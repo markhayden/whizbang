@@ -1,0 +1,11 @@
+# nextest configuration (SPEC.md section 13).
+#
+# The default profile is the fast tier. A test still running after 30 seconds is killed and
+# reported as a failure by timeout: `period` is when nextest calls a test slow, and
+# `terminate-after = 1` ends it at the first such period.
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 1 }
+
+# One result file per run, read by scripts/timing.sh for the seconds-per-suite table.
+[profile.default.junit]
+path = "junit.xml"
