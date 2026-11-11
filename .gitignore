@@ -1,0 +1,11 @@
+/target
+.DS_Store
+.env
+.env.*
+*.png
+*.jpg
+*.jpeg
+*.webp
+!docs/**/*.png
+.claude/settings.local.json
+.claude/worktrees/

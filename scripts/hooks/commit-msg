@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# No attribution to an agent or a model, in any commit (SPEC.md section 15).
+set -euo pipefail
+if grep -i -E -q '^(co-authored-by|generated (with|by)|signed-off-by: *(claude|codex|gpt|gemini))|🤖' "$1"; then
+  echo "commit-msg: remove the attribution line; commits here name no agent or model" >&2
+  exit 1
+fi

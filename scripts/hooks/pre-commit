@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Format check before every commit.
+set -euo pipefail
+cargo fmt --all -- --check
