@@ -1,6 +1,6 @@
 # Whizbang
 
-Draft 4, 2026-11-11. Not yet approved. This is the living description of how whizbang works; it
+Draft 5, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
 is edited as things change and is not a history.
 
 Where this spec says a detail is "decided at" a checkpoint, the constraint written here binds
@@ -160,6 +160,33 @@ already on the stack.
 may call and the bindings it may read. A model cannot discover or call any other action, change
 policy, load a tool file, or enlarge its allowance. This is enforced where calls are
 dispatched, not in the prompt. Text in images and in tool output is data, never instruction.
+
+### Primitives, recipes and loops
+
+Whizbang is not a list of tools for a caller to assemble. Actions come at three levels, and
+the middle one is the front door.
+
+| Level | Examples | Who normally calls it |
+|---|---|---|
+| Primitive | `grow`, `view`, `segment` | Recipes; a person experimenting |
+| Recipe | `remove_prompt`; a source-fidelity check | Agents, apps, other tools |
+| Loop across tools | remove, check, retry | Agents and apps |
+
+- **A recipe is a named, typed sequence of steps** over primitives and other recipes, with
+  the settings that make it work. Rascal's tasks are recipes. A squint use case is one too:
+  its rules, the tools that run before the judge, and the tools the judge may call.
+- **One mechanism, in the core.** The recipe format and its runner (typed steps, values passed
+  between them, one budget) are shared by every tool.
+- **A recipe lives with the tool whose job it does.** A recipe that spans tools lives with
+  the tool that owns the goal: remove-then-check is rascal's.
+- **Recipes are what is advertised.** `whizbang describe` and the server list recipes first,
+  each with what it is for and when to use it; primitives follow as building blocks. A tool
+  that needs an edit evaluated calls squint's checking recipe; it does not choose squint's
+  tools.
+- **A user's own recipe** is a file in a project or config folder, found the same way as an
+  experimental tool.
+- **A recipe is the unit that is admitted** (section 8), because the combination of tools,
+  order and settings is what produces the result.
 
 ### Identities
 
@@ -414,7 +441,7 @@ This is the full promise. Each kept item has an acceptance case in its milestone
 | `segment`, as an action over the segment capability | Kept | Checkpoint 1D |
 | Artifact types `Mask`, `Location`, `Image`, `BandProfile`, `Series`, `Plan` | Kept; formats decided at 1A | Checkpoint 1A |
 | Mask record: core, blend and protect planes; prescriptions; provenance | Kept | Checkpoint 1A |
-| Recipes (a task as a typed sequence of operations) | Kept | Milestone 3 |
+| Recipes: the format and runner move to the core; rascal's tasks are its recipes | Kept | Milestone 3 |
 | Mask export and import | Kept | Milestone 3 |
 | The lab: recipe and filler matrices, resumable cells, blinded pair review | Kept, on the shared harness | Milestone 3 |
 | Bounded check and retry | Kept, as nested calls | Milestone 4 |
@@ -431,6 +458,7 @@ This is the full promise. Each kept item has an acceptance case in its milestone
 | Judge providers: Anthropic, Google, OpenAI | Kept | Milestone 2 |
 | Rust tools: `view`, `resize`, `align`, `change_map`, `edge_similarity` | Kept | Milestone 2 |
 | Decision cache | Kept, with the key in section 9 | Milestone 2 |
+| Use cases expressed as recipes on the shared mechanism | New | Milestone 3 |
 | Evaluation sets and their seals | Kept, moved byte for byte | Milestone 2 |
 | Evaluation of evidence tools: matrices, paired statistics, gates | Kept | Milestone 2 |
 | Report viewer and export | Kept | Milestone 5 |
@@ -782,7 +810,7 @@ repo is retired at milestone 0.
 | 1C | Local pack | The protocol is decided and its conformance suite passes with fake models; the worker's queue, cancellation, restart and removal rules pass; one runtime is chosen (section 17) and SAM 3 answers a phrase request on the Mac's GPU |
 | 1D | Segment coverage | SAM 3 answers phrase, point and box requests; Tiny passes conformance for the features it declares; parity fixtures and a mask-agreement tolerance are recorded; timings are measured |
 | 2 | Squint and evidence evaluation | The baseline reproduces (below); each of the five use cases returns a verdict on a representative case, from the command line and over stdio MCP; Anthropic, Google and OpenAI each pass provider conformance; the decision cache misses when the use case, brief, an image's role or order, a rule or a tool changes, and hits for an unchanged job; a new tool file is tried, scored, edited and re-run without a rebuild; per-subject comparison exists as an experimental tool and has been scored on rungs 1 and 2 |
-| 3 | Rascal and edit evaluation | Each task and operation in section 7 passes its acceptance case, with SAM 3 for masks and Bria through fal for fills; a mask exports and imports; a lab round runs a recipe and filler matrix, resumes after an interruption, presents blinded pairs, collects the picks, checks them against the frozen assignment and decodes the outcomes |
+| 3 | Rascal and edit evaluation | Each task and operation in section 7 passes its acceptance case, with SAM 3 for masks and Bria through fal for fills; a mask exports and imports; rascal's tasks and squint's use cases run as recipes on the core's runner, and `describe` lists recipes before primitives; a lab round runs a recipe and filler matrix, resumes after an interruption, presents blinded pairs, collects the picks, checks them against the frozen assignment and decodes the outcomes |
 | 4 | The loop and a release | Remove with a check and bounded retries runs as nested calls on one budget; the `prerelease` workflow passes and a release archive installs and runs on both targets |
 | 5 | Playground | Every kept playground item in section 7 passes its acceptance case in Chrome; the playground API's negative tests pass; old repos archived |
 | 6 | HTTP and remote hosting | User story 1 runs: the engine API with its negative tests, SAM 3 on a GPU host with parity inside the 1D tolerance, Bria through fal |
