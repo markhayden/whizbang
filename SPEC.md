@@ -1,6 +1,6 @@
 # Whizbang
 
-Draft 5, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
+Draft 6, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
 is edited as things change and is not a history.
 
 Where this spec says a detail is "decided at" a checkpoint, the constraint written here binds
@@ -234,6 +234,45 @@ Invariants kept whatever the storage format becomes:
 - Publication is atomic and survives a crash.
 - Every artifact records what produced it.
 - A mask can be exported from one store and imported into another without loss.
+
+### What every run records
+
+Every run, whatever its outcome, writes one record with a fixed, versioned shape. It is the
+single source for debugging, for audit and for metrics, so nothing below is optional.
+
+| Group | Always stored |
+|---|---|
+| Identity | Run id; request id; parent run, if nested; the whizbang version |
+| What was asked | The action; its exact arguments; the resolved settings, with the digest of the config they came from |
+| Inputs and outputs | The identity of every input binding and artifact; a reference to every committed output |
+| Outcome | Completed, cancelled, error or invalid; for an error, its type and message; for a refusal inside a run, what was refused and why |
+| Time | Start and end; the duration of each step, tool call and capability request |
+| Models | For every capability request: the backend, the model and its version or reported identity, the device, and whether the answer came from a cache |
+| Spend | For every paid request: the amount reserved, the amount settled, and anything unresolved |
+| Egress | Every recipient that was sent data, and the class of data |
+| Steps | Every recipe step, tool call and nested call, in order, with its arguments and a reference to its result |
+| Judge runs | Every turn: what was sent and received, kept whole; token usage; repairs; excluded turns; the checklist and the verdict |
+| Diagnostics | Intermediate images, a failed turn's exchange, a worker's error output, and progress events |
+
+Diagnostics are kept for failed and cancelled runs exactly as for completed ones. Secrets are
+redacted before anything is written. Records and diagnostics are removed only by the store's
+delete and prune commands.
+
+### Metrics from ordinary runs
+
+Because every run writes the same record, a metric is a query over the store. It needs no
+labels and is separate from evaluation (section 8), which scores tools against known answers.
+
+- `whizbang runs list|show` finds and reads runs.
+- `whizbang runs stats` aggregates over a filter (an action, a recipe, a tool, a model, a
+  backend, a period): how many runs; outcome rates; for squint, verdict and unsure rates;
+  retries and repairs; time as median and 95th percentile; cost; cache hits. For example,
+  how one tool behaved across its last 100 runs.
+- `whizbang runs export` writes the matching records as one JSON object per line, so analysis
+  and dashboards can live outside whizbang.
+- The playground shows the same figures in milestone 5.
+- Evaluation results are stored as runs too, with their labels kept apart, so one export
+  format serves both.
 
 ### The interface
 
@@ -628,6 +667,7 @@ whizbang eval run --gate <file>        # rungs 3 and 4
 whizbang models list|get|remove
 whizbang backends status [--probe]
 whizbang store list|delete|prune
+whizbang runs list|show|stats|export
 whizbang spend status|reset
 whizbang serve [--http <addr>]
 whizbang play
@@ -805,11 +845,11 @@ repo is retired at milestone 0.
 | # | Milestone | Done when |
 |---|---|---|
 | 0 | Freeze and skeleton | In order: the old repos' remaining source changes land; each is tagged and pinned in `docs/sources.toml`; the baseline package (below) is assembled from the tagged squint and validated; the 2026-11-11 study is written up from the package in `docs/results/`. Also: workspace, CI, `AGENTS.md`, the three first skills and both scans are in place; `just check` and `just scan` pass |
-| 1A | Contracts and store | Identity types and the six artifact formats are decided; the identity acceptance cases pass; a fake rascal operation and a scripted multi-turn squint run execute through the executor with atomic outputs and kept diagnostics; request ids (simultaneous duplicates, a conflicting payload, a retry after a config change), prepare, admit and cancellation (racing a commit, with children outstanding) behave as section 3 says; the store reopens and recovers after an interrupted publication, keeps diagnostic references, keeps an artifact two runs share when one is deleted, sets owner-only permissions and refuses a second writer; the fill conventions are fixed |
+| 1A | Contracts and store | Identity types and the six artifact formats are decided; the identity acceptance cases pass; a fake rascal operation and a scripted multi-turn squint run execute through the executor with atomic outputs and kept diagnostics, and each writes a run record holding every group section 3 lists; request ids (simultaneous duplicates, a conflicting payload, a retry after a config change), prepare, admit and cancellation (racing a commit, with children outstanding) behave as section 3 says; the store reopens and recovers after an interrupted publication, keeps diagnostic references, keeps an artifact two runs share when one is deleted, sets owner-only permissions and refuses a second writer; the fill conventions are fixed |
 | 1B | Policy and controls | The spend tests of section 6 pass against fakes; estimates expire and are refused when stale; a model installs, attaches, cancels and drains with fake downloads; egress is denied by default |
 | 1C | Local pack | The protocol is decided and its conformance suite passes with fake models; the worker's queue, cancellation, restart and removal rules pass; one runtime is chosen (section 17) and SAM 3 answers a phrase request on the Mac's GPU |
 | 1D | Segment coverage | SAM 3 answers phrase, point and box requests; Tiny passes conformance for the features it declares; parity fixtures and a mask-agreement tolerance are recorded; timings are measured |
-| 2 | Squint and evidence evaluation | The baseline reproduces (below); each of the five use cases returns a verdict on a representative case, from the command line and over stdio MCP; Anthropic, Google and OpenAI each pass provider conformance; the decision cache misses when the use case, brief, an image's role or order, a rule or a tool changes, and hits for an unchanged job; a new tool file is tried, scored, edited and re-run without a rebuild; per-subject comparison exists as an experimental tool and has been scored on rungs 1 and 2 |
+| 2 | Squint and evidence evaluation | The baseline reproduces (below); each of the five use cases returns a verdict on a representative case, from the command line and over stdio MCP; Anthropic, Google and OpenAI each pass provider conformance; the decision cache misses when the use case, brief, an image's role or order, a rule or a tool changes, and hits for an unchanged job; a new tool file is tried, scored, edited and re-run without a rebuild; `whizbang runs stats` and `runs export` report on a tool across at least 100 recorded runs; per-subject comparison exists as an experimental tool and has been scored on rungs 1 and 2 |
 | 3 | Rascal and edit evaluation | Each task and operation in section 7 passes its acceptance case, with SAM 3 for masks and Bria through fal for fills; a mask exports and imports; rascal's tasks and squint's use cases run as recipes on the core's runner, and `describe` lists recipes before primitives; a lab round runs a recipe and filler matrix, resumes after an interruption, presents blinded pairs, collects the picks, checks them against the frozen assignment and decodes the outcomes |
 | 4 | The loop and a release | Remove with a check and bounded retries runs as nested calls on one budget; the `prerelease` workflow passes and a release archive installs and runs on both targets |
 | 5 | Playground | Every kept playground item in section 7 passes its acceptance case in Chrome; the playground API's negative tests pass; old repos archived |
