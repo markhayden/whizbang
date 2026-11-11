@@ -1,6 +1,6 @@
 # Whizbang
 
-Draft 8, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
+Draft 9, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
 is edited as things change and is not a history.
 
 Where this spec says a detail is "decided at" a checkpoint, the constraint written here binds
@@ -557,10 +557,18 @@ tests, and its numbers come from a script that is rerun when the tool changes.
 | Examples | At least two worked examples with their input and output images, and what to look for; one of them a case it handles badly, if one is known |
 | Rung 2 results | The measure, the data, the numbers and the date |
 | Speed and cost | Time at several image sizes on the reference Mac; cost per call where it spends |
+| Alternatives | Other methods that were tried for the same job, each run on the same examples and data, with its result, speed and cost beside the chosen one, and why the default was chosen |
 | Limits | Known failure cases, each with an example |
 | Mark and history | Its mark, each rung's result, each gate it faced, and what changed |
 
 A tool is not finished, and cannot be marked unverified or admitted, without its record.
+
+**Comparing methods.** A tool may have more than one method for the same job (several ways
+to grow a mask; a library call against hand-written code; two segmenters). Each method runs
+under the same name with a `method` setting, on the same examples and data, through the same
+script. The default is the one that meets the tool's bar at the lowest time and cost, and the
+record shows the comparison. A method that loses is removed from the code and kept in the
+record.
 
 ### Marks
 
