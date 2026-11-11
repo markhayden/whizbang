@@ -6,7 +6,8 @@ backlog. This file holds what you cannot work out from the code.
 
 ## On a fresh clone
 
-1. `just setup` installs the git hooks.
+1. `just setup` installs the git hooks and checks the pinned tools
+   (`scripts/tool-versions.txt`), naming the install command for any that is missing.
 2. Set `WHIZBANG_WORDLIST` to the path of the clean-room word list. It lives outside every
    repo. Never commit it, quote it, print it or pass it to another agent.
 3. `just check` and `just scan` must both pass before you change anything.
@@ -15,9 +16,11 @@ backlog. This file holds what you cannot work out from the code.
 
 | Command | When |
 |---|---|
-| `just check` | Before every commit: format check, lint, fast tests |
+| `just check` | Before every commit: format check, lint, the crate graph, licences and sources, the script tests, then the fast tests with seconds per suite |
 | `just scan` | Before every push: the secrets scan and the clean-room scan |
-| `just ci` | What a pull request runs |
+| `just ci` | What a pull request runs: `check`, advisories, a smoke of the release binary, the secrets scan |
+| `just test-scripts-slow` | After changing `.config/nextest.toml` or `scripts/timing.sh`: about 40 seconds; a 31-second test really fails by timeout (CI runs that part as `just test-timeout`) |
+| `scripts/heavy.sh <label> <command...>` | Around any heavy command: one runs at a time on a machine, the next waits |
 
 ## Roles
 

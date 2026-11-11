@@ -1,0 +1,12 @@
+# A fixture for scripts/tests/test-timeout.sh, not part of the whizbang workspace: one test
+# that sleeps, to show the fast tier's timeout stops it.
+[package]
+name = "slow-crate"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[workspace]

@@ -1,6 +1,6 @@
 # Whizbang
 
-Draft 9, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
+Draft 10, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
 is edited as things change and is not a history.
 
 Where this spec says a detail is "decided at" a checkpoint, the constraint written here binds
@@ -108,9 +108,12 @@ not yet needed.
 - Tools, `eval` and `serve` receive an executor and capability handles from the binary. That is
   how `eval` runs tools, how the playground host runs tools, and how one tool calls another.
 - Tools never depend on each other, on `serve` or on `eval`. MCP types stay inside `serve`.
-- `whizbang-testkit` (fakes) is a development dependency only.
+- `whizbang-testkit` (fakes) is a development dependency only. It depends on
+  `whizbang-core`, and any crate, the core included, may take it as a development dependency
+  and in no other way.
 
-The edges are listed in one file and checked.
+The edges are listed in one file, `scripts/crate-graph.txt`, and checked by `just check`. A
+path dependency on a crate outside the workspace fails the check.
 
 ### The execution contract
 
@@ -728,13 +731,23 @@ whizbang setup                         # install the Python pack
 Developer commands:
 
 ```
-just check          # fast tier: format check, lint, fast tests
-just test-models    # model tier
-just test-slow      # slow tier
-just docs           # regenerate the reference
-just scan           # the secrets scan and the clean-room scan
-just ci             # what a pull request runs
+just setup              # install the git hooks; check the pinned tools
+just check              # fast tier: format check, lint, the crate graph, licences and
+                        # sources, the script tests, then the fast tests with seconds
+                        # per suite and the 180-second limit
+just test-scripts-slow  # the script tests with their opt-in parts (about 40 seconds)
+just test-models        # model tier
+just test-slow          # slow tier
+just docs               # regenerate the reference
+just scan               # the secrets scan and the clean-room scan
+just ci                 # what a pull request runs: check, advisories, a smoke of the
+                        # release binary, the secrets scan
 ```
+
+`just setup`, `check`, `test-scripts-slow`, `scan` and `ci` exist; the others arrive with the
+milestone that needs them. `just check` is made of recipes that also run alone: `fmt-check`,
+`clippy`, `graph`, `deny`, `test-scripts`, `timing`. CI also runs `just test-timeout` on one
+runner: a test that sleeps 31 seconds must fail by timeout.
 
 ## 12. Project structure
 
@@ -752,7 +765,9 @@ docs/
   carry-over.md         the only backlog
   sources.toml          the old repos' final commits, fixed before porting starts
 .claude/                skills, subagents and permission settings (versioned)
-scripts/                heavy.sh, scan.sh, worktree.sh, dev.sh
+scripts/                scan.sh, heavy.sh, timing.sh, setup.sh with tool-versions.txt,
+                        check-crate-graph.sh with crate-graph.txt, hooks/, and tests/ (the
+                        tests of the scripts); later worktree.sh and dev.sh
 .github/workflows/      CI
 SPEC.md                 this file
 AGENTS.md               rules for any agent; CLAUDE.md imports it

@@ -9,3 +9,5 @@
 !docs/**/*.png
 .claude/settings.local.json
 .claude/worktrees/
+# The nextest results of the script-test fixtures.
+scripts/tests/fixtures/*/target/
