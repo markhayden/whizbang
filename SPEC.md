@@ -1,6 +1,6 @@
 # Whizbang
 
-Draft 6, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
+Draft 7, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
 is edited as things change and is not a history.
 
 Where this spec says a detail is "decided at" a checkpoint, the constraint written here binds
@@ -62,7 +62,8 @@ create, verify and edit images, is the known next one and is out of scope here.
 4. **Any model, anywhere, by design.** Every model is reached through a backend that may be
    local, self-hosted or a paid service. No capability is designed in a way that works only
    with a paid service. Which combinations ship when is stated in section 5.
-5. **New tools earn their place** by the route that fits them (section 8).
+5. **Every tool earns its place.** Anything that makes a claim about quality climbs the
+   ladder, inherited or new (section 8).
 6. **Stable in Rust, experimental in Python.** New perception and measurement tools start in
    Python, where trying an idea is cheap. A tool moves to Rust only once it is proven and speed
    or distribution calls for it. Nothing is hand-written in Rust that a mature library does
@@ -475,7 +476,7 @@ This is the full promise. Each kept item has an acceptance case in its milestone
 
 | Item | Status | Where |
 |---|---|---|
-| Tasks `mask_rect`, `seam`, `remove`, `remove_prompt`, `repair`, `repair_area`, `protect` | Kept | Milestone 3 |
+| Tasks `mask_rect`, `seam`, `remove`, `remove_prompt`, `repair`, `repair_area`, `protect` | Kept; each model-based one is unverified until it climbs the ladder | Milestone 3, then E |
 | All 25 operations: `line`, `rect`, `stroke`, `rasterize`, `tighten`, `grow`, `shrink`, `close`, `plug`, `subtract`, `select`, `invert`, `fan`, `profile`, `feather`, `cut`, `put`, `ramp`, `apply`, `window`, `unwindow`, `render`, `paste`, `measure`, `inspect` | Kept | Milestone 3 |
 | `segment`, as an action over the segment capability | Kept | Checkpoint 1D |
 | Artifact types `Mask`, `Location`, `Image`, `BandProfile`, `Series`, `Plan` | Kept; formats decided at 1A | Checkpoint 1A |
@@ -495,7 +496,8 @@ This is the full promise. Each kept item has an acceptance case in its milestone
 | The judge: rules, checklist, verdict | Kept | Milestone 2 |
 | Use cases: source fidelity, reference consistency, reality checks, brief compliance, product fidelity | Kept | Milestone 2 |
 | Judge providers: Anthropic, Google, OpenAI | Kept | Milestone 2 |
-| Rust tools: `view`, `resize`, `align`, `change_map`, `edge_similarity` | Kept | Milestone 2 |
+| Rust tools: `view`, `resize`, `align` (the control) | Kept | Milestone 2 |
+| Rust tools: `change_map`, `edge_similarity` | Kept, unverified until they climb the ladder | Milestone 2, then E |
 | Decision cache | Kept, with the key in section 9 | Milestone 2 |
 | Use cases expressed as recipes on the shared mechanism | New | Milestone 3 |
 | Evaluation sets and their seals | Kept, moved byte for byte | Milestone 2 |
@@ -533,12 +535,34 @@ This is the full promise. Each kept item has an acceptance case in its milestone
 
 ## 8. Admitting tools
 
+Every tool that makes a claim about quality climbs the ladder, whether it is new or came from
+the old repos. The base is built first; then tools are brought in one at a time and evaluated
+as they arrive.
+
 | Kind of tool | Example | Route |
 |---|---|---|
-| Deterministic utility | `view`, `align`, `feather` | Behavioural tests of its contract |
-| Inherited model-dependent task | `remove_prompt` | Ported under behavioural tests and an end-to-end acceptance case. Any later change to its model, prompt or logic takes the ladder |
-| Experimental | A new Python file | Runs when named; not on by default |
-| New model-dependent tool | per-subject comparison | The ladder, to be on by default |
+| Pure pixel operation | `grow`, `feather`, `paste` | Behavioural tests. Its result is exactly right or wrong, so there is nothing to climb |
+| The control | `view`, `align` | Behavioural tests. Every squint comparison is measured against these two, so they cannot be measured against themselves |
+| Any model-based recipe or tool offered to a judge, inherited or new | `remove_prompt`, `change_map`, per-subject comparison | The ladder |
+
+### Marks
+
+Each such tool carries one mark, shown by `whizbang describe`.
+
+| Mark | Meaning | Use |
+|---|---|---|
+| Experimental | Present; nothing shown yet | Runs only when named |
+| Unverified | Ported and passing its behavioural tests and rung 1, but its gate has not been cleared | Usable, and may be a default while nothing admitted replaces it; never described as proven |
+| Admitted | Cleared its gate | On by default |
+
+- **Earlier evidence counts.** A tool may be credited with a rung when a recorded result
+  already meets that rung's bar: the data, the method and the numbers are cited in the tool's
+  record. Rascal's segmenters, each accepted against reference masks, are an example for
+  rung 2.
+- **A tool that fails its gate** is fixed and tried again, kept as experimental, or dropped.
+  The result is recorded either way.
+- **Changing an admitted tool's** model, prompt or logic returns it to unverified until it
+  clears its gate again.
 
 ### The ladder
 
@@ -850,13 +874,13 @@ repo is retired at milestone 0.
 | 1C | Local pack | The protocol is decided and its conformance suite passes with fake models; the worker's queue, cancellation, restart and removal rules pass; one runtime is chosen (section 17) and SAM 3 answers a phrase request on the Mac's GPU |
 | 1D | Segment coverage | SAM 3 answers phrase, point and box requests; Tiny passes conformance for the features it declares; parity fixtures and a mask-agreement tolerance are recorded; timings are measured |
 | 2 | Squint and evidence evaluation | The baseline reproduces (below); each of the five use cases returns a verdict on a representative case, from the command line and over stdio MCP; Anthropic, Google and OpenAI each pass provider conformance; the decision cache misses when the use case, brief, an image's role or order, a rule or a tool changes, and hits for an unchanged job; a new tool file is tried, scored, edited and re-run without a rebuild; `whizbang runs stats` and `runs export` report on a tool across at least 100 recorded runs; per-subject comparison exists as an experimental tool and has been scored on rungs 1 and 2 |
-| 3 | Rascal and edit evaluation | Each task and operation in section 7 passes its acceptance case, with SAM 3 for masks and Bria through fal for fills; a mask exports and imports; rascal's tasks and squint's use cases run as recipes on the core's runner, and `describe` lists recipes before primitives; a lab round runs a recipe and filler matrix, resumes after an interruption, presents blinded pairs, collects the picks, checks them against the frozen assignment and decodes the outcomes |
+| 3 | Rascal and edit evaluation | Each task and operation in section 7 passes its acceptance case, and each model-based recipe has its ladder record with rungs 1 and 2 scored or credited from earlier evidence, with SAM 3 for masks and Bria through fal for fills; a mask exports and imports; rascal's tasks and squint's use cases run as recipes on the core's runner, and `describe` lists recipes before primitives; a lab round runs a recipe and filler matrix, resumes after an interruption, presents blinded pairs, collects the picks, checks them against the frozen assignment and decodes the outcomes |
 | 4 | The loop and a release | Remove with a check and bounded retries runs as nested calls on one budget; the `prerelease` workflow passes and a release archive installs and runs on both targets |
 | 5 | Playground | Every kept playground item in section 7 passes its acceptance case in Chrome; the playground API's negative tests pass; old repos archived |
 | 6 | HTTP and remote hosting | User story 1 runs: the engine API with its negative tests, SAM 3 on a GPU host with parity inside the 1D tolerance, Bria through fal |
 | 7 | Bundles and replay | Invocation bundles and journal replay; saved-run comparisons, saved examples and guided chain replay in the playground |
 | 8 | More local models | Each cell section 5 assigns to this milestone passes conformance: fill and judge, each both local and self-hosted; plus any further segmenter the evaluations call for |
-| E | Squint's evidence redesign | Runs alongside milestones 3 onward, once 2 is done. Per-subject comparison climbs rungs 3 and 4 on a fresh confirmation set; `regions`, `classes` and `outline` are each brought in as experimental tools and scored on rungs 1 and 2, on SAM 3 where that works and on their old segmenter as a catalogue entry where it does not, and those that pass go on; the submission format is redesigned so small models can follow it; job requirements carry colour, count and lettering in a new set version. Each change is admitted through its gate |
+| E | Evidence and edit quality | Runs alongside milestones 3 onward, once 2 is done. Every unverified tool and recipe is taken up the ladder, squint's first and the most doubtful first, until each is admitted, experimental or dropped. Per-subject comparison climbs rungs 3 and 4 on a fresh confirmation set; `regions`, `classes` and `outline` are each brought in as experimental tools and scored on rungs 1 and 2, on SAM 3 where that works and on their old segmenter as a catalogue entry where it does not, and those that pass go on; the submission format is redesigned so small models can follow it; job requirements carry colour, count and lettering in a new set version. Each change is admitted through its gate |
 
 Checkpoints 1A to 1D each end with a note. Milestones 2 and 3 need 1A and 1B; they need 1C and
 1D only for the parts that use a real model.

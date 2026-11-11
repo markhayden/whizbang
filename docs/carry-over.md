@@ -54,6 +54,7 @@ to this repo.
 | Item | Milestone |
 |---|---|
 | Per-subject comparison on SAM 3, by name and by location | 2 (rungs 1 and 2), then E |
+| Every inherited tool that makes a quality claim (`change_map`, `edge_similarity`, each model-based rascal recipe): ported as unverified, then taken up the ladder | 2 and 3, then E |
 | `regions`, `classes` and `outline`: wanted, not yet shown to work as intended. Each is brought in as an experimental tool and scored on rungs 1 and 2, on SAM 3 where that works, and on their old fixed-class segmenter (as a catalogue entry) where it does not. Those that pass go on up the ladder | E |
 | A fresh, harder source-fidelity confirmation set: new families, unseen by any agent | E, before any rung 4 run |
 | Rerun the top Google model after the squint fixes above | E |
