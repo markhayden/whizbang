@@ -1,0 +1,36 @@
+# The crate edges SPEC.md section 3 allows. scripts/check-crate-graph.sh fails on any edge
+# between workspace crates that is not listed here, and on any workspace crate not named here.
+#
+#   A            the crate A exists and may depend on nothing in the workspace
+#   A -> B       A may depend on B (normal, build or development dependency)
+#   A -dev-> B   A may depend on B as a development dependency only
+#
+# Crates the spec names but that do not exist yet are listed so they are checked from the
+# commit that adds them. Changing this file is changing the architecture: update the spec's
+# table in the same commit.
+
+whizbang-core
+
+whizbang-backends -> whizbang-core
+whizbang-rascal -> whizbang-core
+whizbang-squint -> whizbang-core
+whizbang-eval -> whizbang-core
+whizbang-serve -> whizbang-core
+
+# The binary builds the registry, the backends and the executor, and injects them.
+whizbang -> whizbang-core
+whizbang -> whizbang-backends
+whizbang -> whizbang-rascal
+whizbang -> whizbang-squint
+whizbang -> whizbang-eval
+whizbang -> whizbang-serve
+
+# The testkit holds fakes of the core's interfaces. It is a development dependency only.
+whizbang-testkit -> whizbang-core
+whizbang-core -dev-> whizbang-testkit
+whizbang-backends -dev-> whizbang-testkit
+whizbang-rascal -dev-> whizbang-testkit
+whizbang-squint -dev-> whizbang-testkit
+whizbang-eval -dev-> whizbang-testkit
+whizbang-serve -dev-> whizbang-testkit
+whizbang -dev-> whizbang-testkit
