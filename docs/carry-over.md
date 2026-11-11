@@ -23,6 +23,8 @@ tagged squint, and write up the 2026-11-11 study from it.
 
 | From | Item | Milestone | Done when |
 |---|---|---|---|
+| whizbang | Check the title and body of a pull request for secrets, listed words and attribution: no scan sees them | 0, with `review-merge` in task S5 | `review-merge` runs both scans and the attribution check over the title and body before a merge |
+| whizbang | A pull request can change the workflow that checks it; CI uses the base branch's scan but the pull request's own workflow file | 0, with `review-merge` in task S5 | `review-merge` refuses a change under `.github/` that the reviewer has not read |
 | rascal | Say on the terminal when a run was not checked | 4 | The loop's output states checked, unchecked and why |
 | rascal | Keep the cause when a check fails | 4 | A failed nested check returns its real error |
 | rascal | A check cannot receive the variables it needs | 4 | Covered by nested calls; verified by the loop's acceptance case |

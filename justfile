@@ -70,7 +70,8 @@ scan-secrets:
 scan-range base head:
     scripts/scan.sh --range "{{base}}" "{{head}}"
 
-# The same without the clean-room scan: what CI runs over a pull request's commits.
+# The same without the clean-room scan: what CI runs over a pull request's commits (CI
+# uses the base branch's copy of the scan, so a pull request cannot change what checks it).
 scan-range-secrets base head:
     scripts/scan.sh --secrets-only --range "{{base}}" "{{head}}"
 
