@@ -1,6 +1,6 @@
 # Whizbang
 
-Draft 10, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
+Draft 11, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
 is edited as things change and is not a history.
 
 Where this spec says a detail is "decided at" a checkpoint, the constraint written here binds
@@ -704,8 +704,27 @@ host for SAM 3 from milestone 6. Adding a recipient is the owner's decision.
 ### The public repo
 
 Before every push two scans must pass: one for secrets and private data, and the clean-room
-scan, which checks the tree against a private word list kept outside every repo. The list is
-never committed, quoted or passed to another agent; the scan reports counts only.
+scan, which checks against a private word list kept outside every repo. The list is never
+committed, quoted or passed to another agent; the scan reports counts only, and fails when
+the list is not there.
+
+- **What is scanned.** By hand, the working tree. On a push (the pre-push hook) and before a
+  merge, everything that would be published: the files each outgoing commit changed, as they
+  were in that commit; each commit's paths and message; the tree of each tip; the names of
+  the pushed branches and tags; the message of an annotated tag. A secret added in one
+  commit and deleted in the next is found.
+- **What is outgoing** is every commit reachable from what is pushed and not from a ref the
+  destination has, and the destination is asked. A commit being on local `main`, or on a
+  remote-tracking ref, is not evidence that it was published. If the destination cannot be
+  asked, the scan fails.
+- **The secrets scan** looks for provider key shapes, private-key headers, the values of a
+  local `.env`, absolute home paths and email addresses. It prints where, never the text.
+- **The attribution check** runs with the scans: a commit or tag message with a
+  `Co-Authored-By` or "Generated with" line, or a commit or tag authored by an agent or a
+  model, fails (section 15). The `commit-msg` hook applies the same rule.
+- **CI** runs the secrets scan and the attribution check over every commit of a pull
+  request, and over the commits of a push to `main`, so a commit made on another machine or
+  with the hooks bypassed is still checked. The clean-room scan cannot run in CI.
 
 ## 11. Commands
 
@@ -739,15 +758,22 @@ just test-scripts-slow  # the script tests with their opt-in parts (about 40 sec
 just test-models        # model tier
 just test-slow          # slow tier
 just docs               # regenerate the reference
-just scan               # the secrets scan and the clean-room scan
+just scan               # the secrets scan and the clean-room scan, over the working tree
+just scan-range <base> <head>
+                        # the two scans and the attribution check over every commit in
+                        # base..head and the tree of head
+just scan-range-secrets <base> <head>
+                        # the same without the clean-room scan: what CI runs over the
+                        # commits of a pull request
 just ci                 # what a pull request runs: check, advisories, a smoke of the
                         # release binary, the secrets scan
 ```
 
-`just setup`, `check`, `test-scripts-slow`, `scan` and `ci` exist; the others arrive with the
-milestone that needs them. `just check` is made of recipes that also run alone: `fmt-check`,
-`clippy`, `graph`, `deny`, `test-scripts`, `timing`. CI also runs `just test-timeout` on one
-runner: a test that sleeps 31 seconds must fail by timeout.
+`just setup`, `check`, `test-scripts-slow`, `scan`, `scan-range`, `scan-range-secrets` and
+`ci` exist; the others arrive with the milestone that needs them. `just check` is made of
+recipes that also run alone: `fmt-check`, `clippy`, `graph`, `deny`, `test-scripts`,
+`timing`. CI also runs `just test-timeout` on one runner: a test that sleeps 31 seconds must
+fail by timeout.
 
 ## 12. Project structure
 
@@ -856,7 +882,7 @@ spends.
 
 | Workflow | Runs | Contains |
 |---|---|---|
-| `ci` | Every pull request | Fast tier on both targets; Chrome end to end; reference check; secrets scan |
+| `ci` | Every pull request | Fast tier on both targets; Chrome end to end; reference check; secrets scan; the secrets scan and attribution check over every commit |
 | `prerelease` | On a release candidate tag | Model tier; a live call to each provider; install from the built archive on both targets. A release is refused unless this passed on the same commit |
 | `release` | On a version tag | Binaries for both targets and the pack |
 
