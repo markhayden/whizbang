@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
-# Both scans before every push.
+# The scans before every push, over what this push would publish. Git gives the remote's
+# name and address as arguments and one line per pushed ref on stdin; both go to the scan.
 set -euo pipefail
-exec "$(git rev-parse --show-toplevel)/scripts/scan.sh"
+exec "$(git rev-parse --show-toplevel)/scripts/scan.sh" --pre-push "$@"

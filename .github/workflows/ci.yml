@@ -6,8 +6,12 @@ on:
     branches: [main]
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # One group per pull request, where a newer run replaces an older one. On main, one
+  # group per push: a run there is never cancelled and never waits behind another (a
+  # group keeps only one waiting run, so a shared group would drop the middle of three
+  # quick pushes), because each run scans only the commits of its own push.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -30,6 +34,24 @@ jobs:
           tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2
       - name: Fast tier, advisories, release smoke and secrets scan
         run: just ci
+      # Every commit, not only the final tree: a secret added and then deleted, or a commit
+      # made where the hooks do not run, is still caught. On a pull request, base..head; on
+      # main, the commits of the push. A pull request is checked by the base branch's copy
+      # of the scan, so it cannot pass by changing the scan; the head's copy is used only
+      # when the base has none that can scan a range.
+      - name: Secrets scan and attribution check over every commit
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          scan=scripts/scan.sh
+          if [ "$EVENT" = pull_request ] &&
+            git show "$BASE":scripts/scan.sh >"$RUNNER_TEMP/scan.sh" 2>/dev/null &&
+            grep -q -e '--range' "$RUNNER_TEMP/scan.sh"; then
+            scan="$RUNNER_TEMP/scan.sh"
+          fi
+          bash "$scan" --secrets-only --range "$BASE" "$HEAD"
       # About 35 seconds, so on one runner only: a test that sleeps 31 seconds really fails
       # by timeout under this repo's nextest config.
       - name: The 30-second test timeout, for real

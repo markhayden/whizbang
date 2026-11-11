@@ -11,13 +11,17 @@ backlog. This file holds what you cannot work out from the code.
 2. Set `WHIZBANG_WORDLIST` to the path of the clean-room word list. It lives outside every
    repo. Never commit it, quote it, print it or pass it to another agent.
 3. `just check` and `just scan` must both pass before you change anything.
+4. A push runs the scans by itself (the pre-push hook) over every commit it would publish,
+   so the variable must be set in the shell you push from.
 
 ## Commands
 
 | Command | When |
 |---|---|
 | `just check` | Before every commit: format check, lint, the crate graph, licences and sources, the script tests, then the fast tests with seconds per suite |
-| `just scan` | Before every push: the secrets scan and the clean-room scan |
+| `just scan` | Before every push: the secrets scan and the clean-room scan, over the working tree |
+| `just scan-range <base> <head>` | Before a merge: the same two scans and the attribution check over every commit in `base..head` (contents, paths, messages) and the tree of `head` |
+| `just scan-range-secrets <base> <head>` | The range scan without the clean-room scan: what CI runs over the commits of a pull request (with the base branch's copy of the scan), and of a push to `main` |
 | `just ci` | What a pull request runs: `check`, advisories, a smoke of the release binary, the secrets scan |
 | `just test-scripts-slow` | After changing `.config/nextest.toml` or `scripts/timing.sh`: about 40 seconds; a 31-second test really fails by timeout (CI runs that part as `just test-timeout`) |
 | `scripts/heavy.sh <label> <command...>` | Around any heavy command: one runs at a time on a machine, the next waits |
@@ -45,7 +49,7 @@ a contradiction from these, stop and ask.
 
 **Never**
 - Add `Co-Authored-By`, "Generated with", or any agent or model name to a commit, a pull
-  request, code or docs.
+  request, code or docs. A `Co-Authored-By` line naming a person is refused too.
 - Commit secrets, the word list, or owner-only material such as answers to unreleased
   evaluation sets. This repo is public.
 - Edit a sealed evaluation set, its labels or the rules files its seal covers.
