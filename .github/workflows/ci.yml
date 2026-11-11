@@ -7,7 +7,8 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A run on main is never cancelled: each one scans the commits of its own push.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -30,6 +31,14 @@ jobs:
           tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2
       - name: Fast tier, advisories, release smoke and secrets scan
         run: just ci
+      # Every commit, not only the final tree: a secret added and then deleted, or a commit
+      # made where the hooks do not run, is still caught. On a pull request, base..head; on
+      # main, the commits of the push.
+      - name: Secrets scan and attribution check over every commit
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: just scan-range-secrets "$BASE" "$HEAD"
       # About 35 seconds, so on one runner only: a test that sleeps 31 seconds really fails
       # by timeout under this repo's nextest config.
       - name: The 30-second test timeout, for real
