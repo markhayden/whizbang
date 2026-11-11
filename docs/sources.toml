@@ -1,0 +1,28 @@
+# The old repos, frozen. Every commit that ports code names a path at one of these commits.
+# Each is the commit its tag `final-before-whizbang` points at, checked against the remote on
+# 2026-11-11. A correction is a new tag `final-before-whizbang.1` and a new entry here; these
+# are never edited.
+
+[[source]]
+name = "rascal"
+url = "https://github.com/markhayden/rascal"
+tag = "final-before-whizbang"
+commit = "d8423e0e17d442ea39973c1eeeafbcc93e8e591e"
+
+[[source]]
+name = "squint"
+url = "https://github.com/markhayden/squint"
+tag = "final-before-whizbang"
+commit = "cc4b9ac3e2a9a3fbfd32a6588e5d700988e36b63"
+
+[[source]]
+name = "wafflery"
+url = "https://github.com/markhayden/wafflery"
+tag = "final-before-whizbang"
+commit = "8d823a8a155fc7119997cc872a705ebeb55750c8"
+
+[[source]]
+name = "table-manners"
+url = "https://github.com/markhayden/table-manners"
+tag = "final-before-whizbang"
+commit = "24ba4d5976c99fa49cd1a7e9f0a37f6f6e765ddd"

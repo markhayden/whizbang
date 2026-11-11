@@ -11,24 +11,13 @@ Old repos are `github.com/markhayden/{rascal,squint,wafflery,table-manners}`, fr
 Checked on 2026-11-11: no item-level answer for an unreleased evaluation set has been committed
 to this repo.
 
-## To finish before the freeze (milestone 0)
+## The freeze
 
-| Repo | Item | Waiting on |
-|---|---|---|
-| rascal | Hand check, part B: rerun with the account variable exported | Owner |
-| rascal | Checkpoint note, local CI run, tag `m14` | The hand check |
-| rascal | Tag `m13` on the command-line path; its in-playground check moves to "Acceptance" below | `m14` |
-| rascal | Remove about a dozen merged worktrees; delete the models scratch folder | The tags |
-| wafflery | Merge `ui-tidy` (three interface fixes; CI passed) | `m14` tag |
-| wafflery | Delete two stale session-grant branches and the merged `wafflery-m14` worktree | — |
-| squint | Commit the 13 study matrix files | — |
-| squint | Two label corrections agreed with the owner on 2026-11-11, recorded in owner storage only | — |
-| squint | Delete the merged `contract-0.6` branch and `squint-m14` worktree | — |
-| images repo | Rename to `whizbang-evalsets`; the old name is never reused | — |
-| coordination repo | Push its local commits; mark it retired | — |
-| all four | Tag `final-before-whizbang`; pin the commits in `docs/sources.toml` | Everything above |
-| whizbang | Assemble and validate the baseline package from the tagged squint (`SPEC.md` section 16) | The tags |
-| whizbang | Write up the 2026-11-11 study from the package, in `docs/results/` | The package |
+Done on 2026-11-11. The four old repos are tagged `final-before-whizbang` and pinned in
+`docs/sources.toml`. What was found and what happened to it is in `docs/plans/m0-inventory.md`.
+
+Still to do in milestone 0, in whizbang: assemble and validate the baseline package from the
+tagged squint, and write up the 2026-11-11 study from it.
 
 ## Fixes carried into whizbang
 
@@ -49,6 +38,7 @@ to this repo.
 | rascal | A configured model that is not in the catalogue can read as ready while the run refuses (R4) | 1B | Readiness reports it |
 | rascal | A hold is judged live by its process id alone (R5) | 1B | A hold from a dead or recycled process is released |
 | rascal | Untested cases around installs: a signal during a download, a reinstall between a call and its retry, a removal racing an install, a corrupt installation record (R6) | 1B | Each has a test |
+| rascal | A local CI image that lacks the test runner its recipes use (R14) | Dropped | Whizbang has no local CI image; `just ci` runs the same recipes CI does |
 | rascal | The documented per-call cap for a check is one cent, which cannot cover a squint check | 4 | A nested check draws on its parent's reservation, with an acceptance case; the guide gives a real figure |
 | squint | A violation located wholly outside the candidate frame is rejected as an invalid submission | 2 | Such a submission is accepted or repaired, with a test |
 | squint | Job requirements omit colour, count and lettering | E | A new set version built with full requirements; sealed sets untouched |
@@ -68,6 +58,7 @@ to this repo.
 | Rerun the top Google model after the squint fixes above | E |
 | Other runtimes for local models, compared on speed, mask agreement and install size | When a measurement calls for it |
 | Holding several models in the worker; concurrent model calls | When a measurement calls for it |
+| Speed of local models (R12): a fill model on the CPU took 41 seconds a fill; one segmenter ran once per detected box; repeat runs were no faster, so models may have reloaded each run | 1C and 1D measure it on the GPU with a resident worker; milestone 8 for the fill model |
 | Faster transfer between whizbang and the worker | When profiling calls for it |
 | Segmentation that labels every pixel | When a tool needs it |
 | A paid segmentation service as a backend | When one is wanted |
