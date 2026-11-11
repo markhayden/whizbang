@@ -1,6 +1,6 @@
 # Whizbang
 
-Draft 7, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
+Draft 8, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
 is edited as things change and is not a history.
 
 Where this spec says a detail is "decided at" a checkpoint, the constraint written here binds
@@ -535,24 +535,42 @@ This is the full promise. Each kept item has an acceptance case in its milestone
 
 ## 8. Admitting tools
 
-Every tool that makes a claim about quality climbs the ladder, whether it is new or came from
-the old repos. The base is built first; then tools are brought in one at a time and evaluated
-as they arrive.
+Every tool climbs the ladder as far as the ladder applies to it, whether it is new or came
+from the old repos, and every tool has a record of what it showed. The base is built first;
+then tools are brought in one at a time and evaluated as they arrive.
 
-| Kind of tool | Example | Route |
+| Kind of tool | Example | Rungs that apply |
 |---|---|---|
-| Pure pixel operation | `grow`, `feather`, `paste` | Behavioural tests. Its result is exactly right or wrong, so there is nothing to climb |
-| The control | `view`, `align` | Behavioural tests. Every squint comparison is measured against these two, so they cannot be measured against themselves |
-| Any model-based recipe or tool offered to a judge, inherited or new | `remove_prompt`, `change_map`, per-subject comparison | The ladder |
+| Pure pixel operation | `grow`, `feather`, `paste` | 1 and 2. Scored alone means: exact against an analytic or reference result, and timed across image sizes |
+| The control | `view`, `align` | 1 and 2. For `align`, scored alone means registration error on pairs with a known transform. Every squint comparison is measured against these two, so rungs 3 and 4 cannot apply |
+| Any model-based recipe or tool offered to a judge, inherited or new | `remove_prompt`, `change_map`, per-subject comparison | All four |
+
+### Tool records
+
+Every tool and recipe has one record, at `docs/reference/tools/<name>.md`, and the playground
+shows the same page. It is built from real runs, so it cannot drift: its examples run as
+tests, and its numbers come from a script that is rerun when the tool changes.
+
+| Part | Contents |
+|---|---|
+| What it does | Purpose, when to use it, when not to, its arguments and outputs |
+| Examples | At least two worked examples with their input and output images, and what to look for; one of them a case it handles badly, if one is known |
+| Rung 2 results | The measure, the data, the numbers and the date |
+| Speed and cost | Time at several image sizes on the reference Mac; cost per call where it spends |
+| Limits | Known failure cases, each with an example |
+| Mark and history | Its mark, each rung's result, each gate it faced, and what changed |
+
+A tool is not finished, and cannot be marked unverified or admitted, without its record.
 
 ### Marks
 
-Each such tool carries one mark, shown by `whizbang describe`.
+Each tool that the upper rungs apply to carries one mark, shown by `whizbang describe`. A
+pixel operation or a control is complete when its record shows rungs 1 and 2.
 
 | Mark | Meaning | Use |
 |---|---|---|
 | Experimental | Present; nothing shown yet | Runs only when named |
-| Unverified | Ported and passing its behavioural tests and rung 1, but its gate has not been cleared | Usable, and may be a default while nothing admitted replaces it; never described as proven |
+| Unverified | Ported, with its record and rungs 1 and 2 done, but its gate has not been cleared | Usable, and may be a default while nothing admitted replaces it; never described as proven |
 | Admitted | Cleared its gate | On by default |
 
 - **Earlier evidence counts.** A tool may be credited with a rung when a recorded result
