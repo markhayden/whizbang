@@ -56,13 +56,23 @@ smoke:
     target/release/whizbang describe
     target/release/whizbang describe --json > /dev/null
 
-# The secrets scan and the clean-room scan, over the tree.
+# The secrets scan and the clean-room scan, over the working tree. A push runs them over
+# what it would publish (scripts/hooks/pre-push).
 scan:
     scripts/scan.sh
 
 # The secrets scan only: what CI can run without the private word list.
 scan-secrets:
     scripts/scan.sh --secrets-only
+
+# The secrets scan, the attribution check and the clean-room scan over every commit in
+# base..head (contents, paths and messages) and the tree of head.
+scan-range base head:
+    scripts/scan.sh --range "{{base}}" "{{head}}"
+
+# The same without the clean-room scan: what CI runs over a pull request's commits.
+scan-range-secrets base head:
+    scripts/scan.sh --secrets-only --range "{{base}}" "{{head}}"
 
 # What a pull request runs.
 ci: check deny-advisories smoke scan-secrets
