@@ -40,9 +40,14 @@ deny-advisories:
 test-scripts:
     scripts/tests/run.sh
 
-# Opt-in, about 40 seconds: the script tests with their slow parts. A fixture test that
-# sleeps 31 seconds really fails by timeout, and the real fast tests fail a zero time limit.
-test-slow:
+# The real timeout: a fixture test that sleeps 31 seconds fails by timeout at 30. About 35
+# seconds, so it is not in `check`; CI runs it on one runner.
+test-timeout:
+    WHIZBANG_TIMEOUT_TEST=1 bash scripts/tests/test-timeout.sh
+
+# The script tests with every opt-in part, about 40 seconds: the real timeout, and the real
+# fast tests failing a zero time limit (which runs the fast tier a second time).
+test-scripts-slow:
     WHIZBANG_SLOW_TESTS=1 scripts/tests/run.sh
 
 # A smoke of the release binary: build it, run `describe`, and require success.

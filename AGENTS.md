@@ -19,7 +19,7 @@ backlog. This file holds what you cannot work out from the code.
 | `just check` | Before every commit: format check, lint, the crate graph, licences and sources, the script tests, then the fast tests with seconds per suite |
 | `just scan` | Before every push: the secrets scan and the clean-room scan |
 | `just ci` | What a pull request runs: `check`, advisories, a smoke of the release binary, the secrets scan |
-| `just test-slow` | After changing `.config/nextest.toml` or `scripts/timing.sh`: about 40 seconds; a 31-second test really fails by timeout |
+| `just test-scripts-slow` | After changing `.config/nextest.toml` or `scripts/timing.sh`: about 40 seconds; a 31-second test really fails by timeout (CI runs that part as `just test-timeout`) |
 | `scripts/heavy.sh <label> <command...>` | Around any heavy command: one runs at a time on a machine, the next waits |
 
 ## Roles

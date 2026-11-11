@@ -4,8 +4,10 @@
 #   scripts/setup.sh           install the hooks and check the tools
 #   scripts/setup.sh --check   check the tools only
 #
-# A missing tool, or one at another version, is named with the command that installs the
-# pinned version, and the script fails. The hooks are installed either way.
+# A tool that is missing, or at another version than scripts/tool-versions.txt pins, is
+# named with the command that installs the pinned version, and the script fails. The hooks
+# are installed either way. `just check` does not run this: only setup is strict about
+# versions.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -29,8 +31,11 @@ while read -r tool want; do
   have=$(installed "$tool")
   if [ "$have" = "$want" ]; then
     echo "tool ok: $tool $want"
+  elif [ -z "$have" ]; then
+    echo "tool problem: $tool is missing; install it with: cargo install $tool@$want --locked" >&2
+    status=1
   else
-    echo "tool missing: $tool $want (found: ${have:-none}); install it with: cargo install $tool@$want --locked" >&2
+    echo "tool problem: $tool is at another version: found $have, pinned $want; install the pinned one with: cargo install $tool@$want --locked" >&2
     status=1
   fi
 done <scripts/tool-versions.txt
@@ -38,7 +43,7 @@ done <scripts/tool-versions.txt
 if command -v jq >/dev/null; then
   echo "tool ok: jq (any version)"
 else
-  echo "tool missing: jq; install it with your package manager (brew install jq, apt-get install jq)" >&2
+  echo "tool problem: jq is missing; install it with your package manager (brew install jq, apt-get install jq)" >&2
   status=1
 fi
 exit "$status"

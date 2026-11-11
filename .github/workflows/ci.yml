@@ -30,6 +30,11 @@ jobs:
           tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2
       - name: Fast tier, advisories, release smoke and secrets scan
         run: just ci
+      # About 35 seconds, so on one runner only: a test that sleeps 31 seconds really fails
+      # by timeout under this repo's nextest config.
+      - name: The 30-second test timeout, for real
+        if: matrix.os == 'ubuntu-22.04'
+        run: just test-timeout
 
   ci:
     name: ci
