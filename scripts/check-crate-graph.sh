@@ -31,6 +31,7 @@ trap 'rm -rf "$tmp"' EXIT
 : >"$tmp/named"; : >"$tmp/normal"; : >"$tmp/dev"
 bad=0
 n=0
+set -f  # a line is split into words; a `*` in it is text, never a list of files
 while IFS= read -r line || [ -n "$line" ]; do
   n=$((n + 1))
   line=${line%%#*}
@@ -52,6 +53,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     bad=1
   fi
 done <"$edges"
+set +f
 [ "$bad" -eq 0 ] || exit 1
 
 if [ -z "$metadata" ]; then
@@ -60,8 +62,12 @@ if [ -z "$metadata" ]; then
 fi
 
 # One line per workspace crate, and one per dependency of a workspace crate on another:
-# "<from> <kind> <to>", kind being normal, build or dev. A dependency is matched by its
+# "edge <from> <kind> <to>", kind being normal, build or dev. A dependency is matched by its
 # package name, so a renamed one is still seen.
+#
+# A path dependency (cargo gives it a null source) on a crate that is not a workspace member
+# gets an "outside" line and fails: such a crate is not checked, so it could depend on
+# anything and carry a forbidden edge through.
 jq -r '.workspace_members as $ids
   | [.packages[] | select(.id as $id | $ids | index($id))] as $ws
   | ($ws | map(.name)) as $names
@@ -69,9 +75,11 @@ jq -r '.workspace_members as $ids
   | .name as $from
   | "crate \($from)",
     (.dependencies[]
-      | select(.name as $to | $names | index($to))
       | select(.name != $from)
-      | "edge \($from) \(.kind // "normal") \(.name)")' "$metadata" | sort -u >"$tmp/found"
+      | (.name as $to | $names | index($to)) as $member
+      | if $member then "edge \($from) \(.kind // "normal") \(.name)"
+        elif .source == null then "outside \($from) \(.kind // "normal") \(.name)"
+        else empty end)' "$metadata" | sort -u >"$tmp/found"
 
 status=0
 crates=0
@@ -83,6 +91,11 @@ while read -r what a b c; do
       echo "crate graph: $a is not named in $edges" >&2
       status=1
     fi
+    continue
+  fi
+  if [ "$what" = "outside" ]; then
+    echo "crate graph: $a depends on $c by path, and $c is not a workspace crate ($b dependency)" >&2
+    status=1
     continue
   fi
   found=$((found + 1))
