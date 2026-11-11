@@ -24,9 +24,14 @@ while [ $# -gt 0 ]; do
     *) echo "timing: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-case "$limit" in
-  '' | *[!0-9.]*) echo "timing: the limit must be a number of seconds: $limit" >&2; exit 2 ;;
-esac
+# A plain number of seconds: digits, with an optional fraction. Anything else (NaN, 1e3,
+# 1.5.2) would be compared as text and could pass by accident.
+is_seconds() { echo "$1" | grep -q -E '^[0-9]+(\.[0-9]+)?$'; }
+if ! is_seconds "$limit"; then
+  echo "timing: the limit must be a number of seconds: $limit" >&2
+  exit 2
+fi
+command -v jq >/dev/null || { echo "timing: jq is not installed" >&2; exit 2; }
 
 test_status=0
 if [ -z "$junit" ]; then
@@ -45,8 +50,12 @@ fi
 # <testcase ... time="seconds">.
 attr() { sed -n "s/.* $1=\"\\([^\"]*\\)\".*/\\1/p"; }
 total=$({ grep '<testsuites ' "$junit" || true; } | attr time | head -1)
-if [ -z "$total" ]; then
+if ! grep -q '<testsuites .* time="' "$junit"; then
   echo "timing: no total in $junit" >&2
+  exit 1
+fi
+if ! is_seconds "$total"; then
+  echo "timing: the total in $junit is not a number of seconds: $total" >&2
   exit 1
 fi
 
@@ -71,7 +80,7 @@ if [ "$test_status" -ne 0 ]; then
   echo "timing: a test failed" >&2
   exit "$test_status"
 fi
-if awk -v t="$total" -v l="$limit" 'BEGIN { exit !(t > l) }'; then
+if awk -v t="$total" -v l="$limit" 'BEGIN { exit !(t + 0 > l + 0) }'; then
   echo "timing: test time ${total}s exceeds the limit of ${limit}s" >&2
   echo "timing: review coverage first, then speed a test up or move it to another tier (SPEC.md section 13)" >&2
   exit 1

@@ -28,6 +28,27 @@ expect_fail "a limit below the measured time" "test time 2.500s exceeds the limi
 expect_fail "the limit from the environment" "exceeds the limit of 1s" \
   env WHIZBANG_TIMING_LIMIT=1 "$timing" --junit "$tmp/junit.xml"
 
+# A total or a limit that is not a plain number of seconds cannot pass.
+for bad in NaN 1.5.2 1e3 -1 "" .5; do
+  sed "s/<testsuites \(.*\) time=\"2.500\"/<testsuites \1 time=\"$bad\"/" "$tmp/junit.xml" >"$tmp/bad.xml"
+  expect_fail "a total of '$bad'" "is not a number of seconds" "$timing" --junit "$tmp/bad.xml"
+done
+for bad in NaN 1.5.2 1e3 -1 .5; do
+  expect_fail "a limit of '$bad'" "limit must be a number of seconds" \
+    "$timing" --junit "$tmp/junit.xml" --limit "$bad"
+done
+# Numbers are compared as numbers: 10 is more than 9, and 2.5 is not more than 2.50.
+sed 's/time="2.500">/time="10.000">/' "$tmp/junit.xml" >"$tmp/ten.xml"
+expect_fail "ten seconds against a limit of nine" "exceeds the limit of 9s" "$timing" --junit "$tmp/ten.xml" --limit 9
+expect_pass "a limit equal to the measured time" "$timing" --junit "$tmp/junit.xml" --limit 2.50
+
+# jq is needed to find the result file; without it the script says so.
+mkdir "$tmp/nojq"
+for tool in git bash sed grep awk cat rm head dirname env; do
+  ln -s "$(command -v "$tool")" "$tmp/nojq/$tool"
+done
+expect_fail "jq is not installed" "jq is not installed" env PATH="$tmp/nojq" "$root/$timing" --junit "$tmp/junit.xml"
+
 # A result file without a total cannot pass.
 grep -v '<testsuites' "$tmp/junit.xml" >"$tmp/broken.xml"
 expect_fail "no total in the result file" "no total" "$timing" --junit "$tmp/broken.xml"
@@ -39,5 +60,5 @@ if [ "${WHIZBANG_SLOW_TESTS:-}" = "1" ]; then
   expect_fail "the real fast tests under a zero limit" "exceeds the limit of 0s" "$timing" --limit 0
   grep -q -F 'whizbang::it' "$tmp/out" || { cat "$tmp/out"; fail "the real run prints a row for the binary's tests"; }
 else
-  echo "skip: the real run under a zero limit; set WHIZBANG_SLOW_TESTS=1 (just test-slow)"
+  echo "skip: the real run under a zero limit; set WHIZBANG_SLOW_TESTS=1 (just test-scripts-slow)"
 fi
