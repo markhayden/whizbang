@@ -66,3 +66,32 @@ Open items in each repo's task list and checkpoint reviews were compared with
 
 Items in the old task lists that are unticked but done (old checkpoints and tags) are not
 carried over.
+
+## Outcome
+
+Recorded on 2026-11-11, after tasks F1 to F6.
+
+- **Archive tags pushed and verified on the remotes:** `archive/m14e-birefnet` and
+  `archive/m14e-hqsam` in rascal; `archive/contract-0.6` in squint;
+  `archive/m5-03-session-grant-boundary` and `archive/m5-03-stable-session-grants` in wafflery.
+  For each, the tag's commit was read from the remote and shown to contain the commit it
+  preserves.
+- **rascal:** `m14` and `m13` tagged by the rascal session; its merged worktrees and branches
+  removed by that session.
+- **squint:** the 13 matrix and config files merged; the merged worktree removed; the
+  archived remote branch deleted. Two label corrections recorded in owner storage.
+- **The images repo** is renamed `whizbang-evalsets`. Before the rename every sealed set was
+  fetched into an empty copy (13 sets, 355 images, every hash checked). After it the same
+  fetch through the old address gave identical files; no seal or manifest changed; and a
+  request that bypasses the cache still succeeds at the old address.
+- **The coordination repo** is retired and archived.
+- **Freeze tags:** `final-before-whizbang` in all four repos. For each, local `main`, remote
+  `main` and the peeled tag are the same commit, CI is green on it, and the tree was clean.
+
+Left as found, by the owner's decision:
+
+- Seven commits pushed on 2026-11-11 carry a co-author line naming a model: three in rascal
+  (including the merge `m14` points at) and four in wafflery. History on a public `main` is
+  not rewritten and a pushed tag is not moved. Whizbang rejects such lines in its hooks, and
+  in CI for every commit of a pull request (task S2).
+- One line in a rascal lab note names a private folder. It holds no contents and no secret.
