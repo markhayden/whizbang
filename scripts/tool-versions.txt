@@ -1,0 +1,7 @@
+# The tools `just check` needs, at the versions this repo is tested with. Read by
+# scripts/setup.sh; .github/workflows/ci.yml installs the same versions, and
+# scripts/tests/test-setup.sh fails when the two disagree. The Rust toolchain is pinned in
+# rust-toolchain.toml.
+just 1.59.0
+cargo-nextest 0.9.148
+cargo-deny 0.20.2
