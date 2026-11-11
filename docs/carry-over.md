@@ -42,6 +42,13 @@ to this repo.
 | rascal | Thin parts escape the mask | Optional investigation | If pursued, it takes the ladder |
 | rascal | Large results spend most of a run encoding images and one large report page | 3 | Measured; thumbnails in reports; result encoding chosen from the measurement |
 | rascal | Parallel installs of models sharing a file each download it | 1B | Two installs sharing a file download it once |
+| rascal | SAM 3 resizes every candidate to full size before cutting to the instance limit; a low threshold on a large image holds hundreds of full-size planes (R1) | 1D | Candidates are cut to the limit before resizing, with a memory test |
+| rascal | A model never shows as out of date: nothing compares an installation with the catalogue, and an adapter change does not change identities (R2) | 1B | An installation records its catalogue and adapter revisions; a mismatch is reported |
+| rascal | Uninstall signals a process id read from a file, which may have been reused (R3) | 1B | A process is identified by more than its id before it is signalled |
+| rascal | A configured model that is not in the catalogue can read as ready while the run refuses (R4) | 1B | Readiness reports it |
+| rascal | A hold is judged live by its process id alone (R5) | 1B | A hold from a dead or recycled process is released |
+| rascal | Untested cases around installs: a signal during a download, a reinstall between a call and its retry, a removal racing an install, a corrupt installation record (R6) | 1B | Each has a test |
+| rascal | The documented per-call cap for a check is one cent, which cannot cover a squint check | 4 | A nested check draws on its parent's reservation, with an acceptance case; the guide gives a real figure |
 | squint | A violation located wholly outside the candidate frame is rejected as an invalid submission | 2 | Such a submission is accepted or repaired, with a test |
 | squint | Job requirements omit colour, count and lettering | E | A new set version built with full requirements; sealed sets untouched |
 | squint | A test pair for a job that does and does not permit a seasonal cover over a protected subject | E | New fixture from fresh images |
