@@ -502,7 +502,7 @@ This is the full promise. Each kept item has an acceptance case in its milestone
 | Evaluation of evidence tools: matrices, paired statistics, gates | Kept | Milestone 2 |
 | Report viewer and export | Kept | Milestone 5 |
 | Per-subject comparison on SAM 3 | New, experimental | Milestone 2 |
-| `regions`, `classes`, `outline`, the fixed-class segmenter | Dropped unless re-admitted | |
+| `regions`, `classes`, `outline`, and the fixed-class segmenter they use | Deferred: wanted, but each is evaluated on the ladder before it is ported | Milestone E |
 | A local or self-hosted judge | Deferred | Milestone 8 |
 
 ### Playground
@@ -856,7 +856,7 @@ repo is retired at milestone 0.
 | 6 | HTTP and remote hosting | User story 1 runs: the engine API with its negative tests, SAM 3 on a GPU host with parity inside the 1D tolerance, Bria through fal |
 | 7 | Bundles and replay | Invocation bundles and journal replay; saved-run comparisons, saved examples and guided chain replay in the playground |
 | 8 | More local models | Each cell section 5 assigns to this milestone passes conformance: fill and judge, each both local and self-hosted; plus any further segmenter the evaluations call for |
-| E | Squint's evidence redesign | Runs alongside milestones 3 onward, once 2 is done. Per-subject comparison climbs rungs 3 and 4 on a fresh confirmation set; the submission format is redesigned so small models can follow it; job requirements carry colour, count and lettering in a new set version. Each change is admitted through its gate |
+| E | Squint's evidence redesign | Runs alongside milestones 3 onward, once 2 is done. Per-subject comparison climbs rungs 3 and 4 on a fresh confirmation set; `regions`, `classes` and `outline` are each brought in as experimental tools and scored on rungs 1 and 2, on SAM 3 where that works and on their old segmenter as a catalogue entry where it does not, and those that pass go on; the submission format is redesigned so small models can follow it; job requirements carry colour, count and lettering in a new set version. Each change is admitted through its gate |
 
 Checkpoints 1A to 1D each end with a note. Milestones 2 and 3 need 1A and 1B; they need 1C and
 1D only for the parts that use a real model.

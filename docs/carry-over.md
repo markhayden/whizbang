@@ -54,7 +54,7 @@ to this repo.
 | Item | Milestone |
 |---|---|
 | Per-subject comparison on SAM 3, by name and by location | 2 (rungs 1 and 2), then E |
-| `regions`, re-tested as an experimental tool | After per-subject comparison |
+| `regions`, `classes` and `outline`: wanted, not yet shown to work as intended. Each is brought in as an experimental tool and scored on rungs 1 and 2, on SAM 3 where that works, and on their old fixed-class segmenter (as a catalogue entry) where it does not. Those that pass go on up the ladder | E |
 | A fresh, harder source-fidelity confirmation set: new families, unseen by any agent | E, before any rung 4 run |
 | Rerun the top Google model after the squint fixes above | E |
 | Other runtimes for local models, compared on speed, mask agreement and install size | When a measurement calls for it |
@@ -64,12 +64,17 @@ to this repo.
 | A paid segmentation service as a backend | When one is wanted |
 | Built-in TLS for the engine API | When a deployment needs it |
 
+## Deferred until evaluated
+
+| From | Item | Where it is | Note |
+|---|---|---|---|
+| squint | `regions`, `classes`, `outline` tools | `tools/python/src/squint_tools/` | See "Evaluations". The 2026-11-11 study found a clear gain only for `regions` on one model, and that `outline` ranked noise above the real change |
+| squint | Fixed-class segmenter | `tools/python/MODEL.md` | Comes back as a catalogue entry if any of the three needs it |
+
 ## Not ported
 
 | From | Item | Where it is | Why |
 |---|---|---|---|
-| squint | `regions`, `classes`, `outline` tools | `tools/python/src/squint_tools/` | Unproven; per-subject comparison replaces them if it passes the ladder |
-| squint | Fixed-class segmenter | `tools/python/MODEL.md` | Generic classes only; no instances, no phrases |
 | squint | Six crates on crates.io at 0.1.0 | crates.io | Left as they are; never updated |
 | rascal | Three further segmenters and their export scripts | `tools/python/src/rascal_tools/models/`, `export/` | Rank below SAM 3; milestone 8 may bring one back |
 | rascal | Compatibility export of schemas | `schemas/copied/` | One repo; nothing to stay compatible with |
