@@ -84,8 +84,11 @@ says() {
 # `sometimes` (every other search for a pattern, never the census). With `always`, git's
 # own list of files loses the name too, as it would if the fault were in how git walks a
 # folder. BREAK names a git command that fails outright. It can also speak on
-# stderr during one kind of search (NOISY: worktree, files or commits), wait a moment
-# (SLOW), and note what the scan's own folder holds at that moment (SPY).
+# stderr during one kind of search (NOISY: worktree, files or commits), or whenever its
+# arguments hold the words of NOISY_ON in a row (`ls-files -z -c` is one listing and no
+# other), and then go on as git would; answer nothing when asked which paths are ignored
+# (MUTE=check-ignore); wait a moment (SLOW); and note what the scan's own folder holds at
+# that moment (SPY).
 stand_in_for_git() {
 real_git=$(command -v git)
 mkdir "$tmp/bin"
@@ -108,6 +111,16 @@ for arg in "$@"; do
     ls-files) [ "${LOSE_WHEN:-}" != always ] || search=1 census=1 ;;
   esac
 done
+if [ -n "${NOISY_ON:-}" ]; then
+  case " $* " in *" $NOISY_ON "*) echo "warning: something git says" >&2 ;; esac
+fi
+if [ "${MUTE:-}" = check-ignore ]; then
+  case " $* " in *" check-ignore "*)
+    "$real" "$@" >/dev/null 2>&1
+    exit 1
+    ;;
+  esac
+fi
 if [ "$search" -eq 1 ]; then
   kind=commits
   case " $* " in *" --untracked "*) kind=worktree ;; *" --no-index "*) kind=files ;; esac
@@ -159,6 +172,71 @@ chmod +x "$tmp/bin/git"
 # first reports what the folder held and what two more scans find, the second with git grep
 # on one thread. On CI's macOS runner git grep on several threads has lost a match at
 # random (docs/carry-over.md), and a scan on one thread has not.
+# The stand-in for find, which the scan uses to list the working tree. FIND_DOES says what
+# it does: `speak` fails with a line that names a path; `fail` fails and says nothing;
+# `warn` says a line and then lists as find would; `keep-out` fails when it is asked to
+# look in the folder FIND_FOLDER or lists anything inside it, as find does when a folder
+# changes under it; `vanish` removes FIND_FOLDER after its call number FIND_AFTER.
+# Anything else: find as it is.
+stand_in_for_find() {
+real_find=$(command -v find)
+mkdir "$tmp/find-bin"
+cat >"$tmp/find-bin/find" <<SH
+#!/usr/bin/env bash
+real="$real_find"
+calls="$tmp/find-calls"
+out="$tmp/find-out"
+SH
+cat >>"$tmp/find-bin/find" <<'SH'
+echo x >>"$calls"
+call=$(wc -l <"$calls" | tr -d ' ')
+case "${FIND_DOES:-}" in
+  speak)
+    echo "find: ./a-path-it-names: Permission denied" >&2
+    exit 1
+    ;;
+  fail) exit 1 ;;
+  warn)
+    echo "find: ./a-path-it-names: something find says" >&2
+    exec "$real" "$@"
+    ;;
+  keep-out)
+    for arg in "$@"; do
+      case "$arg" in "./$FIND_FOLDER" | "./$FIND_FOLDER"/*)
+        echo "find: ./$FIND_FOLDER: it changed while find was in it" >&2
+        exit 1
+        ;;
+      esac
+    done
+    status=0
+    "$real" "$@" >"$out.$call" || status=$?
+    if LC_ALL=C grep -a -q -F -e "./$FIND_FOLDER/" "$out.$call"; then
+      echo "find: ./$FIND_FOLDER: it changed while find was in it" >&2
+      exit 1
+    fi
+    cat "$out.$call"
+    exit "$status"
+    ;;
+  vanish)
+    status=0
+    "$real" "$@" || status=$?
+    [ "$call" -ne "$FIND_AFTER" ] || rm -rf "$FIND_FOLDER"
+    exit "$status"
+    ;;
+  *) exec "$real" "$@" ;;
+esac
+SH
+chmod +x "$tmp/find-bin/find"
+}
+# finding <what> [NAME=value...] <command...>: the command with the stand-in for find,
+# doing <what>.
+finding() {
+  local what=$1
+  shift
+  : >"$tmp/find-calls"
+  env PATH="$tmp/find-bin:$PATH" FIND_DOES="$what" "$@"
+}
+
 tree_says() {
   local f
   if ! grep -a -q -F -e "$1" "$tmp/out"; then
