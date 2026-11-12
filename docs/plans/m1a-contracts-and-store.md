@@ -335,13 +335,13 @@ status, and every diagnostic written before it ended is readable.
 **Depends on:** A4. **Reads:** squint `crates/squint-tools/src/builtin/view.rs` and
 `raster.rs`, and their pixel and mapping tests.
 
-- [ ] `whizbang-squint` is created with `view` for flat images: a crop by box, snapped
+- [x] `whizbang-squint` is created with `view` for flat images: a crop by box, snapped
       outward to whole pixels; downscaling to a bound; the optional second image; each
       returned crop as a binding onto its source.
-- [ ] Its pixel and mapping tests, without the old loop tests.
-- [ ] Panorama rendering is left for milestone 2 and listed on the carry-over list.
+- [x] Its pixel and mapping tests, without the old loop tests.
+- [x] Panorama rendering is left for milestone 2 and listed on the carry-over list.
 
-- [ ] Its tool record, `docs/reference/tools/view.md`: two worked examples with their images;
+- [x] Its tool record, `docs/reference/tools/view.md`: two worked examples with their images;
       mapping error against known boxes; time at three image sizes; known limits, including
       that panoramas are not yet supported.
 
