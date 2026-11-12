@@ -25,7 +25,7 @@ import sys
 
 sys.dont_write_bytecode = True
 
-TABLES_VERSION = "1"
+TABLES_VERSION = "2"
 ARMS = ("C", "D_outline", "D_regions")
 TOOL_ARMS = ("D_outline", "D_regions")
 VERDICTS = ("pass", "fail", "unsure", "error")
@@ -244,7 +244,15 @@ def effect(base, tool, expected, family, seed, resamples, hypotheses):
     balanced = bootstrap(every, balanced_difference, seed, resamples, hypotheses)
     flips_fail = sum(1 for i in base if expected[i] == "fail" and (base[i] == "fail") != (tool[i] == "fail"))
     flips_pass = sum(1 for i in base if expected[i] == "pass" and (base[i] == "fail") != (tool[i] == "fail"))
+    gained = [i for i in base if expected[i] == "fail" and base[i] != "fail" and tool[i] == "fail"]
+    lost = [i for i in base if expected[i] == "fail" and base[i] == "fail" and tool[i] != "fail"]
     return {
+        "gained": len(gained),
+        "gained_from_review": sum(1 for i in gained if base[i] in ("unsure", "error")),
+        "gained_from_pass": sum(1 for i in gained if base[i] == "pass"),
+        "lost": len(lost),
+        "every_family": every,
+        "families_with_fail": with_fail,
         "items": len(base),
         "families": len(every),
         "families_with_expected_fail": len(with_fail),
@@ -460,9 +468,38 @@ def cell_row(run, key, results, expected, spend):
     return row
 
 
-def effect_row(run, model, arm, base, tool, expected, family, gate, resamples):
+def excludes_zero(low, high):
+    """An interval that only touches zero does not exclude it."""
+    return low > 0 or high < 0
+
+
+def level_of(hypotheses):
+    return round(100 * (1 - 0.05 / hypotheses), 2)
+
+
+def wider(e, seed, resamples, hypotheses):
+    """Both intervals of one comparison again, widened for another number of hypotheses."""
+    catch = bootstrap(e["families_with_fail"], catch_difference, seed, resamples, hypotheses)
+    balanced = bootstrap(e["every_family"], balanced_difference, seed, resamples, hypotheses)
+    return {
+        "hypotheses": hypotheses,
+        "interval_level": level_of(hypotheses),
+        "catch_low": points(catch[1]),
+        "catch_high": points(catch[2]),
+        "catch_excludes_zero": excludes_zero(catch[1], catch[2]),
+        "balanced_low": points(balanced[1]),
+        "balanced_high": points(balanced[2]),
+        "balanced_excludes_zero": excludes_zero(balanced[1], balanced[2]),
+        # Fewer than 20 resamples below the lower quantile cannot resolve that tail.
+        "tail_resolved": 0.025 / hypotheses * resamples >= 20,
+    }
+
+
+def effect_row(run, model, arm, base, tool, expected, family, gate, resamples, keep=None):
     e = effect(base, tool, expected, family, gate["seed"], resamples, gate["hypotheses"])
-    level = round(100 * (1 - 0.05 / gate["hypotheses"]), 2)
+    if keep is not None:
+        keep.append((run, model, arm, e, gate["seed"], resamples))
+    level = level_of(gate["hypotheses"])
     catch, balanced = e["catch"], e["balanced"]
     return {
         "run": run,
@@ -477,14 +514,18 @@ def effect_row(run, model, arm, base, tool, expected, family, gate, resamples):
         "catch_points": points(catch[0]),
         "catch_low": points(catch[1]),
         "catch_high": points(catch[2]),
-        "catch_excludes_zero": catch[1] > 0 or catch[2] < 0,
+        "catch_excludes_zero": excludes_zero(catch[1], catch[2]),
         "balanced_points": points(balanced[0]),
         "balanced_low": points(balanced[1]),
         "balanced_high": points(balanced[2]),
-        "balanced_excludes_zero": balanced[1] > 0 or balanced[2] < 0,
+        "balanced_excludes_zero": excludes_zero(balanced[1], balanced[2]),
         "balanced_resamples_used": balanced[3],
         "flipped_expected_fail": e["flipped_expected_fail"],
         "flipped_expected_pass": e["flipped_expected_pass"],
+        "expected_fail_gained": e["gained"],
+        "expected_fail_gained_from_review": e["gained_from_review"],
+        "expected_fail_gained_from_pass": e["gained_from_pass"],
+        "expected_fail_lost": e["lost"],
     }
 
 
@@ -523,8 +564,10 @@ def compute(package, resamples=None):
         "repeat": [],
         "error": [],
         "error_kind": [],
+        "sensitivity": [],
     }
     kinds = {}
+    kept = []
     totals = {"decisions": 0, "spend": 0.0, "errors": 0, "unsure": 0, "study_spend": 0.0, "study_decisions": 0}
     for run in sorted(settings["bootstrap"]):
         policy = settings["scoring_policy"][run]
@@ -533,8 +576,10 @@ def compute(package, resamples=None):
         gate = dict(settings["bootstrap"][run])
         used = resamples or gate["resamples"]
         cells, spend = read_run(package, run)
+        descriptor = load_json(os.path.join(package, "study", run, "descriptor.json"))
         decisions = sum(len(v) for v in cells.values())
         run_spend = sum(spend.values())
+        decision_cost = sum(r["cost_usd"] for v in cells.values() for r in v.values())
         out["run"].append(
             {
                 "run": run,
@@ -544,7 +589,10 @@ def compute(package, resamples=None):
                 "decisions": decisions,
                 "repetitions": max(k[3] for k in cells),
                 "spend_usd": r4(run_spend),
-                "decision_cost_usd": r4(sum(r["cost_usd"] for v in cells.values() for r in v.values())),
+                "decision_cost_usd": r4(decision_cost),
+                "abandoned_attempts_usd": r4(run_spend - decision_cost) + 0.0,
+                "harness_version": str(descriptor["harness_version"]),
+                "prompt_version": str(descriptor["prompt_version"]),
             }
         )
         totals["decisions"] += decisions
@@ -591,7 +639,9 @@ def compute(package, resamples=None):
                 if base is None:
                     raise TablesError("%s: a tool arm has no control" % run)
                 gate_used = {"seed": gate["seed"], "hypotheses": gate["hypotheses"]}
-                out["effect"].append(effect_row(run, model, arm, base, verdicts[key], corrected, family, gate_used, used))
+                out["effect"].append(
+                    effect_row(run, model, arm, base, verdicts[key], corrected, family, gate_used, used, kept)
+                )
                 out["sealed_effect"].append(effect_row(run, model, arm, base, verdicts[key], sealed, family, gate_used, used))
             second = verdicts.get((profile, model, arm, 2))
             if second is not None:
@@ -619,6 +669,29 @@ def compute(package, resamples=None):
                 )
     for (model, kind) in sorted(kinds):
         out["error_kind"].append({"model": model, "kind": kind, "errors": kinds[(model, kind)]})
+    # Each comparison that excludes zero under its run's own correction, again under a
+    # correction for every comparison of the study, and for both measures of each.
+    comparisons = len(out["effect"])
+    for row, (run, model, arm, e, seed, used) in zip(out["effect"], kept):
+        if not (row["catch_excludes_zero"] or row["balanced_excludes_zero"]):
+            continue
+        for scope, hypotheses in (("comparisons", comparisons), ("comparisons_and_measures", 2 * comparisons)):
+            wide = {"run": run, "model": model, "tool": arm, "scope": scope}
+            wide.update(wider(e, seed, used, hypotheses))
+            out["sensitivity"].append(wide)
+
+    def shift(names):
+        pairs = zip(out["effect"], out["sealed_effect"])
+        return round(max([abs(a[n] - b[n]) for a, b in pairs for n in names] or [0.0]), 2)
+
+    out["meta"]["corrections_largest_point_shift"] = shift(("catch_points", "balanced_points"))
+    out["meta"]["corrections_largest_bound_shift"] = shift(("catch_low", "catch_high", "balanced_low", "balanced_high"))
+    out["meta"]["comparisons"] = comparisons
+    out["meta"]["comparisons_excluding_zero"] = sum(
+        1 for r in out["effect"] if r["catch_excludes_zero"] or r["balanced_excludes_zero"]
+    )
+    out["meta"]["comparisons_spanning_zero"] = comparisons - out["meta"]["comparisons_excluding_zero"]
+    out["meta"]["models"] = len({c["model"] for c in out["cell"]})
     out["meta"].update(
         {
             "runs": len(out["run"]),
@@ -635,6 +708,8 @@ def compute(package, resamples=None):
 
 
 # --- writing and reading the numbers file -----------------------------------------------
+
+SECTIONS = ("run", "cell", "effect", "sealed_effect", "sensitivity", "repeat", "error", "error_kind")
 
 HEADER = """# The numbers of the 2026-11 tool study. Written by scripts/baseline/tables.py from the
 # baseline package's study inputs; see 2026-11-tool-study.md beside this file. It holds
@@ -661,7 +736,7 @@ def to_toml(numbers):
     lines = [HEADER]
     for key, value in numbers["meta"].items():
         lines.append("%s = %s" % (key, toml_value(value)))
-    for name in ("run", "cell", "effect", "sealed_effect", "repeat", "error", "error_kind"):
+    for name in SECTIONS:
         for row in numbers[name]:
             lines.append("")
             lines.append("[[%s]]" % name)
@@ -673,7 +748,7 @@ def to_toml(numbers):
 def from_toml(text):
     top, tables = read_toml(text)
     numbers = {"meta": top}
-    for name in ("run", "cell", "effect", "sealed_effect", "repeat", "error", "error_kind"):
+    for name in SECTIONS:
         numbers[name] = tables.get(name, [])
     return numbers
 
@@ -712,7 +787,16 @@ def interval(row, name):
 
 
 def effects_table(rows):
-    head = ["Model", "Tool", "Interval", "Catch rate, points", "Balanced accuracy, points", "Items that changed"]
+    head = [
+        "Model",
+        "Tool",
+        "Interval",
+        "Catch rate, points",
+        "Balanced accuracy, points",
+        "Expected-fail items that changed",
+        "Gained, lost",
+        "All items that changed",
+    ]
     body = []
     for e in rows:
         body.append(
@@ -722,6 +806,8 @@ def effects_table(rows):
                 "%g%%" % e["interval_level"],
                 interval(e, "catch") + (" *" if e["catch_excludes_zero"] else ""),
                 interval(e, "balanced") + (" *" if e["balanced_excludes_zero"] else ""),
+                str(e["flipped_expected_fail"]),
+                "%d, %d" % (e["expected_fail_gained"], e["expected_fail_lost"]),
                 "%d of %d" % (e["flipped_expected_fail"] + e["flipped_expected_pass"], e["items"]),
             ]
         )
@@ -749,10 +835,12 @@ def render_blocks(n):
         ],
     )
     blocks["runs"] = table(
-        ["Run", "Decisions", "Repetitions", "Hypotheses", "Seed", "Resamples", "Spend"],
+        ["Run", "Harness", "Prompt", "Decisions", "Repetitions", "Hypotheses", "Seed", "Resamples", "Spend"],
         [
             [
                 "`%s`" % r["run"],
+                "`%s`" % r["harness_version"],
+                "`%s`" % r["prompt_version"],
                 count(r["decisions"]),
                 str(r["repetitions"]),
                 str(r["hypotheses"]),
@@ -764,10 +852,11 @@ def render_blocks(n):
         ],
     )
     blocks["cells"] = table(
-        ["Model", "Arm", "Catch rate", "False rejects", "Balanced accuracy", "Decided correctly", "Unsure", "Errors", "Median time"],
+        ["Model", "Backend", "Arm", "Catch rate", "False rejects", "Balanced accuracy", "Decided correctly", "Unsure", "Errors", "Median time"],
         [
             [
                 c["model"],
+                c["profile"],
                 ARM_WORDS[c["arm"]],
                 "%s (%d of %d)" % (pct(c["catch_rate"]), c["detected"], c["expected_fail"]),
                 "%s (%d of %d)" % (pct(c["false_reject_rate"]), c["false_rejects"], c["expected_pass"]),
@@ -797,6 +886,37 @@ def render_blocks(n):
         ],
     )
     blocks["effects"] = effects_table(n["effect"])
+    scope_words = {
+        "comparisons": "Across the %d comparisons" % m.get("comparisons", 0),
+        "comparisons_and_measures": "Across the %d comparisons and both measures" % m.get("comparisons", 0),
+    }
+    rows = []
+    for e in n["effect"]:
+        if not (e["catch_excludes_zero"] or e["balanced_excludes_zero"]):
+            continue
+        rows.append([e["model"], TOOL_WORDS[e["tool"]], "As frozen, for this run", str(e["hypotheses"]),
+                     "%g%%" % e["interval_level"],
+                     span(e, "catch") + (" *" if e["catch_excludes_zero"] else ""),
+                     span(e, "balanced") + (" *" if e["balanced_excludes_zero"] else "")])
+        for w in n["sensitivity"]:
+            if (w["model"], w["tool"]) != (e["model"], e["tool"]):
+                continue
+            mark = "" if w["tail_resolved"] else " (coarse)"
+            rows.append([w["model"], TOOL_WORDS[w["tool"]], scope_words[w["scope"]], str(w["hypotheses"]),
+                         "%g%%" % w["interval_level"],
+                         span(w, "catch") + (" *" if w["catch_excludes_zero"] else "") + mark,
+                         span(w, "balanced") + (" *" if w["balanced_excludes_zero"] else "") + mark])
+    blocks["sensitivity"] = table(
+        ["Model", "Tool", "Correction", "Hypotheses", "Interval", "Catch rate, points", "Balanced accuracy, points"], rows
+    )
+    blocks["gains"] = table(
+        ["Model", "Tool", "Expected-fail items gained", "Of those, the control had sent to review", "Of those, the control had passed", "Expected-fail items lost"],
+        [
+            [e["model"], TOOL_WORDS[e["tool"]], str(e["expected_fail_gained"]), str(e["expected_fail_gained_from_review"]),
+             str(e["expected_fail_gained_from_pass"]), str(e["expected_fail_lost"])]
+            for e in n["effect"]
+        ],
+    )
     blocks["sealed-effects"] = effects_table(n["sealed_effect"])
     blocks["repeat"] = table(
         ["Model", "Arm", "Items", "Fail or not fail differs", "Verdict differs", "Catch rate, first and second", "Balanced accuracy, first and second"],
@@ -883,7 +1003,7 @@ def earlier_table(n, errors_by_model):
     others = m["errors"] - haiku
     classes = sorted({c for e in n["error"] for c in e["error_classes"].split(",")})
     return table(
-        ["Figure", "First reported", "Computed here", "Result"],
+        ["Figure", "First reported (not in a committed file)", "Computed here", "Result"],
         [
             ["Gain from regions for gemini-3.8-flash, balanced accuracy, points", "+5.6", gain, gain_status],
             ["Its 97.5% interval", "+1.2 to +10.6", width, width_status],
@@ -925,6 +1045,48 @@ KIND_WORDS = {
 }
 
 
+VALUE = re.compile(r"<!-- =(\S+) -->(.*?)<!-- /= -->", re.S)
+FORMATS = {"": str, "count": count, "points": signed, "pct": pct, "usd": usd}
+
+
+def value_of(numbers, key):
+    """One figure of the numbers file, for a sentence: `<table>/<names...>/<field>`, with
+    `|pct`, `|points`, `|usd` or `|count` to say how it is written.
+
+        meta/<field>                             cell/<model>/<arm>/<field>
+        effect/<model>/<tool>/<field>            sensitivity/<model>/<tool>/<scope>/<field>
+        repeat/<model>/<arm>/<field>             error/<model>/<arm>/<repetition>/<field>
+        errors/<model>                           the model's errors over every repetition
+    """
+    path, _, form = key.partition("|")
+    parts = path.split("/")
+    if form not in FORMATS:
+        raise TablesError("a value is asked for in a form these tables do not know: %s" % key)
+    keys = {
+        "cell": ("model", "arm"),
+        "effect": ("model", "tool"),
+        "sensitivity": ("model", "tool", "scope"),
+        "repeat": ("model", "arm"),
+        "error": ("model", "arm", "repetition"),
+    }
+    found = None
+    if parts[0] == "meta" and len(parts) == 2:
+        found = numbers["meta"].get(parts[1])
+    elif parts[0] == "errors" and len(parts) == 2:
+        rows = [r["errors"] for r in numbers["error"] if r["model"] == parts[1]]
+        found = sum(rows) if rows else None
+    elif parts[0] in keys and len(parts) == len(keys[parts[0]]) + 2:
+        names = keys[parts[0]]
+        rows = [
+            r for r in numbers[parts[0]] if all(str(r[n]) == parts[1 + i] for i, n in enumerate(names))
+        ]
+        if len(rows) == 1:
+            found = rows[0].get(parts[-1])
+    if found is None or isinstance(found, bool):
+        raise TablesError("the numbers file holds no value for: %s" % key)
+    return FORMATS[form](found)
+
+
 def render(numbers, document):
     blocks = render_blocks(numbers)
     seen = set()
@@ -940,7 +1102,7 @@ def render(numbers, document):
     missing = sorted(set(blocks) - seen)
     if missing:
         raise TablesError("the document has no block for: %s" % ", ".join(missing))
-    return out
+    return VALUE.sub(lambda m: "<!-- =%s -->%s<!-- /= -->" % (m.group(1), value_of(numbers, m.group(1))), out)
 
 
 # --- checking the document against the numbers ------------------------------------------
@@ -948,6 +1110,14 @@ def render(numbers, document):
 FIGURE = re.compile(r"(?<![\w.#-])[+-]?\$?\d[\d,]*(?:\.\d+)?%?")
 # Figures the prose may state that are not results: the method's constants.
 METHOD = {"0.025", "0.05", "95", "97.5", "98.33", "64", "256", "2026", "3.9"}
+
+
+UNITS = (
+    "items?|errors?|comparisons?|models?|runs?|families|family|decisions?|repetitions?|points?|images?|arms?"
+    "|labels?|hypothes[ei]s|corrections?|controls?|intervals?|measures?|submissions?"
+)
+COUNTED = re.compile(r"(?<![\w.#-])(\d{1,2})(?= (?:[a-z-]+ ){0,2}(?:%s)\b)" % UNITS)
+OF_THE = re.compile(r"(?<![\w.#-])(\d{1,2})(?= of (?:the |its )?\d)|(?<= of the )(\d{1,2})\b|(?<= of )(\d{1,2})\b")
 
 
 def bare(token):
@@ -978,19 +1148,26 @@ def check_document(numbers, document):
     problems = []
     try:
         if render(numbers, document) != document:
-            problems.append("a generated block differs from what the numbers render to: run `tables.py render`")
+            problems.append("a generated block or value differs from what the numbers render to: run `tables.py render`")
     except TablesError as e:
         problems.append(str(e))
         return problems
     blocks = render_blocks(numbers)
-    prose = BLOCK.sub("", document)
+    prose = VALUE.sub("", BLOCK.sub("", document))
     prose = re.sub(r"`[^`\n]*`", "", prose)  # names of files, runs and commands
     prose = re.sub(r"^#+ .*$", "", prose, flags=re.M)
     known = known_figures(numbers, blocks)
+    # A small whole number that counts something ("26 items", "3 of the 70") must be written
+    # as a value, `<!-- =cell/<model>/<arm>/unsure -->26<!-- /= -->`, which `render` fills.
+    counted = set(COUNTED.findall(prose)) | {x for found in OF_THE.findall(prose) for x in found if x}
     for token in FIGURE.findall(prose):
         value = bare(token)
         plain = value.lstrip("-")
         small = re.fullmatch(r"\d+", plain) and int(plain) < 100 and not token.endswith("%") and "$" not in token
+        if small and token in counted:
+            # So many of the numbers file's values are small that "is it held" proves little.
+            problems.append("the prose counts %s by hand: write it as a value from the numbers file" % token)
+            continue
         if small or value in known or plain in known:
             continue
         problems.append("the prose states %s, which the numbers file does not hold" % token)

@@ -62,27 +62,56 @@ expect_pass "the study's document against its numbers" \
   python3 -B scripts/baseline/tables.py check "$study.toml" "$study.md" --manifest docs/baseline/manifest.toml
 sed -E 's/\| 97\.3% \(71 of 73\)/| 98.3% (71 of 73)/' "$study.md" >"$tmp/edited.md"
 cmp -s "$study.md" "$tmp/edited.md" && fail "the study's document has no line this test can change"
-expect_fail "a changed figure in a table" "generated block differs" \
+expect_fail "a changed figure in a table" "generated block or value differs" \
   python3 -B scripts/baseline/tables.py check "$study.toml" "$tmp/edited.md"
 printf '\nThe tool added 12.3%% to the catch rate.\n' | cat "$study.md" - >"$tmp/edited.md"
 expect_fail "a figure in the prose that the numbers do not hold" "the prose states 12.3%" \
   python3 -B scripts/baseline/tables.py check "$study.toml" "$tmp/edited.md"
+sed -E 's/(<!-- =meta\/errors -->)41(<!-- \/= -->)/\140\2/' "$study.md" >"$tmp/edited.md"
+cmp -s "$study.md" "$tmp/edited.md" && fail "the study's document has no value this test can change"
+expect_fail "a changed value in a sentence" "generated block or value differs" \
+  python3 -B scripts/baseline/tables.py check "$study.toml" "$tmp/edited.md"
+printf '\nIt gained 47 items.\n' | cat "$study.md" - >"$tmp/edited.md"
+expect_fail "a count written by hand in the prose" "the prose counts 47 by hand" \
+  python3 -B scripts/baseline/tables.py check "$study.toml" "$tmp/edited.md"
 grep -q -E '^tables_version = "'"$(grep -E '^TABLES_VERSION = ' scripts/baseline/tables.py | grep -o -E '[0-9.]+' | head -1)"'"$' "$study.toml" \
   || fail "$study.toml was not written by this version of tables.py"
-# The numbers file holds aggregates: a number, a truth value, or one of a few plain names.
+# The numbers file holds aggregates: a number, a truth value, or a name from the lists held
+# here. A new run, kind of error or class of error is added here on purpose or not at all.
 bad=$(awk '
   /^#/ || /^$/ { next }
-  /^\[\[(run|cell|effect|sealed_effect|repeat|error|error_kind)\]\]$/ { next }
+  /^\[\[(run|cell|effect|sealed_effect|sensitivity|repeat|error|error_kind)\]\]$/ { next }
   /^[a-z_0-9]+ = -?[0-9]+(\.[0-9]+)?$/ { next }
   /^[a-z_]+ = (true|false)$/ { next }
-  /^(study|tables_version|policy_on_unsure|policy_on_error|run|profile|model|arm|tool|kind|error_classes) = "[A-Za-z0-9._,-]+"$/ { next }
+  /^study = "2026-11-tool-study"$/ { next }
+  /^tables_version = "[0-9.]+"$/ { next }
+  /^policy_on_(unsure|error) = "review"$/ { next }
+  /^run = "(gate-outline-initial|study-(flash|haiku|opus|sol|sonnet|terra))-2026-11"$/ { next }
+  /^(arm|tool) = "(C|D_outline|D_regions)"$/ { next }
+  /^scope = "(comparisons|comparisons_and_measures)"$/ { next }
+  /^kind = "(location|rule_kind|checklist|evidence|image|other)"$/ { next }
+  /^error_classes = "submission_invalid"$/ { next }
+  /^harness_version = "[0-9.]+ \([0-9a-f]+\)"$/ { next }
+  /^prompt_version = "v[0-9]+"$/ { next }
+  /^(profile|model) = "[a-z0-9.-]+"$/ { next }
   /^package_digest = "sha256:[0-9a-f]+"$/ { next }
   { print }' "$study.toml")
-[ -z "$bad" ] || fail "$study.toml holds a line that is not an aggregate: $bad"
+[ -z "$bad" ] || fail "$study.toml holds a line that is not an aggregate or a known name: $bad"
+for planted in 'run = "study-other-2026-11"' 'kind = "a-new-kind"' 'error_classes = "timeout"' 'arm = "D_other"' 'note = "words"'; do
+  printf '%s\n' "$planted" | awk '
+    /^run = "(gate-outline-initial|study-(flash|haiku|opus|sol|sonnet|terra))-2026-11"$/ { next }
+    /^(arm|tool) = "(C|D_outline|D_regions)"$/ { next }
+    /^kind = "(location|rule_kind|checklist|evidence|image|other)"$/ { next }
+    /^error_classes = "submission_invalid"$/ { next }
+    { found = 1 } END { exit found ? 0 : 1 }' || fail "the guard on $study.toml would let through: $planted"
+done
 # Every model and run it names is one the manifest or the frozen matrices already name.
 known=$(grep -E '^model = ' docs/baseline/manifest.toml | sed -E 's/^model = "[^:]*:(.*)"$/\1/' | sort -u)
 named=$(grep -E '^model = ' "$study.toml" | sed -E 's/^model = "(.*)"$/\1/' | sort -u)
 [ "$known" = "$named" ] || fail "$study.toml names other models than manifest.toml"
+known=$(grep -E '^model = ' docs/baseline/manifest.toml | sed -E 's/^model = "([^:]*):.*"$/\1/' | sort -u)
+named=$(grep -E '^profile = ' "$study.toml" | sed -E 's/^profile = "(.*)"$/\1/' | sort -u)
+[ "$known" = "$named" ] || fail "$study.toml names other backends than manifest.toml"
 
 # The example on the format's page is the file the tests check, and the page says so.
 grep -q -F 'example-transcript.json' docs/baseline/transcript.md || fail "transcript.md does not point at the example"

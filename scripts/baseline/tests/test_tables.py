@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 import tables  # noqa: E402
 
 RUN = "study-synthetic-2026-11"
+GATE = "gate-synthetic-2026-11"
 PROFILE = "provider"
 MODEL = "model-x"
 
@@ -93,6 +94,17 @@ class Scoring(unittest.TestCase):
         self.assertEqual((c["unsure"], c["errors"], c["items"]), (2, 2, 8))
         catch, reject, balanced = tables.rates(c)
         self.assertEqual((catch, reject, balanced), (0.25, 0.25, 0.5))
+
+    def test_each_rate_is_over_its_own_side(self):
+        expected = {"f1": "fail", "f2": "fail", "p1": "pass", "p2": "pass", "p3": "pass", "p4": "pass", "p5": "pass"}
+        verdicts = {"f1": "fail", "f2": "pass", "p1": "fail", "p2": "pass", "p3": "pass", "p4": "pass", "p5": "unsure"}
+        catch, reject, balanced = tables.rates(tables.cell_counts(verdicts, expected))
+        self.assertEqual((catch, reject), (1 / 2, 1 / 5))
+        self.assertEqual(balanced, (1 / 2 + 4 / 5) / 2)
+
+    def test_the_middle_value_is_the_median_not_the_mean(self):
+        self.assertEqual(tables.median([1, 2, 300]), 2)
+        self.assertEqual(tables.median([4, 1, 2, 300]), 3.0)
 
     def test_a_decision_without_a_verdict_is_an_error_and_an_odd_verdict_is_refused(self):
         self.assertEqual(tables.verdict_of({"verdict": None}), "error")
@@ -220,6 +232,105 @@ class Bootstrap(unittest.TestCase):
             tables.bootstrap([], tables.catch_difference, 1, 10, 1)
 
 
+class Flags(unittest.TestCase):
+    def test_an_interval_that_only_touches_zero_does_not_exclude_it(self):
+        self.assertTrue(tables.excludes_zero(0.1, 5.0))
+        self.assertTrue(tables.excludes_zero(-5.0, -0.1))
+        self.assertFalse(tables.excludes_zero(0.0, 5.0))
+        self.assertFalse(tables.excludes_zero(-5.0, 0.0))
+        self.assertFalse(tables.excludes_zero(-1.0, 1.0))
+        self.assertFalse(tables.excludes_zero(0.0, 0.0))
+
+    def test_the_level_of_an_interval_follows_the_hypotheses(self):
+        self.assertEqual([tables.level_of(h) for h in (1, 2, 3, 13, 26)], [95.0, 97.5, 98.33, 99.62, 99.81])
+
+
+class Finer(unittest.TestCase):
+    """Thirty families of three expected-fail and two expected-pass items, with effects of
+    every size, so that neighbouring quantiles and seeds give different intervals."""
+
+    def rows(self, quiet=0):
+        rows = []
+        for f in range(30):
+            for n in range(3):
+                gain = (f * 7 + n * 3) % 5 < 2
+                loss = (f + n) % 11 == 0
+                rows.append(("f%02d" % f, "f%02d-%d" % (f, n), "fail", "fail" if loss else "pass", "fail" if gain else "pass"))
+            for n in range(3, 5):
+                rows.append(("f%02d" % f, "f%02d-%d" % (f, n), "pass", "pass", "fail" if (f + n) % 9 == 0 else "pass"))
+        for f in range(quiet):
+            for n in range(4):
+                rows.append(("q%02d" % f, "q%02d-%d" % (f, n), "pass", "pass", "pass"))
+        return rows
+
+    def test_the_tail_is_0_025_over_the_hypotheses_and_not_0_05(self):
+        base, tool, expected, family = paired(self.rows())
+        sums = tables.family_sums(base, tool, expected, family)
+        stream = tables.Stream(77)
+        estimates = sorted(tables.catch_difference(sums, [stream.below(len(sums)) for _ in sums]) for _ in range(4000))
+        _, low, high, _ = tables.bootstrap(sums, tables.catch_difference, 77, 4000, 2)
+        self.assertEqual((low, high), (tables.quantile_type7(estimates, 0.0125), tables.quantile_type7(estimates, 0.9875)))
+        self.assertNotEqual(low, tables.quantile_type7(estimates, 0.025))
+        self.assertNotEqual(high, tables.quantile_type7(estimates, 0.975))
+
+    def test_the_seed_given_is_the_seed_used(self):
+        base, tool, expected, family = paired(self.rows())
+        rows = [
+            tables.effect_row("r", "m", "D_outline", base, tool, expected, family, {"seed": seed, "hypotheses": 2}, 150)
+            for seed in (11, 12, 11)
+        ]
+        bounds = ("catch_low", "catch_high", "balanced_low", "balanced_high")
+        self.assertEqual(rows[0], rows[2])
+        self.assertNotEqual([rows[0][b] for b in bounds], [rows[1][b] for b in bounds])
+        direct = tables.effect(base, tool, expected, family, 11, 150, 2)
+        self.assertEqual(rows[0]["catch_low"], tables.points(direct["catch"][1]))
+        self.assertEqual(rows[0]["balanced_high"], tables.points(direct["balanced"][2]))
+
+    def test_the_catch_interval_resamples_only_families_with_an_expected_fail(self):
+        base, tool, expected, family = paired(self.rows(quiet=30))
+        every = tables.family_sums(base, tool, expected, family)
+        with_fail = [f for f in every if f["fails"]]
+        self.assertEqual((len(every), len(with_fail)), (60, 30))
+        e = tables.effect(base, tool, expected, family, 5, 2000, 1)
+        self.assertEqual(e["catch"], tables.bootstrap(with_fail, tables.catch_difference, 5, 2000, 1))
+        self.assertNotEqual(e["catch"][1:3], tables.bootstrap(every, tables.catch_difference, 5, 2000, 1)[1:3])
+        self.assertEqual(e["balanced"], tables.bootstrap(every, tables.balanced_difference, 5, 2000, 1))
+
+    def test_gains_and_losses_among_expected_fail_items_are_counted_with_where_they_came_from(self):
+        rows = [
+            ("a", "a-1", "fail", "pass", "fail"),
+            ("a", "a-2", "fail", "unsure", "fail"),
+            ("a", "a-3", "fail", "error", "fail"),
+            ("a", "a-4", "fail", "fail", "unsure"),
+            ("a", "a-5", "fail", "fail", "fail"),
+            ("a", "a-6", "pass", "pass", "fail"),
+        ]
+        base, tool, expected, family = paired(rows)
+        row = tables.effect_row("r", "m", "D_regions", base, tool, expected, family, {"seed": 1, "hypotheses": 1}, 50)
+        self.assertEqual(
+            (row["expected_fail_gained"], row["expected_fail_gained_from_review"], row["expected_fail_gained_from_pass"], row["expected_fail_lost"]),
+            (3, 2, 1, 1),
+        )
+        self.assertEqual((row["flipped_expected_fail"], row["flipped_expected_pass"]), (4, 1))
+
+    def test_a_wider_correction_names_its_hypotheses_and_says_when_the_tail_is_coarse(self):
+        base, tool, expected, family = paired(self.rows())
+        e = tables.effect(base, tool, expected, family, 9, 800, 1)
+        one, thirteen, twenty_six = (tables.wider(e, 9, 800, h) for h in (1, 13, 26))
+        self.assertEqual((thirteen["hypotheses"], thirteen["interval_level"]), (13, 99.62))
+        self.assertEqual((twenty_six["hypotheses"], twenty_six["interval_level"]), (26, 99.81))
+        # 800 resamples put 20 below the lower quantile for one hypothesis, and fewer for more.
+        self.assertEqual([w["tail_resolved"] for w in (one, thirteen, twenty_six)], [True, False, False])
+        self.assertFalse(tables.wider(e, 9, 799, 1)["tail_resolved"])
+        self.assertLessEqual(twenty_six["catch_low"], thirteen["catch_low"])
+        self.assertLess(thirteen["catch_low"], one["catch_low"])
+        self.assertEqual(one["catch_low"], tables.points(e["catch"][1]))
+        again = tables.bootstrap(e["families_with_fail"], tables.catch_difference, 9, 800, 13)
+        self.assertEqual((thirteen["catch_low"], thirteen["catch_high"]), (tables.points(again[1]), tables.points(again[2])))
+        again = tables.bootstrap(e["every_family"], tables.balanced_difference, 9, 800, 26)
+        self.assertEqual(twenty_six["balanced_low"], tables.points(again[1]))
+
+
 class Toml(unittest.TestCase):
     def test_the_small_reader_takes_plain_values_and_skips_the_rest(self):
         text = "\n".join(
@@ -261,6 +372,7 @@ class Toml(unittest.TestCase):
             "cell": [{"model": "m", "catch_rate": 0.8571, "errors": 0}],
             "effect": [{"catch_points": -2.74, "catch_excludes_zero": False}],
             "sealed_effect": [],
+            "sensitivity": [],
             "repeat": [],
             "error": [],
             "error_kind": [],
@@ -275,18 +387,19 @@ class Toml(unittest.TestCase):
 
 
 class Synthetic:
-    """A package with one run of one model: 4 families of 4 items, three arms, and a second
-    repetition of the control."""
+    """A package with one study run of one model: 4 families of 4 items, three arms, and a
+    second repetition of the control. `gate=True` adds a second run that is not a study run,
+    with the control and the outline arm."""
 
-    def __init__(self, root):
+    def __init__(self, root, gate=False):
         self.root = root
+        self.gate = gate
         self.items = []
         for fam in "abcd":
             for n in range(1, 5):
                 expected = "fail" if n <= 2 else "pass"
                 self.items.append(("fam-" + fam, "item-%s-%d" % (fam, n), expected))
         self.sealed = {i: e for _, i, e in self.items}
-        self.sealed["item-d-3"] = "pass"
         self.corrections = [("item-d-3", "pass", "fail")]
         self.verdicts = {}
         for arm in tables.ARMS:
@@ -301,18 +414,47 @@ class Synthetic:
             self.verdicts[("C", 2, item)] = self.verdicts[("C", 1, item)]
         self.verdicts[("C", 2, "item-a-1")] = "fail"
         self.verdicts[("C", 2, "item-b-1")] = "pass"
+        self.verdicts[("C", 2, "item-c-2")] = None  # an error in the second repetition
         self.settings = {
             "bootstrap": {RUN: {"hypotheses": 2, "resamples": 300, "seed": 11}},
             "corrections_version": 1,
             "headline_repetition": 1,
             "scoring_policy": {RUN: {"on_error": "review", "on_unsure": "review"}},
         }
+        if gate:
+            self.settings["bootstrap"][GATE] = {"hypotheses": 1, "resamples": 300, "seed": 5}
+            self.settings["scoring_policy"][GATE] = {"on_error": "review", "on_unsure": "review"}
 
     def put(self, parts, text):
         path = os.path.join(self.root, *parts)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)
+
+    def write_run(self, run, verdicts, spent):
+        ledger = []
+        for (arm, rep, item), verdict in sorted(verdicts.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2])):
+            cell = "%s:%s/%s" % (PROFILE, MODEL, arm)
+            slow = arm == "C" and item == "item-a-1"
+            result = {
+                "item": item,
+                "cell": cell,
+                "repetition": rep,
+                "verdict": verdict,
+                "error_class": None if verdict else "submission_invalid",
+                "error": None if verdict else "submission: finding 1: location invalid: outside",
+                "cost_usd": 0.01,
+                "wall_ms": 500000 if slow else (2000 if arm == "C" else 4000),
+            }
+            self.put(
+                ("study", run, "decisions", "results", "set", item, PROFILE + "_" + MODEL, arm, "rep-%d" % rep, "result.json"),
+                json.dumps(result),
+            )
+            name = "set/%s/%s/rep-%d" % (item, cell, rep)
+            ledger.append(json.dumps({"event": "reserve", "id": name, "attempt": 1, "usd": 1.0}))
+            ledger.append(json.dumps({"event": "settle", "id": name, "attempt": 1, "reserved": 1.0, "spent": spent}))
+        self.put(("study", run, "ledger.jsonl"), "\n".join(ledger) + "\n")
+        self.put(("study", run, "descriptor.json"), json.dumps({"harness_version": "9.9.9 (abc1234)", "prompt_version": "v7"}))
 
     def write(self):
         shutil.rmtree(self.root, ignore_errors=True)
@@ -332,36 +474,20 @@ class Synthetic:
             '[set]\nid = "synthetic"\n\n'
             + "".join('[[item]]\nid = "%s"\nfamily = "%s"\njob = "j"\n\n' % (i, f) for f, i, _ in self.items),
         )
-        ledger = []
-        for (arm, rep, item), verdict in sorted(self.verdicts.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2])):
-            cell = "%s:%s/%s" % (PROFILE, MODEL, arm)
-            result = {
-                "item": item,
-                "cell": cell,
-                "repetition": rep,
-                "verdict": verdict,
-                "error_class": None if verdict else "submission_invalid",
-                "error": None if verdict else "submission: finding 1: location invalid: outside",
-                "cost_usd": 0.01,
-                "wall_ms": 2000 if arm == "C" else 4000,
-            }
-            self.put(
-                ("study", RUN, "decisions", "results", "set", item, PROFILE + "_" + MODEL, arm, "rep-%d" % rep, "result.json"),
-                json.dumps(result),
-            )
-            name = "set/%s/%s/rep-%d" % (item, cell, rep)
-            ledger.append(json.dumps({"event": "reserve", "id": name, "attempt": 1, "usd": 1.0}))
-            ledger.append(json.dumps({"event": "settle", "id": name, "attempt": 1, "reserved": 1.0, "spent": 0.0125}))
-        self.put(("study", RUN, "ledger.jsonl"), "\n".join(ledger) + "\n")
+        self.write_run(RUN, self.verdicts, 0.0125)
+        if self.gate:
+            gate = {(arm, 1, item): expected for arm in ("C", "D_outline") for _, item, expected in self.items}
+            self.write_run(GATE, gate, 0.0125)
         return self.root
 
 
-DOCUMENT = "# A study\n\nSome words about 16 items.\n\n" + "".join(
-    "<!-- generated:%s -->\n<!-- /generated -->\n\n" % name
-    for name in (
-        "scope", "runs", "cells", "outcomes", "effects", "sealed-effects", "repeat",
-        "errors", "errors-by-model", "error-kinds", "spend", "earlier",
-    )
+BLOCKS = (
+    "scope", "runs", "cells", "outcomes", "effects", "sensitivity", "gains", "sealed-effects", "repeat",
+    "errors", "errors-by-model", "error-kinds", "spend", "earlier",
+)
+WORDS = "Some words about <!-- =meta/items -->16<!-- /= --> items."
+DOCUMENT = "# A study\n\n" + WORDS + "\n\n" + "".join(
+    "<!-- generated:%s -->\n<!-- /generated -->\n\n" % name for name in BLOCKS
 )
 
 
@@ -383,7 +509,7 @@ class Whole(unittest.TestCase):
         m = n["meta"]
         self.assertEqual((m["items"], m["families"], m["expected_fail"], m["expected_pass"]), (16, 4, 9, 7))
         self.assertEqual((m["sealed_expected_fail"], m["corrections"], m["corrections_version"]), (8, 1, 1))
-        self.assertEqual((m["runs"], m["decisions"], m["errors"]), (1, 64, 1))
+        self.assertEqual((m["runs"], m["decisions"], m["models"], m["comparisons"]), (1, 64, 1, 2))
         self.assertEqual(m["package_digest"], "sha256:" + "ab" * 32)
         self.assertEqual(len(n["cell"]), 3, "one row per arm, from repetition 1")
         c = self.cell(n, "C")
@@ -394,11 +520,35 @@ class Whole(unittest.TestCase):
         # Decided correctly: caught or cleared. Review is neither.
         self.assertEqual((c["decided_correctly"], c["correct_rate"]), (13, round(13 / 16, 4)))
         self.assertEqual((c["decisions_all_repetitions"], c["spend_usd"]), (32, 0.4))
-        self.assertEqual(c["median_wall_s"], 2.0)
+        self.assertEqual(c["median_wall_s"], 2.0, "one decision of 500 s does not move the median")
+        self.assertEqual(c["profile"], PROFILE)
         r = self.cell(n, "D_regions")
         self.assertEqual((r["errors"], r["false_rejects"], r["decisions_all_repetitions"], r["spend_usd"]), (1, 1, 16, 0.2))
-        self.assertEqual(n["run"][0]["spend_usd"], 0.8)
-        self.assertEqual(n["run"][0]["decision_cost_usd"], 0.64)
+        self.assertEqual(r["false_reject_rate"], round(1 / 7, 4))
+        run = n["run"][0]
+        self.assertEqual((run["spend_usd"], run["decision_cost_usd"], run["abandoned_attempts_usd"]), (0.8, 0.64, 0.16))
+        self.assertEqual((run["harness_version"], run["prompt_version"]), ("9.9.9 (abc1234)", "v7"))
+
+    def test_errors_are_counted_over_every_repetition(self):
+        n = self.numbers()
+        self.assertEqual(n["meta"]["errors"], 2)
+        self.assertEqual(
+            [(e["arm"], e["repetition"], e["errors"], e["on_expected_fail"]) for e in n["error"]],
+            [("C", 2, 1, 1), ("D_regions", 1, 1, 1)],
+        )
+        self.assertEqual(n["error_kind"], [{"model": MODEL, "kind": "location", "errors": 2}])
+        self.assertEqual(self.cell(n, "C")["errors"], 0, "the cell's row is the first repetition's")
+
+    def test_a_run_that_is_not_a_study_run_is_counted_apart(self):
+        package = Synthetic(os.path.join(self.tmp, "with-gate"), gate=True)
+        package.write()
+        n = tables.compute(package.root)
+        m = n["meta"]
+        self.assertEqual((m["runs"], m["decisions"], m["spend_usd"]), (2, 96, 1.2))
+        self.assertEqual((m["study_runs"], m["study_decisions"], m["study_spend_usd"]), (1, 64, 0.8))
+        self.assertEqual([r["run"] for r in n["run"]], [GATE, RUN])
+        self.assertEqual((m["comparisons"], [e["hypotheses"] for e in n["effect"]]), (3, [1, 2, 2]))
+        self.assertEqual(len(n["cell"]), 5)
 
     def test_effects_pair_each_tool_arm_with_the_control_under_corrected_and_sealed_labels(self):
         n = self.numbers()
@@ -407,12 +557,40 @@ class Whole(unittest.TestCase):
         self.assertEqual(outline["catch_points"], round(100 / 9, 2))
         self.assertEqual((outline["hypotheses"], outline["interval_level"]), (2, 97.5))
         self.assertEqual((outline["flipped_expected_fail"], outline["flipped_expected_pass"]), (1, 0))
+        self.assertEqual((outline["expected_fail_gained"], outline["expected_fail_gained_from_pass"], outline["expected_fail_lost"]), (1, 1, 0))
+        self.assertEqual((regions["expected_fail_gained"], regions["expected_fail_gained_from_review"], regions["expected_fail_lost"]), (2, 1, 1))
         self.assertEqual(regions["flipped_expected_pass"], 1)
         self.assertEqual(regions["balanced_points"], round(100 * (1 / 9 - 1 / 7) / 2, 2))
         self.assertLessEqual(outline["catch_low"], outline["catch_points"])
         self.assertGreaterEqual(outline["catch_high"], outline["catch_points"])
         sealed = n["sealed_effect"][0]
         self.assertEqual(sealed["catch_points"], round(100 / 8, 2))
+        shifts = [
+            abs(a[name] - b[name])
+            for a, b in zip(n["effect"], n["sealed_effect"])
+            for name in ("catch_points", "balanced_points")
+        ]
+        self.assertEqual(n["meta"]["corrections_largest_point_shift"], round(max(shifts), 2))
+        self.assertGreater(n["meta"]["corrections_largest_point_shift"], 1.0)
+
+    def test_only_a_comparison_that_excludes_zero_is_widened_for_the_whole_study(self):
+        self.assertEqual(self.numbers()["sensitivity"], [], "neither synthetic effect excludes zero")
+        # The control misses every expected fail and the outline arm catches each one.
+        for _, item, expected in self.package.items:
+            if expected == "fail":
+                self.package.verdicts[("C", 1, item)] = "pass"
+                self.package.verdicts[("D_outline", 1, item)] = "fail"
+                self.package.verdicts[("D_regions", 1, item)] = "pass"
+        self.package.write()
+        n = self.numbers()
+        self.assertTrue(n["effect"][0]["catch_excludes_zero"])
+        self.assertEqual(n["meta"]["comparisons_excluding_zero"], 1)
+        self.assertEqual(
+            [(w["tool"], w["scope"], w["hypotheses"]) for w in n["sensitivity"]],
+            [("D_outline", "comparisons", 2), ("D_outline", "comparisons_and_measures", 4)],
+        )
+        document = tables.render(n, DOCUMENT)
+        self.assertIn("Across the 2 comparisons and both measures", document)
 
     def test_the_resample_count_comes_from_the_settings_unless_given(self):
         self.assertEqual(self.numbers()["run"][0]["resamples"], 300)
@@ -422,14 +600,8 @@ class Whole(unittest.TestCase):
         n = self.numbers()
         (r,) = n["repeat"]
         self.assertEqual(r["arm"], "C")
-        self.assertEqual((r["fail_indicator_disagreements"], r["verdict_disagreements"]), (1, 2))
-        self.assertEqual(r["catch_rate_rep_2"], round(7 / 9, 4))
-
-    def test_errors_are_listed_with_their_kind(self):
-        n = self.numbers()
-        (e,) = n["error"]
-        self.assertEqual((e["arm"], e["repetition"], e["errors"], e["on_expected_fail"]), ("D_regions", 1, 1, 1))
-        self.assertEqual(n["error_kind"], [{"model": MODEL, "kind": "location", "errors": 1}])
+        self.assertEqual((r["fail_indicator_disagreements"], r["verdict_disagreements"]), (2, 3))
+        self.assertEqual((r["catch_rate_rep_2"], r["errors_rep_2"]), (round(6 / 9, 4), 1))
 
     def test_two_computations_write_the_same_bytes(self):
         self.assertEqual(tables.to_toml(self.numbers()), tables.to_toml(self.numbers()))
@@ -462,25 +634,33 @@ class Whole(unittest.TestCase):
     def test_the_document_is_rendered_from_the_numbers_and_checked_against_them(self):
         n = tables.from_toml(tables.to_toml(self.numbers()))
         document = tables.render(n, DOCUMENT)
-        self.assertIn("| model-x | control |", document)
+        self.assertIn("| model-x | provider | control |", document)
+        self.assertIn("`9.9.9 (abc1234)`", document)
         self.assertEqual(tables.render(n, document), document, "rendering again changes nothing")
         self.assertEqual(tables.check_document(n, document), [])
         self.assertTrue(tables.check_document(n, DOCUMENT), "an unrendered document is stale")
         edited = document.replace("66.7%", "76.7%", 1)
         self.assertNotEqual(edited, document)
         self.assertTrue(tables.check_document(n, edited))
+        self.assertIn("<!-- =meta/items -->16<!-- /= -->", document)
+        stale = DOCUMENT.replace("-->16<!--", "-->15<!--")
+        self.assertEqual(tables.render(n, stale), document, "a value is filled from the numbers file")
 
     def test_a_figure_in_the_prose_must_be_one_the_numbers_hold(self):
         n = self.numbers()
         document = tables.render(n, DOCUMENT)
 
         def with_prose(words):
-            return document.replace("Some words about 16 items.", words)
+            return document.replace(WORDS, words)
 
         for fine in (
             "The control caught 66.7% of failures and the run cost $0.80.",
-            "The tool added +11.1 points on 16 items in 4 families, seed 11 at a 97.5% level.",
+            "The tool added +11.1 points, seed 11 at a 97.5% level, in about 55 minutes on day 12.",
             "Run `study-synthetic-2026-11` used model-9.9-x with 300 resamples.",
+            "It caught <!-- =cell/model-x/C/detected -->6<!-- /= --> of the "
+            "<!-- =meta/expected_fail -->9<!-- /= --> failures, <!-- =cell/model-x/C/catch_rate|pct -->66.7%<!-- /= -->.",
+            "The tool added <!-- =effect/model-x/D_outline/catch_points|points -->+11.1<!-- /= --> points "
+            "for <!-- =meta/spend_usd|usd -->$0.80<!-- /= -->; errors: <!-- =errors/model-x -->2<!-- /= -->.",
         ):
             self.assertEqual(tables.check_document(n, with_prose(fine)), [], fine)
         for wrong in (
@@ -488,6 +668,15 @@ class Whole(unittest.TestCase):
             "The run cost $0.90.",
             "The tool added +12.0 points.",
             "It covers 1,700 decisions.",
+            "It covers 17 items.",
+            "It covers 16 items.",
+            "There were 2 errors.",
+            "It caught 6 of the 9 failures.",
+            "Across 9 expected-fail items.",
+            "It caught <!-- =cell/model-x/C/detected -->7<!-- /= --> failures.",
+            "It caught <!-- =cell/model-x/C/nothing -->6<!-- /= --> failures.",
+            "It caught <!-- =cell/model-y/C/detected -->6<!-- /= --> failures.",
+            "It caught <!-- =cell/model-x/C/detected|words -->6<!-- /= --> failures.",
         ):
             self.assertTrue(tables.check_document(n, with_prose(wrong)), wrong)
 

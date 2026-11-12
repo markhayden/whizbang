@@ -3,7 +3,7 @@
 # aggregates only: no item names, no item-level verdicts and no labels.
 
 study = "2026-11-tool-study"
-tables_version = "1"
+tables_version = "2"
 package_digest = "sha256:d2edd3bb789370d2e99e85a212c07f31a7b1e00e76d98ce38b7170ea9db7e726"
 corrections_version = 1
 headline_repetition = 1
@@ -16,6 +16,12 @@ expected_pass = 70
 sealed_expected_fail = 71
 sealed_expected_pass = 72
 corrections = 2
+corrections_largest_point_shift = 1.45
+corrections_largest_bound_shift = 5.19
+comparisons = 13
+comparisons_excluding_zero = 1
+comparisons_spanning_zero = 12
+models = 7
 runs = 7
 decisions = 3289
 spend_usd = 158.58
@@ -34,6 +40,9 @@ decisions = 286
 repetitions = 1
 spend_usd = 10.5793
 decision_cost_usd = 10.3886
+abandoned_attempts_usd = 0.1907
+harness_version = "0.1.0 (feb5a9802)"
+prompt_version = "v1"
 
 [[run]]
 run = "study-flash-2026-11"
@@ -44,6 +53,9 @@ decisions = 429
 repetitions = 1
 spend_usd = 14.7961
 decision_cost_usd = 14.7961
+abandoned_attempts_usd = 0.0
+harness_version = "0.1.0 (feb5a9802)"
+prompt_version = "v1"
 
 [[run]]
 run = "study-haiku-2026-11"
@@ -54,6 +66,9 @@ decisions = 858
 repetitions = 2
 spend_usd = 3.9756
 decision_cost_usd = 3.9756
+abandoned_attempts_usd = 0.0
+harness_version = "0.1.0 (feb5a9802)"
+prompt_version = "v1"
 
 [[run]]
 run = "study-opus-2026-11"
@@ -64,6 +79,9 @@ decisions = 429
 repetitions = 1
 spend_usd = 68.3297
 decision_cost_usd = 68.3297
+abandoned_attempts_usd = 0.0
+harness_version = "0.1.0 (feb5a9802)"
+prompt_version = "v1"
 
 [[run]]
 run = "study-sol-2026-11"
@@ -74,6 +92,9 @@ decisions = 429
 repetitions = 1
 spend_usd = 21.7476
 decision_cost_usd = 21.7476
+abandoned_attempts_usd = 0.0
+harness_version = "0.1.0 (feb5a9802)"
+prompt_version = "v1"
 
 [[run]]
 run = "study-sonnet-2026-11"
@@ -84,6 +105,9 @@ decisions = 429
 repetitions = 1
 spend_usd = 28.5415
 decision_cost_usd = 28.5415
+abandoned_attempts_usd = 0.0
+harness_version = "0.1.0 (feb5a9802)"
+prompt_version = "v1"
 
 [[run]]
 run = "study-terra-2026-11"
@@ -94,6 +118,9 @@ decisions = 429
 repetitions = 1
 spend_usd = 10.6142
 decision_cost_usd = 10.6142
+abandoned_attempts_usd = 0.0
+harness_version = "0.1.0 (feb5a9802)"
+prompt_version = "v1"
 
 [[cell]]
 run = "gate-outline-initial-2026-11"
@@ -716,6 +743,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 2
 flipped_expected_pass = 1
+expected_fail_gained = 1
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 1
+expected_fail_lost = 1
 
 [[effect]]
 run = "study-flash-2026-11"
@@ -738,6 +769,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 10
 flipped_expected_pass = 4
+expected_fail_gained = 7
+expected_fail_gained_from_review = 3
+expected_fail_gained_from_pass = 4
+expected_fail_lost = 3
 
 [[effect]]
 run = "study-flash-2026-11"
@@ -760,6 +795,10 @@ balanced_excludes_zero = true
 balanced_resamples_used = 10000
 flipped_expected_fail = 10
 flipped_expected_pass = 0
+expected_fail_gained = 9
+expected_fail_gained_from_review = 3
+expected_fail_gained_from_pass = 6
+expected_fail_lost = 1
 
 [[effect]]
 run = "study-haiku-2026-11"
@@ -782,6 +821,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 14
 flipped_expected_pass = 2
+expected_fail_gained = 7
+expected_fail_gained_from_review = 7
+expected_fail_gained_from_pass = 0
+expected_fail_lost = 7
 
 [[effect]]
 run = "study-haiku-2026-11"
@@ -804,6 +847,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 13
 flipped_expected_pass = 2
+expected_fail_gained = 6
+expected_fail_gained_from_review = 6
+expected_fail_gained_from_pass = 0
+expected_fail_lost = 7
 
 [[effect]]
 run = "study-opus-2026-11"
@@ -826,6 +873,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 2
 flipped_expected_pass = 4
+expected_fail_gained = 2
+expected_fail_gained_from_review = 2
+expected_fail_gained_from_pass = 0
+expected_fail_lost = 0
 
 [[effect]]
 run = "study-opus-2026-11"
@@ -848,6 +899,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 0
 flipped_expected_pass = 5
+expected_fail_gained = 0
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 0
+expected_fail_lost = 0
 
 [[effect]]
 run = "study-sol-2026-11"
@@ -870,6 +925,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 2
 flipped_expected_pass = 1
+expected_fail_gained = 0
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 0
+expected_fail_lost = 2
 
 [[effect]]
 run = "study-sol-2026-11"
@@ -892,6 +951,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 1
 flipped_expected_pass = 2
+expected_fail_gained = 1
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 1
+expected_fail_lost = 0
 
 [[effect]]
 run = "study-sonnet-2026-11"
@@ -914,6 +977,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 4
 flipped_expected_pass = 2
+expected_fail_gained = 1
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 1
+expected_fail_lost = 3
 
 [[effect]]
 run = "study-sonnet-2026-11"
@@ -936,6 +1003,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 2
 flipped_expected_pass = 0
+expected_fail_gained = 1
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 1
+expected_fail_lost = 1
 
 [[effect]]
 run = "study-terra-2026-11"
@@ -958,6 +1029,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 1
 flipped_expected_pass = 3
+expected_fail_gained = 1
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 1
+expected_fail_lost = 0
 
 [[effect]]
 run = "study-terra-2026-11"
@@ -980,6 +1055,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 0
 flipped_expected_pass = 3
+expected_fail_gained = 0
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 0
+expected_fail_lost = 0
 
 [[sealed_effect]]
 run = "gate-outline-initial-2026-11"
@@ -1002,6 +1081,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 2
 flipped_expected_pass = 1
+expected_fail_gained = 1
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 1
+expected_fail_lost = 1
 
 [[sealed_effect]]
 run = "study-flash-2026-11"
@@ -1024,6 +1107,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 10
 flipped_expected_pass = 4
+expected_fail_gained = 7
+expected_fail_gained_from_review = 3
+expected_fail_gained_from_pass = 4
+expected_fail_lost = 3
 
 [[sealed_effect]]
 run = "study-flash-2026-11"
@@ -1046,6 +1133,10 @@ balanced_excludes_zero = true
 balanced_resamples_used = 10000
 flipped_expected_fail = 10
 flipped_expected_pass = 0
+expected_fail_gained = 9
+expected_fail_gained_from_review = 3
+expected_fail_gained_from_pass = 6
+expected_fail_lost = 1
 
 [[sealed_effect]]
 run = "study-haiku-2026-11"
@@ -1068,6 +1159,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 13
 flipped_expected_pass = 3
+expected_fail_gained = 6
+expected_fail_gained_from_review = 6
+expected_fail_gained_from_pass = 0
+expected_fail_lost = 7
 
 [[sealed_effect]]
 run = "study-haiku-2026-11"
@@ -1090,6 +1185,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 12
 flipped_expected_pass = 3
+expected_fail_gained = 5
+expected_fail_gained_from_review = 5
+expected_fail_gained_from_pass = 0
+expected_fail_lost = 7
 
 [[sealed_effect]]
 run = "study-opus-2026-11"
@@ -1112,6 +1211,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 1
 flipped_expected_pass = 5
+expected_fail_gained = 1
+expected_fail_gained_from_review = 1
+expected_fail_gained_from_pass = 0
+expected_fail_lost = 0
 
 [[sealed_effect]]
 run = "study-opus-2026-11"
@@ -1134,6 +1237,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 0
 flipped_expected_pass = 5
+expected_fail_gained = 0
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 0
+expected_fail_lost = 0
 
 [[sealed_effect]]
 run = "study-sol-2026-11"
@@ -1156,6 +1263,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 1
 flipped_expected_pass = 2
+expected_fail_gained = 0
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 0
+expected_fail_lost = 1
 
 [[sealed_effect]]
 run = "study-sol-2026-11"
@@ -1178,6 +1289,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 1
 flipped_expected_pass = 2
+expected_fail_gained = 1
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 1
+expected_fail_lost = 0
 
 [[sealed_effect]]
 run = "study-sonnet-2026-11"
@@ -1200,6 +1315,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 4
 flipped_expected_pass = 2
+expected_fail_gained = 1
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 1
+expected_fail_lost = 3
 
 [[sealed_effect]]
 run = "study-sonnet-2026-11"
@@ -1222,6 +1341,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 2
 flipped_expected_pass = 0
+expected_fail_gained = 1
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 1
+expected_fail_lost = 1
 
 [[sealed_effect]]
 run = "study-terra-2026-11"
@@ -1244,6 +1367,10 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 0
 flipped_expected_pass = 4
+expected_fail_gained = 0
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 0
+expected_fail_lost = 0
 
 [[sealed_effect]]
 run = "study-terra-2026-11"
@@ -1266,6 +1393,40 @@ balanced_excludes_zero = false
 balanced_resamples_used = 10000
 flipped_expected_fail = 0
 flipped_expected_pass = 3
+expected_fail_gained = 0
+expected_fail_gained_from_review = 0
+expected_fail_gained_from_pass = 0
+expected_fail_lost = 0
+
+[[sensitivity]]
+run = "study-flash-2026-11"
+model = "gemini-3.8-flash"
+tool = "D_regions"
+scope = "comparisons"
+hypotheses = 13
+interval_level = 99.62
+catch_low = 0.0
+catch_high = 21.89
+catch_excludes_zero = false
+balanced_low = 0.0
+balanced_high = 10.94
+balanced_excludes_zero = false
+tail_resolved = false
+
+[[sensitivity]]
+run = "study-flash-2026-11"
+model = "gemini-3.8-flash"
+tool = "D_regions"
+scope = "comparisons_and_measures"
+hypotheses = 26
+interval_level = 99.81
+catch_low = 0.0
+catch_high = 22.43
+catch_excludes_zero = false
+balanced_low = 0.0
+balanced_high = 11.22
+balanced_excludes_zero = false
+tail_resolved = false
 
 [[repeat]]
 run = "study-haiku-2026-11"
