@@ -48,16 +48,16 @@ fn the_weight_of_a_pixel_follows_one_rule() {
     blend[at(0, 5)] = 51;
     blend[at(3, 2)] = 200; // inside the core: forced to zero
     mask.set_blend(blend).unwrap();
-    assert_eq!(mask.weight(3, 2), 1.0);
-    assert_eq!(mask.weight(0, 5), 0.2);
-    assert_eq!(mask.weight(0, 0), 0.0);
+    assert_eq!(mask.weight(3, 2), Some(1.0));
+    assert_eq!(mask.weight(0, 5), Some(0.2));
+    assert_eq!(mask.weight(0, 0), Some(0.0));
     assert_eq!(mask.blend()[at(3, 2)], 0);
     let mut protect = vec![0; (WIDTH * HEIGHT) as usize];
     protect[at(3, 2)] = 1;
     protect[at(0, 5)] = 255;
     mask.protect_union(&protect).unwrap();
-    assert_eq!(mask.weight(3, 2), 0.0);
-    assert_eq!(mask.weight(0, 5), 0.0);
+    assert_eq!(mask.weight(3, 2), Some(0.0));
+    assert_eq!(mask.weight(0, 5), Some(0.0));
     assert_eq!(
         mask.core()[at(3, 2)],
         0,
@@ -69,7 +69,7 @@ fn the_weight_of_a_pixel_follows_one_rule() {
         "the blend is cleared under protect"
     );
     assert_eq!(mask.protect()[at(3, 2)], 255, "protect is binary");
-    assert_eq!(mask.weight(2, 1), 1.0);
+    assert_eq!(mask.weight(2, 1), Some(1.0));
 }
 
 #[test]
@@ -265,11 +265,132 @@ fn replacing_the_core_clears_the_blend_the_profile_and_the_prescriptions_and_kee
     assert!(mask.prescriptions().is_empty());
     assert!(mask.blend().iter().all(|sample| *sample == 0));
     assert_eq!(mask.protect(), protect);
-    // Protect still wins where the new core lies under it.
-    assert_eq!(mask.core()[at(1, 0)], 255);
-    assert_eq!(mask.weight(1, 0), 0.0);
-    assert_eq!(mask.weight(1, 1), 1.0);
+    // Protect still wins where the new core lies under it: the core is cleared there.
+    assert_eq!(mask.core()[at(1, 0)], 0);
+    assert_eq!(mask.core()[at(1, 1)], 255);
+    assert_eq!(mask.weight(1, 0), Some(0.0));
+    assert_eq!(mask.weight(1, 1), Some(1.0));
 
     let report = mask.replace_core(rect(0, 0, 4, 3)).unwrap();
     assert!(!report.profile_cleared);
+}
+
+#[test]
+fn a_blend_set_after_protect_is_zero_under_it() {
+    let mut mask = rect_mask(on("photo"));
+    mask.protect_union(&rect(0, 0, 2, 2)).unwrap();
+    // A blend everywhere: it stays only where there is neither core nor protect.
+    mask.set_blend(vec![77; (WIDTH * HEIGHT) as usize]).unwrap();
+    assert_eq!(mask.blend()[at(1, 1)], 0, "under protect");
+    assert_eq!(mask.blend()[at(3, 2)], 0, "inside the core");
+    assert_eq!(mask.blend()[at(7, 5)], 77, "outside both");
+    // The mask is one its own file accepts.
+    assert_eq!(Mask::from_bytes(&mask.to_bytes(), &limits()).unwrap(), mask);
+}
+
+#[test]
+fn a_replaced_core_is_binary() {
+    let mut mask = rect_mask(on("photo"));
+    let mut core = vec![0; (WIDTH * HEIGHT) as usize];
+    core[at(0, 0)] = 1;
+    core[at(1, 0)] = 128;
+    core[at(2, 0)] = 255;
+    mask.replace_core(core).unwrap();
+    assert_eq!(&mask.core()[..4], [255, 255, 255, 0]);
+    assert_eq!(Mask::from_bytes(&mask.to_bytes(), &limits()).unwrap(), mask);
+}
+
+#[test]
+fn a_tone_ramps_step_that_misses_rows_is_refused() {
+    let binding = on("photo");
+    let mut mask = rect_mask(binding.clone());
+    // Three channels, and five rows of an image of six.
+    let short = whizbang_core::artifact::Series::new(
+        binding,
+        "tone_ramp.step",
+        "levels",
+        3,
+        vec![1.0; 15],
+        made_by("ramp"),
+    )
+    .unwrap();
+    assert_eq!((short.channels(), short.rows().len()), (3, 5));
+    assert!(invalid(mask.push_tone_ramp(short, 0.5)).contains("every row"));
+    assert!(mask.prescriptions().is_empty());
+}
+
+#[test]
+fn a_weight_is_asked_of_a_pixel_the_image_has() {
+    let mask = rect_mask(on("photo"));
+    // The last pixel of the first row, and the first of the second: column 8 of row 0 is
+    // no pixel, and is not read as column 0 of row 1.
+    assert_eq!(mask.weight(7, 0), Some(0.0));
+    assert_eq!(mask.weight(2, 1), Some(1.0));
+    assert_eq!(mask.weight(WIDTH, 0), None);
+    assert_eq!(mask.weight(WIDTH + 2, 0), None, "not the core at (2, 1)");
+    assert_eq!(mask.weight(0, HEIGHT), None);
+    assert_eq!(mask.weight(u32::MAX, u32::MAX), None);
+    assert_eq!(mask.weight(WIDTH - 1, HEIGHT - 1), Some(0.0));
+}
+
+#[test]
+fn a_core_replaced_and_a_protect_added_give_the_same_mask_in_either_order() {
+    let protect = rect(0, 0, 3, 2);
+    let core = rect(1, 1, 5, 4);
+    // Protect first and then the core, and the core first and then protect.
+    let mut one = rect_mask(on("photo"));
+    one.protect_union(&protect).unwrap();
+    one.replace_core(core.clone()).unwrap();
+    let mut other = rect_mask(on("photo"));
+    other.replace_core(core).unwrap();
+    other.protect_union(&protect).unwrap();
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            assert_eq!(one.weight(x, y), other.weight(x, y), "({x}, {y})");
+        }
+    }
+    assert_eq!(one.core()[at(1, 1)], 0, "the core is cleared under protect");
+    assert_eq!(one.core()[at(3, 1)], 255);
+    assert_eq!(one.core(), other.core());
+    assert_eq!(one.id(), other.id());
+    assert_eq!(Mask::from_bytes(&one.to_bytes(), &limits()).unwrap(), one);
+}
+
+#[test]
+fn a_weight_of_one_stated_as_core_and_as_blend_is_two_masks() {
+    // The planes are a statement, not the weights alone. One pixel with a weight of 1: in
+    // the core of one mask, and as a blend of 255 with no core in the other. Both are
+    // masks, both files are read, and they are two identities.
+    let empty = vec![0; (WIDTH * HEIGHT) as usize];
+    let mut pixel = empty.clone();
+    pixel[at(4, 3)] = 255;
+    let make = |core: Vec<u8>| {
+        Mask::from_core(
+            on("photo"),
+            UseCase::Custom,
+            core,
+            Source::default(),
+            made_by("rect"),
+        )
+        .unwrap()
+    };
+    let as_core = make(pixel.clone());
+    let mut as_blend = make(empty);
+    as_blend.set_blend(pixel).unwrap();
+    assert_eq!(as_blend.blend()[at(4, 3)], 255);
+    assert_eq!(as_blend.core()[at(4, 3)], 0);
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            assert_eq!(as_core.weight(x, y), as_blend.weight(x, y), "({x}, {y})");
+        }
+    }
+    assert_eq!(as_core.weight(4, 3), Some(1.0));
+    assert_eq!(as_core.protect(), as_blend.protect());
+    assert_ne!(as_core.id(), as_blend.id());
+    for mask in [&as_core, &as_blend] {
+        assert_eq!(
+            Mask::from_bytes(&mask.to_bytes(), &limits()).unwrap(),
+            *mask
+        );
+    }
 }

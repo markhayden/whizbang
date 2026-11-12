@@ -127,7 +127,7 @@ impl Record for Image {
     fn read(reader: &mut Reader<'_>, limits: &DecodeLimits) -> Result<Image> {
         let file = reader.held_file()?.to_vec();
         let pixels = reader.digest()?;
-        let space = Space::decode(reader)?;
+        let space = reader.space()?;
         let role = match reader.unsigned()? {
             0 => ImageRole::Picture,
             1 => ImageRole::Rendering,

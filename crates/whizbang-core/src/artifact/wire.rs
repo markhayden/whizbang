@@ -16,7 +16,7 @@
 //! a file canonical is made by its caller: the artifact that was read, written again, must
 //! give the same bytes.
 
-use crate::identity::{Binding, Digest, Encoder, FieldSource, Fields, IdentityError};
+use crate::identity::{Binding, Digest, Encoder, FieldSource, Fields, IdentityError, Space};
 
 use super::{ArtifactError, Origin, Result, Step};
 
@@ -206,6 +206,9 @@ impl Fields for Writer {
 pub(crate) struct Reader<'a> {
     bytes: &'a [u8],
     at: usize,
+    /// Why the file could not give a binding or a space one of its fields, kept while the
+    /// identity module reads it so that the refusal is the file's own.
+    failed: Option<ArtifactError>,
 }
 
 fn refuse(why: impl Into<String>) -> ArtifactError {
@@ -214,7 +217,11 @@ fn refuse(why: impl Into<String>) -> ArtifactError {
 
 impl<'a> Reader<'a> {
     pub(crate) fn new(bytes: &'a [u8]) -> Reader<'a> {
-        Reader { bytes, at: 0 }
+        Reader {
+            bytes,
+            at: 0,
+            failed: None,
+        }
     }
 
     fn take(&mut self, count: u64) -> Result<&'a [u8]> {
@@ -317,8 +324,14 @@ impl<'a> Reader<'a> {
         for _ in 0..runs {
             let run = self.take(5)?;
             let length = u64::from(u32::from_be_bytes([run[1], run[2], run[3], run[4]]));
-            if length == 0 || plane.len() as u64 + length > samples {
-                return Err(refuse("a plane whose runs do not add up to its size"));
+            if length == 0 {
+                return Err(refuse("a plane with a run of no samples"));
+            }
+            // Before anything is set aside for the run.
+            if plane.len() as u64 + length > samples {
+                return Err(refuse(format!(
+                    "a run of {length} samples goes past the end of its plane of {samples}"
+                )));
             }
             plane.resize(plane.len() + length as usize, run[0]);
         }
@@ -344,9 +357,31 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 
+    /// What the identity module reads from this file through [`FieldSource`]. A file that
+    /// cannot give a field is refused as a file, in its own words; what the identity
+    /// module refuses of the fields it was given is refused in its words.
+    fn identity<T>(
+        &mut self,
+        read: impl FnOnce(&mut Self) -> std::result::Result<T, IdentityError>,
+    ) -> Result<T> {
+        self.failed = None;
+        let read = read(self);
+        match (read, self.failed.take()) {
+            (Ok(value), _) => Ok(value),
+            (Err(_), Some(file)) => Err(file),
+            (Err(refusal), None) => Err(ArtifactError::Identity(refusal)),
+        }
+    }
+
+    /// A binding, checked as a new one is (ADR 0001).
     pub(crate) fn binding(&mut self) -> Result<Binding> {
         self.inside(Binding::KIND)?;
-        Binding::decode(self).map_err(ArtifactError::Identity)
+        self.identity(|reader| Binding::decode(reader))
+    }
+
+    /// A space, written as its four fields.
+    pub(crate) fn space(&mut self) -> Result<Space> {
+        self.identity(|reader| Space::decode(reader))
     }
 
     pub(crate) fn origin(&mut self) -> Result<Origin> {
@@ -386,18 +421,24 @@ impl<'a> Reader<'a> {
 /// A binding's fields are read through the identity module's own reader of them.
 impl FieldSource for Reader<'_> {
     fn unsigned(&mut self) -> std::result::Result<u64, IdentityError> {
-        Reader::unsigned(self).map_err(as_binding)
+        Reader::unsigned(self).map_err(|error| self.fail(error))
     }
 
     fn float(&mut self) -> std::result::Result<f64, IdentityError> {
-        Reader::float(self).map_err(as_binding)
+        Reader::float(self).map_err(|error| self.fail(error))
     }
 
     fn digest(&mut self) -> std::result::Result<Digest, IdentityError> {
-        Reader::digest(self).map_err(as_binding)
+        Reader::digest(self).map_err(|error| self.fail(error))
     }
 }
 
-fn as_binding(error: ArtifactError) -> IdentityError {
-    IdentityError::Binding(error.to_string())
+impl Reader<'_> {
+    /// Keeps the file's refusal for [`Reader::identity`], which reports it in place of
+    /// what the identity module is given here.
+    fn fail(&mut self, error: ArtifactError) -> IdentityError {
+        let said = IdentityError::Binding("the file could not give a field".to_owned());
+        self.failed.get_or_insert(error);
+        said
+    }
 }

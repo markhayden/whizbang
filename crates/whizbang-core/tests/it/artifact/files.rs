@@ -480,6 +480,10 @@ fn a_mask_file_whose_planes_break_an_invariant_is_refused() {
     let mut odd = bytes.clone();
     odd[protect_run] = 3;
     refused(&odd, "protect is binary");
+    // A protect that covers everything, over the core's box.
+    let mut over = bytes.clone();
+    over[protect_run] = 255;
+    refused(&over, "the core is zero under protect");
     // A blend at the first pixel, which is outside the core, under a protect that covers
     // everything.
     let mut under = bytes.clone();
@@ -487,4 +491,169 @@ fn a_mask_file_whose_planes_break_an_invariant_is_refused() {
     under.splice(blend_run..blend_run + 5, [9, 0, 0, 0, 1, 0, 0, 0, 0, 47]);
     under[blend_run - 8..blend_run].copy_from_slice(&2u64.to_be_bytes());
     refused(&under, "the blend is zero under protect");
+}
+
+/// Where `mark` starts in `bytes`.
+fn find(bytes: &[u8], mark: &[u8]) -> usize {
+    bytes
+        .windows(mark.len())
+        .position(|window| window == mark)
+        .unwrap()
+}
+
+fn whole(value: u64) -> Vec<u8> {
+    [&b"u"[..], &value.to_be_bytes()].concat()
+}
+
+#[test]
+fn a_run_past_the_end_of_its_plane_is_refused_before_it_is_set_aside() {
+    let (bytes, at) = plain_mask_file();
+    // The first run of the core, 10 samples long, said to be 4,294,967,295: the plane is
+    // 48 samples, and nothing is set aside for a run that passes its end.
+    let mut vast = bytes.clone();
+    vast[at + 9..at + 13].copy_from_slice(&u32::MAX.to_be_bytes());
+    let refusal = Mask::from_bytes(&vast, &limits()).unwrap_err();
+    assert!(
+        matches!(&refusal, ArtifactError::Format(why) if why.contains("past the end")),
+        "{refusal}"
+    );
+    // A later run, no longer than the plane itself, that carries the total past the end:
+    // the first run one sample longer, so that the last, of 19, would end at 49. It is
+    // refused where it passes the end, before the plane grows by it.
+    let mut later = bytes.clone();
+    later[at + 9..at + 13].copy_from_slice(&11u32.to_be_bytes());
+    let refusal = Mask::from_bytes(&later, &limits()).unwrap_err();
+    assert!(
+        matches!(&refusal, ArtifactError::Format(why)
+            if why.contains("a run of 19 samples goes past the end")),
+        "{refusal}"
+    );
+    // A run of no samples is refused as that.
+    let mut none = bytes.clone();
+    none[at + 9..at + 13].copy_from_slice(&0u32.to_be_bytes());
+    let refusal = Mask::from_bytes(&none, &limits()).unwrap_err();
+    assert!(
+        matches!(&refusal, ArtifactError::Format(why) if why.contains("a run of no samples")),
+        "{refusal}"
+    );
+    // A run that stops short leaves runs that do not add up, which is another refusal.
+    let mut short = bytes.clone();
+    short[at + 9..at + 13].copy_from_slice(&9u32.to_be_bytes());
+    let refusal = Mask::from_bytes(&short, &limits()).unwrap_err();
+    assert!(
+        matches!(&refusal, ArtifactError::Format(why) if why.contains("add up")),
+        "{refusal}"
+    );
+}
+
+#[test]
+fn a_tone_ramp_of_a_version_this_build_does_not_read_is_refused() {
+    let mask = full_mask(on("photo"));
+    let bytes = mask.to_bytes();
+    // The one prescription: kind 0, version 1, then the step, a series inside the mask.
+    let mark = [&whole(0)[..], &whole(1), b"awhizbang:series/1\0"].concat();
+    let version = find(&bytes, &mark) + 9 + 8;
+    assert_eq!(bytes[version], 1);
+    let mut newer = bytes.clone();
+    newer[version] = 2;
+    let refusal = Mask::from_bytes(&newer, &limits()).unwrap_err();
+    assert!(
+        matches!(&refusal, ArtifactError::Invalid { artifact: ArtifactType::Mask, why }
+            if why.contains("version 2")),
+        "{refusal}"
+    );
+    Mask::from_bytes(&bytes, &limits()).unwrap();
+}
+
+#[test]
+fn a_binding_inside_a_file_that_breaks_its_rules_is_refused() {
+    // A location on a composite placed onto a photo by the identity, both 8 by 6.
+    let binding = Binding::new(
+        picture("composite"),
+        space(),
+        picture("photo"),
+        space(),
+        Direction::SourceToDestination,
+        Mapping::Identity,
+    )
+    .unwrap();
+    let location = Location::new(binding, Shape::WholeImage, made_by("find")).unwrap();
+    let bytes = location.to_bytes();
+    // The binding starts after the file's kind, `a` and its own kind. Its fields: the
+    // source (`d`, 33 bytes), the source space (four `u`, 36 bytes), the destination (`u`
+    // and `d`, 42 bytes), the destination space, the direction, the mapping's kind.
+    let binding_at = b"whizbang:location/1\0".len() + 1 + b"whizbang:binding/1\0".len();
+    let destination_space = binding_at + 33 + 36 + 42;
+    assert_eq!(
+        bytes[destination_space..destination_space + 9],
+        whole(8)[..]
+    );
+    let direction = destination_space + 36;
+    assert_eq!(bytes[direction..direction + 9], whole(0)[..]);
+    let refused = |bytes: &[u8], what: &str| {
+        let result = Location::from_bytes(bytes, &limits());
+        assert!(
+            matches!(
+                &result,
+                Err(ArtifactError::Identity(IdentityError::Binding(_)))
+            ),
+            "{what}: {result:?}"
+        );
+    };
+    // The identity between two spaces that are not equal: the destination 9 wide.
+    let mut wider = bytes.clone();
+    wider[destination_space + 8] = 9;
+    refused(&wider, "an identity between unequal spaces");
+    // A direction that is neither of the two.
+    let mut neither = bytes.clone();
+    neither[direction + 8] = 2;
+    refused(&neither, "a third direction");
+    // A mapping of a kind ADR 0001 does not list.
+    let mut unknown = bytes.clone();
+    unknown[direction + 9 + 8] = 9;
+    refused(&unknown, "an unknown mapping");
+    // A wrap between two flat images: a mapping that does not fit its spaces. The strip
+    // follows the kind, so the file grows by one field.
+    let mut wrap = bytes.clone();
+    wrap[direction + 9 + 8] = 4;
+    wrap.splice(direction + 18..direction + 18, whole(2));
+    refused(&wrap, "a wrap between flat images");
+    Location::from_bytes(&bytes, &limits()).unwrap();
+}
+
+#[test]
+fn a_refusal_inside_a_binding_says_what_is_wrong_once() {
+    let location = Location::new(on("photo"), Shape::WholeImage, made_by("find")).unwrap();
+    let bytes = location.to_bytes();
+    // Cut inside the binding: the file is short, and that is all the refusal says.
+    let binding_at = b"whizbang:location/1\0".len() + 1 + b"whizbang:binding/1\0".len();
+    let refusal = Location::from_bytes(&bytes[..binding_at + 40], &limits()).unwrap_err();
+    assert!(matches!(refusal, ArtifactError::Format(_)), "{refusal:?}");
+    let said = refusal.to_string();
+    assert!(
+        said.starts_with("not a canonical artifact file: the file ends at byte"),
+        "{said}"
+    );
+    // A field of the wrong kind inside the binding is the file's fault too.
+    let mut wrong = bytes.clone();
+    wrong[binding_at] = b'u';
+    let refusal = Location::from_bytes(&wrong, &limits()).unwrap_err();
+    assert!(matches!(refusal, ArtifactError::Format(_)), "{refusal:?}");
+    assert!(!refusal.to_string().contains("binding:"), "{refusal}");
+    // The same holds for the space an image's record states: its width, which follows
+    // the picture and its pixel digest, written as a number of another kind.
+    let image = image_of(photo(), ImageRole::Picture).to_bytes();
+    let mark = [&whole(u64::from(WIDTH))[..], &whole(u64::from(HEIGHT))].concat();
+    let width = image.len()
+        - image
+            .windows(mark.len())
+            .rev()
+            .position(|window| window == mark)
+            .unwrap()
+        - mark.len();
+    let mut wrong = image.clone();
+    wrong[width] = b'f';
+    let refusal = Image::from_bytes(&wrong, &limits()).unwrap_err();
+    assert!(matches!(refusal, ArtifactError::Format(_)), "{refusal:?}");
+    assert!(!refusal.to_string().contains("binding:"), "{refusal}");
 }

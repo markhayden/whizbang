@@ -11,6 +11,7 @@
 //! from the store, and by the types themselves.
 
 mod band;
+mod derivation;
 mod location;
 mod mask;
 mod picture;
@@ -23,6 +24,7 @@ use crate::identity::{DecodeLimits, Digest, IdentityError};
 use crate::store;
 
 pub use band::{BandProfile, Windows};
+pub use derivation::Derivation;
 pub use location::{Line, Location, Shape};
 pub use mask::{Mask, Prescription, Profile, Refinement, Source, UseCase, effective_weight};
 pub use picture::{Image, ImageRole};
@@ -81,10 +83,12 @@ impl ArtifactType {
 }
 
 impl ArtifactType {
-    /// The name with its article, for a sentence: `a mask`, `an image`.
+    /// The type in words with its article, for a sentence: `a mask`, `an image`,
+    /// `a band profile`.
     pub(crate) fn with_article(self) -> String {
         match self {
             ArtifactType::Image => "an image".to_owned(),
+            ArtifactType::BandProfile => "a band profile".to_owned(),
             other => format!("a {}", other.name()),
         }
     }
@@ -133,8 +137,8 @@ pub enum ArtifactError {
     Invalid { artifact: ArtifactType, why: String },
     /// The artifact does not belong to the image it was asked to be used on.
     WrongImage(String),
-    /// The rebind was refused: the binding does not show the new image to be derived
-    /// from the artifact's own.
+    /// The rebind was refused: the binding is no derivation, or it does not show the new
+    /// image to be derived from the artifact's own.
     Rebind(String),
     /// A binding, a space or an image inside the artifact was refused.
     Identity(IdentityError),

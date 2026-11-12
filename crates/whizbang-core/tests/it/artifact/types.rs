@@ -465,3 +465,179 @@ fn a_plan_cuts_a_complete_panorama_by_an_even_strip_that_fits() {
         Plan::new(panorama, 42, made_by("cut")).unwrap().id()
     );
 }
+
+#[test]
+fn a_shape_is_held_at_each_edge_of_its_image() {
+    let binding = on("photo");
+    let make = |shape: Shape| Location::new(binding.clone(), shape, made_by("find"));
+    let boxed = |left, top, right, bottom| Shape::Box {
+        left,
+        top,
+        right,
+        bottom,
+    };
+    // A box on each edge, and one step past each.
+    make(boxed(0.0, 0.0, 8.0, 6.0)).unwrap();
+    for past in [
+        boxed(-0.5, 1.0, 4.0, 3.0),
+        boxed(2.0, -0.5, 4.0, 3.0),
+        boxed(2.0, 1.0, 8.5, 3.0),
+        boxed(2.0, 1.0, 4.0, 6.5),
+    ] {
+        assert!(
+            invalid(make(past.clone()), ArtifactType::Location),
+            "{past:?}"
+        );
+    }
+    // A point on each edge, and one step past each.
+    let polygon = |x, y| Shape::Polygon {
+        points: vec![Point::new(1.0, 1.0), Point::new(6.0, 1.5), Point::new(x, y)],
+    };
+    for (x, y) in [(8.0, 3.0), (0.0, 3.0), (3.0, 6.0), (3.0, 0.0), (8.0, 6.0)] {
+        make(polygon(x, y)).unwrap_or_else(|error| panic!("({x}, {y}): {error}"));
+    }
+    for (x, y) in [(8.5, 3.0), (-0.5, 3.0), (3.0, 6.5), (3.0, -0.5)] {
+        assert!(
+            invalid(make(polygon(x, y)), ArtifactType::Location),
+            "({x}, {y})"
+        );
+    }
+    // A line's column on each edge.
+    let column = |x| Shape::Line {
+        line: Line::Column(x),
+        width: 2.0,
+    };
+    make(column(0.0)).unwrap();
+    make(column(8.0)).unwrap();
+    assert!(invalid(make(column(-0.5)), ArtifactType::Location));
+    assert!(invalid(make(column(8.5)), ArtifactType::Location));
+}
+
+#[test]
+fn a_bands_centre_column_and_half_widths_are_held_to_their_limits() {
+    let binding = on("photo");
+    let line = line(binding.clone()).id();
+    let make = |column: u32, half: Vec<f64>| {
+        BandProfile::new(
+            binding.clone(),
+            line,
+            column,
+            1.5,
+            half,
+            Windows {
+                gap: 1,
+                step_columns: 3,
+                texture_columns: 8,
+            },
+            "fan-v1",
+            made_by("fan"),
+        )
+    };
+    // The centre is a place between columns: from 0, the left edge, to the width, the
+    // right edge.
+    make(0, vec![1.5; 6]).unwrap();
+    assert_eq!(make(WIDTH, vec![1.5; 6]).unwrap().column(), WIDTH);
+    assert!(invalid(
+        make(WIDTH + 1, vec![1.5; 6]),
+        ArtifactType::BandProfile
+    ));
+    // A half-width may be under the least by 1e-9, and by no more.
+    let with = |half: f64| {
+        let mut all = vec![2.0; 6];
+        all[3] = half;
+        make(4, all)
+    };
+    with(1.5).unwrap();
+    with(1.5 - 0.5e-9).unwrap();
+    assert!(invalid(with(1.5 - 2e-9), ArtifactType::BandProfile));
+}
+
+#[test]
+fn one_column_of_a_panorama_stated_at_either_edge_is_two_locations() {
+    // In a wrapped space the right edge is column 0 (ADR 0001). A location hashes what was
+    // stated, so the seam stated as column 0 and as column 400 is one place under two
+    // identities: equal identities mean the same location, and not the reverse.
+    let panorama = Binding::root(picture("panorama"), Space::panorama(400, 200).unwrap());
+    let seam = |column: f64| {
+        Location::new(
+            panorama.clone(),
+            Shape::Line {
+                line: Line::Column(column),
+                width: 3.0,
+            },
+            made_by("find"),
+        )
+        .unwrap()
+    };
+    let (left, right) = (seam(0.0), seam(400.0));
+    assert_eq!(
+        *left.shape(),
+        Shape::Line {
+            line: Line::Column(0.0),
+            width: 3.0
+        }
+    );
+    assert_eq!(
+        *right.shape(),
+        Shape::Line {
+            line: Line::Column(400.0),
+            width: 3.0
+        }
+    );
+    assert_eq!(
+        left.id().0.hex(),
+        "fec5d2d3b53330c73791ac0e67b76019ea726b105c8c327b70534bb2692c79d0"
+    );
+    assert_eq!(
+        right.id().0.hex(),
+        "ea4469c14fb9c49e786f18e30f7ba14f23d134497974ca65f89753fbc7c594f4"
+    );
+    // The space itself knows they are one column.
+    let space = panorama.source_space();
+    assert_eq!(
+        space.place(Point::new(400.0, 50.0)).unwrap(),
+        space.place(Point::new(0.0, 50.0)).unwrap()
+    );
+}
+
+#[test]
+fn a_refusal_names_a_type_in_words() {
+    let band = BandProfile::new(
+        on("photo"),
+        line(on("photo")).id(),
+        4,
+        0.0,
+        vec![1.5; 6],
+        Windows {
+            gap: 1,
+            step_columns: 3,
+            texture_columns: 8,
+        },
+        "fan-v1",
+        made_by("fan"),
+    )
+    .unwrap_err();
+    assert!(
+        band.to_string().starts_with("not a band profile: "),
+        "{band}"
+    );
+    let series = sigma(on("photo"), 0.75).to_bytes();
+    let wrong = BandProfile::from_bytes(&series, &limits()).unwrap_err();
+    assert_eq!(
+        wrong.to_string(),
+        "a band profile is required, and this is a series"
+    );
+    let band = band_file();
+    let wrong = Image::from_bytes(&band, &limits()).unwrap_err();
+    assert_eq!(
+        wrong.to_string(),
+        "an image is required, and this is a band profile"
+    );
+    // The name a store and a file spell is the type's own.
+    assert_eq!(ArtifactType::BandProfile.to_string(), "band_profile");
+}
+
+fn band_file() -> Vec<u8> {
+    let binding = on("photo");
+    band(binding.clone(), line(binding).id(), 1.5).to_bytes()
+}
