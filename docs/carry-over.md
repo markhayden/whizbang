@@ -18,8 +18,8 @@ Done on 2026-11-11. The four old repos are tagged `final-before-whizbang` and pi
 
 The baseline package is assembled from the tagged squint; `docs/baseline/` says what it holds
 and how it is identified. Its replay fixtures are converted to transcripts and audited:
-`docs/baseline/transcript.md` and `docs/baseline/audit.toml`. Still to do in milestone 0, in
-whizbang: write up the 2026-11-11 study from the package.
+`docs/baseline/transcript.md` and `docs/baseline/audit.toml`. The study is written up from
+the package in `docs/results/2026-11-tool-study.md`.
 
 ## Fixes carried into whizbang
 
@@ -57,6 +57,9 @@ whizbang: write up the 2026-11-11 study from the package.
 | whizbang | The baseline gate needs a replay that writes a transcript in format 1 (`docs/baseline/transcript.md`), runs `whizbang_eval::baseline::compare` over every recorded decision and writes the gate receipt | 2 | Every recorded decision compares with no difference, and the receipt is written |
 | whizbang | Transcript format 1 compares the bytes of tool images (crops, aligned frames) and the text of tool results. Whether whizbang's `view` and `align` reproduce the old tools' output exactly is not known until they are ported | 2 | They reproduce; or a new format version says what is compared instead, agreed with the owner before the gate runs |
 | whizbang | `scripts/baseline` needs Python 3.9 or later; only `scripts/tests/test-baseline.sh` checks for it, `scripts/setup.sh` does not | 0 | `just setup` reports a missing or too old `python3` |
+| whizbang | `whizbang-eval` turns on `serde_json`'s `arbitrary_precision`, so the comparison keeps a number's text. Once the binary depends on `whizbang-eval`, feature unification turns it on in every crate: every parsed `Value` keeps number text, an object whose only key is `serde_json`'s private number key reads as a number, and serde's buffered paths (untagged and internally tagged enums, `flatten`) misread numbers under it | 2, before the binary depends on `whizbang-eval` | Decided and recorded: the comparison parses in a way that does not reach other crates, or the workspace accepts the feature everywhere and a test covers each buffered path it has |
+| whizbang | The 2026-11 study has one repetition for six of seven models. One comparison of thirteen excludes zero under the correction frozen for its run, and does not under a correction across the study (`docs/results/2026-11-tool-study.md`). Nothing has been run again | E | The comparison that excluded zero is repeated on a set no agent has seen, with at least two repetitions per arm, or the claim is withdrawn |
+| whizbang | The study's write-up leaves out results by kind of failure: the kinds are the owner's private grouping of a set whose labels are not published | E | The owner decides whether the grouping may be published; if so, `scripts/baseline/tables.py` adds the table |
 
 ## Evaluations
 
