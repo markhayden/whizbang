@@ -244,22 +244,18 @@ impl Fs for RealFs {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
+    // The test kit's scratch directory, removed when it is dropped, whether the test
+    // passed or not. The kit is built on this crate as it ships, not as it is tested, so
+    // only what holds none of this crate's types can come from it here.
+    use whizbang_testkit::scratch::Scratch;
 
-    /// A file in the system temp folder, in a directory of its own, removed at the end.
-    fn scratch(label: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("whizbang-core-fs-{label}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
+    use super::*;
 
     #[cfg(unix)]
     #[test]
     fn a_lock_file_replaced_between_its_lock_and_the_look_at_its_name_is_not_the_one_held() {
-        let dir = scratch("replaced");
-        let path = dir.join("LOCK");
+        let dir = Scratch::new("core-fs-replaced");
+        let path = dir.path().join("LOCK");
         std::fs::write(&path, b"the first file").unwrap();
         // Once, just after the first file is locked: it is replaced by another.
         let replaced = std::cell::Cell::new(false);
@@ -278,13 +274,12 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"holder\n");
         drop(held);
         assert!(hold_lock_file(&path, true, &|| {}).unwrap().is_some());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn a_lock_file_is_made_only_when_asked_and_recording_replaces_its_whole_content() {
-        let dir = scratch("made");
-        let path = dir.join("LOCK");
+        let dir = Scratch::new("core-fs-made");
+        let path = dir.path().join("LOCK");
         let error = RealFs.hold_lock_file(&path, false).err().unwrap();
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
         assert!(!path.exists());
@@ -306,6 +301,5 @@ mod tests {
         );
         held.record(b"").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

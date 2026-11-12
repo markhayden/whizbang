@@ -45,6 +45,14 @@
 //! unfinished creation is not a store yet, which loses nothing: nothing was ever
 //! published in it.
 //!
+//! Where there is nothing, [`Store::open`] makes the root and every directory above it
+//! that is missing. [`Store::open_in_existing_parent`] makes the root alone: where the
+//! directory that would hold it is missing, it is refused with [`Error::NoParent`] and
+//! nothing is made, as `mkdir` without `-p` refuses, so that a path with a mistyped
+//! part does not become a store somewhere unintended. A writer knows whether its open
+//! made the store ([`Store::created`]): it is the one that wrote the first pointer,
+//! under the lock, whether it began from nothing or completed an unfinished creation.
+//!
 //! # One writer
 //!
 //! A writer takes the lock on `LOCK` when it opens the store and holds it for as long as
@@ -72,6 +80,13 @@
 //! no writer is at work in, is refused on the first look alone, so that nothing, not even
 //! a lock file, is made in a directory that is not a store.
 //!
+//! A writer that takes the lock to confirm a fault holds it for the moment its second
+//! reading takes, and writes no name: it is about to be refused. Another writer that
+//! starts in that moment is refused with [`Error::Held`], and rightly: the store is
+//! held. What it is told is what the lock file holds then, which is not the name of the
+//! one that holds it: "another process" when the file is empty, or the name a dead
+//! writer left. The name in a refusal is for the message only, and may be stale.
+//!
 //! The lock is the standard library's file lock, `flock` on Linux and macOS: it works
 //! on local file systems only, and `LOCK` must never be removed or replaced while a
 //! writer holds it. The module [`fs`] says exactly what holds and what does not.
@@ -95,7 +110,12 @@
 //! under a name that is never used twice.
 //!
 //! A run's id is not empty and holds no control character; [`Publication::put_in`]
-//! refuses any other ([`Error::InvalidRun`]). Deleting a run the store does not hold is
+//! refuses any other ([`Error::InvalidRun`]). The rule is held where a run is made and,
+//! deliberately, not where a generation file is read: a file that other hands wrote can
+//! hold a run whose id is empty or has a control character in it, and that run is read,
+//! listed and deleted like any other. Refusing it on reading would make it a run that
+//! nothing can remove, in a store that nothing can read. Whoever prints an id escapes it.
+//! Deleting a run the store does not hold is
 //! refused ([`Error::NoSuchRun`]), and then none of the runs named with it is deleted.
 //!
 //! # Prune
@@ -166,7 +186,7 @@ mod generation;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub use digest::Digest;
@@ -205,6 +225,25 @@ impl Layout {
     }
     fn lock(&self) -> PathBuf {
         self.root.join("LOCK")
+    }
+}
+
+/// What a writer's open may make where there is no store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Make {
+    /// Nothing: the store must be there.
+    Nothing,
+    /// A store, in a root whose parent directory is there.
+    RootOnly,
+    /// A store, and every directory above its root that is missing.
+    WithParents,
+}
+
+/// The directory that holds `dir`: for a name alone, the current directory.
+fn parent_of(dir: &Path) -> &Path {
+    match dir.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
     }
 }
 
@@ -369,27 +408,31 @@ impl Files {
     }
 
     /// What is at the root, for a writer: the number of the current generation of the
-    /// store there, or, when a store may be created (`create`), 0 where one may be made:
-    /// where there is nothing, or nothing but an unfinished creation. Anything else is
-    /// refused. Reads only.
+    /// store there, or, when a store may be made (`make`), 0 where one may be made:
+    /// where there is nothing (and, for [`Make::RootOnly`], a directory to hold the
+    /// root), or nothing but an unfinished creation. Anything else is refused. Reads
+    /// only.
     ///
     /// Without the writer lock this is a look at something another writer may be changing
     /// between two of its reads, and what it reports can be wrong: damage that is not
     /// there, a directory that is not a store and is one. Only under the lock is it final.
-    fn place(&self, create: bool) -> Result<u64> {
+    fn place(&self, make: Make) -> Result<u64> {
         let root = &self.layout.root;
         if !self.exists(root)? {
-            return if create {
-                Ok(0)
-            } else {
-                Err(Error::Missing { root: root.clone() })
+            return match make {
+                Make::Nothing => Err(Error::Missing { root: root.clone() }),
+                Make::RootOnly if !self.exists(parent_of(root))? => Err(Error::NoParent {
+                    root: root.clone(),
+                    parent: parent_of(root).to_path_buf(),
+                }),
+                Make::RootOnly | Make::WithParents => Ok(0),
             };
         }
         if self.exists(&self.layout.pointer())? {
             return Ok(self.snapshot()?.number());
         }
         match self.beyond_an_unfinished_creation()? {
-            None if create => Ok(0),
+            None if make != Make::Nothing => Ok(0),
             found => Err(Error::NotAStore {
                 root: root.clone(),
                 found,
@@ -569,6 +612,10 @@ pub struct Store {
     /// prune keeps it, though no generation names it yet. A prune holds this while it
     /// removes content, and a publication takes it before it looks for content.
     in_progress: Mutex<BTreeMap<u64, BTreeSet<Digest>>>,
+    /// How many publications are waiting for `publishing` now.
+    waiting: AtomicUsize,
+    /// Whether the open that gave this value made the store.
+    created: bool,
     /// The writer lock, held for as long as this value lives.
     lock: Box<dyn LockFile>,
 }
@@ -620,17 +667,41 @@ impl Store {
     /// work on it: damage and "not a store" are found, or confirmed, under the lock, and
     /// while another writer holds the lock the answer is [`Error::Held`].
     pub fn open(root: &Path, fs: Arc<dyn Fs>) -> Result<Store> {
-        Store::open_at(root, fs, true)
+        Store::open_at(root, fs, Make::WithParents)
+    }
+
+    /// As [`Store::open`], except that where there is nothing at `root` only the root
+    /// itself is made: a missing parent directory is refused with [`Error::NoParent`],
+    /// and nothing is made, as `mkdir` without `-p` refuses. For a path a person typed.
+    pub fn open_in_existing_parent(root: &Path, fs: Arc<dyn Fs>) -> Result<Store> {
+        Store::open_at(root, fs, Make::RootOnly)
     }
 
     /// As [`Store::open`], for a store that must be there already: nothing is created
     /// where there is none ([`Error::Missing`]), and an empty directory or an unfinished
     /// creation is not completed ([`Error::NotAStore`]). For what removes things.
     pub fn open_existing(root: &Path, fs: Arc<dyn Fs>) -> Result<Store> {
-        Store::open_at(root, fs, false)
+        Store::open_at(root, fs, Make::Nothing)
     }
 
-    fn open_at(root: &Path, fs: Arc<dyn Fs>, create: bool) -> Result<Store> {
+    /// Whether the open that gave this value made the store: no store was here when it
+    /// took the writer lock, and it wrote the first pointer. That is so where there was
+    /// nothing, in an empty directory, and where another writer's creation was left
+    /// unfinished and this one completed it. It is decided under the lock, so nothing
+    /// another process does between two looks can make it wrong.
+    pub fn created(&self) -> bool {
+        self.created
+    }
+
+    /// For tests: how many publications of this value have come to the step that one
+    /// publication runs at a time, and are waiting there for a prune or for another
+    /// publication to end. One that is counted has made nothing visible yet.
+    #[doc(hidden)]
+    pub fn publications_waiting(&self) -> usize {
+        self.waiting.load(Ordering::SeqCst)
+    }
+
+    fn open_at(root: &Path, fs: Arc<dyn Fs>, make: Make) -> Result<Store> {
         let files = Files {
             fs,
             layout: Layout {
@@ -643,11 +714,11 @@ impl Store {
 
         // A look before the lock, reading only, for one purpose: a place where no store is
         // or may be made is refused with nothing made in it, not even a lock file.
-        let lock = match files.place(create) {
+        let lock = match files.place(make) {
             Ok(_) => {
                 // The lock file is in the root, so the root comes first. It is made only
                 // where there was nothing.
-                create_durably(fs, root)?;
+                create_durably(fs, root, make == Make::WithParents)?;
                 fs.hold_lock_file(&lock_path, true)
                     .map_err(Error::io("lock", &lock_path))?
             }
@@ -671,7 +742,7 @@ impl Store {
         // store as it is, and recovery goes by this and not by the look before the lock:
         // since that look another writer may have published. Until here nothing was
         // changed.
-        let current = files.place(create)?;
+        let current = files.place(make)?;
         lock.record(holder().as_bytes())
             .map_err(Error::io("write", &lock_path))?;
 
@@ -704,7 +775,8 @@ impl Store {
 
         // A new store gets its pointer here, before anything can be published: from now
         // on this directory is a store.
-        if files.pointer()?.is_none() {
+        let created = files.pointer()?.is_none();
+        if created {
             let staged = staging.join("CURRENT");
             fs.write_new(&staged, FIRST_POINTER)
                 .map_err(Error::io("write", &staged))?;
@@ -716,6 +788,8 @@ impl Store {
             next_token: AtomicU64::new(0),
             publishing: Mutex::new(()),
             in_progress: Mutex::new(BTreeMap::new()),
+            waiting: AtomicUsize::new(0),
+            created,
             lock,
         })
     }
@@ -865,20 +939,28 @@ fn generation_number(file: &Path) -> Option<u64> {
     (number.to_string() == digits).then_some(number)
 }
 
-/// Creates a directory and the parents it lacks, each made durable in its own parent.
-fn create_durably(fs: &dyn Fs, dir: &Path) -> Result<()> {
+/// Creates a directory unless it is there, made durable in its parent: with `parents`,
+/// after the parents it lacks, each made the same way; without, a missing parent is
+/// refused and nothing is made.
+fn create_durably(fs: &dyn Fs, dir: &Path, parents: bool) -> Result<()> {
     if fs.exists(dir).map_err(Error::io("look for", dir))? {
         return Ok(());
     }
-    let parent = match dir.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
-        _ => Path::new("."),
-    };
-    create_durably(fs, parent)?;
+    let parent = parent_of(dir);
+    if parents {
+        create_durably(fs, parent, true)?;
+    }
     match fs.create_dir(dir) {
         Ok(()) => {}
         // Another process made it since the look: there is a directory, which is the aim.
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        // The parent went since the look.
+        Err(error) if !parents && error.kind() == io::ErrorKind::NotFound => {
+            return Err(Error::NoParent {
+                root: dir.to_path_buf(),
+                parent: parent.to_path_buf(),
+            });
+        }
         Err(error) => return Err(Error::io("create", dir)(error)),
     }
     fs.sync_dir(parent).map_err(Error::io("sync", parent))
@@ -994,11 +1076,13 @@ impl Publication<'_> {
 
         // The generation, immutable from its rename on. It is built on the generation that
         // is current now, not the one that was when this publication began.
+        self.store.waiting.fetch_add(1, Ordering::SeqCst);
         let _publishing = self
             .store
             .publishing
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        self.store.waiting.fetch_sub(1, Ordering::SeqCst);
         let mut generation = files.snapshot()?;
         let number = generation.number.checked_add(1).ok_or_else(|| {
             Error::corrupt(

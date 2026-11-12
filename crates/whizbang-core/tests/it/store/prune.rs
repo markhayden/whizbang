@@ -385,49 +385,78 @@ fn no_publication_completes_inside_a_prune() {
     assert_eq!(publication.publish().unwrap().generation, 2);
 
     // The prune is stopped at its first event, the removal of generation 1's file: it
-    // has read the current generation. Another thread publishes.
-    let (done, is_done) = std::sync::mpsc::channel();
+    // has read the current generation. Another thread publishes, and the prune goes on
+    // only when that publication is waiting to be let in: the store says when
+    // (`publications_waiting`), so nothing here waits on a clock to learn it.
     let publisher = Arc::new(Mutex::new(None));
-    let early = Arc::new(Mutex::new(false));
+    let stopped: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let first_prune_event = fs.events().len();
     let hook = {
-        let (store, fs, root) = (store.clone(), fs.clone(), root.clone());
-        let (publisher, early) = (publisher.clone(), early.clone());
+        let store = store.clone();
+        let (publisher, stopped) = (publisher.clone(), stopped.clone());
         move || {
             let thread = {
                 let store = store.clone();
                 std::thread::spawn(move || {
                     let mut publication = store.begin().unwrap();
                     publication.put("new", b"published beside a prune").unwrap();
-                    let published = publication.publish().unwrap();
-                    let _ = done.send(());
-                    published
+                    publication.publish().unwrap()
                 })
             };
-            *publisher.lock().unwrap() = Some(thread);
-            // Wait for the publication to have its payload in place and synced: its last
-            // step before it needs the generation. This waits on an event.
-            let objects = root.join("objects");
-            while !fs.events()[first_prune_event..].contains(&Event::SyncDir(objects.clone())) {
+            // A publication that is kept out comes to wait. One that is not kept out
+            // ends, and one that panics ends too: neither is waited for. The limit is
+            // for a store that does neither, and is far beyond what the few calls
+            // before the wait take.
+            let limit = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while store.publications_waiting() == 0 {
+                if thread.is_finished() {
+                    *stopped.lock().unwrap() =
+                        Some("the publication ended inside the prune".to_string());
+                    break;
+                }
+                if std::time::Instant::now() > limit {
+                    *stopped.lock().unwrap() =
+                        Some("the publication neither waited nor ended".to_string());
+                    break;
+                }
                 std::thread::yield_now();
             }
-            // From there a publication that is not kept out needs a few calls to finish.
-            // One that is kept out never does, and that cannot be seen, only waited out:
-            // this wait runs its full length when the store is right, and can only make
-            // the test pass wrongly, never fail wrongly.
-            *early.lock().unwrap() = is_done
-                .recv_timeout(std::time::Duration::from_millis(100))
-                .is_ok();
+            *publisher.lock().unwrap() = Some(thread);
         }
     };
     fs.pause_before(first_prune_event, hook);
     let pruned = store.prune().unwrap();
+    assert_eq!(*stopped.lock().unwrap(), None);
     assert_eq!(pruned.generations_removed, vec![1]);
-    let published = publisher.lock().unwrap().take().unwrap().join().unwrap();
+    assert_eq!(pruned.objects_removed, 1);
+    let thread = publisher.lock().unwrap().take().unwrap();
+    let published = thread.join().expect("the publication did not panic");
     assert_eq!(published.generation, 3);
+    assert_eq!(store.publications_waiting(), 0);
+
+    // The order: everything the prune did, to its last sync, came before the
+    // publication's first step under the lock, the writing of its generation.
+    let events = fs.events();
+    let objects = root.join("objects");
+    let place = |what: &str, is: &dyn Fn(&Event) -> bool| {
+        let found = events.iter().rposition(is);
+        found.unwrap_or_else(|| panic!("no {what} in {events:#?}"))
+    };
+    let prune_ended = place("sync of the content by the prune", &|event| {
+        *event == Event::SyncDir(objects.clone())
+    });
+    let removed = place(
+        "removal of content",
+        &|event| matches!(event, Event::Remove(path) if path.starts_with(&objects)),
+    );
+    let generation_written = place(
+        "generation written",
+        &|event| matches!(event, Event::Write(path) if path.ends_with("generation.json")),
+    );
+    assert!(removed < prune_ended, "{events:#?}");
     assert!(
-        !*early.lock().unwrap(),
-        "a publication completed inside the prune"
+        prune_ended < generation_written,
+        "a publication went on inside the prune: {events:#?}"
     );
 
     // Whatever the order was, nothing the current generation names is gone.
