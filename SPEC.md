@@ -119,7 +119,8 @@ path dependency on a crate outside the workspace fails the check.
 ### The execution contract
 
 Defined in the core, independent of any door. It is proven at checkpoint 1A with one rascal
-operation and one scripted multi-turn squint run before either tool is ported.
+operation and one scripted multi-turn squint run before either tool is ported. The action
+descriptor is decided in ADR 0003 (`docs/adr/0003-the-action-descriptor.md`).
 
 - **Action descriptor.** Static and deterministic: name, kind, typed arguments, typed artifact
   ports (required, optional, variadic), outputs with their bounds, the capabilities and
