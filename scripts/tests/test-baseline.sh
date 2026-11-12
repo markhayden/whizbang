@@ -54,3 +54,5 @@ audited=$(grep -E '^package_digest = ' "$record" | sed -E 's/^package_digest = /
 
 # The example on the format's page is the file the tests check, and the page says so.
 grep -q -F 'example-transcript.json' docs/baseline/transcript.md || fail "transcript.md does not point at the example"
+
+finished
