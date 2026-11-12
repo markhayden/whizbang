@@ -1,4 +1,4 @@
-//! `whizbang store list|delete|prune`: wiring from arguments to the core's store.
+//! `whizbang store list|delete|prune|import`: wiring from arguments to the core's store.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -37,6 +37,15 @@ pub enum Command {
         #[command(flatten)]
         at: Where,
     },
+    /// For developers: bring a canonical artifact file into a store, under its type and
+    /// identity. A picture is not an artifact file.
+    Import {
+        /// The canonical file of a mask, a location, an image, a band profile, a series
+        /// or a plan.
+        file: PathBuf,
+        #[command(flatten)]
+        at: Where,
+    },
 }
 
 /// Runs a store command: what to print on success, or the complaint.
@@ -44,6 +53,7 @@ pub fn run(command: &Command) -> Result<String, String> {
     match command {
         Command::List { at } => list(&at.store),
         Command::Delete { at, runs } => delete(&at.store, runs),
+        Command::Import { file, at } => crate::import::import(file, &at.store),
         Command::Prune { at } => {
             let pruned = writer(&at.store)?.prune().map_err(|e| e.to_string())?;
             Ok(report(&pruned))

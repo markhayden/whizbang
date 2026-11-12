@@ -24,7 +24,7 @@ fn names(root: &Path, dir: &str) -> BTreeSet<String> {
 fn digests(contents: &[&[u8]]) -> BTreeSet<String> {
     contents
         .iter()
-        .map(|bytes| Digest::of(bytes).to_string())
+        .map(|bytes| Digest::of_bytes(bytes).hex())
         .collect()
 }
 
@@ -36,7 +36,7 @@ fn read_all(
     let mut count = 0;
     for entry in generation.references() {
         let bytes = read(entry);
-        assert_eq!(Digest::of(&bytes), entry.digest);
+        assert_eq!(Digest::of_bytes(&bytes), entry.digest);
         count += 1;
     }
     count

@@ -1065,3 +1065,58 @@ fn crops_that_touch_a_panoramas_right_edge_map_their_right_edge_there_and_back()
         }
     }
 }
+
+#[test]
+fn a_crop_maps_its_top_and_bottom_edges_onto_its_box_exactly_and_back() {
+    // Boxes whose four edges are on tenths of a pixel, most of which are not exact in
+    // binary, at any scale. The crop's top edge must land on the box's top and its bottom
+    // edge on the box's bottom, exactly, and each must come back exactly, as the left and
+    // right edges do; the rows between go there and back within rounding.
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let mut next = |below: u32| -> u32 {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        ((state >> 33) % u64::from(below)) as u32
+    };
+    for case in 0..3000 {
+        let (width, height) = (2 + next(4000), 2 + next(3000));
+        let whole = Space::flat(width, height).unwrap();
+        // Two different tenths inside each dimension, in order.
+        let mut pair = |size: u32| {
+            let a = next(size * 10 + 1);
+            let b = (a + 1 + next(size * 10)) % (size * 10 + 1);
+            (f64::from(a.min(b)) / 10.0, f64::from(a.max(b)) / 10.0)
+        };
+        let (left, right) = pair(width);
+        let (top, bottom) = pair(height);
+        let size = (1 + next(300), 1 + next(300));
+        let crop = crop_of("crop", size, "whole", whole, (left, top, right, bottom))
+            .unwrap_or_else(|error| panic!("case {case}: {error}"));
+        let (across, down) = (f64::from(size.0), f64::from(size.1));
+        let what = format!("case {case}: ({left}, {top}) to ({right}, {bottom}), {size:?}");
+        for x in [0.0, across / 2.0, across] {
+            let on_top = crop.to_destination(Point::new(x, 0.0)).unwrap();
+            let on_bottom = crop.to_destination(Point::new(x, down)).unwrap();
+            assert_eq!(on_top.y, top, "{what}");
+            assert_eq!(on_bottom.y, bottom, "{what}");
+            assert_eq!(crop.to_source(on_top).unwrap().y, 0.0, "{what}");
+            assert_eq!(crop.to_source(on_bottom).unwrap().y, down, "{what}");
+        }
+        // The left and right edges, on the same boxes.
+        let on_left = crop.to_destination(Point::new(0.0, down / 2.0)).unwrap();
+        let on_right = crop.to_destination(Point::new(across, down / 2.0)).unwrap();
+        assert_eq!((on_left.x, on_right.x), (left, right), "{what}");
+        assert_eq!(crop.to_source(on_left).unwrap().x, 0.0, "{what}");
+        assert_eq!(crop.to_source(on_right).unwrap().x, across, "{what}");
+        for step in 1..8 {
+            let point = Point::new(across / 2.0, down * f64::from(step) / 8.0);
+            let there = crop.to_destination(point).unwrap();
+            let back = crop.to_source(there).unwrap();
+            assert!(
+                close(back, point, 1e-9),
+                "{what}: {point:?} {there:?} {back:?}"
+            );
+        }
+    }
+}

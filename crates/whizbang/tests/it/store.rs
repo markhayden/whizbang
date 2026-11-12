@@ -64,7 +64,7 @@ fn with_runs(dir: &Scratch) -> PathBuf {
 }
 
 fn object(root: &Path, bytes: &[u8]) -> PathBuf {
-    root.join("objects").join(Digest::of(bytes).to_string())
+    root.join("objects").join(Digest::of_bytes(bytes).hex())
 }
 
 /// Every path under a directory, with the content of each file.
@@ -320,7 +320,7 @@ fn hand_made(root: &Path, runs: &str) {
 fn list_adds_sizes_without_overflowing() {
     let dir = Scratch::new("cli-store");
     let root = with_runs(&dir);
-    let digest = Digest::of(MASK);
+    let digest = Digest::of_bytes(MASK).hex();
     let huge = u64::MAX - 1;
     hand_made(
         &root,

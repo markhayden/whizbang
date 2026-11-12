@@ -7,7 +7,7 @@ use std::f64::consts::{FRAC_PI_2, PI};
 
 use serde::{Deserialize, Serialize};
 
-use super::digest::Encoder;
+use super::digest::{FieldSource, Fields};
 use super::space::{Point, Space, Topology};
 use super::{IdentityError, Result};
 
@@ -227,7 +227,7 @@ impl Mapping {
     }
 
     /// Writes the mapping into an identity: its kind, then its parameters as given.
-    pub(super) fn encode(&self, encoder: &mut Encoder) {
+    pub(super) fn encode(&self, encoder: &mut dyn Fields) {
         match self {
             Mapping::Identity => encoder.unsigned(0),
             Mapping::Crop {
@@ -258,6 +258,46 @@ impl Mapping {
                 encoder.unsigned(u64::from(*strip));
             }
         }
+    }
+
+    /// Reads back what [`Mapping::encode`] wrote. The mapping is not checked against any
+    /// space here: the binding that holds it does that.
+    pub(super) fn decode(source: &mut dyn FieldSource) -> Result<Mapping> {
+        let matrix = |source: &mut dyn FieldSource| -> Result<[f64; 9]> {
+            let mut matrix = [0.0; 9];
+            for value in &mut matrix {
+                *value = source.float()?;
+            }
+            Ok(matrix)
+        };
+        Ok(match source.unsigned()? {
+            0 => Mapping::Identity,
+            1 => Mapping::Crop {
+                left: source.float()?,
+                top: source.float()?,
+                right: source.float()?,
+                bottom: source.float()?,
+            },
+            2 => Mapping::Homography {
+                matrix: matrix(source)?,
+            },
+            3 => Mapping::Rotation {
+                matrix: matrix(source)?,
+            },
+            4 => {
+                let strip = source.unsigned()?;
+                Mapping::Wrap {
+                    strip: u32::try_from(strip).map_err(|_| {
+                        IdentityError::Binding(format!("a strip of {strip} is too large"))
+                    })?,
+                }
+            }
+            other => {
+                return Err(IdentityError::Binding(format!(
+                    "{other} is not a kind of mapping"
+                )));
+            }
+        })
     }
 }
 

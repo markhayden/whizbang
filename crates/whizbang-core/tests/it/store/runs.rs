@@ -45,7 +45,7 @@ pub(super) fn with_runs(root: &Path) {
 }
 
 pub(super) fn object(root: &Path, bytes: &[u8]) -> std::path::PathBuf {
-    root.join("objects").join(Digest::of(bytes).to_string())
+    root.join("objects").join(Digest::of_bytes(bytes).hex())
 }
 
 /// The ids of the runs a reader sees.
@@ -106,7 +106,9 @@ fn the_same_bytes_are_a_diagnostic_to_one_run_and_an_output_to_another() {
             reader.read_output(diagnostic),
         ] {
             match result {
-                Err(Error::NotAnOutput { digest }) => assert_eq!(digest, Digest::of(EXCHANGE)),
+                Err(Error::NotAnOutput { digest }) => {
+                    assert_eq!(digest, Digest::of_bytes(EXCHANGE))
+                }
                 other => panic!("{other:?}"),
             }
         }
@@ -127,7 +129,7 @@ fn a_generation_file_says_the_kind_of_each_reference_and_the_run_it_belongs_to()
         .put_in("r", "journal", Kind::Diagnostic, C)
         .unwrap();
     publication.publish().unwrap();
-    let (b, c) = (Digest::of(B), Digest::of(C));
+    let (b, c) = (Digest::of_bytes(B).hex(), Digest::of_bytes(C).hex());
     let expected = format!(
         r#"{{
   "format": 2,
@@ -203,7 +205,7 @@ fn deleting_a_run_removes_its_references_and_no_others() {
             .runs()
             .values()
             .flat_map(|run| run.entries().values())
-            .any(|entry| entry.digest == Digest::of(ONLY_ONE)),
+            .any(|entry| entry.digest == Digest::of_bytes(ONLY_ONE)),
         "what only the deleted run referenced is referenced no more"
     );
     // Records outside runs are not a run's to lose.
@@ -346,7 +348,7 @@ fn a_generation_file_of_another_format_is_refused_as_another_format_not_as_damag
   }}
 }}
 "#,
-        Digest::of(super::A1),
+        Digest::of_bytes(super::A1).hex(),
         super::A1.len()
     );
     std::fs::write(root.join("generations/1.json"), first_format).unwrap();

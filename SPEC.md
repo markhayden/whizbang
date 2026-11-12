@@ -210,7 +210,8 @@ are decided in ADR 0001 (`docs/adr/0001-identities.md`).
 
 A mask or a piece of evidence belongs to a binding, never to a bare space. Using a mask on a
 different image, such as the filled result of the image it was made on, needs an explicit,
-checked rebind.
+checked rebind. The artifact types, the mask record and the rebind are decided in ADR 0002
+(`docs/adr/0002-artifacts-and-the-mask-record.md`).
 
 Acceptance at 1A covers: two different images of the same size; one source aligned onto two
 different references of the same size; a re-encoded image; a flat
@@ -770,6 +771,9 @@ whizbang eval run --gate <file>        # rungs 3 and 4
 whizbang models list|get|remove
 whizbang backends status [--probe]
 whizbang store list|delete|prune
+whizbang store import <file> --store <dir>
+                                       # for developers: bring a canonical artifact file
+                                       # (ADR 0002) into a store
 whizbang runs list|show|stats|export
 whizbang spend status|reset
 whizbang serve [--http <addr>]

@@ -76,7 +76,7 @@ fn seen(root: &Path, fs: Arc<dyn Fs>) -> (u64, Contents) {
     for (name, entry) in generation.entries() {
         let bytes = reader.read(entry).unwrap();
         assert_eq!(bytes.len() as u64, entry.bytes, "{name}");
-        assert_eq!(Digest::of(&bytes), entry.digest, "{name}");
+        assert_eq!(Digest::of_bytes(&bytes), entry.digest, "{name}");
         contents.insert(name.clone(), bytes);
     }
     (generation.number(), contents)
@@ -269,14 +269,18 @@ impl Fs for Hooked {
 
 #[test]
 fn content_is_named_by_its_sha_256() {
-    let digest = Digest::of(b"hello");
+    let digest = Digest::of_bytes(b"hello");
     assert_eq!(
-        digest.to_string(),
+        digest.hex(),
         "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
     );
-    assert_eq!(Digest::from_hex(&digest.to_string()), Some(digest));
+    assert_eq!(Digest::from_hex(&digest.hex()), Some(digest));
+    // The one digest type of the core: its own text carries the prefix, a file's name
+    // does not.
+    assert_eq!(digest.to_string(), format!("sha256:{}", digest.hex()));
+    assert_eq!(digest, whizbang_core::identity::Digest::of_bytes(b"hello"));
     assert_eq!(Digest::from_hex("2cf2"), None);
-    assert_eq!(Digest::from_hex(&digest.to_string().to_uppercase()), None);
+    assert_eq!(Digest::from_hex(&digest.hex().to_uppercase()), None);
 }
 
 #[test]
@@ -288,7 +292,7 @@ fn a_payload_is_staged_under_the_store_and_published_under_its_digest() {
     let opened = fs.events().len();
     let mut publication = store.begin().unwrap();
     let digest = publication.put("a", A1).unwrap();
-    assert_eq!(digest, Digest::of(A1));
+    assert_eq!(digest, Digest::of_bytes(A1));
 
     // Staged inside the store's own directory, so the move into place is a rename within
     // one file system; synced as it is written; and not yet where a reader would find it.
@@ -304,13 +308,13 @@ fn a_payload_is_staged_under_the_store_and_published_under_its_digest() {
     assert!(staged[0].starts_with(root.join("staging")), "{staged:?}");
     assert_eq!(
         staged[0].file_name().unwrap().to_string_lossy(),
-        digest.to_string()
+        digest.hex()
     );
     assert_eq!(events.last(), Some(&Event::SyncFile(staged[0].clone())));
-    assert!(!root.join("objects").join(digest.to_string()).exists());
+    assert!(!root.join("objects").join(digest.hex()).exists());
 
     publication.publish().unwrap();
-    let object = root.join("objects").join(digest.to_string());
+    let object = root.join("objects").join(digest.hex());
     assert_eq!(std::fs::read(&object).unwrap(), A1);
     assert!(
         fs.events()
@@ -338,7 +342,7 @@ fn the_same_bytes_are_stored_once() {
     let mut publication = store.begin().unwrap();
     publication.put("three", B).unwrap();
     publication.publish().unwrap();
-    let name = Digest::of(B).to_string();
+    let name = Digest::of_bytes(B).hex();
     assert!(
         !fs.events()[before..]
             .iter()
@@ -363,7 +367,7 @@ fn a_stored_file_that_no_longer_matches_its_entry_is_refused_by_its_digest() {
     ] {
         let dir = Scratch::new("store");
         let root = with_old(&dir);
-        let object = root.join("objects").join(Digest::of(B).to_string());
+        let object = root.join("objects").join(Digest::of_bytes(B).hex());
         std::fs::remove_file(&object).unwrap();
         if let Some(bytes) = damage {
             std::fs::write(&object, bytes).unwrap();
@@ -377,7 +381,7 @@ fn a_stored_file_that_no_longer_matches_its_entry_is_refused_by_its_digest() {
             }) => {
                 assert_eq!(path, object);
                 assert!(found.contains(reason), "{found}");
-                assert!(found.contains(&Digest::of(B).to_string()), "{found}");
+                assert!(found.contains(&Digest::of_bytes(B).hex()), "{found}");
             }
             other => panic!("{reason}: {other:?}"),
         }
@@ -397,7 +401,7 @@ fn files_are_synced_then_their_directory_then_the_pointer_then_its_directory() {
     // Each payload: its content synced, then renamed into place.
     let mut last_payload_rename = 0;
     for bytes in [A2, C] {
-        let name = Digest::of(bytes).to_string();
+        let name = Digest::of_bytes(bytes).hex();
         let staged = match &events[position(
             &events,
             "the payload's write",
@@ -784,7 +788,7 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
     let entry = |bytes: &[u8]| {
         format!(
             r#"{{"digest": "{}", "bytes": {}, "kind": "output"}}"#,
-            Digest::of(bytes),
+            Digest::of_bytes(bytes).hex(),
             bytes.len()
         )
     };
@@ -840,6 +844,15 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
             "a name twice",
             "generations/1.json",
             Some(generation(2, 1, &format!("{a}, {a}"))),
+        ),
+        (
+            "a digest in its own text, with the prefix a generation file leaves out",
+            "generations/1.json",
+            Some(generation(
+                2,
+                1,
+                &a.replace("\"digest\": \"", "\"digest\": \"sha256:"),
+            )),
         ),
         (
             "a field it does not know",
@@ -903,6 +916,18 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
     let root = with_old(&dir);
     std::fs::write(root.join("generations/1.json"), generation(2, 1, &a)).unwrap();
     assert_eq!(seen(&root, Arc::new(RealFs)), (1, contents(&[("a", A1)])));
+}
+
+#[test]
+fn a_generation_file_names_content_by_the_64_digits_alone() {
+    let dir = Scratch::new("store");
+    let root = with_old(&dir);
+    let text = std::fs::read_to_string(root.join("generations/1.json")).unwrap();
+    for bytes in [A1, B] {
+        let entry = format!("\"digest\": \"{}\"", Digest::of_bytes(bytes).hex());
+        assert!(text.contains(&entry), "{text}");
+    }
+    assert!(!text.contains("sha256:"), "{text}");
 }
 
 // The real file system.

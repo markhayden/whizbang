@@ -198,7 +198,7 @@ impl Layout {
         self.root.join("objects")
     }
     fn object(&self, digest: &Digest) -> PathBuf {
-        self.objects().join(digest.to_string())
+        self.objects().join(digest.hex())
     }
     fn staging(&self) -> PathBuf {
         self.root.join("staging")
@@ -349,7 +349,7 @@ impl Files {
                 ),
             ));
         }
-        let found = Digest::of(&bytes);
+        let found = Digest::of_bytes(&bytes);
         if found != digest {
             return Err(Error::corrupt(
                 &path,
@@ -937,7 +937,7 @@ impl Publication<'_> {
     /// Stages the bytes unless the store or this publication already holds them.
     fn stage(&mut self, bytes: &[u8], kind: Kind) -> Result<Entry> {
         let fs = self.files.fs.as_ref();
-        let digest = Digest::of(bytes);
+        let digest = Digest::of_bytes(bytes);
         // Before the look for the content: once this returns, a prune keeps the content
         // whether it was found or staged; and a prune that is removing content now is
         // waited for, so that the look sees what it left.
@@ -969,7 +969,7 @@ impl Publication<'_> {
     }
 
     fn staged_path(&self, digest: &Digest) -> PathBuf {
-        self.dir.join(digest.to_string())
+        self.dir.join(digest.hex())
     }
 
     /// Publishes: the steps and the two guarantees are in the module's description. `Ok`
