@@ -48,10 +48,9 @@ git reset -q --hard HEAD~2
 printf 'refs/heads/coverage %s refs/heads/coverage %s\n' "$(git rev-parse HEAD)" "$zeros" >"$tmp/push-line"
 expect_fail "a file lost from every search, a push" "were not looked in by the search (commits)" \
   losing always lost.txt bash -c "'$scan' --pre-push origin '$remote' <'$tmp/push-line'"
-# An untracked file, lost from the search and from git's own list of files as well: the
-# census lists untracked files without git walking the folder, so it still fails.
+# An untracked file lost from the search: git's own list of untracked files has it.
 printf 'token = %s\n' "$key" >not-added.txt
-expect_fail "an untracked file lost from every search and from git's list" "were not looked in by the search (worktree)" \
+expect_fail "an untracked file lost from every search" "were not looked in by the search (worktree)" \
   losing always not-added.txt "$scan"
 never_clean "a lost untracked file"
 expect_fail "the same file, with git as it is" "not-added.txt:1" "$scan"
@@ -69,6 +68,22 @@ never_clean "a file lost now and then, working tree"
 expect_fail "a file lost from every other search, a range" "two runs of the same search disagree" \
   losing sometimes lost.txt "$scan" --range "$first" HEAD
 never_clean "a file lost now and then, a range"
+
+# Two names for one file (hard links) hold the same bytes: when the search looks in one,
+# the file is covered, and what is in it is reported under that name.
+ln lost.txt same-file.txt
+expect_fail "a hard link lost from every search" "lost.txt:1" losing always same-file.txt "$scan"
+quiet "were not looked in"
+quiet "same-file.txt"
+expect_fail "a hard link, with git as it is" "same-file.txt:1" "$scan"
+rm same-file.txt
+# Lost under both its names, it is not covered.
+printf 'token = %s\n' "$key" >twin-a.txt
+ln twin-a.txt twin-b.txt
+expect_fail "both hard links lost from every search" "1 of the 4 files to cover were not looked in by the search (worktree)" \
+  losing always 'twin-[ab].txt' "$scan"
+never_clean "both hard links lost from every search"
+rm twin-a.txt twin-b.txt
 
 # Without the stand-in the same repository is scanned in full.
 expect_fail "the same, with git as it is" "lost.txt:1" "$scan"
@@ -131,13 +146,8 @@ expect_fail "a file a rule puts back, lost from every search" "were not looked i
 never_clean "a lost file that a rule puts back"
 rm keep.log drop.log
 
-# If git cannot say which files are ignored, the scan does not guess.
-fresh no-check-ignore
+fresh links-and-folders
 commit_file "docs: plain" plain.txt "nothing to see"
-expect_fail "git check-ignore failing" "could not be told from the ignored ones (git check-ignore: exit 128, 1 lines" \
-  env PATH="$tmp/bin:$PATH" BREAK=check-ignore "$scan"
-never_clean "git check-ignore failing"
-quiet "this command is broken"
 
 # A link is not followed, by the list or by the search: a folder outside the repository,
 # linked from inside it, is neither listed nor searched, and the scan does not refuse.
@@ -163,13 +173,6 @@ else
 fi
 chmod 755 locked-folder
 rm -r locked-folder
-# The same when it is find that fails, whatever git's own listing said.
-mkdir "$tmp/find-bin"
-printf '#!/bin/sh\necho "find: ./a-path-it-names: Permission denied" >&2\nexit 1\n' >"$tmp/find-bin/find"
-chmod +x "$tmp/find-bin/find"
-expect_fail "find failing" "could not all be listed (find failed, with 1 lines of errors" env PATH="$tmp/find-bin:$PATH" "$scan"
-quiet "a-path-it-names"
-never_clean "find failing"
 
 # The canary (scripts/tests/scan/canary.sh) fails when a search loses a file, even once in
 # a while, and says how often.

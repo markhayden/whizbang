@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Writes a tool record's generated parts again (SPEC.md section 8, "Tool records"): the
+# example images beside the record, its measurements, its times and its comparison of
+# methods. Rerun it when the tool changes, and commit what it writes.
+#
+#   scripts/tool-record.sh view      docs/reference/tools/view.md and view/
+#
+# It builds in release mode and times real work, so it is heavy: run it through
+# scripts/heavy.sh when another agent may be building. The fast tests then hold the record
+# to the tool: the images byte for byte, and the measurements that do not depend on the
+# machine. The times are only as fresh as the last run of this script.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+case "${1:-}" in
+  view)
+    cargo test --release -p whizbang-squint --test it -- \
+      --ignored --exact record::write_the_record
+    ;;
+  *)
+    echo "tool-record: usage: scripts/tool-record.sh view" >&2
+    exit 2
+    ;;
+esac
+echo "tool-record: wrote docs/reference/tools/$1.md and docs/reference/tools/$1/"

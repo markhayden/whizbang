@@ -1,6 +1,38 @@
 {
-  "description_version": 1,
+  "description_version": 2,
   "name": "whizbang",
   "version": "0.0.1",
-  "actions": []
+  "actions": [],
+  "artifact_types": [
+    {
+      "name": "mask",
+      "purpose": "What to change in an image (core), how the change fades (blend) and what to keep (protect), with the band profile and the prescriptions it carries.",
+      "travels_as": "canonical_file"
+    },
+    {
+      "name": "location",
+      "purpose": "Where something is in an image: a box, a polygon, a view, a line, a stroke, the whole image, or that it is absent.",
+      "travels_as": "canonical_file"
+    },
+    {
+      "name": "image",
+      "purpose": "A picture file held whole: a photograph, a composite or a crop; or a rendering of another artifact, which is never accepted in that artifact's place.",
+      "travels_as": "canonical_file"
+    },
+    {
+      "name": "band_profile",
+      "purpose": "A band along a line: its half-width for each row, with the line and the sampling windows it was measured through.",
+      "travels_as": "canonical_file"
+    },
+    {
+      "name": "series",
+      "purpose": "Values measured along the rows of an image, such as the width of a feather or the step of a tone ramp for each row.",
+      "travels_as": "canonical_file"
+    },
+    {
+      "name": "plan",
+      "purpose": "How a wrapped cut was taken from a panorama, and so how it goes back: the width of the strip taken from each side of the seam.",
+      "travels_as": "canonical_file"
+    }
+  ]
 }

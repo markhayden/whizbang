@@ -18,7 +18,8 @@ No model runs in this checkpoint. Every capability is a fake from the test kit.
 
 - **Three ADRs, each merged with the first code that depends on it:** identities (A1),
   artifacts and the mask record (A4), and the capability interfaces with fill's conventions
-  (A8).
+  (A8). The execution contract (A5) turned out to need its own: ADR 0003 is the action
+  descriptor's, so the capability interfaces take the next free number.
 - **The store is files on disk,** published the way rascal's workspace publishes: immutable
   generations, a single pointer that names the current one, and file and directory syncs in a
   fixed order. No database.
@@ -189,6 +190,10 @@ behaviour in milestone 3.
 
 ### A5. The execution contract
 
+**Delivered in parts.** The first is the action descriptor (ADR 0003), registration, the
+static description and the two fixtures; it ticks the boxes it makes true. The boxes left
+open are for the parts that follow: preparing a call, and the executor with the run record.
+
 **Depends on:** A3, A4. **Reads:** rascal `crates/rascal-core/src/op.rs` and the recipes
 `crates/rascal-mask/recipes/seam.toml` and `remove-prompt.toml`; squint
 `crates/squint-core/src/tool/manifest.rs`; table-manners `schemas/core/description.json` and
@@ -199,16 +204,16 @@ behaviour in milestone 3.
 - [ ] In `whizbang-core`: the action descriptor, call, prepared call, context, outcome, run
       record and the executor interface; and the handle types through which a context offers
       capabilities, with their contents left to A8.
-- [ ] Also reads rascal `crates/rascal-mask/src/describe.rs`: the optional filler argument
+- [x] Also reads rascal `crates/rascal-mask/src/describe.rs`: the optional filler argument
       comes from the action description's common properties, not from the recipes.
 - [ ] Registry and executor construction in a module the binary and the tests both use. The
       executor's entry point is where a request id is looked up (A6 fills it in).
 - [ ] `whizbang-testkit`: an `echo` action, registered only by tests.
-- [ ] Descriptor fixtures for `seam` and `remove_prompt`, written from their recipes and the
+- [x] Descriptor fixtures for `seam` and `remove_prompt`, written from their recipes and the
       common properties, that must be expressible: several outputs of different types; an
       optional protect input; a bounded number of instances; a capability needed only for some
       arguments (a filler chosen, or the mask alone); a mask rebound onto a composite.
-- [ ] `whizbang describe` lists what the binary registered.
+- [x] `whizbang describe` lists what the binary registered.
 
 **Done when** these pass: `echo` runs through the executor in a test and its run record is in
 the store, validates against the record's schema, and has every group filled or explicitly
@@ -281,7 +286,7 @@ returns finds the run by its id.
 `tools/python/src/rascal_tools/models/adapters.py`, and the composite and its preservation
 check in `crates/rascal-mask/src/heal.rs`.
 
-- [ ] ADR 0003: the request and response of segment, fill and judge; feature declarations;
+- [ ] An ADR, the next free number (0003 is the action descriptor's): the request and response of segment, fill and judge; feature declarations;
       resolution. For judge: ordered mixed content, provider-opaque parts kept whole, usage,
       and typed errors. For fill: the support plane's polarity and range; how core, blend and
       protect become it; the colour and alpha rules of the returned pixels.
@@ -335,13 +340,13 @@ status, and every diagnostic written before it ended is readable.
 **Depends on:** A4. **Reads:** squint `crates/squint-tools/src/builtin/view.rs` and
 `raster.rs`, and their pixel and mapping tests.
 
-- [ ] `whizbang-squint` is created with `view` for flat images: a crop by box, snapped
+- [x] `whizbang-squint` is created with `view` for flat images: a crop by box, snapped
       outward to whole pixels; downscaling to a bound; the optional second image; each
       returned crop as a binding onto its source.
-- [ ] Its pixel and mapping tests, without the old loop tests.
-- [ ] Panorama rendering is left for milestone 2 and listed on the carry-over list.
+- [x] Its pixel and mapping tests, without the old loop tests.
+- [x] Panorama rendering is left for milestone 2 and listed on the carry-over list.
 
-- [ ] Its tool record, `docs/reference/tools/view.md`: two worked examples with their images;
+- [x] Its tool record, `docs/reference/tools/view.md`: two worked examples with their images;
       mapping error against known boxes; time at three image sizes; known limits, including
       that panoramas are not yet supported.
 
