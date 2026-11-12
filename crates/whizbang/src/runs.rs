@@ -255,9 +255,9 @@ fn text_of(record: &RunRecord) -> String {
     for diagnostic in record.diagnostics() {
         line(format!(
             "  {}\t{} bytes\t{}",
-            shown(&diagnostic.name),
-            diagnostic.bytes,
-            diagnostic.digest
+            shown(diagnostic.name()),
+            diagnostic.bytes(),
+            diagnostic.digest()
         ));
     }
     text

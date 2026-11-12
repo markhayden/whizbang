@@ -16,13 +16,18 @@ use crate::artifact::ArtifactType;
 use crate::identity::Digest;
 use crate::store::{self, Entry, Generation, Kind};
 
-use super::{Outcome, PreparedCall, Secrets, Value};
+use super::journal::{JournalLine, journal_bytes};
+use super::{Outcome, PreparedCall, Secrets, StoreFailure, Value};
 
 /// The record's kind, with its version.
 pub const RUN_RECORD: &str = "run/1";
 
 /// The JSON Schema of a `run/1` record, as a document.
 pub const RUN_RECORD_SCHEMA: &str = include_str!("../../schemas/run-1.json");
+
+/// The most bytes a stored record may be: four mebibytes. A record is read whole and
+/// written again to be compared, so what is read is bounded before it is read.
+pub const RECORD_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
 /// The name, among a run's names in the store, of its record.
 pub const RECORD_NAME: &str = "record";
@@ -32,6 +37,31 @@ pub const JOURNAL_NAME: &str = "journal";
 
 /// What the name of every diagnostic an action wrote starts with, among a run's names.
 pub const DIAGNOSTICS_PREFIX: &str = "diagnostics/";
+
+/// A field that may be null and may not be left out: every field of a record is always
+/// there.
+fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::deserialize(deserializer)
+}
+
+/// The longest name of a diagnostic an action wrote, in characters.
+pub const DIAGNOSTIC_NAME_LIMIT: usize = 64;
+
+/// Whether this can be the name an action gives a diagnostic: a lower-case letter or a
+/// digit, then lower-case letters, digits, `_`, `-` or `.`; 64 characters at most. So it
+/// is one path segment and one word on a command line, as a run's id is.
+pub fn is_diagnostic_name(name: &str) -> bool {
+    let plain = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
+    name.len() <= DIAGNOSTIC_NAME_LIMIT
+        && name.chars().next().is_some_and(plain)
+        && name
+            .chars()
+            .all(|c| plain(c) || c == '_' || c == '-' || c == '.')
+}
 
 /// A list that holds nothing in this version of the record: its element has no value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,8 +74,10 @@ pub struct Identity {
     /// The run's id.
     pub run: String,
     /// The caller's request id. None until a call can carry one.
+    #[serde(deserialize_with = "present")]
     pub request: Option<String>,
     /// The run that called this one. None for a run that nothing nested.
+    #[serde(deserialize_with = "present")]
     pub parent: Option<String>,
     /// The version of whizbang that ran it.
     pub whizbang: String,
@@ -142,8 +174,10 @@ pub struct Failed {
 pub struct Ended {
     pub status: Status,
     /// There exactly when the status is `error`.
+    #[serde(deserialize_with = "present")]
     pub error: Option<Failed>,
     /// There exactly when the status is `invalid`.
+    #[serde(deserialize_with = "present")]
     pub invalid: Option<String>,
     /// What was refused inside the run, and why. Nothing is refused inside a run yet.
     pub refusals: Vec<Nothing>,
@@ -164,9 +198,66 @@ pub struct Time {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Diagnostic {
-    pub name: String,
-    pub digest: Digest,
-    pub bytes: u64,
+    name: String,
+    digest: Digest,
+    bytes: u64,
+}
+
+impl Diagnostic {
+    /// The journal of a run, as a diagnostic, with the bytes to store under its name.
+    /// Each line had the secrets taken out when it was made ([`JournalLine::new`]).
+    pub fn journal(lines: &[JournalLine]) -> (Diagnostic, Vec<u8>) {
+        let stored = journal_bytes(lines);
+        (Diagnostic::naming(JOURNAL_NAME.to_owned(), &stored), stored)
+    }
+
+    /// Something an action wrote under a name of its own, as a diagnostic, with the
+    /// bytes to store under its name: the content with the secrets taken out. The name
+    /// must be a plain one ([`is_diagnostic_name`]); in the run it is `diagnostics/` and
+    /// that name. The digest and the length are of what is stored.
+    ///
+    /// This and [`Diagnostic::journal`] are the two ways to make one, beside reading a
+    /// stored record: a diagnostic that a record lists was redacted when it was made.
+    pub fn written(
+        name: &str,
+        content: &[u8],
+        secrets: &Secrets,
+    ) -> Result<(Diagnostic, Vec<u8>), String> {
+        if !is_diagnostic_name(name) {
+            let shown: String = name.chars().take(DIAGNOSTIC_NAME_LIMIT).collect();
+            return Err(format!(
+                "{shown:?} is no name for a diagnostic: a name is a lower-case letter or a \
+                 digit, then lower-case letters, digits, _, - or ., {DIAGNOSTIC_NAME_LIMIT} \
+                 characters at most"
+            ));
+        }
+        let stored = secrets.redact_bytes(content);
+        let diagnostic = Diagnostic::naming(format!("{DIAGNOSTICS_PREFIX}{name}"), &stored);
+        Ok((diagnostic, stored))
+    }
+
+    fn naming(name: String, stored: &[u8]) -> Diagnostic {
+        Diagnostic {
+            name,
+            digest: Digest::of_bytes(stored),
+            bytes: stored.len() as u64,
+        }
+    }
+
+    /// Its name among the run's names in the store.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The digest of what is stored under the name.
+    pub fn digest(&self) -> Digest {
+        self.digest
+    }
+
+    /// The length of what is stored under the name.
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
 }
 
 /// The record of one run.
@@ -200,6 +291,8 @@ pub enum RecordError {
     Inconsistent(String),
     /// A record that is not written the one way a record is written.
     NotCanonical,
+    /// More bytes than a record may be ([`RECORD_MAX_BYTES`]). They were not read.
+    TooLarge { bytes: u64 },
 }
 
 impl std::fmt::Display for RecordError {
@@ -210,8 +303,15 @@ impl std::fmt::Display for RecordError {
                 "a record of another version: {}, and this build reads {RUN_RECORD}",
                 found.escape_debug()
             ),
-            RecordError::Malformed(why) => write!(f, "not a run record: {why}"),
+            // The reason can quote what was read: it is shown escaped.
+            RecordError::Malformed(why) => {
+                write!(f, "not a run record: {}", why.escape_debug())
+            }
             RecordError::Inconsistent(why) => write!(f, "not a run record: {why}"),
+            RecordError::TooLarge { bytes } => write!(
+                f,
+                "not a run record: {bytes} bytes, and a record is at most {RECORD_MAX_BYTES}"
+            ),
             RecordError::NotCanonical => {
                 f.write_str("not a run record: it is not written the one way a record is written")
             }
@@ -342,13 +442,22 @@ impl RunRecord {
     /// another version does not have this one's shape, and is another version, not
     /// damage.
     pub fn from_bytes(bytes: &[u8]) -> Result<RunRecord, RecordError> {
+        if bytes.len() as u64 > RECORD_MAX_BYTES {
+            return Err(RecordError::TooLarge {
+                bytes: bytes.len() as u64,
+            });
+        }
         #[derive(Deserialize)]
         struct Version {
             record: String,
         }
         match serde_json::from_slice::<Version>(bytes) {
             Ok(Version { record }) if record != RUN_RECORD => {
-                return Err(RecordError::OtherVersion { found: record });
+                // What it says its version is can be anything: its first 64 characters
+                // are kept.
+                return Err(RecordError::OtherVersion {
+                    found: record.chars().take(64).collect(),
+                });
             }
             _ => {}
         }
@@ -364,6 +473,44 @@ impl RunRecord {
     /// What the shape alone does not hold.
     fn check(&self) -> Result<(), RecordError> {
         let refuse = |why: &str| Err(RecordError::Inconsistent(why.to_owned()));
+        let named = [
+            ("the run's id", &self.identity.run),
+            ("the version of whizbang", &self.identity.whizbang),
+            ("the action's name", &self.asked.action),
+            ("the action's version", &self.asked.version),
+        ];
+        let arguments = self
+            .asked
+            .arguments
+            .iter()
+            .map(|a| ("an argument's name", &a.name));
+        let inputs = self.inputs.iter().map(|i| ("an input's port", &i.port));
+        let outputs = self.outputs.iter().map(|o| ("an output's port", &o.port));
+        for (what, text) in named
+            .into_iter()
+            .chain(arguments)
+            .chain(inputs)
+            .chain(outputs)
+        {
+            if text.is_empty() {
+                return refuse(&format!("{what} is empty"));
+            }
+        }
+        // A diagnostic is the journal, or something the action wrote under a plain name.
+        // The record itself is one of the run's names and is not one of its diagnostics.
+        let known = |name: &str| {
+            name == JOURNAL_NAME
+                || name
+                    .strip_prefix(DIAGNOSTICS_PREFIX)
+                    .is_some_and(is_diagnostic_name)
+        };
+        if !self.diagnostics.iter().all(|d| known(&d.name)) {
+            return refuse(
+                "a diagnostic is named journal, or diagnostics/ and a plain name: a \
+                 lower-case letter or a digit, then lower-case letters, digits, _, - or ., \
+                 64 characters at most",
+            );
+        }
         let outcome = &self.outcome;
         if outcome.error.is_some() != (outcome.status == Status::Error) {
             return refuse("an error has its type and message, and nothing else has");
@@ -420,8 +567,9 @@ impl RunRecord {
 pub enum StoredRecordError {
     /// The run has no name `record`: something else made it.
     NoRecord,
-    /// The store failed to give the record's content.
-    Store(store::Error),
+    /// The store failed to give the record's content. Its text and what `{:?}` prints
+    /// of it hold no path; the store's own error is [`StoreFailure::cause`].
+    Store(StoreFailure),
     /// What the run holds under `record` is not a record this build reads.
     Record(RecordError),
     /// The record names another run than the one it is stored in.
@@ -458,8 +606,13 @@ pub fn stored(
     let Some(entry) = run.get(RECORD_NAME) else {
         return Some(Err(StoredRecordError::NoRecord));
     };
+    if entry.bytes > RECORD_MAX_BYTES {
+        return Some(Err(StoredRecordError::Record(RecordError::TooLarge {
+            bytes: entry.bytes,
+        })));
+    }
     let record = read(entry)
-        .map_err(StoredRecordError::Store)
+        .map_err(|error| StoredRecordError::Store(StoreFailure::new(error)))
         .and_then(|bytes| RunRecord::from_bytes(&bytes).map_err(StoredRecordError::Record))
         .and_then(|record| {
             if record.identity.run == id {

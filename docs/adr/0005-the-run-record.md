@@ -91,9 +91,17 @@ in the schema each has at most zero items. A record with anything in one of them
 The shape of what goes in them is not decided here, because it follows from things that
 do not exist: the request and response of a capability, the ledger's reservation, a
 recipient, a recipe step, a judge's turn. Whatever first fills one of these lists defines
-its elements and writes a new version of the record (`run/2`), with its own decision
-record or an amendment of this one. Until a store is kept, a new version costs nothing: a
-store written by earlier code of the checkpoint is discarded, as ADR 0002 says of masks.
+its elements and writes a new version of the record, with its own decision record or an
+amendment of this one.
+
+**When a store starts being kept, and what a version costs before and after.** A store is
+kept from the tag that closes checkpoint 1A. Before that tag a store written by earlier
+code of the checkpoint is discarded, as ADR 0002 says of masks, and the fills of the empty
+lists that the checkpoint's own tasks make (request ids and admission; nested calls,
+cancellation and publication; the capability interfaces; the two proofs) may share one
+step to `run/2`, each adding to it as it lands. `run/2` is frozen at that tag. After it,
+every fill is a new version, and whatever reads records goes on reading the frozen
+versions.
 
 `identity.request` and `identity.parent` are null in every record written today, because
 no call carries a request id and no call nests. They are strings when they are filled, and
@@ -106,17 +114,31 @@ object in the order this record gives them, strings escaped as `serde_json` esca
 a number in the shortest form that reads back to the same double, with a point or an
 exponent, a whole number without one. One newline follows.
 
-Reading refuses:
+Reading refuses, in this order:
 
+- more than 4 MiB (4,194,304 bytes, `RECORD_MAX_BYTES`): a record is read whole and
+  written again to be compared, so what is read is bounded first. From a store, the
+  entry's length is looked at and the content is not read at all;
 - a record of another version, as another version: the `record` field is looked at first
-  and by itself, and a store written by other code is not migrated;
-- anything that is not of the shape: a field that is not known, a field left out, a
-  digest, a type or a status that is none, a value under two kinds or under none;
-- a record of the right shape that says what no run can: an `error` without the status
-  `error` or the status without it; the same for `invalid`; an output of a run that did not
-  complete; an end before the start; diagnostics out of the order of their names, or one
-  name twice;
+  and by itself, and a store written by other code is not migrated. What a record says
+  its version is can be anything, and the refusal keeps its first 64 characters;
+- anything that is not of the shape: a field that is not known; a field left out,
+  `request`, `parent`, `error` and `invalid` among them, which may be null and may not be
+  absent; a digest, a type or a status that is none; a value under two kinds or under
+  none; a number under zero where a time or a length goes;
+- a record of the right shape that says what no run can: an empty run id, version, action
+  name, argument name or port; an `error` without the status `error` or the status
+  without it; the same for `invalid`; an output of a run that did not complete; an end
+  before the start; a diagnostic whose name is neither `journal` nor `diagnostics/` and a
+  plain name (a lower-case letter or a digit, then lower-case letters, digits, `_`, `-`
+  or `.`, 64 characters at most), so that `record` itself is not one; diagnostics out of
+  the order of their names, or one name twice;
 - bytes that are not the bytes this code writes for the record they hold.
+
+A refusal can quote what was read: an unknown field's name, a version. What it quotes is
+shown escaped, so nothing stored reaches a terminal as a control character through a
+refusal. A failure of the store under a record is said as ADR 0004 says a store's failure:
+no path, as text or as `{:?}`, and the store's own error by name.
 
 The last rule is ADR 0002's for an artifact file, and for the same reason: one record has
 one form, so two stores that hold the same record hold the same bytes, and the digest the
@@ -131,25 +153,99 @@ name.
 
 `crates/whizbang-core/schemas/run-1.json` is the JSON Schema (2020-12) of a `run/1`
 record, written by hand, and the core carries it as text (`RUN_RECORD_SCHEMA`). It and the
-types are two statements of one shape. The tests hold them together: hand-written records
-are read by the types and validated against the schema, and each change that the types
-refuse is refused by the schema where the schema can say it.
+types are two statements of one shape, and the tests hold them together in three ways:
 
-The schema says less than the reading does. It does not hold a digest to its hex digits
-(only to its length), the consistency rules of the last section, the order of
-diagnostics, or the one way of writing.
+- Records written by hand, and records made from a prepared call and an outcome, are read
+  by the types and validated against the schema.
+- For every kind of thing the shape refuses (an unknown field at the top and in each
+  group, each field left out, a digest of the wrong length, a type or status that is
+  none, a value under two kinds or none, a number under zero, a name that is empty, each
+  list that must be empty holding something), one document is made with that one fault,
+  and both the types and the schema must refuse it
+  (`record::what_is_not_a_record_is_refused_by_the_types_and_by_the_schema` and the two
+  tests beside it). A schema that is loosened in one of these places fails a test.
+- What the schema cannot say is listed, and pinned as a document the schema takes and
+  the types refuse (`record::what_the_schema_cannot_say_the_types_still_refuse`).
+
+What the schema cannot say, with the vocabulary it uses (no pattern, no rule across two
+fields):
+
+- that a digest's 64 characters are hex digits: it holds a digest to its length only;
+- the rules across fields: `error` exactly with the status `error`, `invalid` exactly
+  with `invalid`, outputs only of a completed run, the end not before the start;
+- what a diagnostic's name may be, the order of the diagnostics, and that no name is
+  there twice;
+- the one way of writing, and the limit on a record's bytes: both are of the bytes, not
+  of the document.
 
 The validator is the test kit's (`whizbang_testkit::schema`): the keywords this schema
-uses and no others, and a keyword it does not know is an error, so a schema never passes
-for holding less than it says. No schema library is added to the build.
+uses and no others. It reads a schema whole before it holds a document to it, and
+refuses a keyword it does not know, a keyword whose value is not of the kind the keyword
+takes, and a reference that leads back to itself, wherever in the schema they are; so a
+schema never passes for holding less than it says. No schema library is added to the
+build.
 
 ### Redaction
 
-`Secrets` holds the values that must never be written. It is squint's pass: every secret
-is replaced by `[redacted]` where it stands as it is, and where it stands in the form a
-JSON string gives it, so a secret quoted inside a JSON body is found. Two things are
-added: a secret that holds another is replaced whole, because the longer is replaced
-first; and the type does not print what it holds.
+`Secrets` holds the values that must never be written, and does not print them. The pass
+began as squint's, which replaced a secret by `[redacted]` where it stood as it was and
+where it stood as a JSON string escapes it. Here:
+
+- **It works on bytes, whatever their encoding.** A body with one byte that is not UTF-8,
+  as a worker's error output cut in the middle of a character is, is searched like any
+  other (`Secrets::redact_bytes`); a text is redacted as its bytes.
+- **Four forms of each secret are searched for:** as it is; as a JSON string escapes it;
+  the same with each `/` written `\/`; and percent-encoded, as a URL holds it, with the
+  hex digits in either case.
+- **Everything is found before anything is replaced.** Every form of every secret is
+  looked for over the bytes as they were given; stretches that overlap are one stretch;
+  each stretch is replaced once. So a secret that holds another is replaced whole, two
+  secrets that overlap leave no tail of either, a secret that is part of the marker
+  cannot rewrite the marker, and a secret that ends in a backslash does not leave half
+  of its own JSON escape behind.
+- **It is one pass.** At each byte, only the forms that start with that byte are
+  compared. The cost is the length of the body times the number of forms that share a
+  first byte, not times the number of secrets; there is no bound on how many secrets
+  there are.
+- **A secret is at least 8 bytes** (`SECRET_MIN_BYTES`). A shorter value would match
+  inside ordinary words and inside JSON's own escapes: a secret `n` would turn `\n` into
+  `\[redacted]`. A shorter value is refused when the secrets are built
+  (`SecretRefused`), and then none are built: whoever meant to protect it is told that it
+  is not protected. One value is left out without a refusal, the empty one: it is what a
+  variable that was never set expands to, and refusing it would make every key that is
+  not configured an error.
+
+A redacted body is searched as bytes, not as JSON. A body that was JSON is still JSON
+after it wherever a secret stood whole in one of its forms. One case can break it: a
+secret that ends in a backslash, found as it stands in front of an escape that is not its
+own, as `abcdefgh\` in front of `"` in `abcdefgh\"`; the string then ends early.
+
+#### What redaction does not find
+
+Redaction is by value and by form. It finds the secrets it was told of, in the four forms
+above, and nothing else:
+
+- a key it was not told of: it does not know a key by its shape;
+- a secret inside base64, as in a basic authorization header (`user:<key>`, encoded);
+- a secret with a character written as a `\u00XX` escape that a JSON writer need not
+  have used;
+- a secret in UTF-16 or any encoding in which its bytes are not its UTF-8 bytes;
+- a secret split across two texts, or across two lines of a journal;
+- a secret compressed, hashed, or inside an image.
+
+A test pins the first three encoded forms as getting through, so that this list stays
+true. They are on `docs/carry-over.md` for checkpoint 1B, where a config first holds a
+key and a worker first returns a body.
+
+**By construction, where it is cheap.** A line of a journal is made by a constructor that
+takes the secrets (`JournalLine::new`), and a diagnostic by one of two
+(`Diagnostic::journal`, from such lines, and `Diagnostic::written`, which takes the
+content and the secrets, checks the name, and gives back the bytes to store with the
+digest of those bytes). Their fields are not public. Beside these, a line and a diagnostic
+come only from reading what was stored, which reading checks. So a record cannot list a
+diagnostic, and a journal cannot hold a line, that did not pass through redaction; what
+is not held by construction is that the bytes then stored are the bytes that were given
+back.
 
 In a record, redaction is applied to each text that comes from outside the build, before
 the record is encoded: an argument's value when it is a text, an error's kind and
@@ -172,9 +268,6 @@ message has written it into the record. A `CallError` shows no path,
 as its text or as `{:?}`; the store's own error does, and an action that quotes one in a
 message quotes it without (`store::Error::without_paths`). Nothing holds an action to
 that (`docs/carry-over.md`).
-
-Bytes that are not UTF-8, as an image is not, cannot be searched for a text and are kept
-as they are (`Secrets::redact_bytes`).
 
 ### Where a record is, in a store
 

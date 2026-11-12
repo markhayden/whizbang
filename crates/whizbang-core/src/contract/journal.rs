@@ -1,12 +1,11 @@
-//! What a run keeps while it executes, to be stored when it ends: its journal of
-//! progress events, and the diagnostics its action wrote.
+//! A run's journal: its progress events, as they are stored, and what a run keeps
+//! while it executes, to be stored when it ends (ADR 0005).
 //!
 //! Squint kept a journal as a file it appended to and synced one event at a time
 //! (`crates/squint-core/src/journal.rs`), and dropped a torn last line on reading. Here
 //! the store is the one owner of everything durable, and it has one way in: a
-//! publication. So a run's journal is collected while the run executes and published
-//! whole, with the run's record, when the run ends. A journal in the store is never
-//! torn, and reading one refuses any line that is not an event.
+//! publication. So a journal is stored whole, with its run's record; one in the store is
+//! never torn, and reading one refuses any line that is not an event.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -14,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use super::record::Diagnostic;
 use super::{Diagnostics, Events, Secrets};
 
 /// What tells a run the time: milliseconds since the Unix epoch.
@@ -34,39 +34,14 @@ impl Clock for SystemClock {
     }
 }
 
-/// One line of a journal: a progress event, with its place in the run and its time.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct JournalLine {
-    /// Its place among the run's events, from 0.
-    pub seq: u64,
-    /// When it was reported, in milliseconds since the Unix epoch.
-    pub at_ms: u64,
-    /// What the action said, with the secrets taken out.
-    pub message: String,
-}
-
-/// The longest name of a diagnostic, in characters.
-pub const DIAGNOSTIC_NAME_LIMIT: usize = 64;
-
-/// Whether this can be the name of a diagnostic: a lower-case letter or a digit, then
-/// lower-case letters, digits, `_`, `-` or `.`; 64 characters at most. So it is one path
-/// segment and one word on a command line, as a run's id is.
-pub fn is_diagnostic_name(name: &str) -> bool {
-    let plain = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
-    name.len() <= DIAGNOSTIC_NAME_LIMIT
-        && name.chars().next().is_some_and(plain)
-        && name
-            .chars()
-            .all(|c| plain(c) || c == '_' || c == '-' || c == '.')
-}
-
-/// The journal and the diagnostics of one run, in memory until the run ends.
+/// The journal and the diagnostics of one run, in memory until the run ends. Each line
+/// and each diagnostic is made through its constructor, with the secrets taken out.
 pub(super) struct Kept {
     clock: Arc<dyn Clock>,
     secrets: Secrets,
     lines: Mutex<Vec<JournalLine>>,
-    diagnostics: Mutex<BTreeMap<String, Vec<u8>>>,
+    /// By the name the action gave: the diagnostic and the bytes to store under it.
+    diagnostics: Mutex<BTreeMap<String, (Diagnostic, Vec<u8>)>>,
 }
 
 impl Kept {
@@ -79,46 +54,78 @@ impl Kept {
         }
     }
 
-    /// The journal as it is stored, and each diagnostic by its name, in order: what was
-    /// kept until now. What is written after this is not part of the run.
-    pub(super) fn take(&self) -> (Vec<u8>, BTreeMap<String, Vec<u8>>) {
+    /// The journal's lines, and each diagnostic with the bytes to store under it, in the
+    /// order of their names: what was kept until now. What is written after this is not
+    /// part of the run.
+    pub(super) fn take(&self) -> (Vec<JournalLine>, Vec<(Diagnostic, Vec<u8>)>) {
         let lines = std::mem::take(&mut *self.lines.lock().unwrap_or_else(|e| e.into_inner()));
         let diagnostics =
             std::mem::take(&mut *self.diagnostics.lock().unwrap_or_else(|e| e.into_inner()));
-        (journal_bytes(&lines), diagnostics)
+        (lines, diagnostics.into_values().collect())
     }
 }
 
 impl Events for Kept {
     fn progress(&self, message: &str) {
         let mut lines = self.lines.lock().unwrap_or_else(|e| e.into_inner());
-        let line = JournalLine {
-            seq: lines.len() as u64,
-            at_ms: self.clock.now_ms(),
-            message: self.secrets.redact(message),
-        };
+        let line = JournalLine::new(
+            lines.len() as u64,
+            self.clock.now_ms(),
+            message,
+            &self.secrets,
+        );
         lines.push(line);
     }
 }
 
 impl Diagnostics for Kept {
     fn write(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
-        if !is_diagnostic_name(name) {
-            let shown: String = name.chars().take(DIAGNOSTIC_NAME_LIMIT).collect();
-            return Err(format!(
-                "{shown:?} is no name for a diagnostic: a name is a lower-case letter or a \
-                 digit, then lower-case letters, digits, _, - or ., {DIAGNOSTIC_NAME_LIMIT} \
-                 characters at most"
-            ));
-        }
+        let made = Diagnostic::written(name, bytes, &self.secrets)?;
         let mut diagnostics = self.diagnostics.lock().unwrap_or_else(|e| e.into_inner());
         if diagnostics.contains_key(name) {
             return Err(format!(
                 "the run already wrote a diagnostic named {name}: a name is written once"
             ));
         }
-        diagnostics.insert(name.to_owned(), self.secrets.redact_bytes(bytes));
+        diagnostics.insert(name.to_owned(), made);
         Ok(())
+    }
+}
+
+/// One line of a journal: a progress event, with its place in the run and its time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalLine {
+    seq: u64,
+    at_ms: u64,
+    message: String,
+}
+
+impl JournalLine {
+    /// The event at this place and time, saying this, with the secrets taken out. It is
+    /// the one way to make a line, beside reading a stored journal: a line in a journal
+    /// was redacted when it was made.
+    pub fn new(seq: u64, at_ms: u64, message: &str, secrets: &Secrets) -> JournalLine {
+        JournalLine {
+            seq,
+            at_ms,
+            message: secrets.redact(message),
+        }
+    }
+
+    /// Its place among the run's events, from 0.
+    pub fn seq(&self) -> u64 {
+        self.seq
+    }
+
+    /// When it was reported, in milliseconds since the Unix epoch.
+    pub fn at_ms(&self) -> u64 {
+        self.at_ms
+    }
+
+    /// What the action said, with the secrets taken out.
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 
@@ -142,8 +149,11 @@ pub fn read_journal(bytes: &[u8]) -> Result<Vec<JournalLine>, String> {
     }
     let mut lines = Vec::new();
     for (index, raw) in text.lines().enumerate() {
-        let line: JournalLine = serde_json::from_str(raw)
-            .map_err(|error| format!("line {} is not an event: {error}", index + 1))?;
+        let line: JournalLine = serde_json::from_str(raw).map_err(|error| {
+            // The reason can quote the line: it is shown escaped.
+            let why = error.to_string();
+            format!("line {} is not an event: {}", index + 1, why.escape_debug())
+        })?;
         if line.seq != index as u64 {
             return Err(format!(
                 "line {} is event {}, out of its place",

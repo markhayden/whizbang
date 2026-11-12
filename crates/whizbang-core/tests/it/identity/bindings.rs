@@ -660,6 +660,31 @@ fn a_binding_is_checked_again_when_it_is_read() {
 // --- the encoding, part by part -----------------------------------------------------------
 
 #[test]
+fn a_binding_read_from_json_has_every_number_it_was_written_with() {
+    // A double is written in the shortest form that names it, up to seventeen digits.
+    // Reading must give the same double back, or the binding that was read is another
+    // binding, with another identity. These two values are ones a reader that takes the
+    // fast path gets wrong in the last bit.
+    for value in [1.6290118483412321_f64, 1.0715660391465826e-75] {
+        let binding = Binding::new(
+            image("a"),
+            Space::flat(100, 100).unwrap(),
+            image("b"),
+            Space::flat(100, 100).unwrap(),
+            Direction::SourceToDestination,
+            Mapping::Homography {
+                matrix: [1.0, 0.0, value, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+            },
+        )
+        .unwrap();
+        let text = serde_json::to_string(&binding).unwrap();
+        let read: Binding = serde_json::from_str(&text).unwrap();
+        assert_eq!(read, binding, "{value:?}");
+        assert_eq!(read.id(), binding.id(), "{value:?}");
+    }
+}
+
+#[test]
 fn the_topology_alone_tells_two_bindings_apart() {
     let whole = Space::panorama(400, 200).unwrap();
     let part = Space::new(400, 200, Projection::Equirectangular, Topology::Bounded).unwrap();

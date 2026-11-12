@@ -91,6 +91,20 @@
 //! on local file systems only, and `LOCK` must never be removed or replaced while a
 //! writer holds it. The module [`fs`] says exactly what holds and what does not.
 //!
+//! A writer may start child processes while it holds a store, and after. A child being
+//! started holds a copy of the open lock file until its program starts, so a writer lets
+//! its lock go when its [`Store`] is dropped, and does not leave that to the closing of
+//! the file: the next writer is admitted at once, whatever child another thread is
+//! starting. Only the process that took the lock lets it go: a forked copy of a writer
+//! that drops its copy of the [`Store`] ends nothing, and takes no name out. The limit
+//! is a writer that ends without dropping its [`Store`] (killed by a signal, which is
+//! how Ctrl-C ends it, aborted, or ended by `exit`) while one of its threads is starting
+//! a child: until that child's program starts, a moment, the next writer is refused
+//! with [`Error::Held`], and is told of "another process" or the name the dead writer
+//! left; and where the writer was pruning, a reader's snapshot can wait that long, since
+//! a reader waits for a generation file that is taken alone. A process that holds a
+//! store and starts a worker ends by returning, with its store dropped, or accepts that.
+//!
 //! # Runs, and the two kinds of reference
 //!
 //! A generation holds names that belong to no run, and, for each run, the names of that

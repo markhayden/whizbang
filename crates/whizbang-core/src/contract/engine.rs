@@ -10,9 +10,7 @@ use crate::store::Store;
 
 use super::journal::Kept;
 use super::prepare::prepare;
-use super::record::{
-    DIAGNOSTICS_PREFIX, Diagnostic, JOURNAL_NAME, RECORD_KIND, RECORD_NAME, Ran, RunRecord,
-};
+use super::record::{Diagnostic, RECORD_KIND, RECORD_NAME, Ran, RunRecord};
 use super::{
     Allowance, Backends, Call, CallError, Cancellation, Capabilities, Clock, Context, Failure,
     Finished, Outcome, PreparedCall, Readiness, Refusal, Registry, RunId, Secrets, StoreFailure,
@@ -225,23 +223,14 @@ impl Executor for Engine {
         // One publication holds the journal, every diagnostic and the record: the run is
         // in the store whole or not at all, and it is durable before it is reported.
         let failed = |error| CallError::Store(StoreFailure::new(error));
-        let (journal, written) = kept.take();
+        let (lines, written) = kept.take();
         let mut publication = store.begin().map_err(failed)?;
         let mut diagnostics = Vec::new();
-        let mut keep = |name: String, bytes: &[u8]| -> Result<(), CallError> {
-            let digest = publication
-                .put_in(run.as_str(), &name, RECORD_KIND, bytes)
+        for (diagnostic, bytes) in std::iter::once(Diagnostic::journal(&lines)).chain(written) {
+            publication
+                .put_in(run.as_str(), diagnostic.name(), RECORD_KIND, &bytes)
                 .map_err(failed)?;
-            diagnostics.push(Diagnostic {
-                name,
-                digest,
-                bytes: bytes.len() as u64,
-            });
-            Ok(())
-        };
-        keep(JOURNAL_NAME.to_owned(), &journal)?;
-        for (name, bytes) in &written {
-            keep(format!("{DIAGNOSTICS_PREFIX}{name}"), bytes)?;
+            diagnostics.push(diagnostic);
         }
         let record = RunRecord::of(
             Ran {

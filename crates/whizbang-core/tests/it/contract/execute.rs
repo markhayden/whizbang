@@ -204,13 +204,16 @@ fn echo_runs_through_the_executor_and_its_record_is_in_the_store() {
     assert_eq!(record.asked().config, Digest::of_bytes(b""));
     // Each diagnostic the record lists is what the run holds under that name.
     for diagnostic in record.diagnostics() {
-        let (_, _, bytes) = held.iter().find(|(n, _, _)| *n == diagnostic.name).unwrap();
-        assert_eq!(diagnostic.digest, Digest::of_bytes(bytes));
-        assert_eq!(diagnostic.bytes, bytes.len() as u64);
+        let (_, _, bytes) = held
+            .iter()
+            .find(|(n, _, _)| n == diagnostic.name())
+            .unwrap();
+        assert_eq!(diagnostic.digest(), Digest::of_bytes(bytes));
+        assert_eq!(diagnostic.bytes(), bytes.len() as u64);
     }
     let journal = read_journal(&held[1].2).unwrap();
     assert_eq!(journal.len(), 2);
-    assert_eq!(journal[1].message, "echo: done");
+    assert_eq!(journal[1].message(), "echo: done");
 }
 
 #[test]
@@ -684,7 +687,7 @@ fn a_secret_given_to_a_run_is_in_nothing_the_store_holds() {
     };
     let engine = world
         .engine_with(vec![leaky])
-        .with_secrets(Secrets::new([key.clone(), quoted.clone()]));
+        .with_secrets(Secrets::new([key.clone(), quoted.clone()]).unwrap());
     let first = engine
         .submit(&echo(&format!("my key is {key}")).argument("fail", Value::text(&key)))
         .unwrap();
