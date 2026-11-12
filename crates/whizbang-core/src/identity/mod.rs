@@ -10,13 +10,18 @@
 //! run provenance last. Nothing local enters any of them: no id, timestamp or path.
 
 mod binding;
+mod colour;
 mod digest;
 mod mapping;
+mod pixels;
 mod space;
 
 pub use binding::{Binding, BindingId, Destination, Direction};
 pub use digest::{Digest, FileDigest, PixelDigest};
 pub use mapping::Mapping;
+pub use pixels::{
+    CanonicalPixels, DecodeLimits, Identified, ImageIdentity, Profile, Stored, identify,
+};
 pub use space::{Point, Projection, Space, Topology};
 
 /// Why an identity could not be made, or a point could not be mapped.

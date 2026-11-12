@@ -13,10 +13,16 @@ name = "it"
 path = "tests/it/main.rs"
 
 [dependencies]
+# Decoding, to reach an image's canonical pixels. PNG and JPEG are what the old tools read.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Powers that round the same on every machine, for the colour conversion.
+libm = "0.2"
 serde.workspace = true
 sha2 = "0.11"
 
 [dev-dependencies]
+# A second lossless container, for the tests only: the same pixels in PNG and in BMP.
+image = { version = "0.25", default-features = false, features = ["bmp"] }
 serde_json.workspace = true
 
 [lints]

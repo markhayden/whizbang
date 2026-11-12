@@ -142,6 +142,12 @@ impl Encoder {
         self.0.update(value.as_bytes());
     }
 
+    pub(super) fn bytes(&mut self, value: &[u8]) {
+        self.0.update(b"b");
+        self.0.update((value.len() as u64).to_be_bytes());
+        self.0.update(value);
+    }
+
     pub(super) fn finish(self) -> Digest {
         Digest(self.0.finalize().into())
     }
