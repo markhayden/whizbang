@@ -28,7 +28,7 @@ manifest. This file holds what you cannot work out from the code.
 
 | Command | When |
 |---|---|
-| `just check` | Before every commit: format check, lint, the crate graph, licences and sources, the script tests, the generated reference against a fresh copy, then the fast tests with seconds per suite |
+| `just check` | Before every commit: format check, lint, the crate graph, licences and sources, the syntax of every script under `scripts/`, the script tests, the generated reference against a fresh copy, then the fast tests with seconds per suite |
 | `just docs` | After changing what `whizbang describe` reports (the description type, an action, the version): rewrites `docs/reference/`; commit the result, because `just check` fails on a stale copy |
 | `just scan` | Before every push: the secrets scan and the clean-room scan, over the working tree |
 | `just scan-range <base> <head>` | Before a merge: the same two scans and the attribution check over every commit in `base..head` (contents, paths, messages) and the tree of `head` |
@@ -44,6 +44,12 @@ that starts with a letter, does not end with a space, and holds only ASCII lette
 spaces and `. , ; : ' " ( ) / % + -`, with no `://` and no `www.`. No two actions share a name.
 The rule is at the top of `scripts/docs.sh`. `docs/reference/` holds the two generated files
 and `tools/` only; `just check` fails on any other file there that git does not ignore.
+
+Every script test file (`scripts/tests/test-*.sh`, and each part under `scripts/tests/scan/`)
+ends with the line `finished`. The bash that ships with macOS can exit 0 from a script that
+stopped half-way, so a test passes only when that line ran. A script that sets an `EXIT` trap
+copies the first lines and the trap of `scripts/scan.sh`; `scripts/tests/test-syntax.sh` holds
+it to that.
 
 ## Where agents may work
 

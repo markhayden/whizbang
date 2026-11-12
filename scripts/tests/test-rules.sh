@@ -292,3 +292,5 @@ git init -q "$tmp/plain"
 printf '%s\n' 'about ~3 minutes; a/~b; see docs/x' >"$tmp/plain/notes.md"
 git -C "$tmp/plain" add notes.md
 expect_pass "a tilde that is not a path" home_paths "$tmp/plain"
+
+finished
