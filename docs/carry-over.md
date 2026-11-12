@@ -16,8 +16,9 @@ to this repo.
 Done on 2026-11-11. The four old repos are tagged `final-before-whizbang` and pinned in
 `docs/sources.toml`. What was found and what happened to it is in `docs/plans/m0-inventory.md`.
 
-Still to do in milestone 0, in whizbang: assemble and validate the baseline package from the
-tagged squint, and write up the 2026-11-11 study from it.
+The baseline package is assembled from the tagged squint; `docs/baseline/` says what it holds
+and how it is identified. Still to do in milestone 0, in whizbang: convert and audit the
+package, and write up the 2026-11-11 study from it.
 
 ## Fixes carried into whizbang
 
@@ -49,6 +50,8 @@ tagged squint, and write up the 2026-11-11 study from it.
 | squint | A test pair for a job that does and does not permit a seasonal cover over a protected subject | E | New fixture from fresh images |
 | squint | Small models break the submission format | E | The redesigned format is admitted through its gate |
 | squint | Open review follow-ups from its milestone 4 | 2 | Each is fixed, or dropped with a line here, as its module is ported |
+| whizbang | The settings test (`scripts/tests/test-rules.sh`) holds `.claude/settings.json` to an exact list, refuses a committed `.claude/settings.local.json` or `.mcp.json`, and refuses a `permissionMode` line in a subagent file. It does not yet cover the tools a subagent file lists or `allowed-tools` in a skill | 0, with the skills in task S5 | The test holds each subagent's tools and each skill's `allowed-tools` to an expected list |
+| whizbang | `ci` has no Chrome end-to-end step: there is no playground to drive yet (`SPEC.md` sections 13 and 14) | 5 | `ci` runs the playground's acceptance cases in Chrome on every pull request |
 | playground | A missing model cannot be picked in the model list | 5 | It can be picked, and Run explains what is missing |
 
 ## Evaluations
