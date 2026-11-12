@@ -13,32 +13,43 @@
 //!   staging/<token>/      the files of one publication on their way in
 //! ```
 //!
-//! A file under `objects/` or `generations/` arrives there by a rename, after its content
-//! was synced, and is never written again. Staging is inside the root, so it is on the
-//! store's file system and every move into place is a rename.
+//! Every file is written in staging, with its content synced through the handle that wrote
+//! it, and arrives under `objects/`, under `generations/` or at `CURRENT` by a rename. None
+//! is written again. Staging is inside the root, so it is on the store's file system; a
+//! staging that is not (a mount point, a link) is refused at the first rename, with
+//! [`Error::OtherFileSystem`], before anything is visible.
+//!
+//! The pointer exists from the moment a store is created, holding 0: the empty generation,
+//! which has no file. A store with generation files and no pointer is damaged, and is
+//! refused, never read as empty.
 //!
 //! # Publication
 //!
-//! 1. Each new payload is written to staging, named by its digest ([`Publication::put`]).
-//! 2. The payloads are synced, renamed into `objects/`, and `objects/` is synced.
+//! 1. Each new payload is written to staging and synced, named by its digest
+//!    ([`Publication::put`]). Content the store already holds is not written again.
+//! 2. The payloads are renamed into `objects/`, and `objects/` is synced. It is synced by
+//!    every publication that names content, whether or not it staged any: content that was
+//!    already there may have arrived by a rename that no sync has made durable yet.
 //! 3. The new generation (the one current at this step with this publication's names
-//!    applied, numbered one higher) is written to staging, synced, renamed into
+//!    applied, numbered one higher) is written to staging and synced, renamed into
 //!    `generations/`, and `generations/` is synced. From here to the end, one publication
 //!    of a process runs at a time.
-//! 4. The new pointer is written to staging, synced, and renamed over `CURRENT`.
+//! 4. The new pointer is written to staging and synced, and renamed over `CURRENT`.
 //! 5. The root is synced.
 //!
 //! There are two guarantees, and they are reached at different steps:
 //!
 //! - **Visibility** is step 4. From the rename on, a reader sees the new generation, and
-//!   everything it names was made durable before the pointer was written.
+//!   everything it names, content and names both, was made durable before the pointer was
+//!   written.
 //! - **Durability** is step 5. [`Publication::publish`] reports success only after it. A
 //!   failure of step 5 itself is [`Error::Unacknowledged`]: visible, and not known to be
 //!   durable.
 //!
 //! # Recovery
 //!
-//! Opening to write ([`Store::open`]) removes whatever is in staging, and any generation
+//! Opening to write ([`Store::open`]) first reads the store, and refuses one that is
+//! damaged without touching it. Then it removes whatever is in staging, and any generation
 //! file numbered above the pointer: both are left by a publication that did not finish.
 //! Opening to read ([`Reader::open`]) removes and creates nothing.
 //!
@@ -53,6 +64,7 @@ pub mod fs;
 mod generation;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -101,37 +113,56 @@ struct Files {
 }
 
 impl Files {
-    /// The number the pointer holds; 0 when the store never published.
-    fn pointer(&self) -> Result<u64> {
+    fn exists(&self, path: &Path) -> Result<bool> {
+        self.fs.exists(path).map_err(Error::io("look for", path))
+    }
+
+    /// The number the pointer holds, or `None` when there is no pointer.
+    fn pointer(&self) -> Result<Option<u64>> {
         let path = self.layout.pointer();
-        if !self
-            .fs
-            .exists(&path)
-            .map_err(Error::io("look for", &path))?
-        {
-            return Ok(0);
+        if !self.exists(&path)? {
+            return Ok(None);
         }
         let bytes = self.fs.read(&path).map_err(Error::io("read", &path))?;
+        // One way to write each number: no sign, no leading zero, one newline.
         std::str::from_utf8(&bytes)
             .ok()
             .and_then(|text| text.strip_suffix('\n'))
-            .filter(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
-            .and_then(|digits| digits.parse::<u64>().ok())
-            .filter(|number| *number > 0)
+            .and_then(|digits| {
+                let number = digits.parse::<u64>().ok()?;
+                (number.to_string() == digits).then_some(number)
+            })
+            .map(Some)
             .ok_or_else(|| Error::corrupt(&path, "not a generation number and a newline"))
     }
 
+    /// The current generation. A store with no pointer is one whose creation did not
+    /// finish, and is empty, unless it has generation files: then the pointer was lost.
     fn snapshot(&self) -> Result<Generation> {
-        let number = self.pointer()?;
+        let number = match self.pointer()? {
+            Some(number) => number,
+            None => {
+                let generations = self.layout.generations();
+                if self.exists(&generations)?
+                    && !self
+                        .fs
+                        .list(&generations)
+                        .map_err(Error::io("list", &generations))?
+                        .is_empty()
+                {
+                    return Err(Error::corrupt(
+                        &self.layout.pointer(),
+                        "it is missing, and the store has generation files",
+                    ));
+                }
+                0
+            }
+        };
         if number == 0 {
             return Ok(Generation::empty());
         }
         let path = self.layout.generation(number);
-        if !self
-            .fs
-            .exists(&path)
-            .map_err(Error::io("look for", &path))?
-        {
+        if !self.exists(&path)? {
             return Err(Error::corrupt(
                 &self.layout.pointer(),
                 format!("it names generation {number}, which has no file"),
@@ -155,14 +186,48 @@ impl Files {
         Ok(generation)
     }
 
-    fn read(&self, digest: &Digest) -> Result<Vec<u8>> {
-        let path = self.layout.object(digest);
-        let bytes = self.fs.read(&path).map_err(Error::io("read", &path))?;
+    fn read(&self, entry: &Entry) -> Result<Vec<u8>> {
+        let digest = entry.digest;
+        let path = self.layout.object(&digest);
+        let bytes = self.fs.read(&path).map_err(|source| {
+            if source.kind() == io::ErrorKind::NotFound {
+                Error::corrupt(&path, format!("the content {digest} is missing"))
+            } else {
+                Error::io("read", &path)(source)
+            }
+        })?;
+        if bytes.len() as u64 != entry.bytes {
+            return Err(Error::corrupt(
+                &path,
+                format!(
+                    "the content {digest} is {} bytes here, and its entry says {}",
+                    bytes.len(),
+                    entry.bytes
+                ),
+            ));
+        }
         let found = Digest::of(&bytes);
-        if found != *digest {
-            return Err(Error::corrupt(&path, format!("its digest is {found}")));
+        if found != digest {
+            return Err(Error::corrupt(
+                &path,
+                format!("the content {digest} has the digest {found} here"),
+            ));
         }
         Ok(bytes)
+    }
+
+    /// Renames a staged file to its place.
+    fn move_into_place(&self, staged: &Path, to: &Path) -> Result<()> {
+        self.fs.rename(staged, to).map_err(|source| {
+            if source.kind() == io::ErrorKind::CrossesDevices {
+                Error::OtherFileSystem {
+                    staging: self.layout.staging(),
+                    source,
+                }
+            } else {
+                Error::io("move into place", staged)(source)
+            }
+        })
     }
 }
 
@@ -195,9 +260,9 @@ impl Reader {
         self.files.snapshot()
     }
 
-    /// The content with this digest, checked against it.
-    pub fn read(&self, digest: &Digest) -> Result<Vec<u8>> {
-        self.files.read(digest)
+    /// The content of an entry, checked against its length and its digest.
+    pub fn read(&self, entry: &Entry) -> Result<Vec<u8>> {
+        self.files.read(entry)
     }
 }
 
@@ -223,15 +288,19 @@ impl Store {
         let fs = files.fs.as_ref();
         let layout = &files.layout;
         create_durably(fs, root)?;
-        // These become durable with the first publication, whose last step syncs the root.
+        let mut created = false;
         for dir in [layout.objects(), layout.generations(), layout.staging()] {
-            if !fs.exists(&dir).map_err(Error::io("look for", &dir))? {
+            if !files.exists(&dir)? {
                 fs.create_dir(&dir).map_err(Error::io("create", &dir))?;
+                created = true;
             }
         }
+        if created {
+            fs.sync_dir(root).map_err(Error::io("sync", root))?;
+        }
 
-        // The store is read before anything is removed: a pointer that cannot be read is
-        // reported, and nothing is tidied on a guess.
+        // The store is read before anything is removed: a pointer that is damaged or lost
+        // is reported, and nothing is tidied on a guess.
         let current = files.snapshot()?.number();
         let staging = layout.staging();
         for leftover in fs.list(&staging).map_err(Error::io("list", &staging))? {
@@ -252,6 +321,16 @@ impl Store {
                 fs.remove_all(&file).map_err(Error::io("remove", &file))?;
             }
         }
+
+        // A new store gets its pointer here, before anything can be published, so that a
+        // missing pointer never again means an empty store.
+        if files.pointer()?.is_none() {
+            let staged = staging.join("CURRENT");
+            fs.write_new(&staged, b"0\n")
+                .map_err(Error::io("write", &staged))?;
+            files.move_into_place(&staged, &layout.pointer())?;
+            fs.sync_dir(root).map_err(Error::io("sync", root))?;
+        }
         Ok(Store {
             files,
             next_token: AtomicU64::new(0),
@@ -264,9 +343,9 @@ impl Store {
         self.files.snapshot()
     }
 
-    /// The content with this digest, checked against it.
-    pub fn read(&self, digest: &Digest) -> Result<Vec<u8>> {
-        self.files.read(digest)
+    /// The content of an entry, checked against its length and its digest.
+    pub fn read(&self, entry: &Entry) -> Result<Vec<u8>> {
+        self.files.read(entry)
     }
 
     /// Starts a publication: a staging directory of its own, and nothing visible until
@@ -327,15 +406,20 @@ pub struct Publication<'s> {
 
 impl Publication<'_> {
     /// Gives `name` this content in the generation to come, replacing what it had. The
-    /// bytes are staged now, unless the store already holds them.
+    /// bytes are staged now, and synced, unless the store already holds them. After an
+    /// error the same call can be made again.
     pub fn put(&mut self, name: &str, bytes: &[u8]) -> Result<Digest> {
         let fs = self.files.fs.as_ref();
         let digest = Digest::of(bytes);
-        let object = self.files.layout.object(&digest);
         if !self.staged.contains(&digest)
-            && !fs.exists(&object).map_err(Error::io("look for", &object))?
+            && !self.files.exists(&self.files.layout.object(&digest))?
         {
             let staged = self.staged_path(&digest);
+            // A write that failed part-way can have left the file behind.
+            if self.files.exists(&staged)? {
+                fs.remove_all(&staged)
+                    .map_err(Error::io("remove", &staged))?;
+            }
             fs.write_new(&staged, bytes)
                 .map_err(Error::io("write", &staged))?;
             self.staged.insert(digest);
@@ -358,20 +442,18 @@ impl Publication<'_> {
     /// means the new generation is durable. An error other than [`Error::Unacknowledged`]
     /// means it never became visible.
     pub fn publish(self) -> Result<Published> {
-        let fs = self.files.fs.as_ref();
-        let layout = &self.files.layout;
+        let files = self.files;
+        let fs = files.fs.as_ref();
+        let layout = &files.layout;
 
-        // The payloads: content, then names, then the directory that holds the names.
+        // The payloads, whose content `put` synced: their names, then the directory that
+        // holds the names. The directory is synced for content that was already there
+        // too: this publication is about to name it, and cannot know that the rename
+        // which brought it was ever made durable.
         for digest in &self.staged {
-            let staged = self.staged_path(digest);
-            fs.sync_file(&staged).map_err(Error::io("sync", &staged))?;
+            files.move_into_place(&self.staged_path(digest), &layout.object(digest))?;
         }
-        for digest in &self.staged {
-            let staged = self.staged_path(digest);
-            fs.rename(&staged, &layout.object(digest))
-                .map_err(Error::io("move into place", &staged))?;
-        }
-        if !self.staged.is_empty() {
+        if !self.names.is_empty() {
             let objects = layout.objects();
             fs.sync_dir(&objects).map_err(Error::io("sync", &objects))?;
         }
@@ -379,19 +461,22 @@ impl Publication<'_> {
         // The generation, immutable from its rename on. It is built on the generation that
         // is current now, not the one that was when this publication began.
         let _publishing = self.publishing.lock().unwrap_or_else(|e| e.into_inner());
-        let mut generation = self.files.snapshot()?;
-        generation.number += 1;
+        let mut generation = files.snapshot()?;
+        let number = generation.number.checked_add(1).ok_or_else(|| {
+            Error::corrupt(
+                &layout.pointer(),
+                format!("no generation number is left after {}", generation.number),
+            )
+        })?;
+        generation.number = number;
         generation.entries.extend(self.names.clone());
-        let number = generation.number;
         let mut text = serde_json::to_vec_pretty(&generation)
             .map_err(|e| Error::corrupt(&layout.generation(number), e.to_string()))?;
         text.push(b'\n');
         let staged = self.dir.join("generation.json");
         fs.write_new(&staged, &text)
             .map_err(Error::io("write", &staged))?;
-        fs.sync_file(&staged).map_err(Error::io("sync", &staged))?;
-        fs.rename(&staged, &layout.generation(number))
-            .map_err(Error::io("move into place", &staged))?;
+        files.move_into_place(&staged, &layout.generation(number))?;
         let generations = layout.generations();
         fs.sync_dir(&generations)
             .map_err(Error::io("sync", &generations))?;
@@ -400,9 +485,7 @@ impl Publication<'_> {
         let staged = self.dir.join("CURRENT");
         fs.write_new(&staged, format!("{number}\n").as_bytes())
             .map_err(Error::io("write", &staged))?;
-        fs.sync_file(&staged).map_err(Error::io("sync", &staged))?;
-        fs.rename(&staged, &layout.pointer())
-            .map_err(Error::io("move into place", &staged))?;
+        files.move_into_place(&staged, &layout.pointer())?;
         fs.sync_dir(&layout.root)
             .map_err(Error::io("sync", &layout.root))
             .map_err(|source| Error::Unacknowledged {

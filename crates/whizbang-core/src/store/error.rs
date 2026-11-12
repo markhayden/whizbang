@@ -18,6 +18,9 @@ pub enum Error {
     Missing { root: PathBuf },
     /// A file of the store does not hold what it must.
     Corrupt { path: PathBuf, reason: String },
+    /// Staging is not on the store's file system, so nothing can be renamed into place.
+    /// Nothing was published.
+    OtherFileSystem { staging: PathBuf, source: io::Error },
     /// The pointer was replaced, so the generation is visible, but the sync that makes it
     /// durable did not succeed. It may or may not survive a crash. This is not a success,
     /// and it is not a publication that did not happen either.
@@ -53,6 +56,11 @@ impl fmt::Display for Error {
             Error::Corrupt { path, reason } => {
                 write!(f, "{} is damaged: {reason}", path.display())
             }
+            Error::OtherFileSystem { staging, source } => write!(
+                f,
+                "{} is not on the store's file system: {source}",
+                staging.display()
+            ),
             Error::Unacknowledged { generation, source } => write!(
                 f,
                 "generation {generation} is visible but was not confirmed durable: {source}"
@@ -64,7 +72,7 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Error::Io { source, .. } => Some(source),
+            Error::Io { source, .. } | Error::OtherFileSystem { source, .. } => Some(source),
             Error::Unacknowledged { source, .. } => Some(source.as_ref()),
             Error::Missing { .. } | Error::Corrupt { .. } => None,
         }

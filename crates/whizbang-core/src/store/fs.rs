@@ -2,9 +2,10 @@
 //! and the disk, record the order of writes, syncs and renames, and drop what was never
 //! synced, as a power loss would. [`RealFs`] is the real one.
 //!
-//! Durability has two halves. A file's content is durable after [`Fs::sync_file`]. A name in
-//! a directory (a new file, a new directory, the new name of a rename, a removal) is durable
-//! after [`Fs::sync_dir`] on that directory. Neither implies the other.
+//! Durability has two halves. A file's content is durable when [`Fs::write_new`] returns:
+//! it syncs through the handle it wrote with, so there is no unsynced write for the store to
+//! forget. A name in a directory (a new file, a new directory, the new name of a rename, a
+//! removal) is durable after [`Fs::sync_dir`] on that directory. Neither implies the other.
 //!
 //! The store reads through the same trait, so a store that goes on working after its file
 //! system has crashed is caught too.
@@ -16,14 +17,15 @@ use std::path::{Path, PathBuf};
 pub trait Fs: Send + Sync {
     /// Creates one directory. Its parent exists; the directory does not.
     fn create_dir(&self, path: &Path) -> io::Result<()>;
-    /// Creates a file with this content. Fails when the name is taken: the store never
-    /// writes over a file, it replaces one by a rename.
+    /// Creates a file with this content and makes the content durable. Fails when the name
+    /// is taken: the store never writes over a file, it replaces one by a rename. After a
+    /// failure the file may be there, with any part of the content; the name is not durable
+    /// either way until its directory is synced.
     fn write_new(&self, path: &Path, bytes: &[u8]) -> io::Result<()>;
-    /// Makes a file's content durable.
-    fn sync_file(&self, path: &Path) -> io::Result<()>;
     /// Makes a directory's entries durable.
     fn sync_dir(&self, path: &Path) -> io::Result<()>;
-    /// Renames, replacing a file already at `to`. Atomic within one file system.
+    /// Renames, replacing a file already at `to`. Atomic within one file system; across two
+    /// it fails with [`io::ErrorKind::CrossesDevices`].
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
     /// Removes a file, or a directory with everything in it.
     fn remove_all(&self, path: &Path) -> io::Result<()>;
@@ -62,11 +64,11 @@ impl Fs for RealFs {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        options.open(path)?.write_all(bytes)
-    }
-
-    fn sync_file(&self, path: &Path) -> io::Result<()> {
-        std::fs::File::open(path)?.sync_all()
+        let mut file = options.open(path)?;
+        file.write_all(bytes)?;
+        // Through the handle that wrote: a sync on a handle opened afterwards can miss a
+        // write error the system already reported, or dropped, before that handle existed.
+        file.sync_all()
     }
 
     fn sync_dir(&self, path: &Path) -> io::Result<()> {

@@ -67,7 +67,7 @@ fn seen(root: &Path, fs: Arc<dyn Fs>) -> (u64, Contents) {
     let generation = reader.snapshot().unwrap();
     let mut contents = Contents::new();
     for (name, entry) in generation.entries() {
-        let bytes = reader.read(&entry.digest).unwrap();
+        let bytes = reader.read(entry).unwrap();
         assert_eq!(bytes.len() as u64, entry.bytes, "{name}");
         assert_eq!(Digest::of(&bytes), entry.digest, "{name}");
         contents.insert(name.clone(), bytes);
@@ -180,14 +180,15 @@ fn a_payload_is_staged_under_the_store_and_published_under_its_digest() {
     let root = root(&dir);
     let fs = Arc::new(ShimFs::new());
     let store = Store::open(&root, fs.clone()).unwrap();
+    let opened = fs.events().len();
     let mut publication = store.begin().unwrap();
     let digest = publication.put("a", A1).unwrap();
     assert_eq!(digest, Digest::of(A1));
 
     // Staged inside the store's own directory, so the move into place is a rename within
-    // one file system, and not yet where a reader would find it.
-    let staged: Vec<PathBuf> = fs
-        .events()
+    // one file system; synced as it is written; and not yet where a reader would find it.
+    let events = fs.events();
+    let staged: Vec<PathBuf> = events[opened..]
         .iter()
         .filter_map(|event| match event {
             Event::Write(path) => Some(path.clone()),
@@ -200,6 +201,7 @@ fn a_payload_is_staged_under_the_store_and_published_under_its_digest() {
         staged[0].file_name().unwrap().to_string_lossy(),
         digest.to_string()
     );
+    assert_eq!(events.last(), Some(&Event::SyncFile(staged[0].clone())));
     assert!(!root.join("objects").join(digest.to_string()).exists());
 
     publication.publish().unwrap();
@@ -246,17 +248,36 @@ fn the_same_bytes_are_stored_once() {
 }
 
 #[test]
-fn a_stored_file_that_no_longer_matches_its_digest_is_refused() {
-    let dir = Scratch::new("store");
-    let root = with_old(&dir);
-    let object = root.join("objects").join(Digest::of(B).to_string());
-    std::fs::write(&object, b"something else").unwrap();
-    let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
-    assert!(matches!(
-        reader.read(&Digest::of(B)),
-        Err(Error::Corrupt { .. })
-    ));
-    assert_eq!(reader.read(&Digest::of(A1)).unwrap(), A1);
+fn a_stored_file_that_no_longer_matches_its_entry_is_refused_by_its_digest() {
+    // Other bytes of the same length; fewer bytes; no file at all.
+    let same_length: Vec<u8> = B.iter().map(|byte| byte ^ 1).collect();
+    for (damage, reason) in [
+        (Some(&same_length[..]), "has the digest"),
+        (Some(&B[..4]), "is 4 bytes here"),
+        (None, "is missing"),
+    ] {
+        let dir = Scratch::new("store");
+        let root = with_old(&dir);
+        let object = root.join("objects").join(Digest::of(B).to_string());
+        std::fs::remove_file(&object).unwrap();
+        if let Some(bytes) = damage {
+            std::fs::write(&object, bytes).unwrap();
+        }
+        let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
+        let generation = reader.snapshot().unwrap();
+        match reader.read(generation.get("b").unwrap()) {
+            Err(Error::Corrupt {
+                path,
+                reason: found,
+            }) => {
+                assert_eq!(path, object);
+                assert!(found.contains(reason), "{found}");
+                assert!(found.contains(&Digest::of(B).to_string()), "{found}");
+            }
+            other => panic!("{reason}: {other:?}"),
+        }
+        assert_eq!(reader.read(generation.get("a").unwrap()).unwrap(), A1);
+    }
 }
 
 // A new immutable generation, then one pointer; the order of the syncs.
@@ -505,11 +526,28 @@ fn a_crash_after_the_final_sync_leaves_the_new_generation() {
 
 // Recovery: every point, not only the named ones.
 
+/// Runs a case under every loss a crash can bring: every unsynced name lost, none lost,
+/// and each subset of the directories that held unsynced names. The case returns how many
+/// such directories its crash found.
+fn for_every_loss(case: impl Fn(Lost) -> usize) {
+    case(Lost::Unsynced);
+    case(Lost::ContentOnly);
+    let mut mask = 0;
+    loop {
+        let choices = case(Lost::Subset(mask));
+        assert!(choices < 16, "{choices} directories with unsynced names");
+        mask += 1;
+        if mask >= 1 << choices {
+            break;
+        }
+    }
+}
+
 #[test]
 fn a_crash_at_any_event_leaves_one_whole_generation_and_a_store_that_still_publishes() {
     let points = points();
-    for lost in [Lost::Unsynced, Lost::ContentOnly] {
-        for crash_at in 0..=points.count {
+    for crash_at in 0..=points.count {
+        for_every_loss(|lost| {
             let case = format!("{lost:?}, crash before event {crash_at}");
             let dir = Scratch::new("store");
             let root = with_old(&dir);
@@ -520,23 +558,24 @@ fn a_crash_at_any_event_leaves_one_whole_generation_and_a_store_that_still_publi
 
             let (number, held) = after_restart(&root);
             // The new generation is durable once the pointer's directory was synced; a disk
-            // that keeps unsynced names shows it from the rename on.
-            let new_from = match lost {
-                Lost::Unsynced => points.final_sync,
-                Lost::ContentOnly => points.pointer,
+            // that keeps unsynced names shows it from the rename on; a disk that keeps
+            // some shows one or the other.
+            let is_new = match lost {
+                Lost::Unsynced => Some(crash_at > points.final_sync),
+                Lost::ContentOnly => Some(crash_at > points.pointer),
+                Lost::Subset(_) => None,
             };
-            if crash_at > new_from {
-                assert_eq!((number, &held), (2, &new()), "{case}");
-            } else {
-                assert_eq!((number, &held), (1, &old()), "{case}");
+            match is_new.unwrap_or(number == 2) {
+                true => assert_eq!((number, &held), (2, &new()), "{case}"),
+                false => assert_eq!((number, &held), (1, &old()), "{case}"),
             }
             if result.is_ok() {
                 assert_eq!(number, 2, "{case}: success was reported");
             }
 
             // The recovered store takes the next publication, on top of what it holds.
-            let fs = Arc::new(ShimFs::new());
-            let store = Store::open(&root, fs.clone()).unwrap();
+            let next = Arc::new(ShimFs::new());
+            let store = Store::open(&root, next.clone()).unwrap();
             let mut publication = store.begin().unwrap();
             publication.put("d", b"after the crash").unwrap();
             assert_eq!(
@@ -546,9 +585,10 @@ fn a_crash_at_any_event_leaves_one_whole_generation_and_a_store_that_still_publi
             );
             let mut expected = held;
             expected.insert("d".to_string(), b"after the crash".to_vec());
-            fs.crash(lost);
+            next.crash(lost);
             assert_eq!(after_restart(&root), (number + 1, expected), "{case}");
-        }
+            fs.crash_choices()
+        });
     }
 }
 
@@ -567,8 +607,8 @@ fn a_crash_at_any_event_of_a_stores_first_publication_leaves_nothing_or_all_of_i
         first(&root(&dir), fs.clone()).unwrap();
         fs.events().len()
     };
-    for lost in [Lost::Unsynced, Lost::ContentOnly] {
-        for crash_at in 0..=count {
+    for crash_at in 0..=count {
+        for_every_loss(|lost| {
             let case = format!("{lost:?}, crash before event {crash_at}");
             let dir = Scratch::new("store");
             let root = root(&dir);
@@ -585,7 +625,8 @@ fn a_crash_at_any_event_of_a_stores_first_publication_leaves_nothing_or_all_of_i
             if result.is_ok() {
                 assert_eq!(number, 1, "{case}: success was reported");
             }
-        }
+            fs.crash_choices()
+        });
     }
 }
 
@@ -635,27 +676,100 @@ fn a_reader_of_a_store_that_does_not_exist_is_refused_and_creates_nothing() {
 
 #[test]
 fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store() {
-    for (file, bytes) in [
-        ("CURRENT", &b"two\n"[..]),
-        ("CURRENT", b"1"),
-        ("CURRENT", b"7\n"),
-        ("generations/1.json", b"{}"),
+    let entry = |bytes: &[u8]| {
+        format!(
+            r#"{{"digest": "{}", "bytes": {}}}"#,
+            Digest::of(bytes),
+            bytes.len()
+        )
+    };
+    let generation = |format: u32, number: u64, entries: &str| {
+        format!(r#"{{"format": {format}, "number": {number}, "entries": {{{entries}}}}}"#)
+    };
+    let a = format!(r#""a": {}"#, entry(A1));
+    for (what, file, bytes) in [
+        (
+            "a pointer that is not a number",
+            "CURRENT",
+            Some("two\n".to_string()),
+        ),
+        (
+            "a pointer without its newline",
+            "CURRENT",
+            Some("1".to_string()),
+        ),
+        (
+            "a pointer written another way",
+            "CURRENT",
+            Some("01\n".to_string()),
+        ),
+        ("a pointer with a sign", "CURRENT", Some("+1\n".to_string())),
+        (
+            "a pointer too large for a number",
+            "CURRENT",
+            Some("18446744073709551616\n".to_string()),
+        ),
+        (
+            "a pointer to a generation with no file",
+            "CURRENT",
+            Some("7\n".to_string()),
+        ),
+        ("no pointer beside generation files", "CURRENT", None),
+        (
+            "a generation that is not one",
+            "generations/1.json",
+            Some("{}".to_string()),
+        ),
+        (
+            "another format",
+            "generations/1.json",
+            Some(generation(2, 1, &a)),
+        ),
+        (
+            "another generation's number",
+            "generations/1.json",
+            Some(generation(1, 5, &a)),
+        ),
+        (
+            "a name twice",
+            "generations/1.json",
+            Some(generation(1, 1, &format!("{a}, {a}"))),
+        ),
+        (
+            "a field it does not know",
+            "generations/1.json",
+            Some(generation(1, 1, &a).replace("{\"format\"", "{\"more\": 1, \"format\"")),
+        ),
     ] {
         let dir = Scratch::new("store");
         let root = with_old(&dir);
-        std::fs::write(root.join(file), bytes).unwrap();
+        std::fs::remove_file(root.join(file)).unwrap();
+        if let Some(bytes) = bytes {
+            std::fs::write(root.join(file), bytes).unwrap();
+        }
         let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
         let result = reader.snapshot();
         assert!(
             matches!(result, Err(Error::Corrupt { .. })),
-            "{file}: {result:?}"
+            "{what}: {result:?}"
         );
-        let result = Store::open(&root, Arc::new(RealFs)).map(|_| ());
+        // A writer refuses it too, and tidies nothing on the way.
+        std::fs::create_dir(root.join("staging/leftover")).unwrap();
+        let fs = Arc::new(ShimFs::new());
+        let result = Store::open(&root, fs.clone()).map(|_| ());
         assert!(
             matches!(result, Err(Error::Corrupt { .. })),
-            "{file}: {result:?}"
+            "{what}: {result:?}"
         );
+        assert_eq!(fs.events(), vec![], "{what}");
     }
+
+    // The same generation file, well formed, is read: the cases above fail for what they
+    // change and nothing else.
+    let dir = Scratch::new("store");
+    let root = with_old(&dir);
+    std::fs::write(root.join("generations/1.json"), generation(1, 1, &a)).unwrap();
+    assert_eq!(seen(&root, Arc::new(RealFs)), (1, contents(&[("a", A1)])));
 }
 
 // The real file system.
@@ -768,4 +882,309 @@ fn publications_from_several_threads_each_get_a_generation_and_none_is_lost() {
     for (name, bytes) in held {
         assert_eq!(name.as_bytes(), bytes);
     }
+}
+
+// A publication reported successful is there after any later crash.
+
+#[test]
+fn content_the_store_already_holds_is_durable_when_a_publication_that_names_it_succeeds() {
+    let at = first_sync_of_objects();
+    let dir = Scratch::new("store");
+    let root = root(&dir);
+    let fs = Arc::new(ShimFs::new().fail_before(at));
+    let store = Store::open(&root, fs.clone()).unwrap();
+    // The first publication renames its payload into place and is refused the sync of the
+    // directory: the content is there, and its name is not durable.
+    let mut first = store.begin().unwrap();
+    first.put("a", A1).unwrap();
+    assert!(matches!(first.publish(), Err(Error::Io { .. })));
+    // The second names the same bytes, stages nothing, and succeeds.
+    let mut second = store.begin().unwrap();
+    second.put("b", A1).unwrap();
+    assert_eq!(second.publish().unwrap().generation, 1);
+    fs.crash(Lost::Unsynced);
+    assert_eq!(after_restart(&root), (1, contents(&[("b", A1)])));
+}
+
+/// SplitMix64: a small generator with a fixed sequence for each seed.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    }
+
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+}
+
+/// As `seen`, for a store that may be damaged: what is wrong, in place of a panic.
+fn try_seen(root: &Path, fs: Arc<dyn Fs>) -> Result<(u64, Contents), String> {
+    let reader = Reader::open(root, fs).map_err(|e| e.to_string())?;
+    let generation = reader.snapshot().map_err(|e| e.to_string())?;
+    let mut contents = Contents::new();
+    for (name, entry) in generation.entries() {
+        let bytes = reader.read(entry).map_err(|e| format!("{name}: {e}"))?;
+        contents.insert(name.clone(), bytes);
+    }
+    Ok((generation.number(), contents))
+}
+
+fn attempt(store: &Store, puts: &[(String, Vec<u8>)]) -> Result<Published, Error> {
+    let mut publication = store.begin()?;
+    for (name, bytes) in puts {
+        publication.put(name, bytes)?;
+    }
+    publication.publish()
+}
+
+#[test]
+fn random_runs_of_publications_refusals_and_a_crash_keep_every_reported_success() {
+    const SEEDS: u64 = 300;
+    let mut failures = Vec::new();
+    for seed in 0..SEEDS {
+        let mut rng = Rng(seed);
+        let dir = Scratch::new("store-random");
+        let root = root(&dir);
+        let lost = match rng.below(8) {
+            0..4 => Lost::Unsynced,
+            4 => Lost::ContentOnly,
+            _ => Lost::Subset(rng.next()),
+        };
+        // Some runs lose power at an event; most, after the last publication.
+        let crash_at = match rng.below(4) {
+            0 => rng.below(90) as usize,
+            _ => usize::MAX,
+        };
+        let fs = Arc::new(ShimFs::new().crash_before(crash_at, lost));
+        // What a reader sees now, and every state the disk may hold after a crash: the
+        // last reported success, and whatever became visible, or may have, since.
+        let mut visible = Contents::new();
+        let mut allowed = vec![Contents::new()];
+        if let Ok(store) = Store::open(&root, fs.clone()) {
+            // A caller whose publication was refused usually tries the same one again.
+            let mut again: Option<Vec<(String, Vec<u8>)>> = None;
+            for _ in 0..3 + rng.below(4) {
+                // A refusal for this attempt: of the event at some distance, or of a kind
+                // of call. A second try is more often left alone.
+                // The syncs of directories are refused most: each is the step that
+                // makes something durable.
+                if rng.below(4) == 0 {
+                    fs.refuse_before(fs.events().len() + rng.below(14) as usize);
+                } else if again.is_none() && rng.below(3) != 0 {
+                    let skip = rng.below(2) as usize;
+                    match rng.below(8) {
+                        0 => fs.refuse_matching(skip, |e| matches!(e, Event::Rename(..))),
+                        1 => fs.refuse_matching(skip, |e| matches!(e, Event::SyncFile(_))),
+                        _ => fs.refuse_matching(skip, |e| matches!(e, Event::SyncDir(_))),
+                    }
+                }
+                let puts = match again.take() {
+                    Some(puts) if rng.below(4) != 0 => puts,
+                    _ => (0..1 + rng.below(2))
+                        .map(|_| {
+                            let name = ["a", "b", "c", "d"][rng.below(4) as usize];
+                            let bytes = format!("content {}", rng.below(6)).into_bytes();
+                            (name.to_string(), bytes)
+                        })
+                        .collect(),
+                };
+                let mut next = visible.clone();
+                next.extend(puts.iter().cloned());
+                match attempt(&store, &puts) {
+                    Ok(_) => {
+                        visible = next;
+                        allowed = vec![visible.clone()];
+                        // Sometimes the power goes right after a success.
+                        if rng.below(2) == 0 {
+                            break;
+                        }
+                    }
+                    Err(Error::Unacknowledged { .. }) => {
+                        visible = next;
+                        allowed.push(visible.clone());
+                    }
+                    // Cut short by the crash: it may have reached the pointer.
+                    Err(_) if fs.crashed() => {
+                        allowed.push(next);
+                        break;
+                    }
+                    // Refused before the pointer: it never became visible.
+                    Err(_) => again = Some(puts),
+                }
+            }
+        }
+        fs.crash(lost);
+
+        let restarted = Arc::new(ShimFs::new());
+        let held = Store::open(&root, restarted.clone())
+            .map_err(|e| e.to_string())
+            .and_then(|_| try_seen(&root, restarted));
+        match held {
+            Err(error) => failures.push(format!("seed {seed}, {lost:?}: {error}")),
+            Ok((_, held)) if !allowed.contains(&held) => failures.push(format!(
+                "seed {seed}, {lost:?}: holds {:?}, a state that was never visible",
+                held.keys().collect::<Vec<_>>()
+            )),
+            Ok(_) => {}
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {SEEDS} runs: {:#?}",
+        failures.len(),
+        &failures[..failures.len().min(3)]
+    );
+}
+
+/// The number of the event at which a store's first publication, of one payload, syncs
+/// `objects/`.
+fn first_sync_of_objects() -> usize {
+    let dir = Scratch::new("store");
+    let root = root(&dir);
+    let fs = Arc::new(ShimFs::new());
+    let store = Store::open(&root, fs.clone()).unwrap();
+    let mut publication = store.begin().unwrap();
+    publication.put("a", A1).unwrap();
+    publication.publish().unwrap();
+    position(
+        &fs.events(),
+        "the sync of objects",
+        |event| matches!(event, Event::SyncDir(path) if *path == root.join("objects")),
+    )
+}
+
+#[test]
+fn content_another_publication_is_still_bringing_in_is_durable_when_this_one_succeeds() {
+    let at = first_sync_of_objects();
+    let dir = Scratch::new("store");
+    let root = root(&dir);
+    let fs = Arc::new(ShimFs::new());
+    let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+    // The first publication has renamed its payload into place and is about to sync the
+    // directory. Before it does, as from another thread, a second publication names the
+    // same bytes, succeeds, and power is lost.
+    let second = {
+        let (store, fs) = (store.clone(), fs.clone());
+        move || {
+            let mut second = store.begin().unwrap();
+            second.put("b", A1).unwrap();
+            assert_eq!(second.publish().unwrap().generation, 1);
+            fs.crash(Lost::Unsynced);
+        }
+    };
+    fs.pause_before(at, second);
+    let mut first = store.begin().unwrap();
+    first.put("a", A1).unwrap();
+    assert!(first.publish().is_err(), "it was cut short by the crash");
+    assert_eq!(after_restart(&root), (1, contents(&[("b", A1)])));
+}
+
+// Refusals that are not crashes.
+
+#[test]
+fn a_put_whose_write_failed_part_way_can_be_made_again() {
+    let dir = Scratch::new("store");
+    let root = with_old(&dir);
+    let fs = Arc::new(ShimFs::new());
+    let store = Store::open(&root, fs.clone()).unwrap();
+    let mut publication = store.begin().unwrap();
+    // The write happens and its sync is refused: the staged file is there, unsynced.
+    fs.refuse_before(fs.events().len() + 1);
+    assert!(matches!(publication.put("c", C), Err(Error::Io { .. })));
+    assert!(matches!(fs.events().last(), Some(Event::Write(_))));
+    publication.put("c", C).unwrap();
+    publication.put("a", A2).unwrap();
+    assert_eq!(publication.publish().unwrap().generation, 2);
+    fs.crash(Lost::Unsynced);
+    assert_eq!(after_restart(&root), (2, new()));
+}
+
+#[test]
+fn a_staging_on_another_file_system_is_refused_with_nothing_visible() {
+    let dir = Scratch::new("store");
+    let root = with_old(&dir);
+    let fs = Arc::new(ShimFs::new().cross_device(&root.join("staging")));
+    match publish_new(&root, fs.clone()) {
+        Err(Error::OtherFileSystem { staging, .. }) => assert_eq!(staging, root.join("staging")),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(seen(&root, fs), (1, old()));
+    assert_eq!(std::fs::read_dir(root.join("objects")).unwrap().count(), 2);
+    assert_eq!(
+        std::fs::read_dir(root.join("generations")).unwrap().count(),
+        1
+    );
+
+    // A new store is refused as it is created, before it has a pointer.
+    let dir = Scratch::new("store");
+    let root = self::root(&dir);
+    let fs = Arc::new(ShimFs::new().cross_device(&root.join("staging")));
+    let result = Store::open(&root, fs.clone()).map(|_| ());
+    assert!(
+        matches!(result, Err(Error::OtherFileSystem { .. })),
+        "{result:?}"
+    );
+    assert!(!root.join("CURRENT").exists());
+    assert_eq!(seen(&root, fs), (0, Contents::new()));
+}
+
+#[test]
+fn the_last_generation_number_is_refused_and_nothing_overflows() {
+    let dir = Scratch::new("store");
+    let root = with_old(&dir);
+    let last = u64::MAX;
+    let text = std::fs::read_to_string(root.join("generations/1.json")).unwrap();
+    assert!(text.contains("\"number\": 1,"), "{text}");
+    std::fs::write(
+        root.join(format!("generations/{last}.json")),
+        text.replace("\"number\": 1,", &format!("\"number\": {last},")),
+    )
+    .unwrap();
+    std::fs::write(root.join("CURRENT"), format!("{last}\n")).unwrap();
+
+    let fs = Arc::new(ShimFs::new());
+    let store = Store::open(&root, fs.clone()).unwrap();
+    assert_eq!(store.snapshot().unwrap().number(), last);
+    let mut publication = store.begin().unwrap();
+    publication.put("c", C).unwrap();
+    let result = publication.publish();
+    assert!(matches!(result, Err(Error::Corrupt { .. })), "{result:?}");
+    assert_eq!(seen(&root, fs), (last, old()));
+}
+
+// A store as it is created.
+
+#[test]
+fn a_new_store_has_its_directories_and_its_pointer_durable_before_it_is_used() {
+    let dir = Scratch::new("store");
+    let root = root(&dir);
+    let fs = Arc::new(ShimFs::new());
+    Store::open(&root, fs.clone()).unwrap();
+
+    // The directories are synced into the root before the pointer is written.
+    let events = fs.events();
+    let directories = last_position(&events, "a directory", |event| {
+        matches!(event, Event::CreateDir(_))
+    });
+    let pointer = position(&events, "the pointer's write", |event| {
+        matches!(event, Event::Write(_))
+    });
+    assert_eq!(events[directories + 1], Event::SyncDir(root.clone()));
+    assert!(directories + 1 < pointer);
+    assert_eq!(events.last(), Some(&Event::SyncDir(root.clone())));
+
+    fs.crash(Lost::Unsynced);
+    assert_eq!(std::fs::read(root.join("CURRENT")).unwrap(), b"0\n");
+    for name in ["objects", "generations", "staging"] {
+        assert!(root.join(name).is_dir(), "{name}");
+    }
+    let reader = Arc::new(ShimFs::new());
+    assert_eq!(seen(&root, reader.clone()), (0, Contents::new()));
+    assert_eq!(reader.events(), vec![]);
 }
