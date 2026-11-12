@@ -355,12 +355,18 @@ impl Files {
     /// For a directory with no pointer: the first thing in it that an unfinished creation
     /// does not leave (the module's description says exactly what it leaves), or `None`
     /// when a store may be made here. Reads only.
+    ///
+    /// Another writer may be finishing this very creation meanwhile. What was listed and
+    /// is gone when it is looked at is not objected to: it is not there. The writer lock,
+    /// which comes after this, settles who goes on.
     fn beyond_an_unfinished_creation(&self) -> Result<Option<PathBuf>> {
         let layout = &self.layout;
+        let gone = |error: &io::Error| error.kind() == io::ErrorKind::NotFound;
         // The entries of a directory; `None` for what is not a directory.
         let inside = |path: &Path| match self.fs.list(path) {
             Ok(inside) => Ok(Some(inside)),
             Err(error) if error.kind() == io::ErrorKind::NotADirectory => Ok(None),
+            Err(error) if gone(&error) => Ok(Some(Vec::new())),
             Err(error) => Err(Error::io("list", path)(error)),
         };
         let (objects, generations, staging) =
@@ -373,7 +379,7 @@ impl Files {
             let inside = inside(&entry)?;
             if entry == layout.lock() {
                 // The lock file: a file, whatever it holds.
-                if inside.is_some() {
+                if inside.is_some() && self.exists(&entry)? {
                     return Ok(Some(entry));
                 }
                 continue;
@@ -398,6 +404,8 @@ impl Files {
                         Err(error) if error.kind() == io::ErrorKind::IsADirectory => {
                             return Ok(Some(staged));
                         }
+                        // Moved into place since it was listed.
+                        Err(error) if gone(&error) => {}
                         Err(error) => return Err(Error::io("read", &staged)(error)),
                     }
                 }

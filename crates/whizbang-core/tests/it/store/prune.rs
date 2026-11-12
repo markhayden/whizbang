@@ -2,17 +2,16 @@
 //! progress still needs stays, and a crash at any point leaves the store whole.
 
 use std::collections::BTreeSet;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use whizbang_core::store::fs::{Fs, Held, RealFs};
+use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Digest, Generation, Kind, Pruned, Reader, Store};
 use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
 use whizbang_testkit::scratch::Scratch;
 
 use super::runs::{EXCHANGE, LEDGER, MASK, ONLY_ONE, object, runs, with_runs};
-use super::{A2, B, C, points, publish_new, root, with_old};
+use super::{A2, B, C, Hooked, When, points, publish_new, root, with_old};
 
 /// The names in a directory of the store.
 fn names(root: &Path, dir: &str) -> BTreeSet<String> {
@@ -272,51 +271,6 @@ fn a_reader_that_is_dropped_holds_nothing() {
     assert_eq!(pruned.objects_removed, 2);
 }
 
-/// The real file system, running a hook once, just before the first file is shared: the
-/// moment between a reader's look at the pointer and its hold on the generation.
-struct BeforeSharing {
-    hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-}
-
-impl Fs for BeforeSharing {
-    fn create_dir(&self, path: &Path) -> io::Result<()> {
-        RealFs.create_dir(path)
-    }
-    fn write_new(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
-        RealFs.write_new(path, bytes)
-    }
-    fn sync_dir(&self, path: &Path) -> io::Result<()> {
-        RealFs.sync_dir(path)
-    }
-    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
-        RealFs.rename(from, to)
-    }
-    fn remove_all(&self, path: &Path) -> io::Result<()> {
-        RealFs.remove_all(path)
-    }
-    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        RealFs.read(path)
-    }
-    fn list(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
-        RealFs.list(path)
-    }
-    fn exists(&self, path: &Path) -> io::Result<bool> {
-        RealFs.exists(path)
-    }
-    fn hold_lock_file(&self, path: &Path, holder: &[u8]) -> io::Result<Option<Box<dyn Held>>> {
-        RealFs.hold_lock_file(path, holder)
-    }
-    fn share(&self, path: &Path) -> io::Result<Box<dyn Held>> {
-        if let Some(hook) = self.hook.lock().unwrap().take() {
-            hook();
-        }
-        RealFs.share(path)
-    }
-    fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
-        RealFs.try_alone(path)
-    }
-}
-
 #[test]
 fn a_reader_whose_generation_is_pruned_before_it_holds_it_reads_the_current_one() {
     let dir = Scratch::new("store-prune");
@@ -334,9 +288,7 @@ fn a_reader_whose_generation_is_pruned_before_it_holds_it_reads_the_current_one(
             assert_eq!(pruned.objects_removed, 2);
         }
     };
-    let fs = Arc::new(BeforeSharing {
-        hook: Mutex::new(Some(Box::new(hook))),
-    });
+    let fs = Arc::new(Hooked::new(When::Sharing, hook));
     let reader = Reader::open(&root, fs).unwrap();
     let generation = reader.snapshot().unwrap();
     assert_eq!(generation.number(), 2, "not the one that went");

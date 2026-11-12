@@ -14,7 +14,8 @@ use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
 use whizbang_testkit::scratch::Scratch;
 
 use super::{
-    A2, C, Contents, after_restart, new, old, points, publish_new, root, seen, tree, with_old,
+    A2, C, Contents, Hooked, When, after_restart, new, old, points, publish_new, root, seen, tree,
+    with_old,
 };
 
 fn held(result: Result<Store, Error>) -> (std::path::PathBuf, Option<String>) {
@@ -198,6 +199,40 @@ fn a_refused_writer_of_a_store_that_is_being_created_changes_nothing() {
         assert_eq!(after_restart(&root), (0, Contents::new()), "stop {stop_at}");
     }
     assert!(refused >= 5, "{refused} of {count} stops met the lock");
+}
+
+#[test]
+fn a_writer_that_looks_while_another_finishes_creating_the_store_is_not_misled() {
+    // The first writer has staged the first pointer. The second lists staging and sees
+    // it; before the second reads it, the first moves it into place and is done. The
+    // file the second meant to read is gone, which is no damage and nothing foreign.
+    for first_still_there in [true, false] {
+        let dir = Scratch::new("store-lock");
+        let root = root(&dir);
+        for folder in ["objects", "generations", "staging"] {
+            std::fs::create_dir_all(root.join(folder)).unwrap();
+        }
+        std::fs::write(root.join("staging/CURRENT"), b"0\n").unwrap();
+        let first = Arc::new(std::sync::Mutex::new(None));
+        let hook = {
+            let (root, first) = (root.clone(), first.clone());
+            move || {
+                let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+                assert!(!root.join("staging/CURRENT").exists());
+                *first.lock().unwrap() = first_still_there.then_some(store);
+            }
+        };
+        let fs = Arc::new(Hooked::new(
+            When::Reading(root.join("staging/CURRENT")),
+            hook,
+        ));
+        let result = Store::open(&root, fs);
+        if first_still_there {
+            held(result);
+        } else {
+            assert_eq!(result.unwrap().snapshot().unwrap().number(), 0);
+        }
+    }
 }
 
 // What is a store, and what is not, said so that the cause can be found.

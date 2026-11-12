@@ -9,10 +9,11 @@ mod prune;
 mod runs;
 
 use std::collections::BTreeMap;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use whizbang_core::store::fs::{Fs, RealFs};
+use whizbang_core::store::fs::{Fs, Held, RealFs};
 use whizbang_core::store::{Digest, Error, Published, Reader, Store};
 use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
 use whizbang_testkit::scratch::Scratch;
@@ -163,6 +164,79 @@ fn points() -> Points {
         pointer,
         final_sync,
         count: events.len(),
+    }
+}
+
+/// When a [`Hooked`] file system runs its hook.
+enum When {
+    /// Just before the first file is shared: the moment between a reader's look at the
+    /// pointer and its hold on the generation.
+    Sharing,
+    /// Just before the first read of this file.
+    Reading(PathBuf),
+}
+
+/// The real file system, running a hook once at a chosen call: what another process does
+/// between two calls of the one under test, at a point the shim's events do not reach.
+struct Hooked {
+    when: When,
+    hook: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Hooked {
+    fn new(when: When, hook: impl FnOnce() + Send + 'static) -> Hooked {
+        Hooked {
+            when,
+            hook: std::sync::Mutex::new(Some(Box::new(hook))),
+        }
+    }
+
+    fn run(&self) {
+        if let Some(hook) = self.hook.lock().unwrap().take() {
+            hook();
+        }
+    }
+}
+
+impl Fs for Hooked {
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
+        RealFs.create_dir(path)
+    }
+    fn write_new(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        RealFs.write_new(path, bytes)
+    }
+    fn sync_dir(&self, path: &Path) -> io::Result<()> {
+        RealFs.sync_dir(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        RealFs.rename(from, to)
+    }
+    fn remove_all(&self, path: &Path) -> io::Result<()> {
+        RealFs.remove_all(path)
+    }
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        if matches!(&self.when, When::Reading(file) if file == path) {
+            self.run();
+        }
+        RealFs.read(path)
+    }
+    fn list(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
+        RealFs.list(path)
+    }
+    fn exists(&self, path: &Path) -> io::Result<bool> {
+        RealFs.exists(path)
+    }
+    fn hold_lock_file(&self, path: &Path, holder: &[u8]) -> io::Result<Option<Box<dyn Held>>> {
+        RealFs.hold_lock_file(path, holder)
+    }
+    fn share(&self, path: &Path) -> io::Result<Box<dyn Held>> {
+        if matches!(self.when, When::Sharing) {
+            self.run();
+        }
+        RealFs.share(path)
+    }
+    fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
+        RealFs.try_alone(path)
     }
 }
 
