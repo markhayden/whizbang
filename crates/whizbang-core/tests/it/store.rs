@@ -563,7 +563,7 @@ fn a_crash_at_any_event_leaves_one_whole_generation_and_a_store_that_still_publi
             let is_new = match lost {
                 Lost::Unsynced => Some(crash_at > points.final_sync),
                 Lost::ContentOnly => Some(crash_at > points.pointer),
-                Lost::Subset(_) => None,
+                Lost::Subset(_) | Lost::Names(_) => None,
             };
             match is_new.unwrap_or(number == 2) {
                 true => assert_eq!((number, &held), (2, &new()), "{case}"),

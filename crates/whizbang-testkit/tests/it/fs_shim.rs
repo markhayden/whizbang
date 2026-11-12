@@ -224,6 +224,65 @@ fn a_subset_loses_the_names_of_the_chosen_directories_and_keeps_the_rest() {
 }
 
 #[test]
+fn any_subset_of_the_unsynced_names_of_one_directory_can_be_lost() {
+    // Three names of one directory with changes not yet durable. In order of their
+    // paths: `gone`, removed and then written again (two changes to one name, bit 0);
+    // `later`, a new file (bit 1); `pointer`, renamed over (bit 2).
+    for mask in 0..8u64 {
+        let dir = Scratch::new("shim");
+        let fs = ShimFs::new();
+        let d = dir.path().join("d");
+        fs.create_dir(&d).unwrap();
+        fs.write_new(&d.join("gone"), b"old gone").unwrap();
+        fs.write_new(&d.join("new"), b"new").unwrap();
+        fs.write_new(&d.join("pointer"), b"old").unwrap();
+        fs.sync_dir(&d).unwrap();
+        fs.sync_dir(dir.path()).unwrap();
+
+        fs.remove_all(&d.join("gone")).unwrap();
+        fs.write_new(&d.join("gone"), b"new gone").unwrap();
+        fs.write_new(&d.join("later"), b"later").unwrap();
+        fs.rename(&d.join("new"), &d.join("pointer")).unwrap();
+        fs.crash(Lost::Names(mask));
+        assert_eq!(fs.crash_names(), 3);
+        assert_eq!(fs.crash_choices(), 1, "all in one directory");
+
+        let gone = on_disk(&d.join("gone")).unwrap();
+        assert_eq!(gone == b"old gone", mask & 1 == 1, "mask {mask}");
+        assert_eq!(gone == b"new gone", mask & 1 == 0, "mask {mask}");
+        assert_eq!(
+            on_disk(&d.join("later")).is_none(),
+            mask & 2 == 2,
+            "mask {mask}"
+        );
+        let pointer = on_disk(&d.join("pointer")).unwrap();
+        assert_eq!(pointer == b"old", mask & 4 == 4, "mask {mask}");
+        assert_eq!(
+            on_disk(&d.join("new")).is_some(),
+            mask & 4 == 4,
+            "mask {mask}"
+        );
+    }
+}
+
+#[test]
+fn some_removals_from_one_directory_can_be_kept_and_others_lost() {
+    for mask in 0..4u64 {
+        let dir = Scratch::new("shim");
+        let fs = ShimFs::new();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        fs.write_new(&a, b"a").unwrap();
+        fs.write_new(&b, b"b").unwrap();
+        fs.sync_dir(dir.path()).unwrap();
+        fs.remove_all(&a).unwrap();
+        fs.remove_all(&b).unwrap();
+        fs.crash(Lost::Names(mask));
+        assert_eq!(on_disk(&a).is_some(), mask & 1 == 1, "mask {mask}");
+        assert_eq!(on_disk(&b).is_some(), mask & 2 == 2, "mask {mask}");
+    }
+}
+
+#[test]
 fn after_a_crash_every_call_fails_and_nothing_more_reaches_the_disk() {
     let dir = Scratch::new("shim");
     let fs = ShimFs::new();
