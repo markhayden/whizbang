@@ -109,7 +109,9 @@ flag in a bundle of short flags, such as `-cR`, is not caught. The list is repea
 `scripts/tests/test-rules.sh`, and `just check` fails when the two differ. The same test holds
 each subagent file to the keys `name`, `description` and `tools`, with its exact list of
 tools, and each skill to one `SKILL.md` whose frontmatter is `name` and `description` only: a
-skill grants nothing. `scripts/worktree.sh` is not on the list, so it asks first.
+skill grants nothing. It refuses any other file in a folder named `.claude`, at any depth: no
+commands, no hooks, no settings further down. `scripts/worktree.sh` is not on the list, so it
+asks first.
 
 ## When documents disagree
 
