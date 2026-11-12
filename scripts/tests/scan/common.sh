@@ -79,6 +79,37 @@ says() {
     fail "expected the output to say: $1"
   }
 }
+# tree_says <place>: `says`, for a scan of the working tree. When the place is missing it
+# first reports what the folder held and what two more scans find, the second with git grep
+# on one thread: FLAKE-NOTE
+tree_says() {
+  local f
+  if ! grep -a -q -F -e "$1" "$tmp/out"; then
+    cp "$tmp/out" "$tmp/first"
+    {
+      echo "missing from the working-tree scan: $1"
+      git --version
+      echo "the files of the folder, with their sizes in bytes:"
+      for f in ./*; do [ -L "$f" ] || [ ! -f "$f" ] || wc -c "$f"; done
+      echo "files git lists: $(git ls-files -co --exclude-standard | wc -l | tr -d ' ')"
+      # The scan exits 1 when it finds anything, so its output is kept and then read.
+      "$scan" >"$tmp/second" 2>&1 || true
+      if grep -a -q -F -e "$1" "$tmp/second"; then
+        echo "a second scan reports it"
+      else
+        echo "a second scan does not report it either"
+      fi
+      GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=grep.threads GIT_CONFIG_VALUE_0=1 "$scan" >"$tmp/second" 2>&1 || true
+      if grep -a -q -F -e "$1" "$tmp/second"; then
+        echo "a scan on one thread reports it"
+      else
+        echo "a scan on one thread does not report it either"
+      fi
+    } >&2
+    cp "$tmp/first" "$tmp/out"
+  fi
+  says "$1"
+}
 
 has_credit="the message has a ${credit} line; this repo allows none, for a person or an agent"
 credits_agent="the message credits an agent or a model"

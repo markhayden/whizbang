@@ -237,22 +237,27 @@ look_in_files() { # <folder> <sha label> <path label, or empty for the file's na
 
 # search <git grep options...>: writes what was found to $work/found, one line each, as
 # sha, path, line number and text, separated by $S. Every backend is git grep, so the
-# matching is the same everywhere. No match is fine; a search that could not run is not.
+# matching is the same everywhere. No match is fine; a search that could not run, or that
+# reported any error, is not.
 search() {
   local rc=0
   case "$target" in
     worktree)
-      git grep --untracked -a -n -z "$@" >"$work/raw" || rc=$?
+      git grep --untracked -a -n -z "$@" >"$work/raw" 2>"$work/search-errors" || rc=$?
       ;;
     files)
       (cd "$target_dir" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
-        git grep --no-index -a -n -z "$@" -- "${target_items[@]}") >"$work/raw" || rc=$?
+        git grep --no-index -a -n -z "$@" -- "${target_items[@]}") >"$work/raw" 2>"$work/search-errors" || rc=$?
       ;;
     commits)
-      git --literal-pathspecs grep -a -n -z "$@" "${target_revs[@]}" -- ${target_items[@]+"${target_items[@]}"} >"$work/raw" || rc=$?
+      git --literal-pathspecs grep -a -n -z "$@" "${target_revs[@]}" -- ${target_items[@]+"${target_items[@]}"} >"$work/raw" 2>"$work/search-errors" || rc=$?
       ;;
   esac
   [ "$rc" -le 1 ] || die "a search failed (exit $rc); refusing to pass"
+  # git grep goes on past a file it cannot read, says so and still exits 0 or 1. What it
+  # said is not printed: it names paths, and a path can hold a match.
+  [ ! -s "$work/search-errors" ] ||
+    die "a search reported $(wc -l <"$work/search-errors" | tr -d ' ') errors, such as a file it could not read; what it did not read is not covered; refusing to pass"
   : >"$work/found"
   [ -s "$work/raw" ] || return 0
   # A line that is not path, number, text is the first part of a path with a newline in

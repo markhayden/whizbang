@@ -18,6 +18,42 @@ printf 'write to someone@example.com or git@github.com:o/r\n' >planted.txt
 expect_pass "the allowed addresses" "$scan"
 rm planted.txt
 
+# A file the scan cannot read is not covered, so the scan fails; it does not report clean.
+printf 'token = %s\n' "$key" >locked.txt
+chmod 000 locked.txt
+if [ -r locked.txt ]; then
+  # Whoever runs this (root, for one) can read a file with no permissions: nothing to test.
+  echo "skip: an unreadable file; this user can read a file with mode 000"
+else
+  expect_fail "a file that cannot be read" "a search reported 1 errors" "$scan"
+  says "refusing to pass"
+  quiet "locked.txt"
+  grep -a -q -e "secrets scan: clean" "$tmp/out" && fail "an unreadable file is not reported clean"
+  expect_fail "a file that cannot be read, secrets only" "refusing to pass" env -u WHIZBANG_WORDLIST "$scan" --secrets-only
+fi
+chmod 644 locked.txt
+rm locked.txt
+
+# What tree_says reports when a place is missing from a scan of the working tree.
+printf 'token = %s\n' "$key" >planted.txt
+expect_fail "a key, for the report" "planted.txt:1" "$scan"
+tree_says "planted.txt:1"
+if (tree_says "nowhere.txt:1") >"$tmp/explained" 2>&1; then fail "a place that is not there fails"; fi
+for text in "missing from the working-tree scan: nowhere.txt:1" "git version" "./planted.txt" \
+  "a second scan does not report it either" "a scan on one thread does not report it either" \
+  "failed: expected the output to say: nowhere.txt:1"; do
+  grep -a -q -F -e "$text" "$tmp/explained" || { cat "$tmp/explained" >&2; fail "the report says: $text"; }
+done
+# The output of a scan that dropped the place, as has happened: the next scans report it.
+grep -a -v -F -e "planted.txt:1" "$tmp/out" >"$tmp/dropped" || true
+cp "$tmp/dropped" "$tmp/out"
+if (tree_says "planted.txt:1") >"$tmp/explained" 2>&1; then fail "a dropped place fails"; fi
+for text in "a second scan reports it" "a scan on one thread reports it"; do
+  grep -a -q -F -e "$text" "$tmp/explained" || { cat "$tmp/explained" >&2; fail "the report says: $text"; }
+done
+grep -a -q -F -e "$key" "$tmp/explained" && fail "the report never prints a key"
+rm planted.txt
+
 # Key shapes, one to a line; and shapes that only look like keys.
 {
   echo "AK""IA""ABCDEFGHIJKLMNOP"
