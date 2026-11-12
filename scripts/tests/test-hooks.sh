@@ -108,5 +108,71 @@ only pre-commit commit-msg pre-push
 expect_pass "a commit once the hooks are sound" git commit -m "feat: again"
 expect_pass "a push once the hooks are sound" git push origin main
 [ "$(git ls-remote "$remote" refs/heads/main | cut -f1)" = "$(git rev-parse HEAD)" ] || fail "the last push arrived"
+published=$(git rev-parse HEAD)
+
+# The real scan, with a fault that a parse does not find on the line after its trap: an
+# unset variable, which makes bash 3.2 exit 0, and a here-document with no end, which
+# makes any bash exit 0 with the rest of the scan unread. The trap of the scan turns that
+# into a failure, so the commit and the push are refused.
+for fault in 'echo "$no_such_variable"' "cat <<'NEVER_ENDS' >/dev/null"; do
+  FAULT="$fault" awk '{ print } /^trap .* EXIT$/ && !put { print ENVIRON["FAULT"]; put = 1 }' \
+    "$root/scripts/scan.sh" >scripts/scan.sh
+  grep -q -F -e "$fault" scripts/scan.sh || fail "the scan has an EXIT trap to put a fault after"
+  chmod +x scripts/scan.sh
+  bash -n scripts/scan.sh 2>/dev/null || fail "a parse does not find the fault: $fault"
+  # Any bash exits 0 from the here-document, so the scan's trap speaks. At the unset
+  # variable bash 3 exits 0 too; a later bash fails by itself. Both name the variable.
+  said="scan: stopped before its end; failing"
+  case "$fault" in echo*) said="no_such_variable" ;; esac
+  only commit-msg
+  change "$fault"
+  expect_fail "a commit with a scan that stops at: $fault" "$said" git commit -m "feat: a fault"
+  [ "$(git rev-parse HEAD)" = "$published" ] || fail "no commit was made with a scan that stops at: $fault"
+  only pre-push
+  git commit -q -m "feat: to push past a fault"
+  expect_fail "a push with a scan that stops at: $fault" "$said" git push origin main
+  [ "$(git ls-remote "$remote" refs/heads/main | cut -f1)" = "$published" ] ||
+    fail "nothing reached the remote with a scan that stops at: $fault"
+  git reset -q --hard "$published"
+done
+
+# A scan that is missing, a folder or unreadable is said to be that, by every hook.
+for hook in pre-commit commit-msg pre-push; do
+  only "$hook"
+  what=commit
+  [ "$hook" != pre-push ] || what=push
+  try() {
+    if [ "$hook" = pre-push ]; then git push origin main; else git commit -m "feat: no scan"; fi
+  }
+  change "no scan, $hook"
+  [ "$hook" != pre-push ] || git commit -q --no-verify -m "feat: to push with no scan"
+  rm -rf scripts/scan.sh
+  expect_fail "$hook with no scan" "$hook: scripts/scan.sh is missing or cannot be read; refusing the $what" try
+  mkdir scripts/scan.sh
+  expect_fail "$hook with a folder for a scan" "$hook: scripts/scan.sh is missing or cannot be read; refusing the $what" try
+  rmdir scripts/scan.sh
+  sound_scan
+  chmod 000 scripts/scan.sh
+  if [ -r scripts/scan.sh ]; then
+    echo "skip: an unreadable scan; this user can read a file with mode 000"
+  else
+    expect_fail "$hook with an unreadable scan" "$hook: scripts/scan.sh is missing or cannot be read; refusing the $what" try
+  fi
+  rm -f scripts/scan.sh
+  [ "$(git ls-remote "$remote" refs/heads/main | cut -f1)" = "$published" ] || fail "$hook: nothing reached the remote"
+  git reset -q --hard "$published"
+done
+
+# What is in the hooks folder and is not a hook (a folder, a file git would not run) is
+# not parsed, and does not stop a commit or a push.
+sound_scan
+only pre-commit commit-msg pre-push
+mkdir scripts/hooks/notes
+printf 'not a script: fi ) done (\n' >scripts/hooks/README
+printf 'if true; then\n' >scripts/hooks/notes/draft.sh
+change "strays"
+expect_pass "a commit with strays in the hooks folder" git commit -m "feat: strays"
+expect_pass "a push with strays in the hooks folder" git push origin main
+[ "$(git ls-remote "$remote" refs/heads/main | cut -f1)" = "$(git rev-parse HEAD)" ] || fail "the push with strays arrived"
 
 finished
