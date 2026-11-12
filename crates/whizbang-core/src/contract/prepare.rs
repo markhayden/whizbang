@@ -275,16 +275,28 @@ impl std::fmt::Display for InputFault {
     }
 }
 
-/// The store failed while a call was being answered. This says nothing about the call:
-/// the same call may be answered once the store is sound.
+/// The store failed while a call was being answered. This is not a judgement of the
+/// call: for content that is missing or damaged, or a file that cannot be read, the same
+/// call may be answered once the store is sound. One failure is not of that kind: a
+/// diagnostic reference under an artifact's own name, which the store refuses to read as
+/// an output and which stays refused until the reference is another.
 ///
 /// Its text holds no path, so it can be handed to a caller who is not on this machine:
 /// a file of the store is named by its last part, a digest or a generation's number.
-/// The whole failure, paths included, is [`StoreFailure::cause`].
-#[derive(Debug, Clone)]
+/// What `{:?}` prints holds none either. The whole failure, paths included, is
+/// [`StoreFailure::cause`], and is given only when asked for by that name: it is not the
+/// error's source, so a chain of causes printed for a caller does not reach it.
+#[derive(Clone)]
 pub struct StoreFailure {
     what: String,
     cause: Arc<store::Error>,
+}
+
+/// The text and nothing else: a failure that is logged with `{:?}` shows no path.
+impl std::fmt::Debug for StoreFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("StoreFailure").field(&self.what).finish()
+    }
 }
 
 impl StoreFailure {
@@ -350,14 +362,10 @@ impl std::fmt::Display for CallError {
     }
 }
 
-impl std::error::Error for CallError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            CallError::Refused(refusal) => Some(refusal),
-            CallError::Store(failure) => Some(failure.cause()),
-        }
-    }
-}
+/// It has no source. A refusal is the error itself, not its cause, and naming it as one
+/// would have a chain of causes say the sentence twice. The store's own error holds
+/// paths, and is had from [`StoreFailure::cause`] by whoever runs the store.
+impl std::error::Error for CallError {}
 
 /// Why a call was turned away before any run existed. A refusal is not an outcome
 /// (`SPEC.md` section 3).

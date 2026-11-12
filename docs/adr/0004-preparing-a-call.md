@@ -15,6 +15,12 @@ refused input as a typed fault, and a failure of the store kept apart from a ref
 no path in its text; negative zero prepared as zero; that the same artifact may be given
 more than once; that a refused run id is echoed up to 64 characters; that stored run ids
 are not held to the run id's rule.
+Amended: 2026-11-12, after the review of the amendment above. Added: what a diagnostic
+reference does to a call, under a run's names and under an artifact's own; that the
+reason left out of a store failure is not left out of a refused input, which can pass on
+a decoder's sentence; that neither `{:?}` nor an error's chain of causes shows a path.
+Changed: "the same call may be answered once the store is sound" did not hold for a
+diagnostic at an artifact's name.
 Spec: section 3, "The execution contract", "Identities" and "Storage"; section 6,
 "Readiness"
 
@@ -91,12 +97,37 @@ the text.
 
 **A failure of the store is not a refusal.** Both methods of the executor answer with a
 `CallError`: `Refused`, with the refusal, or `Store`, with a `StoreFailure`. The store
-failing (content that a generation names and that is missing or damaged, a file that
-cannot be read) says nothing about the call. The text of a `StoreFailure` and of every
-refusal holds no path: a file of the store is named by its last part, which for stored
-content is its digest, and the reason a file was found damaged is left out, since it can
-quote the file. The store's own error, with its paths, is kept beside the text for
-whoever runs the store (`StoreFailure::cause`).
+failing is not a judgement of the call. There are three kinds:
+
+- content that a generation names and that is missing or damaged;
+- a file that cannot be read, or a generation file that is not one;
+- a diagnostic reference under an artifact's own name, outside runs, which the store
+  refuses to read as an output. No publication makes such a reference; a generation file
+  that other hands wrote can hold one.
+
+For the first two, the same call may be answered once the store is sound. Not for the
+third: it stays refused until the reference is one of an output.
+
+**A diagnostic is never an input, wherever it is held.** An artifact is looked for among
+the names outside runs. A run's diagnostics are among the run's names, so an identity
+that a run holds only as a diagnostic is not in the store as an artifact, and a call that
+gives it is refused with `Missing`, like any identity the store does not hold. That is
+the case a tool will meet when it is handed something an earlier run kept as evidence.
+
+**No path in what is said.** The text of a `StoreFailure` and of every refusal holds no
+path. In a `StoreFailure`, a file of the store is named by its last part, which for
+stored content is its digest, and the reason a file was found damaged is left out, since
+it can quote the file. What `{:?}` prints of a `CallError` holds no path either. The
+store's own error, with its paths, is kept for whoever runs the store and is had by name
+(`StoreFailure::cause`); it is not the error's source, and a `CallError` has no source,
+so a chain of causes printed for a caller neither reaches a path nor says a refusal
+twice.
+
+That a reason is left out holds for a store failure only. A refused input of the kind
+`NotTheArtifact` passes on the sentence of whatever read the content: for an image, the
+PNG or JPEG decoder's own, which can quote a chunk's four type bytes, escaped, and
+checksum values. It quotes bytes of the content, never a place on the machine, and is
+kept, because it is what tells one broken file from another.
 
 **The same artifact may be given more than once.** Prepare holds a call to its
 descriptor: the type at each port, how many, and which image each belongs to. It does not
