@@ -87,7 +87,8 @@ says() {
 # stderr during one kind of search (NOISY: worktree, files or commits), or whenever its
 # arguments hold the words of NOISY_ON in a row (`ls-files -z -c` is one listing and no
 # other), and then go on as git would; answer nothing when asked which paths are ignored
-# (MUTE=check-ignore); wait a moment (SLOW); and note what the scan's own folder holds at
+# (MUTE=check-ignore), or answer for one path more than it was asked about
+# (EXTRA=check-ignore); wait a moment (SLOW); and note what the scan's own folder holds at
 # that moment (SPY).
 stand_in_for_git() {
 real_git=$(command -v git)
@@ -118,6 +119,15 @@ if [ "${MUTE:-}" = check-ignore ]; then
   case " $* " in *" check-ignore "*)
     "$real" "$@" >/dev/null 2>&1
     exit 1
+    ;;
+  esac
+fi
+if [ "${EXTRA:-}" = check-ignore ]; then
+  case " $* " in *" check-ignore "*)
+    status=0
+    "$real" "$@" || status=$?
+    printf '\0\0\0./a-path-nobody-asked-about\0'
+    exit "$status"
     ;;
   esac
 fi
@@ -172,6 +182,26 @@ chmod +x "$tmp/bin/git"
 # first reports what the folder held and what two more scans find, the second with git grep
 # on one thread. On CI's macOS runner git grep on several threads has lost a match at
 # random (docs/carry-over.md), and a scan on one thread has not.
+# lists_what_git_lists <name>: the scan passes, and the census's own list of the working
+# tree is exactly git's: every tracked file and every untracked one that no ignore rule
+# keeps out (regular files with something in them; links aside). Needs the stand-in for
+# git, which copies the census's list while the scan runs.
+lists_what_git_lists() {
+  local f
+  mkdir -p "$tmp/scan-tmp"
+  rm -f "$tmp/spy.listed"
+  expect_pass "$1" env PATH="$tmp/bin:$PATH" TMPDIR="$tmp/scan-tmp" SPY="$tmp/spy" SPY_WORD="$word" "$scan"
+  [ -s "$tmp/spy.listed" ] || fail "$1: the census's list was seen"
+  git ls-files -z -co --exclude-standard >"$tmp/git-entries"
+  while IFS= read -r -d '' f; do
+    if [ -f "$f" ] && [ ! -L "$f" ] && [ -s "$f" ]; then printf '%s\0' "$f"; fi
+  done <"$tmp/git-entries" | LC_ALL=C tr '\n\0' '\002\n' | LC_ALL=C sort -u >"$tmp/git-listed"
+  cmp -s "$tmp/git-listed" "$tmp/spy.listed" || {
+    diff "$tmp/git-listed" "$tmp/spy.listed" >&2 || true
+    fail "$1: the census lists exactly what git lists (above: git's list, then the census's)"
+  }
+}
+
 # The stand-in for find, which the scan uses to list the working tree. FIND_DOES says what
 # it does: `speak` fails with a line that names a path; `fail` fails and says nothing;
 # `warn` says a line and then lists as find would; `keep-out` fails when it is asked to

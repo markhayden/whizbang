@@ -295,7 +295,10 @@ run_grep_once() {
       git -c grep.threads=1 grep --untracked -a -n -z "$@" >"$to" 2>>"$work/search-errors" || rc=$?
       ;;
     ignored)
-      git --literal-pathspecs -c grep.threads=1 grep -a -n -z "$@" -- "${ignored_tracked[@]}" >"$to" 2>>"$work/search-errors" || rc=$?
+      # The names are the index's. Where git composes names (macOS), it would compose
+      # these too and then not find one that the index holds decomposed: not here.
+      GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.precomposeunicode GIT_CONFIG_VALUE_0=false \
+        git --literal-pathspecs -c grep.threads=1 grep -a -n -z "$@" -- "${ignored_tracked[@]}" >"$to" 2>>"$work/search-errors" || rc=$?
       ;;
     files)
       (cd "$target_dir" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
@@ -334,6 +337,14 @@ names() { tr '\n\0' '\002\n' | sort -u; }
 # tracked file not ignored). A tracked file in an ignored folder still comes from the
 # index. What goes on inside an ignored folder (a build that is running, a folder that
 # cannot be read) can no longer fail the scan.
+#
+# Names. Files are asked about by the rules alone too: otherwise git reads the name as a
+# pattern, and an ignored `a*b.tmp` beside a tracked `axb.tmp` counts as tracked. A name
+# that holds the byte \001 or \002 is refused (`plain_names`). And where git composes the
+# names it reads from a folder (macOS: `core.precomposeUnicode`), the names find gives
+# are composed the same way (`compose`) before git is asked about them, and so are both
+# lists before they are compared: there the search names a file as its folder does, and
+# the index may hold the same name decomposed.
 census() {
   local f rev missing rc
   case "$target" in
@@ -342,17 +353,21 @@ census() {
       git ls-files -z -c >"$work/census-entries" 2>"$work/census-errors" || rc=$?
       [ "$rc" -eq 0 ] && [ ! -s "$work/census-errors" ] ||
         die "the tracked files could not be listed (git ls-files: exit $rc, $(wc -l <"$work/census-errors" | tr -d ' ') lines of warnings or errors); refusing to pass"
+      plain_names "$work/census-entries"
+      composing=0
+      [ "$(git config --type=bool core.precomposeunicode 2>/dev/null || true)" != true ] || composing=1
       printf '.\0' >"$work/census-level"
       : >"$work/census-folders"
       while [ -s "$work/census-level" ]; do
         cat "$work/census-level" >>"$work/census-folders"
-        walk d <"$work/census-level" >"$work/census-found"
+        walk d <"$work/census-level"
         # A folder is asked about by its name alone. With a `/` after it git takes the
         # name for a path inside the folder: `out/*` would then match `out/`.
         unignored 1 --no-index >"$work/census-level"
       done
-      walk f <"$work/census-folders" >"$work/census-found"
-      unignored 3 >>"$work/census-entries"
+      walk f <"$work/census-folders"
+      unignored 3 --no-index >>"$work/census-entries"
+      compose "$work/census-entries"
       while IFS= read -r -d '' f; do
         if [ -f "$f" ] && [ ! -L "$f" ] && [ -s "$f" ]; then printf '%s\0' "$f"; fi
       done <"$work/census-entries" | names >"$work/census-listed"
@@ -375,28 +390,74 @@ census() {
       ;;
   esac
   run_grep "$work/census-raw" -l -F -e ''
+  [ "$target" != worktree ] || compose "$work/census-raw"
   names <"$work/census-raw" >"$work/census-searched"
   missing=$(comm -23 "$work/census-listed" "$work/census-searched" | wc -l | tr -d ' ')
   [ "$missing" -eq 0 ] ||
     die "$missing of the $(wc -l <"$work/census-listed" | tr -d ' ') files to cover were not looked in by the search ($target); they are not named here, since a path can hold a match; refusing to pass"
 }
 
-# walk <d|f>: the folders (d) or the files (f) directly inside each folder named on stdin,
-# NUL-ended, as `./path`. find does not follow a link, so what a link leads to is not
-# listed (nor searched); and it goes no deeper than the folders it is given. Nothing named
-# `.git` is listed. What find says is not printed: it names paths.
+# plain_names <file>: fails if any of the NUL-ended names in the file holds the byte \001
+# or \002. The scan keeps names as lines with a newline held as \002, and separates the
+# fields of what it finds with \001: such a name would be taken for another, or lost. The
+# names are counted and not shown.
+plain_names() {
+  local odd
+  odd=$(tr '\n\0' ' \n' <"$1" | { grep -a -c -e "[$S"$'\002'"]" || true; })
+  [ "$odd" -eq 0 ] ||
+    die "$odd names hold the byte \\001 or \\002, which the scan uses to tell names and fields apart, so it cannot cover them; rename them; refusing to pass"
+}
+# compose <file>: rewrites the NUL-ended names in the file, each part of a path composed
+# as git composes a name it reads from a folder: a part with a byte that is not ASCII goes
+# through the same conversion (iconv, UTF-8-MAC to UTF-8), and stays as it is when that
+# fails. Only where git does it, and only when some name has such a byte.
+composing=0
+compose() {
+  local f rest part new out
+  [ "$composing" -eq 1 ] || return 0
+  [ "$(($(tr -d '\000-\177' <"$1" | wc -c)))" -gt 0 ] || return 0
+  while IFS= read -r -d '' f; do
+    case "$f" in
+      *[!$'\001'-$'\177']*)
+        rest=$f out=
+        while :; do
+          part=${rest%%/*}
+          case "$part" in
+            *[!$'\001'-$'\177']*)
+              # The dot keeps a newline that ends the name.
+              if new=$(printf '%s.' "$part" | iconv -f UTF-8-MAC -t UTF-8 2>/dev/null); then part=${new%.}; fi
+              ;;
+          esac
+          out=$out$part
+          case "$rest" in */*) rest=${rest#*/} out=$out/ ;; *) break ;; esac
+        done
+        f=$out
+        ;;
+    esac
+    printf '%s\0' "$f"
+  done <"$1" >"$work/census-composed"
+  mv "$work/census-composed" "$1"
+}
+# walk <d|f>: writes to $work/census-found the folders (d) or the files (f) directly
+# inside each folder named on stdin, NUL-ended, as `./path`. find does not follow a link,
+# so what a link leads to is not listed (nor searched); and it goes no deeper than the
+# folders it is given. Nothing named `.git` is listed. What find says is not printed: it
+# names paths.
 walk() {
   local rc=0
   xargs -0 sh -c 'kind=$1; shift; exec find "$@" -mindepth 1 -maxdepth 1 ! -name .git -type "$kind" -print0' sh "$1" \
-    2>"$work/census-errors" || rc=$?
+    >"$work/census-found" 2>"$work/census-errors" || rc=$?
   [ "$rc" -eq 0 ] && [ ! -s "$work/census-errors" ] || {
     if [ "$rc" -eq 0 ]; then rc="said something:"; else rc="failed, with"; fi
-    die "the files of the working tree could not all be listed (find $rc $(wc -l <"$work/census-errors" | tr -d ' ') lines of errors, such as a folder it could not read); a file or folder may have changed during the walk: run it again; what was not listed is not covered; refusing to pass"
+    die "the files of the working tree could not all be listed (find $rc $(wc -l <"$work/census-errors" | tr -d ' ') lines of errors, such as a folder it could not read); a file or folder changed during the walk, or one cannot be read: run it again, and if it refuses again, look for a folder that cannot be read; what was not listed is not covered; refusing to pass"
   }
+  plain_names "$work/census-found"
+  compose "$work/census-found"
 }
 # unignored <from> [--no-index]: of the paths in $work/census-found, NUL-ended, the ones
 # no ignore rule keeps out, each from its character number <from> (3 leaves out the `./`).
-# Without --no-index git says of a tracked path that no rule matches it.
+# Without --no-index git says of a tracked path that no rule matches it, and it reads
+# each path as a pattern that a tracked path may match.
 # check-ignore prints four fields for each path: where the rule is, its line, the rule,
 # the path. No rule matched when the rule is empty; and a rule that starts with `!` puts
 # the path back, so that is not ignored either. Anything git says counts, and so does a
@@ -612,6 +673,7 @@ scan_commits() { # reads $work/outgoing
     esac
   done <"$work/changes"
   [ -s "$work/changed" ] || return 0
+  plain_names "$work/changed"
   # The changed files are searched in every outgoing commit, as each commit had them. A
   # newline in a name is held as \002 while the names are lines.
   tr '\n\0' '\002\n' <"$work/changed" | sort -u >"$work/union"
@@ -641,6 +703,7 @@ scan_trees() { # <sha...>
     trees=$((trees + 1))
     : >"$text/tree-paths/$sha"
     git ls-tree -r -z "$sha" >"$work/entries"
+    plain_names "$work/entries"
     while IFS= read -r -d '' meta; do
       printf '%s\n' "${meta#*$'\t'}" >>"$text/tree-paths/$sha"
       read -r mode _ blob <<<"${meta%%$'\t'*}"
