@@ -18,7 +18,8 @@ pub const RUN_ID_LIMIT: usize = 64;
 pub struct RunId(String);
 
 impl RunId {
-    /// The id this text is, or why it is none.
+    /// The id this text is, or why it is none. The refusal shows the text escaped, and
+    /// its first 64 characters at most.
     pub fn parse(id: &str) -> Result<RunId, String> {
         let first = id
             .chars()
@@ -28,9 +29,18 @@ impl RunId {
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
         if !first || !rest || id.len() > RUN_ID_LIMIT {
+            // What was refused can be anything, of any length. It is shown escaped, and
+            // only as far as the longest id goes.
+            let shown: String = id.chars().take(RUN_ID_LIMIT).collect();
+            let length = id.chars().count();
+            let cut = if length > RUN_ID_LIMIT {
+                format!(" and so on ({length} characters)")
+            } else {
+                String::new()
+            };
             return Err(format!(
-                "{id:?} is no run id: a run id is a lower-case letter or a digit, then \
-                 lower-case letters, digits, _ or -, {RUN_ID_LIMIT} characters at most"
+                "{shown:?}{cut} is no run id: a run id is a lower-case letter or a digit, \
+                 then lower-case letters, digits, _ or -, {RUN_ID_LIMIT} characters at most"
             ));
         }
         Ok(RunId(id.to_owned()))

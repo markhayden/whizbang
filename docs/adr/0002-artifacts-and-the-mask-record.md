@@ -11,6 +11,20 @@ and a binding that breaks ADR 0001's rules are refused. Changed: the core is 0 u
 protect, which narrows `mask/1` without a new version, as the record says where it states
 it. Added to `image/1`: what a change of the encoder that writes an image does to its
 identity.
+Amended: 2026-11-12, a second note, to complete the first and to bring one sentence in
+line with ADR 0004. Also added since the record was accepted, and left out of the note
+above: that a band profile's centre column may be at the right edge, and that a
+half-width may be up to 1e-9 under the least; the counts in `band_profile/1` (its
+half-widths) and in `series/1` (its rows and its values); that "inside the image" includes
+its edges; that the planes are a statement, so one weighting can have two identities;
+`--store <dir>` on `whizbang store import`; the names of the rebind step's inputs (`mask`
+and `derivation`); how long a plane's run can be and what the planes of an empty mask
+cost; a consequence, that a rule refusing what an earlier build wrote is a new version
+once a store is kept; and three alternatives: a derivation as a kind of binding, a
+coordinate at a wrapped right edge brought round to 0, and a replaced core kept under
+protect. Changed: the sentence that said a derivation stated by hand "is refused there
+(tasks A5 and A8)". ADR 0004 decided otherwise, and nothing can refuse the artifact: a
+mask made by hand on a derivation's binding is the same artifact as the rebound one.
 Spec: section 3, "Identities" and "Storage"; section 16, checkpoint 1A
 
 ## Context
@@ -305,10 +319,14 @@ build (ADR 0001 keeps `binding/1` as it is, and to ADR 0001 such a binding is an
 alignment), and stating a derivation is open to any caller. So a caller who states a false
 derivation can move a mask onto an unrelated image of the same size. The type stops that
 happening by mistake; it does not stop it being done on purpose. This boundary is accepted
-here, and closed where derivations are made: only the executor or the fill composite will
-state one, and a derivation stated by hand is refused there (tasks A5 and A8, on
-`docs/carry-over.md`). A rebound mask read from a file is a mask on a binding like any
-other: the file does not say whether its binding was a derivation.
+here. ADR 0004 decided who may state a derivation: code, and no caller; a call has no
+place for one. What can still be closed is the stating itself, where derivations are made:
+the fill composite is to state the one for the image it made (task A8, on
+`docs/carry-over.md`). That closes one way of making such a mask and not the artifact: a
+rebound mask read from a file is a mask on a binding like any other, the file does not say
+whether its binding was a derivation, and a mask made by hand on the same binding is the
+same artifact, with the same identity (ADR 0004, "Who may state a derivation"). What
+holds is that a mask is used only on the image its binding's source names.
 
 Nothing at this layer can check more. A mask and a binding hold digests of pictures, not
 pictures, and two digests say nothing of how alike two pictures are. Comparing the pixels

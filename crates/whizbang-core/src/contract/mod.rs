@@ -26,8 +26,8 @@ pub use descriptor::{
 };
 pub use engine::{Engine, Executor};
 pub use prepare::{
-    Backends, Missing, ModelIdentity, Need, NoBackends, PreparedCall, Readiness, Refusal,
-    ResolvedInput, Unavailable,
+    Backends, CallError, InputFault, Missing, ModelIdentity, Need, NoBackends, PreparedCall,
+    Readiness, Refusal, ResolvedInput, StoreFailure, Unavailable,
 };
 pub use registry::{Action, RegistrationError, Registry};
 pub use run::{Committed, Finished, Outcome, RUN_ID_LIMIT, RunId};
