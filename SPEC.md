@@ -817,6 +817,8 @@ ui/                     the playground interface
 evalsets/               set manifests and public labels (images: github.com/markhayden/whizbang-evalsets)
 docs/
   adr/                  decisions that are costly to reverse, one new series from 0001
+  baseline/             what the old harness did: the package's manifest, the transcript
+                        format, the audit's counts (the package itself is owner-only)
   guides/               one page per door and per "how to add" task
   reference/            generated from the static description; never edited by hand
   results/              evaluation results
@@ -825,8 +827,10 @@ docs/
   sources.toml          the old repos' final commits, fixed before porting starts
 .claude/                skills, subagents and permission settings (versioned)
 scripts/                scan.sh, heavy.sh, timing.sh, setup.sh with tool-versions.txt,
-                        check-crate-graph.sh with crate-graph.txt, docs.sh, hooks/, and
-                        tests/ (the tests of the scripts); later worktree.sh and dev.sh
+                        check-crate-graph.sh with crate-graph.txt, docs.sh, hooks/,
+                        baseline/ (convert.py and audit.py: Python 3.9 or later, standard
+                        library only), and tests/ (the tests of the scripts); later
+                        worktree.sh and dev.sh
 .github/workflows/      CI
 SPEC.md                 this file
 AGENTS.md               rules for any agent; CLAUDE.md imports it

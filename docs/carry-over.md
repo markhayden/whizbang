@@ -17,8 +17,9 @@ Done on 2026-11-11. The four old repos are tagged `final-before-whizbang` and pi
 `docs/sources.toml`. What was found and what happened to it is in `docs/plans/m0-inventory.md`.
 
 The baseline package is assembled from the tagged squint; `docs/baseline/` says what it holds
-and how it is identified. Still to do in milestone 0, in whizbang: convert and audit the
-package, and write up the 2026-11-11 study from it.
+and how it is identified. Its replay fixtures are converted to transcripts and audited:
+`docs/baseline/transcript.md` and `docs/baseline/audit.toml`. Still to do in milestone 0, in
+whizbang: write up the 2026-11-11 study from the package.
 
 ## Fixes carried into whizbang
 
@@ -51,6 +52,9 @@ package, and write up the 2026-11-11 study from it.
 | squint | Small models break the submission format | E | The redesigned format is admitted through its gate |
 | squint | Open review follow-ups from its milestone 4 | 2 | Each is fixed, or dropped with a line here, as its module is ported |
 | playground | A missing model cannot be picked in the model list | 5 | It can be picked, and Run explains what is missing |
+| whizbang | The baseline gate needs a replay that writes a transcript in format 1 (`docs/baseline/transcript.md`), runs `whizbang_eval::baseline::compare` over every recorded decision and writes the gate receipt | 2 | Every recorded decision compares with no difference, and the receipt is written |
+| whizbang | Transcript format 1 compares the bytes of tool images (crops, aligned frames) and the text of tool results. Whether whizbang's `view` and `align` reproduce the old tools' output exactly is not known until they are ported | 2 | They reproduce; or a new format version says what is compared instead, agreed with the owner before the gate runs |
+| whizbang | `scripts/baseline` needs Python 3.9 or later; only `scripts/tests/test-baseline.sh` checks for it, `scripts/setup.sh` does not | 0 | `just setup` reports a missing or too old `python3` |
 
 ## Evaluations
 
