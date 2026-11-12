@@ -702,3 +702,54 @@ fn a_writer_that_makes_the_root_alone_is_refused_where_the_parent_is_missing() {
     drop(store);
     assert_eq!(after_restart(&root), (0, Contents::new()));
 }
+
+/// A child process holds a copy of every file its parent has open, from the moment it is
+/// forked until it starts its program; a file lock that is only closed stays held by
+/// that copy. Here other threads start children without pause while one opens a store,
+/// drops it and opens it again, as a process does that works with a store and with a
+/// worker. No open may be refused: the writer lets its lock go, it does not only close
+/// the file.
+///
+/// The children are of a program that does not exist: each is forked all the same, and
+/// ends where it would have started the program. The race is lost often enough on Linux
+/// to fail this test nearly every time when the lock is only closed (the counts are in
+/// `docs/carry-over.md`); `store/fs.rs` holds the same without a race.
+#[cfg(unix)]
+#[test]
+fn a_writer_that_let_go_is_not_held_by_a_child_being_started_on_another_thread() {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+    let dir = Scratch::new("store-lock-children");
+    let root = root(&dir);
+    let program = dir.path().join("no-such-program");
+    let done = AtomicBool::new(false);
+    let started = AtomicU64::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            scope.spawn(|| {
+                while !done.load(Ordering::Relaxed) {
+                    let child = std::process::Command::new(&program).spawn();
+                    assert!(child.is_err(), "nothing is at {}", program.display());
+                    started.fetch_add(1, Ordering::Relaxed);
+                }
+            });
+        }
+        let opened = (|| {
+            for round in 0..2000 {
+                // Children are being started by now: the first rounds wait for one.
+                while started.load(Ordering::Relaxed) == 0 {
+                    std::thread::yield_now();
+                }
+                let store = Store::open(&root, Arc::new(RealFs)).map_err(|error| (round, error))?;
+                drop(store);
+            }
+            Ok(())
+        })();
+        done.store(true, Ordering::Relaxed);
+        let opened: Result<(), (u32, Error)> = opened;
+        if let Err((round, error)) = opened {
+            panic!("refused at round {round}: {error:?}");
+        }
+    });
+    assert!(started.load(Ordering::Relaxed) > 0);
+}
