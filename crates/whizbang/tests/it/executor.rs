@@ -53,10 +53,10 @@ fn a_test_prepares_echo_on_the_executor_the_binary_builds() {
         prepared.config().to_string(),
         "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     );
-    // The entry point takes it as far as there is anything built to take it.
+    // This executor was built over a read of the store: it runs nothing.
     assert_eq!(
         executor.submit(&call),
-        Err(CallError::Refused(Refusal::NothingRunsYet))
+        Err(CallError::Refused(Refusal::ReadOnly))
     );
     assert!(matches!(
         executor.submit(&Call::new("echo")),

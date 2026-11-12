@@ -20,6 +20,13 @@ pub struct Where {
     store: PathBuf,
 }
 
+impl Where {
+    /// The store's directory.
+    pub fn root(&self) -> &Path {
+        &self.store
+    }
+}
+
 #[derive(Subcommand)]
 pub enum Command {
     /// List the runs the store holds. Reads only: it works while another process writes.

@@ -1,6 +1,7 @@
 //! The `whizbang` binary: argument parsing and wiring only.
 
 mod import;
+mod runs;
 mod store;
 
 use std::process::ExitCode;
@@ -35,6 +36,11 @@ enum Command {
     Store {
         #[command(subcommand)]
         command: store::Command,
+    },
+    /// Runs: finding one, and reading its record and what it kept.
+    Runs {
+        #[command(subcommand)]
+        command: runs::Command,
     },
 }
 
@@ -72,6 +78,22 @@ fn main() -> ExitCode {
             Ok(text) => {
                 print!("{text}");
                 ExitCode::SUCCESS
+            }
+            Err(complaint) => {
+                eprintln!("whizbang: {complaint}");
+                ExitCode::from(1)
+            }
+        },
+        Command::Runs { command } => match runs::run(&command) {
+            Ok(bytes) => {
+                use std::io::Write;
+                match std::io::stdout().write_all(&bytes) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(error) => {
+                        eprintln!("whizbang: could not write: {error}");
+                        ExitCode::from(3)
+                    }
+                }
             }
             Err(complaint) => {
                 eprintln!("whizbang: {complaint}");

@@ -11,6 +11,7 @@ use whizbang_core::artifact::Contents;
 use whizbang_core::contract::{Engine, NoBackends, RegistrationError, Registry};
 use whizbang_core::description::Description;
 use whizbang_core::identity::Digest;
+use whizbang_core::store::Store;
 
 /// Every action this build ships, registered in the order a door lists them. Tools add
 /// theirs here as they are ported.
@@ -18,14 +19,23 @@ pub fn registry() -> Result<Registry, RegistrationError> {
     Ok(Registry::new())
 }
 
-/// The executor of this build over a registry and a read of a store. The binary gives it
-/// [`registry`]; a test gives it that registry with its fakes added.
+/// The executor of this build over a registry and a read of a store: it prepares calls
+/// and runs none. The binary gives it [`registry`]; a test gives it that registry with
+/// its fakes added.
 ///
 /// Two things it is built with do not exist yet, and each has the one value that says
 /// so. No backend is configured, so every capability is unavailable. And there is no
 /// config, so its digest is the digest of no bytes.
 pub fn executor(registry: Registry, store: Arc<dyn Contents + Send + Sync>) -> Engine {
     Engine::new(registry, Arc::new(NoBackends), store, Digest::of_bytes(b""))
+}
+
+/// The executor of this build that runs actions: over a registry and a store opened to
+/// write, which it reads and writes its runs to. It is built as [`executor`] is, with no
+/// backend, no config and no secret to redact: nothing reads a key yet. No command of
+/// the binary runs an action yet; the tests do, with their fakes registered.
+pub fn runner(registry: Registry, store: Arc<Store>) -> Engine {
+    Engine::over(registry, Arc::new(NoBackends), store, Digest::of_bytes(b""))
 }
 
 /// The static description of a build of this crate's version that holds this registry.

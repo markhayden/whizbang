@@ -2,6 +2,10 @@
 
 Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-12, inside checkpoint 1A, with the code that runs an action and writes
+its run. Added: "Running an action, and writing its run". Changed: the sentences that said
+nothing wrote a record, a journal or a diagnostic yet, and the list of what this record
+does not decide.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
 
@@ -39,10 +43,10 @@ The record's shape is costly to reverse: once a store is kept, every record in i
 
 ## Decision
 
-The code is in `crates/whizbang-core/src/contract/` (`record.rs`, `redact.rs`,
-`journal.rs`), the schema in `crates/whizbang-core/schemas/run-1.json`, and the tests that
-hold them to this record in `crates/whizbang-core/tests/it/contract/record.rs` and
-`redact.rs`.
+The code of the record is in `crates/whizbang-core/src/contract/` (`record.rs`,
+`redact.rs`, `journal.rs`), the schema in `crates/whizbang-core/schemas/run-1.json`, and
+the tests that hold them to this record in
+`crates/whizbang-core/tests/it/contract/record.rs` and `redact.rs`.
 
 ### The shape, `run/1`
 
@@ -172,8 +176,8 @@ one of the run's names, it goes when the run is deleted and its content at the n
 and by nothing else, which is what the spec asks.
 
 Beside it, under the names the record lists in `diagnostics`: the run's journal, at
-`journal`, and what the action wrote, each at `diagnostics/<name>`. These names are fixed
-here (`RECORD_NAME`, `JOURNAL_NAME`, `DIAGNOSTICS_PREFIX`); nothing writes under them yet.
+`journal`, and what the action wrote, each at `diagnostics/<name>` (`RECORD_NAME`,
+`JOURNAL_NAME`, `DIAGNOSTICS_PREFIX`). All of them are diagnostic references.
 
 `record::stored` reads the record of a run by whatever id the store holds the run under.
 That id is not a `RunId` (ADR 0004, "The run id"): a store can hold runs that other code
@@ -200,6 +204,91 @@ the message, and `outputs` is empty: a record with an output and a status other 
 `completed` is refused on reading. Its diagnostics are listed as a completed run's are. A
 run that found its input invalid is the same with `invalid` and its reason; a cancelled
 run has neither.
+
+### Running an action, and writing its run
+
+The code is in `crates/whizbang-core/src/contract/` (`engine.rs`, `registry.rs`,
+`context.rs`, `journal.rs`); the tests are in
+`crates/whizbang-core/tests/it/contract/execute.rs` and `crates/whizbang/tests/it/runs.rs`.
+
+**An action runs.** `Action::run` is handed the prepared call and a `Context`, and returns
+when the action is over: `Produced`, or a `Failure`. A `Failure` is an error, with a type
+and a message, or an invalid input, with the reason. `Produced` holds nothing and can only
+be made as nothing: an action cannot hand back an artifact until there is a commit step to
+publish it in, which is the plan's task for nested calls, cancellation and publication.
+An action that does not define `run`, as a fixture that only describes itself, fails with
+the type `not_runnable`.
+
+**Two executors.** `Engine::new` is given a read of a store; it prepares calls and
+refuses to run one (`Refusal::ReadOnly`), because it was given no way to write.
+`Engine::over` is given a store opened to write, which makes its process the store's one
+writer for as long as the executor lives; it reads that store and writes its runs to it.
+
+**What `submit` does, in order.**
+
+1. Prepares the call. A refusal, or a call that is not ready, is answered as ADR 0004
+   says: there is no run and nothing is written.
+2. Names the run and notes the time. From here there is a run.
+3. Runs the action, with a context of its own.
+4. Makes the outcome: completed with no outputs, error, or invalid. The secrets are taken
+   out of an error's type and message and of an invalid run's reason here, so what is
+   handed back holds none, as what is written holds none.
+5. Publishes, in one publication of the store: the journal under `journal`, each
+   diagnostic the action wrote under `diagnostics/<name>`, and the record under `record`,
+   each as a diagnostic reference of the run.
+6. Answers with the run's id and its outcome, after the publication is durable.
+
+So a run is in the store whole or not at all, whatever its outcome, and a run that was
+reported survives a loss of power. When the store fails in step 5, `submit` answers with
+the store's failure (ADR 0004's `CallError::Store`), not with a finished run, and the
+store holds nothing of the run; the one exception is the store's own (`Unacknowledged`):
+the generation became visible and its last sync failed, and then the run is whole and was
+not reported as finished.
+
+**A run's id** is the time it started, in milliseconds since the Unix epoch, a hyphen, and
+a count: `1794519513123-1`. The count is the executor's count of the runs it has named,
+and goes up past any id the store already holds. One process writes a store at a time, and
+it is this one, so an id that is free when it is made stays free until the run is
+published. It is a `RunId` (ADR 0004) by construction. Ids made in order sort in order
+while the time has as many digits.
+
+**What an action is handed.** A cancellation signal that nothing sets; no deadline; an
+event sink, which is the run's journal; an empty allowance; the store the executor reads;
+no capability; an executor that refuses every call (`Refusal::NoNestedCalls`), because
+calls do not nest yet; and a place for diagnostics.
+
+**Diagnostics.** `Context::diagnostics` takes bytes under a name: a lower-case letter or a
+digit, then lower-case letters, digits, `_`, `-` or `.`, 64 characters at most, written
+once in a run. Text has the secrets taken out before it is kept; bytes that are not UTF-8
+are kept as they are. A progress event's message has the secrets taken out when it is
+reported. Both are held in memory until the run ends, and are then stored as step 5 says.
+
+**The time** comes from a clock the executor is built with (`Clock`), so that a test can
+fix it and the record of a run can be compared with bytes written by hand.
+
+**The binary.** `whizbang runs list --store <dir>` lists each run with its status, its
+action, when it started and how long it took; `whizbang runs show <run> --store <dir>`
+shows one record for a person, every group, the empty ones said to be empty; `--json`
+prints the record as it is stored, and `--diagnostic <name>` one of the run's diagnostics
+as it is stored. Both read only. Neither holds a run's id to the rule of a `RunId`: a
+run is looked up under whatever the store has it under, and everything read from a store
+is printed escaped, except the bytes asked for with `--json` and `--diagnostic`. A run
+with no record, or with one this build does not read, is listed with the reason. No
+command of the binary runs an action yet; the tests run `echo` through the executor the
+binary builds (`wiring::runner`).
+
+**What is not built, and what follows from that.**
+
+- There is no admission. A run exists from step 2, in memory; nothing durable says so
+  until step 5. A process that dies while an action runs leaves nothing of the run in the
+  store: no record, no journal, no diagnostic. Admission (the plan's next task) records a
+  run durably when it is assigned.
+- A journal's events are durable only when the run ends, and cannot be read while it
+  executes.
+- A panic inside an action is not caught: it unwinds through `submit`, and the run has no
+  record.
+- Nothing can cancel a run, and `submit` returns only when the run is over.
+- Diagnostics are held in memory, without a bound, until the run ends.
 
 ### The origin does not name the run or the models
 
@@ -228,17 +317,17 @@ inputs. "Every artifact records what produced it" (the spec's invariant) holds b
   to choose: read both versions, or refuse the old one. Before a store is kept, refusing
   is free.
 - The schema and the types can drift apart where no test compares them. The tests compare
-  them on hand-written records, on records made from a prepared call and an outcome, and
-  on every list that must be empty.
-- Redaction is only as good as the list of secrets it is given. There is no config yet
-  and nothing reads a key, so nothing has a secret to give.
+  them on hand-written records, on records made from a prepared call and an outcome, on
+  every list that must be empty, and on the records the executor writes.
+- Redaction is only as good as the list of secrets the executor is given
+  (`Engine::with_secrets`). There is no config yet and nothing reads a key, so the binary
+  gives none.
 - A record is read whole and written again to be compared, on every read.
 - Reversing this costs every stored record. A change to the fields is a new version.
 
-What this record does not decide, and the code does not do: running an action and
-writing its record through the store, which is the rest of the plan's task for the
-execution contract, and with which this record is amended; the elements of the eight
-empty lists; how a request id and a parent are assigned; `runs stats` and `runs export`,
+What this record does not decide, and the code does not do: admission; nested calls,
+cancellation, and an action's outputs with their commit step; how a run that takes long
+is scheduled and watched; the elements of the eight empty lists; how a request id and a parent are assigned; `runs stats` and `runs export`,
 which are milestone 2's (`SPEC.md` section 16); labels for evaluation runs; whether a diagnostic body is cut short (squint cut a
 long body and recorded its full digest; that is on `docs/carry-over.md` with the judge
 loop).

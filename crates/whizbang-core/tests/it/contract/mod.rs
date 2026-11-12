@@ -1,10 +1,11 @@
 //! The execution contract (`SPEC.md` section 3, ADR 0003), part one of task A5: the action
 //! descriptor, the rule for the text a description prints, registration, and the static
-//! description. Part two: preparing a call (ADR 0004). Part three: the run record (ADR
-//! 0005).
+//! description. Part two: preparing a call (ADR 0004). Part three: the run record, and
+//! running an action (ADR 0005).
 
 mod describe;
 mod descriptor;
+mod execute;
 mod fixtures;
 mod prepare;
 mod record;
