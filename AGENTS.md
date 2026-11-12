@@ -18,7 +18,8 @@ backlog. This file holds what you cannot work out from the code.
 
 | Command | When |
 |---|---|
-| `just check` | Before every commit: format check, lint, the crate graph, licences and sources, the script tests, then the fast tests with seconds per suite |
+| `just check` | Before every commit: format check, lint, the crate graph, licences and sources, the script tests, the generated reference against a fresh copy, then the fast tests with seconds per suite |
+| `just docs` | After changing what `whizbang describe` reports (the description type, an action, the version): rewrites `docs/reference/`; commit the result, because `just check` fails on a stale copy |
 | `just scan` | Before every push: the secrets scan and the clean-room scan, over the working tree |
 | `just scan-range <base> <head>` | Before a merge: the same two scans and the attribution check over every commit in `base..head` (contents, paths, messages) and the tree of `head` |
 | `just scan-range-secrets <base> <head>` | The range scan without the clean-room scan: what CI runs over the commits of a pull request (with the base branch's copy of the scan), and of a push to `main` |

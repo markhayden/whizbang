@@ -136,9 +136,9 @@ fails; a test that sleeps 31 seconds fails by timeout.
 
 **Depends on:** S0.
 
-- [ ] `just docs` writes `docs/reference/actions.md` and `docs/reference/description.json` from
+- [x] `just docs` writes `docs/reference/actions.md` and `docs/reference/description.json` from
       `whizbang describe --json`.
-- [ ] `just ci` fails when the committed copies differ from a fresh generation.
+- [x] `just ci` fails when the committed copies differ from a fresh generation.
 
 **Done when:** a branch that changes the description type without regenerating fails CI.
 
