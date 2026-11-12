@@ -180,12 +180,18 @@ pass before you push, and who merges?", answers correctly from the repo.
 - [x] One small code-and-test task (add `--pretty` to `describe --json`, with a test) is done
       by the builder following `kickoff`, reviewed by the reviewer, and merged by the
       orchestrator following `review-merge`.
-- [ ] One push that must be refused is attempted from the builder's worktree: a commit with a
+- [x] One push that must be refused is attempted from the builder's worktree: a commit with a
       planted fake key. The pre-push hook stops it.
-- [ ] The three skills and the two subagent files are corrected from what this showed.
+- [x] The three skills and the two subagent files are corrected from what this showed.
 
 **Done when:** the task is merged through a pull request with a green `ci`; the planted push
 was refused; the corrections are merged.
+
+**Outcome.** The planted push was made on 2026-11-11, during the exercise of pull request
+#14. The pre-push hook refused it, naming the commit, the path and the line of the planted
+fake key, and `git ls-remote` showed that nothing had arrived on origin. The exercise's
+corrections to the skills, the subagent files, `AGENTS.md` and the scripts are in the pull
+request that ticks the third box.
 
 ### Checkpoint S
 
