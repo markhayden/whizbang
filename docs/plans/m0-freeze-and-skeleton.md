@@ -434,6 +434,22 @@ Checked on 2026-11-11 at `main` 27d3fc3; the evidence is in `m0-note.md`. The ta
 the orchestrator on the merge commit of the pull request that adds that note, so its box is
 ticked by the first pull request of the next milestone.
 
+## Review rounds
+
+Recorded as `AGENTS.md`, "Working with the owner", requires. This plan and the plan for checkpoint 1A (`m1a-contracts-and-store.md`)
+were reviewed together, in three rounds on 2026-11-11, by the independent reviewing model. The
+counts are for the two plans together, per the orchestrator's record; the drafts between the
+rounds are not kept in this repo.
+
+| Round | Blockers | Majors |
+|---|---|---|
+| 1 | 3 | 17 |
+| 2 | 2 | 7 |
+| 3 | 0 | 6 |
+
+Every blocker and major finding was addressed in the draft that followed its round; the last
+six majors are addressed in this plan's draft 4 and that plan's draft 6. The owner approved both plans after the third round.
+
 ## Risks
 
 | Risk | Effect | What we do |

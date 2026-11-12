@@ -84,17 +84,21 @@ running them side by side is the obvious saving and is not done yet.
 0 US dollars. Milestone 0 made no model call: the baseline was assembled, converted and
 audited from recordings, and no decision needed capturing again.
 
-## What the reviews found that mattered
+## What CI and the reviews found that mattered
 
 Each pull request that changed code, a script or the rules was built by one agent and
-reviewed by another before the orchestrator merged it. Five findings changed what the
-milestone delivered.
+reviewed by another before the orchestrator merged it. Five things found that way, or by
+CI, changed what the milestone delivered.
 
-- **The scan lost matches on CI's macOS runner.** `git grep` on several threads, in the C
-  locale, with an extended regular expression, dropped a match at random with no error: about
-  one search in twenty-five. The scan could have reported clean on a file holding a key. It
-  now searches on one thread, counts the files each search looked in, runs every search
-  twice, and a canary on that runner repeats the search for 30 seconds on every run.
+- **The scan lost matches on CI's macOS runner.** This one was found by CI, not by a
+  review: the scan's own test failed three times on that runner, on three unrelated
+  branches, and passed each time it was run again. A hunt on the runner (pull request #10)
+  found the cause: `git grep` on several threads, in the C locale, with an extended regular
+  expression, dropped a match at random with no error, in about one search in five to one
+  in thirty depending on how many searches ran at once. The scan could have reported clean
+  on a file holding a key. It now searches on one thread, counts the files each search
+  looked in, runs every search twice, and a canary on that runner repeats the search for
+  30 seconds on every run.
 - **A script that failed could exit 0.** On the bash 3.2 that macOS ships, a script with an
   `EXIT` trap exits 0 after a syntax error, an unset variable and several other faults. Every
   script is now parsed before any test runs, the hooks parse the scan before trusting it, and
@@ -116,7 +120,7 @@ Each has a row in `docs/carry-over.md`.
 - A push made from another folder with git pointed at the repo runs no hook; nothing on
   the way to a branch other than `main` then runs the clean-room scan.
 - The scan relies on one engine for every match, and its time grows with commits and paths.
-- Three kinds of file name the scan's census mishandles (in work).
+- File names the scan's census mishandles (pull request #17, in work).
 - What only reading finds in a pull request's title and body.
 - The tests on the rules and skills hold some lines exactly and cannot see a new sentence
   that contradicts them; such changes are read in full.
