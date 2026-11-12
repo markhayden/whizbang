@@ -56,11 +56,17 @@ careless() { env GIT_CONFIG_GLOBAL="$tmp/careless" "$@"; }
 fresh careless
 commit_file "feat: a key" lost.txt "token = $key"
 printf 'it says %s\n' "$word" >untracked.txt
+# ... and a tracked file that a rule matches, which is searched by name.
+printf '%s\n' '*.log' >.gitignore
+printf 'token = %s\n' "$key" >kept.log
+git add -f kept.log
+git commit -q --no-verify -m "feat: a log"
 expect_fail "a scan with careless settings" "lost.txt:1" careless "$scan"
+says "kept.log:1"
 says "clean-room scan: 1 matching lines (contents 1, paths 0)"
 quiet "git said something"
 quiet "were not looked in"
-rm untracked.txt
+rm untracked.txt .gitignore
 expect_fail "a range with careless settings" "lost.txt:1" careless "$scan" --range "$first" HEAD
 quiet "git said something"
 printf 'refs/heads/careless %s refs/heads/careless %s\n' "$(git rev-parse HEAD)" "$zeros" >"$tmp/push-line"
@@ -71,5 +77,22 @@ expect_pass "a clean scan with careless settings" careless "$scan"
 says "secrets scan: clean (2 files)"
 expect_pass "a clean range with careless settings" careless "$scan" --range "$first" HEAD
 says "secrets scan: clean (1 commits, 1 trees, 0 tags)"
+# A commit that adds a submodule: what the submodule holds is another repository's to
+# scan, with the setting as without it.
+git init -q -b main "$tmp/inner"
+(
+  cd "$tmp/inner"
+  git config user.name "A Tester"
+  git config user.email "tester@example.com"
+  printf 'token = %s\n' "$key" >inside.txt
+  git add inside.txt
+  git commit -q -m "feat: a key in another repository"
+)
+git -c protocol.file.allow=always submodule --quiet add "$tmp/inner" inner-part >/dev/null 2>&1
+git commit -q --no-verify -m "feat: a submodule"
+expect_pass "a range with a submodule" "$scan" --range HEAD~1 HEAD
+quiet "inside.txt"
+expect_pass "a range with a submodule, with careless settings" careless "$scan" --range HEAD~1 HEAD
+quiet "inside.txt"
 
 finished

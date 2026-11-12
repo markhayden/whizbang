@@ -80,20 +80,22 @@ says() {
   }
 }
 # The stand-in: any git command but a search goes to git as it is. A search's output loses
-# every record and every name of the file LOSE names, when LOSE_WHEN says so: `always`, or
-# `sometimes` (every other search for a pattern, never the census). With `always`, git's
-# own list of files loses the name too, as it would if the fault were in how git walks a
-# folder. BREAK names a git command that fails outright. It can also speak on
-# stderr during one kind of search (NOISY: worktree, files or commits), or whenever its
-# arguments hold the words of NOISY_ON in a row (`ls-files -z -c` is one listing and no
-# other), and then go on as git would; answer nothing when asked which paths are ignored
-# (MUTE=check-ignore), or answer for one path more than it was asked about
-# (EXTRA=check-ignore), give its answers in the opposite order (SWAP=check-ignore), or
-# give a first answer that names no rule as git writes one (GARBLE=check-ignore);
-# name, among the files a search of the working tree looked in, one that is not there
-# (GHOST); wait a moment (SLOW); note what the scan's own folder holds at
-# that moment (SPY); and note, for every call, whether configuration came with the
-# environment (its count, and a key and a value) and what two settings then are (ENV_LOG).
+# every record and every name of the file LOSE names (a pattern, so it can name two),
+# when LOSE_WHEN says so: `always`, or `sometimes` (every other search for a pattern,
+# never the census). Git's own lists of files are left as they are: the scan takes them
+# at their word (the top of scripts/scan.sh says why), so only a search that loses a file
+# can be caught. SKIP is a file name's start: the census's search of the working tree
+# then leaves out one name, chosen by SKIP_SEED, under each folder `t<number>`, and
+# notes in SKIP.count how many it left out. BREAK names a git command that fails
+# outright. It can also speak on stderr during one kind of search (NOISY: worktree,
+# files or commits), or whenever its arguments hold the words of NOISY_ON in a row
+# (`ls-files -z -c` is one listing and no other), and then go on as git would; take
+# the file VANISH away after the listing whose words are VANISH_ON; put a new file in
+# the place of REPLACE before the census's search of the working tree; name, among the
+# files that search looked in, one that is not there (GHOST); wait a moment (SLOW);
+# note what the scan's own folder holds at that moment (SPY); and note, for every call,
+# whether configuration came with the environment (its count, and a key and a value)
+# and what two settings then are (ENV_LOG).
 stand_in_for_git() {
 real_git=$(command -v git)
 mkdir "$tmp/bin"
@@ -113,7 +115,6 @@ for arg in "$@"; do
   case "$arg" in
     grep) search=1 ;;
     -l) census=1 ;;
-    ls-files) [ "${LOSE_WHEN:-}" != always ] || search=1 census=1 ;;
   esac
 done
 if [ -n "${ENV_LOG:-}" ]; then
@@ -123,36 +124,11 @@ fi
 if [ -n "${NOISY_ON:-}" ]; then
   case " $* " in *" $NOISY_ON "*) echo "warning: something git says" >&2 ;; esac
 fi
-if [ "${MUTE:-}" = check-ignore ]; then
-  case " $* " in *" check-ignore "*)
-    "$real" "$@" >/dev/null 2>&1
-    exit 1
-    ;;
-  esac
-fi
-if [ "${EXTRA:-}" = check-ignore ]; then
-  case " $* " in *" check-ignore "*)
+if [ -n "${VANISH:-}" ]; then
+  case " $* " in *" $VANISH_ON "*)
     status=0
     "$real" "$@" || status=$?
-    printf '::\t./a-path-nobody-asked-about\n'
-    exit "$status"
-    ;;
-  esac
-fi
-if [ "${SWAP:-}" = check-ignore ]; then
-  case " $* " in *" check-ignore "*)
-    status=0
-    "$real" "$@" >"$SWAP_FILE.$$" || status=$?
-    perl -e 'print reverse <>' "$SWAP_FILE.$$"
-    exit "$status"
-    ;;
-  esac
-fi
-if [ "${GARBLE:-}" = check-ignore ]; then
-  case " $* " in *" check-ignore "*)
-    status=0
-    "$real" "$@" >"$GARBLE_FILE.$$" || status=$?
-    sed '1s/^[^	]*/no rule is written like this/' "$GARBLE_FILE.$$"
+    rm -f "$VANISH"
     exit "$status"
     ;;
   esac
@@ -188,6 +164,31 @@ if [ "$search" -eq 1 ] && [ -n "${LOSE:-}" ]; then
       ;;
   esac
 fi
+if [ -n "${REPLACE:-}" ] && [ "$search" -eq 1 ] && [ "$census" -eq 1 ]; then
+  case " $* " in *" --untracked "*)
+    cp "$REPLACE" "$REPLACE.new"
+    mv "$REPLACE.new" "$REPLACE"
+    ;;
+  esac
+fi
+if [ -n "${SKIP:-}" ] && [ "$search" -eq 1 ] && [ "$census" -eq 1 ]; then
+  case " $* " in *" --untracked "*)
+    status=0
+    "$real" "$@" >"$SKIP.out" || status=$?
+    perl -0 -e '
+      srand($ARGV[0]);
+      my (%under, %left);
+      my @all = <STDIN>;
+      for (@all) { push @{ $under{$1} }, $_ if m{\A(t\d+)/} }
+      for my $t (sort keys %under) { my @names = @{ $under{$t} }; $left{ $names[int(rand(@names))] } = 1 }
+      print grep { !$left{$_} } @all;
+      open(my $count, ">", $ARGV[1]) or die;
+      print $count scalar(keys %left), "\n";
+    ' "$SKIP_SEED" "$SKIP.count" <"$SKIP.out"
+    exit "$status"
+    ;;
+  esac
+fi
 if [ -n "${GHOST:-}" ] && [ "$search" -eq 1 ] && [ "$census" -eq 1 ]; then
   case " $* " in *" --untracked "*)
     status=0
@@ -213,10 +214,6 @@ SH
 chmod +x "$tmp/bin/git"
 }
 
-# tree_says <place>: `says`, for a scan of the working tree. When the place is missing it
-# first reports what the folder held and what two more scans find, the second with git grep
-# on one thread. On CI's macOS runner git grep on several threads has lost a match at
-# random (docs/carry-over.md), and a scan on one thread has not.
 # file_id <name>: the device and inode of what the name itself is (a link is not followed).
 file_id() { perl -e 'my @s = lstat($ARGV[0]) or exit 1; print "$s[0]:$s[1]\n"' -- "$1"; }
 # listed <name>: the census's list, as lists_what_git_lists last saw it, holds the file.
@@ -240,87 +237,10 @@ lists_what_git_lists() {
   }
 }
 
-# The stand-in for find, which the scan uses to list the working tree. FIND_DOES says what
-# it does: `speak` fails with a line that names a path; `fail` fails and says nothing;
-# `warn` says a line and then lists as find would; `keep-out` fails when it is asked to
-# look in the folder FIND_FOLDER or lists anything inside it, as find does when a folder
-# changes under it; `vanish` removes FIND_FOLDER after its call number FIND_AFTER; `dots`
-# gives, on its second call, FIND_FOLDER's own folder as a folder inside it; `deeper`
-# gives one more folder each time, for ever; `circle` gives the same folder each time.
-# Anything else: find as it is.
-stand_in_for_find() {
-real_find=$(command -v find)
-mkdir "$tmp/find-bin"
-cat >"$tmp/find-bin/find" <<SH
-#!/usr/bin/env bash
-real="$real_find"
-calls="$tmp/find-calls"
-out="$tmp/find-out"
-SH
-cat >>"$tmp/find-bin/find" <<'SH'
-echo x >>"$calls"
-call=$(wc -l <"$calls" | tr -d ' ')
-case "${FIND_DOES:-}" in
-  speak)
-    echo "find: ./a-path-it-names: Permission denied" >&2
-    exit 1
-    ;;
-  fail) exit 1 ;;
-  warn)
-    echo "find: ./a-path-it-names: something find says" >&2
-    exec "$real" "$@"
-    ;;
-  keep-out)
-    for arg in "$@"; do
-      case "$arg" in "./$FIND_FOLDER" | "./$FIND_FOLDER"/*)
-        echo "find: ./$FIND_FOLDER: it changed while find was in it" >&2
-        exit 1
-        ;;
-      esac
-    done
-    status=0
-    "$real" "$@" >"$out.$call" || status=$?
-    if LC_ALL=C grep -a -q -F -e "./$FIND_FOLDER/" "$out.$call"; then
-      echo "find: ./$FIND_FOLDER: it changed while find was in it" >&2
-      exit 1
-    fi
-    cat "$out.$call"
-    exit "$status"
-    ;;
-  dots)
-    # The folder it is in, among the folders of FIND_FOLDER.
-    "$real" "$@" || exit $?
-    case " $* " in *" -type d "*) [ "$call" -ne 2 ] || printf './%s/..\0' "$FIND_FOLDER" ;; esac
-    ;;
-  deeper)
-    # One more folder each time it is asked for folders, for ever, and no file. The
-    # names are short and never the same, so nothing but a count of levels stops it.
-    case " $* " in *" -type d "*) printf './level-%s\0' "$call" ;; esac
-    ;;
-  circle)
-    # The same folder each time it is asked for folders, for ever; and no file.
-    case " $* " in *" -type d "*) printf './round\0' ;; esac
-    ;;
-  vanish)
-    status=0
-    "$real" "$@" || status=$?
-    [ "$call" -ne "$FIND_AFTER" ] || rm -rf "$FIND_FOLDER"
-    exit "$status"
-    ;;
-  *) exec "$real" "$@" ;;
-esac
-SH
-chmod +x "$tmp/find-bin/find"
-}
-# finding <what> [NAME=value...] <command...>: the command with the stand-in for find,
-# doing <what>.
-finding() {
-  local what=$1
-  shift
-  : >"$tmp/find-calls"
-  env PATH="$tmp/find-bin:$PATH" FIND_DOES="$what" "$@"
-}
-
+# tree_says <place>: `says`, for a scan of the working tree. When the place is missing it
+# first reports what the folder held and what two more scans find, the second with git grep
+# on one thread. On CI's macOS runner git grep on several threads has lost a match at
+# random (docs/carry-over.md), and a scan on one thread has not.
 tree_says() {
   local f
   if ! grep -a -q -F -e "$1" "$tmp/out"; then

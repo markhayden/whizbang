@@ -96,9 +96,11 @@ fresh the-lister
 # it reads from a folder and find does not; two files elsewhere.
 nfc=$(printf 'caf\303\251')
 nfd=$(printf 'cafe\314\201')
+# A character of four bytes, which no conversion of names knows how to compose.
+smile=$(printf '\360\237\230\200')
 printf '%s\n' '*.log' '!keep.log' 'out/*' '!out/keep/' 'build/' '!build/back.txt' '/top-only.txt' 'docs/**/*.png' '!docs/**/shown.png' \
   'gen/' '!gen/sub/' '!gen/sub/kept.txt' 'cache/**' '!cache/**/keep.me' 'logs/' 'with space ignored/' 'two*ignored/' '-dash-ignored/' \
-  'partly/*' '!partly/keep/' '*.gone' "ig-$nfc/" >.gitignore
+  'partly/*' '!partly/keep/' '*.gone' "ig-$nfc/" "$nfd/$smile.txt" >.gitignore
 printf '%s\n' 'local-*' >>.git/info/exclude
 two_lines=$(printf 'two\nlines')
 mkdir -p out/keep out/drop build/deep sub/inner docs/a/b "a folder" nested/top-only.txt.d \
@@ -108,7 +110,12 @@ printf '%s\n' '!special.log' 'secret-*' '*.tmp' >sub/.gitignore
 printf '%s\n' '!*.tmp' 'inner-only' >sub/inner/.gitignore
 # Files of rules in folders whose names git prints in quotes, or that read like the
 # place of a rule themselves.
-mkdir "odd:3:!source"
+mkdir "odd:3:!source" n:5:y "$nfd" "$smile-folder"
+printf '%s\n' 'here-only' '!n' >n:5:y/.gitignore
+for f in n n:5:y/n n:5:y/here-only "$nfd/$smile.txt" "$nfd/beside.txt" "$smile-folder/$smile" "$smile.txt" \
+  'a "quoted" name.txt' "$(printf 'a\ttab.txt')" "$(printf 'ends in a newline\n.')"; do
+  printf 'content of %s\n' "$f" >"${f%.}"
+done
 printf '%s\n' 'here-only' >"$two_lines kept/.gitignore"
 printf '%s\n' 'here-only' '!back' >"dir-$nfd/.gitignore"
 printf '%s\n' 'here-only' 'ba*' '!back' >"odd:3:!source/.gitignore"
@@ -155,7 +162,8 @@ for f in keep.log out/keep/in.txt docs/a/b/shown.png sub/special.log sub/inner/y
   partly/keep/x.txt partly/keep/deeper/y.txt "$two_lines kept/x.txt" "$two_lines.txt" \
   axb.gone 'star*.txt' 'query?.txt' 'set[a].txt' "nfc-$nfc.txt" "dir-$nfc-too/in.txt" \
   "nfd-$nfd.txt" "dir-$nfd/in.txt" "dir-$nfd/in-$nfd/deep-$nfd.txt" "both-$nfd.txt" "both-$nfc.txt" \
-  "dir-$nfd/back" "odd:3:!source/back" "$two_lines kept/.gitignore"; do
+  "dir-$nfd/back" "odd:3:!source/back" "$two_lines kept/.gitignore" \
+  n n:5:y/n "$nfd/beside.txt" "$smile-folder/$smile" "$smile.txt" 'a "quoted" name.txt' "$(printf 'a\ttab.txt')"; do
   listed "$f" || fail "the list holds $f"
 done
 for f in out/drop/x.txt out/file.txt build/back.txt top-only.txt docs/a/b/hidden.png sub/other.log sub/x.tmp \
@@ -165,7 +173,7 @@ for f in out/drop/x.txt out/file.txt build/back.txt top-only.txt docs/a/b/hidden
   "$two_lines ignored/x.txt" "$two_lines ignored/in/y.txt" \
   partly/file.txt partly/drop/x.txt partly/drop/keep/z.txt build/own-rules/put-back.txt build/own-rules/.gitignore \
   partly/keep/a-way-in/back.txt partly/keep/a-way-in/deep/y.txt 'a*b.gone' 'a?b.gone' 'a[wxy]b.gone' "ig-$nfc/y.txt" \
-  "$two_lines kept/here-only" "dir-$nfd/here-only" "odd:3:!source/here-only" "odd:3:!source/bat"; do
+  "$two_lines kept/here-only" "dir-$nfd/here-only" "odd:3:!source/here-only" "odd:3:!source/bat" n:5:y/here-only; do
   listed "$f" && fail "the list does not hold $f"
 done
 # The folder with the decomposed name: where git composes names, the rule written
@@ -174,6 +182,13 @@ if [ "$(uname -s)" = Darwin ] && [ "$(git config --type=bool core.precomposeunic
   listed "ig-$nfd/x.txt" && fail "a rule with a composed name ignores the folder with the decomposed one"
 else
   listed "ig-$nfd/x.txt" || fail "the list holds ig-$nfd/x.txt, which no rule names"
+fi
+# A rule written decomposed for a file with a four-byte character in a decomposed
+# folder: where git composes names the rule no longer meets the name, elsewhere it does.
+if [ "$(uname -s)" = Darwin ] && [ "$(git config --type=bool core.precomposeunicode || true)" = true ]; then
+  listed "$nfd/$smile.txt" || fail "the list holds $nfd/$smile.txt, which the rule written decomposed does not meet"
+else
+  listed "$nfd/$smile.txt" && fail "the list does not hold $nfd/$smile.txt, which a rule names"
 fi
 listed nested/top-only.txt || fail "a rule for the top folder alone leaves nested/top-only.txt in"
 

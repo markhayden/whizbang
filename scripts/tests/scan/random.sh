@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The census's list of the working tree is exactly git's, on trees nobody built by hand:
+# The census covers exactly the files git lists, on trees nobody built by hand:
 # each seed makes a few trees side by side, every one with its own made-up ignore rules,
 # files, folders, links and tracked files, from names the rules are made of too. One scan
 # for each seed. (scripts/tests/scan/folder.sh holds the same on a tree built by hand.)
@@ -9,6 +9,9 @@
 #   WHIZBANG_SCAN_PRECOMPOSE=false  core.precomposeUnicode for the trees (macOS)
 #   WHIZBANG_SCAN_TALLY=<file>    a seed that fails is noted there with its first line of
 #                                 output, and the run goes on: for looking at many seeds
+#
+# Then each seed's trees are scanned again with a search that leaves out one file of
+# every tree: the scan must miss exactly that many.
 #
 # The trees hold no repository inside a repository: the scan refuses those earlier. A
 # seed gives the same trees on every system: nothing in the generator asks the file
@@ -22,7 +25,8 @@ use warnings;
 my ($seed, $trees, $accents) = @ARGV;
 srand($seed);
 my @plain = ("a", "b", "c", "d", "keep", "out", "build", "log", "x.log", "y.log", "z.tmp", "k.me", "a.b");
-my @odd = ("sp ace", "-dash", "st*r", "q?m", "br[ab]k", "two\nlines", "caf\303\251", "cafe\314\201", "!bang", "#hash");
+my @odd = ("sp ace", "-dash", "st*r", "q?m", "br[ab]k", "two\nlines", "caf\303\251", "cafe\314\201", "!bang", "#hash",
+  "\360\237\230\200", "q\"t", "t\tb", "n:5:y", "n");
 sub pick { $_[int(rand(@_))] }
 sub name { rand() < 0.75 ? pick(@plain) : pick(@odd) }
 # A name as a rule would write it: no newline, and the marks that start a rule escaped.
@@ -94,6 +98,22 @@ for seed in ${WHIZBANG_SCAN_SEEDS:-11 23}; do
       printf '%s: %s\n' "$seed" "$(grep -a -m 1 -E -e '^(scan|failed|[<>0-9])' "$tmp/seed-out" | cut -c1-160)" >>"$WHIZBANG_SCAN_TALLY"
   else
     lists_what_git_lists "the trees of seed $seed"
+  fi
+  # The same trees with a search that leaves out one file of each: every one is missed.
+  [ -n "${WHIZBANG_SCAN_SKIP:-1}" ] || continue
+  rm -f "$tmp/skip.count"
+  if env PATH="$tmp/bin:$PATH" SKIP="$tmp/skip" SKIP_SEED="$seed" "$scan" >"$tmp/out" 2>&1; then
+    left=passed
+  else
+    left=$(sed -n 's/^scan: \([0-9]*\) of the [0-9]* files to cover were not looked in by the search (worktree).*/\1/p' "$tmp/out")
+  fi
+  if [ ! -s "$tmp/skip.count" ] || [ "$left" != "$(cat "$tmp/skip.count")" ]; then
+    if [ -n "${WHIZBANG_SCAN_TALLY:-}" ]; then
+      printf '%s: skipped %s, the scan said %s: %s\n' "$seed" "$(cat "$tmp/skip.count" 2>/dev/null)" "$left" "$(head -n 1 "$tmp/out" | cut -c1-120)" >>"$WHIZBANG_SCAN_TALLY"
+    else
+      cat "$tmp/out" >&2
+      fail "seed $seed: the search left out $(cat "$tmp/skip.count" 2>/dev/null) files, one of each tree, and the scan missed: $left"
+    fi
   fi
 done
 

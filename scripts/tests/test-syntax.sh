@@ -308,7 +308,7 @@ unthreaded() {
 }
 found=$(unthreaded scripts)
 [ -z "$found" ] || fail "a search with $tool $search_word that is not on one thread (add: $one_thread): $found"
-[ "$(grep -c -F -e " -c ${search_word}.fullName=false -c ${search_word}.threads=1 $search_word --no-color --no-recurse-submodules " scripts/scan.sh)" = 4 ] ||
+[ "$(grep -F -e " -c ${search_word}.threads=1 $search_word --no-color " scripts/scan.sh | grep -c -F -e " -a -n -z ")" = 4 ] ||
   fail "scripts/scan.sh runs its four searches on one thread"
 grep -q -x -F "export LC_ALL=C" scripts/scan.sh || fail "scripts/scan.sh keeps the C locale"
 # The rule itself, on lines that break it and lines that do not.
