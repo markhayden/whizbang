@@ -404,12 +404,12 @@ missing file, and six recorded errors for one model.
 
 **Depends on:** B2.
 
-- [ ] `scripts/baseline/tables.py` computes every number from the study inputs alone.
-- [ ] `docs/results/2026-11-tool-study.md`: what was tested, the method, the table per model
+- [x] `scripts/baseline/tables.py` computes every number from the study inputs alone.
+- [x] `docs/results/2026-11-tool-study.md`: what was tested, the method, the table per model
       and arm, the tool effects with corrected intervals, self-disagreement where a second
       repetition exists, the error analysis, spend, and the limits of the result (one
       repetition for six models; an exposed set).
-- [ ] Aggregates only: no item names and no item-level verdicts.
+- [x] Aggregates only: no item names and no item-level verdicts.
 
 **Done when:** rerunning the script reproduces every number in the document.
 

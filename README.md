@@ -32,6 +32,7 @@ are in [AGENTS.md](AGENTS.md).
 | [docs/plans/](docs/plans/) | One short plan per milestone |
 | [docs/carry-over.md](docs/carry-over.md) | The only backlog |
 | [docs/baseline/](docs/baseline/README.md) | What the private baseline package holds, and its public manifest |
+| [docs/results/](docs/results/2026-11-tool-study.md) | Evaluation results, aggregates only; first, the 2026-11 tool study |
 | [docs/adr/](docs/adr/README.md) | Decisions that are costly to reverse |
 | [docs/guides/](docs/guides/README.md) | One page per door and per "how to add" task, as each ships |
 | [docs/reference/](docs/reference/) | Generated from the build; never edited by hand |

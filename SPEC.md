@@ -821,15 +821,17 @@ docs/
                         format, the audit's counts (the package itself is owner-only)
   guides/               one page per door and per "how to add" task
   reference/            generated from the static description; never edited by hand
-  results/              evaluation results
+  results/              evaluation results: per study, a page and the numbers file its
+                        tables are written from
   plans/                one short plan per milestone
   carry-over.md         the only backlog
   sources.toml          the old repos' final commits, fixed before porting starts
 .claude/                skills, subagents and permission settings (versioned)
 scripts/                scan.sh, heavy.sh, timing.sh, setup.sh with tool-versions.txt,
                         check-crate-graph.sh with crate-graph.txt, docs.sh, hooks/,
-                        baseline/ (convert.py and audit.py: Python 3.9 or later, standard
-                        library only), and tests/ (the tests of the scripts); later
+                        baseline/ (convert.py, audit.py and tables.py: Python 3.9 or
+                        later, standard library only), and tests/ (the tests of the
+                        scripts); later
                         worktree.sh and dev.sh
 .github/workflows/      CI
 SPEC.md                 this file
