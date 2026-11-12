@@ -19,7 +19,8 @@ pub const SECRET_MIN_BYTES: usize = 8;
 /// Why a value cannot be a secret.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecretRefused {
-    /// The length of the value that was refused, in bytes. The value itself is not kept.
+    /// The length of the value that was refused, without the white space at its ends, in
+    /// bytes. The value itself is not kept.
     pub bytes: usize,
 }
 
@@ -62,7 +63,12 @@ fn forms_of(secret: &str) -> BTreeSet<Vec<u8>> {
     forms.insert(secret.as_bytes().to_vec());
     // Writing a string as JSON cannot fail.
     let quoted = serde_json::to_string(secret).unwrap_or_default();
-    let escaped = quoted.trim_start_matches('"').trim_end_matches('"');
+    // Exactly one quote from each end: a quote that is the secret's own is escaped, and
+    // is part of the form.
+    let escaped = quoted
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .unwrap_or_default();
     if !escaped.is_empty() {
         forms.insert(escaped.as_bytes().to_vec());
         forms.insert(escaped.replace('/', "\\/").into_bytes());
@@ -89,20 +95,23 @@ impl Secrets {
         Secrets::default()
     }
 
-    /// These values. An empty one is left out: it is what a variable that was never set
-    /// expands to, and is no secret. Any other value shorter than
-    /// [`SECRET_MIN_BYTES`] is refused, and then no secrets are made: a caller that
-    /// meant to protect a value is told that it is not protected.
+    /// These values, each without the ASCII white space at its ends: a value read from a
+    /// file or a variable often carries a line break there. Nothing else is taken off:
+    /// quotes around a value are part of it. A value that is then empty is left out: it
+    /// is what a variable that was never set expands to, and is no secret. Any other
+    /// value shorter than [`SECRET_MIN_BYTES`] is refused, and then no secrets are
+    /// made: a caller that meant to protect a value is told that it is not protected.
     pub fn new(values: impl IntoIterator<Item = String>) -> Result<Secrets, SecretRefused> {
         let mut secrets: BTreeSet<String> = BTreeSet::new();
         for value in values {
+            let value = value.trim_matches(|c: char| c.is_ascii_whitespace());
             if value.is_empty() {
                 continue;
             }
             if value.len() < SECRET_MIN_BYTES {
                 return Err(SecretRefused { bytes: value.len() });
             }
-            secrets.insert(value);
+            secrets.insert(value.to_owned());
         }
         let forms: Vec<Vec<u8>> = secrets
             .iter()

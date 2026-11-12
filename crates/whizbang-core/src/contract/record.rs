@@ -48,6 +48,21 @@ where
     Option::deserialize(deserializer)
 }
 
+/// How many characters of a reason that can quote stored bytes a refusal shows.
+pub const QUOTED_LIMIT: usize = 64;
+
+/// A reason that can quote what was read, as a refusal shows it: its first 64
+/// characters, escaped, and three dots when there were more.
+pub(super) fn quoted(reason: &str) -> String {
+    let shown: String = reason.chars().take(QUOTED_LIMIT).collect();
+    let more = if reason.chars().count() > QUOTED_LIMIT {
+        "..."
+    } else {
+        ""
+    };
+    format!("{}{more}", shown.escape_debug())
+}
+
 /// The longest name of a diagnostic an action wrote, in characters.
 pub const DIAGNOSTIC_NAME_LIMIT: usize = 64;
 
@@ -195,8 +210,11 @@ pub struct Time {
 
 /// One diagnostic of the run: its name among the run's names in the store, and the
 /// digest and length of what is stored under it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+///
+/// It is written as JSON and cannot be read from JSON by anything but this module: a
+/// diagnostic comes from one of its two constructors, or from a stored record that was
+/// read and checked ([`RunRecord::from_bytes`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diagnostic {
     name: String,
     digest: Digest,
@@ -260,9 +278,49 @@ impl Diagnostic {
     }
 }
 
-/// The record of one run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// A diagnostic as a stored record holds it. Private: only reading a record makes a
+/// diagnostic from JSON.
+#[derive(Deserialize)]
+#[serde(remote = "Diagnostic", deny_unknown_fields)]
+struct DiagnosticWire {
+    name: String,
+    digest: Digest,
+    bytes: u64,
+}
+
+fn diagnostics_wire<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<Diagnostic>, D::Error> {
+    #[derive(Deserialize)]
+    struct One(#[serde(with = "DiagnosticWire")] Diagnostic);
+    let read = Vec::<One>::deserialize(deserializer)?;
+    Ok(read.into_iter().map(|One(diagnostic)| diagnostic).collect())
+}
+
+/// A record as it is stored. Private: a record is read from JSON by
+/// [`RunRecord::from_bytes`] and by nothing else, so none is read without being checked.
+#[derive(Deserialize)]
+#[serde(remote = "RunRecord", deny_unknown_fields)]
+struct RunRecordWire {
+    record: String,
+    identity: Identity,
+    asked: Asked,
+    inputs: Vec<Input>,
+    outputs: Vec<Output>,
+    outcome: Ended,
+    time: Time,
+    models: Vec<Nothing>,
+    spend: Vec<Nothing>,
+    egress: Vec<Nothing>,
+    steps: Vec<Nothing>,
+    judge: Vec<Nothing>,
+    #[serde(deserialize_with = "diagnostics_wire")]
+    diagnostics: Vec<Diagnostic>,
+}
+
+/// The record of one run. It is written as JSON, and read only by
+/// [`RunRecord::from_bytes`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RunRecord {
     record: String,
     identity: Identity,
@@ -303,10 +361,8 @@ impl std::fmt::Display for RecordError {
                 "a record of another version: {}, and this build reads {RUN_RECORD}",
                 found.escape_debug()
             ),
-            // The reason can quote what was read: it is shown escaped.
-            RecordError::Malformed(why) => {
-                write!(f, "not a run record: {}", why.escape_debug())
-            }
+            // The reason can quote what was read: it is shown escaped and cut.
+            RecordError::Malformed(why) => write!(f, "not a run record: {}", quoted(why)),
             RecordError::Inconsistent(why) => write!(f, "not a run record: {why}"),
             RecordError::TooLarge { bytes } => write!(
                 f,
@@ -456,13 +512,16 @@ impl RunRecord {
                 // What it says its version is can be anything: its first 64 characters
                 // are kept.
                 return Err(RecordError::OtherVersion {
-                    found: record.chars().take(64).collect(),
+                    found: record.chars().take(QUOTED_LIMIT).collect(),
                 });
             }
             _ => {}
         }
-        let record: RunRecord =
-            serde_json::from_slice(bytes).map_err(|e| RecordError::Malformed(e.to_string()))?;
+        let malformed = |error: serde_json::Error| RecordError::Malformed(error.to_string());
+        let mut reader = serde_json::Deserializer::from_slice(bytes);
+        let record = RunRecordWire::deserialize(&mut reader).map_err(malformed)?;
+        // Nothing but white space after the record.
+        reader.end().map_err(malformed)?;
         record.check()?;
         if record.to_bytes() != bytes {
             return Err(RecordError::NotCanonical);

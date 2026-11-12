@@ -13,7 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use super::record::Diagnostic;
+use super::record::{Diagnostic, quoted};
 use super::{Diagnostics, Events, Secrets};
 
 /// What tells a run the time: milliseconds since the Unix epoch.
@@ -93,8 +93,11 @@ impl Diagnostics for Kept {
 }
 
 /// One line of a journal: a progress event, with its place in the run and its time.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+///
+/// It is written as JSON and cannot be read from JSON by anything but [`read_journal`]:
+/// a line comes from [`JournalLine::new`], which takes the secrets out, or from a stored
+/// journal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct JournalLine {
     seq: u64,
     at_ms: u64,
@@ -129,6 +132,16 @@ impl JournalLine {
     }
 }
 
+/// A line as a stored journal holds it. Private: only [`read_journal`] makes a line from
+/// JSON.
+#[derive(Deserialize)]
+#[serde(remote = "JournalLine", deny_unknown_fields)]
+struct JournalLineWire {
+    seq: u64,
+    at_ms: u64,
+    message: String,
+}
+
 /// A journal as it is stored: each event as JSON on a line of its own.
 pub fn journal_bytes(lines: &[JournalLine]) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -149,11 +162,14 @@ pub fn read_journal(bytes: &[u8]) -> Result<Vec<JournalLine>, String> {
     }
     let mut lines = Vec::new();
     for (index, raw) in text.lines().enumerate() {
-        let line: JournalLine = serde_json::from_str(raw).map_err(|error| {
-            // The reason can quote the line: it is shown escaped.
-            let why = error.to_string();
-            format!("line {} is not an event: {}", index + 1, why.escape_debug())
-        })?;
+        // The reason can quote the line: it is shown escaped and cut.
+        let refused = |error: serde_json::Error| {
+            let why = quoted(&error.to_string());
+            format!("line {} is not an event: {why}", index + 1)
+        };
+        let mut reader = serde_json::Deserializer::from_str(raw);
+        let line = JournalLineWire::deserialize(&mut reader).map_err(refused)?;
+        reader.end().map_err(refused)?;
         if line.seq != index as u64 {
             return Err(format!(
                 "line {} is event {}, out of its place",

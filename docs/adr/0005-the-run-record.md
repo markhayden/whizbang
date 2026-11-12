@@ -6,6 +6,13 @@ Amended: 2026-11-12, inside checkpoint 1A, with the code that runs an action and
 its run. Added: "Running an action, and writing its run". Changed: the sentences that said
 nothing wrote a record, a journal or a diagnostic yet, and the list of what this record
 does not decide.
+Amended: 2026-11-12, a second note, after the second review of the record. Added: a
+secret is trimmed of the white space at its ends, and of nothing else; the forms of
+percent-encoding that are not found; what the pass costs, with a figure; that a line and
+a diagnostic cannot be read from JSON except by the two readers; that what a refusal
+quotes is cut at 64 characters. Corrected: a secret that ends in a quote had a wrong JSON
+form; "one case can break" a JSON body is two; and the consequence that said each of the
+eight groups brings a new version, which did not agree with the shared step to `run/2`.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
 
@@ -136,8 +143,9 @@ Reading refuses, in this order:
 - bytes that are not the bytes this code writes for the record they hold.
 
 A refusal can quote what was read: an unknown field's name, a version. What it quotes is
-shown escaped, so nothing stored reaches a terminal as a control character through a
-refusal. A failure of the store under a record is said as ADR 0004 says a store's failure:
+shown escaped and cut at 64 characters (`QUOTED_LIMIT`), with three dots when there was
+more, so nothing stored reaches a terminal as a control character through a refusal, and
+a refusal is never as long as what it refuses. A failure of the store under a record is said as ADR 0004 says a store's failure:
 no path, as text or as `{:?}`, and the store's own error by name.
 
 The last rule is ADR 0002's for an artifact file, and for the same reason: one record has
@@ -206,7 +214,10 @@ where it stood as a JSON string escapes it. Here:
 - **It is one pass.** At each byte, only the forms that start with that byte are
   compared. The cost is the length of the body times the number of forms that share a
   first byte, not times the number of secrets; there is no bound on how many secrets
-  there are.
+  there are. That is fine at the counts a config holds, a handful of keys, and it is not
+  free at any count: the review of this pass measured about 3 seconds for 1 MiB of JSON
+  against 2,000 keys that share a three-byte prefix, where every key's forms are tried
+  wherever that first byte stands.
 - **A secret is at least 8 bytes** (`SECRET_MIN_BYTES`). A shorter value would match
   inside ordinary words and inside JSON's own escapes: a secret `n` would turn `\n` into
   `\[redacted]`. A shorter value is refused when the secrets are built
@@ -214,11 +225,22 @@ where it stood as a JSON string escapes it. Here:
   is not protected. One value is left out without a refusal, the empty one: it is what a
   variable that was never set expands to, and refusing it would make every key that is
   not configured an error.
+- **A value is trimmed first, of ASCII white space at its two ends and of nothing
+  else.** A value read from a file or a variable often carries a line break, and the key
+  with its line break is in no body. A value that is empty once trimmed is left out as
+  an empty one is, and the 8 bytes are counted on the trimmed value. Quotes around a
+  value are not taken off: whether they are part of the key is known to whoever reads
+  the file the value came from, which is the config's business (checkpoint 1B). The
+  refusal says how long the value was and never shows it; naming the variable it came
+  from is the config's too.
 
 A redacted body is searched as bytes, not as JSON. A body that was JSON is still JSON
-after it wherever a secret stood whole in one of its forms. One case can break it: a
-secret that ends in a backslash, found as it stands in front of an escape that is not its
-own, as `abcdefgh\` in front of `"` in `abcdefgh\"`; the string then ends early.
+after it wherever a secret stood whole in one of its forms. Two cases can break it, both
+where a secret is found as it stands across the edge of an escape that is not its own: a
+secret that ends in a backslash, in front of the rest of an escape, as `abcdefgh\` in
+`abcdefgh\"`, where the string then ends early; and a secret that begins with a letter
+an escape can end in, behind a backslash, as `nabcdefgh` in `x\nabcdefgh`, which leaves
+the backslash in front of the marker. A test pins the second.
 
 #### What redaction does not find
 
@@ -230,11 +252,15 @@ above, and nothing else:
 - a secret with a character written as a `\u00XX` escape that a JSON writer need not
   have used;
 - a secret in UTF-16 or any encoding in which its bytes are not its UTF-8 bytes;
+- percent-encoding that is not the one form searched for, in which every byte that is
+  not a letter, a digit, `-`, `.`, `_` or `~` is encoded and the hex digits are all of one
+  case: the two cases mixed in one value; a reserved byte left plain beside encoded ones;
+  a space written `+`; a byte encoded that need not be; a value encoded twice;
 - a secret split across two texts, or across two lines of a journal;
 - a secret compressed, hashed, or inside an image.
 
-A test pins the first three encoded forms as getting through, so that this list stays
-true. They are on `docs/carry-over.md` for checkpoint 1B, where a config first holds a
+A test pins base64, the `\u00XX` escape, UTF-16 and the five forms of percent-encoding
+as getting through, so that this list stays true. They are on `docs/carry-over.md` for checkpoint 1B, where a config first holds a
 key and a worker first returns a body.
 
 **By construction, where it is cheap.** A line of a journal is made by a constructor that
@@ -242,7 +268,11 @@ takes the secrets (`JournalLine::new`), and a diagnostic by one of two
 (`Diagnostic::journal`, from such lines, and `Diagnostic::written`, which takes the
 content and the secrets, checks the name, and gives back the bytes to store with the
 digest of those bytes). Their fields are not public. Beside these, a line and a diagnostic
-come only from reading what was stored, which reading checks. So a record cannot list a
+come only from reading what was stored, which reading checks: neither type, nor the
+record, can be read from JSON by other code. The readers (`read_journal`,
+`RunRecord::from_bytes`) use private types of their own for what is stored. That holds by
+the absence of an implementation, which no test at run time can show; adding one back
+would be a change to this record. So a record cannot list a
 diagnostic, and a journal cannot hold a line, that did not pass through redaction; what
 is not held by construction is that the bytes then stored are the bytes that were given
 back.
@@ -416,9 +446,10 @@ inputs. "Every artifact records what produced it" (the spec's invariant) holds b
 
 - Whatever lists, shows, counts or exports runs reads one shape. An export of one JSON
   object per line (the spec's `runs export`) can write the stored bytes as they are.
-- Eight groups will each bring a new version when they are first filled. Reading then has
-  to choose: read both versions, or refuse the old one. Before a store is kept, refusing
-  is free.
+- Filling the eight empty lists changes the version: once, to `run/2`, for all that the
+  tasks of checkpoint 1A fill, and once for each fill after the store is kept ("When a
+  store starts being kept", above). Reading then has to choose: read both versions, or
+  refuse the old one. Before a store is kept, refusing is free.
 - The schema and the types can drift apart where no test compares them. The tests compare
   them on hand-written records, on records made from a prepared call and an outcome, on
   every list that must be empty, and on the records the executor writes.
