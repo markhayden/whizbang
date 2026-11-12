@@ -457,7 +457,9 @@ census() {
 #                                is not one)
 #   kinds <names> <paths> <targets>
 #                                adds to <paths> the names that are files or links, one a
-#                                line, and to <targets> where each link leads
+#                                line, and to <targets> where each link leads; a link
+#                                that goes by two names (on macOS the index can hold one
+#                                composed and decomposed) is two paths and one target
 #   by-name <others> <ignored>   the names of <ignored>, NUL-ended, whose file is not one
 #                                of <others> and has not been printed already
 #
@@ -473,12 +475,14 @@ census() {
 # perl is not taken at its word either. It reports how many names it read and how many
 # lines it wrote, and ends its report with a line of its own; a perl that fails, stops
 # early or says nothing fails the scan. The report is left in the rep_ variables: read,
-# gone (names that are not there), out, and for `kinds` files and other (what is neither
-# a file nor a link).
+# gone (names that are not there), out, and for `kinds` files, other (what is neither
+# a file nor a link), and paths and targets (the bytes it added to each of its two
+# files). What it wrote is then held to the report: `wrote` for what it printed,
+# `holds` for the two files of `kinds`.
 lookup='
   use strict;
   my $what = shift @ARGV;
-  my %n = (read => 0, gone => 0, barred => 0, out => 0, files => 0, other => 0);
+  my %n = (read => 0, gone => 0, barred => 0, out => 0, files => 0, other => 0, paths => 0, targets => 0);
   sub names { open(my $in, "<", $_[0]) or die "$_[0]: $!\n"; $in }
   sub look {
     $n{read}++;
@@ -496,15 +500,18 @@ lookup='
       $n{out}++;
     }
   } elsif ($what eq "kinds") {
-    my ($in, $paths, $targets) = (names($ARGV[0]));
+    my ($in, $paths, $targets, %link) = (names($ARGV[0]));
     while (<$in>) {
       chomp;
-      look($_) or next;
+      my @s = look($_) or next;
       if (-l _) {
         my $target = readlink($_);
         if (!defined $target) { $n{barred}++; next }
-        $targets or open($targets, ">>", $ARGV[2]) or die "$ARGV[2]: $!\n";
-        print $targets "$target\n";
+        if (!$link{"$s[0]:$s[1]"}++) {
+          $targets or open($targets, ">>", $ARGV[2]) or die "$ARGV[2]: $!\n";
+          print $targets "$target\n";
+          $n{targets} += length($target) + 1;
+        }
       } elsif (-f _) {
         $n{files}++;
       } else {
@@ -513,6 +520,7 @@ lookup='
       }
       $paths or open($paths, ">>", $ARGV[1]) or die "$ARGV[1]: $!\n";
       print $paths "$_\n";
+      $n{paths} += length($_) + 1;
       $n{out}++;
     }
     !$paths or close($paths) or die "$ARGV[1]: $!\n";
@@ -536,13 +544,13 @@ lookup='
   print STDERR "$_ $n{$_}\n" for sort keys %n;
   print STDERR "end 1\n";
 '
-rep_read=0 rep_gone=0 rep_out=0 rep_files=0 rep_other=0
+rep_read=0 rep_gone=0 rep_out=0 rep_files=0 rep_other=0 rep_paths=0 rep_targets=0
 look_up() {
   local rc=0 key value barred= end= asked=0 f
   perl -0 -e "$lookup" "$@" 2>"$work/lookup-report" || rc=$?
   [ "$rc" -eq 0 ] ||
     die "the files of the working tree could not be looked up (perl: exit $rc); the scan needs perl to tell which files there are and which the search looked in; refusing to pass"
-  rep_read= rep_gone= rep_out= rep_files= rep_other=
+  rep_read= rep_gone= rep_out= rep_files= rep_other= rep_paths= rep_targets=
   while read -r key value; do
     case "$value" in '' | *[!0-9]*) continue ;; esac
     case "$key" in
@@ -552,6 +560,8 @@ look_up() {
       out) rep_out=$value ;;
       files) rep_files=$value ;;
       other) rep_other=$value ;;
+      paths) rep_paths=$value ;;
+      targets) rep_targets=$value ;;
       end) end=$value ;;
     esac
   done <"$work/lookup-report"
@@ -561,7 +571,7 @@ look_up() {
     case "$f" in "$text"/*) ;; *) asked=$((asked + $(tr -c -d '\0' <"$f" | wc -c))) ;; esac
   done
   [ "$end" = 1 ] && [ -n "$rep_gone" ] && [ -n "$barred" ] && [ -n "$rep_out" ] && [ -n "$rep_files" ] &&
-    [ -n "$rep_other" ] && [ "$rep_read" = "$asked" ] ||
+    [ -n "$rep_other" ] && [ -n "$rep_paths" ] && [ -n "$rep_targets" ] && [ "$rep_read" = "$asked" ] ||
     die "perl did not finish looking the files of the working tree up (it reports ${rep_read:-nothing} of $asked names); refusing to pass"
   [ "$barred" -eq 0 ] ||
     die "$barred files of the working tree could not be looked up, though they may be there (a folder that cannot be read or searched, or a path too long to open); they are not covered; refusing to pass"
@@ -573,6 +583,16 @@ wrote() {
   if [ "$2" = lines ]; then held=$(($(wc -l <"$1"))); else held=$(($(tr -c -d '\0' <"$1" | wc -c))); fi
   [ "$held" = "$rep_out" ] ||
     die "perl did not finish looking the files of the working tree up (it reports $rep_out $2 written, and $held are there); refusing to pass"
+}
+
+# holds <file> <bytes> <what>: fails unless the file holds as many bytes as the last
+# `look_up kinds` reports it added to it. The file was not there before, and is not made
+# when nothing is added. Bytes, not lines: a name can hold a newline.
+holds() {
+  local held=0
+  [ ! -e "$1" ] || held=$(($(wc -c <"$1")))
+  [ "$held" = "$2" ] ||
+    die "perl did not finish looking the files of the working tree up (it reports $2 bytes of $3 written, and $held are there); refusing to pass"
 }
 
 # plain_names <file>: fails if any of the NUL-ended names in the file holds the byte \001
@@ -857,6 +877,8 @@ case "$mode" in
     # any more (deleted here and not yet committed: nothing to publish), or something the
     # scan cannot cover.
     look_up kinds "$work/entries" "$text/tree-paths/working-tree" "$text/link-targets/working-tree"
+    holds "$text/tree-paths/working-tree" "$rep_paths" paths
+    holds "$text/link-targets/working-tree" "$rep_targets" "link targets"
     [ "$rep_other" -eq 0 ] ||
       die "$rep_other paths that git lists are neither a file nor a link (a folder where a file is tracked, a submodule that is checked out, a repository inside this one); the scan cannot cover them; refusing to pass"
     files=$rep_files

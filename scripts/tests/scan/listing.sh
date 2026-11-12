@@ -219,4 +219,79 @@ expect_fail "a perl that leaves out a name" "perl did not finish looking the fil
   env PATH="$tmp/perl-bin:$PATH" "$scan"
 never_clean "a perl that leaves out a name"
 
+# --- perl: each list on its own ---------------------------------------------------------
+# perl_on <what> <the end of the last argument> <what it does instead>: as perl_that, for
+# one of the calls that ask the same thing. In what it does, $last is the call's last
+# argument and $before the one before it.
+perl_on() {
+  cat >"$tmp/perl-bin/perl" <<SH
+#!/bin/sh
+before= last=
+for arg in "\$@"; do before=\$last last=\$arg; done
+case " \$* " in *" $1 "*) case "\$last" in *$2) $3 ;; esac ;; esac
+exec "$real_perl" "\$@"
+SH
+  chmod +x "$tmp/perl-bin/perl"
+}
+fresh perl-lists
+commit_file "docs: plain" plain.txt "nothing to see"
+for n in one two three; do printf 'nothing to see\n' >"untracked-$n.txt"; done
+expect_pass "two tracked files and three untracked" "$scan"
+says "secrets scan: clean (5 files)"
+# The files to cover are looked up in two lists, the tracked and the untracked, and each
+# is held to perl's report: a line too few in one alone is refused, at that list.
+perl_on ids /census-entries "\"$real_perl\" \"\$@\" | sed 1d; exit 0"
+expect_fail "a perl that leaves out a tracked file" "perl did not finish looking the files of the working tree up (it reports 2 lines written, and 1 are there)" \
+  env PATH="$tmp/perl-bin:$PATH" "$scan"
+never_clean "a perl that leaves out a tracked file"
+perl_on ids /entries-others "\"$real_perl\" \"\$@\" | sed 1d; exit 0"
+expect_fail "a perl that leaves out an untracked file" "perl did not finish looking the files of the working tree up (it reports 3 lines written, and 2 are there)" \
+  env PATH="$tmp/perl-bin:$PATH" "$scan"
+never_clean "a perl that leaves out an untracked file"
+# ... and so is one whose output cannot be finished: here it has nowhere to write, and
+# what it printed is lost when it closes its output.
+perl_on ids /census-entries "exec \"$real_perl\" \"\$@\" >&-"
+expect_fail "a perl that cannot finish its output" "could not be looked up (perl: exit" env PATH="$tmp/perl-bin:$PATH" "$scan"
+never_clean "a perl that cannot finish its output"
+
+# The two files that `kinds` writes, the paths and where each link leads, are held to
+# the report as well: by their bytes, since a name can hold a newline.
+ln -s "it-says-$word" a-link
+expect_fail "a link whose target holds a listed word" "clean-room scan: 1 matching lines (contents 1, paths 0)" "$scan"
+perl_on kinds /link-targets/working-tree "\"$real_perl\" \"\$@\"; : >\"\$last\"; exit 0"
+expect_fail "a perl whose list of link targets is emptied after its report" \
+  "perl did not finish looking the files of the working tree up (it reports $((${#word} + 9)) bytes of link targets written, and 0 are there)" \
+  env PATH="$tmp/perl-bin:$PATH" "$scan"
+quiet "clean-room scan:"
+never_clean "a perl whose list of link targets is emptied after its report"
+perl_on kinds /link-targets/working-tree "\"$real_perl\" \"\$@\"; rm -f \"\$last\"; exit 0"
+expect_fail "a perl whose list of link targets is taken away after its report" "bytes of link targets written, and 0 are there)" \
+  env PATH="$tmp/perl-bin:$PATH" "$scan"
+never_clean "a perl whose list of link targets is taken away after its report"
+rm a-link
+printf 'nothing to see\n' >"named-$word.txt"
+expect_fail "a file whose name holds a listed word" "clean-room scan: 1 matching lines (contents 0, paths 1)" "$scan"
+perl_on kinds /link-targets/working-tree "\"$real_perl\" \"\$@\"; grep -v -e $word \"\$before\" >\"\$before.less\"; cat \"\$before.less\" >\"\$before\"; exit 0"
+expect_fail "a perl whose list of paths loses a line after its report" "bytes of paths written, and" env PATH="$tmp/perl-bin:$PATH" "$scan"
+says "perl did not finish looking the files of the working tree up"
+quiet "clean-room scan:"
+never_clean "a perl whose list of paths loses a line after its report"
+rm "named-$word.txt"
+
+# A link that is there and cannot be read is out of reach, as a file in a folder that
+# cannot be searched is: counted, and the scan fails. (No file system here makes one, so
+# the stand-in's readlink fails.)
+ln -s plain.txt a-link
+expect_pass "a link" "$scan"
+cat >"$tmp/perl-bin/perl" <<SH
+#!/bin/sh
+exec "$real_perl" -e 'BEGIN { *CORE::GLOBAL::readlink = sub { \$! = 13; undef } }' "\$@"
+SH
+expect_fail "a link that cannot be read" "1 files of the working tree could not be looked up, though they may be there" \
+  env PATH="$tmp/perl-bin:$PATH" "$scan"
+says "refusing to pass"
+quiet "a-link"
+never_clean "a link that cannot be read"
+rm a-link
+
 finished
