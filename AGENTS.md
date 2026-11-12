@@ -237,6 +237,10 @@ deferred is on the carry-over list with a milestone. A tool is not done without 
   exits 0, so check a changed script with `bash -n`.
 - **`pipefail` and `grep`.** A `grep` that finds nothing exits 1 and fails the pipeline.
   Where no match is a valid answer, end that pipeline with `|| true`.
+- **`pipefail` and `grep -q`.** After a pipe, `grep -q` stops at its first match; the
+  command before it can be killed while still writing, and the pipeline then fails though
+  there was a match. It happened on the Linux runner only. Send the output to `/dev/null`
+  instead.
 - **The pre-push hook fails closed.** Without `WHIZBANG_WORDLIST` set in the shell you push
   from, the push is refused. That is intended; set the variable, do not bypass the hook.
 - **A refused push names what it found** as `<commit>:<path>:<line>`. A commit named there

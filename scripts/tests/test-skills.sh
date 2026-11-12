@@ -25,7 +25,7 @@ check_skill() {
   local file=$1 heading
   [ "$(grep '^## ' "$file" | tr '\n' ';')" = "## Inputs;## Checklist;## Commands;## Hand-back format;" ] ||
     { echo "skill: $file must have these sections, in this order, and no other: Inputs, Checklist, Commands, Hand-back format"; return 1; }
-  section "$file" Inputs | grep -q '^- \*\*[A-Z]' ||
+  section "$file" Inputs | grep '^- \*\*[A-Z]' >/dev/null ||
     { echo "skill: $file names no input (a line that starts: - **Name:**)"; return 1; }
   [ "$(section "$file" Checklist | grep -c '^- \[ \] [0-9]*\. ' || true)" -ge 5 ] ||
     { echo "skill: $file has no checklist of numbered boxes"; return 1; }
@@ -41,8 +41,11 @@ check_skill() {
 }
 
 # says <file> <section> <text>: the section holds the text.
+# After a pipe, no grep here is given -q: it would stop at its first match, the command
+# before it would be killed while still writing, and `pipefail` would turn a match into a
+# failure. That happened on the Linux runner and not on macOS.
 says() {
-  section "$1" "$2" | grep -q -F -e "$3" || { echo "skill: $1, under $2, must say: $3"; return 1; }
+  section "$1" "$2" | grep -F -e "$3" >/dev/null || { echo "skill: $1, under $2, must say: $3"; return 1; }
 }
 # holds <file> <text>: the file holds the text, anywhere.
 holds() {
@@ -64,7 +67,7 @@ ways_round='--no-verify|--force|--squash|--rebase|--admin|--auto|reset[[:space:]
 check_file() {
   local file=$1
   # A way round is named only after the word never, in the same sentence of the same line.
-  if grep -E -e "$ways_round" "$file" | grep -v -q -E "[Nn]ever[^.;:]*($ways_round)"; then
+  if grep -E -e "$ways_round" "$file" | grep -v -E "[Nn]ever[^.;:]*($ways_round)" >/dev/null; then
     echo "$file names a way round a check (--no-verify, a forced push, a squash, a rebase, --admin, a hard reset) outside a sentence that says never"
     return 1
   fi
@@ -81,7 +84,7 @@ check_file() {
     return 1
   fi
   if grep -i -E -e 'word list|WHIZBANG_WORDLIST' "$file" |
-    grep -i -E -e '(^|[^a-z])(open|print|quote|show|cat|read|echo|display|paste|copy)' | grep -v -q -E '[Nn]ever'; then
+    grep -i -E -e '(^|[^a-z])(open|print|quote|show|cat|read|echo|display|paste|copy)' | grep -v -E '[Nn]ever' >/dev/null; then
     echo "$file tells someone to open or print the word list"
     return 1
   fi
@@ -219,6 +222,11 @@ check_reviewer() {
     return 1
   fi
 }
+
+if grep -n -E '\|[[:space:]]*grep[^|]*[[:space:]]-[A-Za-z]*q' "$0" | grep -v -F 'grep -n -E' >"$tmp/quiet"; then
+  cat "$tmp/quiet" >&2
+  fail "a grep -q after a pipe in $0: with pipefail it fails at random (see says)"
+fi
 
 while read -r name who; do
   expect_pass "the skill $name" check_skill ".claude/skills/$name/SKILL.md"
@@ -435,7 +443,7 @@ check_listed() {
   done <"$tmp/skills"
   [ "$(section "$file" Skills | grep -c '^| `')" = "$(grep -c . "$tmp/skills")" ] ||
     { echo "rules: the Skills table lists a skill that is not under .claude/skills"; return 1; }
-  section "$file" Commands | grep -q -F -e '| `scripts/worktree.sh add <slug>` |' ||
+  section "$file" Commands | grep -F -e '| `scripts/worktree.sh add <slug>` |' >/dev/null ||
     { echo "rules: the Commands table must have a row for scripts/worktree.sh add <slug>"; return 1; }
 }
 expect_pass "AGENTS.md lists the skills" check_listed AGENTS.md

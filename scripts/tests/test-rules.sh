@@ -187,7 +187,7 @@ granted() {
     grep -l -i -E '^[[:space:]]*permissionMode[[:space:]]*:' .claude/agents/*.md 2>/dev/null | sed 's/^/permission mode: /'
     git -c core.excludesFile=/dev/null ls-files --cached --others --exclude-standard | { grep -i -E '(^|/)\.claude(/|$)' || true; } | while IFS= read -r f; do
       tools=
-      if printf '%s\n' "$f" | grep -q -i -E '(^|/)\.claude$'; then echo "named .claude and not a folder: $f"; continue; fi
+      if printf '%s\n' "$f" | grep -i -E '(^|/)\.claude$' >/dev/null; then echo "named .claude and not a folder: $f"; continue; fi
       case "$f" in
         .claude/settings.json) continue ;;
         .claude/agents/builder.md) keys="name description tools " tools=$builder_tools ;;
