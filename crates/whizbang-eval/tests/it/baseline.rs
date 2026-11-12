@@ -145,7 +145,7 @@ fn an_unchanged_transcript_matches() {
 
 #[test]
 fn the_comparison_has_a_version_for_the_gate_receipt() {
-    assert_eq!(COMPARISON_VERSION, "2");
+    assert_eq!(COMPARISON_VERSION, "3");
 }
 
 #[test]
@@ -228,6 +228,64 @@ fn a_changed_final_verdict_fails() {
     one(
         after(|t| t["terminal"]["verdict"] = json!("fail")),
         "/terminal/verdict",
+        Kind::Changed,
+    );
+}
+
+#[test]
+fn text_is_compared_exactly_case_and_spaces_included() {
+    one(
+        after(|t| t["terminal"]["verdict"] = json!("Pass")),
+        "/terminal/verdict",
+        Kind::Changed,
+    );
+    one(
+        after(|t| t["terminal"]["verdict"] = json!("pass ")),
+        "/terminal/verdict",
+        Kind::Changed,
+    );
+    one(
+        after(|t| t["terminal"]["verdict"] = json!(" pass")),
+        "/terminal/verdict",
+        Kind::Changed,
+    );
+    one(
+        after(|t| {
+            t["turns"][3]["request"]["system"] =
+                json!("you compare a candidate image with its source.")
+        }),
+        "/turns/3/request/system",
+        Kind::Changed,
+    );
+}
+
+#[test]
+fn null_is_not_false_and_not_an_absent_field() {
+    one(
+        after(|t| t["turns"][1]["excluded"] = json!(false)),
+        "/turns/1/excluded",
+        Kind::Changed,
+    );
+    one(
+        after(|t| t["turns"][3]["calls"][0]["result"] = json!(false)),
+        "/turns/3/calls/0/result",
+        Kind::Changed,
+    );
+    one(
+        after(|t| {
+            t["turns"][1].as_object_mut().unwrap().remove("excluded");
+        }),
+        "/turns/1/excluded",
+        Kind::Missing,
+    );
+    one(
+        after(|t| t["turns"][1]["excluded"] = json!(0)),
+        "/turns/1/excluded",
+        Kind::Changed,
+    );
+    one(
+        after(|t| t["turns"][1]["excluded"] = json!("")),
+        "/turns/1/excluded",
         Kind::Changed,
     );
 }
@@ -493,6 +551,12 @@ fn a_pair_without_turns_or_a_terminal_outcome_is_refused() {
         ("terminal", None),
         ("terminal", Some(json!(null))),
         ("terminal", Some(json!("pass"))),
+        // Empty on both sides would compare as equal, and so would an outcome of no kind.
+        ("turns", Some(json!([]))),
+        ("terminal", Some(json!({}))),
+        ("terminal", Some(json!({"verdict": "pass"}))),
+        ("terminal", Some(json!({"kind": null, "verdict": "pass"}))),
+        ("terminal", Some(json!({"kind": 1, "verdict": "pass"}))),
     ] {
         let mut t = transcript();
         match &bad {
@@ -549,6 +613,42 @@ fn numbers_are_compared_by_the_text_they_were_written_with() {
             "{a} and {b}"
         );
         assert_eq!(compare(&parse(a), &parse(a)).unwrap(), vec![], "{a}");
+    }
+}
+
+#[test]
+fn how_an_exponent_is_marked_is_the_one_thing_about_a_number_that_is_not_compared() {
+    // The JSON reader writes an exponent's `E` as `e`, and a `+` where no sign was written,
+    // before the comparison sees the number (docs/baseline/transcript.md, "Numbers keep
+    // their text"). Everything else about the text differs.
+    let parse = |number: &str| -> Value {
+        let text = serde_json::to_string(&transcript()).unwrap().replace(
+            "\"max_output_tokens\":512",
+            &format!("\"max_output_tokens\":{number}"),
+        );
+        assert!(text.contains(number), "{number} was not put in");
+        serde_json::from_str(&text).unwrap()
+    };
+    for same in ["1e2", "1E+2", "1e+2"] {
+        assert_eq!(
+            compare(&parse("1E2"), &parse(same)).unwrap(),
+            vec![],
+            "{same}"
+        );
+    }
+    for (a, b) in [
+        ("1e2", "1e02"),
+        ("1e2", "1e-2"),
+        ("1e2", "100"),
+        ("1E2", "1.0E2"),
+        ("1e-2", "1e-02"),
+    ] {
+        // One difference per request: every turn's request holds the limit.
+        assert_eq!(
+            compare(&parse(a), &parse(b)).unwrap().len(),
+            4,
+            "{a} and {b}"
+        );
     }
 }
 

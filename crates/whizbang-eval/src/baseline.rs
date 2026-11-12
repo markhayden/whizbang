@@ -11,7 +11,7 @@ use serde_json::Value;
 
 /// The version of this comparison, written into the gate receipt (docs/baseline/README.md).
 /// It changes whenever what counts as a difference changes.
-pub const COMPARISON_VERSION: &str = "2";
+pub const COMPARISON_VERSION: &str = "3";
 
 /// The transcript format this comparison reads.
 pub const TRANSCRIPT_VERSION: u64 = 1;
@@ -62,7 +62,8 @@ impl fmt::Display for Difference {
 pub enum Refusal {
     /// A transcript is not of the version this comparison reads.
     Version { which: Side },
-    /// A transcript is not an object with its turns and its terminal outcome.
+    /// A transcript is not an object with at least one turn and a terminal outcome of a
+    /// stated kind.
     Shape { which: Side },
     /// The recorded transcript is not marked complete, or lists something missing, so it is
     /// not a baseline.
@@ -123,13 +124,24 @@ impl std::error::Error for Refusal {}
 /// Compares what whizbang replayed with what was recorded. `Ok` holds every difference, in the
 /// order of the recorded transcript; an empty list is a match. Numbers are compared by the
 /// text they were written with, so `1` and `1.0` differ and no two large numbers are confused.
+/// One thing about that text is lost before the comparison sees it: the JSON reader writes
+/// an exponent's `E` as `e`, and a `+` where no sign was written, so `1E2`, `1e2` and `1e+2`
+/// are equal.
 pub fn compare(recorded: &Value, replayed: &Value) -> Result<Vec<Difference>, Refusal> {
     for (which, t) in [(Side::Recorded, recorded), (Side::Replayed, replayed)] {
         if t.get("transcript_version").and_then(Value::as_u64) != Some(TRANSCRIPT_VERSION) {
             return Err(Refusal::Version { which });
         }
-        let turns = t.get("turns").is_some_and(Value::is_array);
-        let terminal = t.get("terminal").is_some_and(Value::is_object);
+        // At least one turn, and an outcome that says what kind it is: an empty list or an
+        // empty outcome on both sides would otherwise compare as equal.
+        let turns = t
+            .get("turns")
+            .and_then(Value::as_array)
+            .is_some_and(|turns| !turns.is_empty());
+        let terminal = t
+            .get("terminal")
+            .and_then(|terminal| terminal.get("kind"))
+            .is_some_and(Value::is_string);
         if !turns || !terminal {
             return Err(Refusal::Shape { which });
         }
