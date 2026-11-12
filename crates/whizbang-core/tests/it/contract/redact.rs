@@ -90,6 +90,61 @@ fn a_redacted_json_body_is_still_json() {
 }
 
 #[test]
+fn a_secret_that_ends_or_starts_with_a_quote_keeps_its_json_form() {
+    // The secret's own quote is escaped inside a JSON string, and is not the quote that
+    // ends the string: exactly one quote is taken from each end of what the writer gives.
+    for secret in ["abcdefgh\"", "\"abcdefgh", "\"abcdefg\"", "abcdefg\"\""] {
+        let secrets = secrets(&[secret]);
+        let body = serde_json::json!({ "t": secret, "u": 1 }).to_string();
+        let stored = secrets.redact(&body);
+        assert_eq!(stored, r#"{"t":"[redacted]","u":1}"#, "{secret}");
+        serde_json::from_str::<serde_json::Value>(&stored).unwrap();
+    }
+}
+
+#[test]
+fn a_secret_is_trimmed_of_the_space_around_it_and_of_nothing_else() {
+    // A value read from a file or a variable often carries a line break or a space at
+    // an end. What is searched for is the value without them.
+    let key = made_up_key("");
+    let padded = Secrets::new([format!("  {key} \r\n\t")]).unwrap();
+    assert_eq!(padded, secrets(&[&key]));
+    assert_eq!(padded.redact(&format!("auth={key};")), "auth=[redacted];");
+    // A value that is only space is left out, as an empty one is.
+    assert_eq!(
+        Secrets::new([" \n\t ".to_owned()]).unwrap(),
+        Secrets::none()
+    );
+    // The least length is of the trimmed value, and the refusal counts its bytes.
+    assert_eq!(
+        Secrets::new(["   1234567   ".to_owned()]).unwrap_err(),
+        SecretRefused { bytes: 7 }
+    );
+    Secrets::new([" 12345678 ".to_owned()]).unwrap();
+    // Space inside the value is part of it. So are quotes around it: taking those off
+    // is for whoever reads the file the value came from.
+    let spaced = secrets(&["abcd efgh"]);
+    assert_eq!(
+        spaced.redact("x abcd efgh y abcdefgh"),
+        "x [redacted] y abcdefgh"
+    );
+    let quoted = Secrets::new([format!("\"{key}\"")]).unwrap();
+    assert_eq!(quoted.redact(&format!("a {key} b")), format!("a {key} b"));
+    assert_eq!(quoted.redact(&format!("a \"{key}\" b")), "a [redacted] b");
+}
+
+#[test]
+fn a_tilde_and_the_other_unreserved_marks_are_not_percent_encoded() {
+    // `-`, `.`, `_` and `~` stand as they are in a URL; only what is reserved is
+    // written as a percent and two hex digits.
+    let secrets = secrets(&["ab~cd-ef.gh_ij/kl"]);
+    assert_eq!(
+        secrets.redact("https://h.example/?k=ab~cd-ef.gh_ij%2Fkl&x=1"),
+        "https://h.example/?k=[redacted]&x=1"
+    );
+}
+
+#[test]
 fn a_secret_is_found_percent_encoded_as_a_url_holds_it() {
     let secret = "key/with+odd=chars&more".to_owned();
     let secrets = secrets(&[&secret]);
@@ -193,6 +248,29 @@ fn what_redaction_does_not_find_is_known() {
     // ADR 0005, "What redaction does not find". Each of these gets through, and is
     // pinned so that the list in the record stays true: the key inside base64, a letter
     // of it written as a `\u` escape, and the key in UTF-16.
+    // Percent-encoding is found only when every reserved byte is encoded, in one case
+    // of hex. These five are not: the two cases mixed in one value, a reserved byte left
+    // plain beside encoded ones, a space written `+`, a byte encoded that need not be,
+    // and a value encoded twice.
+    let odd = "ab cd/ef+gh=ij".to_owned();
+    let found = secrets(&[&odd]);
+    assert_eq!(found.redact("k=ab%20cd%2Fef%2Bgh%3Dij"), "k=[redacted]");
+    for missed in [
+        "k=ab%20cd%2fef%2Bgh%3dij",
+        "k=ab%20cd/ef%2Bgh%3Dij",
+        "k=ab+cd%2Fef%2Bgh%3Dij",
+        "k=%61b%20cd%2Fef%2Bgh%3Dij",
+        "k=ab%2520cd%252Fef%252Bgh%253Dij",
+    ] {
+        assert_eq!(found.redact(missed), missed);
+    }
+    // A JSON body is searched as bytes: a secret that begins with a letter an escape
+    // ends in, behind a backslash, leaves the backslash in front of the marker.
+    let after = secrets(&["nabcdefgh"]);
+    let body = serde_json::json!({ "t": "x\nabcdefgh" }).to_string();
+    let stored = after.redact(&body);
+    assert_eq!(stored, r#"{"t":"x\[redacted]"}"#);
+    assert!(serde_json::from_str::<serde_json::Value>(&stored).is_err());
     let key = made_up_key("");
     let secrets = secrets(&[&key]);
     let escaped = key.replacen('a', "\\u0061", 1);

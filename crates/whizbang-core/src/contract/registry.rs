@@ -5,15 +5,65 @@
 
 use std::sync::Arc;
 
-use super::ActionDescriptor;
+use super::{ActionDescriptor, Context, PreparedCall};
+
+/// What an action hands back when it finished. It holds nothing yet: an action cannot
+/// hand back an artifact until there is a commit step to publish it in (the plan's task
+/// for nested calls, cancellation and publication). It cannot be made outside this crate
+/// except as nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Produced {
+    _contents: (),
+}
+
+impl Produced {
+    /// The action finished, and made no artifact.
+    pub fn nothing() -> Produced {
+        Produced { _contents: () }
+    }
+}
+
+/// How an action says it did not finish. The executor makes the run's outcome from it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Failure {
+    /// The action failed: the type of the failure, as a short word, and what it said.
+    Error { kind: String, message: String },
+    /// The action found that what it was given cannot be worked on.
+    Invalid { why: String },
+}
+
+impl Failure {
+    pub fn error(kind: &str, message: &str) -> Failure {
+        Failure::Error {
+            kind: kind.to_owned(),
+            message: message.to_owned(),
+        }
+    }
+
+    pub fn invalid(why: &str) -> Failure {
+        Failure::Invalid {
+            why: why.to_owned(),
+        }
+    }
+}
 
 /// One action: something a registry holds and an executor runs.
-///
-/// Today an action says what it is, and that is all this trait asks. How an action is
-/// prepared and executed is not decided yet.
 pub trait Action: Send + Sync {
     /// What the action is, takes, returns and needs. The same value on every call.
     fn descriptor(&self) -> &ActionDescriptor;
+
+    /// Runs the action on a call that was prepared and found ready, with what the
+    /// executor hands it. It returns when the action is over.
+    ///
+    /// An action that only describes itself, as a fixture does, has nothing to run, and
+    /// fails saying so.
+    fn run(&self, call: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+        let _ = context;
+        Err(Failure::error(
+            "not_runnable",
+            &format!("the action {} has nothing to run", call.action()),
+        ))
+    }
 }
 
 /// Why an action was not registered.

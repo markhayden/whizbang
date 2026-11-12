@@ -218,7 +218,7 @@ behaviour in milestone 3.
 `crates/squint-core/src/tool/manifest.rs`; table-manners `schemas/core/description.json` and
 `result.json`.
 
-- [ ] The run record as a versioned type holding every group of `SPEC.md` section 3, "What
+- [x] The run record as a versioned type holding every group of `SPEC.md` section 3, "What
       every run records", with `whizbang runs list|show` to read it.
 - [x] In `whizbang-core`: the action descriptor, call, prepared call, context, outcome, run
       record and the executor interface; and the handle types through which a context offers
@@ -227,7 +227,7 @@ behaviour in milestone 3.
       comes from the action description's common properties, not from the recipes.
 - [x] Registry and executor construction in a module the binary and the tests both use. The
       executor's entry point is where a request id is looked up (A6 fills it in).
-- [ ] `whizbang-testkit`: an `echo` action, registered only by tests.
+- [x] `whizbang-testkit`: an `echo` action, registered only by tests.
 - [x] Descriptor fixtures for `seam` and `remove_prompt`, written from their recipes and the
       common properties, that must be expressible: several outputs of different types; an
       optional protect input; a bounded number of instances; a capability needed only for some

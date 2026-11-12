@@ -2,8 +2,9 @@
 //! signal, a deadline, an event sink for progress, a spend allowance, the store,
 //! capability handles and the executor.
 //!
-//! These are the types. Nothing executes an action yet, so nothing here is given to one:
-//! what each must do when an action runs is decided with the code that runs it.
+//! The executor makes one of these for each run (ADR 0005). The cancellation signal and
+//! the deadline are carried and nothing sets them yet; the allowance and the capability
+//! handles are empty until there is a ledger and there are capability interfaces.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,6 +37,27 @@ impl Cancellation {
 pub trait Events: Send + Sync {
     /// The action got this far.
     fn progress(&self, message: &str);
+}
+
+/// Where an action writes diagnostic evidence: an intermediate image, an exchange that
+/// failed, a worker's error output. What is written is kept with the run whatever its
+/// outcome, marked as diagnostic, and can never be used as an output.
+pub trait Diagnostics: Send + Sync {
+    /// Keeps `bytes` under `name` among the run's diagnostics. A name is a lower-case
+    /// letter or a digit, then lower-case letters, digits, `_`, `-` or `.`, 64 characters
+    /// at most, and is written once in a run. Text has the secrets taken out before it
+    /// is kept; bytes that are not UTF-8 are kept as they are.
+    fn write(&self, name: &str, bytes: &[u8]) -> Result<(), String>;
+}
+
+/// Nowhere to write: what a context has until it is given a place.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoDiagnostics;
+
+impl Diagnostics for NoDiagnostics {
+    fn write(&self, _: &str, _: &[u8]) -> Result<(), String> {
+        Err("this context keeps no diagnostics".to_owned())
+    }
 }
 
 /// What an action may spend. It holds nothing yet: amounts, reservation and settlement
@@ -115,6 +137,7 @@ pub struct Context {
     store: Arc<dyn Contents + Send + Sync>,
     capabilities: Capabilities,
     executor: Arc<dyn Executor>,
+    diagnostics: Arc<dyn Diagnostics>,
 }
 
 impl Context {
@@ -135,7 +158,19 @@ impl Context {
             store,
             capabilities,
             executor,
+            diagnostics: Arc::new(NoDiagnostics),
         }
+    }
+
+    /// The same context, writing its diagnostics here.
+    pub fn with_diagnostics(mut self, diagnostics: Arc<dyn Diagnostics>) -> Context {
+        self.diagnostics = diagnostics;
+        self
+    }
+
+    /// Where diagnostic evidence is written.
+    pub fn diagnostics(&self) -> &dyn Diagnostics {
+        self.diagnostics.as_ref()
     }
 
     /// The signal that the run was cancelled.

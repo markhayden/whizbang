@@ -188,6 +188,82 @@ fn a_later_publication_adds_to_a_run_and_replaces_a_name_of_it() {
 }
 
 #[test]
+fn a_publication_that_makes_a_run_is_refused_when_the_store_holds_that_run() {
+    // Adding names to a run is one thing, and `put_in` does it whether the run is there
+    // or not. Making a run is another: the publication says so, and the store refuses
+    // it when the run exists, looking inside the publishing step. Nothing is merged and
+    // nothing is published.
+    let dir = Scratch::new("store");
+    let root = root(&dir);
+    with_runs(&root);
+    let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+    let before = store.snapshot().unwrap();
+    let mut publication = store.begin().unwrap();
+    publication.create_run("one").unwrap();
+    publication
+        .put_in("one", "record", Kind::Diagnostic, b"another run's record")
+        .unwrap();
+    publication.put("spend/2", LEDGER).unwrap();
+    let refused = publication.publish().unwrap_err();
+    assert!(
+        matches!(&refused, Error::RunExists { run } if run == "one"),
+        "{refused:?}"
+    );
+    assert_eq!(
+        refused.to_string(),
+        "the store already holds a run \"one\": a new run is not merged into it"
+    );
+    assert_eq!(
+        refused.without_paths(),
+        "the store already holds a run of that id"
+    );
+    assert_eq!(store.snapshot().unwrap(), before);
+
+    // Two publications that each make the same new run, both begun before either is
+    // published: the first is taken, the second is refused, and the run is the first's.
+    let mut first = store.begin().unwrap();
+    let mut second = store.begin().unwrap();
+    first.create_run("new").unwrap();
+    first
+        .put_in("new", "record", Kind::Diagnostic, b"first")
+        .unwrap();
+    second.create_run("new").unwrap();
+    second
+        .put_in("new", "record", Kind::Diagnostic, b"second")
+        .unwrap();
+    second
+        .put_in("new", "more", Kind::Diagnostic, b"second")
+        .unwrap();
+    first.publish().unwrap();
+    assert!(matches!(second.publish(), Err(Error::RunExists { .. })));
+    let generation = store.snapshot().unwrap();
+    let run = generation.run("new").unwrap();
+    assert_eq!(run.entries().len(), 1);
+    assert_eq!(store.read(run.get("record").unwrap()).unwrap(), b"first");
+    // A run made with no name in it exists, and its id is held to the store's rule.
+    let mut publication = store.begin().unwrap();
+    publication.create_run("empty").unwrap();
+    assert!(matches!(
+        publication.create_run(""),
+        Err(Error::InvalidRun { .. })
+    ));
+    publication.publish().unwrap();
+    assert!(
+        store
+            .snapshot()
+            .unwrap()
+            .run("empty")
+            .unwrap()
+            .entries()
+            .is_empty()
+    );
+    // A publication that deletes a run and makes it again is not refused for it.
+    let mut publication = store.begin().unwrap();
+    publication.create_run("fresh").unwrap();
+    publication.publish().unwrap();
+}
+
+#[test]
 fn deleting_a_run_removes_its_references_and_no_others() {
     let dir = Scratch::new("store-runs");
     let root = root(&dir);

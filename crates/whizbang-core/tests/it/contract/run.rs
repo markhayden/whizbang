@@ -105,11 +105,11 @@ struct Nothing;
 
 impl Executor for Nothing {
     fn prepare(&self, _: &Call) -> Result<PreparedCall, CallError> {
-        Err(Refusal::NothingRunsYet.into())
+        Err(Refusal::NoNestedCalls.into())
     }
 
     fn submit(&self, _: &Call) -> Result<Finished, CallError> {
-        Err(Refusal::NothingRunsYet.into())
+        Err(Refusal::NoNestedCalls.into())
     }
 }
 
@@ -149,10 +149,12 @@ fn a_context_carries_what_section_3_lists() {
     assert!(context.capabilities().segment().is_none());
     assert!(context.capabilities().fill().is_none());
     assert!(context.capabilities().judge().is_none());
+    // A place for diagnostics: none until the context is given one.
+    assert!(context.diagnostics().write("notes.txt", b"x").is_err());
     // And the executor, for a call to another action.
     assert_eq!(
         context.executor().submit(&Call::new("echo")),
-        Err(Refusal::NothingRunsYet.into())
+        Err(Refusal::NoNestedCalls.into())
     );
 }
 

@@ -1258,13 +1258,14 @@ fn submit_refuses_what_prepare_refuses_and_what_is_not_ready() {
 }
 
 #[test]
-fn submit_runs_nothing_yet() {
-    // A call that is ready is refused all the same, by name: admission and execution are
-    // not built. The part of task A5 that runs `echo` replaces this refusal, and this
-    // test, with a run.
+fn an_executor_that_only_reads_its_store_runs_nothing() {
+    // An executor built over a read of a store was given no way to write, so a call
+    // that is ready is refused by name and no run exists. Running is in `execute.rs`.
     let world = world();
     let engine = world.engine(segmenter());
+    let before = tree(&world.root);
     let refusal = engine.submit(&world.remove()).unwrap_err();
-    assert_eq!(refusal, CallError::Refused(Refusal::NothingRunsYet));
-    assert!(refusal.to_string().contains("cannot run an action yet"));
+    assert_eq!(refusal, CallError::Refused(Refusal::ReadOnly));
+    assert!(refusal.to_string().contains("only reads its store"));
+    assert_eq!(tree(&world.root), before);
 }

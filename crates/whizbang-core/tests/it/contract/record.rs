@@ -293,6 +293,60 @@ fn what_is_not_a_record_is_refused_by_the_types_and_by_the_schema() {
     both("a request id that is a number", &|d| {
         d["identity"]["request"] = json!(7)
     });
+    both("an end that is a text", &|d| {
+        d["time"]["end_ms"] = json!("1003")
+    });
+    both("a reason that is a number", &|d| {
+        d["outcome"]["status"] = json!("invalid");
+        d["outcome"]["invalid"] = json!(3);
+    });
+    // Every field of an error, an input, an output, an argument and a diagnostic, left
+    // out in turn: "each field left out" holds at every level.
+    let digest = |d: &Json| d["asked"]["config"].clone();
+    for field in ["kind", "message"] {
+        both(&format!("an error without its {field}"), &|d| {
+            d["outcome"]["status"] = json!("error");
+            d["outcome"]["error"] = json!({"kind": "k", "message": "m"});
+            d["outcome"]["error"].as_object_mut().unwrap().remove(field);
+        });
+    }
+    for field in ["port", "type", "artifact", "binding"] {
+        both(&format!("an input without its {field}"), &|d| {
+            d["inputs"] = json!([{"port": "image", "type": "image",
+                "artifact": digest(d), "binding": digest(d)}]);
+            d["inputs"][0].as_object_mut().unwrap().remove(field);
+        });
+    }
+    for field in ["port", "type", "artifact"] {
+        both(&format!("an output without its {field}"), &|d| {
+            d["outputs"] = json!([{"port": "mask", "type": "mask", "artifact": digest(d)}]);
+            d["outputs"][0].as_object_mut().unwrap().remove(field);
+        });
+    }
+    for field in ["name", "value"] {
+        both(&format!("an argument without its {field}"), &|d| {
+            d["asked"]["arguments"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+        });
+    }
+    for field in ["name", "digest", "bytes"] {
+        both(&format!("a diagnostic without its {field}"), &|d| {
+            d["diagnostics"][0].as_object_mut().unwrap().remove(field);
+        });
+    }
+    for field in ["action", "version", "arguments"] {
+        both(&format!("asked without its {field}"), &|d| {
+            d["asked"].as_object_mut().unwrap().remove(field);
+        });
+    }
+    both("an outcome without its status", &|d| {
+        d["outcome"].as_object_mut().unwrap().remove("status");
+    });
+    both("a time without its start", &|d| {
+        d["time"].as_object_mut().unwrap().remove("start_ms");
+    });
     // Another version is refused by both too, the types as another version.
     let other = changed(|d| d["record"] = json!("run/2"));
     assert!(validate(&schema(), &serde_json::from_slice(&other).unwrap()).is_err());
@@ -419,6 +473,61 @@ fn what_the_schema_cannot_say_the_types_still_refuse() {
 }
 
 #[test]
+fn the_limit_on_a_record_is_exact() {
+    // A record padded to exactly the limit is read, and refused for how it is written;
+    // one byte more is refused for its size.
+    let limit = record::RECORD_MAX_BYTES as usize;
+    let padded = |length: usize| {
+        let mut bytes = completed().into_bytes();
+        bytes.pop();
+        bytes.resize(length - 1, b' ');
+        bytes.push(b'\n');
+        bytes
+    };
+    assert_eq!(
+        RunRecord::from_bytes(&padded(limit)).unwrap_err(),
+        RecordError::NotCanonical
+    );
+    assert_eq!(
+        RunRecord::from_bytes(&padded(limit + 1)).unwrap_err(),
+        RecordError::TooLarge {
+            bytes: limit as u64 + 1
+        }
+    );
+    // From a store: at the limit the content is read; over it, it is not.
+    let dir = Scratch::new("record-limit");
+    let store = Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap();
+    let mut publication = store.begin().unwrap();
+    for (run, length) in [("at", limit), ("over", limit + 1)] {
+        publication
+            .put_in(
+                run,
+                record::RECORD_NAME,
+                record::RECORD_KIND,
+                &padded(length),
+            )
+            .unwrap();
+    }
+    publication.publish().unwrap();
+    let generation = store.snapshot().unwrap();
+    let read = std::cell::Cell::new(0);
+    let count = |entry: &store::Entry| {
+        read.set(read.get() + 1);
+        store.read(entry)
+    };
+    assert!(matches!(
+        record::stored(&generation, "at", count),
+        Some(Err(StoredRecordError::Record(RecordError::NotCanonical)))
+    ));
+    assert_eq!(read.get(), 1);
+    assert!(matches!(
+        record::stored(&generation, "over", count),
+        Some(Err(StoredRecordError::Record(RecordError::TooLarge { .. })))
+    ));
+    assert_eq!(read.get(), 1);
+}
+
+#[test]
 fn what_a_refusal_quotes_of_stored_bytes_is_escaped_and_cut() {
     // A field's name with an escape sequence in it, which the reader's own sentence
     // quotes; and a version five thousand characters long.
@@ -438,6 +547,25 @@ fn what_a_refusal_quotes_of_stored_bytes_is_escaped_and_cut() {
     let said = error.to_string();
     assert!(said.len() < 200, "{said}");
     assert!(!said.chars().any(char::is_control), "{said:?}");
+    // A reason that quotes the bytes is cut at 200 characters.
+    let long = format!("{{\"record\":\"run/1\",\"{}\":1}}\n", "f".repeat(5000));
+    let said = RunRecord::from_bytes(long.as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(said.contains("unknown field"), "{said}");
+    assert_eq!(said.len(), "not a run record: ".len() + 200 + 3, "{said}");
+    assert!(said.ends_with("..."), "{said}");
+    let long = format!("{{\"seq\":0,\"at_ms\":5,\"{}\":1}}\n", "f".repeat(5000));
+    let said = read_journal(long.as_bytes()).unwrap_err();
+    assert!(said.len() < 240 && said.ends_with("..."), "{said}");
+    // A reason of ordinary length is whole, with where in the bytes it was met.
+    let said = RunRecord::from_bytes(&changed(|d| d["extra"] = json!(1)))
+        .unwrap_err()
+        .to_string();
+    assert!(said.contains("unknown field `extra`"), "{said}");
+    assert!(said.contains(" at line 1 column "), "{said}");
+    assert!(!said.ends_with("..."), "{said}");
+    assert_eq!((record::QUOTED_LIMIT, record::REASON_LIMIT), (64, 200));
     // A journal's refusal quotes a line's field the same way.
     let error = read_journal(b"{\"seq\":0,\"at_ms\":5,\"\\u001b[2J\":1}\n").unwrap_err();
     assert!(!error.chars().any(char::is_control), "{error:?}");
@@ -980,6 +1108,23 @@ fn a_stored_record_is_read_by_whatever_id_the_store_holds_it_under() {
     }
     .to_string();
     assert!(!said.contains('\u{1b}'), "{said:?}");
+    // And cut at 64 characters where it is kept.
+    let long = completed().replace(
+        r#""run":"1000-1""#,
+        &format!(r#""run":"{}""#, "r".repeat(5000)),
+    );
+    let mut publication = store.begin().unwrap();
+    publication
+        .put_in("long", "record", record::RECORD_KIND, long.as_bytes())
+        .unwrap();
+    publication.publish().unwrap();
+    let generation = store.snapshot().unwrap();
+    let Some(Err(StoredRecordError::OtherRun { names })) =
+        record::stored(&generation, "long", |entry| store.read(entry))
+    else {
+        panic!("a record that names another run was read");
+    };
+    assert_eq!(names, "r".repeat(64));
 }
 
 #[test]

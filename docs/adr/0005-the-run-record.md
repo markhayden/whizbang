@@ -2,6 +2,25 @@
 
 Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-12, inside checkpoint 1A, with the code that runs an action and writes
+its run. Added: "Running an action, and writing its run". Changed: the sentences that said
+nothing wrote a record, a journal or a diagnostic yet, and the list of what this record
+does not decide.
+Amended: 2026-11-12, a second note, after the second review of the record. Added: a
+secret is trimmed of the white space at its ends, and of nothing else; the forms of
+percent-encoding that are not found; what the pass costs, with a figure; that a line and
+a diagnostic cannot be read from JSON except by the two readers; that what a refusal
+quotes is cut at 64 characters. Corrected: a secret that ends in a quote had a wrong JSON
+form; "one case can break" a JSON body is two; and the consequence that said each of the
+eight groups brings a new version, which did not agree with the shared step to `run/2`.
+Amended: 2026-11-12, a third note, after the review of running an action. Corrected: a
+run's id was said to stay free until its run was published because one process writes a
+store; two executors in one process could give two runs one id, and the store merged
+them. The count is now the process's, the store refuses to make a run it already holds,
+and the executor names the run again. Added: a secret is refused as a diagnostic's name;
+a reader's reason is cut at 200 characters, a quoted name at 64; that a refusal inside a
+run is not recorded yet; what `--diagnostic` prints; that a record does not give back the
+fingerprint of a call whose argument held a secret; a closed pipe is not an error.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
 
@@ -39,10 +58,10 @@ The record's shape is costly to reverse: once a store is kept, every record in i
 
 ## Decision
 
-The code is in `crates/whizbang-core/src/contract/` (`record.rs`, `redact.rs`,
-`journal.rs`), the schema in `crates/whizbang-core/schemas/run-1.json`, and the tests that
-hold them to this record in `crates/whizbang-core/tests/it/contract/record.rs` and
-`redact.rs`.
+The code of the record is in `crates/whizbang-core/src/contract/` (`record.rs`,
+`redact.rs`, `journal.rs`), the schema in `crates/whizbang-core/schemas/run-1.json`, and
+the tests that hold them to this record in
+`crates/whizbang-core/tests/it/contract/record.rs` and `redact.rs`.
 
 ### The shape, `run/1`
 
@@ -132,8 +151,12 @@ Reading refuses, in this order:
 - bytes that are not the bytes this code writes for the record they hold.
 
 A refusal can quote what was read: an unknown field's name, a version. What it quotes is
-shown escaped, so nothing stored reaches a terminal as a control character through a
-refusal. A failure of the store under a record is said as ADR 0004 says a store's failure:
+shown escaped and cut, so nothing stored reaches a terminal as a control character
+through a refusal, and a refusal is never as long as what it refuses. A name that is kept
+(a version, the id of another run that a record names) is cut at 64 characters
+(`QUOTED_LIMIT`). A reader's reason, which holds the name and then where in the bytes it
+was met, is cut at 200 (`REASON_LIMIT`), with three dots when there was more. A failure
+of the store under a record is said as ADR 0004 says a store's failure:
 no path, as text or as `{:?}`, and the store's own error by name.
 
 The last rule is ADR 0002's for an artifact file, and for the same reason: one record has
@@ -202,7 +225,10 @@ where it stood as a JSON string escapes it. Here:
 - **It is one pass.** At each byte, only the forms that start with that byte are
   compared. The cost is the length of the body times the number of forms that share a
   first byte, not times the number of secrets; there is no bound on how many secrets
-  there are.
+  there are. That is fine at the counts a config holds, a handful of keys, and it is not
+  free at any count: the review of this pass measured about 3 seconds for 1 MiB of JSON
+  against 2,000 keys that share a three-byte prefix, where every key's forms are tried
+  wherever that first byte stands.
 - **A secret is at least 8 bytes** (`SECRET_MIN_BYTES`). A shorter value would match
   inside ordinary words and inside JSON's own escapes: a secret `n` would turn `\n` into
   `\[redacted]`. A shorter value is refused when the secrets are built
@@ -210,11 +236,22 @@ where it stood as a JSON string escapes it. Here:
   is not protected. One value is left out without a refusal, the empty one: it is what a
   variable that was never set expands to, and refusing it would make every key that is
   not configured an error.
+- **A value is trimmed first, of ASCII white space at its two ends and of nothing
+  else.** A value read from a file or a variable often carries a line break, and the key
+  with its line break is in no body. A value that is empty once trimmed is left out as
+  an empty one is, and the 8 bytes are counted on the trimmed value. Quotes around a
+  value are not taken off: whether they are part of the key is known to whoever reads
+  the file the value came from, which is the config's business (checkpoint 1B). The
+  refusal says how long the value was and never shows it; naming the variable it came
+  from is the config's too.
 
 A redacted body is searched as bytes, not as JSON. A body that was JSON is still JSON
-after it wherever a secret stood whole in one of its forms. One case can break it: a
-secret that ends in a backslash, found as it stands in front of an escape that is not its
-own, as `abcdefgh\` in front of `"` in `abcdefgh\"`; the string then ends early.
+after it wherever a secret stood whole in one of its forms. Two cases can break it, both
+where a secret is found as it stands across the edge of an escape that is not its own: a
+secret that ends in a backslash, in front of the rest of an escape, as `abcdefgh\` in
+`abcdefgh\"`, where the string then ends early; and a secret that begins with a letter
+an escape can end in, behind a backslash, as `nabcdefgh` in `x\nabcdefgh`, which leaves
+the backslash in front of the marker. A test pins the second.
 
 #### What redaction does not find
 
@@ -226,11 +263,15 @@ above, and nothing else:
 - a secret with a character written as a `\u00XX` escape that a JSON writer need not
   have used;
 - a secret in UTF-16 or any encoding in which its bytes are not its UTF-8 bytes;
+- percent-encoding that is not the one form searched for, in which every byte that is
+  not a letter, a digit, `-`, `.`, `_` or `~` is encoded and the hex digits are all of one
+  case: the two cases mixed in one value; a reserved byte left plain beside encoded ones;
+  a space written `+`; a byte encoded that need not be; a value encoded twice;
 - a secret split across two texts, or across two lines of a journal;
 - a secret compressed, hashed, or inside an image.
 
-A test pins the first three encoded forms as getting through, so that this list stays
-true. They are on `docs/carry-over.md` for checkpoint 1B, where a config first holds a
+A test pins base64, the `\u00XX` escape, UTF-16 and the five forms of percent-encoding
+as getting through, so that this list stays true. They are on `docs/carry-over.md` for checkpoint 1B, where a config first holds a
 key and a worker first returns a body.
 
 **By construction, where it is cheap.** A line of a journal is made by a constructor that
@@ -238,7 +279,11 @@ takes the secrets (`JournalLine::new`), and a diagnostic by one of two
 (`Diagnostic::journal`, from such lines, and `Diagnostic::written`, which takes the
 content and the secrets, checks the name, and gives back the bytes to store with the
 digest of those bytes). Their fields are not public. Beside these, a line and a diagnostic
-come only from reading what was stored, which reading checks. So a record cannot list a
+come only from reading what was stored, which reading checks: neither type, nor the
+record, can be read from JSON by other code. The readers (`read_journal`,
+`RunRecord::from_bytes`) use private types of their own for what is stored. That holds by
+the absence of an implementation, which no test at run time can show; adding one back
+would be a change to this record. So a record cannot list a
 diagnostic, and a journal cannot hold a line, that did not pass through redaction; what
 is not held by construction is that the bytes then stored are the bytes that were given
 back.
@@ -250,7 +295,10 @@ cannot break the record's shape. Names that come from a descriptor, identities, 
 booleans and times are not texts from outside and are written as they are.
 
 So "its exact arguments" (the spec) holds except where an argument held a secret: there
-the record holds `[redacted]`, because the spec also says a secret is never written.
+the record holds `[redacted]`, because the spec also says a secret is never written. One
+thing follows: the fingerprint of the prepared call (ADR 0004) cannot be worked out again
+from such a record, since the fingerprint hashed the argument as it was given; and the
+record does not store the fingerprint.
 
 An error's message is otherwise kept as it was given. It can carry the sentence of
 something the action called, a decoder's for one (ADR 0004, "No path in what is said"),
@@ -274,8 +322,8 @@ one of the run's names, it goes when the run is deleted and its content at the n
 and by nothing else, which is what the spec asks.
 
 Beside it, under the names the record lists in `diagnostics`: the run's journal, at
-`journal`, and what the action wrote, each at `diagnostics/<name>`. These names are fixed
-here (`RECORD_NAME`, `JOURNAL_NAME`, `DIAGNOSTICS_PREFIX`); nothing writes under them yet.
+`journal`, and what the action wrote, each at `diagnostics/<name>` (`RECORD_NAME`,
+`JOURNAL_NAME`, `DIAGNOSTICS_PREFIX`). All of them are diagnostic references.
 
 `record::stored` reads the record of a run by whatever id the store holds the run under.
 That id is not a `RunId` (ADR 0004, "The run id"): a store can hold runs that other code
@@ -303,6 +351,113 @@ the message, and `outputs` is empty: a record with an output and a status other 
 run that found its input invalid is the same with `invalid` and its reason; a cancelled
 run has neither.
 
+### Running an action, and writing its run
+
+The code is in `crates/whizbang-core/src/contract/` (`engine.rs`, `registry.rs`,
+`context.rs`, `journal.rs`); the tests are in
+`crates/whizbang-core/tests/it/contract/execute.rs` and `crates/whizbang/tests/it/runs.rs`.
+
+**An action runs.** `Action::run` is handed the prepared call and a `Context`, and returns
+when the action is over: `Produced`, or a `Failure`. A `Failure` is an error, with a type
+and a message, or an invalid input, with the reason. `Produced` holds nothing and can only
+be made as nothing: an action cannot hand back an artifact until there is a commit step to
+publish it in, which is the plan's task for nested calls, cancellation and publication.
+An action that does not define `run`, as a fixture that only describes itself, fails with
+the type `not_runnable`.
+
+**Two executors.** `Engine::new` is given a read of a store; it prepares calls and
+refuses to run one (`Refusal::ReadOnly`), because it was given no way to write.
+`Engine::over` is given a store opened to write, which makes its process the store's one
+writer for as long as the executor lives; it reads that store and writes its runs to it.
+
+**What `submit` does, in order.**
+
+1. Prepares the call. A refusal, or a call that is not ready, is answered as ADR 0004
+   says: there is no run and nothing is written.
+2. Names the run and notes the time. From here there is a run.
+3. Runs the action, with a context of its own.
+4. Makes the outcome: completed with no outputs, error, or invalid. The secrets are taken
+   out of an error's type and message and of an invalid run's reason here, so what is
+   handed back holds none, as what is written holds none.
+5. Publishes, in one publication of the store that makes the run
+   (`Publication::create_run`): the journal under `journal`, each diagnostic the action
+   wrote under `diagnostics/<name>`, and the record under `record`, each as a diagnostic
+   reference of the run. The store refuses a publication that makes a run it already
+   holds, looking inside its publishing step; the executor then names the run again and
+   publishes again, up to eight namings, after which the refusal is handed back as the
+   store's failure.
+6. Answers with the run's id and its outcome, after the publication is durable.
+
+So a run is in the store whole or not at all, whatever its outcome, and a run that was
+reported survives a loss of power. When the store fails in step 5, `submit` answers with
+the store's failure (ADR 0004's `CallError::Store`), not with a finished run, and the
+store holds nothing of the run; the one exception is the store's own (`Unacknowledged`):
+the generation became visible and its last sync failed, and then the run is whole and was
+not reported as finished.
+
+**A run's id** is the time it started, in milliseconds since the Unix epoch, a hyphen, and
+a count: `1794519513123-1`. The count is the process's, one for every executor in it, so
+two executors over one store never make the same id from the same time; and it goes up
+past any id the store holds when the run is named. It is a `RunId` (ADR 0004) by
+construction. Runs that started at different milliseconds sort, by id, in the order they
+started, while the time has as many digits; within one millisecond the count is compared
+as text, so `-10` comes before `-9`.
+
+**One id, one run, held by the store.** That an id is free when a run is named does not
+make it free when the run is published: the run executes in between, and anything that
+writes the store can publish a run meanwhile. So it is not left to the naming. Adding
+names to a run (`Publication::put_in`) and making a run (`Publication::create_run`) are
+two operations of the store; a publication that makes a run is refused with `RunExists`,
+and publishes nothing, when the generation it would be published onto holds that run.
+Two runs are never merged under one id, whoever named them.
+
+**What an action is handed.** A cancellation signal that nothing sets; no deadline; an
+event sink, which is the run's journal; an empty allowance; the store the executor reads;
+no capability; an executor that refuses every call (`Refusal::NoNestedCalls`), because
+calls do not nest yet; and a place for diagnostics.
+
+**Diagnostics.** `Context::diagnostics` takes bytes under a name: a lower-case letter or a
+digit, then lower-case letters, digits, `_`, `-` or `.`, 64 characters at most, written
+once in a run. The content has the secrets taken out before it is kept, whatever its
+encoding. The name is a key in the store, written as it is in the generation file and in
+the record: a name that redaction would change, because it is or holds a secret, is
+refused, and the refusal does not show it. No other name of a run comes from outside the
+build: a port and an argument are named by the action's descriptor, a call that names
+any other is refused before a run exists, and the run's id is made by the executor. A progress event's message has the secrets taken out when it is
+reported. Both are held in memory until the run ends, and are then stored as step 5 says.
+
+**The time** comes from a clock the executor is built with (`Clock`), so that a test can
+fix it and the record of a run can be compared with bytes written by hand.
+
+**The binary.** `whizbang runs list --store <dir>` lists each run with its status, its
+action, when it started and how long it took; `whizbang runs show <run> --store <dir>`
+shows one record for a person, every group, the empty ones said to be empty; `--json`
+prints the record as it is stored, and `--diagnostic <name>` what the run holds under one
+name, which is any diagnostic name of the run and also `record`, as the bytes that are
+stored: they are not escaped, and the help says so. A reader that stops reading, as
+`head` does, is not an error: the command says nothing and exits 0. Both read only. Neither holds a run's id to the rule of a `RunId`: a
+run is looked up under whatever the store has it under, and everything read from a store
+is printed escaped, except the bytes asked for with `--json` and `--diagnostic`. A run
+with no record, or with one this build does not read, is listed with the reason. No
+command of the binary runs an action yet; the tests run `echo` through the executor the
+binary builds (`wiring::runner`).
+
+**What is not built, and what follows from that.**
+
+- There is no admission. A run exists from step 2, in memory; nothing durable says so
+  until step 5. A process that dies while an action runs leaves nothing of the run in the
+  store: no record, no journal, no diagnostic. Admission (the plan's next task) records a
+  run durably when it is assigned.
+- A journal's events are durable only when the run ends, and cannot be read while it
+  executes.
+- A panic inside an action is not caught: it unwinds through `submit`, and the run has no
+  record.
+- Nothing can cancel a run, and `submit` returns only when the run is over.
+- A refusal inside a run is not recorded. There is one today: a call from inside an
+  action is refused (`NoNestedCalls`). The record's `refusals` list has no elements in
+  `run/1`, so the action's own error is the only trace of it, if the action reports it.
+- Diagnostics are held in memory, without a bound, until the run ends.
+
 ### The origin does not name the run or the models
 
 `docs/carry-over.md` asked whether an artifact's origin (ADR 0002) should name the run
@@ -326,21 +481,22 @@ inputs. "Every artifact records what produced it" (the spec's invariant) holds b
 
 - Whatever lists, shows, counts or exports runs reads one shape. An export of one JSON
   object per line (the spec's `runs export`) can write the stored bytes as they are.
-- Eight groups will each bring a new version when they are first filled. Reading then has
-  to choose: read both versions, or refuse the old one. Before a store is kept, refusing
-  is free.
+- Filling the eight empty lists changes the version: once, to `run/2`, for all that the
+  tasks of checkpoint 1A fill, and once for each fill after the store is kept ("When a
+  store starts being kept", above). Reading then has to choose: read both versions, or
+  refuse the old one. Before a store is kept, refusing is free.
 - The schema and the types can drift apart where no test compares them. The tests compare
-  them on hand-written records, on records made from a prepared call and an outcome, and
-  on every list that must be empty.
-- Redaction is only as good as the list of secrets it is given. There is no config yet
-  and nothing reads a key, so nothing has a secret to give.
+  them on hand-written records, on records made from a prepared call and an outcome, on
+  every list that must be empty, and on the records the executor writes.
+- Redaction is only as good as the list of secrets the executor is given
+  (`Engine::with_secrets`). There is no config yet and nothing reads a key, so the binary
+  gives none.
 - A record is read whole and written again to be compared, on every read.
 - Reversing this costs every stored record. A change to the fields is a new version.
 
-What this record does not decide, and the code does not do: running an action and
-writing its record through the store, which is the rest of the plan's task for the
-execution contract, and with which this record is amended; the elements of the eight
-empty lists; how a request id and a parent are assigned; `runs stats` and `runs export`,
+What this record does not decide, and the code does not do: admission; nested calls,
+cancellation, and an action's outputs with their commit step; how a run that takes long
+is scheduled and watched; the elements of the eight empty lists; how a request id and a parent are assigned; `runs stats` and `runs export`,
 which are milestone 2's (`SPEC.md` section 16); labels for evaluation runs; whether a diagnostic body is cut short (squint cut a
 long body and recorded its full digest; that is on `docs/carry-over.md` with the judge
 loop).

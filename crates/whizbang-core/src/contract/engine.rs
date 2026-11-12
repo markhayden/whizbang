@@ -2,18 +2,27 @@
 //! hands to whatever runs actions.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::artifact::Contents;
 use crate::identity::{DecodeLimits, Digest};
+use crate::store::{self, Store};
 
+use super::journal::Kept;
 use super::prepare::prepare;
-use super::{Backends, Call, CallError, Finished, PreparedCall, Readiness, Refusal, Registry};
+use super::record::{Diagnostic, RECORD_KIND, RECORD_NAME, Ran, RunRecord};
+use super::{
+    Allowance, Backends, Call, CallError, Cancellation, Capabilities, Clock, Context, Failure,
+    Finished, Outcome, PreparedCall, Readiness, Refusal, Registry, RunId, Secrets, StoreFailure,
+    SystemClock,
+};
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
 /// action all hold one of these and nothing closer to a tool.
 ///
-/// Both methods return when they have their answer. How a run that takes long is
-/// scheduled, watched and cancelled while it executes is not decided here.
+/// Both methods return when they have their answer: `submit` returns when the run is
+/// over and its record is durable. How a run that takes long is scheduled, watched and
+/// cancelled while it executes is not decided here.
 pub trait Executor: Send + Sync {
     /// Can this exact call run now? Nothing is written, nothing is spent, and nothing is
     /// sent to a model. A call that is refused and a store that failed are told apart
@@ -21,23 +30,38 @@ pub trait Executor: Send + Sync {
     fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError>;
 
     /// The entry point for a call that is to run: the one place a call comes in, whatever
-    /// door it came through.
+    /// door it came through. A call that is refused has no run. One that is taken runs,
+    /// and what comes back is its run's id and outcome, after the run's record and
+    /// diagnostics are durable in the store, whatever the outcome.
     fn submit(&self, call: &Call) -> Result<Finished, CallError>;
 }
 
-/// The executor of one build: a registry, the backends, a read of the store and the
-/// digest of the config.
+/// The executor of one build: a registry, the backends, a store and the digest of the
+/// config.
+///
+/// Built over a read of a store ([`Engine::new`]) it prepares calls and runs none. Built
+/// over a store opened to write ([`Engine::over`]) it runs them, and writes each run's
+/// record and diagnostics through that store's publication.
 pub struct Engine {
     registry: Registry,
     backends: Arc<dyn Backends>,
     contents: Arc<dyn Contents + Send + Sync>,
+    /// The store to write runs to, when this executor may.
+    store: Option<Arc<Store>>,
     config: Digest,
     limits: DecodeLimits,
+    clock: Arc<dyn Clock>,
+    secrets: Secrets,
 }
+
+/// The version of whizbang a record is written with: this crate's, which the workspace
+/// shares.
+pub const WHIZBANG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 impl Engine {
     /// An executor over these actions and backends, reading this store, under the config
-    /// with this digest. Images are decoded within the default limits.
+    /// with this digest. Images are decoded within the default limits. It runs nothing:
+    /// it was given no way to write.
     pub fn new(
         registry: Registry,
         backends: Arc<dyn Backends>,
@@ -48,14 +72,83 @@ impl Engine {
             registry,
             backends,
             contents,
+            store: None,
             config,
             limits: DecodeLimits::default(),
+            clock: Arc::new(SystemClock),
+            secrets: Secrets::none(),
         }
+    }
+
+    /// An executor that runs actions: it reads this store and writes its runs to it. The
+    /// store is open to write, so this process is its one writer for as long as the
+    /// executor lives.
+    pub fn over(
+        registry: Registry,
+        backends: Arc<dyn Backends>,
+        store: Arc<Store>,
+        config: Digest,
+    ) -> Engine {
+        let mut engine = Engine::new(registry, backends, store.clone(), config);
+        engine.store = Some(store);
+        engine
+    }
+
+    /// The same executor, telling the time by this clock.
+    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Engine {
+        self.clock = clock;
+        self
+    }
+
+    /// The same executor, taking these secrets out of everything it writes.
+    pub fn with_secrets(mut self, secrets: Secrets) -> Engine {
+        self.secrets = secrets;
+        self
     }
 
     /// The actions this executor runs.
     pub fn registry(&self) -> &Registry {
         &self.registry
+    }
+
+    /// A new run's id: the time in milliseconds since the Unix epoch, a hyphen, and a
+    /// count. The count is one for the whole process ([`NAMED`]), so two executors never
+    /// make the same id from the same time, and it goes up past any id the store
+    /// already holds now. That an id is still free when its run is published is not
+    /// taken on trust: the publication makes the run, and the store refuses it if the
+    /// id was taken meanwhile ([`MAX_NAMINGS`]).
+    fn name_run(&self, store: &Store, now_ms: u64) -> Result<RunId, CallError> {
+        let generation = store
+            .snapshot()
+            .map_err(|error| CallError::Store(StoreFailure::new(error)))?;
+        loop {
+            let count = NAMED.fetch_add(1, Ordering::SeqCst) + 1;
+            let id = RunId::minted(now_ms, count);
+            if generation.run(id.as_str()).is_none() {
+                return Ok(id);
+            }
+        }
+    }
+}
+
+/// The runs this process has named, whichever executor named them.
+static NAMED: AtomicU64 = AtomicU64::new(0);
+
+/// How many times a run is named and published before the store's refusal of its id is
+/// handed back as the store's failure.
+const MAX_NAMINGS: u32 = 8;
+
+/// What a running action is given in place of the executor: a call from inside an
+/// action is refused until calls can nest.
+struct NoNesting;
+
+impl Executor for NoNesting {
+    fn prepare(&self, _: &Call) -> Result<PreparedCall, CallError> {
+        Err(Refusal::NoNestedCalls.into())
+    }
+
+    fn submit(&self, _: &Call) -> Result<Finished, CallError> {
+        Err(Refusal::NoNestedCalls.into())
     }
 }
 
@@ -89,9 +182,93 @@ impl Executor for Engine {
                 missing: missing.clone(),
             }));
         }
+        let Some(store) = &self.store else {
+            return Err(CallError::Refused(Refusal::ReadOnly));
+        };
+        // Prepare found the action a moment ago, in a registry that does not change.
+        let Some(action) = self.registry.get(prepared.action()) else {
+            return Err(CallError::Refused(Refusal::UnknownAction {
+                name: prepared.action().to_owned(),
+            }));
+        };
 
-        // Admission and execution come here: the preparation is revalidated, the run is
-        // assigned and the action is executed. Neither is built.
-        Err(CallError::Refused(Refusal::NothingRunsYet))
+        // Admission comes here: the preparation is revalidated, the spend is reserved
+        // and the request id is recorded with the run. None of it is built. From the
+        // next line on there is a run, and whatever happens it gets its record.
+        let start_ms = self.clock.now_ms();
+        let run = self.name_run(store, start_ms)?;
+
+        let kept = Arc::new(Kept::new(self.clock.clone(), self.secrets.clone()));
+        let context = Context::new(
+            Cancellation::new(),
+            None,
+            kept.clone(),
+            Allowance::none(),
+            self.contents.clone(),
+            Capabilities::none(),
+            Arc::new(NoNesting),
+        )
+        .with_diagnostics(kept.clone());
+        // The outcome is made here, from what the action handed back, with the secrets
+        // taken out: what is reported holds none, as what is written holds none.
+        let outcome = match action.run(&prepared, &context) {
+            Ok(_) => Outcome::Completed {
+                outputs: Vec::new(),
+            },
+            Err(Failure::Error { kind, message }) => Outcome::Error {
+                kind: self.secrets.redact(&kind),
+                message: self.secrets.redact(&message),
+            },
+            Err(Failure::Invalid { why }) => Outcome::Invalid {
+                why: self.secrets.redact(&why),
+            },
+        };
+        let end_ms = self.clock.now_ms();
+
+        // One publication holds the journal, every diagnostic and the record: the run is
+        // in the store whole or not at all, and it is durable before it is reported. The
+        // publication makes the run, so the store refuses it when a run of that id was
+        // published while this one executed; the run is then named again and published
+        // again, and nothing is ever merged into another run.
+        let failed = |error| CallError::Store(StoreFailure::new(error));
+        let (lines, written) = kept.take();
+        let kept: Vec<(Diagnostic, Vec<u8>)> = std::iter::once(Diagnostic::journal(&lines))
+            .chain(written)
+            .collect();
+        let mut run = run;
+        let mut namings = 1;
+        loop {
+            let mut publication = store.begin().map_err(failed)?;
+            publication.create_run(run.as_str()).map_err(failed)?;
+            for (diagnostic, bytes) in &kept {
+                publication
+                    .put_in(run.as_str(), diagnostic.name(), RECORD_KIND, bytes)
+                    .map_err(failed)?;
+            }
+            let record = RunRecord::of(
+                Ran {
+                    run: run.as_str(),
+                    whizbang: WHIZBANG_VERSION,
+                    prepared: &prepared,
+                    outcome: &outcome,
+                    start_ms,
+                    end_ms,
+                    diagnostics: kept.iter().map(|(d, _)| d.clone()).collect(),
+                },
+                &self.secrets,
+            );
+            publication
+                .put_in(run.as_str(), RECORD_NAME, RECORD_KIND, &record.to_bytes())
+                .map_err(failed)?;
+            match publication.publish() {
+                Ok(_) => break,
+                Err(store::Error::RunExists { .. }) if namings < MAX_NAMINGS => {
+                    namings += 1;
+                    run = self.name_run(store, start_ms)?;
+                }
+                Err(error) => return Err(failed(error)),
+            }
+        }
+        Ok(Finished::new(run, outcome))
     }
 }

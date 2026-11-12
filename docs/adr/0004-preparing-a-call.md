@@ -21,6 +21,10 @@ reason left out of a store failure is not left out of a refused input, which can
 a decoder's sentence; that neither `{:?}` nor an error's chain of causes shows a path.
 Changed: "the same call may be answered once the store is sound" did not hold for a
 diagnostic at an artifact's name.
+Amended: 2026-11-12, with ADR 0005, which runs an action. Changed: `submit` no longer
+refuses a ready call with `NothingRunsYet`; an executor built over a read of a store
+refuses it with `ReadOnly`, and one built over a store opened to write runs it. The types
+an executing action is handed are now used, and `Context` has a place for diagnostics.
 Spec: section 3, "The execution contract", "Identities" and "Storage"; section 6,
 "Readiness"
 
@@ -261,7 +265,7 @@ of an address with nothing to escape, and two ids never differ by letter case al
 It is enforced where a `RunId` is made (`RunId::parse`), and the executor, the only thing
 that makes a run, names it with one. The store keeps its looser check as the floor: it is
 the layer below, and its own tests publish under ids this rule refuses. Every `RunId` is
-an id the store takes. How an id is minted is decided with the code that makes runs.
+an id the store takes. How an id is minted is in ADR 0005.
 
 A refusal shows what was refused escaped, and its first 64 characters at most, with its
 length when it was longer.
@@ -277,22 +281,27 @@ lists and shows runs must take stored ids as they are (`docs/carry-over.md`).
 `prepare` is the above. `submit` is the entry point for a call
 that is to run, the one place a call comes in whatever door it came through: it is where a
 caller's request id will be looked up, before anything else (task A6); then it prepares,
-and refuses a call that is not ready. Past that point nothing is built, and a ready call
-is refused with `NothingRunsYet`, which the code that runs an action removes.
+and refuses a call that is not ready. What happens to a ready call is ADR 0005's: an
+executor that was given a store to write to runs it and writes its record; one that was
+given only a read of a store refuses it with `ReadOnly`.
 
-`Engine` is the implementation: a registry, the backends, a read of the store and the
-config's digest. The binary builds it in the function its tests share
-(`crates/whizbang/src/wiring.rs`), with no backends.
+`Engine` is the implementation: a registry, the backends, a store and the config's
+digest. The binary builds it in the functions its tests share
+(`crates/whizbang/src/wiring.rs`), with no backends: `executor`, over a read of a store,
+and `runner`, over a store opened to write.
 
-The types an executing action is handed and hands back exist, and nothing uses them yet:
+The types an executing action is handed and hands back:
 
 - `Context`: a cancellation signal, a deadline, an event sink for progress, a spend
-  allowance, a read of the store, capability handles, and the executor.
+  allowance, a read of the store, capability handles, the executor, and a place to write
+  diagnostics. ADR 0005 says what each holds when an action runs today.
 - `SegmentHandle`, `FillHandle`, `JudgeHandle`, and `Capabilities`, which offers each or
   none. The handles are empty and cannot be made: their contents are the capability
   interfaces' (task A8). `Allowance` is empty too, until there is a ledger.
 - `Outcome`: completed with its committed outputs, cancelled, error with a type and a
-  message, or invalid with a reason; and `Finished`, an outcome with its run's id.
+  message, or invalid with a reason; and `Finished`, an outcome with its run's id. The
+  executor makes the outcome; what an action hands back is `Produced` or a `Failure` (ADR
+  0005).
 
 ### Conditions on a value are not added
 
@@ -316,15 +325,16 @@ known case that does not, and it goes with rascal's recipes to milestone 3
   asynchronous, with status and cancel answered while a run executes. How that is
   scheduled is not decided, and `submit`'s shape may change when it is; it is cheap to
   change while nothing runs.
-- `Context` and `Outcome` are shapes read from section 3, not proven by an action. The
-  proofs of checkpoint 1A may change them, and the plan says a proof is never bent to fit.
+- `Context` and `Outcome` are shapes read from section 3. One fake action, `echo`, uses
+  them (ADR 0005); the proofs of checkpoint 1A may still change them, and the plan says a
+  proof is never bent to fit.
 - Closing `Derivation::stated` later changes every test that states one. The vectors of
   rebound masks do not change: a derivation holds a binding and adds nothing to it. For
   the same reason it does not change what prepare accepts (above).
 
-What this record does not decide, and the code does not do: an estimate; admission,
-request ids and reservations; executing an action, its commit step and cancellation; the
-run record; how a run id is minted.
+What this record does not decide: an estimate; admission, request ids and reservations;
+an action's commit step and cancellation. Executing an action, the run record and how a
+run id is minted are ADR 0005's.
 
 ## Alternatives
 

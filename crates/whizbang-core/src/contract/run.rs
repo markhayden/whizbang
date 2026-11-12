@@ -46,6 +46,14 @@ impl RunId {
         Ok(RunId(id.to_owned()))
     }
 
+    /// The id the executor gives a new run: the time it started, in milliseconds since
+    /// the Unix epoch, a hyphen, and a count. Digits and one hyphen, 41 characters at
+    /// most, so it keeps the rule above. Runs that started at different milliseconds
+    /// sort, by id, in the order they started, while the time has as many digits.
+    pub(super) fn minted(now_ms: u64, count: u64) -> RunId {
+        RunId(format!("{now_ms}-{count}"))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
