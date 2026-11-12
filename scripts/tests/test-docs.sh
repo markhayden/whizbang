@@ -1,27 +1,88 @@
 #!/usr/bin/env bash
 # The generated reference (scripts/docs.sh): a fresh copy passes the check, a stale or missing
-# one fails it, and generation is the same every time. Descriptions are saved documents, so
-# nothing here builds the binary; `just docs-check` is the check against the real build.
+# one fails it, generation is the same every time, and what is not a well-formed description
+# is refused. Nothing here builds the binary: descriptions are saved documents, or come from
+# a stand-in for cargo that prints one. `just docs-check` is the check against the real build,
+# and the first part below holds the chain from there to CI in place.
 source "$(dirname "$0")/lib.sh"
 
 docs=scripts/docs.sh
 
-cat >"$tmp/empty.json" <<'JSON'
-{
-  "description_version": 1,
-  "name": "whizbang",
-  "version": "9.9.9",
-  "actions": []
+# --- The chain from the real binary to CI ------------------------------------------------
+
+# recipe <name>: the body of a recipe in the justfile, without its indentation.
+recipe() {
+  awk -v name="$1" '
+    /^[^ #]/ { on = (index($0, name ":") == 1) ; next }
+    on && /^    / { sub(/^    /, ""); print }' justfile
 }
-JSON
+grep -q -E '^check:( [a-z-]+)* docs-check( [a-z-]+)*$' justfile ||
+  fail "justfile: check must depend on docs-check"
+grep -q -E '^ci:( [a-z-]+)* check( [a-z-]+)*$' justfile ||
+  fail "justfile: ci must depend on check"
+[ "$(recipe docs-check)" = "scripts/docs.sh --check" ] ||
+  fail "justfile: docs-check must run exactly: scripts/docs.sh --check"
+[ "$(recipe docs)" = "scripts/docs.sh" ] ||
+  fail "justfile: docs must run exactly: scripts/docs.sh"
+grep -q -E '^ +run: just ci$' .github/workflows/ci.yml ||
+  fail ".github/workflows/ci.yml must have a step that runs: just ci"
+
+# A stand-in for cargo, first on the path. It accepts only the command the real description
+# comes from, prints the file named by FAKE_DESCRIBE_OUT and exits with FAKE_DESCRIBE_EXIT.
+mkdir "$tmp/bin"
+cat >"$tmp/bin/cargo" <<'SH'
+#!/usr/bin/env bash
+if [ "$*" != "run --quiet -p whizbang -- describe --json" ]; then
+  echo "stand-in cargo: unexpected arguments: $*" >&2
+  exit 97
+fi
+cat "$FAKE_DESCRIBE_OUT"
+exit "${FAKE_DESCRIBE_EXIT:-0}"
+SH
+chmod +x "$tmp/bin/cargo"
+# with_binary <file> <exit> <command...>: run the command with the stand-in for cargo.
+with_binary() {
+  local file=$1 code=$2
+  shift 2
+  PATH="$tmp/bin:$PATH" FAKE_DESCRIBE_OUT=$file FAKE_DESCRIBE_EXIT=$code "$@"
+}
+
+committed=docs/reference/description.json
+jq '. + {doors: []}' "$committed" >"$tmp/changed.json"
+: >"$tmp/nothing"
+
+# Without --description the description comes from the binary, not from the committed copy.
+expect_pass "the binary prints the committed description" with_binary "$committed" 0 "$docs" --check
+expect_fail "the binary prints a changed description" "docs/reference is stale" \
+  with_binary "$tmp/changed.json" 0 "$docs" --check
+expect_fail "the binary fails" "could not run" with_binary "$committed" 3 "$docs" --check
+expect_fail "the binary prints nothing" "not a description" with_binary "$tmp/nothing" 0 "$docs" --check
+
+# Writing takes the same path, and a failure writes nothing: never an empty file.
+expect_pass "write from the binary" with_binary "$tmp/changed.json" 0 "$docs" --out "$tmp/frombin"
+cmp -s "$tmp/changed.json" "$tmp/frombin/description.json" || fail "the written description is not the binary's"
+expect_fail "write when the binary fails" "could not run" \
+  with_binary "$committed" 3 "$docs" --out "$tmp/failed"
+expect_fail "write when the binary prints nothing" "not a description" \
+  with_binary "$tmp/nothing" 0 "$docs" --out "$tmp/failed"
+[ ! -e "$tmp/failed" ] || fail "a failed generation wrote something"
+expect_fail "a failed write over a good copy" "not a description" \
+  with_binary "$tmp/nothing" 0 "$docs" --out "$tmp/frombin"
+cmp -s "$tmp/changed.json" "$tmp/frombin/description.json" || fail "a failed generation changed a good copy"
+[ -s "$tmp/frombin/actions.md" ] || fail "a failed generation emptied the page"
+
+# --- Generation ----------------------------------------------------------------------------
+
+# Odd spacing and key order: description.json is a copy, not a reformatting.
+printf '{"version":"9.9.9",   "name": "whizbang",\n "actions":[ ],"description_version":1}\n' >"$tmp/empty.json"
 cat >"$tmp/two.json" <<'JSON'
 {
   "description_version": 1,
   "name": "whizbang",
   "version": "9.9.9",
   "actions": [
-    {"name": "zebra", "purpose": "Listed first | with a bar and a `tick`."},
-    {"name": "apple", "purpose": "Listed second."}
+    {"name": "zebra_map", "purpose": "Listed first: 2 images in, 1 map out (50% faster)."},
+    {"name": "apple-2", "purpose": "Listed second."}
   ]
 }
 JSON
@@ -48,13 +109,16 @@ for f in actions.md description.json; do
   fi
 done
 
-# A stale copy fails, and the failure names the file and the fix.
-expect_fail "a stale description.json" "docs/reference is stale" \
+# A stale copy fails, and the failure names the file, the folder that was checked and the fix.
+expect_fail "a stale description.json" "$tmp/ref is stale" \
   "$docs" --check --description "$tmp/two.json" --out "$tmp/ref"
 expect_fail "names the stale file" "description.json" \
   "$docs" --check --description "$tmp/two.json" --out "$tmp/ref"
 expect_fail "names the fix" "just docs" \
   "$docs" --check --description "$tmp/two.json" --out "$tmp/ref"
+if grep -q -F "docs/reference is stale" "$tmp/out"; then
+  fail "the failure names docs/reference when another folder was checked"
+fi
 
 # Only the page is stale: someone edited it by hand.
 echo "an edit by hand" >>"$tmp/ref/actions.md"
@@ -63,19 +127,33 @@ expect_fail "a page edited by hand" "actions.md" \
 
 # A missing file is stale too.
 rm "$tmp/ref/actions.md"
-expect_fail "a missing page" "actions.md" \
+expect_fail "a missing page" "actions.md is missing" \
   "$docs" --check --description "$tmp/empty.json" --out "$tmp/ref"
-expect_fail "a missing folder" "docs/reference is stale" \
+expect_fail "a missing folder" "$tmp/nowhere is stale" \
   "$docs" --check --description "$tmp/empty.json" --out "$tmp/nowhere"
 [ ! -e "$tmp/nowhere" ] || fail "the check wrote to the folder it checks"
+
+# The folder holds the two generated files and the tool records under tools/, nothing else.
+mkdir -p "$tmp/again/tools"
+echo "a record" >"$tmp/again/tools/some_tool.md"
+expect_pass "tool records beside the generated files" \
+  "$docs" --check --description "$tmp/empty.json" --out "$tmp/again"
+echo "by hand" >"$tmp/again/notes.md"
+expect_fail "a file nothing generates" "notes.md is not generated" \
+  "$docs" --check --description "$tmp/empty.json" --out "$tmp/again"
+rm "$tmp/again/notes.md"
+: >"$tmp/again/.hidden"
+expect_fail "a hidden file nothing generates" ".hidden is not generated" \
+  "$docs" --check --description "$tmp/empty.json" --out "$tmp/again"
 
 # Actions are listed in the description's order (recipes come first there), each with its
 # purpose as written.
 expect_pass "generate with two actions" "$docs" --description "$tmp/two.json" --out "$tmp/two"
-grep -n -F -e '## `zebra`' -e '## `apple`' "$tmp/two/actions.md" | cut -d: -f2 >"$tmp/order"
-printf '## `zebra`\n## `apple`\n' >"$tmp/want"
+grep -n -F -e '## `zebra_map`' -e '## `apple-2`' "$tmp/two/actions.md" | cut -d: -f2 >"$tmp/order"
+printf '## `zebra_map`\n## `apple-2`\n' >"$tmp/want"
 cmp -s "$tmp/order" "$tmp/want" || { cat "$tmp/two/actions.md" >&2; fail "the actions are not in the description's order"; }
-grep -q -x -F 'Listed first | with a bar and a `tick`.' "$tmp/two/actions.md" || fail "a purpose was changed"
+grep -q -x -F 'Listed first: 2 images in, 1 map out (50% faster).' "$tmp/two/actions.md" || fail "a purpose was changed"
+[ "$(grep -c '^#' "$tmp/two/actions.md")" -eq 3 ] || fail "the page has headings other than its title and one per action"
 if grep -q -F "registers no actions yet" "$tmp/two/actions.md"; then
   fail "a page with actions says there are none"
 fi
@@ -84,16 +162,65 @@ expect_pass "the two-action copy is fresh" "$docs" --check --description "$tmp/t
 # The committed reference agrees with its own description.json, and a description whose type
 # has changed (one more field) fails against it.
 expect_pass "the committed page comes from the committed description" \
-  "$docs" --check --description docs/reference/description.json
-jq '. + {doors: []}' docs/reference/description.json >"$tmp/changed.json"
+  "$docs" --check --description "$committed"
 expect_fail "a changed description type against the committed copies" "docs/reference is stale" \
   "$docs" --check --description "$tmp/changed.json"
 
-# What is not a description is refused, not rendered.
-echo '{"name": "whizbang"}' >"$tmp/bad.json"
-expect_fail "a document without actions" "not a description" \
-  "$docs" --description "$tmp/bad.json" --out "$tmp/bad"
-echo 'not json' >"$tmp/bad.json"
-expect_fail "a document that is not JSON" "not a description" \
-  "$docs" --description "$tmp/bad.json" --out "$tmp/bad"
+# --- What is refused -----------------------------------------------------------------------
+
+# refuse <name> <text> <description>: neither written nor checked, and the reason is given.
+refuse() {
+  printf '%s\n' "$3" >"$tmp/bad.json"
+  expect_fail "$1" "not a description" "$docs" --description "$tmp/bad.json" --out "$tmp/bad"
+  grep -q -F -e "$2" "$tmp/out" || { cat "$tmp/out" >&2; fail "$1: expected the output to say: $2"; }
+  [ ! -e "$tmp/bad" ] || fail "$1: something was written"
+  expect_fail "$1, when checking" "not a description" \
+    "$docs" --check --description "$tmp/bad.json" --out "$tmp/two"
+}
+# with <jq filter>: the two-action description, changed.
+with() { jq -c "$1" "$tmp/two.json"; }
+
+# The shape.
+refuse "not JSON" "" 'not json'
+refuse "an empty document" "exactly one JSON document" ''
+refuse "two documents" "exactly one JSON document" "$(with .; with .)"
+refuse "an array" "an object" '[]'
+refuse "no description_version" "description_version" "$(with 'del(.description_version)')"
+refuse "a description_version that is text" "description_version" "$(with '.description_version = "1"')"
+refuse "a description_version that is not whole" "description_version" "$(with '.description_version = 1.5')"
+refuse "no name" "name" "$(with 'del(.name)')"
+refuse "a name that is a number" "name" "$(with '.name = 7')"
+refuse "no version" "version" "$(with 'del(.version)')"
+refuse "no actions" "actions" "$(with 'del(.actions)')"
+refuse "actions that are not a list" "actions" "$(with '.actions = {}')"
+refuse "an action that is text" "action 1" "$(with '.actions[0] = "zebra"')"
+refuse "an action without a name" "action 2" "$(with 'del(.actions[1].name)')"
+refuse "an action without a purpose" "action 2" "$(with 'del(.actions[1].purpose)')"
+refuse "a purpose that is a number" "action 1" "$(with '.actions[0].purpose = 3')"
+
+# Names and versions: nothing that could close the code span or start a line of its own.
+refuse "a build name with a backtick" "name" "$(with '.name = "whiz`bang"')"
+refuse "a version that is not three numbers" "version" "$(with '.version = "1.2"')"
+refuse "a version with a newline" "version" "$(with '.version = "1.2.3\n# Forged"')"
+refuse "a version with a space" "version" "$(with '.version = "1.2.3 beta"')"
+refuse "a version with an empty part" "version" "$(with '.version = "1..3"')"
+for name in "" "Zebra" "9lives" "-dash" "two words" 'tick`' "a.b" "a|b" 'new\nline' "café" \
+  "$(printf 'x%.0s' $(seq 1 65))"; do
+  refuse "the action name '$name'" "action 1" "$(with ".actions[0].name = \"$name\"")"
+done
+with '.version = "1.2.3-rc.1+build.5"' >"$tmp/pre.json"
+expect_pass "a pre-release version with build data" "$docs" --description "$tmp/pre.json" --out "$tmp/pre"
+
+# Purposes: one plain line.
+for purpose in "" " Leading space." "Trailing space. " "# A heading" "2. A list item" "- A list item" \
+  'Two\nlines.' 'Text\n\n## `forged`\n\nA forged action.' 'A carriage\rreturn.' 'A\ttab.' \
+  'A bell\u0007.' 'A <b>tag</b>.' 'An <!-- unclosed comment.' 'A quote > mark.' 'A `tick`.' \
+  'A | bar.' 'A [link](https://example.com).' 'An *emphasis*.' 'An _emphasis_.' \
+  'A back\\slash.' 'An &amp; entity.' 'A line separator here.' 'Café.' \
+  "$(printf 'A%.0s' $(seq 1 201))"; do
+  refuse "the purpose '$purpose'" "action 1" "$(with ".actions[0].purpose = \"$purpose\"")"
+done
+
+expect_fail "a description that does not exist" "no such description" \
+  "$docs" --description "$tmp/absent.json" --out "$tmp/bad"
 expect_fail "an unknown argument" "unknown argument" "$docs" --nope
