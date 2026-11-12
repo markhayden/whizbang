@@ -16,8 +16,9 @@ to this repo.
 Done on 2026-11-11. The four old repos are tagged `final-before-whizbang` and pinned in
 `docs/sources.toml`. What was found and what happened to it is in `docs/plans/m0-inventory.md`.
 
-Still to do in milestone 0, in whizbang: assemble and validate the baseline package from the
-tagged squint, and write up the 2026-11-11 study from it.
+The baseline package is assembled from the tagged squint; `docs/baseline/` says what it holds
+and how it is identified. Still to do in milestone 0, in whizbang: convert and audit the
+package, and write up the 2026-11-11 study from it.
 
 ## Fixes carried into whizbang
 
