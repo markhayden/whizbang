@@ -714,7 +714,6 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
             "CURRENT",
             Some("7\n".to_string()),
         ),
-        ("no pointer beside generation files", "CURRENT", None),
         (
             "a generation that is not one",
             "generations/1.json",
@@ -1131,7 +1130,12 @@ fn a_staging_on_another_file_system_is_refused_with_nothing_visible() {
         "{result:?}"
     );
     assert!(!root.join("CURRENT").exists());
-    assert_eq!(seen(&root, fs), (0, Contents::new()));
+    assert!(matches!(
+        Reader::open(&root, fs),
+        Err(Error::NotAStore { .. })
+    ));
+    // What it left is an unfinished creation, which a writer on one file system completes.
+    assert_eq!(after_restart(&root), (0, Contents::new()));
 }
 
 #[test]
@@ -1187,4 +1191,181 @@ fn a_new_store_has_its_directories_and_its_pointer_durable_before_it_is_used() {
     let reader = Arc::new(ShimFs::new());
     assert_eq!(seen(&root, reader.clone()), (0, Contents::new()));
     assert_eq!(reader.events(), vec![]);
+}
+
+// What is a store, and what is not: a directory with a pointer.
+
+/// Every path under a directory, with the content of each file.
+fn tree(dir: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        if path.is_dir() {
+            found.push((path.clone(), None));
+            stack.extend(
+                std::fs::read_dir(&path)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path()),
+            );
+        } else {
+            found.push((path.clone(), Some(std::fs::read(&path).unwrap())));
+        }
+    }
+    found.sort();
+    found
+}
+
+#[test]
+fn a_directory_that_is_not_a_store_is_refused_and_left_exactly_as_it_is() {
+    type Build = fn(&Path);
+    let cases: [(&str, Build); 7] = [
+        ("unrelated files", |root| {
+            std::fs::write(root.join("notes.txt"), b"mine").unwrap();
+        }),
+        ("an unrelated staging folder with files in it", |root| {
+            std::fs::create_dir(root.join("staging")).unwrap();
+            std::fs::write(root.join("staging/draft.txt"), b"mine").unwrap();
+        }),
+        ("an objects folder with files and no pointer", |root| {
+            std::fs::create_dir(root.join("objects")).unwrap();
+            std::fs::write(root.join("objects/thing"), b"mine").unwrap();
+        }),
+        ("generation files and no pointer", |root| {
+            std::fs::create_dir(root.join("generations")).unwrap();
+            std::fs::write(root.join("generations/1.json"), b"{}").unwrap();
+        }),
+        ("the three folders and a folder in staging", |root| {
+            for name in ["objects", "generations", "staging", "staging/1-0"] {
+                std::fs::create_dir(root.join(name)).unwrap();
+            }
+        }),
+        ("the three folders and one more thing", |root| {
+            for name in ["objects", "generations", "staging", "other"] {
+                std::fs::create_dir(root.join(name)).unwrap();
+            }
+        }),
+        ("a file where a folder of the store would be", |root| {
+            std::fs::write(root.join("objects"), b"mine").unwrap();
+        }),
+    ];
+    for (what, build) in cases {
+        let dir = Scratch::new("store");
+        let root = root(&dir);
+        std::fs::create_dir(&root).unwrap();
+        build(&root);
+        let before = tree(&root);
+
+        let fs = Arc::new(ShimFs::new());
+        let result = Store::open(&root, fs.clone()).map(|_| ());
+        match result {
+            Err(Error::NotAStore { root: named }) => assert_eq!(named, root, "{what}"),
+            other => panic!("{what}: {other:?}"),
+        }
+        let result = Reader::open(&root, fs.clone()).map(|_| ());
+        assert!(
+            matches!(result, Err(Error::NotAStore { .. })),
+            "{what}: {result:?}"
+        );
+        assert_eq!(fs.events(), vec![], "{what}");
+        assert_eq!(tree(&root), before, "{what}");
+    }
+}
+
+#[test]
+fn a_store_that_lost_its_pointer_is_refused_and_nothing_in_it_is_removed() {
+    let dir = Scratch::new("store");
+    let root = with_old(&dir);
+    std::fs::remove_file(root.join("CURRENT")).unwrap();
+    std::fs::create_dir(root.join("staging/leftover")).unwrap();
+    let before = tree(&root);
+    let fs = Arc::new(ShimFs::new());
+    let result = Store::open(&root, fs.clone()).map(|_| ());
+    assert!(matches!(result, Err(Error::NotAStore { .. })), "{result:?}");
+    let result = Reader::open(&root, fs.clone()).map(|_| ());
+    assert!(matches!(result, Err(Error::NotAStore { .. })), "{result:?}");
+    assert_eq!(fs.events(), vec![]);
+    assert_eq!(tree(&root), before);
+}
+
+#[test]
+fn an_empty_directory_and_an_unfinished_creation_become_a_store() {
+    // What a creation that did not finish can leave: some of the three folders, empty,
+    // and in staging the first pointer, whole or cut short.
+    let cases: [(&str, &[&str], Option<&[u8]>); 5] = [
+        ("an empty directory", &[], None),
+        ("one folder", &["objects"], None),
+        ("two folders", &["generations", "staging"], None),
+        (
+            "the three folders",
+            &["objects", "generations", "staging"],
+            None,
+        ),
+        (
+            "the three folders and a staged pointer cut short",
+            &["objects", "generations", "staging"],
+            Some(b"0"),
+        ),
+    ];
+    for (what, folders, staged) in cases {
+        let dir = Scratch::new("store");
+        let root = root(&dir);
+        std::fs::create_dir(&root).unwrap();
+        for folder in folders {
+            std::fs::create_dir(root.join(folder)).unwrap();
+        }
+        if let Some(bytes) = staged {
+            std::fs::write(root.join("staging/CURRENT"), bytes).unwrap();
+        }
+        // To a reader it is not a store yet, and the reader leaves it alone.
+        let before = tree(&root);
+        let fs = Arc::new(ShimFs::new());
+        let result = Reader::open(&root, fs.clone()).map(|_| ());
+        assert!(
+            matches!(result, Err(Error::NotAStore { .. })),
+            "{what}: {result:?}"
+        );
+        assert_eq!(tree(&root), before, "{what}");
+
+        assert_eq!(after_restart(&root), (0, Contents::new()), "{what}");
+        assert_eq!(
+            std::fs::read(root.join("CURRENT")).unwrap(),
+            b"0\n",
+            "{what}"
+        );
+    }
+}
+
+#[test]
+fn a_crash_at_any_event_of_a_stores_creation_leaves_no_store_or_an_empty_one() {
+    let count = {
+        let dir = Scratch::new("store");
+        let fs = Arc::new(ShimFs::new());
+        Store::open(&root(&dir), fs.clone()).unwrap();
+        fs.events().len()
+    };
+    for crash_at in 0..=count {
+        for_every_loss(|lost| {
+            let case = format!("{lost:?}, crash before event {crash_at}");
+            let dir = Scratch::new("store");
+            let root = root(&dir);
+            let fs = Arc::new(ShimFs::new().crash_before(crash_at, lost));
+            let result = Store::open(&root, fs.clone()).map(|_| ());
+            fs.crash(lost);
+
+            // A reader is told there is no store, or sees the empty one; never damage.
+            let reader = Arc::new(ShimFs::new());
+            let read = Reader::open(&root, reader.clone()).and_then(|r| r.snapshot());
+            match read {
+                Err(Error::Missing { .. } | Error::NotAStore { .. }) => {
+                    assert!(result.is_err(), "{case}: the open had succeeded")
+                }
+                Ok(generation) => assert_eq!(generation.number(), 0, "{case}"),
+                Err(other) => panic!("{case}: {other:?}"),
+            }
+            assert_eq!(reader.events(), vec![], "{case}");
+            // A writer completes it.
+            assert_eq!(after_restart(&root), (0, Contents::new()), "{case}");
+            fs.crash_choices()
+        });
+    }
 }

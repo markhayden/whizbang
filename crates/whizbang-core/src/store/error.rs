@@ -16,6 +16,10 @@ pub enum Error {
     },
     /// There is no store here. Opening to read creates nothing.
     Missing { root: PathBuf },
+    /// There is a directory here, and it is not a store: it has no pointer, and it is not
+    /// an empty directory or a store whose creation did not finish. Nothing in it was
+    /// created, removed or changed.
+    NotAStore { root: PathBuf },
     /// A file of the store does not hold what it must.
     Corrupt { path: PathBuf, reason: String },
     /// Staging is not on the store's file system, so nothing can be renamed into place.
@@ -53,6 +57,11 @@ impl fmt::Display for Error {
                 source,
             } => write!(f, "cannot {doing} {}: {source}", path.display()),
             Error::Missing { root } => write!(f, "there is no store at {}", root.display()),
+            Error::NotAStore { root } => write!(
+                f,
+                "{} is not a store: it has no CURRENT, and it holds other things",
+                root.display()
+            ),
             Error::Corrupt { path, reason } => {
                 write!(f, "{} is damaged: {reason}", path.display())
             }
@@ -74,7 +83,7 @@ impl std::error::Error for Error {
         match self {
             Error::Io { source, .. } | Error::OtherFileSystem { source, .. } => Some(source),
             Error::Unacknowledged { source, .. } => Some(source.as_ref()),
-            Error::Missing { .. } | Error::Corrupt { .. } => None,
+            Error::Missing { .. } | Error::NotAStore { .. } | Error::Corrupt { .. } => None,
         }
     }
 }

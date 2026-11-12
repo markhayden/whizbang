@@ -19,9 +19,19 @@
 //! staging that is not (a mount point, a link) is refused at the first rename, with
 //! [`Error::OtherFileSystem`], before anything is visible.
 //!
-//! The pointer exists from the moment a store is created, holding 0: the empty generation,
-//! which has no file. A store with generation files and no pointer is damaged, and is
-//! refused, never read as empty.
+//! # What a store is
+//!
+//! A directory with a pointer. The pointer exists from the moment a store is created,
+//! holding 0: the empty generation, which has no file.
+//!
+//! A directory without a pointer is not a store, whatever else it holds, and is refused
+//! with [`Error::NotAStore`]; a path with nothing at it, with [`Error::Missing`]. A writer
+//! makes a store in two places only: where there is nothing, and in a directory that
+//! holds nothing but what an unfinished creation leaves. That is exactly: any of the
+//! directories `objects/`, `generations/` and `staging/`, the first two empty, and in
+//! `staging/` nothing, or one file named `CURRENT` (the first pointer, on its way). An
+//! empty directory is the least of these. To a reader an unfinished creation is not a
+//! store yet, which loses nothing: nothing was ever published in it.
 //!
 //! # Publication
 //!
@@ -48,10 +58,18 @@
 //!
 //! # Recovery
 //!
-//! Opening to write ([`Store::open`]) first reads the store, and refuses one that is
-//! damaged without touching it. Then it removes whatever is in staging, and any generation
-//! file numbered above the pointer: both are left by a publication that did not finish.
-//! Opening to read ([`Reader::open`]) removes and creates nothing.
+//! Opening to write ([`Store::open`]) reads before it changes anything: whether there is
+//! a store, a place for one, or neither, and, for a store, its pointer and its current
+//! generation. A directory that is not a store, and a store that is damaged, are refused
+//! there, with nothing created, removed, synced or changed. Only then does it create what
+//! is missing (the root and its parents, the three directories, and for a new store the
+//! pointer), and remove whatever is in staging and any generation file numbered above the
+//! pointer: both are left by a publication that did not finish. Opening to read
+//! ([`Reader::open`]) removes and creates nothing.
+//!
+//! One thing cannot be told apart from a crash, and is accepted: a pointer rewritten from
+//! outside to a lower number that still has its file. A writer then takes the generation
+//! files above it for leftovers and removes them.
 //!
 //! After a crash before success was reported the store holds the old generation or the new
 //! one, whole: the pointer is replaced in one rename, and nothing it can name is incomplete.
@@ -136,28 +154,11 @@ impl Files {
             .ok_or_else(|| Error::corrupt(&path, "not a generation number and a newline"))
     }
 
-    /// The current generation. A store with no pointer is one whose creation did not
-    /// finish, and is empty, unless it has generation files: then the pointer was lost.
+    /// The current generation.
     fn snapshot(&self) -> Result<Generation> {
-        let number = match self.pointer()? {
-            Some(number) => number,
-            None => {
-                let generations = self.layout.generations();
-                if self.exists(&generations)?
-                    && !self
-                        .fs
-                        .list(&generations)
-                        .map_err(Error::io("list", &generations))?
-                        .is_empty()
-                {
-                    return Err(Error::corrupt(
-                        &self.layout.pointer(),
-                        "it is missing, and the store has generation files",
-                    ));
-                }
-                0
-            }
-        };
+        let number = self.pointer()?.ok_or_else(|| Error::NotAStore {
+            root: self.layout.root.clone(),
+        })?;
         if number == 0 {
             return Ok(Generation::empty());
         }
@@ -216,6 +217,36 @@ impl Files {
         Ok(bytes)
     }
 
+    /// For a directory with no pointer: whether it holds nothing but what an unfinished
+    /// creation leaves (the module's description says exactly what), so that a store may
+    /// be made in it. Reads only.
+    fn is_unfinished_creation(&self) -> Result<bool> {
+        let layout = &self.layout;
+        let list = |dir: &Path| self.fs.list(dir).map_err(Error::io("list", dir));
+        let (objects, generations, staging) =
+            (layout.objects(), layout.generations(), layout.staging());
+        for entry in list(&layout.root)? {
+            if ![&objects, &generations, &staging].contains(&&entry) {
+                return Ok(false);
+            }
+            // Each must be a directory: listing a file fails.
+            let Ok(inside) = self.fs.list(&entry) else {
+                return Ok(false);
+            };
+            let allowed = if entry == staging {
+                let pointer = staging.join("CURRENT");
+                inside.is_empty()
+                    || (inside == [pointer.clone()] && self.fs.list(&pointer).is_err())
+            } else {
+                inside.is_empty()
+            };
+            if !allowed {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Renames a staged file to its place.
     fn move_into_place(&self, staged: &Path, to: &Path) -> Result<()> {
         self.fs.rename(staged, to).map_err(|source| {
@@ -237,22 +268,27 @@ pub struct Reader {
 }
 
 impl Reader {
-    /// Opens the store at `root` to read. A store that does not exist is refused, not
-    /// created, and nothing a writer left behind is touched.
+    /// Opens the store at `root` to read. A path with nothing at it, and a directory that
+    /// has no pointer, are refused; nothing is created, and nothing a writer left behind
+    /// is touched.
     pub fn open(root: &Path, fs: Arc<dyn Fs>) -> Result<Reader> {
-        if !fs.exists(root).map_err(Error::io("look for", root))? {
+        let files = Files {
+            fs,
+            layout: Layout {
+                root: root.to_path_buf(),
+            },
+        };
+        if !files.exists(root)? {
             return Err(Error::Missing {
                 root: root.to_path_buf(),
             });
         }
-        Ok(Reader {
-            files: Files {
-                fs,
-                layout: Layout {
-                    root: root.to_path_buf(),
-                },
-            },
-        })
+        if !files.exists(&files.layout.pointer())? {
+            return Err(Error::NotAStore {
+                root: root.to_path_buf(),
+            });
+        }
+        Ok(Reader { files })
     }
 
     /// The current generation: the one the pointer names now.
@@ -276,8 +312,10 @@ pub struct Store {
 }
 
 impl Store {
-    /// Opens the store at `root` to write, creating it when it is not there, and recovers
-    /// it: leftover staging and any generation file above the pointer are removed.
+    /// Opens the store at `root` to write, and recovers it: leftover staging and any
+    /// generation file above the pointer are removed. A store is created where there is
+    /// nothing, or nothing but an unfinished creation. Everything is read first: an open
+    /// that is refused has changed nothing.
     pub fn open(root: &Path, fs: Arc<dyn Fs>) -> Result<Store> {
         let files = Files {
             fs,
@@ -287,6 +325,21 @@ impl Store {
         };
         let fs = files.fs.as_ref();
         let layout = &files.layout;
+
+        // Reading only, down to the next comment.
+        let current = if !files.exists(root)? {
+            0
+        } else if files.exists(&layout.pointer())? {
+            files.snapshot()?.number()
+        } else if files.is_unfinished_creation()? {
+            0
+        } else {
+            return Err(Error::NotAStore {
+                root: root.to_path_buf(),
+            });
+        };
+
+        // From here on the disk may change.
         create_durably(fs, root)?;
         let mut created = false;
         for dir in [layout.objects(), layout.generations(), layout.staging()] {
@@ -298,10 +351,6 @@ impl Store {
         if created {
             fs.sync_dir(root).map_err(Error::io("sync", root))?;
         }
-
-        // The store is read before anything is removed: a pointer that is damaged or lost
-        // is reported, and nothing is tidied on a guess.
-        let current = files.snapshot()?.number();
         let staging = layout.staging();
         for leftover in fs.list(&staging).map_err(Error::io("list", &staging))? {
             fs.remove_all(&leftover)
@@ -322,8 +371,8 @@ impl Store {
             }
         }
 
-        // A new store gets its pointer here, before anything can be published, so that a
-        // missing pointer never again means an empty store.
+        // A new store gets its pointer here, before anything can be published: from now
+        // on this directory is a store.
         if files.pointer()?.is_none() {
             let staged = staging.join("CURRENT");
             fs.write_new(&staged, b"0\n")
