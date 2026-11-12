@@ -53,10 +53,8 @@ in a format milestone 2 can write, and audited: 1,144 decisions, all complete
 | 14 | `describe --json` prints one line, `--pretty` indents it (the exercise of the workflow) |
 | 15 | Corrections to the skills and subagent files from the exercise |
 | 16 | The scan's census does not enter ignored folders |
-| 17 | This close-out |
-
-Open when this note was written: `m0-scan-names`, three kinds of file name the scan's census
-mishandles. It has a row in `docs/carry-over.md`.
+| 17 | Open when this note was written: three kinds of file name the scan's census mishandles (`m0-scan-names`); it has a row in `docs/carry-over.md` |
+| 18 | This close-out |
 
 ## Timing
 
