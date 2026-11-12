@@ -268,6 +268,18 @@ perl_on kinds /link-targets/working-tree "\"$real_perl\" \"\$@\"; rm -f \"\$last
 expect_fail "a perl whose list of link targets is taken away after its report" "bytes of link targets written, and 0 are there)" \
   env PATH="$tmp/perl-bin:$PATH" "$scan"
 never_clean "a perl whose list of link targets is taken away after its report"
+# More than the report says is refused as well, in either file: the count is exact.
+perl_on kinds /link-targets/working-tree "\"$real_perl\" \"\$@\"; echo extra >>\"\$last\"; exit 0"
+expect_fail "a perl whose list of link targets gains a line after its report" \
+  "perl did not finish looking the files of the working tree up (it reports $((${#word} + 9)) bytes of link targets written, and $((${#word} + 15)) are there)" \
+  env PATH="$tmp/perl-bin:$PATH" "$scan"
+quiet "clean-room scan:"
+never_clean "a perl whose list of link targets gains a line after its report"
+perl_on kinds /link-targets/working-tree "\"$real_perl\" \"\$@\"; echo extra >>\"\$before\"; exit 0"
+expect_fail "a perl whose list of paths gains a line after its report" "bytes of paths written, and" env PATH="$tmp/perl-bin:$PATH" "$scan"
+says "perl did not finish looking the files of the working tree up"
+quiet "clean-room scan:"
+never_clean "a perl whose list of paths gains a line after its report"
 rm a-link
 printf 'nothing to see\n' >"named-$word.txt"
 expect_fail "a file whose name holds a listed word" "clean-room scan: 1 matching lines (contents 0, paths 1)" "$scan"
@@ -293,5 +305,23 @@ says "refusing to pass"
 quiet "a-link"
 never_clean "a link that cannot be read"
 rm a-link
+
+# Two links are told apart by where they lead as well as by device and inode: a file
+# system that gave two different links one inode number hides neither target from the
+# search. (No file system here does, so the stand-in gives every name the same inode
+# when the scan asks what each listed name is.)
+ln -s "it-says-$word" a-link
+ln -s "it-also-says-$word" b-link
+expect_fail "two links whose targets hold a listed word" "clean-room scan: 2 matching lines (contents 2, paths 0)" "$scan"
+cat >"$tmp/perl-bin/perl" <<SH
+#!/bin/sh
+case " \$* " in *" kinds "*)
+  exec "$real_perl" -e 'BEGIN { *CORE::GLOBAL::lstat = sub { my @s = CORE::lstat(\$_[0]); \$s[1] = 7 if @s; @s } }' "\$@" ;;
+esac
+exec "$real_perl" "\$@"
+SH
+expect_fail "two links with one inode number, whose targets hold a listed word" \
+  "clean-room scan: 2 matching lines (contents 2, paths 0)" env PATH="$tmp/perl-bin:$PATH" "$scan"
+rm a-link b-link
 
 finished
