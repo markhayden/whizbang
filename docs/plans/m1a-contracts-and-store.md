@@ -190,9 +190,23 @@ behaviour in milestone 3.
 
 ### A5. The execution contract
 
-**Delivered in parts.** The first is the action descriptor (ADR 0003), registration, the
-static description and the two fixtures; it ticks the boxes it makes true. The boxes left
-open are for the parts that follow: preparing a call, and the executor with the run record.
+**Delivered in parts.** Each part ticks the boxes it makes true.
+
+- **Part 1, merged:** the action descriptor (ADR 0003), registration, the static
+  description and the two fixtures: boxes 3, 6 and 7, and of "Done when" the two fixtures
+  validating and the shipping description without `echo`.
+- **Part 2:** from box 2, the call, the prepared call, the context, the outcome, the
+  executor interface and the capability handle types; box 4, the construction of the
+  registry and the executor, with the entry point where a request id will be looked up; of
+  "Done when", `remove_prompt` prepared with and without a filler reporting different
+  capabilities and readiness. With it: prepare has no side effects and spends nothing, and
+  is tested as such; who may state a derivation, and the run id's rule
+  (`docs/carry-over.md`).
+- **Part 3:** box 1, the run record and `whizbang runs list|show`; the rest of box 2, the
+  run record's type; box 5, `echo` running; of "Done when", `echo` through the executor with
+  its record in the store, and a failed `echo`. With it: the run and the models in an
+  artifact's origin, and diagnostics written through the store and redacted
+  (`docs/carry-over.md`).
 
 **Depends on:** A3, A4. **Reads:** rascal `crates/rascal-core/src/op.rs` and the recipes
 `crates/rascal-mask/recipes/seam.toml` and `remove-prompt.toml`; squint

@@ -928,7 +928,9 @@ generated from it, and CI fails if the committed copy is stale. The generator pr
 and purposes as they are, so it refuses any that could be read as markup: an action's name is
 a lower-case letter followed by lower-case letters, digits, `_` or `-` (64 characters at
 most), and its purpose is one plain line of at most 200 characters (the exact characters
-are listed at the top of `scripts/docs.sh`). Guide examples are marked with
+are listed at the top of `scripts/docs.sh`). The same rule is held where an action's
+descriptor is made (`crates/whizbang-core/src/contract/text.rs`, ADR 0003), so an action
+that breaks it cannot be registered. Guide examples are marked with
 the tier that runs them and use offline fixtures in the fast tier; a documentation check never
 spends.
 

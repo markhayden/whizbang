@@ -7,38 +7,51 @@
 use serde::Serialize;
 
 use crate::artifact::ArtifactType;
-use crate::contract::{ActionDescriptor, Registry};
+use crate::contract::{ActionDescriptor, Kind, Registry};
 
-/// The version of the description's own shape. Version 2 lists each action as its whole
-/// descriptor and adds the artifact types; version 1 listed an action's name and purpose.
-pub const DESCRIPTION_VERSION: u32 = 2;
+/// The version of the description's own shape. It goes up with any change a reader could
+/// observe (ADR 0003, "What changes the version"). Version 1 listed an action's name and
+/// purpose. Version 2 lists each action as its whole descriptor and adds the artifact
+/// types. Version 3 lists actions by kind, recipes first, where 2 listed them as they were
+/// registered.
+pub const DESCRIPTION_VERSION: u32 = 3;
 
 /// Everything a door can offer, as one document.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Description {
-    pub description_version: u32,
-    pub name: String,
-    pub version: String,
-    /// Every registered action, in the order it was registered.
-    pub actions: Vec<ActionDescriptor>,
-    /// The six artifact types, in the order ADR 0002 lists them.
-    pub artifact_types: Vec<ArtifactTypeSummary>,
+    description_version: u32,
+    name: String,
+    version: String,
+    actions: Vec<ActionDescriptor>,
+    artifact_types: Vec<ArtifactTypeSummary>,
 }
 
 /// What a caller is told of an artifact type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ArtifactTypeSummary {
-    /// The type's name, as a port spells it.
-    pub name: String,
-    /// What an artifact of the type is, in a sentence.
-    pub purpose: String,
-    /// How an artifact of the type leaves a store and enters another. Every type is one
-    /// canonical file (ADR 0002), so this is `canonical_file` for each: a copy of the file
-    /// is the artifact, and `whizbang store import` reads it.
-    pub travels_as: String,
+    name: String,
+    purpose: String,
+    travels_as: String,
 }
 
 impl ArtifactTypeSummary {
+    /// The type's name, as a port spells it.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// What an artifact of the type is, in a sentence.
+    pub fn purpose(&self) -> &str {
+        &self.purpose
+    }
+
+    /// How an artifact of the type leaves a store and enters another. Every type is one
+    /// canonical file (ADR 0002), so this is `canonical_file` for each: a copy of the file
+    /// is the artifact, and `whizbang store import` reads it.
+    pub fn travels_as(&self) -> &str {
+        &self.travels_as
+    }
+
     fn of(artifact: ArtifactType) -> ArtifactTypeSummary {
         let purpose = match artifact {
             ArtifactType::Mask => {
@@ -69,17 +82,56 @@ impl ArtifactTypeSummary {
 }
 
 impl Description {
-    /// The description of a build of this version that registered these actions.
+    /// The description of a build of this version that registered these actions. It is
+    /// made from a registry and in no other way, so it never lists a name twice.
+    ///
+    /// Actions are listed by kind: recipes, then loops, then primitives, each kind in the
+    /// order its actions were registered. Recipes are what is advertised (`SPEC.md`,
+    /// "Primitives, recipes and loops"), and that does not depend on the order in which a
+    /// build happened to register its tools.
     pub fn new(version: &str, registry: &Registry) -> Self {
+        let mut actions: Vec<ActionDescriptor> = registry.descriptors().cloned().collect();
+        // A stable sort: within a kind the registration order stands.
+        actions.sort_by_key(|action| match action.kind() {
+            Kind::Recipe => 0,
+            Kind::Loop => 1,
+            Kind::Primitive => 2,
+        });
         Self {
             description_version: DESCRIPTION_VERSION,
             name: "whizbang".to_owned(),
             version: version.to_owned(),
-            actions: registry.descriptors().cloned().collect(),
+            actions,
             artifact_types: ArtifactType::ALL
                 .into_iter()
                 .map(ArtifactTypeSummary::of)
                 .collect(),
         }
+    }
+
+    /// The version of this document's shape.
+    pub fn description_version(&self) -> u32 {
+        self.description_version
+    }
+
+    /// The build's name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The build's version.
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    /// Every registered action: recipes, then loops, then primitives, each kind in the
+    /// order it was registered.
+    pub fn actions(&self) -> &[ActionDescriptor] {
+        &self.actions
+    }
+
+    /// The six artifact types, in the order ADR 0002 lists them.
+    pub fn artifact_types(&self) -> &[ArtifactTypeSummary] {
+        &self.artifact_types
     }
 }

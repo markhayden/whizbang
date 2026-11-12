@@ -52,18 +52,24 @@ fn slug(name: &str, dash: bool) -> Result<(), String> {
 /// with a space, holds only ASCII letters, digits, spaces and `. , ; : ' " ( ) / % + -`,
 /// and holds neither `://` nor `www.` in any case.
 pub fn purpose(purpose: &str) -> Result<(), String> {
-    let refuse = |why: &str| Err(format!("the purpose {purpose:?} {why}"));
-    if !purpose
-        .chars()
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic())
-    {
+    plain_line("purpose", purpose)
+}
+
+/// The purpose rule, for any text a description prints as it is: `what` says which text
+/// it is, in the refusal. The refusal shows the start of a long text, not the whole.
+pub fn plain_line(what: &str, line: &str) -> Result<(), String> {
+    let refuse = |why: &str| {
+        let start: String = line.chars().take(60).collect();
+        let cut = if start.len() < line.len() { "..." } else { "" };
+        Err(format!("the {what} {start:?}{cut} {why}"))
+    };
+    if !line.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
         return refuse("must start with a letter");
     }
-    if purpose.ends_with(' ') {
+    if line.ends_with(' ') {
         return refuse("must not end with a space");
     }
-    if let Some(found) = purpose
+    if let Some(found) = line
         .chars()
         .find(|c| !(c.is_ascii_alphanumeric() || *c == ' ' || PURPOSE_MARKS.contains(*c)))
     {
@@ -72,20 +78,24 @@ pub fn purpose(purpose: &str) -> Result<(), String> {
         ));
     }
     // Every character is ASCII from here on, so bytes are characters.
-    if purpose.len() > PURPOSE_LIMIT {
+    if line.len() > PURPOSE_LIMIT {
         return refuse(&format!("is longer than {PURPOSE_LIMIT} characters"));
     }
-    if purpose.contains("://") || purpose.to_ascii_lowercase().contains("www.") {
+    if line.contains("://") || line.to_ascii_lowercase().contains("www.") {
         return refuse("holds what some renderers turn into a link");
     }
     Ok(())
 }
 
-/// An action's version: three numbers with dots between them.
+/// An action's version: three numbers with dots between them, each written the one way a
+/// number is written: no sign, no leading zero, nine digits at most.
 pub fn version(version: &str) -> Result<(), String> {
     let parts: Vec<&str> = version.split('.').collect();
     let numbers = parts.iter().all(|part| {
-        !part.is_empty() && part.len() <= 9 && part.bytes().all(|b| b.is_ascii_digit())
+        !part.is_empty()
+            && part.len() <= 9
+            && part.bytes().all(|b| b.is_ascii_digit())
+            && (*part == "0" || !part.starts_with('0'))
     });
     if parts.len() != 3 || !numbers {
         return Err(format!(

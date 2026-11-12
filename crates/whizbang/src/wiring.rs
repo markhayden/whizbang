@@ -22,11 +22,11 @@ pub fn description(registry: &Registry) -> Description {
 /// The description as `whizbang describe` prints it for a person: the build, then each
 /// action's name and purpose.
 pub fn describe_text(description: &Description) -> String {
-    let mut text = format!("{} {}\n", description.name, description.version);
-    if description.actions.is_empty() {
+    let mut text = format!("{} {}\n", description.name(), description.version());
+    if description.actions().is_empty() {
         text.push_str("no actions yet\n");
     }
-    for action in &description.actions {
+    for action in description.actions() {
         text.push_str(&format!("  {}  {}\n", action.name(), action.purpose()));
     }
     text

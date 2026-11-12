@@ -24,7 +24,7 @@ fn indented_description() -> &'static str {
 /// order, with no space between them, and one newline at the end.
 fn compact_start() -> String {
     format!(
-        "{{\"description_version\":2,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[],\"artifact_types\":[{{\"name\":\"mask\",\"purpose\":\"",
+        "{{\"description_version\":3,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[],\"artifact_types\":[{{\"name\":\"mask\",\"purpose\":\"",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -100,7 +100,7 @@ fn describe_json_is_valid_and_lists_no_actions_yet() {
     assert!(ok);
     let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
     assert_eq!(doc["name"], "whizbang");
-    assert_eq!(doc["description_version"], 2);
+    assert_eq!(doc["description_version"], 3);
     assert_eq!(doc["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(doc["actions"], serde_json::json!([]));
 }
@@ -181,11 +181,61 @@ fn a_test_adds_echo_to_the_registry_the_binary_builds() {
         .register(Arc::new(Echo::new()))
         .expect("echo is registered");
     let description = whizbang::wiring::description(&registry);
-    assert_eq!(description.actions.len(), shipped + 1);
-    assert_eq!(description.actions[shipped].name(), "echo");
-    assert_eq!(description.version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(description.actions().len(), shipped + 1);
+    assert_eq!(description.actions()[shipped].name(), "echo");
+    assert_eq!(description.version(), env!("CARGO_PKG_VERSION"));
     // And the text a person reads lists it.
     let text = whizbang::wiring::describe_text(&description);
-    assert!(text.contains("echo"), "{text}");
-    assert!(!text.contains("no actions yet"), "{text}");
+    assert_eq!(
+        text,
+        format!(
+            "whizbang {}\n  echo  Returns the text it was given; a fake for tests, which never ships.\n",
+            env!("CARGO_PKG_VERSION")
+        )
+    );
+}
+
+/// The indented form, pinned here and not only against the reference: its first lines, and
+/// the artifact types whole.
+#[test]
+fn describe_json_pretty_starts_and_ends_with_these_bytes() {
+    let (_, pretty) = whizbang(&["describe", "--json", "--pretty"]);
+    let start = format!(
+        "{{\n  \"description_version\": 3,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [],\n  \"artifact_types\": [\n",
+        env!("CARGO_PKG_VERSION")
+    );
+    let types = r#"    {
+      "name": "mask",
+      "purpose": "What to change in an image (core), how the change fades (blend) and what to keep (protect), with the band profile and the prescriptions it carries.",
+      "travels_as": "canonical_file"
+    },
+    {
+      "name": "location",
+      "purpose": "Where something is in an image: a box, a polygon, a view, a line, a stroke, the whole image, or that it is absent.",
+      "travels_as": "canonical_file"
+    },
+    {
+      "name": "image",
+      "purpose": "A picture file held whole: a photograph, a composite or a crop; or a rendering of another artifact, which is never accepted in that artifact's place.",
+      "travels_as": "canonical_file"
+    },
+    {
+      "name": "band_profile",
+      "purpose": "A band along a line: its half-width for each row, with the line and the sampling windows it was measured through.",
+      "travels_as": "canonical_file"
+    },
+    {
+      "name": "series",
+      "purpose": "Values measured along the rows of an image, such as the width of a feather or the step of a tone ramp for each row.",
+      "travels_as": "canonical_file"
+    },
+    {
+      "name": "plan",
+      "purpose": "How a wrapped cut was taken from a panorama, and so how it goes back: the width of the strip taken from each side of the seam.",
+      "travels_as": "canonical_file"
+    }
+  ]
+}
+"#;
+    assert_eq!(pretty, format!("{start}{types}"));
 }

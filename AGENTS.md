@@ -53,7 +53,10 @@ any that could be read as markup. A name is a lower-case letter, then lower-case
 digits, `_` or `-`, 64 characters at most. A purpose is one line of at most 200 characters
 that starts with a letter, does not end with a space, and holds only ASCII letters, digits,
 spaces and `. , ; : ' " ( ) / % + -`, with no `://` and no `www.`. No two actions share a name.
-The rule is at the top of `scripts/docs.sh`. `docs/reference/` holds the two generated files
+The rule is at the top of `scripts/docs.sh`, and is held a second time in
+`crates/whizbang-core/src/contract/text.rs`, where an action's descriptor is made, so an
+action that breaks it cannot be registered; one table of cases
+(`scripts/tests/fixtures/names-and-purposes.tsv`) is run against both. `docs/reference/` holds the two generated files
 and `tools/` only; `just check` fails on any other file there that git does not ignore.
 
 Every script test file (`scripts/tests/test-*.sh`, and each part under `scripts/tests/scan/`)
