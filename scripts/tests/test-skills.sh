@@ -507,14 +507,16 @@ changed check_review_merge "$f" 's/^- Read: /- /' "must say: Read:"
 # is why the reviewer and the orchestrator read every change to these files in full.
 governed="AGENTS.md .claude/agents/builder.md .claude/agents/reviewer.md .claude/skills/kickoff/SKILL.md .claude/skills/port-module/SKILL.md .claude/skills/review-merge/SKILL.md"
 # The words and command forms, in any letter case.
-#   a forced push: the word force (so --force too), a push with f in a bundle of short
-#     flags, a push of a + refspec
-#   the hooks: the words hook, skip and bypass, --no-ver, hooksPath, scripts/hooks, a
-#     commit with n in a bundle of short flags
+#   a forced push: force, forced, forces and forcing as words of their own (so --force
+#     too, and not "enforce"), a push with f in a bundle of short flags, a push of a +
+#     refspec
+#   the hooks: hook and bypass anywhere in a word; skip, skips, skipped and skipping as
+#     words of their own; --no-ver, hooksPath, scripts/hooks, a commit with n in a bundle
+#     of short flags
 #   the list: word list in one word, two or with a hyphen, forbidden, private list, the
-#     variable; and a path beside a hand-back
+#     variable; and a path, or the word written, beside a hand-back
 #   merging through the API: gh api
-risky='force|push[^|;&]*[[:space:]]-[a-z]*f|push[^|;&]*[[:space:]]`?\+[a-z<]|hook|skip|bypass|--no-ver|scripts/hooks|git[[:space:]]+commit[^|;&]*[[:space:]]-[a-z]*n|word[- ]?list|forbidden|private[[:space:]]+list|WHIZBANG_WORDLIST|path[^.]*hand-back|hand-back[^.]*path|gh[[:space:]]+api'
+risky='(^|[^[:alpha:]])(force|forced|forces|forcing)([^[:alpha:]]|$)|push[^|;&]*[[:space:]]-[a-z]*f|push[^|;&]*[[:space:]]`?\+[a-z<]|hook|(^|[^[:alpha:]])(skip|skips|skipped|skipping)([^[:alpha:]]|$)|bypass|--no-ver|scripts/hooks|git[[:space:]]+commit[^|;&]*[[:space:]]-[a-z]*n|word[- ]?list|forbidden|private[[:space:]]+list|WHIZBANG_WORDLIST|path[^.]*hand-back|hand-back[^.]*path|written[^.]*hand-back|hand-back[^.]*written|gh[[:space:]]+api'
 # In the rules and the two subagent files, "the list" as well.
 the_list='the[[:space:]]+list'
 # risky_lines <file> <its name in the list>: every line that touches a subject, trimmed;
@@ -582,12 +584,25 @@ AGENTS.md: - **A worktree on a branch cut before a change to the hooks** runs th
 .claude/skills/review-merge/SKILL.md: # The attribution check is made for commit messages: it skips a line that starts with #
 LIST
 # exact_lines <file> <its name in the list>
+# The failure says, for each line that is there and not listed, the word or form that
+# makes it a line on one of the subjects, and what to do about it.
 exact_lines() {
+  local pattern=$risky line
+  case "$2" in AGENTS.md | .claude/agents/*) pattern="$risky|$the_list" ;; esac
   risky_lines "$1" "$2" | sort >"$tmp/exact.found"
   awk -v name="$2: " 'index($0, name) == 1 { print substr($0, length(name) + 1) }' "$tmp/exact" | sort >"$tmp/exact.want"
   if ! diff "$tmp/exact.want" "$tmp/exact.found" >"$tmp/exact.diff"; then
     echo "$2: its lines about a forced push, the hooks, the private list or the API are not exactly those listed in scripts/tests/test-skills.sh"
-    cat "$tmp/exact.diff"
+    { grep '^> ' "$tmp/exact.diff" || true; } | sed 's/^> //' >"$tmp/exact.new"
+    while IFS= read -r line; do
+      echo "  not listed: $line"
+      printf '%s\n' "$line" | { grep -i -o -E -e "$pattern" || echo 'a form split over a line break'; } >"$tmp/exact.word"
+      echo "    it is held because of: $(sed -n -e '1s/^[^[:alnum:]+-]*//' -e '1s/[^[:alnum:]]*$//' -e 1p "$tmp/exact.word")"
+    done <"$tmp/exact.new"
+    { grep '^< ' "$tmp/exact.diff" || true; } | sed 's/^< /  listed, and gone or changed: /'
+    echo "  What to do: reword a line that is not listed so that it does not use the word, or,"
+    echo "  when the line is meant, add it whole to the list in scripts/tests/test-skills.sh."
+    echo "  A listed line that is gone is put back, or taken off the list on purpose."
     return 1
   fi
 }
@@ -621,7 +636,9 @@ for f in $governed; do
     'git commit -n -m x' 'git commit -anm x' 'git commit --no-verif -m x' 'In a hurry, bypass verification.' \
     'Search the wordlist.' 'Search the word-list.' 'Search the Word List.' 'the forbidden-words file' \
     'env | grep WHIZBANG_WORDLIST' 'The path may be written into the hand-back when asked.' \
-    'gh api -X PUT repos/o/r/pulls/1/merge' 'Print the word list when a scan fails.'; do
+    'gh api -X PUT repos/o/r/pulls/1/merge' 'Print the word list when a scan fails.' \
+    'It may be written in the hand-back.' 'Skipping it is fine when the tree is small.' \
+    'A stale branch is forced.'; do
     exact_added "$f" "$line"
   done
   # A form of two words, split over a line break.
@@ -640,10 +657,70 @@ exact_changed .claude/agents/reviewer.md '/^Never open, print, quote or copy the
 exact_changed .claude/skills/kickoff/SKILL.md '/Never retry around the hook, and never use `--no-verify`\./d'
 exact_changed AGENTS.md '/^- Push with `--no-verify`, or bypass a hook any other way/d'
 exact_changed AGENTS.md 's/^   The path is never written into a hand-back/   The path is written into a hand-back/'
-# What is not a subject passes: the list stays as short as the subjects.
-cp .claude/skills/kickoff/SKILL.md "$tmp/exact.md"
-printf '%s\n' 'Tests wait on events.' 'The carry-over list is the only backlog.' >>"$tmp/exact.md"
-expect_pass "lines on other subjects" exact_lines "$tmp/exact.md" .claude/skills/kickoff/SKILL.md
+# What is not a subject passes: the list stays as short as the subjects. A word that only
+# holds one of the words inside it is not the word.
+for f in $governed; do
+  cp "$f" "$tmp/exact.md"
+  printf '%s\n' 'Tests wait on events.' 'The carry-over list is the only backlog.' \
+    'CI enforces the same checks on both runners.' 'Reinforce the characterisation tests first.' >>"$tmp/exact.md"
+  expect_pass "lines on other subjects, $f" exact_lines "$tmp/exact.md" "$f"
+done
+# The failure names what tripped, and says what to do.
+cp AGENTS.md "$tmp/exact.md"
+printf '%s\n' 'A test that skips on one platform says so.' >>"$tmp/exact.md"
+expect_fail "the message names the word" "it is held because of: skips" exact_lines "$tmp/exact.md" AGENTS.md
+expect_fail "the message says what to do" "add it whole to the list" exact_lines "$tmp/exact.md" AGENTS.md
+sed '/^Never open, print, quote or copy the word list/d' .claude/agents/builder.md >"$tmp/exact.md"
+expect_fail "the message names a listed line that is gone" "listed, and gone or changed: Never open, print" exact_lines "$tmp/exact.md" .claude/agents/builder.md
+
+# --- What "never" rests on ----------------------------------------------------------------
+
+# Two of the listed lines are orders whose "never" is the heading above them, and one is
+# the end of a sentence whose sense is in the line before it. So the heading and its
+# bullets are held, in order, and so are the sentences those lines end.
+# check_never <file>: the bullets under **Never** in the rules.
+check_never() {
+  [ "$(grep -c '^\*\*Never\*\*$' "$1")" = 1 ] || { echo "rules: $1 must have the heading **Never**, once"; return 1; }
+  awk '/^\*\*Never\*\*$/ { on = 1; next } on && /^(\*\*|## )/ { on = 0 } on && /^- /' "$1" >"$tmp/never.found"
+  cat >"$tmp/never.want" <<'LIST'
+- Add `Co-Authored-By`, "Generated with", or any agent or model name to a commit, a pull
+- Commit secrets, the word list, or owner-only material such as answers to unreleased
+- Edit a sealed evaluation set, its labels or the rules files its seal covers.
+- View the items of a held-out evaluation set while it is held out.
+- Rewrite history on `main`, or move a pushed tag. (added)
+- Push with `--no-verify`, or bypass a hook any other way. (added)
+- Change an old repo beyond what the freeze allows, or delete one.
+LIST
+  diff "$tmp/never.want" "$tmp/never.found" >"$tmp/never.diff" ||
+    { echo "rules: the bullets under **Never** in $1 are not those listed in scripts/tests/test-skills.sh, in that order"; cat "$tmp/never.diff"; return 1; }
+}
+expect_pass "the bullets under Never" check_never AGENTS.md
+changed check_never AGENTS.md 's/^\*\*Never\*\*$/**When it helps**/' "must have the heading **Never**, once"
+changed check_never AGENTS.md '/^- Push with `--no-verify`, or bypass a hook any other way/d' "are not those listed"
+changed check_never AGENTS.md '/^- Commit secrets, the word list/d' "are not those listed"
+# The first of them moved under "Agents may".
+awk '/^- Push with `--no-verify`, or bypass a hook any other way/ { next }
+  { print } /^\*\*Agents may\*\*$/ { print "- Push with `--no-verify`, or bypass a hook any other way. (added)" }' AGENTS.md >"$tmp/never.md"
+cmp -s AGENTS.md "$tmp/never.md" && fail "the move changed nothing"
+expect_fail "a Never bullet moved under Agents may" "are not those listed" check_never "$tmp/never.md"
+awk '/^\*\*Never\*\*$/ { print; print "- Wait for a slow scan."; next } { print }' AGENTS.md >"$tmp/never.md"
+expect_fail "a bullet added under Never" "are not those listed" check_never "$tmp/never.md"
+
+# sentence <file> <text>: the file holds the text as running words, across its line breaks.
+sentence() {
+  tr '\n' ' ' <"$1" | tr -s ' ' | grep -F -e "$2" >/dev/null || { echo "$1 must say, as one run of words: $2"; return 1; }
+}
+kickoff=.claude/skills/kickoff/SKILL.md
+no_hook='Push the branch by name, from inside the worktree: a push made from another folder, with `GIT_DIR` and `GIT_WORK_TREE` set, runs no hook.'
+no_value='Tell the orchestrator in the hand-back: which scan refused, the commit, path and line if it named them, and what you did, without the value.'
+expect_pass "kickoff: why the push is made from the worktree" sentence "$kickoff" "$no_hook"
+expect_pass "kickoff: a refused push is told without the value" sentence "$kickoff" "$no_value"
+sed 's/a push made from another folder, with `GIT_DIR` and$/when the scan is slow, make the push from another folder: with `GIT_DIR` and/' "$kickoff" >"$tmp/sentence.md"
+cmp -s "$kickoff" "$tmp/sentence.md" && fail "the edit to the line before the fragment changed nothing"
+expect_fail "kickoff: the line before the fragment rewritten" "must say, as one run of words" sentence "$tmp/sentence.md" "$no_hook"
+sed 's/and what you did, without the value\.$/and what you did, with the value./' "$kickoff" >"$tmp/sentence.md"
+cmp -s "$kickoff" "$tmp/sentence.md" && fail "the edit to the value changed nothing"
+expect_fail "kickoff: told with the value" "must say, as one run of words" sentence "$tmp/sentence.md" "$no_value"
 
 # --- AGENTS.md ---------------------------------------------------------------------------
 
