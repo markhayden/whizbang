@@ -48,14 +48,19 @@ where
     Option::deserialize(deserializer)
 }
 
-/// How many characters of a reason that can quote stored bytes a refusal shows.
+/// How many characters a refusal keeps of a name it quotes from stored bytes: a version,
+/// the id of another run.
 pub const QUOTED_LIMIT: usize = 64;
 
-/// A reason that can quote what was read, as a refusal shows it: its first 64
-/// characters, escaped, and three dots when there were more.
+/// How many characters a refusal shows of a reader's reason, which can quote stored
+/// bytes: enough for the reason and for where in the bytes it was met.
+pub const REASON_LIMIT: usize = 200;
+
+/// A reader's reason, as a refusal shows it: its first 200 characters, escaped, and
+/// three dots when there were more.
 pub(super) fn quoted(reason: &str) -> String {
-    let shown: String = reason.chars().take(QUOTED_LIMIT).collect();
-    let more = if reason.chars().count() > QUOTED_LIMIT {
+    let shown: String = reason.chars().take(REASON_LIMIT).collect();
+    let more = if reason.chars().count() > REASON_LIMIT {
         "..."
     } else {
         ""
@@ -194,7 +199,10 @@ pub struct Ended {
     /// There exactly when the status is `invalid`.
     #[serde(deserialize_with = "present")]
     pub invalid: Option<String>,
-    /// What was refused inside the run, and why. Nothing is refused inside a run yet.
+    /// What was refused inside the run, and why. It holds nothing in this version, and
+    /// not because nothing is refused: a call from inside an action is refused
+    /// ([`super::Refusal::NoNestedCalls`]) and is not recorded here until nested calls
+    /// are built and this list has elements.
     pub refusals: Vec<Nothing>,
 }
 
@@ -241,6 +249,15 @@ impl Diagnostic {
         content: &[u8],
         secrets: &Secrets,
     ) -> Result<(Diagnostic, Vec<u8>), String> {
+        // A name is a key in the store, written as it is: one that holds a secret is
+        // refused, and the refusal does not show it.
+        if secrets.redact(name) != name {
+            return Err(
+                "the name of a diagnostic holds something that must not be written: a \
+                 name is stored as it is, so it cannot hold a secret"
+                    .to_owned(),
+            );
+        }
         if !is_diagnostic_name(name) {
             let shown: String = name.chars().take(DIAGNOSTIC_NAME_LIMIT).collect();
             return Err(format!(
@@ -677,8 +694,9 @@ pub fn stored(
             if record.identity.run == id {
                 Ok(record)
             } else {
+                // What a record says its run is can be anything: 64 characters are kept.
                 Err(StoredRecordError::OtherRun {
-                    names: record.identity.run.clone(),
+                    names: record.identity.run.chars().take(QUOTED_LIMIT).collect(),
                 })
             }
         });

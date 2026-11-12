@@ -141,12 +141,17 @@ fn record_of(root: &Path, fs: Arc<dyn Fs>, run: &str) -> RunRecord {
         .unwrap()
 }
 
-/// The hand-written record, with this build's version where it has the first one's.
-fn expected(record: &str) -> String {
-    record.replace(
-        r#""whizbang":"0.0.1""#,
-        &format!(r#""whizbang":"{WHIZBANG_VERSION}""#),
-    )
+/// The hand-written record of the run `1000-1`, with this build's version where it has
+/// the first one's, and this run's id where it has that one: the count in an id is the
+/// process's, so a test does not choose it.
+fn expected(record: &str, run: &str) -> String {
+    assert!(run.starts_with("1000-"), "{run}");
+    record
+        .replace(
+            r#""whizbang":"0.0.1""#,
+            &format!(r#""whizbang":"{WHIZBANG_VERSION}""#),
+        )
+        .replace(r#""run":"1000-1""#, &format!(r#""run":"{run}""#))
 }
 
 // --- echo, completed ------------------------------------------------------------------------
@@ -156,7 +161,8 @@ fn echo_runs_through_the_executor_and_its_record_is_in_the_store() {
     let world = World::new();
     let engine = world.engine();
     let finished = engine.submit(&echo("hello")).unwrap();
-    assert_eq!(finished.run().as_str(), "1000-1");
+    let id = finished.run().as_str();
+    assert!(id.starts_with("1000-"), "{id}");
     assert_eq!(
         finished.outcome(),
         &Outcome::Completed {
@@ -166,7 +172,7 @@ fn echo_runs_through_the_executor_and_its_record_is_in_the_store() {
 
     // The run holds three names, each a diagnostic reference: what the action wrote, the
     // journal, and the record.
-    let held = names_of(&world.root(), world.fs.clone(), "1000-1");
+    let held = names_of(&world.root(), world.fs.clone(), finished.run().as_str());
     let names: Vec<(&str, store::Kind)> = held.iter().map(|(n, k, _)| (n.as_str(), *k)).collect();
     assert_eq!(
         names,
@@ -191,13 +197,13 @@ fn echo_runs_through_the_executor_and_its_record_is_in_the_store() {
     );
     assert_eq!(
         String::from_utf8(held[2].2.clone()).unwrap(),
-        expected(&completed())
+        expected(&completed(), id)
     );
 
     // It validates against the record's schema, and reads back as what was reported.
     let document: serde_json::Value = serde_json::from_slice(&held[2].2).unwrap();
     validate(&schema(), &document).unwrap();
-    let record = record_of(&world.root(), world.fs.clone(), "1000-1");
+    let record = record_of(&world.root(), world.fs.clone(), finished.run().as_str());
     assert_eq!(record.identity().run, finished.run().as_str());
     assert_eq!(record.identity().whizbang, WHIZBANG_VERSION);
     assert_eq!(record.outcome().status, Status::Completed);
@@ -268,7 +274,7 @@ fn a_failed_echo_writes_the_same_record_with_its_error_and_keeps_its_diagnostics
     );
     assert!(finished.outcome().outputs().is_empty());
 
-    let held = names_of(&world.root(), world.fs.clone(), "1000-1");
+    let held = names_of(&world.root(), world.fs.clone(), finished.run().as_str());
     // The same three names, each a diagnostic: what it wrote before it failed is kept.
     let names: Vec<&str> = held.iter().map(|(n, _, _)| n.as_str()).collect();
     assert_eq!(names, ["diagnostics/echo.txt", "journal", "record"]);
@@ -303,7 +309,7 @@ fn a_failed_echo_writes_the_same_record_with_its_error_and_keeps_its_diagnostics
         "\n"
     );
     let written = String::from_utf8(held[2].2.clone()).unwrap();
-    assert_eq!(written, expected(by_hand));
+    assert_eq!(written, expected(by_hand, finished.run().as_str()));
     assert!(!written.contains("completed"));
     validate(&schema(), &serde_json::from_str(&written).unwrap()).unwrap();
 
@@ -311,7 +317,8 @@ fn a_failed_echo_writes_the_same_record_with_its_error_and_keeps_its_diagnostics
     // is asked for.
     let reader = Reader::open(&world.root(), world.fs.clone()).unwrap();
     let generation = reader.snapshot().unwrap();
-    for entry in generation.run("1000-1").unwrap().entries().values() {
+    let run = generation.run(finished.run().as_str()).unwrap();
+    for entry in run.entries().values() {
         reader.read(entry).unwrap();
         assert!(matches!(
             reader.read_output(entry),
@@ -333,7 +340,7 @@ fn an_echo_that_finds_its_text_invalid_is_an_invalid_run_with_its_record() {
             why: "the text is too short".to_owned()
         }
     );
-    let record = record_of(&world.root(), world.fs.clone(), "1000-1");
+    let record = record_of(&world.root(), world.fs.clone(), finished.run().as_str());
     assert_eq!(record.outcome().status, Status::Invalid);
     assert_eq!(
         record.outcome().invalid.as_deref(),
@@ -530,7 +537,16 @@ fn every_run_gets_an_id_of_its_own_that_is_a_run_id() {
     let ids: Vec<String> = (0..3)
         .map(|_| engine.submit(&echo("x")).unwrap().run().as_str().to_owned())
         .collect();
-    assert_eq!(ids, ["5000-2", "5000-3", "5000-4"]);
+    // Three ids at one instant: each its own, counted upwards, and none the id that was
+    // already there.
+    let counts: Vec<u64> = ids
+        .iter()
+        .map(|id| id.strip_prefix("5000-").unwrap().parse().unwrap())
+        .collect();
+    assert!(
+        counts[0] > 1 && counts[0] < counts[1] && counts[1] < counts[2],
+        "{ids:?}"
+    );
     for id in &ids {
         assert_eq!(RunId::parse(id).unwrap().as_str(), id);
     }
@@ -553,7 +569,7 @@ fn every_run_gets_an_id_of_its_own_that_is_a_run_id() {
     )
     .with_clock(Arc::new(Stopped(u64::MAX)));
     let id = last.submit(&echo("x")).unwrap().run().as_str().to_owned();
-    assert_eq!(id, format!("{}-1", u64::MAX));
+    assert!(id.starts_with(&format!("{}-", u64::MAX)), "{id}");
     RunId::parse(&id).unwrap();
 }
 
@@ -613,7 +629,12 @@ fn a_run_whose_publication_fails_is_reported_as_the_stores_failure_and_leaves_no
                 said.contains("not confirmed durable"),
                 "step {step}: {said}"
             );
-            assert_eq!(generation.run("1000-1").unwrap().entries().len(), 3);
+            let runs: Vec<usize> = generation
+                .runs()
+                .values()
+                .map(|r| r.entries().len())
+                .collect();
+            assert_eq!(runs, [3], "step {step}");
         }
     }
 }
@@ -770,7 +791,7 @@ fn a_record_holds_no_path_of_this_machine_and_nothing_of_its_environment() {
 fn what_submit_hands_back_names_the_run() {
     let world = World::new();
     let finished: Finished = world.engine().submit(&echo("hello")).unwrap();
-    assert_eq!(finished.run().to_string(), "1000-1");
+    assert!(finished.run().to_string().starts_with("1000-"));
 }
 
 #[test]
@@ -825,4 +846,193 @@ fn a_run_that_failed_on_a_store_failure_it_was_handed_holds_no_path_in_its_recor
             "{name}"
         );
     }
+}
+
+// --- one id, one run -------------------------------------------------------------------------
+
+/// Every run of a store, with how many names it holds.
+fn runs_of(root: &Path, fs: Arc<dyn Fs>) -> Vec<(String, usize)> {
+    let reader = Reader::open(root, fs).unwrap();
+    let generation = reader.snapshot().unwrap();
+    let runs = generation.runs().iter();
+    runs.map(|(id, run)| (id.clone(), run.entries().len()))
+        .collect()
+}
+
+fn engine_over(store: Arc<Store>, actions: Vec<Arc<dyn Action>>, now: u64) -> Engine {
+    let mut registry = Registry::new();
+    registry.register(Arc::new(Echo::new())).unwrap();
+    for action in actions {
+        registry.register(action).unwrap();
+    }
+    Engine::over(registry, Arc::new(NoBackends), store, Digest::of_bytes(b""))
+        .with_clock(Arc::new(Stopped(now)))
+}
+
+#[test]
+fn two_executors_over_one_store_never_give_two_runs_one_id() {
+    // Two executors share a store and a clock that does not move. Each names its run,
+    // and each action then waits for the other, so both runs are named before either is
+    // published. Each run has an id of its own and is in the store whole.
+    let world = World::new();
+    let store = world.store();
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let waiting = |name: &str| {
+        let barrier = barrier.clone();
+        scripted(name, move |_, context| {
+            context.diagnostics().write("mine.txt", b"x").unwrap();
+            barrier.wait();
+            Ok(Produced::nothing())
+        })
+    };
+    let first = engine_over(store.clone(), vec![waiting("wait")], 7000);
+    let second = engine_over(store.clone(), vec![waiting("wait")], 7000);
+    let (a, b) = std::thread::scope(|scope| {
+        let a = scope.spawn(|| first.submit(&Call::new("wait")).unwrap());
+        let b = scope.spawn(|| second.submit(&Call::new("wait")).unwrap());
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    assert_ne!(a.run(), b.run());
+    let runs = runs_of(&world.root(), world.fs.clone());
+    assert_eq!(runs.len(), 2, "{runs:?}");
+    for finished in [&a, &b] {
+        // The journal, the diagnostic and the record: three names, and the record is
+        // this run's own.
+        let held = names_of(&world.root(), world.fs.clone(), finished.run().as_str());
+        assert_eq!(held.len(), 3, "{}", finished.run());
+        let record = record_of(&world.root(), world.fs.clone(), finished.run().as_str());
+        assert_eq!(record.identity().run, finished.run().as_str());
+    }
+}
+
+#[test]
+fn many_runs_from_two_executors_at_one_instant_are_all_kept() {
+    // Eight threads, two executors, one store, a clock that does not move: two hundred
+    // submits. Every reported run is in the store under an id of its own.
+    let world = World::new();
+    let store = world.store();
+    let engines = [
+        engine_over(store.clone(), Vec::new(), 9000),
+        engine_over(store.clone(), Vec::new(), 9000),
+    ];
+    let reported: Vec<String> = std::thread::scope(|scope| {
+        let threads: Vec<_> = (0..8)
+            .map(|thread| {
+                let engine = &engines[thread % 2];
+                scope.spawn(move || {
+                    (0..25)
+                        .map(|n| {
+                            let finished = engine.submit(&echo(&format!("{thread}-{n}")));
+                            finished.unwrap().run().as_str().to_owned()
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        threads
+            .into_iter()
+            .flat_map(|thread| thread.join().unwrap())
+            .collect()
+    });
+    assert_eq!(reported.len(), 200);
+    let distinct: std::collections::BTreeSet<&String> = reported.iter().collect();
+    assert_eq!(distinct.len(), 200);
+    let runs = runs_of(&world.root(), world.fs.clone());
+    assert_eq!(runs.len(), 200);
+    assert!(runs.iter().all(|(_, names)| *names == 3), "{runs:?}");
+}
+
+#[test]
+fn a_run_whose_id_was_taken_while_it_executed_is_named_again_and_merges_into_nothing() {
+    // The id is free when the run is named. While the action runs, other hands publish
+    // runs under that id and the ids after it. The store refuses to make a run that it
+    // already holds, the executor names the run again, and nothing is merged: the runs
+    // that were planted hold what they held, and the reported run is whole.
+    let world = World::new();
+    let store = world.store();
+    let planting = {
+        let store = store.clone();
+        scripted("plant", move |_, context| {
+            context.diagnostics().write("mine.txt", b"x").unwrap();
+            let mut publication = store.begin().unwrap();
+            for count in 1..=40 {
+                publication
+                    .put_in(
+                        &format!("8000-{count}"),
+                        "theirs",
+                        store::Kind::Diagnostic,
+                        b"y",
+                    )
+                    .unwrap();
+            }
+            publication.publish().unwrap();
+            Ok(Produced::nothing())
+        })
+    };
+    let engine = engine_over(store.clone(), vec![planting], 8000);
+    let finished = engine.submit(&Call::new("plant")).unwrap();
+    let runs = runs_of(&world.root(), world.fs.clone());
+    assert_eq!(runs.len(), 41, "{runs:?}");
+    for (id, names) in &runs {
+        if id == finished.run().as_str() {
+            assert_eq!(*names, 3, "{id}");
+        } else {
+            assert_eq!(*names, 1, "{id} was merged into");
+        }
+    }
+    let record = record_of(&world.root(), world.fs.clone(), finished.run().as_str());
+    assert_eq!(record.identity().run, finished.run().as_str());
+}
+
+// --- a secret as a name -----------------------------------------------------------------------
+
+#[test]
+fn a_secret_is_not_written_as_a_diagnostics_name() {
+    // A name is a key in the store: it is in the generation file and in the record, and
+    // `runs show` prints it. A secret made of the letters a name may hold is refused as
+    // a name, alone or as part of one, and the refusal does not show it.
+    let key = format!("sk{}abcdefghij0123456789", "-");
+    assert!(is_diagnostic_name(&key));
+    let world = World::new();
+    let named = {
+        let key = key.clone();
+        scripted("named", move |_, context| {
+            for name in [key.clone(), format!("turn.{key}.txt")] {
+                let refused = context.diagnostics().write(&name, b"body").unwrap_err();
+                assert!(!refused.contains(&key), "{refused}");
+                assert!(refused.contains("must not be written"), "{refused}");
+            }
+            context.diagnostics().write("fine.txt", b"body").unwrap();
+            Ok(Produced::nothing())
+        })
+    };
+    let engine = world
+        .engine_with(vec![named])
+        .with_secrets(Secrets::new([key.clone()]).unwrap());
+    let finished = engine.submit(&Call::new("named")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    drop(engine);
+    for (path, bytes) in files(&world.root()) {
+        assert!(!holds(&bytes, key.as_bytes()), "{}", path.display());
+    }
+    let held = names_of(&world.root(), world.fs.clone(), finished.run().as_str());
+    assert_eq!(held[0].0, "diagnostics/fine.txt");
+    assert_eq!(held.len(), 3);
+}
+
+#[test]
+fn the_reason_a_run_was_invalid_is_handed_back_without_a_secret() {
+    let key = made_up_key("");
+    let world = World::new();
+    let engine = world
+        .engine()
+        .with_secrets(Secrets::new([key.clone()]).unwrap());
+    let call = echo("hello").argument("invalid", Value::text(&format!("{key} is no prompt")));
+    let finished = engine.submit(&call).unwrap();
+    assert_eq!(
+        finished.outcome(),
+        &Outcome::Invalid {
+            why: "[redacted] is no prompt".to_owned()
+        }
+    );
 }

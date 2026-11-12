@@ -37,8 +37,10 @@ pub enum Command {
         /// Print the record as it is stored: JSON, on one line.
         #[arg(long, conflicts_with = "diagnostic")]
         json: bool,
-        /// Print one of the run's diagnostics, as it is stored, by the name the record
-        /// lists it under, such as `journal`.
+        /// Print what the run holds under one name, as it is stored: the bytes
+        /// themselves, NOT escaped, so send them to a file or a pager rather than
+        /// straight to a terminal. NAME is any diagnostic name of the run, as the record
+        /// lists them (`journal`, `diagnostics/<name>`), or `record` for the record.
         #[arg(long, value_name = "NAME")]
         diagnostic: Option<String>,
     },
@@ -122,11 +124,9 @@ fn list(root: &Path) -> Result<String, String> {
             Some(Err(StoredRecordError::NoRecord)) | None => {
                 format!("{}\tno record", shown(id))
             }
-            Some(Err(error)) => format!(
-                "{}\trecord not read: {}",
-                shown(id),
-                shown(&error.to_string())
-            ),
+            // The core's sentence is escaped and cut where it quotes the store: it is
+            // printed as it is.
+            Some(Err(error)) => format!("{}\trecord not read: {error}", shown(id)),
         };
         text.push_str(&line);
         text.push('\n');
@@ -160,9 +160,8 @@ fn show(root: &Path, id: &str, json: bool, diagnostic: Option<&str>) -> Result<V
         Some(Ok(record)) => record,
         Some(Err(error)) => {
             return Err(format!(
-                "the record of the run {} cannot be shown: {}",
-                shown(id),
-                shown(&error.to_string())
+                "the record of the run {} cannot be shown: {error}",
+                shown(id)
             ));
         }
         None => return Err(format!("the store holds no run {}", shown(id))),

@@ -13,6 +13,14 @@ a diagnostic cannot be read from JSON except by the two readers; that what a ref
 quotes is cut at 64 characters. Corrected: a secret that ends in a quote had a wrong JSON
 form; "one case can break" a JSON body is two; and the consequence that said each of the
 eight groups brings a new version, which did not agree with the shared step to `run/2`.
+Amended: 2026-11-12, a third note, after the review of running an action. Corrected: a
+run's id was said to stay free until its run was published because one process writes a
+store; two executors in one process could give two runs one id, and the store merged
+them. The count is now the process's, the store refuses to make a run it already holds,
+and the executor names the run again. Added: a secret is refused as a diagnostic's name;
+a reader's reason is cut at 200 characters, a quoted name at 64; that a refusal inside a
+run is not recorded yet; what `--diagnostic` prints; that a record does not give back the
+fingerprint of a call whose argument held a secret; a closed pipe is not an error.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
 
@@ -143,9 +151,12 @@ Reading refuses, in this order:
 - bytes that are not the bytes this code writes for the record they hold.
 
 A refusal can quote what was read: an unknown field's name, a version. What it quotes is
-shown escaped and cut at 64 characters (`QUOTED_LIMIT`), with three dots when there was
-more, so nothing stored reaches a terminal as a control character through a refusal, and
-a refusal is never as long as what it refuses. A failure of the store under a record is said as ADR 0004 says a store's failure:
+shown escaped and cut, so nothing stored reaches a terminal as a control character
+through a refusal, and a refusal is never as long as what it refuses. A name that is kept
+(a version, the id of another run that a record names) is cut at 64 characters
+(`QUOTED_LIMIT`). A reader's reason, which holds the name and then where in the bytes it
+was met, is cut at 200 (`REASON_LIMIT`), with three dots when there was more. A failure
+of the store under a record is said as ADR 0004 says a store's failure:
 no path, as text or as `{:?}`, and the store's own error by name.
 
 The last rule is ADR 0002's for an artifact file, and for the same reason: one record has
@@ -284,7 +295,10 @@ cannot break the record's shape. Names that come from a descriptor, identities, 
 booleans and times are not texts from outside and are written as they are.
 
 So "its exact arguments" (the spec) holds except where an argument held a secret: there
-the record holds `[redacted]`, because the spec also says a secret is never written.
+the record holds `[redacted]`, because the spec also says a secret is never written. One
+thing follows: the fingerprint of the prepared call (ADR 0004) cannot be worked out again
+from such a record, since the fingerprint hashed the argument as it was given; and the
+record does not store the fingerprint.
 
 An error's message is otherwise kept as it was given. It can carry the sentence of
 something the action called, a decoder's for one (ADR 0004, "No path in what is said"),
@@ -365,9 +379,13 @@ writer for as long as the executor lives; it reads that store and writes its run
 4. Makes the outcome: completed with no outputs, error, or invalid. The secrets are taken
    out of an error's type and message and of an invalid run's reason here, so what is
    handed back holds none, as what is written holds none.
-5. Publishes, in one publication of the store: the journal under `journal`, each
-   diagnostic the action wrote under `diagnostics/<name>`, and the record under `record`,
-   each as a diagnostic reference of the run.
+5. Publishes, in one publication of the store that makes the run
+   (`Publication::create_run`): the journal under `journal`, each diagnostic the action
+   wrote under `diagnostics/<name>`, and the record under `record`, each as a diagnostic
+   reference of the run. The store refuses a publication that makes a run it already
+   holds, looking inside its publishing step; the executor then names the run again and
+   publishes again, up to eight namings, after which the refusal is handed back as the
+   store's failure.
 6. Answers with the run's id and its outcome, after the publication is durable.
 
 So a run is in the store whole or not at all, whatever its outcome, and a run that was
@@ -378,12 +396,20 @@ the generation became visible and its last sync failed, and then the run is whol
 not reported as finished.
 
 **A run's id** is the time it started, in milliseconds since the Unix epoch, a hyphen, and
-a count: `1794519513123-1`. The count is the executor's count of the runs it has named,
-and goes up past any id the store already holds. One process writes a store at a time, and
-it is this one, so an id that is free when it is made stays free until the run is
-published. It is a `RunId` (ADR 0004) by construction. Runs that started at different
-milliseconds sort, by id, in the order they started, while the time has as many digits;
-within one millisecond the count is compared as text, so `-10` comes before `-9`.
+a count: `1794519513123-1`. The count is the process's, one for every executor in it, so
+two executors over one store never make the same id from the same time; and it goes up
+past any id the store holds when the run is named. It is a `RunId` (ADR 0004) by
+construction. Runs that started at different milliseconds sort, by id, in the order they
+started, while the time has as many digits; within one millisecond the count is compared
+as text, so `-10` comes before `-9`.
+
+**One id, one run, held by the store.** That an id is free when a run is named does not
+make it free when the run is published: the run executes in between, and anything that
+writes the store can publish a run meanwhile. So it is not left to the naming. Adding
+names to a run (`Publication::put_in`) and making a run (`Publication::create_run`) are
+two operations of the store; a publication that makes a run is refused with `RunExists`,
+and publishes nothing, when the generation it would be published onto holds that run.
+Two runs are never merged under one id, whoever named them.
 
 **What an action is handed.** A cancellation signal that nothing sets; no deadline; an
 event sink, which is the run's journal; an empty allowance; the store the executor reads;
@@ -392,8 +418,12 @@ calls do not nest yet; and a place for diagnostics.
 
 **Diagnostics.** `Context::diagnostics` takes bytes under a name: a lower-case letter or a
 digit, then lower-case letters, digits, `_`, `-` or `.`, 64 characters at most, written
-once in a run. Text has the secrets taken out before it is kept; bytes that are not UTF-8
-are kept as they are. A progress event's message has the secrets taken out when it is
+once in a run. The content has the secrets taken out before it is kept, whatever its
+encoding. The name is a key in the store, written as it is in the generation file and in
+the record: a name that redaction would change, because it is or holds a secret, is
+refused, and the refusal does not show it. No other name of a run comes from outside the
+build: a port and an argument are named by the action's descriptor, a call that names
+any other is refused before a run exists, and the run's id is made by the executor. A progress event's message has the secrets taken out when it is
 reported. Both are held in memory until the run ends, and are then stored as step 5 says.
 
 **The time** comes from a clock the executor is built with (`Clock`), so that a test can
@@ -402,8 +432,10 @@ fix it and the record of a run can be compared with bytes written by hand.
 **The binary.** `whizbang runs list --store <dir>` lists each run with its status, its
 action, when it started and how long it took; `whizbang runs show <run> --store <dir>`
 shows one record for a person, every group, the empty ones said to be empty; `--json`
-prints the record as it is stored, and `--diagnostic <name>` one of the run's diagnostics
-as it is stored. Both read only. Neither holds a run's id to the rule of a `RunId`: a
+prints the record as it is stored, and `--diagnostic <name>` what the run holds under one
+name, which is any diagnostic name of the run and also `record`, as the bytes that are
+stored: they are not escaped, and the help says so. A reader that stops reading, as
+`head` does, is not an error: the command says nothing and exits 0. Both read only. Neither holds a run's id to the rule of a `RunId`: a
 run is looked up under whatever the store has it under, and everything read from a store
 is printed escaped, except the bytes asked for with `--json` and `--diagnostic`. A run
 with no record, or with one this build does not read, is listed with the reason. No
@@ -421,6 +453,9 @@ binary builds (`wiring::runner`).
 - A panic inside an action is not caught: it unwinds through `submit`, and the run has no
   record.
 - Nothing can cancel a run, and `submit` returns only when the run is over.
+- A refusal inside a run is not recorded. There is one today: a call from inside an
+  action is refused (`NoNestedCalls`). The record's `refusals` list has no elements in
+  `run/1`, so the action's own error is the only trace of it, if the action reports it.
 - Diagnostics are held in memory, without a bound, until the run ends.
 
 ### The origin does not name the run or the models

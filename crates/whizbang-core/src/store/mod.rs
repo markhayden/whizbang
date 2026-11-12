@@ -108,7 +108,9 @@
 //! # Runs, and the two kinds of reference
 //!
 //! A generation holds names that belong to no run, and, for each run, the names of that
-//! run ([`Publication::put`], [`Publication::put_in`]). Each name is a reference to stored
+//! run ([`Publication::put`], [`Publication::put_in`]). A publication that makes a run
+//! says so ([`Publication::create_run`]) and is refused when the store already holds a
+//! run of that id; one that does not say so adds its names to the run, new or not. Each name is a reference to stored
 //! content and says what kind it is ([`Kind`]): a committed output, or a diagnostic. The
 //! kind is the reference's, not the content's: the same bytes can be a diagnostic to one
 //! run and an output to another, are stored once, and are treated as each reference says.
@@ -849,6 +851,7 @@ impl Store {
             names: BTreeMap::new(),
             run_names: BTreeMap::new(),
             deleted: BTreeSet::new(),
+            created: BTreeSet::new(),
         })
     }
 
@@ -1006,6 +1009,8 @@ pub struct Publication<'s> {
     run_names: BTreeMap<String, BTreeMap<String, Entry>>,
     /// The runs it deletes.
     deleted: BTreeSet<String>,
+    /// The runs it makes: each must not be in the generation it is published onto.
+    created: BTreeSet<String>,
 }
 
 impl Publication<'_> {
@@ -1031,6 +1036,22 @@ impl Publication<'_> {
             .or_default()
             .insert(name.to_string(), entry);
         Ok(digest)
+    }
+
+    /// Says that this publication makes the run `run`: it is a new run, and the names
+    /// this publication gives it are all it holds. Publishing is then refused with
+    /// [`Error::RunExists`], and nothing is published, when the generation it would be
+    /// published onto already holds a run of that id. That is looked at inside the
+    /// publishing step, on the generation that is current then, so two publications
+    /// that each make a run of one id cannot both succeed, whatever each saw before.
+    ///
+    /// Without this, [`Publication::put_in`] adds names to a run whether or not it
+    /// exists, which is how names are added to a run that is already there.
+    pub fn create_run(&mut self, run: &str) -> Result<()> {
+        check_run_id(run)?;
+        self.created.insert(run.to_string());
+        self.run_names.entry(run.to_string()).or_default();
+        Ok(())
     }
 
     /// Stages the bytes unless the store or this publication already holds them.
@@ -1118,6 +1139,13 @@ impl Publication<'_> {
             if generation.runs.remove(run).is_none() {
                 return Err(Error::NoSuchRun { run: run.clone() });
             }
+        }
+        if let Some(run) = self
+            .created
+            .iter()
+            .find(|run| !self.deleted.contains(*run) && generation.runs.contains_key(*run))
+        {
+            return Err(Error::RunExists { run: run.clone() });
         }
         generation.entries.extend(self.names.clone());
         for (run, names) in &self.run_names {

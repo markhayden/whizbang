@@ -287,3 +287,115 @@ fn runs_that_other_hands_made_are_listed_and_shown_as_they_are() {
         shown.err
     );
 }
+
+#[test]
+fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
+    // A record that is not one, with an escape sequence in a field's name. The core's
+    // sentence quotes it escaped; the command prints that sentence as it is, so a
+    // backslash is one backslash and the sentence is not cut a second time.
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    with_two_runs(&root);
+    {
+        let store = Store::open_existing(&root, Arc::new(RealFs)).unwrap();
+        let mut publication = store.begin().unwrap();
+        publication
+            .put_in(
+                "broken",
+                "record",
+                Kind::Diagnostic,
+                b"{\"record\":\"run/1\",\"\\u001b[2J\":1}\n",
+            )
+            .unwrap();
+        publication.publish().unwrap();
+    }
+    let expected = "not a run record: unknown field `\\u{1b}[2J`, expected one of `record`";
+    let listed = whizbang(&["list"], &root);
+    let line = listed
+        .text()
+        .lines()
+        .find(|line| line.starts_with("broken\t"))
+        .unwrap();
+    assert!(line.contains(expected), "{line}");
+    assert!(line.contains(" at line 1 column "), "{line}");
+    let shown = whizbang(&["show", "broken"], &root);
+    assert_eq!(shown.code, Some(1));
+    assert!(shown.err.contains(expected), "{}", shown.err);
+    assert!(shown.err.contains(" at line 1 column "), "{}", shown.err);
+    assert!(!shown.err.contains('\u{1b}'));
+}
+
+#[test]
+fn runs_show_escapes_every_text_a_run_was_given() {
+    // An escape sequence in an argument's text, in an error's message and in the reason
+    // a run was invalid: `show` prints none of it as a control character.
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let (failed, invalid) = {
+        let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+        let mut registry = whizbang::wiring::registry().unwrap();
+        registry.register(Arc::new(Echo::new())).unwrap();
+        let executor = whizbang::wiring::runner(registry, store);
+        let failed = executor
+            .submit(
+                &echo("text \u{1b}[31m red").argument("fail", Value::text("it \u{1b}[2J broke")),
+            )
+            .unwrap();
+        let invalid = executor
+            .submit(&echo("fine").argument("invalid", Value::text("no \u{7} bell")))
+            .unwrap();
+        (
+            failed.run().as_str().to_owned(),
+            invalid.run().as_str().to_owned(),
+        )
+    };
+    let plain = |text: &str| {
+        !text
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t')
+    };
+    let shown = whizbang(&["show", &failed], &root);
+    assert_eq!(shown.code, Some(0), "{}", shown.err);
+    let text = shown.text();
+    assert!(plain(text), "{text:?}");
+    assert!(
+        text.contains("error: echo: it \\u{1b}[2J broke\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("  text = \"text \\u{1b}[31m red\"\n"),
+        "{text}"
+    );
+    let shown = whizbang(&["show", &invalid], &root);
+    let text = shown.text();
+    assert!(plain(text), "{text:?}");
+    assert!(text.contains("invalid: no \\u{7} bell\n"), "{text}");
+}
+
+#[test]
+fn a_reader_that_stops_reading_is_not_an_error() {
+    // The command's output goes to a pipe nobody reads, as `whizbang runs list | head -1`
+    // leaves it once `head` has gone. That is not a failure: nothing is said, and the
+    // exit is 0. The same for `store list` and `describe`.
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let (completed, _) = with_two_runs(&root);
+    let store = root.to_str().unwrap();
+    for args in [
+        vec!["runs", "list", "--store", store],
+        vec!["runs", "show", &completed, "--json", "--store", store],
+        vec!["store", "list", "--store", store],
+        vec!["describe"],
+    ] {
+        let (reader, writer) = std::io::pipe().unwrap();
+        drop(reader);
+        let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+            .args(&args)
+            .stdout(writer)
+            .output()
+            .unwrap();
+        let err = String::from_utf8(out.stderr).unwrap();
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {err}");
+        assert!(err.is_empty(), "{args:?}: {err}");
+    }
+}

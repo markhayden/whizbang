@@ -547,17 +547,25 @@ fn what_a_refusal_quotes_of_stored_bytes_is_escaped_and_cut() {
     let said = error.to_string();
     assert!(said.len() < 200, "{said}");
     assert!(!said.chars().any(char::is_control), "{said:?}");
-    // What a sentence quotes of the bytes is cut at 64 characters, as the version is.
+    // A reason that quotes the bytes is cut at 200 characters.
     let long = format!("{{\"record\":\"run/1\",\"{}\":1}}\n", "f".repeat(5000));
     let said = RunRecord::from_bytes(long.as_bytes())
         .unwrap_err()
         .to_string();
     assert!(said.contains("unknown field"), "{said}");
-    assert!(said.len() < 120, "{} bytes: {said}", said.len());
+    assert_eq!(said.len(), "not a run record: ".len() + 200 + 3, "{said}");
     assert!(said.ends_with("..."), "{said}");
     let long = format!("{{\"seq\":0,\"at_ms\":5,\"{}\":1}}\n", "f".repeat(5000));
     let said = read_journal(long.as_bytes()).unwrap_err();
-    assert!(said.len() < 120 && said.ends_with("..."), "{said}");
+    assert!(said.len() < 240 && said.ends_with("..."), "{said}");
+    // A reason of ordinary length is whole, with where in the bytes it was met.
+    let said = RunRecord::from_bytes(&changed(|d| d["extra"] = json!(1)))
+        .unwrap_err()
+        .to_string();
+    assert!(said.contains("unknown field `extra`"), "{said}");
+    assert!(said.contains(" at line 1 column "), "{said}");
+    assert!(!said.ends_with("..."), "{said}");
+    assert_eq!((record::QUOTED_LIMIT, record::REASON_LIMIT), (64, 200));
     // A journal's refusal quotes a line's field the same way.
     let error = read_journal(b"{\"seq\":0,\"at_ms\":5,\"\\u001b[2J\":1}\n").unwrap_err();
     assert!(!error.chars().any(char::is_control), "{error:?}");
@@ -1100,6 +1108,23 @@ fn a_stored_record_is_read_by_whatever_id_the_store_holds_it_under() {
     }
     .to_string();
     assert!(!said.contains('\u{1b}'), "{said:?}");
+    // And cut at 64 characters where it is kept.
+    let long = completed().replace(
+        r#""run":"1000-1""#,
+        &format!(r#""run":"{}""#, "r".repeat(5000)),
+    );
+    let mut publication = store.begin().unwrap();
+    publication
+        .put_in("long", "record", record::RECORD_KIND, long.as_bytes())
+        .unwrap();
+    publication.publish().unwrap();
+    let generation = store.snapshot().unwrap();
+    let Some(Err(StoredRecordError::OtherRun { names })) =
+        record::stored(&generation, "long", |entry| store.read(entry))
+    else {
+        panic!("a record that names another run was read");
+    };
+    assert_eq!(names, "r".repeat(64));
 }
 
 #[test]

@@ -10,6 +10,10 @@ use whizbang_core::contract::{
 /// writes it as a diagnostic named `echo.txt`, and makes no artifact. Given `fail`, it
 /// does both and then fails with that message; given `invalid`, it finds its text
 /// invalid for that reason.
+///
+/// Its version stayed `1.0.0` while it gained two arguments. It is registered only by
+/// tests and is in no published description, so no caller holds it to a version. Were it
+/// ever published, it would be versioned as ADR 0003 says first.
 pub struct Echo {
     descriptor: ActionDescriptor,
 }

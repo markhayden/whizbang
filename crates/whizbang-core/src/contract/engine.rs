@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::artifact::Contents;
 use crate::identity::{DecodeLimits, Digest};
-use crate::store::Store;
+use crate::store::{self, Store};
 
 use super::journal::Kept;
 use super::prepare::prepare;
@@ -52,8 +52,6 @@ pub struct Engine {
     limits: DecodeLimits,
     clock: Arc<dyn Clock>,
     secrets: Secrets,
-    /// The runs this executor has named, so that two of one millisecond differ.
-    named: AtomicU64,
 }
 
 /// The version of whizbang a record is written with: this crate's, which the workspace
@@ -79,7 +77,6 @@ impl Engine {
             limits: DecodeLimits::default(),
             clock: Arc::new(SystemClock),
             secrets: Secrets::none(),
-            named: AtomicU64::new(0),
         }
     }
 
@@ -115,16 +112,17 @@ impl Engine {
     }
 
     /// A new run's id: the time in milliseconds since the Unix epoch, a hyphen, and a
-    /// count. The count starts at this executor's count of runs and goes up until the
-    /// store holds no run of that id. One process writes a store at a time, and this is
-    /// that process, so an id that is free now stays free until this run is published,
-    /// unless this executor names it again, which the count prevents.
+    /// count. The count is one for the whole process ([`NAMED`]), so two executors never
+    /// make the same id from the same time, and it goes up past any id the store
+    /// already holds now. That an id is still free when its run is published is not
+    /// taken on trust: the publication makes the run, and the store refuses it if the
+    /// id was taken meanwhile ([`MAX_NAMINGS`]).
     fn name_run(&self, store: &Store, now_ms: u64) -> Result<RunId, CallError> {
         let generation = store
             .snapshot()
             .map_err(|error| CallError::Store(StoreFailure::new(error)))?;
         loop {
-            let count = self.named.fetch_add(1, Ordering::SeqCst) + 1;
+            let count = NAMED.fetch_add(1, Ordering::SeqCst) + 1;
             let id = RunId::minted(now_ms, count);
             if generation.run(id.as_str()).is_none() {
                 return Ok(id);
@@ -132,6 +130,13 @@ impl Engine {
         }
     }
 }
+
+/// The runs this process has named, whichever executor named them.
+static NAMED: AtomicU64 = AtomicU64::new(0);
+
+/// How many times a run is named and published before the store's refusal of its id is
+/// handed back as the store's failure.
+const MAX_NAMINGS: u32 = 8;
 
 /// What a running action is given in place of the executor: a call from inside an
 /// action is refused until calls can nest.
@@ -221,33 +226,49 @@ impl Executor for Engine {
         let end_ms = self.clock.now_ms();
 
         // One publication holds the journal, every diagnostic and the record: the run is
-        // in the store whole or not at all, and it is durable before it is reported.
+        // in the store whole or not at all, and it is durable before it is reported. The
+        // publication makes the run, so the store refuses it when a run of that id was
+        // published while this one executed; the run is then named again and published
+        // again, and nothing is ever merged into another run.
         let failed = |error| CallError::Store(StoreFailure::new(error));
         let (lines, written) = kept.take();
-        let mut publication = store.begin().map_err(failed)?;
-        let mut diagnostics = Vec::new();
-        for (diagnostic, bytes) in std::iter::once(Diagnostic::journal(&lines)).chain(written) {
+        let kept: Vec<(Diagnostic, Vec<u8>)> = std::iter::once(Diagnostic::journal(&lines))
+            .chain(written)
+            .collect();
+        let mut run = run;
+        let mut namings = 1;
+        loop {
+            let mut publication = store.begin().map_err(failed)?;
+            publication.create_run(run.as_str()).map_err(failed)?;
+            for (diagnostic, bytes) in &kept {
+                publication
+                    .put_in(run.as_str(), diagnostic.name(), RECORD_KIND, bytes)
+                    .map_err(failed)?;
+            }
+            let record = RunRecord::of(
+                Ran {
+                    run: run.as_str(),
+                    whizbang: WHIZBANG_VERSION,
+                    prepared: &prepared,
+                    outcome: &outcome,
+                    start_ms,
+                    end_ms,
+                    diagnostics: kept.iter().map(|(d, _)| d.clone()).collect(),
+                },
+                &self.secrets,
+            );
             publication
-                .put_in(run.as_str(), diagnostic.name(), RECORD_KIND, &bytes)
+                .put_in(run.as_str(), RECORD_NAME, RECORD_KIND, &record.to_bytes())
                 .map_err(failed)?;
-            diagnostics.push(diagnostic);
+            match publication.publish() {
+                Ok(_) => break,
+                Err(store::Error::RunExists { .. }) if namings < MAX_NAMINGS => {
+                    namings += 1;
+                    run = self.name_run(store, start_ms)?;
+                }
+                Err(error) => return Err(failed(error)),
+            }
         }
-        let record = RunRecord::of(
-            Ran {
-                run: run.as_str(),
-                whizbang: WHIZBANG_VERSION,
-                prepared: &prepared,
-                outcome: &outcome,
-                start_ms,
-                end_ms,
-                diagnostics,
-            },
-            &self.secrets,
-        );
-        publication
-            .put_in(run.as_str(), RECORD_NAME, RECORD_KIND, &record.to_bytes())
-            .map_err(failed)?;
-        publication.publish().map_err(failed)?;
         Ok(Finished::new(run, outcome))
     }
 }

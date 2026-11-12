@@ -1587,6 +1587,9 @@ fn every_failure_can_be_said_without_a_path() {
             generation: 3,
             source: Box::new(Error::Missing { root: root.clone() }),
         },
+        Error::RunExists {
+            run: "/somewhere/private".to_owned(),
+        },
     ];
     for failure in &failures {
         let said = failure.without_paths();

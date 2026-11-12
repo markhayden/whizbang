@@ -49,6 +49,9 @@ pub enum Error {
     },
     /// No run has this id in the current generation. Nothing was published.
     NoSuchRun { run: String },
+    /// A publication was to make this run, and the current generation holds it already.
+    /// Nothing was published: two runs are never merged under one id.
+    RunExists { run: String },
     /// The reference is a diagnostic. It can be read as one, and never used as an output.
     NotAnOutput { digest: Digest },
     /// A file of the store does not hold what it must.
@@ -114,6 +117,7 @@ impl Error {
                 file(path)
             ),
             Error::NoSuchRun { .. } => "the store does not hold that run".to_owned(),
+            Error::RunExists { .. } => "the store already holds a run of that id".to_owned(),
             Error::NotAnOutput { digest } => format!(
                 "the reference to {digest} is a diagnostic: it can be read, and never used \
                  as an output"
@@ -182,6 +186,10 @@ impl fmt::Display for Error {
                 path.display()
             ),
             Error::NoSuchRun { run } => write!(f, "the store holds no run {run:?}"),
+            Error::RunExists { run } => write!(
+                f,
+                "the store already holds a run {run:?}: a new run is not merged into it"
+            ),
             Error::NotAnOutput { digest } => write!(
                 f,
                 "the reference to {digest} is a diagnostic: it can be read, and never used \
@@ -213,6 +221,7 @@ impl std::error::Error for Error {
             | Error::NotAStore { .. }
             | Error::Held { .. }
             | Error::NoSuchRun { .. }
+            | Error::RunExists { .. }
             | Error::InvalidRun { .. }
             | Error::OtherFormat { .. }
             | Error::NotAnOutput { .. }
