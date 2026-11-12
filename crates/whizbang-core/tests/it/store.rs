@@ -5,6 +5,7 @@
 //! The one writer, and what is and is not a store, are in `store/locking.rs` (task A3).
 
 mod locking;
+mod runs;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -682,13 +683,15 @@ fn a_reader_of_a_store_that_does_not_exist_is_refused_and_creates_nothing() {
 fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store() {
     let entry = |bytes: &[u8]| {
         format!(
-            r#"{{"digest": "{}", "bytes": {}}}"#,
+            r#"{{"digest": "{}", "bytes": {}, "kind": "output"}}"#,
             Digest::of(bytes),
             bytes.len()
         )
     };
     let generation = |format: u32, number: u64, entries: &str| {
-        format!(r#"{{"format": {format}, "number": {number}, "entries": {{{entries}}}}}"#)
+        format!(
+            r#"{{"format": {format}, "number": {number}, "entries": {{{entries}}}, "runs": {{}}}}"#
+        )
     };
     let a = format!(r#""a": {}"#, entry(A1));
     for (what, file, bytes) in [
@@ -726,22 +729,45 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
         (
             "another format",
             "generations/1.json",
-            Some(generation(2, 1, &a)),
+            Some(generation(1, 1, &a)),
         ),
         (
             "another generation's number",
             "generations/1.json",
-            Some(generation(1, 5, &a)),
+            Some(generation(2, 5, &a)),
         ),
         (
             "a name twice",
             "generations/1.json",
-            Some(generation(1, 1, &format!("{a}, {a}"))),
+            Some(generation(2, 1, &format!("{a}, {a}"))),
         ),
         (
             "a field it does not know",
             "generations/1.json",
-            Some(generation(1, 1, &a).replace("{\"format\"", "{\"more\": 1, \"format\"")),
+            Some(generation(2, 1, &a).replace("{\"format\"", "{\"more\": 1, \"format\"")),
+        ),
+        (
+            "an entry that does not say what kind of reference it is",
+            "generations/1.json",
+            Some(generation(2, 1, &a).replace(", \"kind\": \"output\"", "")),
+        ),
+        (
+            "a kind it does not know",
+            "generations/1.json",
+            Some(generation(2, 1, &a).replace("\"output\"", "\"input\"")),
+        ),
+        (
+            "no runs",
+            "generations/1.json",
+            Some(generation(2, 1, &a).replace(", \"runs\": {}", "")),
+        ),
+        (
+            "a run twice",
+            "generations/1.json",
+            Some(generation(2, 1, &a).replace(
+                "\"runs\": {}",
+                "\"runs\": {\"r\": {\"entries\": {}}, \"r\": {\"entries\": {}}}",
+            )),
         ),
     ] {
         let dir = Scratch::new("store");
@@ -771,7 +797,7 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
     // change and nothing else.
     let dir = Scratch::new("store");
     let root = with_old(&dir);
-    std::fs::write(root.join("generations/1.json"), generation(1, 1, &a)).unwrap();
+    std::fs::write(root.join("generations/1.json"), generation(2, 1, &a)).unwrap();
     assert_eq!(seen(&root, Arc::new(RealFs)), (1, contents(&[("a", A1)])));
 }
 

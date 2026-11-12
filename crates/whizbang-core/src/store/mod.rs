@@ -89,7 +89,7 @@ use std::sync::{Arc, Mutex};
 
 pub use digest::Digest;
 pub use error::Error;
-pub use generation::{Entry, GENERATION_FORMAT, Generation};
+pub use generation::{Entry, GENERATION_FORMAT, Generation, Kind, Run};
 
 use fs::{Fs, Held};
 
@@ -219,6 +219,15 @@ impl Files {
             ));
         }
         Ok(bytes)
+    }
+
+    fn read_output(&self, entry: &Entry) -> Result<Vec<u8>> {
+        match entry.kind {
+            Kind::Output => self.read(entry),
+            Kind::Diagnostic => Err(Error::NotAnOutput {
+                digest: entry.digest,
+            }),
+        }
     }
 
     /// What is at the root, for a writer: the number of the current generation of the
@@ -361,9 +370,15 @@ impl Reader {
         self.files.snapshot()
     }
 
-    /// The content of an entry, checked against its length and its digest.
+    /// The content of an entry of either kind, checked against its length and its digest.
     pub fn read(&self, entry: &Entry) -> Result<Vec<u8>> {
         self.files.read(entry)
+    }
+
+    /// The content of an entry, to be used as an output: a diagnostic is refused with
+    /// [`Error::NotAnOutput`], whatever other reference the same bytes have.
+    pub fn read_output(&self, entry: &Entry) -> Result<Vec<u8>> {
+        self.files.read_output(entry)
     }
 }
 
@@ -486,9 +501,15 @@ impl Store {
         self.files.snapshot()
     }
 
-    /// The content of an entry, checked against its length and its digest.
+    /// The content of an entry of either kind, checked against its length and its digest.
     pub fn read(&self, entry: &Entry) -> Result<Vec<u8>> {
         self.files.read(entry)
+    }
+
+    /// The content of an entry, to be used as an output: a diagnostic is refused with
+    /// [`Error::NotAnOutput`], whatever other reference the same bytes have.
+    pub fn read_output(&self, entry: &Entry) -> Result<Vec<u8>> {
+        self.files.read_output(entry)
     }
 
     /// Starts a publication: a staging directory of its own, and nothing visible until
@@ -510,7 +531,19 @@ impl Store {
             dir,
             staged: BTreeSet::new(),
             names: BTreeMap::new(),
+            run_names: BTreeMap::new(),
+            deleted: BTreeSet::new(),
         })
+    }
+
+    /// Deletes runs: publishes a generation without them, in which nothing they alone
+    /// referenced is named any more. Names that belong to no run are not touched. A run
+    /// the store does not hold is refused with [`Error::NoSuchRun`], and nothing is
+    /// published. The content itself stays on disk until [`Store::prune`].
+    pub fn delete(&self, runs: &[&str]) -> Result<Published> {
+        let mut publication = self.begin()?;
+        publication.deleted = runs.iter().map(|run| run.to_string()).collect();
+        publication.publish()
     }
 }
 
@@ -548,15 +581,40 @@ pub struct Publication<'s> {
     dir: PathBuf,
     /// The payloads this publication wrote to staging.
     staged: BTreeSet<Digest>,
-    /// The names this publication sets.
+    /// The names this publication sets outside any run.
     names: BTreeMap<String, Entry>,
+    /// The names it sets in runs, by run.
+    run_names: BTreeMap<String, BTreeMap<String, Entry>>,
+    /// The runs it deletes.
+    deleted: BTreeSet<String>,
 }
 
 impl Publication<'_> {
-    /// Gives `name` this content in the generation to come, replacing what it had. The
-    /// bytes are staged now, and synced, unless the store already holds them. After an
-    /// error the same call can be made again.
+    /// Gives `name`, which belongs to no run, this content in the generation to come,
+    /// replacing what it had, as an output. The bytes are staged now, and synced, unless
+    /// the store already holds them. After an error the same call can be made again.
     pub fn put(&mut self, name: &str, bytes: &[u8]) -> Result<Digest> {
+        let entry = self.stage(bytes, Kind::Output)?;
+        let digest = entry.digest;
+        self.names.insert(name.to_string(), entry);
+        Ok(digest)
+    }
+
+    /// Gives the name `name` of the run `run` this content in the generation to come, as
+    /// a reference of this kind, replacing what that name of that run had. A run exists
+    /// from its first name. Staging is as for [`Publication::put`].
+    pub fn put_in(&mut self, run: &str, name: &str, kind: Kind, bytes: &[u8]) -> Result<Digest> {
+        let entry = self.stage(bytes, kind)?;
+        let digest = entry.digest;
+        self.run_names
+            .entry(run.to_string())
+            .or_default()
+            .insert(name.to_string(), entry);
+        Ok(digest)
+    }
+
+    /// Stages the bytes unless the store or this publication already holds them.
+    fn stage(&mut self, bytes: &[u8], kind: Kind) -> Result<Entry> {
         let fs = self.files.fs.as_ref();
         let digest = Digest::of(bytes);
         if !self.staged.contains(&digest)
@@ -572,14 +630,11 @@ impl Publication<'_> {
                 .map_err(Error::io("write", &staged))?;
             self.staged.insert(digest);
         }
-        self.names.insert(
-            name.to_string(),
-            Entry {
-                digest,
-                bytes: bytes.len() as u64,
-            },
-        );
-        Ok(digest)
+        Ok(Entry {
+            digest,
+            bytes: bytes.len() as u64,
+            kind,
+        })
     }
 
     fn staged_path(&self, digest: &Digest) -> PathBuf {
@@ -601,7 +656,7 @@ impl Publication<'_> {
         for digest in &self.staged {
             files.move_into_place(&self.staged_path(digest), &layout.object(digest))?;
         }
-        if !self.names.is_empty() {
+        if !self.names.is_empty() || !self.run_names.is_empty() {
             let objects = layout.objects();
             fs.sync_dir(&objects).map_err(Error::io("sync", &objects))?;
         }
@@ -617,7 +672,16 @@ impl Publication<'_> {
             )
         })?;
         generation.number = number;
+        for run in &self.deleted {
+            if generation.runs.remove(run).is_none() {
+                return Err(Error::NoSuchRun { run: run.clone() });
+            }
+        }
         generation.entries.extend(self.names.clone());
+        for (run, names) in &self.run_names {
+            let run = generation.runs.entry(run.clone()).or_default();
+            run.entries.extend(names.clone());
+        }
         let mut text = serde_json::to_vec_pretty(&generation)
             .map_err(|e| Error::corrupt(&layout.generation(number), e.to_string()))?;
         text.push(b'\n');

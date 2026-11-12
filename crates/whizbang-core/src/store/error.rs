@@ -4,6 +4,8 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use super::digest::Digest;
+
 /// A failure of the store.
 #[derive(Debug)]
 pub enum Error {
@@ -32,6 +34,10 @@ pub enum Error {
         root: PathBuf,
         holder: Option<String>,
     },
+    /// No run has this id in the current generation. Nothing was published.
+    NoSuchRun { run: String },
+    /// The reference is a diagnostic. It can be read as one, and never used as an output.
+    NotAnOutput { digest: Digest },
     /// A file of the store does not hold what it must.
     Corrupt { path: PathBuf, reason: String },
     /// Staging is not on the store's file system, so nothing can be renamed into place.
@@ -89,6 +95,12 @@ impl fmt::Display for Error {
                 root.display(),
                 holder.as_deref().unwrap_or("another process")
             ),
+            Error::NoSuchRun { run } => write!(f, "the store holds no run {run:?}"),
+            Error::NotAnOutput { digest } => write!(
+                f,
+                "the reference to {digest} is a diagnostic: it can be read, and never used \
+                 as an output"
+            ),
             Error::Corrupt { path, reason } => {
                 write!(f, "{} is damaged: {reason}", path.display())
             }
@@ -113,6 +125,8 @@ impl std::error::Error for Error {
             Error::Missing { .. }
             | Error::NotAStore { .. }
             | Error::Held { .. }
+            | Error::NoSuchRun { .. }
+            | Error::NotAnOutput { .. }
             | Error::Corrupt { .. } => None,
         }
     }
