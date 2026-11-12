@@ -121,16 +121,16 @@ a colour profile without applying it.
 **Reads:** rascal `crates/rascal-core/src/workspace/commit.rs` and `registry.rs`; squint
 `crates/squint-core/src/journal.rs` and `artifacts.rs`.
 
-- [ ] Content-addressed files staged on the same filesystem as the store.
-- [ ] Publication writes a new immutable generation and then replaces one pointer. Files are
+- [x] Content-addressed files staged on the same filesystem as the store.
+- [x] Publication writes a new immutable generation and then replaces one pointer. Files are
       synced, then their directory, then the pointer, then its directory.
-- [ ] Two separate guarantees. **Visibility:** replacing the pointer makes the new generation
+- [x] Two separate guarantees. **Visibility:** replacing the pointer makes the new generation
       visible. **Durability:** success is reported to the caller only after the final
       directory sync.
-- [ ] Recovery on open: leftover staging is removed. After a crash before success was
+- [x] Recovery on open: leftover staging is removed. After a crash before success was
       reported, the store holds either the old generation or the new one, each complete,
       never a mixture. After a crash once success was reported, it holds the new one.
-- [ ] Faults are injected through a file-system shim in the test kit that drops writes and
+- [x] Faults are injected through a file-system shim in the test kit that drops writes and
       renames which were not synced, as rascal's test kit does. Raising an error and reopening
       the same files does not test this.
 

@@ -464,6 +464,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "whizbang-testkit",
  "zune-core",
  "zune-jpeg",
 ]
@@ -473,6 +474,13 @@ name = "whizbang-eval"
 version = "0.0.1"
 dependencies = [
  "serde_json",
+]
+
+[[package]]
+name = "whizbang-testkit"
+version = "0.0.1"
+dependencies = [
+ "whizbang-core",
 ]
 
 [[package]]

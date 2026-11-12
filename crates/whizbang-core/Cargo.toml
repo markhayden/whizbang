@@ -27,12 +27,14 @@ libm = "=0.2.16"
 # Inflating a PNG's colour profile inside a limit. The version the PNG decoder uses.
 miniz_oxide = "=0.8.9"
 serde.workspace = true
-sha2 = "0.11"
+serde_json.workspace = true
+# The digest that names stored content, and every identity.
+sha2.workspace = true
 
 [dev-dependencies]
 # A second lossless container, for the tests only: the same pixels in PNG and in BMP.
 image = { version = "=0.25.10", default-features = false, features = ["bmp"] }
-serde_json.workspace = true
+whizbang-testkit.workspace = true
 
 [lints]
 workspace = true
