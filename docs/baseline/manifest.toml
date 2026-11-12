@@ -2,7 +2,7 @@
 # owner-only and is never published. See README.md beside this file.
 
 package_version = 1
-digest = "sha256:e2974c53c5c855c2121576282f622ae221483cb2342c5b3018a7d6ade10704ce"
+digest = "sha256:d2edd3bb789370d2e99e85a212c07f31a7b1e00e76d98ce38b7170ea9db7e726"
 
 # The harness each run was executed with, read from that run's own descriptor.
 [[provenance.executed]]
