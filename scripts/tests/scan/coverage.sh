@@ -98,6 +98,15 @@ printf 'token = %s\n' "$key" >untracked.log
 expect_fail "a key in a tracked file that an ignore rule matches" "kept.log:1" "$scan"
 quiet "untracked.log"
 rm untracked.log
+# The listed words are searched for there too.
+printf 'it says %s\n' "$word" >kept.log
+printf 'it says %s\n' "$word" >untracked.log
+expect_fail "a listed word in a tracked file that an ignore rule matches" \
+  "clean-room scan: 1 matching lines (contents 1, paths 0)" "$scan"
+says "secrets scan: clean"
+quiet "$word"
+rm untracked.log
+printf 'token = %s\n' "$key" >kept.log
 # And when such a file cannot be read, the scan fails rather than pass it by.
 chmod 000 kept.log
 if [ -r kept.log ]; then
@@ -107,6 +116,60 @@ else
   never_clean "an unreadable ignored tracked file"
 fi
 chmod 644 kept.log
+
+# An untracked file that one rule ignores and a later rule puts back is a file to cover.
+# The census must list it: a search that never looks in it fails the scan.
+fresh put-back
+printf '%s\n' '*.log' '!keep.log' >.gitignore
+commit_all "feat: rules"
+printf 'token = %s\n' "$key" >keep.log
+printf 'token = %s\n' "$key" >drop.log
+expect_fail "a key in a file a rule puts back" "keep.log:1" "$scan"
+quiet "drop.log"
+expect_fail "a file a rule puts back, lost from every search" "were not looked in by the search (worktree)" \
+  losing always keep.log "$scan"
+never_clean "a lost file that a rule puts back"
+rm keep.log drop.log
+
+# If git cannot say which files are ignored, the scan does not guess.
+fresh no-check-ignore
+commit_file "docs: plain" plain.txt "nothing to see"
+expect_fail "git check-ignore failing" "could not be told from the ignored ones (git check-ignore: exit 128)" \
+  env PATH="$tmp/bin:$PATH" BREAK=check-ignore "$scan"
+never_clean "git check-ignore failing"
+quiet "this command is broken"
+
+# A link is not followed, by the list or by the search: a folder outside the repository,
+# linked from inside it, is neither listed nor searched, and the scan does not refuse.
+mkdir "$tmp/outside"
+printf 'token = %s\n' "$key" >"$tmp/outside/secret.txt"
+ln -s "$tmp/outside" a-way-out
+expect_pass "a link to a folder outside the repository" env -u WHIZBANG_WORDLIST "$scan" --secrets-only
+says "secrets scan: clean"
+rm a-way-out
+
+# A folder that cannot be read cannot be listed: the scan refuses, in its own words, and
+# does not name the folder.
+mkdir locked-folder
+printf 'token = %s\n' "$key" >locked-folder/inside.txt
+chmod 000 locked-folder
+if ls locked-folder >/dev/null 2>&1; then
+  echo "skip: an unreadable folder; this user can read a folder with mode 000"
+else
+  expect_fail "a folder that cannot be read" "refusing to pass" "$scan"
+  says "scan: "
+  quiet "locked-folder"
+  never_clean "a folder that cannot be read"
+fi
+chmod 755 locked-folder
+rm -r locked-folder
+# The same when it is find that fails, whatever git's own listing said.
+mkdir "$tmp/find-bin"
+printf '#!/bin/sh\necho "find: ./a-path-it-names: Permission denied" >&2\nexit 1\n' >"$tmp/find-bin/find"
+chmod +x "$tmp/find-bin/find"
+expect_fail "find failing" "could not all be listed (find: exit 1, 1 lines of errors" env PATH="$tmp/find-bin:$PATH" "$scan"
+quiet "a-path-it-names"
+never_clean "find failing"
 
 # The canary (scripts/tests/scan/canary.sh) fails when a search loses a file, even once in
 # a while, and says how often.

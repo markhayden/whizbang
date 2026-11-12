@@ -143,9 +143,11 @@ done
 work=$(mktemp -d "${TMPDIR:-/tmp}/whizbang-scan.XXXXXX")
 done_ok=0
 trap 'rc=$?; rm -rf "$work"; [ "$done_ok" = 1 ] || [ "$rc" -ne 0 ] || { echo "scan: stopped before its end; failing" >&2; rc=70; }; exit "$rc"' EXIT
-# A signal ends the scan through the same trap, so the folder is removed then too. (It
-# cannot be after a kill -9; what would be left is readable by this user alone: this
-# run's findings and the values of a local .env, never the word list.)
+# A signal ends the scan through the same trap, so the folder is removed then too. Two
+# cases leave it behind: a kill -9, and a signal that lands while the trap is already
+# running. What is left is readable by this user alone: this run's findings with the text
+# of each matching line (so a listed word that is in the repository is there, in its
+# line), and the values of a local .env. The word list itself is never there.
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -325,14 +327,21 @@ census() {
   case "$target" in
     worktree)
       git ls-files -z -c >"$work/census-entries"
-      # check-ignore prints four fields for each path: where the rule is, its line, the
-      # rule, the path. The first three are empty when no rule matches.
-      find . -name .git -prune -o -type f -print0 >"$work/census-found"
+      # find does not follow a link, so what a link leads to is not listed (nor searched).
+      # What find says is not printed: it names paths.
       rc=0
-      git check-ignore -z --stdin -v -n <"$work/census-found" >"$work/census-rules" || rc=$?
-      [ "$rc" -le 1 ] || die "the files of the working tree could not be listed (git check-ignore, exit $rc); refusing to pass"
+      find . -name .git -prune -o -type f -print0 >"$work/census-found" 2>"$work/census-errors" || rc=$?
+      [ "$rc" -eq 0 ] && [ ! -s "$work/census-errors" ] ||
+        die "the files of the working tree could not all be listed (find: exit $rc, $(wc -l <"$work/census-errors" | tr -d ' ') lines of errors, such as a folder it could not read); what was not listed is not covered; refusing to pass"
+      # check-ignore prints four fields for each path: where the rule is, its line, the
+      # rule, the path. No rule matched when the rule is empty; and a rule that starts with
+      # `!` puts the path back, so that is not ignored either.
+      rc=0
+      git check-ignore -z --stdin -v -n <"$work/census-found" >"$work/census-rules" 2>"$work/census-errors" || rc=$?
+      [ "$rc" -le 1 ] && [ ! -s "$work/census-errors" ] ||
+        die "the files of the working tree could not be told from the ignored ones (git check-ignore: exit $rc); refusing to pass"
       tr '\n\0' '\002\n' <"$work/census-rules" |
-        awk 'NR % 4 == 1 { free = ($0 == "") } NR % 4 == 0 && free { print substr($0, 3) }' |
+        awk 'NR % 4 == 3 { free = ($0 == "" || substr($0, 1, 1) == "!") } NR % 4 == 0 && free { print substr($0, 3) }' |
         tr '\002\n' '\n\0' >>"$work/census-entries"
       while IFS= read -r -d '' f; do
         if [ -f "$f" ] && [ ! -L "$f" ] && [ -s "$f" ]; then printf '%s\0' "$f"; fi
@@ -622,7 +631,11 @@ mkdir "$text/tree-paths" "$text/link-targets"
 case "$mode" in
   tree)
     files=0
-    git ls-files -z -co --exclude-standard >"$work/entries"
+    # What git says while it lists is not printed either: it names paths.
+    git ls-files -z -co --exclude-standard >"$work/entries" 2>"$work/list-errors" ||
+      die "the files of the working tree could not be listed (git ls-files failed); refusing to pass"
+    [ ! -s "$work/list-errors" ] ||
+      die "git said something while it listed the working tree ($(wc -l <"$work/list-errors" | tr -d ' ') lines of warnings or errors, such as a folder it could not read); what was not listed is not covered; refusing to pass"
     while IFS= read -r -d '' f; do
       if [ -L "$f" ]; then
         readlink "$f" >>"$text/link-targets/working-tree"

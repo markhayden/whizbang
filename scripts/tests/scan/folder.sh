@@ -85,4 +85,49 @@ for signal in TERM INT HUP; do
   gone "after $signal"
 done
 
+# The census's own list of the working tree is exactly git's: every tracked file and every
+# untracked one that no ignore rule keeps out (regular files with something in them; links
+# aside). The census makes it without git walking the folder, so the rules are the place
+# to go wrong: rules that put a file back, rules in nested files, rules for folders.
+fresh the-lister
+printf '%s\n' '*.log' '!keep.log' 'out/*' '!out/keep/' 'build/' '!build/back.txt' '/top-only.txt' 'docs/**/*.png' '!docs/**/shown.png' >.gitignore
+printf '%s\n' 'local-*' >>.git/info/exclude
+mkdir -p out/keep out/drop build/deep sub/inner docs/a/b "a folder" nested/top-only.txt.d
+printf '%s\n' '!special.log' 'secret-*' '*.tmp' >sub/.gitignore
+printf '%s\n' '!*.tmp' 'inner-only' >sub/inner/.gitignore
+for f in keep.log drop.log out/keep/in.txt out/keep/in.log out/drop/x.txt out/file.txt build/back.txt build/deep/y.txt \
+  top-only.txt nested/top-only.txt docs/a/b/hidden.png docs/a/b/shown.png docs/a/plain.md sub/special.log sub/other.log \
+  sub/secret-1 sub/x.tmp sub/inner/y.tmp sub/inner/inner-only sub/inner/z.log local-notes.txt "a folder/with space.txt" \
+  "a folder/-dash" plain.txt; do
+  printf 'content of %s\n' "$f" >"$f"
+done
+printf 'a name over two lines\n' >"$(printf 'two\nlines.txt')"
+: >empty.txt
+ln -s plain.txt a-link
+ln -s "a folder" a-folder-link
+# Tracked files, in and out of what the rules match.
+git add -f plain.txt drop.log build/deep/y.txt sub/secret-1 .gitignore
+git commit -q --no-verify -m "feat: tracked"
+rm -f "$tmp/spy.listed"
+expect_pass "a tree full of ignore rules" spied "$scan"
+[ -s "$tmp/spy.listed" ] || fail "the census's list was seen"
+git ls-files -z -co --exclude-standard >"$tmp/git-entries"
+while IFS= read -r -d '' f; do
+  if [ -f "$f" ] && [ ! -L "$f" ] && [ -s "$f" ]; then printf '%s\0' "$f"; fi
+done <"$tmp/git-entries" | tr '\n\0' '\002\n' | sort -u >"$tmp/git-listed"
+cmp -s "$tmp/git-listed" "$tmp/spy.listed" || {
+  diff "$tmp/git-listed" "$tmp/spy.listed" >&2 || true
+  fail "the census lists exactly what git lists (above: git's list, then the census's)"
+}
+# The cases are really in there: put back by a rule, kept out by one, tracked though matched.
+for f in keep.log out/keep/in.txt docs/a/b/shown.png sub/special.log sub/inner/y.tmp drop.log build/deep/y.txt sub/secret-1 \
+  "a folder/with space.txt"; do
+  grep -q -x -F -e "$f" "$tmp/spy.listed" || { cat "$tmp/spy.listed" >&2; fail "the list holds $f"; }
+done
+for f in out/drop/x.txt out/file.txt build/back.txt top-only.txt docs/a/b/hidden.png sub/other.log sub/x.tmp \
+  sub/inner/inner-only local-notes.txt out/keep/in.log empty.txt a-link; do
+  grep -q -x -F -e "$f" "$tmp/spy.listed" && { cat "$tmp/spy.listed" >&2; fail "the list does not hold $f"; }
+done
+grep -q -x -F -e "nested/top-only.txt" "$tmp/spy.listed" || fail "a rule for the top folder alone leaves nested/top-only.txt in"
+
 finished

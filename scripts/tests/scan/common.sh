@@ -83,7 +83,7 @@ says() {
 # every record and every name of the file LOSE names, when LOSE_WHEN says so: `always`, or
 # `sometimes` (every other search for a pattern, never the census). With `always`, git's
 # own list of files loses the name too, as it would if the fault were in how git walks a
-# folder. It can also speak on
+# folder. BREAK names a git command that fails outright. It can also speak on
 # stderr during one kind of search (NOISY: worktree, files or commits), wait a moment
 # (SLOW), and note what the scan's own folder holds at that moment (SPY).
 stand_in_for_git() {
@@ -97,6 +97,11 @@ SH
 cat >>"$tmp/bin/git" <<'SH'
 search=0 census=0
 for arg in "$@"; do
+  # BREAK names a git command that fails outright, with a message, as on a broken install.
+  if [ -n "${BREAK:-}" ] && [ "$arg" = "$BREAK" ]; then
+    echo "fatal: this command is broken" >&2
+    exit 128
+  fi
   case "$arg" in
     grep) search=1 ;;
     -l) census=1 ;;
@@ -112,6 +117,10 @@ if [ "$search" -eq 1 ]; then
     ls -lAR "$TMPDIR" | grep -E '^[-d]' | grep -v -E '^.{4}------' >>"$SPY.loose" || true
     ls -A "$TMPDIR" >>"$SPY.seen"
     ! grep -r -a -q -i -F -e "$SPY_WORD" "$TMPDIR" || echo found >>"$SPY.word"
+    # The census's list of the working tree, once it is there.
+    for listed in "$TMPDIR"/whizbang-scan.*/census-listed; do
+      [ ! -f "$listed" ] || [ "$kind" != worktree ] || cp "$listed" "$SPY.listed"
+    done
   fi
   if [ -n "${SLOW:-}" ]; then
     echo started >>"$SLOW"
