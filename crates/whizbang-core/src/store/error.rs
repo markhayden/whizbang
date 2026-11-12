@@ -18,6 +18,10 @@ pub enum Error {
     },
     /// There is no store here. Opening to read creates nothing.
     Missing { root: PathBuf },
+    /// There is nothing here, and the directory that would hold a store is missing too.
+    /// A writer that makes the root alone ([`super::Store::open_in_existing_parent`])
+    /// made nothing.
+    NoParent { root: PathBuf, parent: PathBuf },
     /// There is a directory here, and it is not a store: it has no pointer. `found` is
     /// the first thing met in it that a store being created does not hold, which is why
     /// a writer does not make a store here; `None` when there is no such thing, as in an
@@ -84,6 +88,13 @@ impl fmt::Display for Error {
                 source,
             } => write!(f, "cannot {doing} {}: {source}", path.display()),
             Error::Missing { root } => write!(f, "there is no store at {}", root.display()),
+            Error::NoParent { root, parent } => write!(
+                f,
+                "there is no store at {}, and none is made there: there is no directory \
+                 {} to make it in",
+                root.display(),
+                parent.display()
+            ),
             Error::NotAStore { root, found: None } => {
                 write!(f, "{} is not a store: it has no CURRENT", root.display())
             }
@@ -146,6 +157,7 @@ impl std::error::Error for Error {
             Error::Io { source, .. } | Error::OtherFileSystem { source, .. } => Some(source),
             Error::Unacknowledged { source, .. } => Some(source.as_ref()),
             Error::Missing { .. }
+            | Error::NoParent { .. }
             | Error::NotAStore { .. }
             | Error::Held { .. }
             | Error::NoSuchRun { .. }

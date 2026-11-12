@@ -204,6 +204,8 @@ fn an_artifact_is_stored_as_an_output_and_a_diagnostic_of_its_name_is_not_taken_
     let generation = reader.snapshot().unwrap();
     let entry = generation.get(&artifact::name(kind, id)).unwrap();
     assert_eq!(reader.read(entry).unwrap(), artifact.to_bytes());
+    // The store does not hold the artifact: `holds` says what `get` will say.
+    assert!(!artifact::holds(&generation, kind, id));
     let by_reader = artifact::get(&reader, kind, id, &limits());
     let by_writer = artifact::get(&writer, kind, id, &limits());
     for result in [by_reader, by_writer] {
@@ -213,5 +215,46 @@ fn an_artifact_is_stored_as_an_output_and_a_diagnostic_of_its_name_is_not_taken_
             }
             other => panic!("{other:?}"),
         }
+    }
+}
+
+#[test]
+fn a_diagnostic_under_an_artifacts_name_is_not_found_as_an_artifact_of_another_type() {
+    // The diagnostic is under a location's name. Asked for a mask of that identity, the
+    // store holds none, and it does not answer that it holds a location instead.
+    let dir = Scratch::new("artifacts");
+    let root = dir.path().join("store");
+    let store = open(&dir, "store");
+    let location = one_of_each()
+        .into_iter()
+        .find(|artifact| artifact.artifact_type() == ArtifactType::Location)
+        .unwrap();
+    let id = location.id();
+    store_all(&store, std::slice::from_ref(&location));
+    assert!(matches!(
+        artifact::get(&store, ArtifactType::Mask, id, &limits()),
+        Err(ArtifactError::WrongType { .. })
+    ));
+    drop(store);
+    let file = root.join("generations/1.json");
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(
+        &file,
+        text.replace("\"kind\": \"output\"", "\"kind\": \"diagnostic\""),
+    )
+    .unwrap();
+    let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
+    let generation = reader.snapshot().unwrap();
+    for kind in ArtifactType::ALL {
+        assert!(!artifact::holds(&generation, kind, id), "{kind}");
+    }
+    match artifact::get(&reader, ArtifactType::Mask, id, &limits()) {
+        Err(ArtifactError::Missing {
+            artifact,
+            id: named,
+        }) => {
+            assert_eq!((artifact, named), (ArtifactType::Mask, id));
+        }
+        other => panic!("{other:?}"),
     }
 }

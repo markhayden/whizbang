@@ -481,7 +481,10 @@ dependencies = [
 name = "whizbang-squint"
 version = "0.0.1"
 dependencies = [
+ "flate2",
  "image",
+ "miniz_oxide 0.9.1",
+ "png",
  "whizbang-core",
 ]
 

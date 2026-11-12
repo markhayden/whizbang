@@ -87,6 +87,39 @@ fn a_fraction_a_hair_past_a_pixel_edge_widens_the_cut_by_a_pixel() {
     let image = picture(10, 100, noisy(17, false));
     let crop = look(&image, [0.0, 0.0, 1.0, 0.7]);
     assert_eq!(cut_of(&crop.binding), [0.0, 0.0, 10.0, 70.0]);
+    // The low side is widened the same way: 0.7 of 90 pixels was meant as the edge of
+    // pixel 63, the nearest double to the product is 62.99999999999999, and the cut
+    // starts at column 62.
+    let image = picture(90, 10, noisy(18, false));
+    let crop = look(&image, [0.7, 0.0, 1.0, 1.0]);
+    assert_eq!(cut_of(&crop.binding), [62.0, 0.0, 90.0, 10.0]);
+}
+
+#[test]
+fn how_often_a_fraction_meant_as_a_pixel_edge_falls_a_hair_off_it() {
+    // The record's count for that limit. Every fraction from 0 to 1 written with one,
+    // two or three decimals, on every width from 8 to 4096 pixels on which it names a
+    // whole number of pixels: how often the product of the two doubles is above that
+    // number, which widens a high edge by a pixel, and how often below it, which widens
+    // a low edge. The cut of one such pair each way is in the test above.
+    let (mut pairs, mut above, mut below) = (0u32, 0u32, 0u32);
+    for (decimals, parts) in [(1usize, 10u32), (2, 100), (3, 1000)] {
+        for numerator in 0..=parts {
+            let written = format!("{:.decimals$}", f64::from(numerator) / f64::from(parts));
+            let fraction: f64 = written.parse().unwrap();
+            for width in 8u32..=4096 {
+                if !(numerator * width).is_multiple_of(parts) {
+                    continue;
+                }
+                let edge = f64::from(numerator * width / parts);
+                let product = fraction * f64::from(width);
+                pairs += 1;
+                above += u32::from(product > edge);
+                below += u32::from(product < edge);
+            }
+        }
+    }
+    assert_eq!((pairs, above, below), (78_989, 1_539, 826));
 }
 
 #[test]
@@ -123,6 +156,28 @@ fn the_same_region_is_shown_in_a_second_image() {
 }
 
 #[test]
+fn a_second_image_of_another_shape_is_cut_to_another_shape() {
+    // A known limit, in the record. Nothing asks the two images to have one aspect
+    // ratio: the same fractions of a wide image and of a tall one are two regions of
+    // different shapes.
+    let wide = picture(200, 100, noisy(19, false));
+    let tall = picture(100, 200, noisy(20, false));
+    let crops = view(
+        &Request {
+            image: &wide,
+            also: Some(&tall),
+            bbox: [0.25, 0.25, 0.75, 0.75],
+        },
+        &limits(),
+    )
+    .unwrap();
+    assert_eq!(cut_of(&crops[0].binding), [50.0, 25.0, 150.0, 75.0]);
+    assert_eq!(cut_of(&crops[1].binding), [25.0, 50.0, 75.0, 150.0]);
+    assert_eq!(crops[0].image.space(), Space::flat(100, 50).unwrap());
+    assert_eq!(crops[1].image.space(), Space::flat(50, 100).unwrap());
+}
+
+#[test]
 fn a_bad_request_is_the_callers_mistake() {
     let image = picture(256, 192, noisy(7, false));
     let other = picture(256, 192, noisy(8, false));
@@ -134,6 +189,7 @@ fn a_bad_request_is_the_callers_mistake() {
     };
     let cases = [
         (alone([0.5, 0.5, 0.4, 0.9]), "left < right"),
+        (alone([0.5, 0.1, 0.5, 0.9]), "left < right"),
         (alone([0.1, 0.5, 0.4, 0.5]), "top < bottom"),
         // A box past an edge is not clipped: it is refused.
         (alone([0.9, 0.25, 1.1, 0.75]), "fractions"),

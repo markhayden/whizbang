@@ -11,9 +11,14 @@
 //! taken from a run, and they hold the encoder still: a crop's file is part of its
 //! artifact's identity (ADR 0002), so an encoder that writes another file for the same
 //! pixels changes every crop's identity, and must be a deliberate change.
+//!
+//! The record's table of these vectors is held here too, by the test that makes the
+//! crops anyway.
 
 use whizbang_core::identity::Digest;
+use whizbang_squint::view::Crop;
 
+use super::record;
 use super::support::*;
 
 pub struct Vector {
@@ -90,12 +95,22 @@ pub const VECTORS: &[Vector] = &[
     },
 ];
 
+/// The crop `view` gives for each vector, in their order.
+pub fn crops() -> Vec<Crop> {
+    VECTORS
+        .iter()
+        .map(|vector| {
+            let (width, height) = vector.size;
+            let image = picture(width, height, noisy(vector.seed, vector.alpha));
+            look(&image, vector.bbox)
+        })
+        .collect()
+}
+
 #[test]
 fn the_crops_are_the_fixed_vectors() {
-    for vector in VECTORS {
-        let (width, height) = vector.size;
-        let image = picture(width, height, noisy(vector.seed, vector.alpha));
-        let crop = look(&image, vector.bbox);
+    let crops = crops();
+    for (vector, crop) in VECTORS.iter().zip(&crops) {
         let space = crop.image.space();
         assert_eq!(
             cut_of(&crop.binding),
@@ -128,4 +143,47 @@ fn the_crops_are_the_fixed_vectors() {
             vector.name
         );
     }
+    // The record's table of the vectors is what these crops are.
+    record::holds(1, &record::vector_table(&crops));
+}
+
+/// The package of a name in the lock file: its lines, from its name on.
+fn locked<'a>(lock: &'a str, name: &str) -> &'a str {
+    lock.split("[[package]]\n")
+        .find(|package| package.starts_with(&format!("name = \"{name}\"\n")))
+        .unwrap_or_else(|| panic!("the lock file holds no {name}"))
+}
+
+#[test]
+fn what_writes_a_crops_file_is_pinned_exactly() {
+    // A crop's file comes from the `image` crate's PNG encoder, which is the `png` crate,
+    // whose compressor at the setting `view` uses is `flate2` over `miniz_oxide`. Each is
+    // pinned in this crate's manifest to the version the lock file resolves, so raising
+    // one is an edit of the manifest: a deliberate change, which the file digests above
+    // then judge. `flate2` uses another `miniz_oxide` than the one the core pins for the
+    // PNG decoder; the pin here is of the one that compresses.
+    let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = std::fs::read_to_string(folder.join("Cargo.toml")).unwrap();
+    let lock = std::fs::read_to_string(folder.join("../../Cargo.lock")).unwrap();
+    for (name, version) in [
+        ("image", "0.25.10"),
+        ("png", "0.18.1"),
+        ("flate2", "1.1.11"),
+        ("miniz_oxide", "0.9.1"),
+    ] {
+        let pinned = manifest.lines().any(|line| {
+            line.starts_with(&format!("{name} = ")) && line.contains(&format!("\"={version}\""))
+        });
+        assert!(
+            pinned,
+            "{name} is pinned to exactly {version} in the manifest"
+        );
+        assert!(
+            lock.contains(&format!("name = \"{name}\"\nversion = \"{version}\"\n")),
+            "the lock file resolves {name} {version}"
+        );
+    }
+    assert!(locked(&lock, "image").contains("\n \"png\",\n"));
+    assert!(locked(&lock, "png").contains("\n \"flate2\",\n"));
+    assert!(locked(&lock, "flate2").contains("\n \"miniz_oxide 0.9.1\",\n"));
 }
