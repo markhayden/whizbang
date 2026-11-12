@@ -28,6 +28,7 @@ manifest. This file holds what you cannot work out from the code.
 
 | Command | When |
 |---|---|
+| `scripts/worktree.sh add <slug>` | At the start of a task: fetches `origin/main` and makes the worktree `../whizbang-<slug>` on a new branch `<slug>`. `remove <slug>` takes both away once the branch is merged into `origin/main`, and refuses otherwise; `list` shows the worktrees |
 | `just check` | Before every commit: format check, lint, the crate graph, licences and sources, the syntax of every script under `scripts/`, the script tests, the generated reference against a fresh copy, then the fast tests with seconds per suite |
 | `just docs` | After changing what `whizbang describe` reports (the description type, an action, the version): rewrites `docs/reference/`; commit the result, because `just check` fails on a stale copy |
 | `just scan` | Before every push: the secrets scan and the clean-room scan, over the working tree |
@@ -82,6 +83,22 @@ commit or a new tag. Commit messages are `type(scope): summary`. Stage files by 
 
 The subagents are defined in `.claude/agents/`.
 
+## Skills
+
+The workflows are checklists in `.claude/skills/<name>/SKILL.md`. Any agent can follow one
+as plain text. Each names its inputs, its commands and its hand-back format.
+
+| Skill | Who | When |
+|---|---|---|
+| `kickoff` | Builder | Starting any task from the plan: make the worktree, build with tests first, push, open the pull request, wait for CI, hand back the head commit |
+| `port-module` | Builder | A task that brings code from an old repo: on top of `kickoff`, what to port, rewrite or drop, the tests to bring, and how the source is named |
+| `review-merge` | Orchestrator | After the reviewer's verdict: check that the head has not moved, test the merged result, run both scans over `base..head`, merge with a merge commit, confirm it, clean up |
+
+The orchestrator does not review its own build: a branch it wrote is reviewed by a reviewer
+that did not write it.
+
+## Permissions
+
 `.claude/settings.json` lists commands an agent may run without a prompt: the local `just`
 recipes and a few scripts by their exact text, and some read-only `git` and `gh` commands.
 These rules reduce prompts. They are not the boundary. The boundary is branch protection on
@@ -89,7 +106,12 @@ These rules reduce prompts. They are not the boundary. The boundary is branch pr
 an allowed command runs, so a change to either is reviewed as code. A `gh` command that
 names another repository by `-R`, `--repo` or an address asks first, but one that hides the
 flag in a bundle of short flags, such as `-cR`, is not caught. The list is repeated in
-`scripts/tests/test-rules.sh`, and `just check` fails when the two differ.
+`scripts/tests/test-rules.sh`, and `just check` fails when the two differ. The same test holds
+each subagent file to the keys `name`, `description` and `tools`, with its exact list of
+tools, and each skill to one `SKILL.md` whose frontmatter is `name` and `description` only: a
+skill grants nothing. It refuses any other file in a folder named `.claude`, at any depth: no
+commands, no hooks, no settings further down. `scripts/worktree.sh` is not on the list, so it
+asks first.
 
 ## When documents disagree
 

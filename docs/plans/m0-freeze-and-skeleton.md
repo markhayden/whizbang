@@ -164,11 +164,11 @@ pass before you push, and who merges?", answers correctly from the repo.
 
 **Depends on:** S4.
 
-- [ ] `.claude/skills/kickoff`, `port-module`, `review-merge`, each a checklist.
-- [ ] `review-merge` records the pull request's base and head commits, runs both scans over
+- [x] `.claude/skills/kickoff`, `port-module`, `review-merge`, each a checklist.
+- [x] `review-merge` records the pull request's base and head commits, runs both scans over
       exactly that range, refuses if the head has moved since review, merges, and confirms the
       merged commit.
-- [ ] `scripts/worktree.sh`.
+- [x] `scripts/worktree.sh`.
 
 **Done when:** each skill names its inputs, its commands and its hand-back format, and
 `AGENTS.md` lists all three.

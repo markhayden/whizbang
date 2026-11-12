@@ -15,6 +15,13 @@ Check, in this order:
 5. Tests wait on events, not sleeps. Nothing runs twice.
 6. The spec, reference and carry-over list were updated where the change affects them.
 
-Report: the head commit you reviewed; then findings, most severe first, each with the file
-and line, what is wrong, and the fix. Say plainly whether the branch may merge. Change no
-file.
+7. Each changed file that grants permissions or checks the pull request, read in full:
+   any file under `.github/`; any file under a folder named `.claude`, at any depth;
+   `.mcp.json`, at any depth; `justfile`; any file under `scripts/hooks/`; and
+   `scripts/scan.sh`.
+
+Report: the full head commit you reviewed; then findings, most severe first, each with the
+file and line, what is wrong, and the fix; then each file of item 7 by name, saying you read
+it. Say plainly whether the branch may merge at that commit. Change no file. The orchestrator
+merges by `.claude/skills/review-merge/SKILL.md`, which refuses a verdict that names no
+commit, or a head that has moved since.

@@ -6,6 +6,11 @@
 # They are NOT the boundary: the boundary is branch protection, the pre-push hook and CI.
 # Whoever can edit the justfile or a script changes what an exact rule runs.
 #
+# The other files that can grant permissions are held too: no local settings or MCP server
+# file is committed; a subagent file has only the keys name, description and tools, with the
+# tools listed below; a skill is one SKILL.md whose frontmatter is name and description only;
+# and no folder named .claude, at any depth, holds any file but the ones listed below.
+#
 # AGENTS.md must still hold the fresh-clone checklist, the push and merge rows, the three
 # roles, who merges, and the attribution rule, and must give no location for the word list.
 # Nothing here runs an agent.
@@ -153,14 +158,56 @@ expect_fail "settings that are not JSON" "settings: not valid JSON" check_settin
 
 # --- Other files that can grant permissions ----------------------------------------------
 
-# Local settings and MCP servers are never committed, and a subagent does not choose its own
-# permission mode. (Skills and their allowed tools: docs/carry-over.md, with task S5.)
+# Local settings and MCP servers are never committed. A subagent file holds only the keys
+# below, with exactly the tools listed here, so it cannot choose a permission mode, a model,
+# hooks or servers. A skill is one file, .claude/skills/<name>/SKILL.md, whose frontmatter
+# is `name` and `description` and nothing else: no `allowed-tools`, no model, no hooks; and
+# it runs no command when it is loaded (no `!` before a backtick, and no block fenced with
+# three backticks and a `!`). Nothing else may be in a folder named .claude, at any depth
+# and in any letter case: no commands, no hooks, no settings or skills of a folder further
+# down. A change to any of this needs the same change here.
+builder_tools="Bash, Read, Edit, Write, Grep, Glob"
+reviewer_tools="Bash, Read, Grep, Glob"
+
+# front <file>: the lines of its frontmatter; nothing when the file does not start with one.
+front() { awk 'NR == 1 { if ($0 != "---") exit; next } $0 == "---" { exit } { print }' "$1"; }
+# front_keys <file>: the keys, in order, each followed by a space.
+front_keys() { front "$1" | sed -n 's/^\([A-Za-z][A-Za-z0-9_-]*\):.*$/\1/p' | tr '\n' ' '; }
+# front_odd <file>: how many frontmatter lines are not one key with its value on the line.
+front_odd() { front "$1" | grep -c -v -E '^[A-Za-z][A-Za-z0-9_-]*:[[:space:]]*[^[:space:]>|].*$' || true; }
+
 # granted <folder>: prints what in a checkout grants permissions outside settings.json.
 granted() {
   (
     cd "$1"
     git ls-files -- .claude/settings.local.json .mcp.json '**/.mcp.json' | sed 's/^/tracked: /'
     grep -l -i -E '^[[:space:]]*permissionMode[[:space:]]*:' .claude/agents/*.md 2>/dev/null | sed 's/^/permission mode: /'
+    git -c core.excludesFile=/dev/null ls-files --cached --others --exclude-standard | { grep -i -E '(^|/)\.claude/' || true; } | while IFS= read -r f; do
+      tools=
+      case "$f" in
+        .claude/settings.json) continue ;;
+        .claude/agents/builder.md) keys="name description tools " tools=$builder_tools ;;
+        .claude/agents/reviewer.md) keys="name description tools " tools=$reviewer_tools ;;
+        .claude/skills/kickoff/SKILL.md | .claude/skills/port-module/SKILL.md | .claude/skills/review-merge/SKILL.md)
+          keys="name description "
+          ;;
+        *) echo "in a .claude folder, and not a file this test knows: $f"; continue ;;
+      esac
+      [ -f "$f" ] && [ ! -L "$f" ] || { echo "not a plain file: $f"; continue; }
+      [ "$(front_odd "$f")" = 0 ] || echo "a frontmatter line that is not one key and its value: $f"
+      [ "$(front_keys "$f")" = "$keys" ] || echo "frontmatter keys: $f has [$(front_keys "$f")], expected [$keys]"
+      case "$f" in
+        .claude/agents/*)
+          [ "$(front "$f" | sed -n 's/^tools:[[:space:]]*//p')" = "$tools" ] || echo "tools: $f must list exactly: $tools"
+          ;;
+        *)
+          name=${f#.claude/skills/}
+          name=${name%/SKILL.md}
+          [ "$(front "$f" | sed -n 's/^name:[[:space:]]*//p')" = "$name" ] || echo "skill name: $f must be named $name, as its folder is"
+          if grep -q -E -e '!`|^[[:space:]]*```+[[:space:]]*!' "$f"; then echo "runs a command when it is loaded: $f"; fi
+          ;;
+      esac
+    done
   ) >"$tmp/granted"
   [ ! -s "$tmp/granted" ] || { cat "$tmp/granted"; return 1; }
 }
@@ -169,16 +216,101 @@ expect_pass "nothing else grants permissions" granted .
 git init -q "$tmp/repo"
 mkdir -p "$tmp/repo/.claude/agents"
 cp .claude/agents/*.md "$tmp/repo/.claude/agents/"
+mkdir -p "$tmp/repo/.claude/skills"
+cp -R .claude/skills/. "$tmp/repo/.claude/skills/"
 git -C "$tmp/repo" add .claude
-expect_pass "a copy of the agent files" granted "$tmp/repo"
+expect_pass "a copy of the agent files and the skills" granted "$tmp/repo"
+[ -n "$(git -C "$tmp/repo" ls-files -- .claude/skills)" ] || fail "the copy holds the skills"
 echo '{}' >"$tmp/repo/.claude/settings.local.json"
 git -C "$tmp/repo" add -f .claude/settings.local.json
 expect_fail "local settings committed" "tracked: .claude/settings.local.json" granted "$tmp/repo"
-git -C "$tmp/repo" rm -q -f --cached .claude/settings.local.json
+git -C "$tmp/repo" rm -q -f .claude/settings.local.json
 echo '{}' >"$tmp/repo/.mcp.json"
 git -C "$tmp/repo" add -f .mcp.json
 expect_fail "MCP servers committed" "tracked: .mcp.json" granted "$tmp/repo"
-git -C "$tmp/repo" rm -q -f --cached .mcp.json
+git -C "$tmp/repo" rm -q -f .mcp.json
+
+# planted <name> <expected text> <file> <sed script>: the copy with one file edited must fail,
+# saying the text. The file is put back afterwards.
+planted() {
+  local name=$1 text=$2 file=$3 script=$4
+  sed "$script" "$file" >"$tmp/repo/$file"
+  cmp -s "$file" "$tmp/repo/$file" && fail "the edit changed nothing: $name"
+  expect_fail "$name" "$text" granted "$tmp/repo"
+  cp "$file" "$tmp/repo/$file"
+}
+skill=.claude/skills/kickoff/SKILL.md
+for line in 'allowed-tools: Bash(git push *)' 'allowed-tools: Bash' 'model: a-model' 'hooks: {}' \
+  'context: fork' 'agent: builder' 'disable-model-invocation: false' 'Allowed-Tools: Bash'; do
+  planted "a skill with the line: $line" "frontmatter keys: $skill" "$skill" "2s/^/$line\\
+/"
+done
+planted "a skill with a key after its description" "frontmatter keys: $skill" "$skill" '3s/$/\
+allowed-tools: Bash/'
+planted "a skill with tools on continued lines" "a frontmatter line that is not one key and its value: $skill" "$skill" '3s/$/\
+allowed-tools:\
+  - Bash/'
+planted "a skill with a description that runs on" "a frontmatter line that is not one key and its value: $skill" "$skill" \
+  '3s/^description: .*$/description: >\
+  words/'
+planted "a skill with no name" "frontmatter keys: $skill" "$skill" '2d'
+planted "a skill named for another" "skill name: $skill must be named kickoff" "$skill" '2s/kickoff/review-merge/'
+planted "a skill with no frontmatter" "frontmatter keys: $skill" "$skill" '1d'
+planted "a skill that runs a command when loaded" "runs a command when it is loaded: $skill" "$skill" '$s/$/\
+!`git push`/'
+planted "a skill with a block that runs when loaded" "runs a command when it is loaded: $skill" "$skill" '$s/$/\
+```!\
+git push\
+```/'
+planted "a skill with such a block, spaced" "runs a command when it is loaded: $skill" "$skill" '$s/$/\
+  ```` !\
+git push\
+````/'
+
+# other <path> [<text>]: a file at the path, tracked or not, must fail, naming the path.
+other() {
+  mkdir -p "$tmp/repo/$(dirname "$1")"
+  printf '%s\n' "${2:-words}" >"$tmp/repo/$1"
+  expect_fail "an untracked $1" "in a .claude folder, and not a file this test knows: $1" granted "$tmp/repo"
+  git -C "$tmp/repo" add -f -- "$1"
+  expect_fail "a tracked $1" "in a .claude folder, and not a file this test knows: $1" granted "$tmp/repo"
+  git -C "$tmp/repo" rm -q -f --cached -- "$1"
+  rm "$tmp/repo/$1"
+}
+other .claude/skills/kickoff/run.sh 'git push'
+other .claude/skills/kickoff/inner/SKILL.md
+other .claude/skills/another/SKILL.md
+other .claude/skills/SKILL.md
+other .claude/commands/ship.md 'allowed-tools: Bash(git push *)'
+other .claude/hooks/pre-tool.sh
+other .claude/settings.toml
+other .claude/CLAUDE.md
+other .claude/rules/more.md
+other .claude/output-styles/loud.md
+other sub/.claude/skills/kickoff/SKILL.md
+other sub/.claude/settings.json '{}'
+other sub/deeper/.claude/agents/builder.md
+other crates/.claude/commands/x.md
+# In another letter case, which is the same folder where the file system ignores case.
+other docs/.CLAUDE/commands/x.md
+expect_pass "a folder whose name only starts the same" bash -c 'mkdir -p "$1/.claude-notes" && echo words >"$1/.claude-notes/a.md"' - "$tmp/repo"
+expect_pass "is no .claude folder" granted "$tmp/repo"
+rm -r "$tmp/repo/.claude-notes"
+
+agent=.claude/agents/reviewer.md
+planted "a reviewer that can edit" "tools: $agent must list exactly: $reviewer_tools" "$agent" '/^tools:/s/$/, Edit/'
+planted "a reviewer with every tool" "tools: $agent must list exactly" "$agent" '/^tools:/s/:.*/: "*"/'
+planted "a reviewer with no tools line" "frontmatter keys: $agent" "$agent" '/^tools:/d'
+planted "a builder with one more tool" "tools: .claude/agents/builder.md must list exactly: $builder_tools" \
+  .claude/agents/builder.md '/^tools:/s/$/, WebFetch/'
+for line in 'model: a-model' 'skills: kickoff' 'mcpServers: {}' 'hooks: {}' 'disallowedTools: Read' \
+  'permissionMode: acceptEdits' 'tools: Bash'; do
+  planted "a subagent with the line: $line" "frontmatter keys: $agent" "$agent" "2s/^/$line\\
+/"
+done
+other .claude/agents/another.md
+expect_pass "the copy, put back" granted "$tmp/repo"
+
 awk '{ print } /^name: reviewer$/ { print "permissionMode: bypassPermissions" }' \
   .claude/agents/reviewer.md >"$tmp/repo/.claude/agents/reviewer.md"
 grep -q '^permissionMode' "$tmp/repo/.claude/agents/reviewer.md" || fail "the planted permission mode is not there"
