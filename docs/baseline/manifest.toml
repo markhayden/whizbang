@@ -1,0 +1,145 @@
+# The 2026-11 baseline package: what it is, without what is in it. The package itself is
+# owner-only and is never published. See README.md beside this file.
+
+package_version = 1
+digest = "sha256:e2974c53c5c855c2121576282f622ae221483cb2342c5b3018a7d6ade10704ce"
+
+# The harness each run was executed with, read from that run's own descriptor.
+[[provenance.executed]]
+repository = "squint"
+harness_version = "0.1.0 (feb5a9802)"
+commit = "feb5a98028210baf248454620c37be0be129b73f"
+runs = 7
+
+# The squint commit the package was assembled from (the freeze tag).
+[provenance.assembled]
+repository = "squint"
+tag = "final-before-whizbang"
+commit = "cc4b9ac3e2a9a3fbfd32a6588e5d700988e36b63"
+
+# The commit used for any recapture. Nothing has been recaptured.
+[provenance.recaptured]
+commit = ""
+
+# Decisions and spend per model and arm, every repetition counted. Spend is what the run's
+# ledger settled, in US dollars.
+
+[[cell]]
+model = "google-ai-studio:gemini-4-argon"
+arm = "C"
+decisions = 143
+spend_usd = 4.2516
+
+[[cell]]
+model = "google-ai-studio:gemini-4-argon"
+arm = "D_outline"
+decisions = 143
+spend_usd = 6.3277
+
+[[cell]]
+model = "google-ai-studio:gemini-3.8-flash"
+arm = "C"
+decisions = 143
+spend_usd = 3.2535
+
+[[cell]]
+model = "google-ai-studio:gemini-3.8-flash"
+arm = "D_outline"
+decisions = 143
+spend_usd = 5.8356
+
+[[cell]]
+model = "google-ai-studio:gemini-3.8-flash"
+arm = "D_regions"
+decisions = 143
+spend_usd = 5.7069
+
+[[cell]]
+model = "anthropic:claude-haiku-5-5"
+arm = "C"
+decisions = 286
+spend_usd = 0.9417
+
+[[cell]]
+model = "anthropic:claude-haiku-5-5"
+arm = "D_outline"
+decisions = 286
+spend_usd = 1.5261
+
+[[cell]]
+model = "anthropic:claude-haiku-5-5"
+arm = "D_regions"
+decisions = 286
+spend_usd = 1.5077
+
+[[cell]]
+model = "anthropic:claude-opus-5-5"
+arm = "C"
+decisions = 143
+spend_usd = 16.9650
+
+[[cell]]
+model = "anthropic:claude-opus-5-5"
+arm = "D_outline"
+decisions = 143
+spend_usd = 25.5716
+
+[[cell]]
+model = "anthropic:claude-opus-5-5"
+arm = "D_regions"
+decisions = 143
+spend_usd = 25.7931
+
+[[cell]]
+model = "openai:gpt-6.1-sol"
+arm = "C"
+decisions = 143
+spend_usd = 4.8097
+
+[[cell]]
+model = "openai:gpt-6.1-sol"
+arm = "D_outline"
+decisions = 143
+spend_usd = 8.1527
+
+[[cell]]
+model = "openai:gpt-6.1-sol"
+arm = "D_regions"
+decisions = 143
+spend_usd = 8.7851
+
+[[cell]]
+model = "anthropic:claude-sonnet-5-5"
+arm = "C"
+decisions = 143
+spend_usd = 7.1541
+
+[[cell]]
+model = "anthropic:claude-sonnet-5-5"
+arm = "D_outline"
+decisions = 143
+spend_usd = 10.5990
+
+[[cell]]
+model = "anthropic:claude-sonnet-5-5"
+arm = "D_regions"
+decisions = 143
+spend_usd = 10.7885
+
+[[cell]]
+model = "openai:gpt-6.1-terra"
+arm = "C"
+decisions = 143
+spend_usd = 2.4642
+
+[[cell]]
+model = "openai:gpt-6.1-terra"
+arm = "D_outline"
+decisions = 143
+spend_usd = 3.9535
+
+[[cell]]
+model = "openai:gpt-6.1-terra"
+arm = "D_regions"
+decisions = 143
+spend_usd = 4.1965
