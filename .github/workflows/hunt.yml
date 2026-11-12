@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        job: [planted-par, planted-serial, planted-threads1, planted-nocache, planted-applegit, planted-plain, testscan, parts-serial, min]
+        job: [min, min-b]
     runs-on: macos-15
     timeout-minutes: 25
     steps:

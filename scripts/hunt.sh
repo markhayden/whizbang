@@ -22,7 +22,7 @@ sysctl -n hw.ncpu 2>/dev/null || nproc
 git config --system --list 2>/dev/null | sed 's/^/system config: /'
 
 # paths <raw>: the paths of the records in a `git grep -n -z` output.
-paths() { tr '\0' '\001' <"$1" | awk -F "$(printf '\001')" 'NF >= 3 { print $1 }'; }
+paths() { LC_ALL=C tr '\0' '\001' <"$1" | LC_ALL=C awk -F "$(printf '\001')" 'NF >= 3 { print $1 }'; }
 
 summary() {
   echo "== mismatches kept by the scan: $(ls -d "$out"/hunt/mismatch.* 2>/dev/null | wc -l | tr -d ' ') of $(wc -l <"$out/hunt/searches" 2>/dev/null | tr -d ' ') repeated searches"
@@ -108,7 +108,7 @@ case "$job" in
     }
     loop 1 serial
     ;;
-  min) bash scripts/hunt-min.sh "$out" ;;
+  min | min-b) bash scripts/hunt-min.sh "$out" ;;
   *) echo "unknown job: $job"; exit 2 ;;
 esac
 summary

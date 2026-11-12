@@ -7,7 +7,7 @@ out=$1
 mkdir -p "$out/min"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 base=$(mktemp -d)
-each=${HUNT_MIN_SECONDS:-55}
+each=${HUNT_MIN_SECONDS:-70}
 
 key="sk""-abcdefghij0123456789ABCDEFGHIJ"
 sk_shape='(^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}'
@@ -53,10 +53,15 @@ golden() { # <name> <git options and grep arguments...>
     (cd "$base/golden" && "$@") | cmp -s - "$base/golden.$name" || { echo "the known output of $name is not stable"; exit 1; }
     i=$((i + 1))
   done
-  echo "known output of $name: $(tr -d -c '\n' <"$base/golden.$name" | wc -c | tr -d ' ') lines"
+  echo "known output of $name: $(LC_ALL=C tr -d -c '\n' <"$base/golden.$name" | wc -c | tr -d ' ') lines"
 }
-golden sk git grep --untracked -a -n -z -o -E -e "$sk_shape"
-golden all git grep --untracked -a -n -z "${all[@]}"
+golden sk env LC_ALL=C git -c grep.threads=1 grep --untracked -a -n -z -o -E -e "$sk_shape"
+golden all env LC_ALL=C git -c grep.threads=1 grep --untracked -a -n -z "${all[@]}"
+golden sk8 env LC_ALL=en_US.UTF-8 git -c grep.threads=1 grep --untracked -a -n -z -o -E -e "$sk_shape"
+golden all8 env LC_ALL=en_US.UTF-8 git -c grep.threads=1 grep --untracked -a -n -z "${all[@]}"
+golden sku env -u LC_ALL -u LANG -u LC_CTYPE git -c grep.threads=1 grep --untracked -a -n -z -o -E -e "$sk_shape"
+golden allu env -u LC_ALL -u LANG -u LC_CTYPE git -c grep.threads=1 grep --untracked -a -n -z "${all[@]}"
+golden token env LC_ALL=C git -c grep.threads=1 grep --untracked -a -n -z -F -e "token = "
 files_known=$(cd "$base/golden" && git ls-files -co --exclude-standard | wc -l | tr -d ' ')
 found_known=$(cd "$base/golden" && find . -path ./.git -prune -o -type f -print | wc -l | tr -d ' ')
 echo "files git lists: $files_known; files find lists: $found_known"
@@ -78,24 +83,28 @@ check() {
     if cmp -s "$d/again" "$d/golden"; then echo "a second run is right"; else echo "a second run is wrong too"; fi
     echo "files git lists: $(cd "$repo" && git ls-files -co --exclude-standard | wc -l | tr -d ' ') (known $files_known)"
     echo "files find lists: $(cd "$repo" && find . -path ./.git -prune -o -type f -print | wc -l | tr -d ' ') (known $found_known)"
-    echo "lines: $(tr -d -c '\n' <"$d/raw" | wc -c | tr -d ' ') (known $(tr -d -c '\n' <"$d/golden" | wc -c | tr -d ' '))"
+    echo "lines: $(LC_ALL=C tr -d -c '\n' <"$d/raw" | wc -c | tr -d ' ') (known $(LC_ALL=C tr -d -c '\n' <"$d/golden" | wc -c | tr -d ' '))"
   } >"$d/status"
   return 1
 }
 
 # The ways to run the search. Each is a function: <tag> <repo>.
-v_default() { check "$1" "$2" sk git grep --untracked -a -n -z -o -E -e "$sk_shape" && check "$1" "$2" all git grep --untracked -a -n -z "${all[@]}"; }
-v_threads1() { check "$1" "$2" sk git -c grep.threads=1 grep --untracked -a -n -z -o -E -e "$sk_shape" && check "$1" "$2" all git -c grep.threads=1 grep --untracked -a -n -z "${all[@]}"; }
-v_tracked() { check "$1" "$2" sk git grep -a -n -z -o -E -e "$sk_shape" && check "$1" "$2" all git grep -a -n -z "${all[@]}"; }
-v_nocache() { check "$1" "$2" sk git -c core.fsmonitor=false -c core.untrackedCache=false grep --untracked -a -n -z -o -E -e "$sk_shape"; }
-v_applegit() { check "$1" "$2" sk /usr/bin/git grep --untracked -a -n -z -o -E -e "$sk_shape" && check "$1" "$2" all /usr/bin/git grep --untracked -a -n -z "${all[@]}"; }
-v_applegit1() { check "$1" "$2" sk /usr/bin/git -c grep.threads=1 grep --untracked -a -n -z -o -E -e "$sk_shape"; }
-v_listing() { # no search at all: do the two listings agree with what was made?
-  local a b
-  a=$(cd "$2" && git ls-files -co --exclude-standard | wc -l | tr -d ' ')
-  b=$(cd "$2" && find . -path ./.git -prune -o -type f -print | wc -l | tr -d ' ')
-  [ "$a" = "$files_known" ] && [ "$b" = "$found_known" ] || { mkdir -p "$out/min/listing.$RANDOM$RANDOM"; return 1; }
+sk=(grep --untracked -a -n -z -o -E -e "$sk_shape")
+co=(grep --untracked -a -n -z "${all[@]}")
+both() { # <tag> <repo> <known-output suffix> <command and options before `grep`...>
+  local tag=$1 repo=$2 suffix=$3
+  shift 3
+  check "$tag" "$repo" "sk$suffix" "$@" "${sk[@]}" && check "$tag" "$repo" "all$suffix" "$@" "${co[@]}"
 }
+v_utf8() { both "$1" "$2" 8 env LC_ALL=en_US.UTF-8 git; }
+v_c() { both "$1" "$2" "" env LC_ALL=C git; }
+v_c_threads1() { both "$1" "$2" "" env LC_ALL=C git -c grep.threads=1; }
+v_c_threads2() { both "$1" "$2" "" env LC_ALL=C git -c grep.threads=2; }
+v_c_applegit() { both "$1" "$2" "" env LC_ALL=C /usr/bin/git; }
+v_c_tracked() { check "$1" "$2" sk env LC_ALL=C git grep -a -n -z -o -E -e "$sk_shape"; }
+v_c_pcre() { check "$1" "$2" sk env LC_ALL=C git grep --untracked -a -n -z -o -P -e "$sk_shape"; }
+v_c_basic() { check "$1" "$2" token env LC_ALL=C git grep --untracked -a -n -z -F -e "token = "; }
+v_unset() { both "$1" "$2" u env -u LC_ALL -u LANG -u LC_CTYPE git; }
 
 # run <label> <mode> <workers> <variant>: for $each seconds. Modes: static (one repository,
 # made before), fresh (a new repository before every search), synced (fresh, then sync and
@@ -129,20 +138,20 @@ run() {
   awk -v label="$label" '{ n += $1; bad += $2 } END { printf "== min %-28s %7d searches, %d wrong\n", label, n, bad }' "$base/count.$label"
 }
 
-run static-default-1 static 1 v_default
-run static-default-8 static 8 v_default
-run static-threads1-8 static 8 v_threads1
-run static-tracked-8 static 8 v_tracked
-run static-nocache-8 static 8 v_nocache
-run static-applegit-8 static 8 v_applegit
-run static-applegit1-8 static 8 v_applegit1
-run fresh-default-1 fresh 1 v_default
-run fresh-default-8 fresh 8 v_default
-run fresh-threads1-8 fresh 8 v_threads1
-run fresh-tracked-8 fresh 8 v_tracked
-run fresh-applegit-8 fresh 8 v_applegit
-run fresh-listing-8 fresh 8 v_listing
-run synced-default-8 synced 8 v_default
+locale
+/usr/bin/git --version
+run utf8-8 static 8 v_utf8
+run c-8 static 8 v_c
+run c-1 static 1 v_c
+run c-threads1-8 static 8 v_c_threads1
+run c-threads2-8 static 8 v_c_threads2
+run c-applegit-8 static 8 v_c_applegit
+run c-tracked-8 static 8 v_c_tracked
+run c-pcre-8 static 8 v_c_pcre
+run c-fixed-string-8 static 8 v_c_basic
+run unset-8 static 8 v_unset
+run c-fresh-8 fresh 8 v_c
+run c-8-again static 8 v_c
 
 echo "== min: what was kept"
 for d in "$out"/min/*/; do
@@ -150,6 +159,6 @@ for d in "$out"/min/*/; do
   echo "-- $d: $(tr '\n' ';' <"$d/status")"
   echo "   stderr: $(head -n 2 "$d/err" | tr '\n' '|')"
   echo "   missing or changed lines, paths only:"
-  diff <(tr '\0' '\001' <"$d/golden" | cut -d "$(printf '\001')" -f 1) <(tr '\0' '\001' <"$d/raw" | cut -d "$(printf '\001')" -f 1) | head -n 8 | sed 's/^/     /'
+  LC_ALL=C diff <(tr '\0' '\001' <"$d/golden" | LC_ALL=C cut -d "$(printf '\001')" -f 1) <(tr '\0' '\001' <"$d/raw" | LC_ALL=C cut -d "$(printf '\001')" -f 1) | head -n 8 | sed 's/^/     /'
 done | head -n 200
 rm -rf "$base"
