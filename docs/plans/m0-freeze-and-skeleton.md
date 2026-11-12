@@ -308,15 +308,15 @@ The recorded material is under squint's `eval-out/`: the run named
 Two parts, in `~/whizbang-owner/baseline/2026-11/`:
 
 **Replay fixtures (the arm the old harness calls C).**
-- [ ] For each decision, the authoritative attempt is the one its `result.json` names.
+- [x] For each decision, the authoritative attempt is the one its `result.json` names.
       Abandoned attempts are kept apart.
-- [ ] Per decision: the journal, every stored exchange and tool artifact it references, and
+- [x] Per decision: the journal, every stored exchange and tool artifact it references, and
       the prepared images.
-- [ ] The input closure: the job and image files, the set's seal, the matrix, descriptor,
+- [x] The input closure: the job and image files, the set's seal, the matrix, descriptor,
       config and prompts, the rules as resolved, the provider catalogue, the tool definitions
       as the arm projected them, the image-preparation version and settings, and the
       dependency lock files.
-- [ ] A private inventory with one line per input and the kind of evidence that ties it to
+- [x] A private inventory with one line per input and the kind of evidence that ties it to
       the historical run:
       - **Recorded digest** (config, prompts, catalogue, set components, tool definitions):
         hash the file the way the old harness did and require it to equal what the run's
@@ -327,19 +327,19 @@ Two parts, in `~/whizbang-owner/baseline/2026-11/`:
         assembly time.
       - **Preparation:** match the recorded preparation version and the hashes of the prepared
         images against settings derived from the historical config, catalogue and code.
-- [ ] No input is left unexplained. Files gathered at assembly time are kept apart from
+- [x] No input is left unexplained. Files gathered at assembly time are kept apart from
       historical ones.
 
 **Study inputs (every arm and repetition).**
-- [ ] Each decision's result and report, without image payloads.
-- [ ] The labels, the corrections with their version, the family assignments, the scoring
+- [x] Each decision's result and report, without image payloads.
+- [x] The labels, the corrections with their version, the family assignments, the scoring
       policy, the bootstrap seed and resample count, the multiple-hypothesis correction, and
       the spend ledgers.
 
 **Provenance, kept as three separate records.**
-- [ ] The harness version each run was executed with, read from that run's own descriptor.
-- [ ] The squint commit the package was assembled from (the freeze tag).
-- [ ] The commit used for any recapture.
+- [x] The harness version each run was executed with, read from that run's own descriptor.
+- [x] The squint commit the package was assembled from (the freeze tag).
+- [x] The commit used for any recapture.
 
 **The public manifest,** `docs/baseline/manifest.toml`, holds only: the package version; one
 digest over the package; per model and arm, the decision count and spend; the three
