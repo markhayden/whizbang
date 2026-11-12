@@ -17,6 +17,9 @@ seconds=${WHIZBANG_CANARY_SECONDS:-2}
 # CI runs the long form, on the runner where the fault was seen.
 grep -q -E '^ +run: just search-canary$' .github/workflows/ci.yml ||
   fail ".github/workflows/ci.yml must have a step that runs: just search-canary"
+grep -q -x -F "    WHIZBANG_CANARY_SECONDS=30 bash scripts/tests/scan/canary.sh" justfile ||
+  fail "the justfile must run the search canary for 30 seconds"
+case "$seconds" in '' | *[!0-9]*) fail "WHIZBANG_CANARY_SECONDS must be a whole number of seconds" ;; esac
 grep -B1 -E '^ +run: just search-canary$' .github/workflows/ci.yml | grep -q -F "if: matrix.os == 'macos-15'" ||
   fail ".github/workflows/ci.yml must run the search canary on macos-15"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
@@ -47,6 +50,7 @@ for f in "${holders[@]}"; do printf '%s\0001\000 %s\n' "$f" "$key" >>"$tmp/known
 
 runs=0
 wrong=0
+started=$SECONDS
 deadline=$((SECONDS + seconds))
 while [ "$runs" -lt 20 ] || [ "$SECONDS" -lt "$deadline" ]; do
   runs=$((runs + 1))
@@ -59,6 +63,6 @@ done
 cd "$root"
 [ "$wrong" -eq 0 ] ||
   fail "the search canary: $wrong of $runs searches differed from the known output ($(git --version), $(uname -sr)); the scan cannot be trusted here: see the comment above \`search\` in scripts/scan.sh"
-echo "search canary: $runs searches in about $seconds seconds, all as known ($(git --version))"
+echo "search canary: $runs searches in $((SECONDS - started)) seconds (asked for $seconds), all as known ($(git --version))"
 
 finished

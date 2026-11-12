@@ -247,6 +247,13 @@ check_rule() { # <file>: prints what is wrong with it, if anything
   { sed -n "${trap_line}p" "$f" | grep -F -e "$trap_test" | grep -q -F -e "$trap_end"; } ||
     echo "$f: the EXIT trap does not turn an unmeant exit of 0 into 70 (see the top of scripts/scan.sh)"
   [ "$(sed -n "$((trap_line - 1))p" "$f")" = "done_ok=0" ] || echo "$f: done_ok=0 is not on the line before the EXIT trap"
+  # done_ok=1 only where the script is about to end as it meant to: the next line is an
+  # exit, or there is no next line. (In lib.sh it is the last line of `finished`, which is
+  # the last line of a test.)
+  awk -v file="$f" '
+    was { if ($0 !~ /^[[:space:]]*exit( |$)/ && !(file ~ /tests\/lib\.sh$/ && $0 == "}")) print file ": done_ok=1 on line " (NR - 1) " is not followed by an exit"; was = 0 }
+    /done_ok=1/ && !/^[[:space:]]*#/ { if ($0 !~ /^[[:space:]]*done_ok=1$/) print file ": done_ok=1 is not alone on line " NR; was = 1 }
+  ' "$f"
 }
 while IFS= read -r -d '' f; do
   problems=$(check_rule "$f")
@@ -264,6 +271,17 @@ case "$(check_rule "$tmp/no-parse.sh")" in
   *) fail "the rule finds a trap with no parse before it" ;;
 esac
 [ -z "$(check_rule scripts/scan.sh)" ] || fail "the rule passes scripts/scan.sh"
+# done_ok=1 straight after the trap would switch the trap off.
+awk '{ print } /^trap .* EXIT$/ { print "done_ok=1" }' scripts/scan.sh >"$tmp/early-done.sh"
+case "$(check_rule "$tmp/early-done.sh")" in
+  *"is not followed by an exit"*) ;;
+  *) fail "the rule finds done_ok=1 that is not followed by an exit" ;;
+esac
+printf '%s\n' '"$BASH" -n x' 'done_ok=0' "$(grep -E '^trap .* EXIT$' scripts/scan.sh)" 'true && done_ok=1' 'exit 0' >"$tmp/joined-done.sh"
+case "$(check_rule "$tmp/joined-done.sh")" in
+  *"is not alone on line"*) ;;
+  *) fail "the rule finds done_ok=1 that shares its line" ;;
+esac
 
 # --- Every search with git's grep, anywhere under scripts/, runs on one thread: on several
 # it has lost matches at random on CI's macOS runner (the comment above `search` in
@@ -272,16 +290,25 @@ esac
 tool="git"
 search_word="grep"
 one_thread="-c ${search_word}.threads=1 "
-# unthreaded <folder>: the lines under it that run the search without the option. Between
-# the two words there may be options, each with at most one argument.
+# unthreaded <folder>: the lines under it that run the search without the option, or with
+# an option after it that sets the threads again. Between the two words there may be
+# options, each with at most one argument. The first word may be a variable that holds the
+# command, and a line that ends in a backslash goes on in the next.
 unthreaded() {
-  grep -r -n -E -e "(^|[^[:alnum:]_.-])${tool}[[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?[[:space:]]+)*${search_word}([[:space:]]|\$)" "$1" |
-    grep -v -E -e "^[^:]*:[0-9]+:[[:space:]]*#" |
-    grep -v -F -e "$one_thread$search_word " || true
+  local f
+  while IFS= read -r -d '' f; do
+    sed -e ':more' -e '/\\$/{' -e 'N' -e 's/\\\n[[:space:]]*/ /' -e 'b more' -e '}' "$f" |
+      { grep -n -E -e "(^|[^[:alnum:]_.-])(${tool}|\"?\\$\{?[A-Za-z_][A-Za-z0-9_]*\}?\"?)[[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?[[:space:]]+)*${search_word}([[:space:]]|\$)" || true; } |
+      { grep -v -E -e "^[0-9]+:[[:space:]]*#" || true; } |
+      { grep -v -F -e "$one_thread$search_word " || true; } | sed "s|^|$f:|"
+    sed -e ':more' -e '/\\$/{' -e 'N' -e 's/\\\n[[:space:]]*/ /' -e 'b more' -e '}' "$f" |
+      { grep -n -F -e "$one_thread$search_word " || true; } | { grep -E -e "--threads([= ]|\$)" || true; } | sed "s|^|$f:|"
+  done < <(find "$1" -type f -print0)
+  return 0
 }
 found=$(unthreaded scripts)
 [ -z "$found" ] || fail "a search with $tool $search_word that is not on one thread (add: $one_thread): $found"
-[ "$(grep -c -F -e "$tool -c ${search_word}.threads=1 $search_word" -e "$tool --literal-pathspecs -c ${search_word}.threads=1 $search_word" scripts/scan.sh)" = 4 ] ||
+[ "$(grep -F -e "$tool -c ${search_word}.threads=1 $search_word" -e "$tool --literal-pathspecs -c ${search_word}.threads=1 $search_word" scripts/scan.sh | grep -c -F -e " -a -n -z ")" = 4 ] ||
   fail "scripts/scan.sh runs its four searches on one thread"
 grep -q -x -F "export LC_ALL=C" scripts/scan.sh || fail "scripts/scan.sh keeps the C locale"
 # The rule itself, on lines that break it and lines that do not.
@@ -291,7 +318,13 @@ printf '%s\n' "$tool $search_word -n x" "  if $tool -C there $search_word -q x; 
 printf '%s\n' "# $tool $search_word -n x" "$tool ${one_thread}$search_word -n x" "$tool -C there ${one_thread}$search_word x" \
   "$tool log --$search_word=x" "$tool status | $search_word x" "echo dig$tool $search_word" \
   "for t in $tool bash $search_word awk; do" >"$tmp/threads/good.sh"
-[ "$(unthreaded "$tmp/threads" | wc -l | tr -d ' ')" = 3 ] || { unthreaded "$tmp/threads" >&2; fail "the rule finds three searches not on one thread"; }
+printf '%s\n' "\$GIT $search_word -n x" "\"\$tool\" $search_word -n x" "\${GIT} -C there $search_word x" \
+  "$tool -C there \\" "  $search_word -n x" "$tool ${one_thread}$search_word --threads=4 x" \
+  "$tool ${one_thread}$search_word --threads 4 x" >"$tmp/threads/worse.sh"
+printf '%s\n' "\$GIT ${one_thread}$search_word -n x" "$tool \\" "  ${one_thread}$search_word -n x" \
+  "\$words | $search_word x" "echo \"\$out\" | $search_word -q x" >"$tmp/threads/better.sh"
+[ "$(unthreaded "$tmp/threads" | wc -l | tr -d ' ')" = 9 ] || { unthreaded "$tmp/threads" >&2; fail "the rule finds nine searches not on one thread"; }
+unthreaded "$tmp/threads" | grep -q -F "better.sh" && fail "the rule passes a variable, and a line that goes on, on one thread"
 unthreaded "$tmp/threads" | grep -q -F "good.sh" && fail "the rule passes searches on one thread and what is not a search"
 
 # --- run.sh: the syntax check comes before any test, and a test file passes only when it

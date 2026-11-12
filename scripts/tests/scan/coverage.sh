@@ -6,50 +6,7 @@
 # the search did on CI's macOS runner (the comment above `search` in scripts/scan.sh).
 source "$(dirname "$0")/common.sh"
 
-# The stand-in: any git command but a search goes to git as it is. A search's output loses
-# every record and every name of the file LOSE names, when LOSE_WHEN says so: `always`, or
-# `sometimes` (every other search for a pattern, never the census).
-real_git=$(command -v git)
-mkdir "$tmp/bin"
-cat >"$tmp/bin/git" <<SH
-#!/usr/bin/env bash
-real="$real_git"
-sep=\$(printf '\\001')
-SH
-cat >>"$tmp/bin/git" <<'SH'
-search=0 census=0
-for arg in "$@"; do
-  case "$arg" in
-    grep) search=1 ;;
-    -l) census=1 ;;
-  esac
-done
-lose=0
-if [ "$search" -eq 1 ] && [ -n "${LOSE:-}" ]; then
-  case "${LOSE_WHEN:-}" in
-    always) lose=1 ;;
-    sometimes)
-      if [ "$census" -eq 0 ]; then
-        echo x >>"$LOSE_COUNT"
-        [ $(($(wc -l <"$LOSE_COUNT") % 2)) -eq 0 ] || lose=1
-      fi
-      ;;
-  esac
-fi
-[ "$lose" -eq 1 ] || exec "$real" "$@"
-status=0
-"$real" "$@" >"$LOSE_COUNT.out" || status=$?
-# Records are lines; a list of names (-l, the census) is one line of names, each ended by
-# the separator.
-if [ "$census" -eq 1 ]; then
-  edit="s|\([0-9a-f]\{40,64\}:\)\{0,1\}$LOSE$sep||g"
-else
-  edit="\\|^\([0-9a-f]*:\)\{0,1\}$LOSE$sep|d"
-fi
-LC_ALL=C tr '\0' "$sep" <"$LOSE_COUNT.out" | LC_ALL=C sed -e "$edit" | LC_ALL=C tr "$sep" '\0'
-exit "$status"
-SH
-chmod +x "$tmp/bin/git"
+stand_in_for_git
 export LOSE_COUNT="$tmp/lose-count"
 losing() { # <when> <file> <command...>
   local when=$1 file=$2
@@ -79,9 +36,26 @@ expect_fail "a file lost from every search, a range" "were not looked in by the 
   losing always lost.txt "$scan" --range "$first" HEAD
 says "2 of the 3 files to cover"
 never_clean "a lost file, a range"
+# A file that can be executed is a file of the commit like any other.
+commit_file "feat: a tool" tool.sh "token = $key"
+chmod +x tool.sh
+git add tool.sh
+git commit -q --no-verify -m "feat: the tool can be run"
+[ "$(git ls-files -s tool.sh | cut -d' ' -f1)" = 100755 ] || fail "tool.sh is committed as a file that can be run"
+expect_fail "a file that can be run, lost from every search, a range" "were not looked in by the search (commits)" \
+  losing always tool.sh "$scan" --range HEAD~1 HEAD
+git reset -q --hard HEAD~2
 printf 'refs/heads/coverage %s refs/heads/coverage %s\n' "$(git rev-parse HEAD)" "$zeros" >"$tmp/push-line"
 expect_fail "a file lost from every search, a push" "were not looked in by the search (commits)" \
   losing always lost.txt bash -c "'$scan' --pre-push origin '$remote' <'$tmp/push-line'"
+# An untracked file, lost from the search and from git's own list of files as well: the
+# census lists untracked files without git walking the folder, so it still fails.
+printf 'token = %s\n' "$key" >not-added.txt
+expect_fail "an untracked file lost from every search and from git's list" "were not looked in by the search (worktree)" \
+  losing always not-added.txt "$scan"
+never_clean "a lost untracked file"
+expect_fail "the same file, with git as it is" "not-added.txt:1" "$scan"
+rm not-added.txt
 # The scan's own text files (paths, messages, link targets) are counted too.
 expect_fail "one of the scan's text files lost from every search" "were not looked in by the search (files)" \
   losing always "tree-paths/working-tree" "$scan"
@@ -90,6 +64,7 @@ expect_fail "one of the scan's text files lost from every search" "were not look
 expect_fail "a file lost from every other search, working tree" "two runs of the same search disagree" \
   losing sometimes lost.txt "$scan"
 says "refusing to pass"
+says "The ordinary cause is a file that changed during the scan: run it again."
 never_clean "a file lost now and then, working tree"
 expect_fail "a file lost from every other search, a range" "two runs of the same search disagree" \
   losing sometimes lost.txt "$scan" --range "$first" HEAD
@@ -123,6 +98,15 @@ printf 'token = %s\n' "$key" >untracked.log
 expect_fail "a key in a tracked file that an ignore rule matches" "kept.log:1" "$scan"
 quiet "untracked.log"
 rm untracked.log
+# And when such a file cannot be read, the scan fails rather than pass it by.
+chmod 000 kept.log
+if [ -r kept.log ]; then
+  echo "skip: an unreadable tracked file that an ignore rule matches; this user can read a file with mode 000"
+else
+  expect_fail "an unreadable tracked file that an ignore rule matches" "git said something during a search" "$scan"
+  never_clean "an unreadable ignored tracked file"
+fi
+chmod 644 kept.log
 
 # The canary (scripts/tests/scan/canary.sh) fails when a search loses a file, even once in
 # a while, and says how often.
