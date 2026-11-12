@@ -196,7 +196,7 @@ the middle one is the front door.
 ### Identities
 
 The old tools mean different things by "frame", so whizbang separates three things. The types
-are decided at checkpoint 1A.
+are decided in ADR 0001 (`docs/adr/0001-identities.md`).
 
 - **Image identity:** two digests. One is of the file's bytes. The other is of its canonical
   pixels, after orientation, channel order, alpha and colour interpretation are normalised, so
