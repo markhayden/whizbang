@@ -7,9 +7,9 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 setup:
     scripts/setup.sh
 
-# The fast tier: format check, lint, the repo checks, the script tests, then the fast tests
-# with their timing table.
-check: fmt-check clippy graph deny test-scripts timing
+# The fast tier: format check, lint, the repo checks, the script tests, the generated
+# reference against a fresh copy, then the fast tests with their timing table.
+check: fmt-check clippy graph deny test-scripts docs-check timing
 
 fmt-check:
     cargo fmt --all -- --check
@@ -39,6 +39,14 @@ deny-advisories:
 # The tests of the scripts themselves (scripts/tests/).
 test-scripts:
     scripts/tests/run.sh
+
+# Regenerate the reference (docs/reference/) from `whizbang describe --json`.
+docs:
+    scripts/docs.sh
+
+# Fails when the committed reference differs from a fresh generation.
+docs-check:
+    scripts/docs.sh --check
 
 # The real timeout: a fixture test that sleeps 31 seconds fails by timeout at 30. About 35
 # seconds, so it is not in `check`; CI runs it on one runner.
