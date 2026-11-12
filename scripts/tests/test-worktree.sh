@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# scripts/worktree.sh: add makes a worktree and a branch at a freshly fetched origin/main;
+# remove takes them away only when the branch is merged there; a bad slug changes nothing.
+# Everything runs in a throwaway repo whose "origin" is a bare repo beside it. The script
+# under test is this checkout's copy, committed into the throwaway repo, because it works
+# on the repo it lives in.
+source "$(dirname "$0")/lib.sh"
+
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+unset WHIZBANG_WORDLIST
+
+w=$(cd "$tmp" && pwd -P)/w
+repo=$w/whizbang
+other=$w/elsewhere/other
+mkdir -p "$w/elsewhere"
+
+# new_clone <folder>: a checkout with an identity and `origin`, on the branch main.
+new_clone() {
+  git init -q "$1"
+  git -C "$1" symbolic-ref HEAD refs/heads/main
+  git -C "$1" config user.name "A Tester"
+  git -C "$1" config user.email "tester@example.com"
+  git -C "$1" remote add origin "$w/origin.git"
+}
+
+git init -q --bare "$w/origin.git"
+git -C "$w/origin.git" symbolic-ref HEAD refs/heads/main
+new_clone "$repo"
+mkdir -p "$repo/scripts/hooks"
+cp scripts/worktree.sh "$repo/scripts/worktree.sh"
+for hook in pre-commit commit-msg pre-push; do
+  printf '%s\n' '#!/bin/sh' 'exit 0' >"$repo/scripts/hooks/$hook"
+  chmod +x "$repo/scripts/hooks/$hook"
+done
+git -C "$repo" add scripts
+git -C "$repo" commit -q -m "build: the script and its hooks"
+git -C "$repo" push -q origin main
+new_clone "$other"
+git -C "$other" pull -q origin main
+
+# wt <arguments...>: the script, run from the main checkout of the throwaway repo.
+wt() { (cd "$repo" && scripts/worktree.sh "$@"); }
+# state: every folder beside the repo, and every local branch.
+state() {
+  ls "$w"
+  git -C "$repo" for-each-ref --format='%(refname)' refs/heads
+}
+unchanged() {
+  [ "$(state)" = "$1" ] || { state >&2; fail "$2: something was created or removed"; }
+}
+# advance_origin <file>: another checkout adds a commit to origin's main.
+advance_origin() {
+  git -C "$other" pull -q origin main
+  echo "$1" >"$other/$1"
+  git -C "$other" add "$1"
+  git -C "$other" commit -q -m "docs: $1"
+  git -C "$other" push -q origin main
+}
+
+# --- Where it runs -----------------------------------------------------------------------
+
+expect_fail "from a folder that is no repo" "run it from inside the repo it belongs to" \
+  bash -c 'cd "$1" && "$2/scripts/worktree.sh" list' - "$w" "$repo"
+expect_fail "from another repo" "run it from inside the repo it belongs to" \
+  bash -c 'cd "$1" && "$2/scripts/worktree.sh" add s1' - "$other" "$repo"
+expect_fail "no command" "usage: worktree.sh" wt
+expect_fail "an unknown command" "usage: worktree.sh" wt prune
+expect_fail "add with no slug" "usage: worktree.sh" wt add
+expect_fail "add with two slugs" "usage: worktree.sh" wt add s1 s2
+expect_fail "remove with no slug" "usage: worktree.sh" wt remove
+expect_fail "list with an argument" "usage: worktree.sh" wt list s1
+
+# --- The hooks must be installed first ---------------------------------------------------
+
+before=$(state)
+expect_fail "add before the hooks are installed" "the hooks are not installed" wt add s1
+unchanged "$before" "add before the hooks are installed"
+git -C "$repo" config core.hooksPath scripts/hooks
+
+# --- A bad slug changes nothing ----------------------------------------------------------
+
+long=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+[ "${#long}" -eq 65 ] || fail "the long slug is 65 characters"
+for bad in '' '-' '-x' '--force' '--detach' 'a/b' '/abs' '..' '../x' 'a..b' 'x.y' 'A' 'Task' 'a b' ' a' \
+  'a;b' 'a$b' 'a*' 'a~1' 'a^' 'a:b' 'a@{0}' 'a\b' $'a\nb' $'a\tb' "$long"; do
+  expect_fail "add with the slug [$bad]" "a slug is" wt add "$bad"
+  unchanged "$before" "add with the slug [$bad]"
+  expect_fail "remove with the slug [$bad]" "a slug is" wt remove "$bad"
+  unchanged "$before" "remove with the slug [$bad]"
+done
+expect_fail "add main" "the slug main is not a task" wt add main
+expect_fail "remove main" "the slug main is not a task" wt remove main
+unchanged "$before" "the slug main"
+
+# --- add ---------------------------------------------------------------------------------
+
+# origin's main moves after the repo last fetched it: the worktree starts at the new commit.
+advance_origin one
+tip=$(git -C "$w/origin.git" rev-parse refs/heads/main)
+[ "$(git -C "$repo" rev-parse refs/remotes/origin/main)" != "$tip" ] || fail "the repo has not fetched the new commit yet"
+
+expect_pass "add" wt add s1
+[ "$(git -C "$w/whizbang-s1" rev-parse HEAD)" = "$tip" ] || fail "add: the worktree starts at the fetched origin/main"
+[ "$(git -C "$w/whizbang-s1" symbolic-ref --short HEAD)" = s1 ] || fail "add: the worktree is on the branch s1"
+[ -z "$(git -C "$repo" config --get branch.s1.merge || true)" ] || fail "add: the new branch follows no upstream"
+grep -q -F "hooks ok" "$tmp/out" || fail "add: says the hooks are installed"
+grep -q -F "WHIZBANG_WORDLIST is not set: set it to the private word list the owner provides" "$tmp/out" ||
+  fail "add: reminds about the word list"
+
+# With the variable set, its value is never printed.
+expect_pass "add with the word list set" env WHIZBANG_WORDLIST="$w/a-private-place" bash -c 'cd "$1" && scripts/worktree.sh add s2' - "$repo"
+grep -q -F "WHIZBANG_WORDLIST is set" "$tmp/out" || fail "add: says the variable is set"
+if grep -q -F "a-private-place" "$tmp/out"; then fail "add: printed the value of WHIZBANG_WORDLIST"; fi
+
+before=$(state)
+expect_fail "add a slug that has a folder and a branch" "is already there; nothing was created" wt add s1
+git -C "$repo" branch only-a-branch
+expect_fail "add a slug that has a branch" "the branch only-a-branch is already there" wt add only-a-branch
+git -C "$repo" branch -D only-a-branch >/dev/null
+mkdir "$w/whizbang-only-a-folder"
+expect_fail "add a slug that has a folder" "is already there; nothing was created" wt add only-a-folder
+[ ! -e "$w/whizbang-only-a-folder/.git" ] || fail "add: a folder that was there is left alone"
+rmdir "$w/whizbang-only-a-folder"
+unchanged "$before" "add a slug that is taken"
+
+# From inside another worktree, the new one still goes beside the main checkout.
+expect_pass "add from a worktree" bash -c 'cd "$1" && scripts/worktree.sh add s3' - "$w/whizbang-s1"
+[ -d "$w/whizbang-s3" ] || fail "add from a worktree: the folder is beside the main checkout"
+
+# A worktree whose branch has no hooks is made, and reported.
+git -C "$other" pull -q origin main
+git -C "$other" rm -q scripts/hooks/pre-push
+git -C "$other" commit -q -m "build: no pre-push hook"
+git -C "$other" push -q origin main
+expect_fail "add when main has no pre-push hook" "its hook scripts/hooks/pre-push is missing" wt add s4
+
+# --- list --------------------------------------------------------------------------------
+
+expect_pass "list" wt list
+for name in whizbang-s1 whizbang-s2 whizbang-s3 whizbang-s4 '[s1]' '[main]'; do
+  grep -q -F -e "$name" "$tmp/out" || { cat "$tmp/out" >&2; fail "list: names $name"; }
+done
+
+# --- remove ------------------------------------------------------------------------------
+
+# Not merged: a commit on the branch that origin/main does not have, pushed or not.
+echo work >"$w/whizbang-s1/work"
+git -C "$w/whizbang-s1" add work
+git -C "$w/whizbang-s1" commit -q -m "feat: work"
+before=$(state)
+expect_fail "remove a branch that is not merged" "the branch s1 is not merged into origin/main; nothing was removed" wt remove s1
+git -C "$w/whizbang-s1" push -q origin s1
+expect_fail "remove a branch that is pushed but not merged" "is not merged into origin/main; nothing was removed" wt remove s1
+for flag in --force -f; do
+  expect_fail "remove with $flag" "usage: worktree.sh" wt remove "$flag" s1
+  expect_fail "remove with $flag after the slug" "usage: worktree.sh" wt remove s1 "$flag"
+done
+unchanged "$before" "remove a branch that is not merged"
+[ -f "$w/whizbang-s1/work" ] || fail "remove: the unmerged work is still there"
+
+# Merged by another checkout, with a merge commit: the repo learns of it by fetching.
+git -C "$other" fetch -q origin
+git -C "$other" merge -q --no-ff -m "Merge s1" origin/s1
+git -C "$other" push -q origin main
+expect_fail "remove from inside the worktree" "run it from another worktree" \
+  bash -c 'cd "$1" && scripts/worktree.sh remove s1' - "$w/whizbang-s1"
+unchanged "$before" "remove from inside the worktree"
+expect_pass "remove a merged branch" wt remove s1
+[ ! -e "$w/whizbang-s1" ] || fail "remove: the worktree is gone"
+if git -C "$repo" show-ref --verify --quiet refs/heads/s1; then fail "remove: the local branch is gone"; fi
+git -C "$w/origin.git" show-ref --verify --quiet refs/heads/s1 || fail "remove: the branch on origin is left alone"
+
+# Merged (no commit of its own), but the worktree holds a file git does not ignore.
+echo note >"$w/whizbang-s2/note"
+before=$(state)
+expect_fail "remove a worktree with an untracked file" "git would not remove" wt remove s2
+unchanged "$before" "remove a worktree with an untracked file"
+[ -f "$w/whizbang-s2/note" ] || fail "remove: the untracked file is still there"
+rm "$w/whizbang-s2/note"
+expect_pass "remove once the worktree is clean" wt remove s2
+[ ! -e "$w/whizbang-s2" ] || fail "remove: the clean worktree is gone"
+
+# A branch that is checked out somewhere else is never deleted.
+git -C "$w/whizbang-s3" checkout -q -b s5
+before=$(state)
+expect_fail "remove a branch checked out in another folder" "is checked out in" wt remove s5
+expect_fail "remove a slug whose folder is on another branch" "is not a worktree on the branch s3" wt remove s3
+unchanged "$before" "remove a branch that is checked out elsewhere"
+git -C "$w/whizbang-s3" checkout -q s3
+git -C "$repo" branch -D s5 >/dev/null
+
+# A branch with no worktree, and a slug with nothing.
+git -C "$repo" branch -q loose refs/remotes/origin/main
+expect_pass "remove a merged branch that has no worktree" wt remove loose
+if git -C "$repo" show-ref --verify --quiet refs/heads/loose; then fail "remove: the loose branch is gone"; fi
+before=$(state)
+expect_fail "remove a slug that has nothing" "there is no local branch nothing-here; nothing was removed" wt remove nothing-here
+unchanged "$before" "remove a slug that has nothing"
+
+# origin cannot be reached: nothing is removed on the word of an old fetch.
+mv "$w/origin.git" "$w/origin.gone"
+before=$(state)
+expect_fail "remove when origin cannot be fetched" "cannot fetch origin/main; nothing was changed" wt remove s3
+expect_fail "add when origin cannot be fetched" "cannot fetch origin/main; nothing was changed" wt add s6
+unchanged "$before" "origin cannot be fetched"
+mv "$w/origin.gone" "$w/origin.git"
+expect_pass "remove the rest" wt remove s3
+finished
