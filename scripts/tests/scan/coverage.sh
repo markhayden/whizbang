@@ -127,9 +127,9 @@ rm untracked.log
 # The canary (scripts/tests/scan/canary.sh) fails when a search loses a file, even once in
 # a while, and says how often.
 expect_fail "the canary with a search that loses a file now and then" "searches differed from the known output" \
-  losing sometimes x.dat bash -c "cd '$root' && bash scripts/tests/scan/canary.sh"
+  losing sometimes x.dat bash -c "cd '$root' && WHIZBANG_CANARY_SECONDS=0 bash scripts/tests/scan/canary.sh"
 says "the search canary: "
 expect_fail "the canary with a search that always loses a file" "searches differed from the known output" \
-  losing always x.dat bash -c "cd '$root' && bash scripts/tests/scan/canary.sh"
+  losing always x.dat bash -c "cd '$root' && WHIZBANG_CANARY_SECONDS=0 bash scripts/tests/scan/canary.sh"
 
 finished
