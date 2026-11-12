@@ -605,7 +605,7 @@ fn a_secret_is_taken_out_of_every_text_a_record_takes_from_outside() {
     // run was invalid; and a second secret that JSON would escape.
     let key = made_up_key("");
     let quoted = "pa\"ss\\word".to_owned();
-    let secrets = Secrets::new([key.clone(), quoted.clone()]);
+    let secrets = Secrets::new([key.clone(), quoted.clone()]).unwrap();
     let world = world();
     let prepared = echo(&world, &format!("my key is {key} and {quoted}"));
     let outcome = Outcome::Error {

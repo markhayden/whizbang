@@ -141,11 +141,55 @@ for holding less than it says. No schema library is added to the build.
 
 ### Redaction
 
-`Secrets` holds the values that must never be written. It is squint's pass: every secret
-is replaced by `[redacted]` where it stands as it is, and where it stands in the form a
-JSON string gives it, so a secret quoted inside a JSON body is found. Two things are
-added: a secret that holds another is replaced whole, because the longer is replaced
-first; and the type does not print what it holds.
+`Secrets` holds the values that must never be written, and does not print them. The pass
+began as squint's, which replaced a secret by `[redacted]` where it stood as it was and
+where it stood as a JSON string escapes it. Here:
+
+- **It works on bytes, whatever their encoding.** A body with one byte that is not UTF-8,
+  as a worker's error output cut in the middle of a character is, is searched like any
+  other (`Secrets::redact_bytes`); a text is redacted as its bytes.
+- **Four forms of each secret are searched for:** as it is; as a JSON string escapes it;
+  the same with each `/` written `\/`; and percent-encoded, as a URL holds it, with the
+  hex digits in either case.
+- **Everything is found before anything is replaced.** Every form of every secret is
+  looked for over the bytes as they were given; stretches that overlap are one stretch;
+  each stretch is replaced once. So a secret that holds another is replaced whole, two
+  secrets that overlap leave no tail of either, a secret that is part of the marker
+  cannot rewrite the marker, and a secret that ends in a backslash does not leave half
+  of its own JSON escape behind.
+- **It is one pass.** At each byte, only the forms that start with that byte are
+  compared. The cost is the length of the body times the number of forms that share a
+  first byte, not times the number of secrets; there is no bound on how many secrets
+  there are.
+- **A secret is at least 8 bytes** (`SECRET_MIN_BYTES`). A shorter value would match
+  inside ordinary words and inside JSON's own escapes: a secret `n` would turn `\n` into
+  `\[redacted]`. A shorter value is refused when the secrets are built
+  (`SecretRefused`), and then none are built: whoever meant to protect it is told that it
+  is not protected. One value is left out without a refusal, the empty one: it is what a
+  variable that was never set expands to, and refusing it would make every key that is
+  not configured an error.
+
+A redacted body is searched as bytes, not as JSON. A body that was JSON is still JSON
+after it wherever a secret stood whole in one of its forms. One case can break it: a
+secret that ends in a backslash, found as it stands in front of an escape that is not its
+own, as `abcdefgh\` in front of `"` in `abcdefgh\"`; the string then ends early.
+
+#### What redaction does not find
+
+Redaction is by value and by form. It finds the secrets it was told of, in the four forms
+above, and nothing else:
+
+- a key it was not told of: it does not know a key by its shape;
+- a secret inside base64, as in a basic authorization header (`user:<key>`, encoded);
+- a secret with a character written as a `\u00XX` escape that a JSON writer need not
+  have used;
+- a secret in UTF-16 or any encoding in which its bytes are not its UTF-8 bytes;
+- a secret split across two texts, or across two lines of a journal;
+- a secret compressed, hashed, or inside an image.
+
+A test pins the first three encoded forms as getting through, so that this list stays
+true. They are on `docs/carry-over.md` for checkpoint 1B, where a config first holds a
+key and a worker first returns a body.
 
 In a record, redaction is applied to each text that comes from outside the build, before
 the record is encoded: an argument's value when it is a text, an error's kind and
@@ -168,9 +212,6 @@ message has written it into the record. A `CallError` shows no path,
 as its text or as `{:?}`; the store's own error does, and an action that quotes one in a
 message quotes it without (`store::Error::without_paths`). Nothing holds an action to
 that (`docs/carry-over.md`).
-
-Bytes that are not UTF-8, as an image is not, cannot be searched for a text and are kept
-as they are (`Secrets::redact_bytes`).
 
 ### Where a record is, in a store
 
