@@ -1291,7 +1291,8 @@ fn a_store_that_lost_its_pointer_is_refused_and_nothing_in_it_is_removed() {
 fn an_empty_directory_and_an_unfinished_creation_become_a_store() {
     // What a creation that did not finish can leave: some of the three folders, empty,
     // and in staging the first pointer, whole or cut short.
-    let cases: [(&str, &[&str], Option<&[u8]>); 5] = [
+    type Case = (&'static str, &'static [&'static str], Option<&'static [u8]>);
+    let cases: [Case; 5] = [
         ("an empty directory", &[], None),
         ("one folder", &["objects"], None),
         ("two folders", &["generations", "staging"], None),
