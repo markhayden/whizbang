@@ -27,6 +27,12 @@ backlog. This file holds what you cannot work out from the code.
 | `just test-scripts-slow` | After changing `.config/nextest.toml` or `scripts/timing.sh`: about 40 seconds; a 31-second test really fails by timeout (CI runs that part as `just test-timeout`) |
 | `scripts/heavy.sh <label> <command...>` | Around any heavy command: one runs at a time on a machine, the next waits |
 
+An action's name and purpose are printed in the reference as they are, so `just docs` refuses
+any that could be read as markup. A name is a lower-case letter, then lower-case letters,
+digits, `_` or `-`, 64 characters at most. A purpose is one line of at most 200 characters
+that starts with a letter, does not end with a space, and holds only ASCII letters, digits,
+spaces and `. , ; : ' " ( ) / % + -`. The rule is at the top of `scripts/docs.sh`.
+
 ## Roles
 
 - **Builder:** does one task from the plan in a worktree, on one branch, and hands back the

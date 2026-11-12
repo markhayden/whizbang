@@ -1,6 +1,6 @@
 # Whizbang
 
-Draft 12, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
+Draft 13, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
 is edited as things change and is not a history.
 
 Where this spec says a detail is "decided at" a checkpoint, the constraint written here binds
@@ -805,8 +805,8 @@ just ci                 # what a pull request runs: check, advisories, a smoke o
 `just setup`, `check`, `test-scripts-slow`, `docs`, `scan`, `scan-range`,
 `scan-range-secrets` and `ci` exist; the others arrive with the milestone that needs them.
 `just check` is made of recipes that also run alone: `fmt-check`, `clippy`, `graph`, `deny`,
-`test-scripts`, `docs-check`, `timing`. CI also runs `just test-timeout` on one runner: a test that sleeps 31 seconds must
-fail by timeout.
+`test-scripts`, `docs-check`, `timing`. CI also runs `just test-timeout` on one runner: a test
+that sleeps 31 seconds must fail by timeout.
 
 ## 12. Project structure
 
@@ -907,7 +907,11 @@ anything deferred goes on the carry-over list with a milestone.
 
 **Documentation that cannot drift.** `whizbang describe` is static: it reports what the build
 can do and contains no installed models, credentials or reachability. The reference is
-generated from it, and CI fails if the committed copy is stale. Guide examples are marked with
+generated from it, and CI fails if the committed copy is stale. The generator prints names
+and purposes as they are, so it refuses any that could be read as markup: an action's name is
+a lower-case letter followed by lower-case letters, digits, `_` or `-` (64 characters at
+most), and its purpose is one plain line of at most 200 characters (the exact characters
+are listed at the top of `scripts/docs.sh`). Guide examples are marked with
 the tier that runs them and use offline fixtures in the fast tier; a documentation check never
 spends.
 

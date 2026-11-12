@@ -25,6 +25,7 @@ tagged squint, and write up the 2026-11-11 study from it.
 |---|---|---|---|
 | whizbang | Check the title and body of a pull request for secrets, listed words and attribution: no scan sees them | 0, with `review-merge` in task S5 | `review-merge` runs both scans and the attribution check over the title and body before a merge |
 | whizbang | A pull request can change the workflow that checks it; CI uses the base branch's scan but the pull request's own workflow file | 0, with `review-merge` in task S5 | `review-merge` refuses a change under `.github/` that the reviewer has not read |
+| whizbang | The rule for an action's name and purpose (the top of `scripts/docs.sh`) is enforced only when the reference is generated; an action that breaks it can still be registered | 1A, with the execution contract | Registering an action whose name or purpose breaks the rule fails in Rust, with a test |
 | rascal | Say on the terminal when a run was not checked | 4 | The loop's output states checked, unchecked and why |
 | rascal | Keep the cause when a check fails | 4 | A failed nested check returns its real error |
 | rascal | A check cannot receive the variables it needs | 4 | Covered by nested calls; verified by the loop's acceptance case |
