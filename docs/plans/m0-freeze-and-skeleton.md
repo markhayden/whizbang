@@ -69,25 +69,25 @@ A revert of a merge undoes a source change. It does not undo anything done outsi
 
 One commit to `main`, by the orchestrating session.
 
-- [ ] `Cargo.toml` workspace; `rust-toolchain.toml` at 1.99.1; edition 2024; `unsafe` forbidden;
+- [x] `Cargo.toml` workspace; `rust-toolchain.toml` at 1.99.1; edition 2024; `unsafe` forbidden;
       `unwrap` and `expect` denied outside tests.
-- [ ] `crates/whizbang-core`: the static description type (a list of actions, empty).
-- [ ] `crates/whizbang`: `whizbang describe [--json]` and `--version`; one integration test:
+- [x] `crates/whizbang-core`: the static description type (a list of actions, empty).
+- [x] `crates/whizbang`: `whizbang describe [--json]` and `--version`; one integration test:
       `describe --json` is valid, lists no actions, and is byte-identical across two runs.
-- [ ] `justfile`: `setup`, `check`, `scan`, `ci`.
-- [ ] `scripts/scan.sh` (first version: secrets patterns over the tree; clean-room counts from
+- [x] `justfile`: `setup`, `check`, `scan`, `ci`.
+- [x] `scripts/scan.sh` (first version: secrets patterns over the tree; clean-room counts from
       a word list whose path comes from an environment variable; fails closed when the
       variable is unset or the list is unreadable or empty).
-- [ ] `scripts/hooks/`: `pre-commit` (format check), `commit-msg` (rejects attribution),
+- [x] `scripts/hooks/`: `pre-commit` (format check), `commit-msg` (rejects attribution),
       `pre-push` (`just scan`). `just setup` installs them and prints what it installed.
-- [ ] `AGENTS.md` (first version: commands, boundaries, the no-attribution rule, where the spec
+- [x] `AGENTS.md` (first version: commands, boundaries, the no-attribution rule, where the spec
       and plans are) and `CLAUDE.md` importing it.
-- [ ] `.claude/agents/builder.md` and `reviewer.md` as checklists: the builder works in a
+- [x] `.claude/agents/builder.md` and `reviewer.md` as checklists: the builder works in a
       worktree and hands back a branch; the reviewer checks a branch against the spec and the
       task; neither merges.
-- [ ] `.github/workflows/ci.yml`: `macos-15` and `ubuntu-22.04` jobs that run `just ci`, and
+- [x] `.github/workflows/ci.yml`: `macos-15` and `ubuntu-22.04` jobs that run `just ci`, and
       one aggregate job named `ci` that passes only when both do.
-- [ ] After the first green run: branch protection on `main` requiring the `ci` job.
+- [x] After the first green run: branch protection on `main` requiring the `ci` job.
 
 **Done when:** on a fresh clone, `just setup && just check && just scan` pass; the first CI run
 is green; a direct push to `main` is then refused.
@@ -98,15 +98,15 @@ others.
 
 **Depends on:** S0.
 
-- [ ] `scripts/crate-graph.txt` and `scripts/check-crate-graph.sh` with the edges of `SPEC.md`
+- [x] `scripts/crate-graph.txt` and `scripts/check-crate-graph.sh` with the edges of `SPEC.md`
       section 3; `just check` runs it.
-- [ ] `deny.toml` (the old repos' licence allowlist; unknown registries denied).
-- [ ] `.config/nextest.toml`: a per-test timeout of 30 seconds in the fast tier.
-- [ ] `scripts/timing.sh`: seconds per test suite, compilation excluded; `just check` prints
+- [x] `deny.toml` (the old repos' licence allowlist; unknown registries denied).
+- [x] `.config/nextest.toml`: a per-test timeout of 30 seconds in the fast tier.
+- [x] `scripts/timing.sh`: seconds per test suite, compilation excluded; `just check` prints
       the table and fails when test time exceeds 180 seconds.
-- [ ] A smoke of the release binary (`cargo build --release`, then `describe`) in `just ci`.
-- [ ] `scripts/heavy.sh`: one heavy command at a time on this machine.
-- [ ] Tool versions pinned in `just setup`.
+- [x] A smoke of the release binary (`cargo build --release`, then `describe`) in `just ci`.
+- [x] `scripts/heavy.sh`: one heavy command at a time on this machine.
+- [x] Tool versions pinned in `just setup`.
 
 **Done when:** `just check` prints a timing table; a branch that adds a forbidden crate edge
 fails; a test that sleeps 31 seconds fails by timeout.
@@ -115,17 +115,17 @@ fails; a test that sleeps 31 seconds fails by timeout.
 
 **Depends on:** S0.
 
-- [ ] The scan covers, for a pushed range, every outgoing commit's changed files, paths and
+- [x] The scan covers, for a pushed range, every outgoing commit's changed files, paths and
       message, and the final tree; the names of pushed branches and tags; and the message of
       an annotated tag. What is outgoing is worked out from the refs the destination remote
       already has and the updates being pushed; a commit being on local `main` is not
       evidence it was published. Every commit that becomes newly reachable on the remote is
       scanned. If the remote's state cannot be established, the scan fails.
-- [ ] Patterns: provider key shapes; values from a local `.env` if one exists; absolute home
+- [x] Patterns: provider key shapes; values from a local `.env` if one exists; absolute home
       paths; email addresses.
-- [ ] CI runs the secrets scan and the attribution check over every commit of a pull request,
+- [x] CI runs the secrets scan and the attribution check over every commit of a pull request,
       so a commit made on another machine is still checked.
-- [ ] Tests: a planted fake key fails; a key added in one commit and deleted in the next
+- [x] Tests: a planted fake key fails; a key added in one commit and deleted in the next
       fails; a commit with an attribution line fails in CI; a key added and then deleted in commits that are on local `main` but
       not on the remote, pushed under a new branch name, fails; an annotated tag whose message
       holds a planted key, on a clean commit, fails; an empty word list fails; clean-room output is counts only.
@@ -200,19 +200,19 @@ Each task runs in the named repo, under that repo's own rules and checks.
 
 Read-only. Before anything in this track changes a repo.
 
-- [ ] For rascal, squint, wafflery and table-manners, after a fetch: local and remote `main`
+- [x] For rascal, squint, wafflery and table-manners, after a fetch: local and remote `main`
       commits; dirty tracked files; untracked files; every local and remote branch tip that is
       not an ancestor of `origin/main`; every worktree with its commit and whether it is clean.
-- [ ] For every worktree that is a candidate for removal, its ignored contents too: run
+- [x] For every worktree that is a candidate for removal, its ignored contents too: run
       outputs, lab folders, local data and anything else git does not track. Each folder or
       file that could not be rebuilt gets its own line.
-- [ ] A disposition for each line: merge, archive tag, hand to its owner, or discard with a
+- [x] A disposition for each line: merge, archive tag, hand to its owner, or discard with a
       reason. Written to `docs/plans/m0-inventory.md`.
-- [ ] Known at the time of writing, to be confirmed by the inventory: rascal's checkout is
+- [x] Known at the time of writing, to be confirmed by the inventory: rascal's checkout is
       behind its remote and has an uncommitted edit to `labs/segment-01/candidates.md` that
       belongs to the owner; wafflery has two session-grant branches that are not on `main`;
       squint has an unmerged `origin/contract-0.6` and a worktree on `m14-contract`.
-- [ ] Reconcile the backlog: every open item in each repo's task list and checkpoint reviews
+- [x] Reconcile the backlog: every open item in each repo's task list and checkpoint reviews
       (including rascal's milestone 14 follow-ups R1 to R6) is on `docs/carry-over.md` with a
       milestone, or dropped there with a reason.
 
@@ -223,10 +223,10 @@ agreed to each "discard" line.
 
 Carried out by the rascal session; this plan tracks it.
 
-- [ ] The owner's hand check, part B, with the checker's per-call cap raised so a squint check
+- [x] The owner's hand check, part B, with the checker's per-call cap raised so a squint check
       fits (the documented cap of one cent cannot cover squint's reservation).
-- [ ] "Second attempt" recorded in `docs/reviews/m14-checkpoint.md`; local CI; tag `m14`.
-- [ ] Tag `m13` at the commit its review names, with a line that the in-playground check moved
+- [x] "Second attempt" recorded in `docs/reviews/m14-checkpoint.md`; local CI; tag `m14`.
+- [x] Tag `m13` at the commit its review names, with a line that the in-playground check moved
       to whizbang milestone 5.
 
 **Done when:** both tags are on the remote, and every required workflow is green for the exact
@@ -236,13 +236,13 @@ commit each tag points at.
 
 **Depends on:** F0, F1.
 
-- [ ] Push an `archive/<name>` tag for every non-ancestor tip the inventory marks "archive".
-- [ ] Commit or hand back every dirty file the inventory marks so.
-- [ ] For ignored contents marked "keep": copy them to the place the inventory names and
+- [x] Push an `archive/<name>` tag for every non-ancestor tip the inventory marks "archive".
+- [x] Commit or hand back every dirty file the inventory marks so.
+- [x] For ignored contents marked "keep": copy them to the place the inventory names and
       check the copy, or get the owning session's confirmation that it has them.
-- [ ] Remove a worktree only when it is clean, its commit is reachable from `main` or a tag
+- [x] Remove a worktree only when it is clean, its commit is reachable from `main` or a tag
       **on the remote**, and every ignored line for it has its outcome.
-- [ ] Delete a branch only when its tip is reachable from `main` or a tag on the remote.
+- [x] Delete a branch only when its tip is reachable from `main` or a tag on the remote.
 
 **Done when:** for every removed branch and worktree, the hash of a ref on the remote is read
 with `git ls-remote` and the removed commit is shown to be an ancestor of it; and the
@@ -250,42 +250,42 @@ inventory shows the outcome of each ignored line.
 
 ### F3. Squint: commit the study inputs
 
-- [ ] Pull `main`.
-- [ ] Commit the 13 matrix and config files under `evalsets/matrix/`.
-- [ ] Record the two agreed label corrections in owner storage, as a versioned corrections
+- [x] Pull `main`.
+- [x] Commit the 13 matrix and config files under `evalsets/matrix/`.
+- [x] Record the two agreed label corrections in owner storage, as a versioned corrections
       file beside the owner's labels.
 
 **Done when:** `git status` is clean; CI green for that commit; `just sets-check` passes.
 
 ### F4. Rename the images repo
 
-- [ ] Before: list each distinct repository and revision pair the sealed sets pin; record each
+- [x] Before: list each distinct repository and revision pair the sealed sets pin; record each
       set's seal digest.
-- [ ] Rename `wafflery-evalsets` to `whizbang-evalsets`.
-- [ ] After: for each distinct pinned revision, fetch that set's images through the **old**
+- [x] Rename `wafflery-evalsets` to `whizbang-evalsets`.
+- [x] After: for each distinct pinned revision, fetch that set's images through the **old**
       raw-content address into an empty folder, so every file is really downloaded, and check
       every hash. Check each seal digest is unchanged.
-- [ ] If any fetch fails: rename back at once, and stop.
-- [ ] Only then update the local clone's remote.
+- [x] If any fetch fails: rename back at once, and stop.
+- [x] Only then update the local clone's remote.
 
 **Done when:** every pinned revision fetched and verified through the old address.
 **Sealed manifests are not edited** to point at the new name.
 
 ### F5. Retire the coordination repo
 
-- [ ] Commit a first line to its `AGENTS.md` and README (retired; see whizbang), and push it
+- [x] Commit a first line to its `AGENTS.md` and README (retired; see whizbang), and push it
       with its 8 local commits.
-- [ ] Archive it.
+- [x] Archive it.
 
 ### F6. Tag and pin
 
 **Depends on:** F1 to F5, S2.
 
-- [ ] In each of the four repos: local `main` equals `origin/main`; the tree is clean; that
+- [x] In each of the four repos: local `main` equals `origin/main`; the tree is clean; that
       repo's own checks and scans pass; every required workflow is green for that exact commit
       (a workflow skipped for a documentation-only change is noted as such).
-- [ ] Tag `final-before-whizbang` in each and push.
-- [ ] `docs/sources.toml` in whizbang: for each repo, its URL, the tag, and the commit the tag
+- [x] Tag `final-before-whizbang` in each and push.
+- [x] `docs/sources.toml` in whizbang: for each repo, its URL, the tag, and the commit the tag
       points at (`git rev-parse <tag>^{commit}`).
 
 **Done when:** each pinned commit equals local `main`, remote `main` and the peeled tag.
