@@ -322,27 +322,37 @@ names() { tr '\n\0' '\002\n' | sort -u; }
 # in CI, are for that). In the working tree the tracked files come from the index and the
 # untracked ones from `find`, with the ignored ones taken out by `git check-ignore`, so the
 # list shares no folder-walking code with the search.
+#
+# The walk goes level by level and never enters a folder that git says is ignored: the
+# folders directly inside the folders of one level are listed, git is asked about them,
+# and the ones it does not ignore are the next level. That leaves out nothing git would
+# list, because git cannot put back a file whose folder is ignored: for a file,
+# `git check-ignore` first asks the same question of each folder above it, top down, by
+# the rules alone, and answers with the first one that is ignored. So a file under an
+# ignored folder was always dropped; now it is not looked at. The folders are asked about
+# by the rules alone as well (`--no-index`: without it git calls a folder that holds a
+# tracked file not ignored). A tracked file in an ignored folder still comes from the
+# index. What goes on inside an ignored folder (a build that is running, a folder that
+# cannot be read) can no longer fail the scan.
 census() {
   local f rev missing rc
   case "$target" in
     worktree)
-      git ls-files -z -c >"$work/census-entries"
-      # find does not follow a link, so what a link leads to is not listed (nor searched).
-      # What find says is not printed: it names paths.
       rc=0
-      find . -name .git -prune -o -type f -print0 >"$work/census-found" 2>"$work/census-errors" || rc=$?
+      git ls-files -z -c >"$work/census-entries" 2>"$work/census-errors" || rc=$?
       [ "$rc" -eq 0 ] && [ ! -s "$work/census-errors" ] ||
-        die "the files of the working tree could not all be listed (find: exit $rc, $(wc -l <"$work/census-errors" | tr -d ' ') lines of errors, such as a folder it could not read); what was not listed is not covered; refusing to pass"
-      # check-ignore prints four fields for each path: where the rule is, its line, the
-      # rule, the path. No rule matched when the rule is empty; and a rule that starts with
-      # `!` puts the path back, so that is not ignored either.
-      rc=0
-      git check-ignore -z --stdin -v -n <"$work/census-found" >"$work/census-rules" 2>"$work/census-errors" || rc=$?
-      [ "$rc" -le 1 ] && [ ! -s "$work/census-errors" ] ||
-        die "the files of the working tree could not be told from the ignored ones (git check-ignore: exit $rc); refusing to pass"
-      tr '\n\0' '\002\n' <"$work/census-rules" |
-        awk 'NR % 4 == 3 { free = ($0 == "" || substr($0, 1, 1) == "!") } NR % 4 == 0 && free { print substr($0, 3) }' |
-        tr '\002\n' '\n\0' >>"$work/census-entries"
+        die "the tracked files could not be listed (git ls-files: exit $rc, $(wc -l <"$work/census-errors" | tr -d ' ') lines of warnings or errors); refusing to pass"
+      printf '.\0' >"$work/census-level"
+      : >"$work/census-folders"
+      while [ -s "$work/census-level" ]; do
+        cat "$work/census-level" >>"$work/census-folders"
+        walk d <"$work/census-level" >"$work/census-found"
+        # A folder is asked about by its name alone. With a `/` after it git takes the
+        # name for a path inside the folder: `out/*` would then match `out/`.
+        unignored 1 --no-index >"$work/census-level"
+      done
+      walk f <"$work/census-folders" >"$work/census-found"
+      unignored 3 >>"$work/census-entries"
       while IFS= read -r -d '' f; do
         if [ -f "$f" ] && [ ! -L "$f" ] && [ -s "$f" ]; then printf '%s\0' "$f"; fi
       done <"$work/census-entries" | names >"$work/census-listed"
@@ -369,6 +379,41 @@ census() {
   missing=$(comm -23 "$work/census-listed" "$work/census-searched" | wc -l | tr -d ' ')
   [ "$missing" -eq 0 ] ||
     die "$missing of the $(wc -l <"$work/census-listed" | tr -d ' ') files to cover were not looked in by the search ($target); they are not named here, since a path can hold a match; refusing to pass"
+}
+
+# walk <d|f>: the folders (d) or the files (f) directly inside each folder named on stdin,
+# NUL-ended, as `./path`. find does not follow a link, so what a link leads to is not
+# listed (nor searched); and it goes no deeper than the folders it is given. Nothing named
+# `.git` is listed. What find says is not printed: it names paths.
+walk() {
+  local rc=0
+  xargs -0 sh -c 'kind=$1; shift; exec find "$@" -mindepth 1 -maxdepth 1 ! -name .git -type "$kind" -print0' sh "$1" \
+    2>"$work/census-errors" || rc=$?
+  [ "$rc" -eq 0 ] && [ ! -s "$work/census-errors" ] || {
+    if [ "$rc" -eq 0 ]; then rc="said something:"; else rc="failed, with"; fi
+    die "the files of the working tree could not all be listed (find $rc $(wc -l <"$work/census-errors" | tr -d ' ') lines of errors, such as a folder it could not read); a file or folder may have changed during the walk: run it again; what was not listed is not covered; refusing to pass"
+  }
+}
+# unignored <from> [--no-index]: of the paths in $work/census-found, NUL-ended, the ones
+# no ignore rule keeps out, each from its character number <from> (3 leaves out the `./`).
+# Without --no-index git says of a tracked path that no rule matches it.
+# check-ignore prints four fields for each path: where the rule is, its line, the rule,
+# the path. No rule matched when the rule is empty; and a rule that starts with `!` puts
+# the path back, so that is not ignored either. Anything git says counts, and so does a
+# path it gives no answer for: the scan does not guess.
+unignored() {
+  local rc=0 asked answered
+  [ -s "$work/census-found" ] || return 0
+  git check-ignore -z --stdin -v -n ${2+"$2"} <"$work/census-found" >"$work/census-rules" 2>"$work/census-errors" || rc=$?
+  [ "$rc" -le 1 ] && [ ! -s "$work/census-errors" ] ||
+    die "the files of the working tree could not be told from the ignored ones (git check-ignore: exit $rc, $(wc -l <"$work/census-errors" | tr -d ' ') lines of warnings or errors); refusing to pass"
+  asked=$(($(tr -c -d '\0' <"$work/census-found" | wc -c)))
+  answered=$(($(tr -c -d '\0' <"$work/census-rules" | wc -c)))
+  [ "$answered" -eq $((asked * 4)) ] ||
+    die "the files of the working tree could not be told from the ignored ones: git check-ignore answered for $((answered / 4)) of the $asked paths it was asked about; refusing to pass"
+  tr '\n\0' '\002\n' <"$work/census-rules" |
+    awk -v from="$1" 'NR % 4 == 3 { free = ($0 == "" || substr($0, 1, 1) == "!") } NR % 4 == 0 && free { print substr($0, from) }' |
+    tr '\002\n' '\n\0'
 }
 
 # search_words: a search for the listed words, in any case, as fixed strings.
@@ -648,7 +693,11 @@ case "$mode" in
       fi
       printf '%s\n' "$f" >>"$text/tree-paths/working-tree"
     done <"$work/entries"
-    while IFS= read -r -d '' f; do [ ! -f "$f" ] || [ -L "$f" ] || ignored_tracked+=("$f"); done < <(git ls-files -z -ci --exclude-standard)
+    rc=0
+    git ls-files -z -ci --exclude-standard >"$work/entries-ignored" 2>"$work/list-errors" || rc=$?
+    [ "$rc" -eq 0 ] && [ ! -s "$work/list-errors" ] ||
+      die "the tracked files that an ignore rule matches could not be listed (git ls-files: exit $rc, $(wc -l <"$work/list-errors" | tr -d ' ') lines of warnings or errors); refusing to pass"
+    while IFS= read -r -d '' f; do [ ! -f "$f" ] || [ -L "$f" ] || ignored_tracked+=("$f"); done <"$work/entries-ignored"
     look_in_worktree
     scan_contents
     covered="$files files"

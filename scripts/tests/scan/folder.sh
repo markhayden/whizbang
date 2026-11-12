@@ -87,26 +87,44 @@ done
 
 # The census's own list of the working tree is exactly git's: every tracked file and every
 # untracked one that no ignore rule keeps out (regular files with something in them; links
-# aside). The census makes it without git walking the folder, so the rules are the place
-# to go wrong: rules that put a file back, rules in nested files, rules for folders.
+# aside). The census makes it without git walking the folder, and it never enters a folder
+# git says is ignored, so the rules are the place to go wrong: rules that put a file back,
+# rules in nested files, rules for folders, and what a rule under an ignored folder can
+# and cannot put back.
 fresh the-lister
-printf '%s\n' '*.log' '!keep.log' 'out/*' '!out/keep/' 'build/' '!build/back.txt' '/top-only.txt' 'docs/**/*.png' '!docs/**/shown.png' >.gitignore
+printf '%s\n' '*.log' '!keep.log' 'out/*' '!out/keep/' 'build/' '!build/back.txt' '/top-only.txt' 'docs/**/*.png' '!docs/**/shown.png' \
+  'gen/' '!gen/sub/' '!gen/sub/kept.txt' 'cache/**' '!cache/**/keep.me' 'logs/' 'with space ignored/' 'two*ignored/' '-dash-ignored/' \
+  'partly/*' '!partly/keep/' >.gitignore
 printf '%s\n' 'local-*' >>.git/info/exclude
-mkdir -p out/keep out/drop build/deep sub/inner docs/a/b "a folder" nested/top-only.txt.d
+two_lines=$(printf 'two\nlines')
+mkdir -p out/keep out/drop build/deep sub/inner docs/a/b "a folder" nested/top-only.txt.d \
+  gen/sub cache/a/b deep/logs "with space ignored/in" "$two_lines ignored/in" "$two_lines kept" ./-dash-ignored/in ./-dash-kept \
+  partly/keep/deeper partly/drop/keep build/own-rules
 printf '%s\n' '!special.log' 'secret-*' '*.tmp' >sub/.gitignore
 printf '%s\n' '!*.tmp' 'inner-only' >sub/inner/.gitignore
+# A file of rules inside an ignored folder puts nothing back.
+printf '%s\n' '!*' '!put-back.txt' >build/own-rules/.gitignore
 for f in keep.log drop.log out/keep/in.txt out/keep/in.log out/drop/x.txt out/file.txt build/back.txt build/deep/y.txt \
   top-only.txt nested/top-only.txt docs/a/b/hidden.png docs/a/b/shown.png docs/a/plain.md sub/special.log sub/other.log \
   sub/secret-1 sub/x.tmp sub/inner/y.tmp sub/inner/inner-only sub/inner/z.log local-notes.txt "a folder/with space.txt" \
-  "a folder/-dash" plain.txt; do
+  "a folder/-dash" plain.txt \
+  gen/tracked.txt gen/loose.txt gen/sub/kept.txt gen/sub/other.txt \
+  cache/keep.me cache/other.txt cache/a/keep.me cache/a/b/keep.me cache/a/other.txt \
+  logs deep/logs/day.txt deep/beside.txt \
+  "with space ignored/x.txt" "with space ignored/in/y.txt" "$two_lines ignored/x.txt" "$two_lines ignored/in/y.txt" \
+  "$two_lines kept/x.txt" ./-dash-ignored/x.txt ./-dash-ignored/in/y.txt ./-dash-kept/x.txt \
+  partly/file.txt partly/keep/x.txt partly/keep/deeper/y.txt partly/drop/x.txt partly/drop/keep/z.txt \
+  build/own-rules/put-back.txt; do
   printf 'content of %s\n' "$f" >"$f"
 done
 printf 'a name over two lines\n' >"$(printf 'two\nlines.txt')"
 : >empty.txt
 ln -s plain.txt a-link
 ln -s "a folder" a-folder-link
+# A link to a folder, inside a folder that is listed: the walk does not go through it.
+ln -s ../build partly/keep/a-way-in
 # Tracked files, in and out of what the rules match.
-git add -f plain.txt drop.log build/deep/y.txt sub/secret-1 .gitignore
+git add -f plain.txt drop.log build/deep/y.txt sub/secret-1 gen/tracked.txt .gitignore
 git commit -q --no-verify -m "feat: tracked"
 rm -f "$tmp/spy.listed"
 expect_pass "a tree full of ignore rules" spied "$scan"
@@ -121,11 +139,17 @@ cmp -s "$tmp/git-listed" "$tmp/spy.listed" || {
 }
 # The cases are really in there: put back by a rule, kept out by one, tracked though matched.
 for f in keep.log out/keep/in.txt docs/a/b/shown.png sub/special.log sub/inner/y.tmp drop.log build/deep/y.txt sub/secret-1 \
-  "a folder/with space.txt"; do
+  "a folder/with space.txt" gen/tracked.txt cache/keep.me logs deep/beside.txt -dash-kept/x.txt \
+  partly/keep/x.txt partly/keep/deeper/y.txt "$(printf 'two\002lines kept/x.txt')" "$(printf 'two\002lines.txt')"; do
   grep -q -x -F -e "$f" "$tmp/spy.listed" || { cat "$tmp/spy.listed" >&2; fail "the list holds $f"; }
 done
 for f in out/drop/x.txt out/file.txt build/back.txt top-only.txt docs/a/b/hidden.png sub/other.log sub/x.tmp \
-  sub/inner/inner-only local-notes.txt out/keep/in.log empty.txt a-link; do
+  sub/inner/inner-only local-notes.txt out/keep/in.log empty.txt a-link \
+  gen/loose.txt gen/sub/kept.txt gen/sub/other.txt cache/other.txt cache/a/keep.me cache/a/b/keep.me cache/a/other.txt \
+  deep/logs/day.txt "with space ignored/x.txt" "with space ignored/in/y.txt" -dash-ignored/x.txt -dash-ignored/in/y.txt \
+  "$(printf 'two\002lines ignored/x.txt')" "$(printf 'two\002lines ignored/in/y.txt')" \
+  partly/file.txt partly/drop/x.txt partly/drop/keep/z.txt build/own-rules/put-back.txt build/own-rules/.gitignore \
+  partly/keep/a-way-in/back.txt partly/keep/a-way-in/deep/y.txt; do
   grep -q -x -F -e "$f" "$tmp/spy.listed" && { cat "$tmp/spy.listed" >&2; fail "the list does not hold $f"; }
 done
 grep -q -x -F -e "nested/top-only.txt" "$tmp/spy.listed" || fail "a rule for the top folder alone leaves nested/top-only.txt in"

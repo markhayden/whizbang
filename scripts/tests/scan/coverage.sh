@@ -134,7 +134,7 @@ rm keep.log drop.log
 # If git cannot say which files are ignored, the scan does not guess.
 fresh no-check-ignore
 commit_file "docs: plain" plain.txt "nothing to see"
-expect_fail "git check-ignore failing" "could not be told from the ignored ones (git check-ignore: exit 128)" \
+expect_fail "git check-ignore failing" "could not be told from the ignored ones (git check-ignore: exit 128, 1 lines" \
   env PATH="$tmp/bin:$PATH" BREAK=check-ignore "$scan"
 never_clean "git check-ignore failing"
 quiet "this command is broken"
@@ -167,7 +167,7 @@ rm -r locked-folder
 mkdir "$tmp/find-bin"
 printf '#!/bin/sh\necho "find: ./a-path-it-names: Permission denied" >&2\nexit 1\n' >"$tmp/find-bin/find"
 chmod +x "$tmp/find-bin/find"
-expect_fail "find failing" "could not all be listed (find: exit 1, 1 lines of errors" env PATH="$tmp/find-bin:$PATH" "$scan"
+expect_fail "find failing" "could not all be listed (find failed, with 1 lines of errors" env PATH="$tmp/find-bin:$PATH" "$scan"
 quiet "a-path-it-names"
 never_clean "find failing"
 
