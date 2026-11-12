@@ -51,6 +51,11 @@ refuses it and the comparison counts it as a difference.
 the stored file has it, and a replay must write the same characters. "Whole number" below
 means digits only.
 
+One thing about a number's text is not compared: how its exponent is marked. The reader the
+comparison uses writes `E` as `e`, and a `+` where the exponent has no sign, before anything
+is compared. So `1E2`, `1e2` and `1e+2` are equal. The exponent's digits are kept: `1e2` and
+`1e02` differ.
+
 ### Top level
 
 | Field | Type | Compared | Holds |
@@ -95,6 +100,30 @@ read; the transcript is then incomplete.
 The old recorder wrote the version and not the settings. The settings come from the package:
 they were derived from the historical config, catalogue and code, and checked by preparing
 every image again (`README.md`, "The preparation check").
+
+`settings` is compared, so a replay does not write its own: it copies the package's object
+for the model, whole and unchanged. That object is the value under `settings`, then the
+model's name without its provider, in the package's `assembly/generated/preparation.json`.
+The format does not fix its keys; the audit requires the object to equal the package's. In
+the 2026-11 package every model's object holds exactly these keys:
+
+| Key | Type |
+|---|---|
+| `config_max_long_edge` | whole number or `null` |
+| `decode_max_bytes` | whole number |
+| `decode_max_pixels` | whole number |
+| `formats_accepted` | list of text |
+| `jpeg_quality` | whole number |
+| `long_edge_px` | whole number |
+| `metadata` | text |
+| `model` | text |
+| `native_long_edge_px` | whole number |
+| `plan` | text |
+| `png_when_alpha` | text |
+| `prep_version` | text |
+| `resize` | text |
+
+The example's object holds two invented keys, because it describes no real model.
 
 ### `images`
 
@@ -327,7 +356,7 @@ names, file names or verdicts. It is written only for a package the manifest cou
   repairs, the terminal outcome, and any field this page does not name. Any difference
   fails. Differences are reported by place, in the order of the recorded transcript, and
   never carry the values.
-- **Numbers are compared by their text.**
+- **Numbers are compared by their text,** except how an exponent is marked (above).
 - **A transcript cannot make the gate blind.** The comparison refuses a recorded transcript
   whose volatile list is not exactly the one above. A replayed transcript's list is compared
   like any other field.
@@ -335,7 +364,10 @@ names, file names or verdicts. It is written only for a package the manifest cou
   transcript that is not marked complete, or that lists something missing. A replayed
   transcript that is not complete differs.
 - **A pair with no turns or no terminal outcome is refused,** so two transcripts with the
-  same hole never compare as equal.
+  same hole never compare as equal. An empty list of turns is no turns, and an outcome
+  without a `kind` is no outcome.
+- **Text and `null` are compared exactly.** Two texts that differ in case or by a space
+  differ, and `null` is not `false`.
 
 It is written in Rust, in `whizbang-eval`, because the gate is driven from the Rust
 workspace: the replay produces its transcript in the same process that compares it. Its

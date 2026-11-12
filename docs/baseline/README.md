@@ -14,6 +14,9 @@ exchange, so it is never published. This folder holds what can be public:
   converter by the tests;
 - `audit.toml`: the result of that audit, as counts.
 
+The study itself is written up from the package's study inputs in
+`docs/results/2026-11-tool-study.md`, by `scripts/baseline/tables.py`.
+
 ## What the package holds
 
 - **Replay fixtures** for the arm the old harness called C (the `view` and `align` tools).
