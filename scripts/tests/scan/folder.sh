@@ -35,19 +35,6 @@ rm lost.txt kept.txt
 expect_pass "a scan with git's tracing on" env GIT_TRACE=1 GIT_TRACE2=1 GIT_TRACE_SETUP=1 GIT_CURL_VERBOSE=1 "$scan"
 says "secrets scan: clean"
 git checkout -q -- lost.txt kept.txt
-# Configuration put into the environment of every git (GIT_CONFIG_COUNT and its keys and
-# values) does not reach the gits the scan runs.
-rm -f "$tmp/env-log"
-expect_fail "a scan with configuration in the environment" "lost.txt:1" \
-  env PATH="$tmp/bin:$PATH" ENV_LOG="$tmp/env-log" GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=grep.threads GIT_CONFIG_VALUE_0=8 \
-  GIT_CONFIG_KEY_1=core.hooksPath GIT_CONFIG_VALUE_1=/injected "$scan"
-says "kept.txt:1"
-[ -s "$tmp/env-log" ] || fail "the scan's gits were seen"
-grep -q -x -F -e "unset|unsetunset||scripts/hooks" "$tmp/env-log" || fail "the scan's gits were seen in the repository"
-# (A search of the scan's own text files runs outside the repository: no hooks path there.)
-if grep -v -x -F -e "unset|unsetunset||scripts/hooks" -e "unset|unsetunset||" "$tmp/env-log" >&2; then
-  fail "configuration from the environment reached a git of the scan (above: the count, a key and a value, grep.threads, core.hooksPath)"
-fi
 
 # The scan's own folder: only this user can read anything in it, the word list is never
 # copied into it, and it is gone when the scan ends, however it ends.
@@ -119,6 +106,16 @@ mkdir -p out/keep out/drop build/deep sub/inner docs/a/b "a folder" nested/top-o
   partly/keep/deeper partly/drop/keep build/own-rules "dir-$nfd/in-$nfd" "dir-$nfc-too" "ig-$nfd" "ig-$nfc"
 printf '%s\n' '!special.log' 'secret-*' '*.tmp' >sub/.gitignore
 printf '%s\n' '!*.tmp' 'inner-only' >sub/inner/.gitignore
+# Files of rules in folders whose names git prints in quotes, or that read like the
+# place of a rule themselves.
+mkdir "odd:3:!source"
+printf '%s\n' 'here-only' >"$two_lines kept/.gitignore"
+printf '%s\n' 'here-only' '!back' >"dir-$nfd/.gitignore"
+printf '%s\n' 'here-only' 'ba*' '!back' >"odd:3:!source/.gitignore"
+for f in "$two_lines kept/here-only" "dir-$nfd/here-only" "dir-$nfd/back" "odd:3:!source/here-only" "odd:3:!source/back" \
+  "odd:3:!source/bat"; do
+  printf 'content of %s\n' "$f" >"$f"
+done
 # A file of rules inside an ignored folder puts nothing back.
 printf '%s\n' '!*' '!put-back.txt' >build/own-rules/.gitignore
 for f in keep.log drop.log out/keep/in.txt out/keep/in.log out/drop/x.txt out/file.txt build/back.txt build/deep/y.txt \
@@ -141,41 +138,43 @@ printf 'a name over two lines\n' >"$(printf 'two\nlines.txt')"
 : >empty.txt
 ln -s plain.txt a-link
 ln -s "a folder" a-folder-link
+# A link to an ignored file is a link, not that file.
+ln -s out/file.txt a-link-to-an-ignored-file
 # A link to a folder, inside a folder that is listed: the walk does not go through it.
 ln -s ../build partly/keep/a-way-in
 # Tracked files, in and out of what the rules match.
 # Among them a tracked file that an ignored one's name matches, when the name is read as
 # a pattern: `a*b.gone` is ignored whatever axb.gone is.
-git add -f plain.txt drop.log build/deep/y.txt sub/secret-1 gen/tracked.txt axb.gone .gitignore
+# And a tracked link to an ignored file: the link is tracked, the file is not covered.
+git add -f plain.txt drop.log build/deep/y.txt sub/secret-1 gen/tracked.txt axb.gone a-link-to-an-ignored-file .gitignore
 git commit -q --no-verify -m "feat: tracked"
 lists_what_git_lists "a tree full of ignore rules"
 # The cases are really in there: put back by a rule, kept out by one, tracked though matched.
 for f in keep.log out/keep/in.txt docs/a/b/shown.png sub/special.log sub/inner/y.tmp drop.log build/deep/y.txt sub/secret-1 \
   "a folder/with space.txt" gen/tracked.txt cache/keep.me logs deep/beside.txt -dash-kept/x.txt \
-  partly/keep/x.txt partly/keep/deeper/y.txt "$(printf 'two\002lines kept/x.txt')" "$(printf 'two\002lines.txt')" \
-  axb.gone 'star*.txt' 'query?.txt' 'set[a].txt' "nfc-$nfc.txt" "dir-$nfc-too/in.txt"; do
-  grep -q -x -F -e "$f" "$tmp/spy.listed" || { cat "$tmp/spy.listed" >&2; fail "the list holds $f"; }
+  partly/keep/x.txt partly/keep/deeper/y.txt "$two_lines kept/x.txt" "$two_lines.txt" \
+  axb.gone 'star*.txt' 'query?.txt' 'set[a].txt' "nfc-$nfc.txt" "dir-$nfc-too/in.txt" \
+  "nfd-$nfd.txt" "dir-$nfd/in.txt" "dir-$nfd/in-$nfd/deep-$nfd.txt" "both-$nfd.txt" "both-$nfc.txt" \
+  "dir-$nfd/back" "odd:3:!source/back" "$two_lines kept/.gitignore"; do
+  listed "$f" || fail "the list holds $f"
 done
 for f in out/drop/x.txt out/file.txt build/back.txt top-only.txt docs/a/b/hidden.png sub/other.log sub/x.tmp \
   sub/inner/inner-only local-notes.txt out/keep/in.log empty.txt a-link \
   gen/loose.txt gen/sub/kept.txt gen/sub/other.txt cache/other.txt cache/a/keep.me cache/a/b/keep.me cache/a/other.txt \
   deep/logs/day.txt "with space ignored/x.txt" "with space ignored/in/y.txt" -dash-ignored/x.txt -dash-ignored/in/y.txt \
-  "$(printf 'two\002lines ignored/x.txt')" "$(printf 'two\002lines ignored/in/y.txt')" \
+  "$two_lines ignored/x.txt" "$two_lines ignored/in/y.txt" \
   partly/file.txt partly/drop/x.txt partly/drop/keep/z.txt build/own-rules/put-back.txt build/own-rules/.gitignore \
-  partly/keep/a-way-in/back.txt partly/keep/a-way-in/deep/y.txt 'a*b.gone' 'a?b.gone' 'a[wxy]b.gone' "ig-$nfc/y.txt"; do
-  grep -q -x -F -e "$f" "$tmp/spy.listed" && { cat "$tmp/spy.listed" >&2; fail "the list does not hold $f"; }
+  partly/keep/a-way-in/back.txt partly/keep/a-way-in/deep/y.txt 'a*b.gone' 'a?b.gone' 'a[wxy]b.gone' "ig-$nfc/y.txt" \
+  "$two_lines kept/here-only" "dir-$nfd/here-only" "odd:3:!source/here-only" "odd:3:!source/bat"; do
+  listed "$f" && fail "the list does not hold $f"
 done
-# A decomposed name: listed as git names it, which on macOS is composed.
-if [ "$(git config --type=bool core.precomposeunicode || true)" = true ]; then
-  for f in "nfd-$nfc.txt" "dir-$nfc/in.txt" "dir-$nfc/in-$nfc/deep-$nfc.txt"; do
-    grep -q -x -F -e "$f" "$tmp/spy.listed" || { cat "$tmp/spy.listed" >&2; fail "the list holds $f, composed"; }
-  done
-  grep -q -F -e "ig-" "$tmp/spy.listed" && fail "a rule with a composed name ignores the folder with the decomposed one"
+# The folder with the decomposed name: where git composes names, the rule written
+# composed ignores it; elsewhere it is another name, and its file is listed.
+if [ "$(uname -s)" = Darwin ] && [ "$(git config --type=bool core.precomposeunicode || true)" = true ]; then
+  listed "ig-$nfd/x.txt" && fail "a rule with a composed name ignores the folder with the decomposed one"
 else
-  for f in "nfd-$nfd.txt" "dir-$nfd/in.txt" "both-$nfd.txt" "ig-$nfd/x.txt"; do
-    grep -q -x -F -e "$f" "$tmp/spy.listed" || { cat "$tmp/spy.listed" >&2; fail "the list holds $f, decomposed"; }
-  done
+  listed "ig-$nfd/x.txt" || fail "the list holds ig-$nfd/x.txt, which no rule names"
 fi
-grep -q -x -F -e "nested/top-only.txt" "$tmp/spy.listed" || fail "a rule for the top folder alone leaves nested/top-only.txt in"
+listed nested/top-only.txt || fail "a rule for the top folder alone leaves nested/top-only.txt in"
 
 finished

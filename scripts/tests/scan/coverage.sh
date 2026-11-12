@@ -70,6 +70,15 @@ expect_fail "a file lost from every other search, a range" "two runs of the same
   losing sometimes lost.txt "$scan" --range "$first" HEAD
 never_clean "a file lost now and then, a range"
 
+# Two names for one file (hard links) hold the same bytes: when the search looks in one,
+# the file is covered, and what is in it is reported under that name.
+ln lost.txt same-file.txt
+expect_fail "a hard link lost from every search" "lost.txt:1" losing always same-file.txt "$scan"
+quiet "were not looked in"
+quiet "same-file.txt"
+expect_fail "a hard link, with git as it is" "same-file.txt:1" "$scan"
+rm same-file.txt
+
 # Without the stand-in the same repository is scanned in full.
 expect_fail "the same, with git as it is" "lost.txt:1" "$scan"
 says "kept.txt:1"

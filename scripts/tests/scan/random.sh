@@ -5,6 +5,10 @@
 # for each seed. (scripts/tests/scan/folder.sh holds the same on a tree built by hand.)
 #
 #   WHIZBANG_SCAN_SEEDS="1 2 3"   other seeds; WHIZBANG_SCAN_TREES=18 trees for each
+#   WHIZBANG_SCAN_ACCENTS=1       names with an accent are tracked too, as the folder has them
+#   WHIZBANG_SCAN_PRECOMPOSE=false  core.precomposeUnicode for the trees (macOS)
+#   WHIZBANG_SCAN_TALLY=<file>    a seed that fails is noted there with its first line of
+#                                 output, and the run goes on: for looking at many seeds
 #
 # The trees hold no repository inside a repository: the scan refuses those earlier. A
 # seed gives the same trees on every system: nothing in the generator asks the file
@@ -15,7 +19,7 @@ stand_in_for_git
 cat >"$tmp/make-trees.pl" <<'PL'
 use strict;
 use warnings;
-my ($seed, $trees) = @ARGV;
+my ($seed, $trees, $accents) = @ARGV;
 srand($seed);
 my @plain = ("a", "b", "c", "d", "keep", "out", "build", "log", "x.log", "y.log", "z.tmp", "k.me", "a.b");
 my @odd = ("sp ace", "-dash", "st*r", "q?m", "br[ab]k", "two\nlines", "caf\303\251", "cafe\314\201", "!bang", "#hash");
@@ -56,8 +60,11 @@ sub fill {
       open(my $out, ">", $path) or die "$path: $!";
       print $out "content\n" unless rand() < 0.05;
       close($out);
-      # Not a name with an accent: on macOS git add would compose it or not find it.
-      push @tracked, $path if rand() < 0.15 && $path !~ /[\200-\377]/;
+      # A name with an accent is tracked only when asked for: on macOS the index then
+      # holds it as the folder does, and a rule in the other form refuses the scan
+      # (docs/carry-over.md).
+      my $track = rand() < 0.15;
+      push @tracked, $path if $track && ($accents || $path !~ /[\200-\377]/);
     }
   }
 }
@@ -78,10 +85,16 @@ for seed in ${WHIZBANG_SCAN_SEEDS:-11 23}; do
   fresh "seed-$seed"
   # What the last seed's rules ignored, too.
   git clean -q -f -d -x -e /scripts
-  perl "$tmp/make-trees.pl" "$seed" "${WHIZBANG_SCAN_TREES:-18}" >"$tmp/tracked"
-  git --literal-pathspecs add -f --pathspec-from-file="$tmp/tracked" --pathspec-file-nul
+  [ -z "${WHIZBANG_SCAN_PRECOMPOSE:-}" ] || git config core.precomposeunicode "$WHIZBANG_SCAN_PRECOMPOSE"
+  perl "$tmp/make-trees.pl" "$seed" "${WHIZBANG_SCAN_TREES:-18}" "${WHIZBANG_SCAN_ACCENTS:-0}" >"$tmp/tracked"
+  git -c core.precomposeunicode=false --literal-pathspecs add -f --pathspec-from-file="$tmp/tracked" --pathspec-file-nul
   git commit -q --no-verify -m "feat: the trees of seed $seed"
-  lists_what_git_lists "the trees of seed $seed"
+  if [ -n "${WHIZBANG_SCAN_TALLY:-}" ]; then
+    (lists_what_git_lists "the trees of seed $seed") >"$tmp/seed-out" 2>&1 ||
+      printf '%s: %s\n' "$seed" "$(grep -a -m 1 -E -e '^(scan|failed|[<>0-9])' "$tmp/seed-out" | cut -c1-160)" >>"$WHIZBANG_SCAN_TALLY"
+  else
+    lists_what_git_lists "the trees of seed $seed"
+  fi
 done
 
 finished

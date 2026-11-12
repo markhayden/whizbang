@@ -148,7 +148,7 @@ expect_fail "git speaks while it lists the tracked files a rule matches" \
   noisy_on "ls-files -z -ci --exclude-standard" "$scan"
 quiet "something git says"
 never_clean "git speaks while it lists the tracked files a rule matches"
-for listing in "ls-files -z -c" "ls-files -z -ci --exclude-standard" "check-ignore -z --stdin -v -n"; do
+for listing in "ls-files -z -c" "ls-files -z -ci --exclude-standard" "check-ignore -v -n --no-index"; do
   printf '#!/bin/sh\ncase " $* " in *" %s "*) exit 3 ;; esac\nexec "%s" "$@"\n' "$listing" "$real_git" >"$tmp/hush-bin/git"
   case "$listing" in
     ls-files*) refusal="could not be listed (git ls-files: exit 3, 0 lines" ;;
@@ -283,22 +283,85 @@ expect_fail "a key in a tracked file with a decomposed name" ".txt:1" "$scan"
 printf '%s\n' '*.txt' >.gitignore
 expect_fail "a key in a tracked file with a decomposed name that a rule matches" ".txt:1" "$scan"
 quiet "were not looked in"
-# Two cases that are still refused on macOS, each in words that name the cause
-# (docs/carry-over.md): a file tracked under a decomposed name that a rule written
-# composed ignores, which git's search then leaves out; and one name in the index in both
-# forms, which are one file there.
+# A rule written decomposed, as the index has the name: the file is searched by its name
+# in the index, and where git composes names by the composed one as well. Two names for
+# one file are one file to cover.
+printf '%s\n' "file-$nfd.txt" >.gitignore
+expect_fail "a key in a tracked file with a decomposed name that a decomposed rule matches" ".txt:1" "$scan"
+quiet "were not looked in"
+quiet "could not"
+printf 'nothing to see\n' >"file-$nfd.txt"
+expect_pass "a tracked file with a decomposed name that a decomposed rule matches" "$scan"
+says "secrets scan: clean"
+# The same for a folder.
+printf '%s\n' "dir-$nfd/" >.gitignore
+expect_pass "a tracked folder with a decomposed name that a decomposed rule matches" "$scan"
+says "secrets scan: clean"
+printf 'token = %s\n' "$key" >"dir-$nfd/in-$nfd.txt"
+expect_fail "a key in a tracked folder with a decomposed name that a decomposed rule matches" ".txt:1" "$scan"
+quiet "were not looked in"
+printf 'nothing to see\n' >"dir-$nfd/in-$nfd.txt"
+rm .gitignore
 if [ "$(uname -s)" = Darwin ] && [ "$(git config --type=bool core.precomposeunicode || true)" = true ]; then
-  printf 'nothing to see\n' >"file-$nfd.txt"
+  # One name in the index in both forms: one file there, covered once.
+  git -c core.precomposeunicode=false update-index --add --cacheinfo "100644,$(git rev-parse "HEAD:file-$nfd.txt"),file-$nfc.txt"
+  expect_pass "one name in the index, composed and decomposed" "$scan"
+  says "secrets scan: clean"
+  git -c core.precomposeunicode=false update-index --force-remove "file-$nfc.txt"
+  # Still refused there, and rightly (docs/carry-over.md): a file tracked under a
+  # decomposed name that a rule written composed ignores. Git's search leaves it out.
   printf '%s\n' "file-$nfc.txt" >.gitignore
   expect_fail "a tracked decomposed name that a composed rule ignores" "files to cover were not looked in" "$scan"
-  says "tracked under a decomposed name that an ignore rule written composed matches"
   rm .gitignore
-  git -c core.precomposeunicode=false update-index --add --cacheinfo "100644,$(git rev-parse "HEAD:file-$nfd.txt"),file-$nfc.txt"
-  expect_fail "one name in the index, composed and decomposed" "could not be composed as git composes them (4 names became 3)" "$scan"
-  says "the index holds a name both composed and decomposed"
-  quiet "$nfc"
 else
-  echo "skip: the two refusals of macOS for names the index holds decomposed; git does not compose names here"
+  echo "skip: two cases of names the index holds decomposed; git does not compose names here"
+fi
+
+# --- What the walk and the comparison refuse ------------------------------------------
+fresh the-walk-again
+mkdir -p kept/inner
+printf 'nothing to see\n' >kept/inner/plain.txt
+commit_file "docs: plain" plain.txt "nothing to see"
+# A folder that find gives as inside itself, or by way of `..`.
+expect_fail "find giving a folder's own folder as one inside it" "find gave 1 names that are not paths inside the folders it was given" \
+  finding dots FIND_FOLDER=kept "$scan"
+never_clean "find giving a folder's own folder as one inside it"
+# Answers in another order than the questions.
+expect_fail "git check-ignore answering in another order" "are not for the paths it was asked about, in the order asked" \
+  env PATH="$tmp/bin:$PATH" SWAP=check-ignore SWAP_FILE="$tmp/swap" "$scan"
+never_clean "git check-ignore answering in another order"
+# An answer that cannot be read is not taken for "ignored", nor for "not ignored".
+expect_fail "git check-ignore answering in words of its own" "the answers of git check-ignore could not be read" \
+  env PATH="$tmp/bin:$PATH" GARBLE=check-ignore GARBLE_FILE="$tmp/garble" "$scan"
+never_clean "git check-ignore answering in words of its own"
+# xargs, which hands the paths to git, failing without a word.
+real_xargs=$(command -v xargs)
+mkdir "$tmp/xargs-bin"
+printf '#!/bin/sh\ncase "$*" in *check-ignore*) exit 1 ;; esac\nexec "%s" "$@"\n' "$real_xargs" >"$tmp/xargs-bin/xargs"
+chmod +x "$tmp/xargs-bin/xargs"
+expect_fail "xargs failing before git is asked" "could not be told from the ignored ones (xargs: exit 1)" \
+  env PATH="$tmp/xargs-bin:$PATH" "$scan"
+never_clean "xargs failing before git is asked"
+# A file that is gone between the walk and the look at it (find's fourth call lists the
+# files), and a name from the search that leads nowhere.
+printf 'nothing to see\n' >kept/soon-gone.txt
+expect_fail "a file that vanishes after it was listed" "1 files that were in the working tree when it was listed are no longer there" \
+  finding vanish FIND_FOLDER=kept/soon-gone.txt FIND_AFTER=4 "$scan"
+says "run it again"
+never_clean "a file that vanishes after it was listed"
+expect_fail "a search that names a file that is not there" "1 names the search gave for the working tree lead to no file" \
+  env PATH="$tmp/bin:$PATH" GHOST=no-such-file.txt "$scan"
+never_clean "a search that names a file that is not there"
+# A walk that comes back to a folder is going in a circle, and is stopped.
+expect_fail "a walk that goes in a circle" "came to a folder a second time" finding circle perl -e 'alarm 60; exec @ARGV' "$scan"
+never_clean "a walk that goes in a circle"
+# A walk that never comes to an end is stopped. It takes three minutes to get there, so
+# it runs only when asked for by name.
+if [ "${WHIZBANG_SCAN_DEPTH_TEST:-}" = 1 ]; then
+  expect_fail "a walk that goes down for ever" "more than 4096 levels deep" finding deeper perl -e 'alarm 900; exec @ARGV' "$scan"
+  never_clean "a walk that goes down for ever"
+else
+  echo "skip: a walk that goes down for ever; set WHIZBANG_SCAN_DEPTH_TEST=1 (three minutes)"
 fi
 
 finished

@@ -41,6 +41,13 @@
 # closed when the variable is unset, or the list is unreadable or empty. It prints counts
 # only: never a word, never a matching line.
 #
+# What the scan defends against. A careless caller: settings in the environment or in a
+# configuration file that would change what git lists, searches or prints are overridden
+# where the scan depends on them. A faulty tool: where the scan can tell that git, find
+# or xargs failed, said something, answered for the wrong number of paths or missed a
+# file, it fails rather than pass. It does not defend against a caller who chooses the
+# tools: whoever sets PATH, or replaces git, decides what the scan sees.
+#
 # The first line below parses this whole file before anything runs. The bash that ships
 # with macOS (3.2) runs a script up to its first syntax error and then, if the script has
 # set an `EXIT` trap, exits 0: without this line a broken scan would pass. Every script
@@ -60,15 +67,22 @@ export LC_ALL=C
 # Anything git says on stderr during a search fails the scan, so git must not be told to
 # talk: tracing is switched off for this run.
 for name in ${!GIT_TRACE@} GIT_CURL_VERBOSE; do unset "$name"; done
-# Nor is configuration taken from the environment variables that hold settings
-# themselves (GIT_CONFIG_COUNT with its keys and values): whoever starts the scan could
-# otherwise set anything for every git it runs. The variables that name configuration
-# files (GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM) are left alone: they
-# choose among files this user's git reads anyway, and the options of a `git -c` that
-# started a hook (GIT_CONFIG_PARAMETERS) are left too, since the push they belong to
-# may need them to reach its remote. Every search sets its own thread count with `-c`,
-# which outranks all of these.
-for name in GIT_CONFIG_COUNT ${!GIT_CONFIG_KEY_@} ${!GIT_CONFIG_VALUE_@}; do unset "$name"; done
+# Configuration that comes in environment variables holding the settings themselves
+# (GIT_CONFIG_COUNT with its keys and values) is kept from every git the scan runs but
+# one: left in place it would set anything for the listings and searches that decide
+# what is scanned. The one is the question to the remote of a push (`git ls-remote`),
+# which may be reached only through such a setting (`url.<base>.insteadOf`), so it is
+# asked with them (`caller_config`). The variables that name configuration files
+# (GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM) are left alone: they choose
+# among files this user's git reads anyway; and so are the options of a `git -c` that
+# started a hook (GIT_CONFIG_PARAMETERS). Every search sets what it depends on itself,
+# with `-c` and options, which outrank all of these: one thread, no colour, no
+# submodules, names as they are.
+caller_config=()
+for name in GIT_CONFIG_COUNT ${!GIT_CONFIG_KEY_@} ${!GIT_CONFIG_VALUE_@}; do
+  [ -z "${!name+set}" ] || caller_config+=("$name=${!name}")
+  unset "$name"
+done
 unset name
 
 die() {
@@ -303,19 +317,19 @@ run_grep_once() {
   shift 2
   case "$which" in
     worktree)
-      git -c grep.threads=1 grep --untracked -a -n -z "$@" >"$to" 2>>"$work/search-errors" || rc=$?
+      git -c grep.fullName=false -c grep.threads=1 grep --no-color --no-recurse-submodules --untracked -a -n -z "$@" >"$to" 2>>"$work/search-errors" || rc=$?
       ;;
     ignored)
       # The names are the index's. Where git composes names (macOS), it would compose
       # these too and then not find one that the index holds decomposed: not here.
-      git -c core.precomposeunicode=false --literal-pathspecs -c grep.threads=1 grep -a -n -z "$@" -- "${ignored_tracked[@]}" >"$to" 2>>"$work/search-errors" || rc=$?
+      git -c core.precomposeunicode=false --literal-pathspecs -c grep.fullName=false -c grep.threads=1 grep --no-color --no-recurse-submodules -a -n -z "$@" -- "${ignored_tracked[@]}" >"$to" 2>>"$work/search-errors" || rc=$?
       ;;
     files)
       (cd "$target_dir" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
-        git -c grep.threads=1 grep --no-index -a -n -z "$@" -- "${target_items[@]}") >"$to" 2>>"$work/search-errors" || rc=$?
+        git -c grep.fullName=false -c grep.threads=1 grep --no-color --no-recurse-submodules --no-index -a -n -z "$@" -- "${target_items[@]}") >"$to" 2>>"$work/search-errors" || rc=$?
       ;;
     commits)
-      git --literal-pathspecs -c grep.threads=1 grep -a -n -z "$@" "${target_revs[@]}" -- ${target_items[@]+"${target_items[@]}"} >"$to" 2>>"$work/search-errors" || rc=$?
+      git --literal-pathspecs -c grep.fullName=false -c grep.threads=1 grep --no-color --no-recurse-submodules -a -n -z "$@" "${target_revs[@]}" -- ${target_items[@]+"${target_items[@]}"} >"$to" 2>>"$work/search-errors" || rc=$?
       ;;
   esac
   [ "$rc" -le 1 ] || die "a search failed (exit $rc); refusing to pass"
@@ -348,47 +362,64 @@ names() { tr '\n\0' '\002\n' | sort -u; }
 # index. What goes on inside an ignored folder (a build that is running, a folder that
 # cannot be read) can no longer fail the scan.
 #
-# Names. Files are asked about by the rules alone too: otherwise git reads the name as a
-# pattern, and an ignored `a*b.tmp` beside a tracked `axb.tmp` counts as tracked. A name
-# that holds the byte \001 or \002 is refused (`plain_names`). And where git composes the
-# names it reads from a folder (on macOS, with `core.precomposeUnicode` on, and nowhere
-# else), the names find gives are composed the same way (`compose`) before git is asked
-# about them, and so are the index's names and the names the search looked in before the
-# two lists are compared: there the search names a file as its folder does, and the
-# index may hold the same name decomposed.
+# Names. The scan never converts a name itself. On macOS one file can go by two names:
+# a folder gives a name as it was written (an accent may come after its letter), git
+# composes the names it reads from a folder when `core.precomposeUnicode` is on, and the
+# index holds whichever form was committed. Two things follow.
 #
-# What still refuses, rightly or not, is on docs/carry-over.md: a tracked folder that
-# has since become a repository of its own (git's search does not look inside one), and
-# on macOS a file tracked under a decomposed name that a rule written composed ignores.
+# Git is asked about the names find gives as arguments, not on stdin (`unignored`): git
+# composes its arguments exactly as it composes what it reads from a folder, so its
+# rules meet the name its own walk would have met. Each answer is tied to its name by
+# its place, never by the name git prints back.
+#
+# And in the working tree the files to cover and the files the search looked in are
+# compared as files, not as names (`same_files`): each name on either side is looked up
+# once and stands for its device and inode. Two names for one file are then one file,
+# whichever form each side used; where the two forms are two files, they are two inodes.
+# Two hard links to one file hold the same bytes, so a search of one has covered both.
+# A name the index holds for a file that is not there (deleted and not yet committed) is
+# nothing to cover; a name find gave, or the search gave, that leads nowhere is a
+# refusal, since something changed while the scan ran.
+#
+# A name that holds the byte \001 or \002 is refused (`plain_names`).
+#
+# What still refuses is on docs/carry-over.md: a tracked folder that has since become a
+# repository of its own (git's search does not look inside one), and on macOS a file
+# tracked under a decomposed name that a rule written composed ignores (git's search
+# leaves it out).
 census() {
-  local f rev missing rc
+  local f rev missing rc depth=0
   case "$target" in
     worktree)
       rc=0
+      command -v perl >/dev/null || die "perl is needed to tell which files the search looked in, and is not here; refusing to pass"
       git ls-files -z -c >"$work/census-entries" 2>"$work/census-errors" || rc=$?
       [ "$rc" -eq 0 ] && [ ! -s "$work/census-errors" ] ||
         die "the tracked files could not be listed (git ls-files: exit $rc, $(wc -l <"$work/census-errors" | tr -d ' ') lines of warnings or errors); refusing to pass"
       plain_names "$work/census-entries"
-      # Git composes names on macOS alone, and there only with the setting on.
-      composing=0
-      if [ "$(uname -s)" = Darwin ] && [ "$(git config --type=bool core.precomposeunicode 2>/dev/null || true)" = true ]; then
-        composing=1
-      fi
-      compose "$work/census-entries"
+      # A tracked name with no file behind it is a file deleted here: nothing to cover.
+      same_files <"$work/census-entries" >"$work/census-ids" 2>/dev/null
       printf '.\0' >"$work/census-level"
       : >"$work/census-folders"
       while [ -s "$work/census-level" ]; do
+        # A walk must end. No folder is walked twice, and no tree is 4096 levels deep.
+        depth=$((depth + 1))
+        [ "$depth" -le 4096 ] ||
+          die "the folders of the working tree go more than 4096 levels deep; the walk is not coming to an end; refusing to pass"
         cat "$work/census-level" >>"$work/census-folders"
+        [ "$(($(tr '\n\0' '\002\n' <"$work/census-folders" | sort | uniq -d | wc -l)))" -eq 0 ] ||
+          die "the walk of the working tree came to a folder a second time: it is going in a circle; refusing to pass"
         walk d <"$work/census-level"
         # A folder is asked about by its name alone. With a `/` after it git takes the
         # name for a path inside the folder: `out/*` would then match `out/`.
-        unignored 1 --no-index >"$work/census-level"
+        unignored 1 >"$work/census-level"
       done
       walk f <"$work/census-folders"
-      unignored 3 --no-index >>"$work/census-entries"
-      while IFS= read -r -d '' f; do
-        if [ -f "$f" ] && [ ! -L "$f" ] && [ -s "$f" ]; then printf '%s\0' "$f"; fi
-      done <"$work/census-entries" | names >"$work/census-listed"
+      unignored 3 >"$work/census-files"
+      same_files <"$work/census-files" >>"$work/census-ids" 2>"$work/census-gone"
+      [ ! -s "$work/census-gone" ] ||
+        die "$(cat "$work/census-gone") files that were in the working tree when it was listed are no longer there; something changed during the scan: run it again; refusing to pass"
+      sort -u "$work/census-ids" >"$work/census-listed"
       ;;
     files)
       for f in "${target_items[@]}"; do
@@ -408,13 +439,45 @@ census() {
       ;;
   esac
   run_grep "$work/census-raw" -l -F -e ''
-  [ "$target" != worktree ] || compose "$work/census-raw"
-  names <"$work/census-raw" >"$work/census-searched"
+  if [ "$target" = worktree ]; then
+    same_files <"$work/census-raw" 2>"$work/census-gone" | sort -u >"$work/census-searched"
+    [ ! -s "$work/census-gone" ] ||
+      die "$(cat "$work/census-gone") names the search gave for the working tree lead to no file; something changed during the scan: run it again; refusing to pass"
+  else
+    names <"$work/census-raw" >"$work/census-searched"
+  fi
   missing=$(comm -23 "$work/census-listed" "$work/census-searched" | wc -l | tr -d ' ')
-  [ "$missing" -eq 0 ] || [ "$composing" -eq 0 ] ||
-    die "$missing of the $(wc -l <"$work/census-listed" | tr -d ' ') files to cover were not looked in by the search ($target); they are not named here, since a path can hold a match; on macOS one cause is a file tracked under a decomposed name that an ignore rule written composed matches; refusing to pass"
   [ "$missing" -eq 0 ] ||
     die "$missing of the $(wc -l <"$work/census-listed" | tr -d ' ') files to cover were not looked in by the search ($target); they are not named here, since a path can hold a match; refusing to pass"
+}
+
+# same_files: NUL-ended names on stdin, relative to the top of the working tree; on stdout
+# one line, device and inode, for each that is a regular file with something in it (a
+# link is not followed, so it is not one). On stderr, if any name leads nowhere, how many
+# do. perl, because it is on every system the scan runs on and reads a NUL-ended list and
+# looks a name up in one process; `stat` would do, but its options differ between the
+# systems.
+#
+# A name can be too long to look up in one go and still name a file: macOS takes 1,023
+# bytes, and a decomposed name is longer than the composed one git knows the file by.
+# Such a name is followed folder by folder.
+same_files() {
+  perl -0 -ne '
+    BEGIN { require Cwd; $top = Cwd::getcwd(); defined $top or die "no working directory\n" }
+    chomp;
+    my @s = lstat($_);
+    if (!@s && $!{ENAMETOOLONG}) {
+      my @parts = grep { $_ ne "" } split m{/}, $_;
+      my $last = pop @parts;
+      my $there = defined $last;
+      for my $part (@parts) { $there &&= chdir($part) }
+      @s = lstat($last) if $there;
+      chdir($top) or die "cannot go back to the working directory\n";
+    }
+    if (!@s) { $gone++; next }
+    print "$s[0]:$s[1]\n" if -f _ && $s[7] > 0;
+    END { print STDERR "$gone\n" if $gone }
+  '
 }
 
 # plain_names <file>: fails if any of the NUL-ended names in the file holds the byte \001
@@ -427,124 +490,15 @@ plain_names() {
   [ "$odd" -eq 0 ] ||
     die "$odd names hold the byte \\001 or \\002, which the scan uses to tell names and fields apart, so it cannot cover them; rename them; refusing to pass"
 }
-# compose <file>: rewrites the NUL-ended names in the file, composed as git composes a
-# name it reads from a folder: each part of a path that has a byte that is not ASCII goes
-# through the same conversion (iconv, UTF-8-MAC to UTF-8), and stays as it is when iconv
-# refuses it. Only where git does it (`composing`), and only for names with such a byte.
-#
-# Not one iconv for each part, which takes seconds for a thousand names, and not one
-# iconv over the whole list either: iconv reads its input in blocks (of 4096 bytes on the
-# Mac this was measured on) and does not compose a letter that ends one block with the
-# accent that starts the next. So each name goes into a small file of its own and one
-# iconv is given some hundreds of those files: it reads each file by itself, and gave,
-# for 3,000 made-up names, exactly what one iconv for each name gave. A whole name gives
-# what its parts would: the `/` between two parts composes with nothing. And a path is
-# at most 1024 bytes there, so no file reaches the end of a block. The names of a batch
-# that iconv refuses are done part by part, one iconv each (`compose_each`).
-#
-# iconv is not taken at its word. The scan fails unless iconv gives as many names as it
-# was given, there are as many different names after as before, every name has as many
-# parts as before, and every name that led to a file or a folder still leads to one: a name that came out wrong would otherwise
-# be dropped from the list as a file that is not there. Two names of the index that
-# differ only in this (a tree made on a system that keeps them apart) are one file here,
-# and are refused the same way.
-composing=0
-compose_batch=()
-compose() {
-  local f g before gave lost=0 n=0
-  [ "$composing" -eq 1 ] || return 0
-  [ "$(($(tr -d '\000-\177' <"$1" | wc -c)))" -gt 0 ] || return 0
-  mkdir -p "$work/compose"
-  : >"$work/compose-done"
-  compose_batch=()
-  while IFS= read -r -d '' f; do
-    case "$f" in
-      *[!$'\001'-$'\177']*)
-        n=$((n + 1))
-        printf '%s\0' "$f" >"$work/compose/$n"
-        compose_batch+=("$n")
-        [ "${#compose_batch[@]}" -lt 500 ] || compose_flush
-        ;;
-    esac
-  done <"$1"
-  compose_flush
-  # The composed names take the places of the ones they came from.
-  while IFS= read -r -d '' f; do
-    case "$f" in
-      *[!$'\001'-$'\177']*)
-        IFS= read -r -d '' g <&3 || g=
-        f=$g
-        ;;
-    esac
-    printf '%s\0' "$f"
-  done <"$1" 3<"$work/compose-done" >"$work/census-composed"
-  before=$(($(names <"$1" | wc -l)))
-  gave=$(($(names <"$work/census-composed" | wc -l)))
-  [ "$gave" -eq "$before" ] ||
-    die "the names of the working tree could not be composed as git composes them ($before names became $gave); either iconv is at fault, or the index holds a name both composed and decomposed, which are one file here; refusing to pass"
-  while IFS= read -r -d '' f <&3 && IFS= read -r -d '' g <&4; do
-    [ "$f" != "$g" ] || continue
-    # As many parts as before, none of them empty: a folder that came back as the folder
-    # it is in would be walked for ever.
-    case "/$g/" in
-      *//*) lost=$((lost + 1)) && continue ;;
-    esac
-    [ "${f//[!\/]/}" = "${g//[!\/]/}" ] || { lost=$((lost + 1)) && continue; }
-    [ -e "$f" ] || [ -L "$f" ] || continue
-    [ -e "$g" ] || [ -L "$g" ] || lost=$((lost + 1))
-  done 3<"$1" 4<"$work/census-composed"
-  [ "$lost" -eq 0 ] ||
-    die "the names of the working tree could not be composed as git composes them ($lost names no longer lead to what they named); refusing to pass"
-  mv "$work/census-composed" "$1"
-}
-# compose_flush: one iconv for the names of $compose_batch, each in its file under
-# $work/compose; what it gives is added to $work/compose-done.
-compose_flush() {
-  local gave
-  [ "${#compose_batch[@]}" -gt 0 ] || return 0
-  if ! (cd "$work/compose" && iconv -f UTF-8-MAC -t UTF-8 "${compose_batch[@]}") >"$work/compose-out" 2>/dev/null; then
-    (cd "$work/compose" && cat "${compose_batch[@]}") >"$work/compose-in"
-    compose_each "$work/compose-in" >"$work/compose-out"
-  fi
-  gave=$(($(tr -c -d '\0' <"$work/compose-out" | wc -c)))
-  [ "$gave" -eq "${#compose_batch[@]}" ] && [ "$(tail -c 1 "$work/compose-out" | tr '\0' x)" = x ] ||
-    die "the names of the working tree could not be composed as git composes them (iconv gave $gave names for ${#compose_batch[@]}); refusing to pass"
-  cat "$work/compose-out" >>"$work/compose-done"
-  compose_batch=()
-}
-# compose_each <file>: the same for the names of the file, as git does it: one iconv
-# for each part of a path that has a byte that is not ASCII. A part iconv refuses stays
-# as it is.
-compose_each() {
-  local f rest part new out
-  while IFS= read -r -d '' f; do
-    case "$f" in
-      *[!$'\001'-$'\177']*)
-        rest=$f out=
-        while :; do
-          part=${rest%%/*}
-          case "$part" in
-            *[!$'\001'-$'\177']*)
-              # The dot keeps a newline that ends the part.
-              if new=$(printf '%s.' "$part" | iconv -f UTF-8-MAC -t UTF-8 2>/dev/null); then part=${new%.}; fi
-              ;;
-          esac
-          out=$out$part
-          case "$rest" in */*) rest=${rest#*/} out=$out/ ;; *) break ;; esac
-        done
-        f=$out
-        ;;
-    esac
-    printf '%s\0' "$f"
-  done <"$1"
-}
 # walk <d|f>: writes to $work/census-found the folders (d) or the files (f) directly
 # inside each folder named on stdin, NUL-ended, as `./path`. find does not follow a link,
 # so what a link leads to is not listed (nor searched); and it goes no deeper than the
 # folders it is given. Nothing named `.git` is listed. What find says is not printed: it
-# names paths.
+# names paths. A name that is not a path below `./`, or has a part that is empty, `.` or
+# `..`, is not one find should give: it could lead the walk out of the tree or round in
+# a circle, so it is refused.
 walk() {
-  local rc=0
+  local rc=0 odd
   xargs -0 sh -c 'kind=$1; shift; exec find "$@" -mindepth 1 -maxdepth 1 ! -name .git -type "$kind" -print0' sh "$1" \
     >"$work/census-found" 2>"$work/census-errors" || rc=$?
   [ "$rc" -eq 0 ] && [ ! -s "$work/census-errors" ] || {
@@ -552,29 +506,87 @@ walk() {
     die "the files of the working tree could not all be listed (find $rc $(wc -l <"$work/census-errors" | tr -d ' ') lines of errors, such as a folder it could not read); a file or folder changed during the walk, or one cannot be read: run it again, and if it refuses again, look for a folder that cannot be read; what was not listed is not covered; refusing to pass"
   }
   plain_names "$work/census-found"
-  compose "$work/census-found"
+  odd=$(tr '\n\0' ' \n' <"$work/census-found" | { grep -a -c -E -e '//|/\.\.?(/|$)|^([^.]|\.[^/])|^\./$' || true; })
+  [ "$odd" -eq 0 ] ||
+    die "the files of the working tree could not be listed: find gave $odd names that are not paths inside the folders it was given; refusing to pass"
 }
-# unignored <from> [--no-index]: of the paths in $work/census-found, NUL-ended, the ones
-# no ignore rule keeps out, each from its character number <from> (3 leaves out the `./`).
-# Without --no-index git says of a tracked path that no rule matches it, and it reads
-# each path as a pattern that a tracked path may match.
-# check-ignore prints four fields for each path: where the rule is, its line, the rule,
-# the path. No rule matched when the rule is empty; and a rule that starts with `!` puts
-# the path back, so that is not ignored either. Anything git says counts, and so does a
-# path it gives no answer for: the scan does not guess.
+# unignored <from>: of the paths in $work/census-found, NUL-ended, the ones no ignore rule
+# keeps out, each from its character number <from> (3 leaves out the `./`).
+#
+# Git is asked by the rules alone (`--no-index`): otherwise it says of a tracked path
+# that no rule matches it, and it reads each path as a pattern that a tracked path may
+# match. The paths are its arguments, some thousands to a git: see "Names" above
+# `census`. For each argument git prints one line, in the order given: where the rule
+# is, its line, the rule, a tab, the path (quoted when it holds a tab or a newline, so a
+# line is a path). No rule matched when the line starts `::`; and a rule that starts
+# with `!` puts the path back, so that is not ignored either.
+#
+# Anything git says counts, and so does a git that answers for more or fewer paths than
+# it was given: the scan does not guess. An answer goes with the path in the same place
+# of the list; where the path is made of plain letters only, git must have printed it
+# back as it was, which catches answers that come in another order.
 unignored() {
-  local rc=0 asked answered
+  local rc=0
   [ -s "$work/census-found" ] || return 0
-  git check-ignore -z --stdin -v -n ${2+"$2"} <"$work/census-found" >"$work/census-rules" 2>"$work/census-errors" || rc=$?
-  [ "$rc" -le 1 ] && [ ! -s "$work/census-errors" ] ||
-    die "the files of the working tree could not be told from the ignored ones (git check-ignore: exit $rc, $(wc -l <"$work/census-errors" | tr -d ' ') lines of warnings or errors); refusing to pass"
-  asked=$(($(tr -c -d '\0' <"$work/census-found" | wc -c)))
-  answered=$(($(tr -c -d '\0' <"$work/census-rules" | wc -c)))
-  [ "$answered" -eq $((asked * 4)) ] ||
-    die "the files of the working tree could not be told from the ignored ones: git check-ignore answered for $((answered / 4)) of the $asked paths it was asked about; refusing to pass"
-  tr '\n\0' '\002\n' <"$work/census-rules" |
-    awk -v from="$1" 'NR % 4 == 3 { free = ($0 == "" || substr($0, 1, 1) == "!") } NR % 4 == 0 && free { print substr($0, from) }' |
-    tr '\002\n' '\n\0'
+  rm -f "$work/census-short"
+  : >"$work/census-errors"
+  echo 0 >"$work/census-status"
+  # xargs stops at the first git that fails or answers short (exit 255).
+  xargs -0 "$BASH" -c '
+    work=$1
+    shift
+    rc=0
+    git check-ignore -v -n --no-index -- "$@" >"$work/census-batch" 2>>"$work/census-errors" || rc=$?
+    [ "$rc" -le "$(cat "$work/census-status")" ] || echo "$rc" >"$work/census-status"
+    [ "$rc" -le 1 ] || exit 255
+    answered=$(($(wc -l <"$work/census-batch")))
+    [ "$answered" -eq "$#" ] || { echo "$answered of the $#" >"$work/census-short"; exit 255; }
+    cat "$work/census-batch"
+  ' bash "$work" <"$work/census-found" >"$work/census-rules" || rc=$?
+  [ "$(cat "$work/census-status")" -le 1 ] && [ ! -s "$work/census-errors" ] ||
+    die "the files of the working tree could not be told from the ignored ones (git check-ignore: exit $(cat "$work/census-status"), $(wc -l <"$work/census-errors" | tr -d ' ') lines of warnings or errors); refusing to pass"
+  [ ! -e "$work/census-short" ] ||
+    die "the files of the working tree could not be told from the ignored ones: git check-ignore answered for $(cat "$work/census-short") paths it was asked about; refusing to pass"
+  [ "$rc" -eq 0 ] ||
+    die "the files of the working tree could not be told from the ignored ones (xargs: exit $rc); refusing to pass"
+  # In a rule's place: `source:line:rule`. Git puts a source in quotes when it holds a
+  # newline, a quote or a byte that is not ASCII: it then ends at the closing quote. A
+  # source without quotes may itself hold `:digits:`, so it is the shortest start of the
+  # line that is a file.
+  perl -e '
+    my ($from, $rules, $found) = @ARGV;
+    open(my $r, "<", $rules) or exit 3;
+    open(my $f, "<", $found) or exit 3;
+    my $odd = 0;
+    while (1) {
+      my $line = do { local $/ = "\n"; <$r> };
+      my $name = do { local $/ = "\0"; <$f> };
+      last if !defined $line && !defined $name;
+      if (!defined $line || !defined $name) { $odd++; last }
+      $line =~ s/\n\z//;
+      $name =~ s/\0\z//;
+      my $tab = rindex($line, "\t");
+      if ($tab < 0) { $odd++; next }
+      my ($rule, $path) = (substr($line, 0, $tab), substr($line, $tab + 1));
+      if ($name =~ m{\A[A-Za-z0-9._/-]+\z} && $path ne $name) { $odd++; next }
+      my $free;
+      if ($rule eq "::") {
+        $free = 1;
+      } elsif ($rule =~ /\A"(?:[^"\\]|\\.)*":\d+:/s) {
+        $free = substr($rule, $+[0], 1) eq "!" ? 1 : 0;
+      } else {
+        while ($rule =~ /:\d+(?=:)/g) {
+          next unless -f substr($rule, 0, $-[0]);
+          $free = substr($rule, $+[0] + 1, 1) eq "!" ? 1 : 0;
+          last;
+        }
+        if (!defined $free) { $odd++; next }
+      }
+      print substr($name, $from - 1), "\0" if $free;
+    }
+    exit($odd ? 4 : 0);
+  ' "$1" "$work/census-rules" "$work/census-found" ||
+    die "the files of the working tree could not be told from the ignored ones: the answers of git check-ignore could not be read, or are not for the paths it was asked about, in the order asked; refusing to pass"
 }
 
 # search_words: a search for the listed words, in any case, as fixed strings.
@@ -880,7 +892,7 @@ case "$mode" in
       echo "^$base_sha" >>"$work/revs"
     else
       # What the destination has now, from the destination itself.
-      git ls-remote "$url" >"$work/remote-refs" ||
+      env ${caller_config[@]+"${caller_config[@]}"} git ls-remote "$url" >"$work/remote-refs" ||
         die "cannot establish what the remote '$remote' has; refusing to pass"
       # The last line counts even without a newline after it.
       while read -r local_ref local_sha remote_ref remote_sha more || [ -n "$local_ref" ]; do

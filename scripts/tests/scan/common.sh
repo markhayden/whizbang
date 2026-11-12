@@ -88,7 +88,10 @@ says() {
 # arguments hold the words of NOISY_ON in a row (`ls-files -z -c` is one listing and no
 # other), and then go on as git would; answer nothing when asked which paths are ignored
 # (MUTE=check-ignore), or answer for one path more than it was asked about
-# (EXTRA=check-ignore); wait a moment (SLOW); note what the scan's own folder holds at
+# (EXTRA=check-ignore), give its answers in the opposite order (SWAP=check-ignore), or
+# give a first answer that names no rule as git writes one (GARBLE=check-ignore);
+# name, among the files a search of the working tree looked in, one that is not there
+# (GHOST); wait a moment (SLOW); note what the scan's own folder holds at
 # that moment (SPY); and note, for every call, whether configuration came with the
 # environment (its count, and a key and a value) and what two settings then are (ENV_LOG).
 stand_in_for_git() {
@@ -131,7 +134,25 @@ if [ "${EXTRA:-}" = check-ignore ]; then
   case " $* " in *" check-ignore "*)
     status=0
     "$real" "$@" || status=$?
-    printf '\0\0\0./a-path-nobody-asked-about\0'
+    printf '::\t./a-path-nobody-asked-about\n'
+    exit "$status"
+    ;;
+  esac
+fi
+if [ "${SWAP:-}" = check-ignore ]; then
+  case " $* " in *" check-ignore "*)
+    status=0
+    "$real" "$@" >"$SWAP_FILE.$$" || status=$?
+    perl -e 'print reverse <>' "$SWAP_FILE.$$"
+    exit "$status"
+    ;;
+  esac
+fi
+if [ "${GARBLE:-}" = check-ignore ]; then
+  case " $* " in *" check-ignore "*)
+    status=0
+    "$real" "$@" >"$GARBLE_FILE.$$" || status=$?
+    sed '1s/^[^	]*/no rule is written like this/' "$GARBLE_FILE.$$"
     exit "$status"
     ;;
   esac
@@ -167,6 +188,15 @@ if [ "$search" -eq 1 ] && [ -n "${LOSE:-}" ]; then
       ;;
   esac
 fi
+if [ -n "${GHOST:-}" ] && [ "$search" -eq 1 ] && [ "$census" -eq 1 ]; then
+  case " $* " in *" --untracked "*)
+    status=0
+    "$real" "$@" || status=$?
+    printf '%s\0' "$GHOST"
+    exit "$status"
+    ;;
+  esac
+fi
 [ "$lose" -eq 1 ] || exec "$real" "$@"
 status=0
 "$real" "$@" >"$LOSE_COUNT.out" || status=$?
@@ -187,20 +217,23 @@ chmod +x "$tmp/bin/git"
 # first reports what the folder held and what two more scans find, the second with git grep
 # on one thread. On CI's macOS runner git grep on several threads has lost a match at
 # random (docs/carry-over.md), and a scan on one thread has not.
+# file_id <name>: the device and inode of what the name itself is (a link is not followed).
+file_id() { perl -e 'my @s = lstat($ARGV[0]) or exit 1; print "$s[0]:$s[1]\n"' -- "$1"; }
+# listed <name>: the census's list, as lists_what_git_lists last saw it, holds the file.
+listed() { grep -q -x -F -e "$(file_id "$1")" "$tmp/spy.listed"; }
 # lists_what_git_lists <name>: the scan passes, and the census's own list of the working
 # tree is exactly git's: every tracked file and every untracked one that no ignore rule
-# keeps out (regular files with something in them; links aside). Needs the stand-in for
-# git, which copies the census's list while the scan runs.
+# keeps out (regular files with something in them; links aside). Both are lists of
+# files, by device and inode, as the census keeps its own: a name is looked up, never
+# compared. Needs the stand-in for git, which copies the census's list while the scan runs.
 lists_what_git_lists() {
-  local f
   mkdir -p "$tmp/scan-tmp"
   rm -f "$tmp/spy.listed"
   expect_pass "$1" env PATH="$tmp/bin:$PATH" TMPDIR="$tmp/scan-tmp" SPY="$tmp/spy" SPY_WORD="$word" "$scan"
   [ -s "$tmp/spy.listed" ] || fail "$1: the census's list was seen"
   git ls-files -z -co --exclude-standard >"$tmp/git-entries"
-  while IFS= read -r -d '' f; do
-    if [ -f "$f" ] && [ ! -L "$f" ] && [ -s "$f" ]; then printf '%s\0' "$f"; fi
-  done <"$tmp/git-entries" | LC_ALL=C tr '\n\0' '\002\n' | LC_ALL=C sort -u >"$tmp/git-listed"
+  perl -0 -ne 'chomp; my @s = lstat($_) or next; print "$s[0]:$s[1]\n" if -f _ && $s[7] > 0' <"$tmp/git-entries" |
+    LC_ALL=C sort -u >"$tmp/git-listed"
   cmp -s "$tmp/git-listed" "$tmp/spy.listed" || {
     diff "$tmp/git-listed" "$tmp/spy.listed" >&2 || true
     fail "$1: the census lists exactly what git lists (above: git's list, then the census's)"
@@ -211,7 +244,9 @@ lists_what_git_lists() {
 # it does: `speak` fails with a line that names a path; `fail` fails and says nothing;
 # `warn` says a line and then lists as find would; `keep-out` fails when it is asked to
 # look in the folder FIND_FOLDER or lists anything inside it, as find does when a folder
-# changes under it; `vanish` removes FIND_FOLDER after its call number FIND_AFTER.
+# changes under it; `vanish` removes FIND_FOLDER after its call number FIND_AFTER; `dots`
+# gives, on its second call, FIND_FOLDER's own folder as a folder inside it; `deeper`
+# gives one more folder each time, for ever; `circle` gives the same folder each time.
 # Anything else: find as it is.
 stand_in_for_find() {
 real_find=$(command -v find)
@@ -251,6 +286,20 @@ case "${FIND_DOES:-}" in
     fi
     cat "$out.$call"
     exit "$status"
+    ;;
+  dots)
+    # The folder it is in, among the folders of FIND_FOLDER.
+    "$real" "$@" || exit $?
+    case " $* " in *" -type d "*) [ "$call" -ne 2 ] || printf './%s/..\0' "$FIND_FOLDER" ;; esac
+    ;;
+  deeper)
+    # One more folder each time it is asked for folders, for ever, and no file. The
+    # names are short and never the same, so nothing but a count of levels stops it.
+    case " $* " in *" -type d "*) printf './level-%s\0' "$call" ;; esac
+    ;;
+  circle)
+    # The same folder each time it is asked for folders, for ever; and no file.
+    case " $* " in *" -type d "*) printf './round\0' ;; esac
     ;;
   vanish)
     status=0
