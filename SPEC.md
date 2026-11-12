@@ -834,7 +834,9 @@ docs/
   sources.toml          the old repos' final commits, fixed before porting starts
 .claude/                skills, subagents and permission settings (versioned)
 scripts/                scan.sh, heavy.sh, timing.sh, setup.sh with tool-versions.txt,
-                        check-crate-graph.sh with crate-graph.txt, docs.sh, hooks/,
+                        check-crate-graph.sh with crate-graph.txt, docs.sh,
+                        tool-record.sh (writes a tool record's examples and numbers
+                        again), hooks/,
                         baseline/ (convert.py, audit.py and tables.py: Python 3.9 or
                         later, standard library only), and tests/ (the tests of the
                         scripts); later

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/whizbang-core", "crates/whizbang-eval", "crates/whizbang-testkit", "crates/whizbang"]
+members = ["crates/whizbang-core", "crates/whizbang-eval", "crates/whizbang-squint", "crates/whizbang-testkit", "crates/whizbang"]
 
 [workspace.package]
 version = "0.0.1"

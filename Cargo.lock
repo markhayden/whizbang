@@ -478,6 +478,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "whizbang-squint"
+version = "0.0.1"
+dependencies = [
+ "image",
+ "whizbang-core",
+]
+
+[[package]]
 name = "whizbang-testkit"
 version = "0.0.1"
 dependencies = [

@@ -39,6 +39,7 @@ manifest. This file holds what you cannot work out from the code.
 | `scripts/worktree.sh add <slug>` | At the start of a task: fetches `origin/main` and makes the worktree `../whizbang-<slug>` on a new branch `<slug>`. `remove <slug>` takes both away once the branch is merged into `origin/main`, and refuses otherwise; `list` shows the worktrees |
 | `just check` | Before every commit: format check, lint, the crate graph, licences and sources, the syntax of every script under `scripts/`, the script tests, the generated reference against a fresh copy, then the fast tests with seconds per suite |
 | `just docs` | After changing what `whizbang describe` reports (the description type, an action, the version): rewrites `docs/reference/`; commit the result, because `just check` fails on a stale copy |
+| `scripts/tool-record.sh view` | After changing what `view` gives: writes the record's example images, measurements and times again (`docs/reference/tools/view.md`); commit the result, because the fast tests fail on stale images or measurements. Heavy |
 | `just scan` | Before every push: the secrets scan and the clean-room scan, over the working tree |
 | `just scan-range <base> <head>` | Before a merge: the same two scans and the attribution check over every commit in `base..head` (contents, paths, messages) and the tree of `head` |
 | `just scan-range-secrets <base> <head>` | The range scan without the clean-room scan: what CI runs over the commits of a pull request (with the base branch's copy of the scan), and of a push to `main` |
