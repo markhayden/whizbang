@@ -249,8 +249,9 @@ not reported as finished.
 a count: `1794519513123-1`. The count is the executor's count of the runs it has named,
 and goes up past any id the store already holds. One process writes a store at a time, and
 it is this one, so an id that is free when it is made stays free until the run is
-published. It is a `RunId` (ADR 0004) by construction. Ids made in order sort in order
-while the time has as many digits.
+published. It is a `RunId` (ADR 0004) by construction. Runs that started at different
+milliseconds sort, by id, in the order they started, while the time has as many digits;
+within one millisecond the count is compared as text, so `-10` comes before `-9`.
 
 **What an action is handed.** A cancellation signal that nothing sets; no deadline; an
 event sink, which is the run's journal; an empty allowance; the store the executor reads;
