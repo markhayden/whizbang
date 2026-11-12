@@ -15,17 +15,17 @@
 //!   of the new name). Syncing any other directory does nothing for it.
 //!
 //! What a crash does with the rest is the caller's choice ([`Lost`]), because a real disk may
-//! keep more than was asked of it, and may keep one directory's names without another's. A
-//! correct protocol passes under every choice.
+//! keep more than was asked of it, and may keep one directory's names without another's, or
+//! one name of a directory without the next. A correct protocol passes under every choice.
 //!
 //! The shim never calls the real sync: it models durability, and a real sync is slow.
 
 use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
-use whizbang_core::store::fs::{Fs, RealFs};
+use whizbang_core::store::fs::{Fs, Held, LockFile, RealFs};
 
 /// One recorded call that changes the disk or makes a change durable. Reads are not events.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +42,10 @@ pub enum Event {
     Rename(PathBuf, PathBuf),
     /// A file or a directory tree was removed.
     Remove(PathBuf),
+    /// A lock file was taken ([`Fs::hold_lock_file`]). A refused attempt is not an event,
+    /// and neither is recording the holder, sharing a file or taking one alone: nothing
+    /// durable changes by them.
+    Lock(PathBuf),
 }
 
 /// What a crash loses. Under every choice, a file whose content was not synced is cut to
@@ -60,6 +64,13 @@ pub enum Lost {
     /// directory number `i` loses its names when bit `i` of the mask is set.
     /// [`ShimFs::crash_choices`] says how many there were, so a test can try every mask.
     Subset(u64),
+    /// The disk kept some unsynced names and lost others, whatever directory they are in:
+    /// two names of one directory can fare differently. The names with changes not yet
+    /// durable are taken in order of their paths (for a rename, the new name), and name
+    /// number `i` loses every change made to it when bit `i` of the mask is set.
+    /// [`ShimFs::crash_names`] says how many there were. A removal that removes many names
+    /// from one directory is tested under this.
+    Names(u64),
 }
 
 /// A copy of what a path held, kept so that a crash can bring it back.
@@ -90,6 +101,48 @@ impl Pending {
             Pending::Renamed { to, .. } => to.parent(),
         }
     }
+
+    /// The name the change is made to: for a rename, the new name.
+    fn name(&self) -> &Path {
+        match self {
+            Pending::Created(path) | Pending::Removed { path, .. } => path,
+            Pending::Renamed { to, .. } => to,
+        }
+    }
+}
+
+/// A lock on the real disk, shared between the value handed to the store and the shim, so
+/// that either can end it: the store by dropping its value, the shim by crashing.
+type Lock = Arc<Mutex<Option<Box<dyn Held>>>>;
+
+struct ShimHeld(Lock);
+
+impl Held for ShimHeld {}
+
+impl Drop for ShimHeld {
+    fn drop(&mut self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
+}
+
+/// The same for a lock file.
+type HeldLockFile = Arc<Mutex<Option<Box<dyn LockFile>>>>;
+
+struct ShimLockFile(HeldLockFile);
+
+impl LockFile for ShimLockFile {
+    fn record(&self, holder: &[u8]) -> io::Result<()> {
+        match self.0.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            Some(lock) => lock.record(holder),
+            None => Err(io::Error::other("the file system has crashed")),
+        }
+    }
+}
+
+impl Drop for ShimLockFile {
+    fn drop(&mut self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
 }
 
 type Hook = Box<dyn FnOnce() + Send>;
@@ -108,8 +161,12 @@ struct State {
     fail_matching: Option<(usize, Matches)>,
     cross_device: Option<PathBuf>,
     hook: Option<(usize, Hook)>,
+    /// The locks this file system holds, each until its holder drops it or the crash.
+    locks: Vec<Lock>,
+    lock_files: Vec<HeldLockFile>,
     crashed: bool,
     crash_choices: usize,
+    crash_names: usize,
 }
 
 /// The file system that can lose power.
@@ -196,8 +253,22 @@ impl ShimFs {
         self.lock().crash_choices
     }
 
+    /// After a crash: how many names had changes that were not durable. Each could have
+    /// lost them or kept them, so [`Lost::Names`] has two to this power outcomes.
+    pub fn crash_names(&self) -> usize {
+        self.lock().crash_names
+    }
+
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Keeps a lock taken on the real disk, to end it at a crash.
+    fn keep(state: &mut State, held: Box<dyn Held>) -> Box<dyn Held> {
+        state.locks.retain(|lock| Arc::strong_count(lock) > 1);
+        let lock: Lock = Arc::new(Mutex::new(Some(held)));
+        state.locks.push(lock.clone());
+        Box::new(ShimHeld(lock))
     }
 
     /// The state, for a read: refused after a crash.
@@ -258,6 +329,13 @@ fn crash(state: &mut State, lost: Lost) {
         return;
     }
     state.crashed = true;
+    // The process is gone, and its locks with it.
+    for lock in std::mem::take(&mut state.locks) {
+        lock.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
+    for lock in std::mem::take(&mut state.lock_files) {
+        lock.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
     // Content first, while every file still has the name the shim knows it by.
     for path in std::mem::take(&mut state.unsynced) {
         if let Ok(meta) = std::fs::metadata(&path)
@@ -268,20 +346,37 @@ fn crash(state: &mut State, lost: Lost) {
         }
     }
     let pending = std::mem::take(&mut state.pending);
-    let dirs: BTreeSet<&Path> = pending.iter().filter_map(Pending::dir).collect();
-    state.crash_choices = dirs.len();
-    let loses: BTreeSet<PathBuf> = dirs
+    let dirs: Vec<&Path> = pending
+        .iter()
+        .filter_map(Pending::dir)
+        .collect::<BTreeSet<_>>()
         .into_iter()
-        .enumerate()
-        .filter(|(i, _)| match lost {
+        .collect();
+    let names: Vec<&Path> = pending
+        .iter()
+        .map(Pending::name)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    state.crash_choices = dirs.len();
+    state.crash_names = names.len();
+    let chosen = |mask: u64, i: Option<usize>| i.is_some_and(|i| i < 64 && mask >> i & 1 == 1);
+    let loses: Vec<bool> = pending
+        .iter()
+        .map(|change| match lost {
             Lost::Unsynced => true,
             Lost::ContentOnly => false,
-            Lost::Subset(mask) => *i < 64 && mask >> i & 1 == 1,
+            Lost::Subset(mask) => chosen(
+                mask,
+                change
+                    .dir()
+                    .and_then(|dir| dirs.iter().position(|d| *d == dir)),
+            ),
+            Lost::Names(mask) => chosen(mask, names.iter().position(|n| *n == change.name())),
         })
-        .map(|(_, dir)| dir.to_path_buf())
         .collect();
-    for change in pending.into_iter().rev() {
-        if !change.dir().is_some_and(|dir| loses.contains(dir)) {
+    for (change, lost) in pending.into_iter().zip(loses).rev() {
+        if !lost {
             continue;
         }
         match change {
@@ -441,5 +536,37 @@ impl Fs for ShimFs {
     fn exists(&self, path: &Path) -> io::Result<bool> {
         let _state = self.alive()?;
         self.real.exists(path)
+    }
+    fn hold_lock_file(&self, path: &Path, create: bool) -> io::Result<Option<Box<dyn LockFile>>> {
+        let event = Event::Lock(path.to_path_buf());
+        let mut state = self.next_event(&event)?;
+        let was_there = self.real.exists(path)?;
+        let Some(held) = self.real.hold_lock_file(path, create)? else {
+            return Ok(None);
+        };
+        if !was_there {
+            state.pending.push(Pending::Created(path.to_path_buf()));
+        }
+        state.events.push(event);
+        state.lock_files.retain(|lock| Arc::strong_count(lock) > 1);
+        let lock: HeldLockFile = Arc::new(Mutex::new(Some(held)));
+        state.lock_files.push(lock.clone());
+        Ok(Some(Box::new(ShimLockFile(lock))))
+    }
+
+    fn share(&self, path: &Path) -> io::Result<Box<dyn Held>> {
+        // Not under the shim's own lock: this can wait for one who has the file alone.
+        drop(self.alive()?);
+        let held = self.real.share(path)?;
+        let mut state = self.alive()?;
+        Ok(Self::keep(&mut state, held))
+    }
+
+    fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
+        let mut state = self.alive()?;
+        Ok(self
+            .real
+            .try_alone(path)?
+            .map(|held| Self::keep(&mut state, held)))
     }
 }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use whizbang_core::artifact::{self, Artifact, ArtifactError, ArtifactId, ArtifactType, Step};
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::RealFs;
-use whizbang_core::store::{Reader, Store};
+use whizbang_core::store::{self, Kind, Reader, Store};
 use whizbang_testkit::scratch::Scratch;
 
 use super::support::*;
@@ -165,5 +165,53 @@ fn what_is_stored_under_an_artifacts_name_must_be_that_artifact() {
             artifact::get(&store, ArtifactType::Mask, under(n), &limits()),
             Err(ArtifactError::WrongType { .. })
         ));
+    }
+}
+
+#[test]
+fn an_artifact_is_stored_as_an_output_and_a_diagnostic_of_its_name_is_not_taken_for_it() {
+    let dir = Scratch::new("artifacts");
+    let root = dir.path().join("store");
+    let store = open(&dir, "store");
+    let artifact = one_of_each().remove(0);
+    let (kind, id) = (artifact.artifact_type(), artifact.id());
+    store_all(&store, std::slice::from_ref(&artifact));
+    let generation = store.snapshot().unwrap();
+    let entry = generation.get(&artifact::name(kind, id)).unwrap();
+    assert_eq!(
+        entry.kind,
+        Kind::Output,
+        "an artifact is a committed output"
+    );
+    assert_eq!(
+        artifact::get(&store, kind, id, &limits()).unwrap(),
+        artifact
+    );
+    drop(store);
+
+    // The same reference, said to be a diagnostic: the same bytes under the same name.
+    // It is read as a diagnostic is, and it is not an artifact to anyone who asks for one.
+    let file = root.join("generations/1.json");
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(text.matches("\"kind\": \"output\"").count(), 1);
+    std::fs::write(
+        &file,
+        text.replace("\"kind\": \"output\"", "\"kind\": \"diagnostic\""),
+    )
+    .unwrap();
+    let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
+    let writer = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let generation = reader.snapshot().unwrap();
+    let entry = generation.get(&artifact::name(kind, id)).unwrap();
+    assert_eq!(reader.read(entry).unwrap(), artifact.to_bytes());
+    let by_reader = artifact::get(&reader, kind, id, &limits());
+    let by_writer = artifact::get(&writer, kind, id, &limits());
+    for result in [by_reader, by_writer] {
+        match result {
+            Err(ArtifactError::Store(store::Error::NotAnOutput { digest })) => {
+                assert_eq!(digest, entry.digest);
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

@@ -4,6 +4,8 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use super::digest::Digest;
+
 /// A failure of the store.
 #[derive(Debug)]
 pub enum Error {
@@ -16,10 +18,35 @@ pub enum Error {
     },
     /// There is no store here. Opening to read creates nothing.
     Missing { root: PathBuf },
-    /// There is a directory here, and it is not a store: it has no pointer, and it is not
-    /// an empty directory or a store whose creation did not finish. Nothing in it was
-    /// created, removed or changed.
-    NotAStore { root: PathBuf },
+    /// There is a directory here, and it is not a store: it has no pointer. `found` is
+    /// the first thing met in it that a store being created does not hold, which is why
+    /// a writer does not make a store here; `None` when there is no such thing, as in an
+    /// empty directory, which is not a store to a reader or to a writer that must find
+    /// one. Nothing in the directory was created, removed or changed.
+    NotAStore {
+        root: PathBuf,
+        found: Option<PathBuf>,
+    },
+    /// Another writer holds the store: one process at a time may write it. `holder` is
+    /// what that writer wrote of itself in the lock file, when it could be read. Nothing
+    /// was removed or changed; reading is not refused.
+    Held {
+        root: PathBuf,
+        holder: Option<String>,
+    },
+    /// This cannot be the id of a run: it is empty, or it holds a control character.
+    InvalidRun { run: String },
+    /// A generation file says it is of a format this build does not read. A store written
+    /// by other code is not migrated.
+    OtherFormat {
+        path: PathBuf,
+        format: u32,
+        reads: u32,
+    },
+    /// No run has this id in the current generation. Nothing was published.
+    NoSuchRun { run: String },
+    /// The reference is a diagnostic. It can be read as one, and never used as an output.
+    NotAnOutput { digest: Digest },
     /// A file of the store does not hold what it must.
     Corrupt { path: PathBuf, reason: String },
     /// Staging is not on the store's file system, so nothing can be renamed into place.
@@ -57,10 +84,45 @@ impl fmt::Display for Error {
                 source,
             } => write!(f, "cannot {doing} {}: {source}", path.display()),
             Error::Missing { root } => write!(f, "there is no store at {}", root.display()),
-            Error::NotAStore { root } => write!(
+            Error::NotAStore { root, found: None } => {
+                write!(f, "{} is not a store: it has no CURRENT", root.display())
+            }
+            Error::NotAStore {
+                root,
+                found: Some(found),
+            } => write!(
                 f,
-                "{} is not a store: it has no CURRENT, and it holds other things",
-                root.display()
+                "{} is not a store: it has no CURRENT, and it holds {}, which a store that \
+                 is being created does not",
+                root.display(),
+                found.display()
+            ),
+            Error::Held { root, holder } => write!(
+                f,
+                "the store at {} is being written by {}; one process at a time may write a \
+                 store",
+                root.display(),
+                holder.as_deref().unwrap_or("another process")
+            ),
+            Error::InvalidRun { run } => write!(
+                f,
+                "{run:?} cannot be a run's id: an id is not empty and holds no control \
+                 character"
+            ),
+            Error::OtherFormat {
+                path,
+                format,
+                reads,
+            } => write!(
+                f,
+                "{} is of another format: {format}, and this build reads format {reads}",
+                path.display()
+            ),
+            Error::NoSuchRun { run } => write!(f, "the store holds no run {run:?}"),
+            Error::NotAnOutput { digest } => write!(
+                f,
+                "the reference to {digest} is a diagnostic: it can be read, and never used \
+                 as an output"
             ),
             Error::Corrupt { path, reason } => {
                 write!(f, "{} is damaged: {reason}", path.display())
@@ -83,7 +145,14 @@ impl std::error::Error for Error {
         match self {
             Error::Io { source, .. } | Error::OtherFileSystem { source, .. } => Some(source),
             Error::Unacknowledged { source, .. } => Some(source.as_ref()),
-            Error::Missing { .. } | Error::NotAStore { .. } | Error::Corrupt { .. } => None,
+            Error::Missing { .. }
+            | Error::NotAStore { .. }
+            | Error::Held { .. }
+            | Error::NoSuchRun { .. }
+            | Error::InvalidRun { .. }
+            | Error::OtherFormat { .. }
+            | Error::NotAnOutput { .. }
+            | Error::Corrupt { .. } => None,
         }
     }
 }

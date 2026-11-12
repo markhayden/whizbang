@@ -1,6 +1,7 @@
 //! The `whizbang` binary: argument parsing and wiring only.
 
 mod import;
+mod store;
 
 use std::process::ExitCode;
 
@@ -29,10 +30,11 @@ enum Command {
         #[arg(long, requires = "json")]
         pretty: bool,
     },
-    /// The store: bringing an artifact file into it.
+    /// The store: what it holds, removing runs and what only they reference, and
+    /// bringing an artifact file into it.
     Store {
         #[command(subcommand)]
-        command: import::Command,
+        command: store::Command,
     },
 }
 
@@ -74,7 +76,7 @@ fn main() -> ExitCode {
                 ExitCode::from(3)
             }
         },
-        Command::Store { command } => match import::run(&command) {
+        Command::Store { command } => match store::run(&command) {
             Ok(text) => {
                 print!("{text}");
                 ExitCode::SUCCESS

@@ -224,6 +224,65 @@ fn a_subset_loses_the_names_of_the_chosen_directories_and_keeps_the_rest() {
 }
 
 #[test]
+fn any_subset_of_the_unsynced_names_of_one_directory_can_be_lost() {
+    // Three names of one directory with changes not yet durable. In order of their
+    // paths: `gone`, removed and then written again (two changes to one name, bit 0);
+    // `later`, a new file (bit 1); `pointer`, renamed over (bit 2).
+    for mask in 0..8u64 {
+        let dir = Scratch::new("shim");
+        let fs = ShimFs::new();
+        let d = dir.path().join("d");
+        fs.create_dir(&d).unwrap();
+        fs.write_new(&d.join("gone"), b"old gone").unwrap();
+        fs.write_new(&d.join("new"), b"new").unwrap();
+        fs.write_new(&d.join("pointer"), b"old").unwrap();
+        fs.sync_dir(&d).unwrap();
+        fs.sync_dir(dir.path()).unwrap();
+
+        fs.remove_all(&d.join("gone")).unwrap();
+        fs.write_new(&d.join("gone"), b"new gone").unwrap();
+        fs.write_new(&d.join("later"), b"later").unwrap();
+        fs.rename(&d.join("new"), &d.join("pointer")).unwrap();
+        fs.crash(Lost::Names(mask));
+        assert_eq!(fs.crash_names(), 3);
+        assert_eq!(fs.crash_choices(), 1, "all in one directory");
+
+        let gone = on_disk(&d.join("gone")).unwrap();
+        assert_eq!(gone == b"old gone", mask & 1 == 1, "mask {mask}");
+        assert_eq!(gone == b"new gone", mask & 1 == 0, "mask {mask}");
+        assert_eq!(
+            on_disk(&d.join("later")).is_none(),
+            mask & 2 == 2,
+            "mask {mask}"
+        );
+        let pointer = on_disk(&d.join("pointer")).unwrap();
+        assert_eq!(pointer == b"old", mask & 4 == 4, "mask {mask}");
+        assert_eq!(
+            on_disk(&d.join("new")).is_some(),
+            mask & 4 == 4,
+            "mask {mask}"
+        );
+    }
+}
+
+#[test]
+fn some_removals_from_one_directory_can_be_kept_and_others_lost() {
+    for mask in 0..4u64 {
+        let dir = Scratch::new("shim");
+        let fs = ShimFs::new();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        fs.write_new(&a, b"a").unwrap();
+        fs.write_new(&b, b"b").unwrap();
+        fs.sync_dir(dir.path()).unwrap();
+        fs.remove_all(&a).unwrap();
+        fs.remove_all(&b).unwrap();
+        fs.crash(Lost::Names(mask));
+        assert_eq!(on_disk(&a).is_some(), mask & 1 == 1, "mask {mask}");
+        assert_eq!(on_disk(&b).is_some(), mask & 2 == 2, "mask {mask}");
+    }
+}
+
+#[test]
 fn after_a_crash_every_call_fails_and_nothing_more_reaches_the_disk() {
     let dir = Scratch::new("shim");
     let fs = ShimFs::new();
@@ -389,4 +448,98 @@ fn syncing_a_directory_that_is_not_there_fails() {
     let dir = Scratch::new("shim");
     let fs = ShimFs::new();
     assert!(fs.sync_dir(&dir.path().join("missing")).is_err());
+}
+
+// Locks: a shim stands for a process, so two shims exclude each other, and a crash ends
+// every lock the crashed one held.
+
+#[test]
+fn a_lock_file_is_held_by_one_file_system_until_it_is_dropped_or_the_crash() {
+    let dir = Scratch::new("shim");
+    let lock = dir.path().join("LOCK");
+    let (first, second) = (ShimFs::new(), ShimFs::new());
+
+    // Not made unless asked for.
+    assert_eq!(
+        first.hold_lock_file(&lock, false).err().unwrap().kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert!(!lock.exists());
+
+    let held = first.hold_lock_file(&lock, true).unwrap().unwrap();
+    assert_eq!(first.events(), vec![Event::Lock(lock.clone())]);
+    assert_eq!(on_disk(&lock).unwrap(), b"", "taking it writes nothing");
+    held.record(b"the first\n").unwrap();
+    assert_eq!(first.events().len(), 1, "recording is not an event");
+    assert!(second.hold_lock_file(&lock, true).unwrap().is_none());
+    assert!(second.hold_lock_file(&lock, false).unwrap().is_none());
+    assert_eq!(second.events(), vec![], "a refused attempt is not an event");
+    assert_eq!(
+        on_disk(&lock).unwrap(),
+        b"the first\n",
+        "and it wrote nothing"
+    );
+
+    drop(held);
+    let held = second.hold_lock_file(&lock, false).unwrap().unwrap();
+    held.record(b"2\n").unwrap();
+    assert_eq!(
+        on_disk(&lock).unwrap(),
+        b"2\n",
+        "the whole content, replaced"
+    );
+
+    assert!(first.hold_lock_file(&lock, true).unwrap().is_none());
+    second.crash(Lost::ContentOnly);
+    assert!(held.record(b"late\n").is_err(), "its process is gone");
+    assert_eq!(on_disk(&lock).unwrap(), b"2\n");
+    assert!(first.hold_lock_file(&lock, true).unwrap().is_some());
+    drop(held);
+}
+
+#[test]
+fn a_lock_file_that_was_created_and_never_synced_is_gone_after_a_crash() {
+    for synced in [false, true] {
+        let dir = Scratch::new("shim");
+        let lock = dir.path().join("LOCK");
+        let fs = ShimFs::new();
+        let _held = fs.hold_lock_file(&lock, true).unwrap().unwrap();
+        if synced {
+            fs.sync_dir(dir.path()).unwrap();
+        }
+        fs.crash(Lost::Unsynced);
+        assert_eq!(lock.exists(), synced);
+    }
+}
+
+#[test]
+fn a_file_that_is_shared_cannot_be_taken_alone_until_every_share_ends() {
+    let dir = Scratch::new("shim");
+    let file = dir.path().join("f");
+    let (reader, other, writer) = (ShimFs::new(), ShimFs::new(), ShimFs::new());
+    writer.write_new(&file, b"content").unwrap();
+    let before = writer.events().len();
+
+    let one = reader.share(&file).unwrap();
+    let two = other.share(&file).unwrap();
+    assert!(writer.try_alone(&file).unwrap().is_none());
+    drop(one);
+    assert!(writer.try_alone(&file).unwrap().is_none());
+    other.crash(Lost::Unsynced);
+    let alone = writer.try_alone(&file).unwrap();
+    assert!(alone.is_some(), "a crash ended the last share");
+    drop(two);
+    drop(alone);
+
+    assert_eq!(reader.events(), vec![], "sharing is not an event");
+    assert_eq!(writer.events().len(), before, "nor is taking a file alone");
+    assert_eq!(
+        reader
+            .share(&dir.path().join("missing"))
+            .err()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert!(other.share(&file).is_err(), "it has crashed");
 }

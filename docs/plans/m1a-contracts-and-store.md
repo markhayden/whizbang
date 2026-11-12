@@ -144,17 +144,17 @@ generation, old or new. For the last, it shows the new one.
 
 **Depends on:** A2.
 
-- [ ] One writer: a lock held for the life of a writing process. A real second process is
+- [x] One writer: a lock held for the life of a writing process. A real second process is
       refused, with a message naming the holder, while a reader in a third process works.
-- [ ] Recovery and the removal of staging happen only after the writer lock is taken. Opening
+- [x] Recovery and the removal of staging happen only after the writer lock is taken. Opening
       to read, and an open that is refused, clean up nothing.
-- [ ] `whizbang store list|delete|prune`: deleting a run removes what only it references and
+- [x] `whizbang store list|delete|prune`: deleting a run removes what only it references and
       keeps what another run shares. A reader that opened a generation keeps reading it while
       a prune runs. Spend and request-id records are never removed.
-- [ ] Two kinds of reference to stored content: a committed output, and a diagnostic. The kind
+- [x] Two kinds of reference to stored content: a committed output, and a diagnostic. The kind
       belongs to the reference, not to the file, so two references to the same bytes can
       differ.
-- [ ] Everything the store writes is readable by the owner only: final files, staging,
+- [x] Everything the store writes is readable by the owner only: final files, staging,
       journals and the index.
 
 **Done when** these pass: with a first writer paused after staging its files, a reader opens

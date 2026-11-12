@@ -1,12 +1,19 @@
 //! The store's publication and recovery (plan 1A, task A2). Crashes come from the testkit's
 //! file-system shim, which drops what was not synced; no test here raises an error and
 //! reopens the same files to stand for a crash.
+//!
+//! The one writer, and what is and is not a store, are in `store/locking.rs` (task A3).
+
+mod locking;
+mod prune;
+mod runs;
 
 use std::collections::BTreeMap;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use whizbang_core::store::fs::{Fs, RealFs};
+use whizbang_core::store::fs::{Fs, Held, LockFile, RealFs};
 use whizbang_core::store::{Digest, Error, Published, Reader, Store};
 use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
 use whizbang_testkit::scratch::Scratch;
@@ -157,6 +164,104 @@ fn points() -> Points {
         pointer,
         final_sync,
         count: events.len(),
+    }
+}
+
+/// When a [`Hooked`] file system runs its hook.
+enum When {
+    /// Just before the first file is shared: the moment between a reader's look at the
+    /// pointer and its hold on the generation.
+    Sharing,
+    /// Just before the first read of this file.
+    Reading(PathBuf),
+    /// Just before the first listing of this directory.
+    Listing(PathBuf),
+    /// Just after the first look for this name, before the caller has its answer: the
+    /// answer it then gets is what was true before the hook ran.
+    Looked(PathBuf),
+    /// Inside the first sharing of a file: after the file is opened, before it is locked.
+    Opened,
+}
+
+/// A file shared by this test's own file system.
+struct SharedFile(#[allow(dead_code)] std::fs::File);
+
+impl Held for SharedFile {}
+
+/// The real file system, running a hook once at a chosen call: what another process does
+/// between two calls of the one under test, at a point the shim's events do not reach.
+struct Hooked {
+    when: When,
+    hook: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Hooked {
+    fn new(when: When, hook: impl FnOnce() + Send + 'static) -> Hooked {
+        Hooked {
+            when,
+            hook: std::sync::Mutex::new(Some(Box::new(hook))),
+        }
+    }
+
+    fn run(&self) {
+        if let Some(hook) = self.hook.lock().unwrap().take() {
+            hook();
+        }
+    }
+}
+
+impl Fs for Hooked {
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
+        RealFs.create_dir(path)
+    }
+    fn write_new(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        RealFs.write_new(path, bytes)
+    }
+    fn sync_dir(&self, path: &Path) -> io::Result<()> {
+        RealFs.sync_dir(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        RealFs.rename(from, to)
+    }
+    fn remove_all(&self, path: &Path) -> io::Result<()> {
+        RealFs.remove_all(path)
+    }
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        if matches!(&self.when, When::Reading(file) if file == path) {
+            self.run();
+        }
+        RealFs.read(path)
+    }
+    fn list(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
+        if matches!(&self.when, When::Listing(dir) if dir == path) {
+            self.run();
+        }
+        RealFs.list(path)
+    }
+    fn exists(&self, path: &Path) -> io::Result<bool> {
+        let found = RealFs.exists(path);
+        if matches!(&self.when, When::Looked(name) if name == path) {
+            self.run();
+        }
+        found
+    }
+    fn hold_lock_file(&self, path: &Path, create: bool) -> io::Result<Option<Box<dyn LockFile>>> {
+        RealFs.hold_lock_file(path, create)
+    }
+    fn share(&self, path: &Path) -> io::Result<Box<dyn Held>> {
+        if matches!(self.when, When::Sharing) {
+            self.run();
+        }
+        if matches!(self.when, When::Opened) {
+            let file = std::fs::File::open(path)?;
+            self.run();
+            file.lock_shared()?;
+            return Ok(Box::new(SharedFile(file)));
+        }
+        RealFs.share(path)
+    }
+    fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
+        RealFs.try_alone(path)
     }
 }
 
@@ -567,7 +672,7 @@ fn a_crash_at_any_event_leaves_one_whole_generation_and_a_store_that_still_publi
             let is_new = match lost {
                 Lost::Unsynced => Some(crash_at > points.final_sync),
                 Lost::ContentOnly => Some(crash_at > points.pointer),
-                Lost::Subset(_) => None,
+                Lost::Subset(_) | Lost::Names(_) => None,
             };
             match is_new.unwrap_or(number == 2) {
                 true => assert_eq!((number, &held), (2, &new()), "{case}"),
@@ -682,13 +787,15 @@ fn a_reader_of_a_store_that_does_not_exist_is_refused_and_creates_nothing() {
 fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store() {
     let entry = |bytes: &[u8]| {
         format!(
-            r#"{{"digest": "{}", "bytes": {}}}"#,
+            r#"{{"digest": "{}", "bytes": {}, "kind": "output"}}"#,
             Digest::of_bytes(bytes).hex(),
             bytes.len()
         )
     };
     let generation = |format: u32, number: u64, entries: &str| {
-        format!(r#"{{"format": {format}, "number": {number}, "entries": {{{entries}}}}}"#)
+        format!(
+            r#"{{"format": {format}, "number": {number}, "entries": {{{entries}}}, "runs": {{}}}}"#
+        )
     };
     let a = format!(r#""a": {}"#, entry(A1));
     for (what, file, bytes) in [
@@ -726,23 +833,23 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
         (
             "another format",
             "generations/1.json",
-            Some(generation(2, 1, &a)),
+            Some(generation(1, 1, &a)),
         ),
         (
             "another generation's number",
             "generations/1.json",
-            Some(generation(1, 5, &a)),
+            Some(generation(2, 5, &a)),
         ),
         (
             "a name twice",
             "generations/1.json",
-            Some(generation(1, 1, &format!("{a}, {a}"))),
+            Some(generation(2, 1, &format!("{a}, {a}"))),
         ),
         (
             "a digest in its own text, with the prefix a generation file leaves out",
             "generations/1.json",
             Some(generation(
-                1,
+                2,
                 1,
                 &a.replace("\"digest\": \"", "\"digest\": \"sha256:"),
             )),
@@ -750,7 +857,30 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
         (
             "a field it does not know",
             "generations/1.json",
-            Some(generation(1, 1, &a).replace("{\"format\"", "{\"more\": 1, \"format\"")),
+            Some(generation(2, 1, &a).replace("{\"format\"", "{\"more\": 1, \"format\"")),
+        ),
+        (
+            "an entry that does not say what kind of reference it is",
+            "generations/1.json",
+            Some(generation(2, 1, &a).replace(", \"kind\": \"output\"", "")),
+        ),
+        (
+            "a kind it does not know",
+            "generations/1.json",
+            Some(generation(2, 1, &a).replace("\"output\"", "\"input\"")),
+        ),
+        (
+            "no runs",
+            "generations/1.json",
+            Some(generation(2, 1, &a).replace(", \"runs\": {}", "")),
+        ),
+        (
+            "a run twice",
+            "generations/1.json",
+            Some(generation(2, 1, &a).replace(
+                "\"runs\": {}",
+                "\"runs\": {\"r\": {\"entries\": {}}, \"r\": {\"entries\": {}}}",
+            )),
         ),
     ] {
         let dir = Scratch::new("store");
@@ -759,28 +889,32 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
         if let Some(bytes) = bytes {
             std::fs::write(root.join(file), bytes).unwrap();
         }
+        // Damage; or, for the file that says so itself, another format.
+        let refused = |result: &Result<(), Error>| match result {
+            Err(Error::Corrupt { .. }) => what != "another format",
+            Err(Error::OtherFormat { format: 1, .. }) => what == "another format",
+            _ => false,
+        };
         let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
-        let result = reader.snapshot();
-        assert!(
-            matches!(result, Err(Error::Corrupt { .. })),
-            "{what}: {result:?}"
-        );
-        // A writer refuses it too, and tidies nothing on the way.
+        let result = reader.snapshot().map(|_| ());
+        assert!(refused(&result), "{what}: {result:?}");
+        // A writer refuses it too, and tidies nothing on the way. The fault is one a
+        // writer at work could seem to cause, so it is confirmed under the lock: the lock
+        // is taken, and nothing else happens.
         std::fs::create_dir(root.join("staging/leftover")).unwrap();
+        let before = tree(&root);
         let fs = Arc::new(ShimFs::new());
         let result = Store::open(&root, fs.clone()).map(|_| ());
-        assert!(
-            matches!(result, Err(Error::Corrupt { .. })),
-            "{what}: {result:?}"
-        );
-        assert_eq!(fs.events(), vec![], "{what}");
+        assert!(refused(&result), "{what}: {result:?}");
+        assert_eq!(fs.events(), vec![Event::Lock(root.join("LOCK"))], "{what}");
+        assert_eq!(tree(&root), before, "{what}");
     }
 
     // The same generation file, well formed, is read: the cases above fail for what they
     // change and nothing else.
     let dir = Scratch::new("store");
     let root = with_old(&dir);
-    std::fs::write(root.join("generations/1.json"), generation(1, 1, &a)).unwrap();
+    std::fs::write(root.join("generations/1.json"), generation(2, 1, &a)).unwrap();
     assert_eq!(seen(&root, Arc::new(RealFs)), (1, contents(&[("a", A1)])));
 }
 
@@ -1283,7 +1417,7 @@ fn a_directory_that_is_not_a_store_is_refused_and_left_exactly_as_it_is() {
         let fs = Arc::new(ShimFs::new());
         let result = Store::open(&root, fs.clone()).map(|_| ());
         match result {
-            Err(Error::NotAStore { root: named }) => assert_eq!(named, root, "{what}"),
+            Err(Error::NotAStore { root: named, .. }) => assert_eq!(named, root, "{what}"),
             other => panic!("{what}: {other:?}"),
         }
         let result = Reader::open(&root, fs.clone()).map(|_| ());
@@ -1308,7 +1442,8 @@ fn a_store_that_lost_its_pointer_is_refused_and_nothing_in_it_is_removed() {
     assert!(matches!(result, Err(Error::NotAStore { .. })), "{result:?}");
     let result = Reader::open(&root, fs.clone()).map(|_| ());
     assert!(matches!(result, Err(Error::NotAStore { .. })), "{result:?}");
-    assert_eq!(fs.events(), vec![]);
+    // The writer confirmed what it saw under the lock, and did nothing else.
+    assert_eq!(fs.events(), vec![Event::Lock(root.join("LOCK"))]);
     assert_eq!(tree(&root), before);
 }
 

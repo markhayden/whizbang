@@ -771,7 +771,7 @@ whizbang eval run --gate <file>        # rungs 3 and 4
 whizbang models list|get|remove
 whizbang backends status [--probe]
 whizbang store list|delete|prune
-whizbang store import <file> --store <dir>
+whizbang store import <file> --store <dir> [--create]
                                        # for developers: bring a canonical artifact file
                                        # (ADR 0002) into a store
 whizbang runs list|show|stats|export

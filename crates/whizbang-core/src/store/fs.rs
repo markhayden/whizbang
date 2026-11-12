@@ -9,9 +9,43 @@
 //!
 //! The store reads through the same trait, so a store that goes on working after its file
 //! system has crashed is caught too.
+//!
+//! Locks go through it as well, because a lock belongs to the process that took it and a
+//! test's file system stands for a process: when it crashes, its locks are gone. A lock is
+//! advisory and is held on an open file: it ends when the value that holds it is dropped,
+//! or when the process ends, however it ends. Two holders in one process exclude each other
+//! exactly as two processes do.
+//!
+//! # What these locks are, and are not
+//!
+//! [`RealFs`] takes them with the standard library's file locks, which are `flock` on
+//! Linux and on macOS. That sets their limits:
+//!
+//! - **Local file systems only.** On a network file system (NFS, SMB) `flock` may fail, may
+//!   lock only on the machine that asked, or may be turned into another kind of lock with
+//!   other rules. On Linux over NFS it becomes a byte-range lock, which a file opened only
+//!   to read cannot take alone, so [`Fs::try_alone`], and with it the store's prune, fails
+//!   there. A store on such a file system is not supported.
+//! - **The lock is on the file, not on its name.** A lock file that is removed or replaced
+//!   while it is held stays locked for its holder, and the next to come locks the new
+//!   file and is admitted beside it. Nothing may remove or replace a store's `LOCK`.
+//!   [`Fs::hold_lock_file`] closes the gap it can: having locked the file it opened, it
+//!   looks at the name again, and if that is now another file, or none, it starts over.
+//!   One that replaces the file after that look is not seen.
+//! - **Advisory.** A program that does not ask for the lock is not stopped by it.
 
 use std::io;
 use std::path::{Path, PathBuf};
+
+/// A lock that is held until this value is dropped.
+pub trait Held: Send + Sync {}
+
+/// A lock file, held until this value is dropped.
+pub trait LockFile: Send + Sync {
+    /// Makes `holder` the whole content of the file, for whoever is refused to read.
+    /// Nothing depends on it, and it is not made durable.
+    fn record(&self, holder: &[u8]) -> io::Result<()>;
+}
 
 /// What the store needs from a file system.
 pub trait Fs: Send + Sync {
@@ -35,6 +69,92 @@ pub trait Fs: Send + Sync {
     fn list(&self, path: &Path) -> io::Result<Vec<PathBuf>>;
     /// Whether something has this name.
     fn exists(&self, path: &Path) -> io::Result<bool>;
+    /// Takes the lock file at `path` for this process alone, without waiting. With
+    /// `create`, the file is created when there is none; without, a missing file fails
+    /// with [`io::ErrorKind::NotFound`]. `None` when another holder has it. The content of
+    /// the file is not touched, whoever gets it.
+    fn hold_lock_file(&self, path: &Path, create: bool) -> io::Result<Option<Box<dyn LockFile>>>;
+    /// Shares the file at `path` with any number of others, so that nobody can take it
+    /// alone ([`Fs::try_alone`]) while this is held. Waits for one who has it alone. Writes
+    /// and creates nothing; fails with [`io::ErrorKind::NotFound`] when there is no file.
+    fn share(&self, path: &Path) -> io::Result<Box<dyn Held>>;
+    /// Takes the file at `path` alone, without waiting: `None` when anyone shares it.
+    /// Writes and creates nothing.
+    fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>>;
+}
+
+/// An open file with a lock on it. Closing the file releases the lock.
+struct LockedFile(#[allow(dead_code)] std::fs::File);
+
+impl Held for LockedFile {}
+
+impl LockFile for LockedFile {
+    fn record(&self, holder: &[u8]) -> io::Result<()> {
+        use std::io::{Seek, Write};
+        let mut file = &self.0;
+        file.set_len(0)?;
+        file.seek(io::SeekFrom::Start(0))?;
+        file.write_all(holder)
+    }
+}
+
+/// Whether the open file is the one `path` names now.
+#[cfg(unix)]
+fn is_at(file: &std::fs::File, path: &Path) -> io::Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let named = match std::fs::metadata(path) {
+        Ok(named) => named,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let open = file.metadata()?;
+    Ok((named.dev(), named.ino()) == (open.dev(), open.ino()))
+}
+
+/// Without a way to tell one file from another, the open file is taken to be the one.
+#[cfg(not(unix))]
+fn is_at(_file: &std::fs::File, _path: &Path) -> io::Result<bool> {
+    Ok(true)
+}
+
+/// [`Fs::hold_lock_file`] for the real file system. `locked` runs each time a file has
+/// been locked and before its name is looked at again: the moment a test needs.
+fn hold_lock_file(
+    path: &Path,
+    create: bool,
+    locked: &dyn Fn(),
+) -> io::Result<Option<Box<dyn LockFile>>> {
+    loop {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(create).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(path)?;
+        let lock = file.try_lock();
+        let Some(file) = taken(file, lock)? else {
+            return Ok(None);
+        };
+        locked();
+        // The lock is on the file that was opened. If the name now leads to another file,
+        // or to none, this lock keeps nobody out who comes by the name: start over.
+        if is_at(&file, path)? {
+            return Ok(Some(Box::new(LockedFile(file))));
+        }
+    }
+}
+
+fn taken(
+    file: std::fs::File,
+    lock: Result<(), std::fs::TryLockError>,
+) -> io::Result<Option<std::fs::File>> {
+    match lock {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(error)) => Err(error),
+    }
 }
 
 /// The real file system. What it creates is readable by its owner only.
@@ -102,5 +222,90 @@ impl Fs for RealFs {
 
     fn exists(&self, path: &Path) -> io::Result<bool> {
         path.try_exists()
+    }
+
+    fn hold_lock_file(&self, path: &Path, create: bool) -> io::Result<Option<Box<dyn LockFile>>> {
+        hold_lock_file(path, create, &|| {})
+    }
+
+    fn share(&self, path: &Path) -> io::Result<Box<dyn Held>> {
+        let file = std::fs::File::open(path)?;
+        file.lock_shared()?;
+        Ok(Box::new(LockedFile(file)))
+    }
+
+    fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
+        let file = std::fs::File::open(path)?;
+        let lock = file.try_lock();
+        Ok(taken(file, lock)?.map(|file| Box::new(LockedFile(file)) as Box<dyn Held>))
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    /// A file in the system temp folder, in a directory of its own, removed at the end.
+    fn scratch(label: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("whizbang-core-fs-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_lock_file_replaced_between_its_lock_and_the_look_at_its_name_is_not_the_one_held() {
+        let dir = scratch("replaced");
+        let path = dir.join("LOCK");
+        std::fs::write(&path, b"the first file").unwrap();
+        // Once, just after the first file is locked: it is replaced by another.
+        let replaced = std::cell::Cell::new(false);
+        let replace = || {
+            if !replaced.replace(true) {
+                std::fs::remove_file(&path).unwrap();
+                std::fs::write(&path, b"the second file").unwrap();
+            }
+        };
+        let held = hold_lock_file(&path, true, &replace).unwrap().unwrap();
+        assert!(replaced.get());
+        // What is held is the file the name leads to now: the next to come is refused,
+        // and what the holder records is read by the name.
+        assert!(hold_lock_file(&path, true, &|| {}).unwrap().is_none());
+        held.record(b"holder\n").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"holder\n");
+        drop(held);
+        assert!(hold_lock_file(&path, true, &|| {}).unwrap().is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_lock_file_is_made_only_when_asked_and_recording_replaces_its_whole_content() {
+        let dir = scratch("made");
+        let path = dir.join("LOCK");
+        let error = RealFs.hold_lock_file(&path, false).err().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert!(!path.exists());
+
+        let held = RealFs.hold_lock_file(&path, true).unwrap().unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"",
+            "taking it writes nothing"
+        );
+        held.record(b"a long name for a holder\n").unwrap();
+        held.record(b"short\n").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"short\n");
+        assert!(RealFs.hold_lock_file(&path, false).unwrap().is_none());
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"short\n",
+            "nor does a refusal"
+        );
+        held.record(b"").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
