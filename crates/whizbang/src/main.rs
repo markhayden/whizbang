@@ -6,7 +6,7 @@ mod store;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use whizbang_core::description::{ActionSummary, Description};
+use whizbang::wiring;
 
 #[derive(Parser)]
 #[command(
@@ -38,29 +38,21 @@ enum Command {
     },
 }
 
-/// Every action this build registers. Tools add theirs here as they are ported.
-fn registered_actions() -> Vec<ActionSummary> {
-    Vec::new()
-}
-
-fn describe(json: bool, pretty: bool) -> Result<String, serde_json::Error> {
-    let description = Description::new(env!("CARGO_PKG_VERSION"), registered_actions());
+fn describe(json: bool, pretty: bool) -> Result<String, String> {
+    let registry = wiring::registry().map_err(|error| error.to_string())?;
+    let description = wiring::description(&registry);
     if json {
         let document = if pretty {
-            serde_json::to_string_pretty(&description)?
+            serde_json::to_string_pretty(&description)
         } else {
-            serde_json::to_string(&description)?
+            serde_json::to_string(&description)
         };
-        return Ok(format!("{document}\n"));
+        return match document {
+            Ok(document) => Ok(format!("{document}\n")),
+            Err(error) => Err(error.to_string()),
+        };
     }
-    let mut text = format!("{} {}\n", description.name, description.version);
-    if description.actions.is_empty() {
-        text.push_str("no actions yet\n");
-    }
-    for action in &description.actions {
-        text.push_str(&format!("  {}  {}\n", action.name, action.purpose));
-    }
-    Ok(text)
+    Ok(wiring::describe_text(&description))
 }
 
 fn main() -> ExitCode {
