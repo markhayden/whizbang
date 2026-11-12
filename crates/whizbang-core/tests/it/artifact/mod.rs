@@ -5,6 +5,6 @@ mod files;
 mod masks;
 mod rebind;
 mod stored;
-mod support;
+pub mod support;
 mod types;
 mod vectors;

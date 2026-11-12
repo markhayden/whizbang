@@ -5,5 +5,7 @@
 mod describe;
 mod descriptor;
 mod fixtures;
+mod prepare;
 mod registry;
+mod run;
 mod text;

@@ -95,7 +95,8 @@
 //! under a name that is never used twice.
 //!
 //! A run's id is not empty and holds no control character; [`Publication::put_in`]
-//! refuses any other ([`Error::InvalidRun`]). Deleting a run the store does not hold is
+//! refuses any other ([`Error::InvalidRun`]). The ids the executor gives runs keep a
+//! narrower rule ([`crate::contract::RunId`]). Deleting a run the store does not hold is
 //! refused ([`Error::NoSuchRun`]), and then none of the runs named with it is deleted.
 //!
 //! # Prune
@@ -581,8 +582,9 @@ impl Drop for Store {
     }
 }
 
-/// A run's id: not empty, and no control character (a line break, a tab, an escape). The
-/// task that makes runs may ask for more.
+/// A run's id: not empty, and no control character (a line break, a tab, an escape). This
+/// is the floor. The executor names a run with a [`crate::contract::RunId`], whose rule is
+/// narrower, and nothing else makes a run.
 fn check_run_id(run: &str) -> Result<()> {
     if run.is_empty() || run.chars().any(char::is_control) {
         return Err(Error::InvalidRun {
