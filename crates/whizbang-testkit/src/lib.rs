@@ -3,4 +3,5 @@
 
 pub mod echo;
 pub mod fs_shim;
+pub mod schema;
 pub mod scratch;

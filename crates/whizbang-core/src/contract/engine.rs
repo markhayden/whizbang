@@ -7,7 +7,7 @@ use crate::artifact::Contents;
 use crate::identity::{DecodeLimits, Digest};
 
 use super::prepare::prepare;
-use super::{Backends, Call, Finished, PreparedCall, Readiness, Refusal, Registry};
+use super::{Backends, Call, CallError, Finished, PreparedCall, Readiness, Refusal, Registry};
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
 /// action all hold one of these and nothing closer to a tool.
@@ -16,12 +16,13 @@ use super::{Backends, Call, Finished, PreparedCall, Readiness, Refusal, Registry
 /// scheduled, watched and cancelled while it executes is not decided here.
 pub trait Executor: Send + Sync {
     /// Can this exact call run now? Nothing is written, nothing is spent, and nothing is
-    /// sent to a model.
-    fn prepare(&self, call: &Call) -> Result<PreparedCall, Refusal>;
+    /// sent to a model. A call that is refused and a store that failed are told apart
+    /// ([`CallError`]).
+    fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError>;
 
     /// The entry point for a call that is to run: the one place a call comes in, whatever
     /// door it came through.
-    fn submit(&self, call: &Call) -> Result<Finished, Refusal>;
+    fn submit(&self, call: &Call) -> Result<Finished, CallError>;
 }
 
 /// The executor of one build: a registry, the backends, a read of the store and the
@@ -59,11 +60,11 @@ impl Engine {
 }
 
 impl Executor for Engine {
-    fn prepare(&self, call: &Call) -> Result<PreparedCall, Refusal> {
+    fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError> {
         let Some(action) = self.registry.get(call.action()) else {
-            return Err(Refusal::UnknownAction {
+            return Err(CallError::Refused(Refusal::UnknownAction {
                 name: call.action().to_owned(),
-            });
+            }));
         };
         prepare(
             action.descriptor(),
@@ -75,7 +76,7 @@ impl Executor for Engine {
         )
     }
 
-    fn submit(&self, call: &Call) -> Result<Finished, Refusal> {
+    fn submit(&self, call: &Call) -> Result<Finished, CallError> {
         // A caller's request id is looked up here, before anything else: a repeated id
         // answers with the run it already has, and neither readiness nor preparation is
         // consulted (`SPEC.md` section 3, "Request identity"). A call carries no request
@@ -83,14 +84,14 @@ impl Executor for Engine {
 
         let prepared = self.prepare(call)?;
         if let Readiness::NotReady(missing) = prepared.readiness() {
-            return Err(Refusal::NotReady {
+            return Err(CallError::Refused(Refusal::NotReady {
                 action: prepared.action().to_owned(),
                 missing: missing.clone(),
-            });
+            }));
         }
 
         // Admission and execution come here: the preparation is revalidated, the run is
         // assigned and the action is executed. Neither is built.
-        Err(Refusal::NothingRunsYet)
+        Err(CallError::Refused(Refusal::NothingRunsYet))
     }
 }

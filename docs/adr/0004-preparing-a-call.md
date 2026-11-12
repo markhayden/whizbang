@@ -2,6 +2,19 @@
 
 Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-12, inside checkpoint 1A, after the review of the code that came with it.
+Corrected: what the decision on derivations guarantees (a mask made by hand on a
+derivation's binding is the same artifact as the rebound one, so "a mask names another
+image only through a rebind" was untrue, and closing `Derivation::stated` cannot make
+prepare refuse it); "No side effects", which said prepare locks nothing (each input read
+shares the current generation's file) and that the type holds `Backends` to asking nothing
+(the trait's shape does, and an implementor could do otherwise); where the run id's rule
+had been left open (a code comment and a line of the plan, not `docs/carry-over.md`).
+Added: the fingerprint's tags and orders stated exactly, and a second fixed vector; a
+refused input as a typed fault, and a failure of the store kept apart from a refusal, with
+no path in its text; negative zero prepared as zero; that the same artifact may be given
+more than once; that a refused run id is echoed up to 64 characters; that stored run ids
+are not held to the run id's rule.
 Spec: section 3, "The execution contract", "Identities" and "Storage"; section 6,
 "Readiness"
 
@@ -14,7 +27,8 @@ bound to the digests of the inputs, the config and the model identities it saw. 
 and refuses a stale one. Section 6 gives prepare the question "can this exact call run
 now?", answered without a network.
 
-Three open questions sat on `docs/carry-over.md` for this task:
+Three questions were open for this task. The first and the third were on
+`docs/carry-over.md`; the second was a comment in the store's code and a line of the plan:
 
 - **Who vouches for a derivation.** `Mask::rebind` (ADR 0002) checks a derivation's
   statement and trusts that it is true. `Derivation::stated` is open to any caller, so a
@@ -52,10 +66,12 @@ derivation. An input is something the store already holds.
    it takes.
 4. Reads each input from the store as the type its port takes. One the store does not
    hold, and one it holds as another type, is refused; so a rendering is refused where a
-   mask is required, here as everywhere.
+   mask is required, here as everywhere. So is content stored under an artifact's name
+   that is not that artifact.
 5. Where a port says its artifact belongs to the image at another port, checks that it
    does: the same canonical pixels in the same space. A mask on another image of the same
-   size is refused.
+   size is refused, and so is any artifact whose image has those pixels under another
+   space.
 6. Asks, for each capability the call needs (`needs_for`, from the names of the arguments
    given), which model would answer it with the features needed.
 
@@ -68,33 +84,92 @@ that it cannot run now is the answer, not a failure to answer.
 A `Refusal` is what comes back instead when the call is not one the descriptor allows, or
 an input is not what its port takes. A refusal is not an outcome: no run exists.
 
+A refused input says which case it is as a type, not only as a sentence: the port, the
+type the port takes, the artifact's identity, and an `InputFault`, one of `Missing`,
+`WrongType`, `WrongImage` and `NotTheArtifact`. A door can tell them apart without reading
+the text.
+
+**A failure of the store is not a refusal.** Both methods of the executor answer with a
+`CallError`: `Refused`, with the refusal, or `Store`, with a `StoreFailure`. The store
+failing (content that a generation names and that is missing or damaged, a file that
+cannot be read) says nothing about the call. The text of a `StoreFailure` and of every
+refusal holds no path: a file of the store is named by its last part, which for stored
+content is its digest, and the reason a file was found damaged is left out, since it can
+quote the file. The store's own error, with its paths, is kept beside the text for
+whoever runs the store (`StoreFailure::cause`).
+
+**The same artifact may be given more than once.** Prepare holds a call to its
+descriptor: the type at each port, how many, and which image each belongs to. It does not
+ask whether the artifacts differ. The same image twice at a port that takes several, and
+the image of one port given again at another, are accepted, listed as they were given and
+counted each in the fingerprint. Whether a repeat makes sense is for the action to say
+when it runs.
+
 ### No side effects, by what prepare is given
 
-Prepare is given two things, and neither can change anything.
+Prepare is given two things. Through neither can it make a durable change.
 
 - **A read of the store** (`artifact::Contents`: the current generation and the content of
-  an entry). It has no way to write. Reading takes no part in the writer lock.
+  an entry). It has no way to write, and it takes no part in the writer lock. It is not
+  free of locks: each input read asks for the current generation, and a reader then
+  shares that generation's file: a shared advisory lock (`flock`; the store's module
+  `fs`), which can wait behind a prune that holds the file alone for the moment it takes
+  to remove it. The executor's reader keeps the share until its next snapshot or
+  until it is dropped, so that a prune leaves the generation it last read and what that
+  names. Nothing durable changes by it. The empty generation has no file and is not
+  shared.
 - **`Backends`**, one question: which model would answer this capability with these
-  features? It is answered from what is configured. It has no way to send a request to a
-  model and none to reserve spend.
+  features? It is meant to be answered from what is configured.
 
 The tests hold the first on a file system that records every change: preparing calls that
-are ready, not ready and refused creates, writes, syncs, renames, removes and locks
-nothing, and leaves every file's bytes as they were. The second is held by the type today.
-A count of zero requests on the capabilities themselves, and of zero reservations on the
-ledger, needs fakes that tasks A8 and A6 bring; an ignored test in `prepare.rs` names what
-they complete.
+are ready, not ready and refused creates, writes, syncs, renames and removes nothing,
+takes no lock file, and leaves every file's bytes as they were. Sharing a file is not one
+of the changes that file system records.
+
+The second is held by the shape of the `Backends` trait and no further: its one method
+is handed a capability and features, and is handed neither a request nor a ledger. An
+implementor could still do anything inside `resolve`; nothing checks that it sends
+nothing. A count of zero requests on the capabilities themselves, and of zero reservations
+on the ledger, needs fakes that tasks A8 and A6 bring; an ignored test in `prepare.rs`
+names what they complete.
 
 ### Bound to what it saw
 
 A `PreparedCall` carries a fingerprint, kind `prepared/1`, hashed in the encoding ADR 0001
-gives every identity. Its fields, in order: the action; its version; the count of
-arguments, and each as its name and value; the count of inputs, and each as its port and
-identity; the config's digest; the count of needs, and each as its capability, the count
-of its features and each feature, then `u` 1 and the backend, model and version of the
-model that would answer, or `u` 0 where none would. A value is its kind as `u` (0 a
-number, 1 a whole number, 2 a boolean, 3 a text) and then itself: `f`, `u` (the eight
-bytes of the two's complement), `u` (0 or 1), or `b`. A test pins one fingerprint.
+gives every identity: `whizbang:`, the kind, a zero byte, then the fields. A field is a
+tag and a value: `b`, a length as eight bytes and that many bytes; `u`, eight bytes;
+`f`, a double; `d`, a digest. The fields, in order:
+
+1. the action's name (`b`) and its version (`b`);
+2. the count of arguments that have a value (`u`); then each, in the order the descriptor
+   declares its arguments, as its name (`b`) and its value. An argument has a value when
+   the call gave one or the descriptor has a default; one with neither is not counted and
+   not written. A value is its kind (`u`: 0 a number, 1 a whole number, 2 a boolean, 3 a
+   text) and then itself: a number as `f`, with negative zero as zero; a whole number as
+   `u` holding the eight bytes of its two's complement; a boolean as `u` 0 or 1; a text,
+   and a choice, which is a text, as `b`;
+3. the count of inputs (`u`); then each as its port's name (`b`) and its identity (`d`).
+   Inputs are in the order the descriptor declares its ports, and within one port in the
+   order the call gave them. That order is significant: the same artifacts at one port
+   the other way round are another preparation;
+4. the config's digest (`d`);
+5. the count of needs (`u`); then each, in the order the descriptor declares them, as the
+   capability's name (`b`: `segment`, `fill` or `judge`), the count of its features (`u`)
+   and each feature (`b`) in the order the descriptor declares them, and then `u` 1 and
+   the backend (`b`), the model (`b`) and the version (`b`) of the model that would
+   answer, or `u` 0 where none would.
+
+Every name, port, feature and part of a model's identity is the `b` of its UTF-8 bytes,
+and a text is hashed as it was given: nothing is normalised, so one word composed (NFC)
+and decomposed (NFD) is two values and two preparations.
+
+Two tests pin a fingerprint each. The first has one argument, by default. The second has
+a value of each kind, an argument with no value, inputs at two ports, and two needs with
+features, one answered and one not; its digest was computed by a script written from this
+text and ADR 0001's, apart from the code, which is not kept in the repository.
+
+A prepared argument that is a number holds zero where the call gave negative zero, so
+what is bound and what an action is handed do not differ by a sign.
 
 - An input's identity is the digest of its content (ADR 0002), so the fingerprint is
   bound to the inputs' digests without reading them twice.
@@ -119,18 +194,32 @@ Code may; no caller can.
 - **`Derivation::stated` stays open to code,** for one reason: nothing else makes a
   derivation yet. The one thing that should is the fill composite (task A8), which sees
   both pictures and can check that every protected pixel and every pixel outside the
-  support is the original. When it returns the derivation with the image it made,
-  `stated` closes. Until then a mask that code moved with a false statement names the
-  image it was moved onto, and prepare takes it at its word; a test pins this, beside the
-  one ADR 0002 names, and both are inverted then (`docs/carry-over.md`).
-- **The way round is not a way round.** A mask made directly on an image, by
-  `Mask::from_core` or as a file brought in with `whizbang store import`, is accepted on
-  that image. It is a statement about that image by whoever made it, as every hand-drawn
-  mask is, and its origin says how it was made; it does not claim to be another image's
-  mask moved. Whizbang cannot tell a good mask from a bad one by its provenance, and does
-  not try. What it guarantees is narrower and holds: a mask is never used on an image
-  other than the one it names, and a mask names another image only through a rebind,
-  which its origin records.
+  support is the original. Until then a mask that code moved with a false statement names
+  the image it was moved onto, and prepare accepts it there; a test pins this
+  (`prepare::a_mask_rebound_by_a_stated_derivation_is_still_taken_at_its_word`), beside
+  the one ADR 0002 names (`rebind::a_derivation_is_trusted_to_be_true`).
+- **A mask made by hand is the statement of whoever made it.** A mask made directly on an
+  image, by `Mask::from_core` or as a file brought in with `whizbang store import`, is
+  accepted on that image, and its origin says how it was made. Whizbang cannot tell a good
+  mask from a bad one by its provenance, and does not try.
+- **A rebound mask and a mask made by hand can be one artifact.** A derivation holds a
+  binding and adds nothing to it, and an origin is not part of an identity. So a mask made
+  with `Mask::from_core` directly on the binding that places a second image onto the first
+  by the identity has the same identity as the first image's mask rebound through
+  `Derivation::stated`, and its origin has no `rebind` step. A test pins the equality
+  (`prepare::a_mask_made_by_hand_on_a_derivations_binding_is_the_rebound_mask`), and
+  prepare accepts either on the second image.
+
+What holds, then, is this and no more: **a mask is used only on the image its binding's
+source names.** It does not hold that a mask names a second image only through a rebind,
+nor that its origin records one. Closing `Derivation::stated` in task A8 closes one way of
+making such a mask, in the API; it does not make prepare refuse the artifact, and the
+prepare test above cannot be inverted by it. Only the rebind's own test can. What the
+executor could add is a record it wrote itself, of the composite and the derivation it
+checked, which a mask made by hand cannot have. Task A8 decides between the two, and the
+row on `docs/carry-over.md` states them: the trust boundary is the maker's statement, and
+the prepare test is rewritten with `Mask::from_core` and stays accepted; or prepare
+requires that record for a mask whose binding places its image onto another.
 
 ### The run id
 
@@ -143,9 +232,18 @@ that makes a run, names it with one. The store keeps its looser check as the flo
 the layer below, and its own tests publish under ids this rule refuses. Every `RunId` is
 an id the store takes. How an id is minted is decided with the code that makes runs.
 
+A refusal shows what was refused escaped, and its first 64 characters at most, with its
+length when it was longer.
+
+The layering holds by convention. `Publication::put_in` is public and takes any id the
+store's rule allows, and a generation file is not checked against either rule when it is
+read. So an id read back from a store is not a `RunId` and is not trusted to be one; what
+lists and shows runs must take stored ids as they are (`docs/carry-over.md`).
+
 ### The executor's interface, and the types around execution
 
-`Executor` has two methods. `prepare` is the above. `submit` is the entry point for a call
+`Executor` has two methods, and each answers with what it was asked for or a `CallError`.
+`prepare` is the above. `submit` is the entry point for a call
 that is to run, the one place a call comes in whatever door it came through: it is where a
 caller's request id will be looked up, before anything else (task A6); then it prepares,
 and refuses a call that is not ready. Past that point nothing is built, and a ready call
@@ -190,7 +288,8 @@ known case that does not, and it goes with rascal's recipes to milestone 3
 - `Context` and `Outcome` are shapes read from section 3, not proven by an action. The
   proofs of checkpoint 1A may change them, and the plan says a proof is never bent to fit.
 - Closing `Derivation::stated` later changes every test that states one. The vectors of
-  rebound masks do not change: a derivation holds a binding and adds nothing to it.
+  rebound masks do not change: a derivation holds a binding and adds nothing to it. For
+  the same reason it does not change what prepare accepts (above).
 
 What this record does not decide, and the code does not do: an estimate; admission,
 request ids and reservations; executing an action, its commit step and cancellation; the
