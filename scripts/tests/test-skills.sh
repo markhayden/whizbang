@@ -90,6 +90,14 @@ check_file() {
   fi
 }
 
+# own_build_plain <file>: the sentence that says so makes no exception.
+own_build_plain() {
+  if tr '\n' ' ' <"$1" | grep -o 'The orchestrator does not review its own build[^.]*\.' | grep -i -E 'unless|except' >/dev/null; then
+    echo "$1: the sentence about the orchestrator's own build makes an exception"
+    return 1
+  fi
+}
+
 # check_kickoff <file> and check_review_merge <file>: the lines the flow depends on.
 check_kickoff() {
   local text
@@ -105,11 +113,13 @@ check_kickoff() {
     "grep -n -i -E '$second_net' \"\$text/title.txt\" \"\$text/body.md\"" \
     'gh pr edit <number> --title "$(cat "$text/title.txt")" --body-file "$text/body.md"' \
     'until run=$(gh run list --commit "$head" --json databaseId' \
+    '.jobs | length'"'"')" -ge 3 ]; do' '[ "$tries" -le 60 ] ||' \
+    'git merge --no-ff --no-edit origin/main' 'git status --short' \
     'gh pr checks <number> --watch                  # check (macos-15), check (ubuntu-22.04), ci'; do
     says "$1" Commands "$text" || return 1
   done
   says "$1" Inputs 'It may be given short: resolve it to the full commit with `git rev-parse`' || return 1
-  for text in 'Never merge: only the orchestrator merges.' \
+  for text in 'Never merge a pull request, and never merge into `main`: only the orchestrator does.' \
     'Never open, print, quote or copy the word list, and never pass on what it holds.' \
     'The path may be given to another agent working in this repo.' \
     "does not last from one of an agent's shell calls to the next" \
@@ -120,7 +130,13 @@ check_kickoff() {
     "from inside the repo's main checkout" \
     'Neither command is on the allow list' \
     'makes true once it merges' 'is ticked by a later pull request' \
-    'holds for the tree it ran on' \
+    "a pass covers a commit only when it ran on exactly that commit's tree" \
+    'after the commit `git status --short`' 'has passed on exactly the tree being pushed' \
+    'written into a hand-back, a pull request, a commit or a tracked file.' \
+    'the clean-room scan prints a count and names' 'every commit that is not yet on origin' \
+    'bring them back, by the reflog or by a cherry-pick' 'owner at once and is rotated' \
+    'It gives up after 20' 'gets no run at all' 'give the call a longer time limit' \
+    'merge `origin/main` into your' 'with a merge commit (this asks first), never with a rebase' \
     '`<commit>:<path>:<line>`' 'Never retry around the hook, and never use `--no-verify`.' \
     'the system temp folder may be used for this' 'After any edit to either file, read' \
     '`check (macos-15)` and `check (ubuntu-22.04)`' 'says "no checks reported"' \
@@ -143,17 +159,21 @@ check_review_merge() {
   for text in 'Reviewed head:' 'Base:' 'Merge commit:' 'Verified' 'Read:' 'Follow-ups' \
     '- Verdict: may merge at the reviewed head; no finding that blocks the merge is open' \
     'check (macos-15) <result>, check (ubuntu-22.04) <result>, ci <result>' \
-    'corrected by the orchestrator' 'where the verdict says it is recorded'; do
+    'corrected by the orchestrator' 'pull request of mine that adds its row to docs/carry-over.md'; do
     says "$1" "Hand-back format" "$text" || return 1
   done
   for text in 'For the orchestrator, and nobody else' 'The orchestrator does not review its own build'; do
     holds "$1" "$text" || return 1
   done
+  own_build_plain "$1" || return 1
   # The steps that the rows removed from docs/carry-over.md rest on.
   for text in 'If the head has moved since the review, refuse' \
     '- [ ] 1. The verdict says `may merge at <full head>`, and the commit it names is exactly' \
     'A finding that blocks the merge and is still open, or a verdict for another commit, is a' \
     'A follow-up does not block' \
+    '- [ ] 9. Follow-ups are recorded by you; the reviewer only names them.' \
+    'a new head that is reviewed again' 'Nothing is left only in a verdict.' \
+    'The corrected files get every check of this step again' \
     '`check (macos-15)` and `check (ubuntu-22.04)`' \
     'You may correct the title or body yourself' 'goes back to the builder' \
     'Earlier merged branches that are still on origin may be deleted the same way' \
@@ -165,17 +185,20 @@ check_review_merge() {
     'any file under `.github/`' 'any file under a folder named `.claude`, at' '`.mcp.json`, at any depth' \
     '`justfile`' 'any file under `scripts/`' \
     "the reviewer's verdict names it and" 'says it was read, and you read its diff yourself. Otherwise refuse.' \
-    '- [ ] 9. Fetch `main` once more. If it has moved since step 4, do step 4 again.' \
+    '- [ ] 10. Fetch `main` once more. If it has moved since step 4, do step 4 again.' \
     'unless the branch is merged into `origin/main`'; do
     says "$1" Checklist "$text" || return 1
   done
-  for text in "gh pr view <pr> --json title,body --jq '.title, \"\", .body' >\"\$text/pull-request.txt\"" \
+  for text in 'gh pr view <pr> --json title --jq .title >"$text/title.txt"' \
+    'gh pr view <pr> --json body --jq .body >"$text/body.md"' \
+    'After a correction to either file, all of them run again on the two files.' \
+    'A variable' 'gh run list --commit <head>' \
     '(cd "$text" && "$repo/scripts/scan.sh")' \
-    "sed '$strip' \"\$text/pull-request.txt\" >\"\$plain\"" \
+    "sed '$strip' >\"\$plain\"" \
     'plain=$(mktemp)' 'It prints nothing when it passes: exit 0 is the pass.' \
     'scripts/scan.sh --message "$plain"' \
-    "grep -n -i -E '$second_net' \"\$text/pull-request.txt\"" \
-    'gh pr edit <pr> --title' \
+    "grep -n -i -E '$second_net' \"\$text/title.txt\" \"\$text/body.md\"" \
+    'gh pr edit <pr> --title "$(cat "$text/title.txt")" --body-file "$text/body.md"' \
     "git diff <base> <head> -- .github justfile scripts ':(glob)**/.claude/**' ':(glob)**/.mcp.json'" \
     'git merge-base --is-ancestor origin/<branch> origin/main' \
     'git -C ../whizbang-merge-check merge --abort' \
@@ -208,7 +231,16 @@ check_reviewer() {
     "in the builder's worktree" 'Nothing is committed or pushed' \
     'so you need `WHIZBANG_WORDLIST`' 'Never open, print, quote or copy the word list, and never pass on what it holds.' \
     '**blocks the merge**' '**follow-up**' 'may merge at <full head>' \
-    'names where it will be recorded' \
+    'the orchestrator records it' 'none is left only in your report' \
+    'If you wrote any commit on this branch, stop: you cannot review it.' \
+    '- **Pull request:**' '- **Worktree:**' "- **The builder's hand-back:**" \
+    'Change into it in every shell call' 'is not one of the exact allowed commands and asks first' \
+    'which is not on the allow list' 'A scratch clone in the system temp' \
+    'written into a report, a pull request, a commit or a tracked file.' \
+    'While it is still running, wait for it. A red job is a finding that blocks' \
+    'that is step 4 of `.claude/skills/review-merge/SKILL.md`' \
+    'step 7 of `review-merge`' 'settles it without moving the head' \
+    'what the branch adds' 'a tripwire, not a proof' \
     'is not a false claim' "The pull request's title and body" \
     'the decision behind it is recorded in the pull request body' \
     'the acceptance is the text of the box and any decision recorded in the pull request body' \
@@ -236,12 +268,13 @@ expect_pass "port-module names its source" says .claude/skills/port-module/SKILL
 expect_pass "port-module hands back a table" says .claude/skills/port-module/SKILL.md "Hand-back format" 'ported / rewritten / dropped'
 last_step=$(section .claude/skills/kickoff/SKILL.md Checklist | grep -c '^- \[ \] [0-9]*\. ')
 expect_pass "port-module finishes with the last step of kickoff" says .claude/skills/port-module/SKILL.md Checklist "Finish with \`kickoff\`, steps 6 to $last_step."
-expect_pass "port-module never merges" says .claude/skills/port-module/SKILL.md Checklist 'Never merge: only the orchestrator merges.'
+expect_pass "port-module never merges" says .claude/skills/port-module/SKILL.md Checklist 'Never merge a pull request, and never merge into `main`: only the orchestrator does.'
 expect_pass "port-module takes the tag from the sources file" says .claude/skills/port-module/SKILL.md Checklist 'the tag that entry names'
 if grep -q -e 'final-before-whizbang' .claude/skills/port-module/SKILL.md; then fail "port-module names a tag of its own"; fi
 expect_pass "review-merge" check_review_merge .claude/skills/review-merge/SKILL.md
 expect_pass "the reviewer" check_reviewer .claude/agents/reviewer.md
-expect_pass "the builder never merges" holds .claude/agents/builder.md 'Do not merge'
+expect_pass "the builder never merges" holds .claude/agents/builder.md 'Do not merge a pull request, merge into `main`, push to `main`, tag'
+expect_pass "the builder pushes a checked tree" holds .claude/agents/builder.md '`just check` has passed on exactly the tree being pushed'
 expect_pass "AGENTS.md: no review of one's own build" holds AGENTS.md 'The orchestrator does not review its own build'
 for f in .claude/skills/*/SKILL.md .claude/agents/*.md; do
   expect_pass "$f" check_file "$f"
@@ -350,15 +383,20 @@ changed check_kickoff "$f" 's/^gh pr edit <number> /gh pr comment <number> /' "m
 changed check_kickoff "$f" 's/Never retry around the hook, and never use `--no-verify`\.//' "must say: Never retry around the hook"
 changed check_kickoff "$f" 's/^plain=$(mktemp)$/plain=$text\/plain.txt/' 'must say: plain=$(mktemp)'
 changed check_kickoff "$f" '/^until run=/d' "must say: until run="
+changed check_kickoff "$f" 's/ -ge 3 \]; do$/ -ge 1 ]; do/' "must say: .jobs | length"
+changed check_kickoff "$f" '/"$tries" -le 60/d' 'must say: [ "$tries" -le 60 ]'
+changed check_kickoff "$f" 's/has passed on exactly the tree being pushed/has passed/' "must say: has passed on exactly the tree being pushed"
+changed check_kickoff "$f" 's/owner at once and is rotated/owner/' "must say: owner at once and is rotated"
+changed check_kickoff "$f" 's/, never with a rebase\././' "must say: with a merge commit"
 changed check_kickoff "$f" 's/is ticked by a later pull request/is ticked now/' "must say: is ticked by a later pull request"
 changed check_kickoff "$f" 's/go back to step 4/open a new pull request/' "must say: go back to step 4"
 changed check_kickoff "$f" 's/It may be given short: /It is given in full: /' "must say: It may be given short"
-changed check_kickoff "$f" 's/Never merge: only the orchestrator merges\./Merge when CI is green./' "must say: Never merge"
+changed check_kickoff "$f" 's/Never merge a pull request, and never merge into `main`: only the orchestrator does\./Merge when CI is green./' "must say: Never merge"
 changed check_kickoff "$f" 's/Never push with `--no-verify`, never force a push, and never push to `main`\.//' "must say: Never push with"
 changed check_kickoff "$f" "/^cat .* sed /d" "must say: sed"
 changed check_kickoff "$f" 's/^scripts\/scan.sh --message "$plain"$/scripts\/scan.sh --message "$text\/body.md"/' 'must say: scripts/scan.sh --message "$plain"'
-never_merges() { says "$1" Checklist 'Never merge: only the orchestrator merges.'; }
-changed never_merges .claude/skills/port-module/SKILL.md 's/Never merge: only the orchestrator merges\.//' "must say: Never merge"
+never_merges() { says "$1" Checklist 'Never merge a pull request, and never merge into `main`: only the orchestrator does.'; }
+changed never_merges .claude/skills/port-module/SKILL.md 's/Never merge a pull request, and never merge into `main`: only the orchestrator does\.//' "must say: Never merge"
 changed check_kickoff "$f" '/^just scan /d' "must say: just scan"
 changed check_kickoff "$f" 's/^scripts\/worktree.sh add/git worktree add/' "must say: scripts/worktree.sh add <slug>"
 changed check_kickoff "$f" 's/^Doubts$/Notes/' "must say: Doubts"
@@ -379,8 +417,11 @@ just scan-range-secrets <base> <head>/' "not the scan without the clean-room sca
 changed check_review_merge "$f" 's/`just scan-range <base> <head>` passes: secrets,/the scans pass: secrets,/' "must say: - [ ] 6."
 changed check_review_merge "$f" 's/so save them to a file$/so read them/' "must say: - [ ] 7."
 changed check_review_merge "$f" '/^(cd "$text" && "$repo\/scripts\/scan.sh")/d' 'must say: (cd "$text"'
-changed check_review_merge "$f" "/^sed .*>\"\$plain\"\$/d" "must say: sed"
-changed check_review_merge "$f" 's/^scripts\/scan.sh --message "$plain"$/scripts\/scan.sh --message "$text\/pull-request.txt"/' 'must say: scripts/scan.sh --message "$plain"'
+changed check_review_merge "$f" "/^cat .* sed /d" "must say: sed"
+changed check_review_merge "$f" 's/Nothing is left only in a verdict\.//' "must say: Nothing is left only in a verdict."
+changed check_review_merge "$f" '/^gh run list --commit <head> /d' "must say: gh run list --commit <head>"
+changed check_review_merge "$f" 's/does not review its own build: if/does not review its own build unless it must: if/' "own build"
+changed check_review_merge "$f" 's/^scripts\/scan.sh --message "$plain"$/scripts\/scan.sh --message "$text\/body.md"/' 'must say: scripts/scan.sh --message "$plain"'
 changed check_review_merge "$f" "/^grep -n -i -E /d" "must say: grep -n -i -E"
 changed check_review_merge "$f" 's/, or a verdict for another commit, is a$/ is a/' "must say: A finding that blocks the merge"
 changed check_review_merge "$f" 's/A follow-up does not block/A follow-up blocks/' "must say: A follow-up does not block"
@@ -391,7 +432,7 @@ changed check_review_merge "$f" 's/check (macos-15)/check (macOS)/g' "must say:"
 changed check_review_merge "$f" 's/^- \[ \] 8\. Files that grant permissions or check the pull request\./- [ ] 8. Files./' "must say: - [ ] 8."
 changed check_review_merge "$f" 's/any file under `\.github\/`; //' 'must say: any file under `.github/`'
 changed check_review_merge "$f" 's/ Otherwise refuse\./ Otherwise note it./' "Otherwise refuse."
-changed check_review_merge "$f" 's/If it has moved since step 4, do step 4 again\./Then merge./' "must say: - [ ] 9."
+changed check_review_merge "$f" 's/If it has moved since step 4, do step 4 again\./Then merge./' "must say: - [ ] 10."
 changed check_review_merge "$f" '/merge --abort/d' "must say: git -C ../whizbang-merge-check merge --abort"
 changed check_review_merge "$f" '/^git merge-base --is-ancestor <branch> origin\/main/d' "must say: git merge-base --is-ancestor <branch> origin/main"
 
@@ -416,9 +457,13 @@ changed check_reviewer "$f" 's/may merge at <full head>/may merge/' "must say: m
 changed check_reviewer "$f" 's/just scan-range <base> <head>/just scan/' "must say: just scan-range <base> <head>"
 changed check_reviewer "$f" 's/^scripts\/heavy.sh check just check/just test/' "must say: scripts/heavy.sh check just check"
 changed check_reviewer "$f" 's/is not a false claim/is a false claim/' "must say: is not a false claim"
+changed check_reviewer "$f" '/^If you wrote any commit on this branch/d' "must say: If you wrote any commit"
+changed check_reviewer "$f" 's/the orchestrator records it/it is recorded somewhere/' "must say: the orchestrator records it"
+changed check_reviewer "$f" 's/A red job is a finding that blocks/A red job is noted/' "must say: While it is still running"
 changed check_reviewer "$f" 's/so you need `WHIZBANG_WORDLIST`/and need nothing/' "must say: so you need"
-own_build() { holds "$1" 'The orchestrator does not review its own build'; }
+own_build() { holds "$1" 'The orchestrator does not review its own build' && own_build_plain "$1"; }
 changed own_build AGENTS.md 's/The orchestrator does not review its own build/The orchestrator reviews its own build/' "must say: The orchestrator does not review its own build"
+changed own_build AGENTS.md 's/The orchestrator does not review its own build:/The orchestrator does not review its own build unless nobody else can:/' "makes an exception"
 
 f=.claude/skills/review-merge/SKILL.md
 changed check_review_merge "$f" '$s/$/\
@@ -431,6 +476,68 @@ changed check_review_merge "$f" 's/If the head has moved since the review, refus
 changed check_review_merge "$f" '/^git merge-base --is-ancestor origin\/main <head>$/d' "must say: git merge-base --is-ancestor"
 changed check_review_merge "$f" 's/^Merge commit: /Merged: /' "must say: Merge commit:"
 changed check_review_merge "$f" 's/^- Read: /- /' "must say: Read:"
+
+# --- Three subjects held to exact lines ---------------------------------------------------
+
+# The checks above hold phrases, and a phrase can stay while a sentence beside it takes
+# it back. So for a push that skips the hook, a forced push and the word list, every
+# line that touches the subject, in the rules, the subagent files and the skills, must
+# be one of the lines below, whole, after trimming; and each line below must be there.
+# A new sentence on one of these subjects needs a change here, made on purpose.
+governed="AGENTS.md .claude/agents/builder.md .claude/agents/reviewer.md .claude/skills/kickoff/SKILL.md .claude/skills/port-module/SKILL.md .claude/skills/review-merge/SKILL.md"
+risky='--no-verify|--force|word list|push[^|;&]*[[:space:]]-[A-Za-z]*f([^A-Za-z]|$)'
+cat >"$tmp/exact" <<'LIST'
+AGENTS.md: 2. Set `WHIZBANG_WORDLIST` to the path of a private word list the owner provides. Set it
+AGENTS.md: | Push | `just check` passed on exactly the tree being pushed (it runs on the working tree, so `git status --short` prints nothing after the commit), then `just scan`: the secrets scan and the clean-room scan. The pre-push hook runs both scans again over every commit the push would publish. Never push with `--no-verify` | Whoever pushes |
+AGENTS.md: - Commit secrets, the word list, or owner-only material such as answers to unreleased
+AGENTS.md: - Push with `--no-verify`, or bypass a hook any other way. (added)
+AGENTS.md: - **CI cannot run the clean-room scan,** because the word list never leaves the owner's
+.claude/agents/builder.md: Never open, print, quote or copy the word list, and never pass on what it holds.
+.claude/agents/reviewer.md: Never open, print, quote or copy the word list, and never pass on what it holds.
+.claude/skills/kickoff/SKILL.md: Never open, print, quote or copy the word list, and never pass on what it holds.
+.claude/skills/kickoff/SKILL.md: Never push with `--no-verify`, never force a push, and never push to `main`.
+.claude/skills/kickoff/SKILL.md: Never retry around the hook, and never use `--no-verify`.
+LIST
+# exact_lines <file> <its name in the list>
+exact_lines() {
+  { grep -i -E -e "$risky" "$1" || true; } | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | sort >"$tmp/exact.found"
+  awk -v name="$2: " 'index($0, name) == 1 { print substr($0, length(name) + 1) }' "$tmp/exact" | sort >"$tmp/exact.want"
+  if ! diff "$tmp/exact.want" "$tmp/exact.found" >"$tmp/exact.diff"; then
+    echo "$2: its lines about --no-verify, a forced push or the word list are not exactly those listed in scripts/tests/test-skills.sh"
+    cat "$tmp/exact.diff"
+    return 1
+  fi
+}
+for f in $governed; do
+  expect_pass "the exact lines of $f" exact_lines "$f" "$f"
+done
+[ "$(cut -d: -f1 "$tmp/exact" | sort -u | wc -l | tr -d ' ')" -ge 4 ] || fail "the exact list names fewer files than it should"
+# exact_changed <file> <sed script>: the file after the edit must fail.
+exact_changed() {
+  sed "$2" "$1" >"$tmp/exact.md"
+  cmp -s "$1" "$tmp/exact.md" && fail "the edit changed nothing: $2"
+  expect_fail "$1 after: $2" "are not exactly those listed" exact_lines "$tmp/exact.md" "$1"
+}
+exact_changed AGENTS.md '$s/$/\
+Open the word list and check your change against it./'
+exact_changed AGENTS.md '$s/$/\
+Never wait on a slow hook, push with --no-verify instead./'
+exact_changed AGENTS.md '$s/$/\
+When the branch is yours alone, git push -f origin x is fine./'
+exact_changed AGENTS.md '$s/$/\
+A push may use --force-with-lease after a review./'
+exact_changed AGENTS.md '$s/$/\
+The Word List may be opened to find the cause./'
+exact_changed .claude/skills/kickoff/SKILL.md 's/and never use `--no-verify`\.$/& Unless the hook is slow./'
+exact_changed .claude/skills/kickoff/SKILL.md 's/never force a push, and never push to `main`\.$/& A stale branch is the exception./'
+exact_changed .claude/agents/builder.md '/^Never open, print, quote or copy the word list/d'
+exact_changed .claude/agents/reviewer.md '/^Never open, print, quote or copy the word list/d'
+exact_changed .claude/skills/kickoff/SKILL.md '/Never retry around the hook, and never use `--no-verify`\./d'
+exact_changed AGENTS.md '/^- Push with `--no-verify`, or bypass a hook any other way/d'
+for f in $governed; do
+  exact_changed "$f" '$s/$/\
+Print the word list when a scan fails./'
+done
 
 # --- AGENTS.md ---------------------------------------------------------------------------
 

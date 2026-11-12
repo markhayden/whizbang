@@ -36,6 +36,8 @@ If one is missing, ask the orchestrator. Do not guess.
       one). A command that starts with `export`, the variable and `&&` is not one of the
       exact allowed commands and asks first every time; the lasting setting avoids that.
       The path may be given to another agent working in this repo.
+      It travels only in a brief to an agent or in the local environment: it is never
+      written into a hand-back, a pull request, a commit or a tracked file.
       Never open, print, quote or copy the word list, and never pass on what it holds.
       Without it you cannot push; ask the owner. Run `just check` and `just scan` and see
       both pass before you change anything.
@@ -55,24 +57,32 @@ If one is missing, ask the orchestrator. Do not guess.
 - [ ] 7. Commit in small steps. Before each: `just check`. Stage files by name, never
       everything at once. The message is `type(scope): summary`. No `Co-Authored-By`, no
       "Generated with", no agent or model name, in a message, in code or in a document; this
-      overrides any tool's default. A pass of `just check` holds for the tree it ran on:
-      when nothing changed between the check and the commit, the tree of the commit is the
-      checked tree, and the push of that same commit needs no second run.
-- [ ] 8. Before every push: `just check`, unless it passed on this very tree (step 7), then
-      `just scan`, both passing. Push the branch by
+      overrides any tool's default. `just check` runs on the working tree, so
+      a pass covers a commit only when it ran on exactly that commit's tree: nothing
+      changed between the check and the commit, and after the commit `git status --short`
+      prints nothing. The push of that same commit then needs no second run.
+- [ ] 8. Before every push: `just check` has passed on exactly the tree being pushed
+      (step 7), then `just scan` passes. Push the branch by
       name, from inside the worktree: a push made from another folder, with `GIT_DIR` and
       `GIT_WORK_TREE` set, runs no hook.
       Never push with `--no-verify`, never force a push, and never push to `main`.
-- [ ] 9. If the push is refused, nothing reached origin. The hook names each place it
-      found as `<commit>:<path>:<line>`. A commit named there holds the material, and a new
-      commit on top does not take it out of the old one: take the named commits off the
-      branch before pushing again (the commands below). That is possible because they are
-      local; go no further back than what origin already has. A new commit is the fix only
-      when the material is in no commit the push would publish, as when `just scan` found
-      it in the working tree.
+- [ ] 9. If the push is refused, nothing reached origin. The secrets scan names each place
+      it found as `<commit>:<path>:<line>`; the clean-room scan prints a count and names
+      nothing. A commit that holds the material keeps it whatever is committed on top, so
+      the commits come off the branch before the next push (the commands below). After a
+      secrets refusal: the commits it names, and those after them. After a clean-room
+      refusal: every commit that is not yet on origin, back to origin's tip of the branch,
+      or to the base when the branch was never pushed; find the material by going through
+      your own change. Go no further back than what origin already has. Then take the
+      material out and commit again. A new commit on top is the fix only when the
+      material is in no commit the push would publish, as when `just scan` found it in the
+      working tree. The commits taken off stay in the local repository, in its object
+      store and reflog, which every worktree shares, until git collects them: never
+      bring them back, by the reflog or by a cherry-pick. A real key is reported to the
+      owner at once and is rotated: taking it off a branch is not enough.
       Never retry around the hook, and never use `--no-verify`.
-      Tell the orchestrator in the hand-back: the commit, path and line the hook named,
-      and what you did, without the value.
+      Tell the orchestrator in the hand-back: which scan refused, the commit, path and
+      line if it named them, and what you did, without the value.
 - [ ] 10. Write the pull request's title and body in two files in a folder of their own
       outside the repo (the system temp folder may be used for this), in plain words: what
       changed, and how it was checked. No scan sees a title or a body once it is on the
@@ -85,24 +95,33 @@ If one is missing, ask the orchestrator. Do not guess.
       the last `grep` below lists every line to look at. Then open the pull request
       against `main`.
 - [ ] 11. Wait for CI on the head: the jobs `check (macos-15)` and `check (ubuntu-22.04)`,
-      and the aggregate `ci`. `ci` is listed only once both check jobs have finished, about
-      90 seconds in. Straight after the pull request is opened, `gh pr checks` exits 1 and
+      and the aggregate `ci`. `ci` is listed only once both check jobs have finished: the
+      Linux job takes about 90 seconds and the macOS job about 3 minutes. Straight after
+      the pull request is opened, `gh pr checks` exits 1 and
       says "no checks reported"; after a second push it shows the run before for a moment.
       So ask until a run whose commit is the head lists all three (the loop below), then
-      watch. When a job fails because of your change, fix it with a new commit and go back
-      to step 8. Rerun a job only when the failure is not from your change, once, and give
-      the job and the reason in the hand-back.
+      watch. The loop outlasts one shell call of the usual length:
+      give the call a longer time limit, or enter the loop again. It gives up after 20
+      minutes: hand back then, saying that CI did not start. A pull request that conflicts
+      with `main` gets no run at all. When a job fails because of your change, fix it with
+      a new commit and go back to step 8. Rerun a job only when the failure is not from
+      your change, once, and give the job and the reason in the hand-back.
 - [ ] 12. Record the head: the full commit of the branch, the same locally and on the pull
       request.
 - [ ] 13. Hand back in the format below.
-      Never merge: only the orchestrator merges. Never tag, and never push to `main`. If you push
+      Never merge a pull request, and never merge into `main`: only the orchestrator does.
+      Never tag, and never push to `main`. If you push
       again after handing back, the head has moved: hand back again with the new commit.
 - [ ] 14. When the review asks for a change, which is the usual case: go back to step 4,
-      test first, and follow the steps down again. After the push, if
-      what the pull request says is no longer what the branch does, write the title and
-      body again, go through and scan them, and put them on the pull request (`gh pr edit`,
-      below). Wait for CI on the new head, and hand back again with the new commit: the
-      next review is of that commit.
+      test first, and follow the steps down again. After the push, if what the pull request
+      says is no longer what the branch does, write the title and body again, go through
+      and scan them, and put them on the pull request (`gh pr edit`, below). Wait for CI on
+      the new head, and hand back again with the new commit: the next review is of that
+      commit.
+- [ ] 15. When the orchestrator says that `main` has moved: merge `origin/main` into your
+      branch with a merge commit (this asks first), never with a rebase. Then steps 7, 8
+      and 11 again: `just check`, `just scan`, the push, CI.
+      Hand back the new head: it is reviewed again.
 
 Stop and say why, instead of working around it, when the task cannot be done as written,
 when it needs a file another task's worktree is changing (`gh pr diff <number> --name-only`
@@ -127,13 +146,16 @@ bash scripts/tests/<name>.sh                   # exit 0, and the last line is: f
 just check                                     # before a commit; holds for the tree it ran on
 git add <file> <file>                          # by name
 git commit -m "type(scope): summary"
+git status --short                             # prints nothing: the commit is what was checked
 git rev-parse 'HEAD^{tree}'                    # the tree that was checked
 just scan                                      # before every push
 git push -u origin <slug>
 
-# 9: after a refused push that named commits. <good> is the last commit before the first
-# one named, and no older than the branch on origin. The work stays, staged; take the
-# material out of the file, then check, commit, scan and push as in 7 and 8.
+# 9: after a refused push. <good> is the last commit before the first one the secrets scan
+# named; after a clean-room refusal it is origin's tip of the branch, or the base when the
+# branch was never pushed. It is never older than the branch on origin. The work stays,
+# staged; take the material out of the file, then check, commit, scan and push as in 7, 8.
+git rev-parse origin/<slug>                    # origin's tip of the branch, if it was pushed
 git reset --soft <good>
 git restore --staged <path>
 
@@ -161,10 +183,15 @@ gh pr create --base main --head <slug> --title "$(cat "$text/title.txt")" --body
 gh pr edit <number> --title "$(cat "$text/title.txt")" --body-file "$text/body.md"
 rm -rf "$text" "$plain"
 
-# 11: ask every 20 seconds until the run for the head lists three jobs, then watch
+# 11: ask every 20 seconds until the run for the head lists three jobs, for 20 minutes
+# at most. The macOS job takes about 3 minutes: give the shell call a longer time limit,
+# or enter the loop again.
 head=$(git rev-parse HEAD)
+tries=0
 until run=$(gh run list --commit "$head" --json databaseId --jq '.[0].databaseId // empty') &&
   [ -n "$run" ] && [ "$(gh run view "$run" --json jobs --jq '.jobs | length')" -ge 3 ]; do
+  tries=$((tries + 1))
+  [ "$tries" -le 60 ] || { echo "no run with three jobs for $head after 20 minutes"; break; }
   sleep 20
 done
 gh pr checks <number> --watch                  # check (macos-15), check (ubuntu-22.04), ci
@@ -172,6 +199,10 @@ gh pr checks <number> --watch                  # check (macos-15), check (ubuntu
 # 12
 git rev-parse HEAD                             # the head you hand back
 gh pr view <number> --json headRefOid,url      # the same commit
+
+# 15: main has moved, and the orchestrator asked (the merge asks first)
+git fetch origin main
+git merge --no-ff --no-edit origin/main
 ```
 
 ## Hand-back format
@@ -185,7 +216,9 @@ Head: <full commit; the pull request shows the same>
 CI: check (macos-15) <result>, check (ubuntu-22.04) <result>, ci <result>
     <any rerun: the job and the reason; otherwise "no rerun">
 Local: just check <result>, just scan <result>, on the head
-Refused push: <the commit, path and line the hook named, and what was done; or "none">
+Refused push: <which scan refused, the commit, path and line if named, and what was done;
+    or "none">
+Main merged in: <the commit of origin/main merged into the branch; or "no">
 
 Acceptance
 - <box or "Done when" part> -> <the test, or the file and line, that shows it>
