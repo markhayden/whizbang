@@ -24,6 +24,8 @@
 # WHIZBANG_HEAVY_LOCK moves the lock and WHIZBANG_HEAVY_POLL is the seconds between
 # attempts; WHIZBANG_HEAVY_TEST_HOOK is a command run between deciding a lock is stale and
 # moving it. The tests use all three.
+# Parse the whole file first: see the top of scripts/scan.sh.
+"$BASH" -n "${BASH_SOURCE[0]}" || { echo "heavy: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
 set -euo pipefail
 
 if [ $# -lt 2 ]; then

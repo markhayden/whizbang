@@ -73,3 +73,5 @@ Signed-off-by: Mark via $N <m@example.com>" "$first"
 expect_fail "a trailer naming an agent in a tag message" "$credits_agent" git push origin v-signed
 GIT_COMMITTER_NAME="${N}Bot" git tag -a v-agent -m "release" "$first"
 expect_fail "an agent as the tagger" "the tagger is an agent or a model" git push origin v-agent
+
+finished

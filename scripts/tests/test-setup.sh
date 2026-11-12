@@ -52,3 +52,5 @@ grep -q -F "cargo-nextest is at another version: found 9.9.9" "$tmp/out" ||
 pins=$(grep -v '^#' scripts/tool-versions.txt | awk 'NF { printf "%s%s@%s", sep, $1, $2; sep = "," }')
 grep -q -F "tool: $pins" .github/workflows/ci.yml ||
   fail ".github/workflows/ci.yml must install: $pins"
+
+finished

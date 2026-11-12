@@ -84,3 +84,5 @@ git commit -q --no-verify -F "$tmp/message" 2>/dev/null
 expect_fail "a key after a Latin-1 byte in a message" "commit-message/" git push origin HEAD
 quiet "$key"
 unset LC_ALL
+
+finished

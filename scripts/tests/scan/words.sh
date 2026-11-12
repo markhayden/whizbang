@@ -47,3 +47,5 @@ fresh no-list
 commit_file "feat: clean" clean.txt "clean"
 expect_fail "no word list variable, on a push" "WHIZBANG_WORDLIST is not set" env -u WHIZBANG_WORDLIST git push origin no-list
 not_on_remote refs/heads/no-list
+
+finished

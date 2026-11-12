@@ -36,3 +36,5 @@ fresh key-in-message
 commit_file "feat: a file with $key in its message" plain.txt "nothing here"
 expect_fail "a key in a commit message" "commit-message/" git push origin key-in-message
 quiet "$key"
+
+finished

@@ -62,3 +62,5 @@ if [ "${WHIZBANG_SLOW_TESTS:-}" = "1" ]; then
 else
   echo "skip: the real run under a zero limit; set WHIZBANG_SLOW_TESTS=1 (just test-scripts-slow)"
 fi
+
+finished

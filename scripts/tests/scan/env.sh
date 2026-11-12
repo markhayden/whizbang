@@ -28,3 +28,5 @@ commit_file "feat: a setting" settings.txt "x = $secret_value"
 expect_fail "a value from .env in a commit" "settings.txt:1 (the value of SOME_TOKEN in .env)" "$scan" --secrets-only --range "$first" HEAD
 quiet "$secret_value"
 rm .env
+
+finished

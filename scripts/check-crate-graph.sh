@@ -7,6 +7,8 @@
 #   scripts/check-crate-graph.sh --metadata FILE    a saved `cargo metadata` document
 #
 # The two options exist for scripts/tests/test-crate-graph.sh. Needs jq.
+# Parse the whole file first: see the top of scripts/scan.sh.
+"$BASH" -n "${BASH_SOURCE[0]}" || { echo "crate graph: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 

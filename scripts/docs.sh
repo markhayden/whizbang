@@ -28,6 +28,8 @@
 #
 # Nothing those rules allow can start a heading, a list, a table, a link, a code span, a
 # tag, a comment or a new line, so a description cannot forge a section of the page.
+# Parse the whole file first: see the top of scripts/scan.sh.
+"$BASH" -n "${BASH_SOURCE[0]}" || { echo "docs: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
 set -euo pipefail
 
 check=0

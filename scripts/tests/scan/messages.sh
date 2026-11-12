@@ -93,3 +93,5 @@ for f in "$good_messages"/*.message; do
   git commit -q --no-verify -F "$f"
 done
 expect_pass "messages without attribution" env -u WHIZBANG_WORDLIST "$scan" --secrets-only --range "$first" HEAD
+
+finished

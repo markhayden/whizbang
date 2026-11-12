@@ -40,6 +40,13 @@
 # Clean-room scan: reads a private word list from the path in WHIZBANG_WORDLIST. It fails
 # closed when the variable is unset, or the list is unreadable or empty. It prints counts
 # only: never a word, never a matching line.
+#
+# The first line below parses this whole file before anything runs. The bash that ships
+# with macOS (3.2) runs a script up to its first syntax error and then, if the script has
+# set an `EXIT` trap, exits 0: without this line a broken scan would pass. Every script
+# here that sets such a trap starts the same way (scripts/tests/test-syntax.sh holds them
+# to it).
+"$BASH" -n "${BASH_SOURCE[0]}" || { echo "scan: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
 set -euo pipefail
 umask 077
 # Bytes, not characters: a byte that is not valid UTF-8 must not hide the rest of its line.

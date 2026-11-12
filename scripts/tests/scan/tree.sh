@@ -53,3 +53,5 @@ rm shapes.txt
 } >lookalikes.txt
 expect_pass "kebab-case and other lookalikes" env -u WHIZBANG_WORDLIST "$scan" --secrets-only
 rm lookalikes.txt
+
+finished
