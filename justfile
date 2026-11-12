@@ -1,5 +1,5 @@
 # Whizbang developer commands. `just setup` once on a fresh clone, `just check` before a
-# commit, `just scan` before a push.
+# commit, `just check` and `just scan` before a push.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -75,13 +75,16 @@ scan-secrets:
 
 # The secrets scan, the attribution check and the clean-room scan over every commit in
 # base..head (contents, paths and messages) and the tree of head.
+# The arguments reach the scan as "$1" and "$2", never as text a shell reads.
+[positional-arguments]
 scan-range base head:
-    scripts/scan.sh --range "{{base}}" "{{head}}"
+    scripts/scan.sh --range "$1" "$2"
 
 # The same without the clean-room scan: what CI runs over a pull request's commits (CI
 # uses the base branch's copy of the scan, so a pull request cannot change what checks it).
+[positional-arguments]
 scan-range-secrets base head:
-    scripts/scan.sh --secrets-only --range "{{base}}" "{{head}}"
+    scripts/scan.sh --secrets-only --range "$1" "$2"
 
 # What a pull request runs.
 ci: check deny-advisories smoke scan-secrets
