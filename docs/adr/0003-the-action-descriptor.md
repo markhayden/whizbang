@@ -2,6 +2,9 @@
 
 Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-12, with ADR 0004. The list of what this record does not decide now names
+ADR 0004 for preparing a call, and no longer promises one record for all that remained.
+Nothing this record decides changed.
 Spec: section 3, "The execution contract" and "Primitives, recipes and loops"; section 6,
 "Readiness"; section 14, "Documentation that cannot drift"
 
@@ -184,8 +187,8 @@ document written under it is still a document a reader of the same version under
 
 What this record does not decide, and the code does not do:
 
-- How a call is prepared, admitted and executed, the outcome, and the run record. They are
-  the rest of the execution contract and get their own record.
+- How a call is prepared: ADR 0004 (`docs/adr/0004-preparing-a-call.md`). How it is
+  admitted and executed, and the run record, are not decided yet.
 - What a feature is. A need names features; the capability interfaces say which exist.
 - A result that is not an artifact, such as a verdict. An output port returns one of the
   six artifact types (`docs/carry-over.md`).

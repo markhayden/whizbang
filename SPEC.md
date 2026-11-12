@@ -120,7 +120,8 @@ path dependency on a crate outside the workspace fails the check.
 
 Defined in the core, independent of any door. It is proven at checkpoint 1A with one rascal
 operation and one scripted multi-turn squint run before either tool is ported. The action
-descriptor is decided in ADR 0003 (`docs/adr/0003-the-action-descriptor.md`).
+descriptor is decided in ADR 0003 (`docs/adr/0003-the-action-descriptor.md`), and preparing
+a call in ADR 0004 (`docs/adr/0004-preparing-a-call.md`).
 
 - **Action descriptor.** Static and deterministic: name, kind, typed arguments, typed artifact
   ports (required, optional, variadic), outputs with their bounds, the capabilities and

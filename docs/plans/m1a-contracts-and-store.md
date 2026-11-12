@@ -19,7 +19,9 @@ No model runs in this checkpoint. Every capability is a fake from the test kit.
 - **Three ADRs, each merged with the first code that depends on it:** identities (A1),
   artifacts and the mask record (A4), and the capability interfaces with fill's conventions
   (A8). The execution contract (A5) turned out to need its own: ADR 0003 is the action
-  descriptor's, so the capability interfaces take the next free number.
+  descriptor's and ADR 0004 is preparing a call's, and the run record will have one; so the
+  capability interfaces take the next free number, and the cancellation rule of A7 goes in
+  the record for executing a call.
 - **The store is files on disk,** published the way rascal's workspace publishes: immutable
   generations, a single pointer that names the current one, and file and directory syncs in a
   fixed order. No database.
@@ -220,7 +222,7 @@ behaviour in milestone 3.
       capabilities, with their contents left to A8.
 - [x] Also reads rascal `crates/rascal-mask/src/describe.rs`: the optional filler argument
       comes from the action description's common properties, not from the recipes.
-- [ ] Registry and executor construction in a module the binary and the tests both use. The
+- [x] Registry and executor construction in a module the binary and the tests both use. The
       executor's entry point is where a request id is looked up (A6 fills it in).
 - [ ] `whizbang-testkit`: an `echo` action, registered only by tests.
 - [x] Descriptor fixtures for `seam` and `remove_prompt`, written from their recipes and the
