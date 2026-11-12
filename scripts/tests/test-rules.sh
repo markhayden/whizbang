@@ -53,7 +53,8 @@ Bash(git ls-files)
 Bash(git ls-files *)
 Bash(git rev-parse *)
 Bash(git branch --list)
-Bash(git branch --list *)
+Bash(git branch --list -a)
+Bash(git branch --list -r)
 Bash(git worktree list)
 Bash(git worktree list *)
 Bash(git fetch)
@@ -77,6 +78,8 @@ Bash(*gh release*)
 Bash(*cargo publish*)
 Bash(gh * -R*)
 Bash(gh * --repo*)
+Bash(gh *://*)
+Bash(gh *github.com*)
 LIST
 cat >"$tmp/deny" <<'LIST'
 Bash(*--no-verify*)
@@ -124,13 +127,17 @@ mutated() {
 }
 for rule in 'Bash(g*)' 'Bash(git commit *)' 'Bash(python3 *)' 'Read(//**)' 'Bash(just *)' \
   'Bash(scripts/*)' 'Bash(git push *)' 'Bash(gh pr merge *)' 'Bash(git diff *)' \
-  'Bash(gh api repos/*)' 'Bash(scripts/heavy.sh *)' 'Bash(*)'; do
+  'Bash(gh api repos/*)' 'Bash(scripts/heavy.sh *)' 'Bash(git branch --list *)' 'Bash(*)'; do
   expect_fail "allowing $rule" "permissions.allow is not the list" \
     mutated ".permissions.allow += [\"$rule\"]"
 done
 expect_fail "an allow rule removed" "permissions.allow is not the list" mutated 'del(.permissions.allow[0])'
 expect_fail "ask emptied" "permissions.ask is not the list" mutated '.permissions.ask = []'
 expect_fail "an ask rule removed" "permissions.ask is not the list" mutated 'del(.permissions.ask[0])'
+expect_fail "no ask for a pull request by its address" "permissions.ask is not the list" \
+  mutated '.permissions.ask -= ["Bash(gh *://*)"]'
+expect_fail "no ask for another host's address" "permissions.ask is not the list" \
+  mutated '.permissions.ask -= ["Bash(gh *github.com*)"]'
 expect_fail "deny emptied" "permissions.deny is not the list" mutated '.permissions.deny = []'
 expect_fail "no ask list" "nothing else" mutated 'del(.permissions.ask)'
 expect_fail "a default mode" "nothing else" mutated '.permissions.defaultMode = "bypassPermissions"'
@@ -143,6 +150,39 @@ expect_fail "a list that is not a list" "must be a list of rule strings" mutated
 
 printf '{ "permissions": { "allow": [ ' >"$tmp/broken.json"
 expect_fail "settings that are not JSON" "settings: not valid JSON" check_settings "$tmp/broken.json"
+
+# --- Other files that can grant permissions ----------------------------------------------
+
+# Local settings and MCP servers are never committed, and a subagent does not choose its own
+# permission mode. (Skills and their allowed tools: docs/carry-over.md, with task S5.)
+# granted <folder>: prints what in a checkout grants permissions outside settings.json.
+granted() {
+  (
+    cd "$1"
+    git ls-files -- .claude/settings.local.json .mcp.json '**/.mcp.json' | sed 's/^/tracked: /'
+    grep -l -i -E '^[[:space:]]*permissionMode[[:space:]]*:' .claude/agents/*.md 2>/dev/null | sed 's/^/permission mode: /'
+  ) >"$tmp/granted"
+  [ ! -s "$tmp/granted" ] || { cat "$tmp/granted"; return 1; }
+}
+expect_pass "nothing else grants permissions" granted .
+
+git init -q "$tmp/repo"
+mkdir -p "$tmp/repo/.claude/agents"
+cp .claude/agents/*.md "$tmp/repo/.claude/agents/"
+git -C "$tmp/repo" add .claude
+expect_pass "a copy of the agent files" granted "$tmp/repo"
+echo '{}' >"$tmp/repo/.claude/settings.local.json"
+git -C "$tmp/repo" add -f .claude/settings.local.json
+expect_fail "local settings committed" "tracked: .claude/settings.local.json" granted "$tmp/repo"
+git -C "$tmp/repo" rm -q -f --cached .claude/settings.local.json
+echo '{}' >"$tmp/repo/.mcp.json"
+git -C "$tmp/repo" add -f .mcp.json
+expect_fail "MCP servers committed" "tracked: .mcp.json" granted "$tmp/repo"
+git -C "$tmp/repo" rm -q -f --cached .mcp.json
+awk '{ print } /^name: reviewer$/ { print "permissionMode: bypassPermissions" }' \
+  .claude/agents/reviewer.md >"$tmp/repo/.claude/agents/reviewer.md"
+grep -q '^permissionMode' "$tmp/repo/.claude/agents/reviewer.md" || fail "the planted permission mode is not there"
+expect_fail "a subagent with a permission mode" "permission mode: .claude/agents/reviewer.md" granted "$tmp/repo"
 
 # --- The two recipes that take arguments -------------------------------------------------
 
@@ -222,9 +262,33 @@ changed '$s|$| WHIZBANG_WORDLIST=words|' "no value or location"
 
 # --- Private locations -------------------------------------------------------------------
 
-# No document, plan or settings file names a folder under a home directory. (The secrets
-# scan finds absolute home paths; this finds the `~` form.)
-if git grep -n -E '~/[A-Za-z._]' -- '*.md' '*.toml' '*.json' >"$tmp/homes"; then
-  cut -d: -f1,2 "$tmp/homes" >&2
-  fail "a home-relative path in a document"
-fi
+# No document, settings file, workflow, recipe or script names a folder under a home
+# directory or on another volume. (The secrets scan finds absolute home paths; this finds
+# the `~`, `~user`, `$HOME` and volume forms.) The script tests are left out: they plant
+# such paths on purpose.
+homes='(^|[^A-Za-z0-9_.])~[A-Za-z0-9_-]*/|\$HOME/|\$\{HOME\}|/Volumes/'
+# home_paths <folder>: prints where a tracked file of a checkout holds such a path.
+home_paths() {
+  if git -C "$1" grep -n -I -E -e "$homes" -- '*.md' '*.toml' '*.json' '*.yml' justfile scripts .claude \
+    ':!scripts/tests' >"$tmp/homes"; then
+    cut -d: -f1,2 "$tmp/homes"
+    return 1
+  fi
+}
+expect_pass "no home path in a tracked file" home_paths .
+
+n=0
+for planted in 'in ~/owner/x' 'in ~mark/x' 'in $HOME/x' 'in ${HOME}/x' 'in /Volumes/disk/x'; do
+  for name in notes.md justfile scripts/a.sh; do
+    n=$((n + 1))
+    git init -q "$tmp/h$n"
+    mkdir -p "$tmp/h$n/scripts"
+    printf '%s\n' "$planted" >"$tmp/h$n/$name"
+    git -C "$tmp/h$n" add "$name"
+    expect_fail "$planted in $name" "$name:1" home_paths "$tmp/h$n"
+  done
+done
+git init -q "$tmp/plain"
+printf '%s\n' 'about ~3 minutes; a/~b; see docs/x' >"$tmp/plain/notes.md"
+git -C "$tmp/plain" add notes.md
+expect_pass "a tilde that is not a path" home_paths "$tmp/plain"

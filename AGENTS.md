@@ -80,7 +80,9 @@ The subagents are defined in `.claude/agents/`.
 recipes and a few scripts by their exact text, and some read-only `git` and `gh` commands.
 These rules reduce prompts. They are not the boundary. The boundary is branch protection on
 `main`, the pre-push hook and CI. Anyone who can edit the justfile or a script changes what
-an allowed command runs, so a change to either is reviewed as code. The list is repeated in
+an allowed command runs, so a change to either is reviewed as code. A `gh` command that
+names another repository by `-R`, `--repo` or an address asks first, but one that hides the
+flag in a bundle of short flags, such as `-cR`, is not caught. The list is repeated in
 `scripts/tests/test-rules.sh`, and `just check` fails when the two differ.
 
 ## When documents disagree
@@ -105,9 +107,9 @@ These are the boundaries of `SPEC.md` section 15, with these additions, each mar
 - Do everything in this repo: commit, push, open and merge pull requests, tag, cut version
   releases and publish crates, once CI and both scans pass.
 - Spend up to 100 US dollars per milestone on approved recipients (`SPEC.md` section 10),
-  without asking.
+  without asking. The milestone note records what was spent.
 - Each acts in its role above: only the orchestrator merges, tags, releases and
-  publishes. The milestone note records what was spent. (added)
+  publishes. (added)
 
 **Only the owner**
 - Approves spend beyond that, a new recipient for data, or a reset of the spend allowance.
