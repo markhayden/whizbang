@@ -445,6 +445,13 @@ fn an_input_the_store_does_not_hold_or_holds_as_another_type_is_refused() {
         engine.prepare(&Call::new("seam").input("image", nothing)),
         &["the input image", "the store holds no image"],
     );
+    // The sentence names the identity that was asked for.
+    assert!(
+        refusal
+            .to_string()
+            .ends_with(&format!("the store holds no image {nothing}")),
+        "{refusal}"
+    );
     // The refusal says which case it is as a type, and names the artifact by identity.
     assert_eq!(
         refusal,
@@ -513,14 +520,105 @@ fn a_store_that_fails_is_not_a_refusal_of_the_call_and_names_no_path() {
     let parent = world.root.parent().unwrap().to_str().unwrap();
     assert!(!said.contains(root) && !said.contains(parent), "{said}");
     assert!(!said.contains(std::path::MAIN_SEPARATOR), "{said}");
-    // Whoever runs the store can still have all of it.
+    // Neither does what `{:?}` prints of it: a failure is often logged that way.
+    let debugged = format!("{:?}", CallError::Store(failure.clone()));
+    assert!(debugged.contains(&digest), "{debugged}");
+    assert!(
+        !debugged.contains(root) && !debugged.contains(parent),
+        "{debugged}"
+    );
+    assert!(!debugged.contains(std::path::MAIN_SEPARATOR), "{debugged}");
+    // Whoever runs the store can still have all of it, and asks for it by name: it is
+    // not the error's source, so a chain of causes printed for a caller stops here.
     assert!(failure.cause().to_string().contains(root));
+    assert!(std::error::Error::source(&CallError::Store(failure.clone())).is_none());
     assert!(CallError::Store(failure).refusal().is_none());
     // Submit says the same.
     assert!(matches!(
         engine.submit(&world.remove()),
         Err(CallError::Store(_))
     ));
+}
+
+#[test]
+fn a_refusal_is_the_error_and_not_its_own_cause() {
+    // Whatever prints an error and then its chain of causes says a refusal once.
+    let world = world();
+    let error = world
+        .engine(segmenter())
+        .prepare(&Call::new("vanish"))
+        .unwrap_err();
+    assert!(std::error::Error::source(&error).is_none());
+    assert_eq!(error.to_string(), error.refusal().unwrap().to_string());
+}
+
+/// The current generation's file, edited as JSON.
+fn edit_generation(world: &World, edit: impl FnOnce(&mut serde_json::Value)) {
+    let reader = Reader::open(&world.root, world.fs.clone()).unwrap();
+    let number = reader.snapshot().unwrap().number();
+    drop(reader);
+    let file = world
+        .root
+        .join("generations")
+        .join(format!("{number}.json"));
+    let mut generation: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    edit(&mut generation);
+    std::fs::remove_file(&file).unwrap();
+    std::fs::write(&file, serde_json::to_vec(&generation).unwrap()).unwrap();
+}
+
+#[test]
+fn a_diagnostic_is_never_an_input_wherever_it_is_held() {
+    let world = world();
+    // Under a run's names, as a run's diagnostics are: an artifact is looked for among
+    // the names outside runs, so the store holds no such image, though a run holds the
+    // image's own bytes as a diagnostic.
+    let unpublished = image_of(png(|x, y| [x as u8, y as u8, 200, 255]), ImageRole::Picture);
+    let store = Store::open_existing(&world.root, world.fs.clone()).unwrap();
+    let mut publication = store.begin().unwrap();
+    let name = artifact::name(ArtifactType::Image, unpublished.id());
+    let bytes = Artifact::from(unpublished.clone()).to_bytes();
+    publication
+        .put_in(
+            "run-1",
+            &name,
+            whizbang_core::store::Kind::Diagnostic,
+            &bytes,
+        )
+        .unwrap();
+    publication.publish().unwrap();
+    drop(store);
+    let engine = world.engine(segmenter());
+    let refusal = refused(
+        engine.prepare(&Call::new("seam").input("image", unpublished.id())),
+        &["the input image", "the store holds no image"],
+    );
+    assert!(matches!(
+        refusal,
+        Refusal::Input {
+            fault: InputFault::Missing,
+            ..
+        }
+    ));
+    drop(engine);
+
+    // At an artifact's own name, outside runs: no publication makes such a reference,
+    // and a generation file that other hands wrote can. The store refuses to read a
+    // diagnostic as an output, and that comes back as the store's failure, with the
+    // content's digest and no path. It is not a failure the store recovers from: the
+    // call is answered only when the reference is one of an output.
+    let name = artifact::name(ArtifactType::Image, world.photo);
+    edit_generation(&world, |generation| {
+        generation["entries"][&name]["kind"] = serde_json::json!("diagnostic");
+    });
+    let engine = world.engine(segmenter());
+    let Err(CallError::Store(failure)) = engine.prepare(&world.remove()) else {
+        panic!("a diagnostic at an artifact's name was not the store's failure");
+    };
+    let said = failure.to_string();
+    assert!(said.contains("is a diagnostic"), "{said}");
+    assert!(!said.contains(world.root.to_str().unwrap()), "{said}");
 }
 
 #[test]
@@ -976,6 +1074,35 @@ fn a_negative_zero_is_prepared_as_zero() {
     };
     assert_eq!(amount.to_bits(), 0.0_f64.to_bits());
     assert_eq!(zero, negative);
+
+    // A default of negative zero, left to apply, is prepared as zero too.
+    let mut registry = Registry::new();
+    let draft = ActionDescriptor::draft("tilt", "1.0.0", Kind::Primitive, "Tilts.").argument(
+        Argument::with_default(
+            "angle",
+            "An angle.",
+            ValueType::number(None, None),
+            Value::Number(-0.0),
+        ),
+    );
+    registry
+        .register(Arc::new(Fake(draft.build().unwrap())))
+        .unwrap();
+    let engine = Engine::new(
+        registry,
+        Arc::new(NoBackends),
+        Arc::new(Reader::open(&world.root, world.fs.clone()).unwrap()),
+        Digest::of_bytes(b"config"),
+    );
+    let by_default = engine.prepare(&Call::new("tilt")).unwrap();
+    let Value::Number(angle) = by_default.arguments()[0].1 else {
+        panic!("not a number: {:?}", by_default.arguments()[0]);
+    };
+    assert_eq!(angle.to_bits(), 0.0_f64.to_bits());
+    let given = engine
+        .prepare(&Call::new("tilt").argument("angle", Value::Number(0.0)))
+        .unwrap();
+    assert_eq!(by_default, given);
 }
 
 #[test]

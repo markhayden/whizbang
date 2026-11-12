@@ -160,9 +160,18 @@ booleans and times are not texts from outside and are written as they are.
 So "its exact arguments" (the spec) holds except where an argument held a secret: there
 the record holds `[redacted]`, because the spec also says a secret is never written.
 
+An error's message is otherwise kept as it was given. It can carry the sentence of
+something the action called, a decoder's for one (ADR 0004, "No path in what is said"),
+and that sentence is kept in the record, since it says what failed.
+
 Redaction is by value. It takes out the secrets it was told of, and nothing else: it does
 not find a key by its shape. What keeps other private things out of a record is the shape:
-it has no field for a path, a host name, a user or an environment variable.
+it has no field for a path, a host name, a user or an environment variable. A free text
+is the one place the shape does not reach: an action that writes a path into its error's
+message has written it into the record. A `CallError` shows no path,
+as its text or as `{:?}`; the store's own error does, and an action that quotes one in a
+message quotes it without (`store::Error::without_paths`). Nothing holds an action to
+that (`docs/carry-over.md`).
 
 Bytes that are not UTF-8, as an image is not, cannot be searched for a text and are kept
 as they are (`Secrets::redact_bytes`).
