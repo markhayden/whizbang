@@ -105,10 +105,10 @@ that the repos are frozen:
 - **All four:** merged remote branches were not deleted (rascal 17, squint 8, wafflery 5,
   table-manners 5); each is on `main`.
 
-Three boxes of the plan rest on the orchestrator's record alone, because what they describe
-is outside the four repos, and are left unticked until it confirms them: the two label
-corrections in owner storage (F3), the local images clone pointing at the new address (F4),
-and the retirement line pushed to the coordination repo (F5).
+Three boxes of the plan describe things outside the four repos, and were confirmed by the
+orchestrator on 2026-11-11: the two label corrections in owner storage (F3), the local images
+clone pointing at the new address (F4), and the retirement line pushed to the coordination repo
+(F5).
 
 Left as found, by the owner's decision:
 
