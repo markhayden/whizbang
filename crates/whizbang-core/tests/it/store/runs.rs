@@ -290,3 +290,84 @@ fn a_crash_at_any_event_of_a_deletion_leaves_the_run_whole_or_gone() {
         });
     }
 }
+
+#[test]
+fn a_run_id_is_not_empty_and_holds_no_control_character() {
+    let dir = Scratch::new("store-runs");
+    let root = root(&dir);
+    let fs = Arc::new(ShimFs::new());
+    let store = Store::open(&root, fs.clone()).unwrap();
+    let mut publication = store.begin().unwrap();
+    let before = fs.events().len();
+    for id in [
+        "",
+        "a\nb",
+        "tab\there",
+        "\u{1b}[31mred",
+        "bell\u{7}",
+        "nul\0",
+    ] {
+        match publication.put_in(id, "out", Kind::Output, MASK) {
+            Err(Error::InvalidRun { run }) => assert_eq!(run, id),
+            other => panic!("{id:?}: {other:?}"),
+        }
+    }
+    assert_eq!(fs.events().len(), before, "nothing was staged for them");
+    let message = publication
+        .put_in("a\nb", "out", Kind::Output, MASK)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message.starts_with("\"a\\nb\" cannot be a run's id"),
+        "{message}"
+    );
+    // Anything else is an id, as far as the store goes.
+    for id in ["one", "run 2", "caf\u{e9}/7", "-", "."] {
+        publication.put_in(id, "out", Kind::Output, MASK).unwrap();
+    }
+    publication.publish().unwrap();
+    assert_eq!(runs(&root), ["-", ".", "caf\u{e9}/7", "one", "run 2"]);
+}
+
+#[test]
+fn a_generation_file_of_another_format_is_refused_as_another_format_not_as_damage() {
+    let dir = Scratch::new("store-runs");
+    let root = super::with_old(&dir);
+    // Generation 1 exactly as the first format wrote it: no kinds, no runs.
+    let first_format = format!(
+        r#"{{
+  "format": 1,
+  "number": 1,
+  "entries": {{
+    "a": {{
+      "digest": "{}",
+      "bytes": {}
+    }}
+  }}
+}}
+"#,
+        Digest::of(super::A1),
+        super::A1.len()
+    );
+    std::fs::write(root.join("generations/1.json"), first_format).unwrap();
+    let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
+    let by_reader = reader.snapshot().map(|_| ());
+    let by_writer = Store::open(&root, Arc::new(ShimFs::new())).map(|_| ());
+    for result in [by_reader, by_writer] {
+        let error = result.unwrap_err();
+        match &error {
+            Error::OtherFormat {
+                path,
+                format: 1,
+                reads: 2,
+            } => assert_eq!(*path, root.join("generations/1.json")),
+            other => panic!("{other:?}"),
+        }
+        let message = error.to_string();
+        assert!(
+            message.ends_with("is of another format: 1, and this build reads format 2"),
+            "{message}"
+        );
+        assert!(!message.contains("damaged"), "{message}");
+    }
+}

@@ -25,7 +25,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use whizbang_core::store::fs::{Fs, Held, RealFs};
+use whizbang_core::store::fs::{Fs, Held, LockFile, RealFs};
 
 /// One recorded call that changes the disk or makes a change durable. Reads are not events.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,7 +43,8 @@ pub enum Event {
     /// A file or a directory tree was removed.
     Remove(PathBuf),
     /// A lock file was taken ([`Fs::hold_lock_file`]). A refused attempt is not an event,
-    /// and neither is sharing a file or taking one alone: those change nothing.
+    /// and neither is recording the holder, sharing a file or taking one alone: nothing
+    /// durable changes by them.
     Lock(PathBuf),
 }
 
@@ -124,6 +125,26 @@ impl Drop for ShimHeld {
     }
 }
 
+/// The same for a lock file.
+type HeldLockFile = Arc<Mutex<Option<Box<dyn LockFile>>>>;
+
+struct ShimLockFile(HeldLockFile);
+
+impl LockFile for ShimLockFile {
+    fn record(&self, holder: &[u8]) -> io::Result<()> {
+        match self.0.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            Some(lock) => lock.record(holder),
+            None => Err(io::Error::other("the file system has crashed")),
+        }
+    }
+}
+
+impl Drop for ShimLockFile {
+    fn drop(&mut self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
+}
+
 type Hook = Box<dyn FnOnce() + Send>;
 type Matches = Box<dyn Fn(&Event) -> bool + Send>;
 
@@ -142,6 +163,7 @@ struct State {
     hook: Option<(usize, Hook)>,
     /// The locks this file system holds, each until its holder drops it or the crash.
     locks: Vec<Lock>,
+    lock_files: Vec<HeldLockFile>,
     crashed: bool,
     crash_choices: usize,
     crash_names: usize,
@@ -309,6 +331,9 @@ fn crash(state: &mut State, lost: Lost) {
     state.crashed = true;
     // The process is gone, and its locks with it.
     for lock in std::mem::take(&mut state.locks) {
+        lock.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
+    for lock in std::mem::take(&mut state.lock_files) {
         lock.lock().unwrap_or_else(|e| e.into_inner()).take();
     }
     // Content first, while every file still has the name the shim knows it by.
@@ -512,18 +537,21 @@ impl Fs for ShimFs {
         let _state = self.alive()?;
         self.real.exists(path)
     }
-    fn hold_lock_file(&self, path: &Path, holder: &[u8]) -> io::Result<Option<Box<dyn Held>>> {
+    fn hold_lock_file(&self, path: &Path, create: bool) -> io::Result<Option<Box<dyn LockFile>>> {
         let event = Event::Lock(path.to_path_buf());
         let mut state = self.next_event(&event)?;
         let was_there = self.real.exists(path)?;
-        let Some(held) = self.real.hold_lock_file(path, holder)? else {
+        let Some(held) = self.real.hold_lock_file(path, create)? else {
             return Ok(None);
         };
         if !was_there {
             state.pending.push(Pending::Created(path.to_path_buf()));
         }
         state.events.push(event);
-        Ok(Some(Self::keep(&mut state, held)))
+        state.lock_files.retain(|lock| Arc::strong_count(lock) > 1);
+        let lock: HeldLockFile = Arc::new(Mutex::new(Some(held)));
+        state.lock_files.push(lock.clone());
+        Ok(Some(Box::new(ShimLockFile(lock))))
     }
 
     fn share(&self, path: &Path) -> io::Result<Box<dyn Held>> {

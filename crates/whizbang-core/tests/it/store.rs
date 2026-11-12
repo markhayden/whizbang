@@ -13,7 +13,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use whizbang_core::store::fs::{Fs, Held, RealFs};
+use whizbang_core::store::fs::{Fs, Held, LockFile, RealFs};
 use whizbang_core::store::{Digest, Error, Published, Reader, Store};
 use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
 use whizbang_testkit::scratch::Scratch;
@@ -174,6 +174,8 @@ enum When {
     Sharing,
     /// Just before the first read of this file.
     Reading(PathBuf),
+    /// Just before the first listing of this directory.
+    Listing(PathBuf),
 }
 
 /// The real file system, running a hook once at a chosen call: what another process does
@@ -221,13 +223,16 @@ impl Fs for Hooked {
         RealFs.read(path)
     }
     fn list(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
+        if matches!(&self.when, When::Listing(dir) if dir == path) {
+            self.run();
+        }
         RealFs.list(path)
     }
     fn exists(&self, path: &Path) -> io::Result<bool> {
         RealFs.exists(path)
     }
-    fn hold_lock_file(&self, path: &Path, holder: &[u8]) -> io::Result<Option<Box<dyn Held>>> {
-        RealFs.hold_lock_file(path, holder)
+    fn hold_lock_file(&self, path: &Path, create: bool) -> io::Result<Option<Box<dyn LockFile>>> {
+        RealFs.hold_lock_file(path, create)
     }
     fn share(&self, path: &Path) -> io::Result<Box<dyn Held>> {
         if matches!(self.when, When::Sharing) {
@@ -851,21 +856,25 @@ fn a_pointer_or_a_generation_that_cannot_be_read_is_an_error_not_an_empty_store(
         if let Some(bytes) = bytes {
             std::fs::write(root.join(file), bytes).unwrap();
         }
+        // Damage; or, for the file that says so itself, another format.
+        let refused = |result: &Result<(), Error>| match result {
+            Err(Error::Corrupt { .. }) => what != "another format",
+            Err(Error::OtherFormat { format: 1, .. }) => what == "another format",
+            _ => false,
+        };
         let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
-        let result = reader.snapshot();
-        assert!(
-            matches!(result, Err(Error::Corrupt { .. })),
-            "{what}: {result:?}"
-        );
-        // A writer refuses it too, and tidies nothing on the way.
+        let result = reader.snapshot().map(|_| ());
+        assert!(refused(&result), "{what}: {result:?}");
+        // A writer refuses it too, and tidies nothing on the way. The fault is one a
+        // writer at work could seem to cause, so it is confirmed under the lock: the lock
+        // is taken, and nothing else happens.
         std::fs::create_dir(root.join("staging/leftover")).unwrap();
+        let before = tree(&root);
         let fs = Arc::new(ShimFs::new());
         let result = Store::open(&root, fs.clone()).map(|_| ());
-        assert!(
-            matches!(result, Err(Error::Corrupt { .. })),
-            "{what}: {result:?}"
-        );
-        assert_eq!(fs.events(), vec![], "{what}");
+        assert!(refused(&result), "{what}: {result:?}");
+        assert_eq!(fs.events(), vec![Event::Lock(root.join("LOCK"))], "{what}");
+        assert_eq!(tree(&root), before, "{what}");
     }
 
     // The same generation file, well formed, is read: the cases above fail for what they
@@ -1388,7 +1397,8 @@ fn a_store_that_lost_its_pointer_is_refused_and_nothing_in_it_is_removed() {
     assert!(matches!(result, Err(Error::NotAStore { .. })), "{result:?}");
     let result = Reader::open(&root, fs.clone()).map(|_| ());
     assert!(matches!(result, Err(Error::NotAStore { .. })), "{result:?}");
-    assert_eq!(fs.events(), vec![]);
+    // The writer confirmed what it saw under the lock, and did nothing else.
+    assert_eq!(fs.events(), vec![Event::Lock(root.join("LOCK"))]);
     assert_eq!(tree(&root), before);
 }
 

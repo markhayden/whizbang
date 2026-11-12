@@ -53,9 +53,28 @@
 //! [`Error::Held`], which names the holder as the holder wrote itself in the file: its
 //! process id and its program. A reader never takes this lock and is never refused.
 //!
+//! A writer writes its name once it holds the lock and has found the store sound, and
+//! takes it out when it is dropped. A writer that dies leaves its name in the file. So
+//! for the moment between a writer's taking the lock and its writing, one that is refused
+//! is told of "another process", or, after a death, the name of the dead one; nothing
+//! but the message depends on the name.
+//!
 //! Nothing is removed, by recovery or otherwise, except by a writer that holds the lock.
 //! An open that is refused, for any reason, has removed and changed nothing; only where
-//! there was no directory at all has it made one, to hold the lock file.
+//! there was no directory at all has it made one, to hold the lock file. In particular a
+//! writer refused for damage has not written its name.
+//!
+//! What a writer sees before it holds the lock can be another writer's change half made:
+//! a pointer that has moved on from the generation file just looked for, a store whose
+//! creation ends between two looks. So no fault seen then is reported as seen. If the
+//! lock cannot be taken the answer is [`Error::Held`]; if it can, everything is read
+//! again under it and that is the answer. Only a directory with no lock file in it, which
+//! no writer is at work in, is refused on the first look alone, so that nothing, not even
+//! a lock file, is made in a directory that is not a store.
+//!
+//! The lock is the standard library's file lock, `flock` on Linux and macOS: it works
+//! on local file systems only, and `LOCK` must never be removed or replaced while a
+//! writer holds it. The module [`fs`] says exactly what holds and what does not.
 //!
 //! # Runs, and the two kinds of reference
 //!
@@ -113,11 +132,11 @@
 //!
 //! Opening to write ([`Store::open`]) reads before it changes anything: whether there is
 //! a store, a place for one, or neither, and, for a store, its pointer and its current
-//! generation. A directory that is not a store, and a store that is damaged, are refused
-//! there, with nothing created, removed, synced or changed. Then it takes the writer lock,
-//! making the root first where there was none, and reads the same things again, because
-//! until the lock was held another writer could have been at work. Only then does it
-//! create what is missing (the three directories, and for a new store the pointer), and
+//! generation. Then it takes the writer lock, making the root first where there was none,
+//! and reads the same things again: this second reading is the one that refuses a
+//! directory that is not a store or a store that is damaged, with nothing created,
+//! removed, synced or changed, and the one recovery goes by ("One writer" says why).
+//! Only then does it create what is missing (the three directories, and for a new store the pointer), and
 //! remove whatever is in staging and any generation file numbered above the pointer: both
 //! are left by a publication that did not finish. Opening to read ([`Reader::open`])
 //! removes and creates nothing.
@@ -147,7 +166,7 @@ pub use digest::Digest;
 pub use error::Error;
 pub use generation::{Entry, GENERATION_FORMAT, Generation, Kind, Run};
 
-use fs::{Fs, Held};
+use fs::{Fs, Held, LockFile};
 
 /// The store's result.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -277,14 +296,23 @@ impl Files {
     fn generation(&self, number: u64) -> Result<Generation> {
         let path = self.layout.generation(number);
         let bytes = self.fs.read(&path).map_err(Error::io("read", &path))?;
+        // The format first, by itself: a file of another format does not have this
+        // format's shape, and is another format, not damage.
+        #[derive(serde::Deserialize)]
+        struct Format {
+            format: u32,
+        }
+        if let Ok(Format { format }) = serde_json::from_slice(&bytes)
+            && format != GENERATION_FORMAT
+        {
+            return Err(Error::OtherFormat {
+                path,
+                format,
+                reads: GENERATION_FORMAT,
+            });
+        }
         let generation: Generation =
             serde_json::from_slice(&bytes).map_err(|e| Error::corrupt(&path, e.to_string()))?;
-        if generation.format != GENERATION_FORMAT {
-            return Err(Error::corrupt(
-                &path,
-                format!("format {}, not {GENERATION_FORMAT}", generation.format),
-            ));
-        }
         if generation.number != number {
             return Err(Error::corrupt(
                 &path,
@@ -334,21 +362,31 @@ impl Files {
     }
 
     /// What is at the root, for a writer: the number of the current generation of the
-    /// store there, or 0 where a store may be made (nothing, or nothing but an unfinished
-    /// creation). Anything else is refused. Reads only.
-    fn place(&self) -> Result<u64> {
+    /// store there, or, when a store may be created (`create`), 0 where one may be made:
+    /// where there is nothing, or nothing but an unfinished creation. Anything else is
+    /// refused. Reads only.
+    ///
+    /// Without the writer lock this is a look at something another writer may be changing
+    /// between two of its reads, and what it reports can be wrong: damage that is not
+    /// there, a directory that is not a store and is one. Only under the lock is it final.
+    fn place(&self, create: bool) -> Result<u64> {
         let root = &self.layout.root;
         if !self.exists(root)? {
-            Ok(0)
-        } else if self.exists(&self.layout.pointer())? {
-            Ok(self.snapshot()?.number())
-        } else if let Some(found) = self.beyond_an_unfinished_creation()? {
-            Err(Error::NotAStore {
+            return if create {
+                Ok(0)
+            } else {
+                Err(Error::Missing { root: root.clone() })
+            };
+        }
+        if self.exists(&self.layout.pointer())? {
+            return Ok(self.snapshot()?.number());
+        }
+        match self.beyond_an_unfinished_creation()? {
+            None if create => Ok(0),
+            found => Err(Error::NotAStore {
                 root: root.clone(),
-                found: Some(found),
-            })
-        } else {
-            Ok(0)
+                found,
+            }),
         }
     }
 
@@ -518,7 +556,26 @@ pub struct Store {
     /// removes content, and a publication takes it before it looks for content.
     in_progress: Mutex<BTreeMap<u64, BTreeSet<Digest>>>,
     /// The writer lock, held for as long as this value lives.
-    _lock: Box<dyn Held>,
+    lock: Box<dyn LockFile>,
+}
+
+impl Drop for Store {
+    /// The lock ends with this value. The name in the lock file is taken out first, so
+    /// that it does not outlive its holder; a writer that dies leaves its name behind.
+    fn drop(&mut self) {
+        let _ = self.lock.record(b"");
+    }
+}
+
+/// A run's id: not empty, and no control character (a line break, a tab, an escape). The
+/// task that makes runs may ask for more.
+fn check_run_id(run: &str) -> Result<()> {
+    if run.is_empty() || run.chars().any(char::is_control) {
+        return Err(Error::InvalidRun {
+            run: run.to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// What the first pointer of a store holds.
@@ -541,11 +598,25 @@ fn holder() -> String {
 impl Store {
     /// Opens the store at `root` to write, takes the writer lock, and recovers it:
     /// leftover staging and any generation file above the pointer are removed. A store is
-    /// created where there is nothing, or nothing but an unfinished creation. Everything
-    /// is read first, and nothing is removed before the lock is held: an open that is
-    /// refused, because this is not a store, because it is damaged or because another
-    /// writer holds it ([`Error::Held`]), has removed and changed nothing.
+    /// created where there is nothing, or nothing but an unfinished creation.
+    ///
+    /// An open that is refused has removed and changed nothing, whatever the reason: this
+    /// is not a store ([`Error::NotAStore`]), it is damaged, or another writer holds it
+    /// ([`Error::Held`]). What is reported is what the store is with no other writer at
+    /// work on it: damage and "not a store" are found, or confirmed, under the lock, and
+    /// while another writer holds the lock the answer is [`Error::Held`].
     pub fn open(root: &Path, fs: Arc<dyn Fs>) -> Result<Store> {
+        Store::open_at(root, fs, true)
+    }
+
+    /// As [`Store::open`], for a store that must be there already: nothing is created
+    /// where there is none ([`Error::Missing`]), and an empty directory or an unfinished
+    /// creation is not completed ([`Error::NotAStore`]). For what removes things.
+    pub fn open_existing(root: &Path, fs: Arc<dyn Fs>) -> Result<Store> {
+        Store::open_at(root, fs, false)
+    }
+
+    fn open_at(root: &Path, fs: Arc<dyn Fs>, create: bool) -> Result<Store> {
         let files = Files {
             fs,
             layout: Layout {
@@ -554,29 +625,43 @@ impl Store {
         };
         let fs = files.fs.as_ref();
         let layout = &files.layout;
-
-        // Reading only: a place that is not a store, or a damaged one, is refused before
-        // anything exists that was not there.
-        files.place()?;
-
-        // The lock file is in the root, so the root comes first. It is made only where
-        // there was nothing.
-        create_durably(fs, root)?;
         let lock_path = layout.lock();
-        let Some(lock) = fs
-            .hold_lock_file(&lock_path, holder().as_bytes())
-            .map_err(Error::io("lock", &lock_path))?
-        else {
+
+        // A look before the lock, reading only, for one purpose: a place where no store is
+        // or may be made is refused with nothing made in it, not even a lock file.
+        let lock = match files.place(create) {
+            Ok(_) => {
+                // The lock file is in the root, so the root comes first. It is made only
+                // where there was nothing.
+                create_durably(fs, root)?;
+                fs.hold_lock_file(&lock_path, true)
+                    .map_err(Error::io("lock", &lock_path))?
+            }
+            // The look found fault. Another writer may have been changing the store
+            // between two reads of it, so the fault is not reported yet. With no lock file
+            // there is no such writer, and it stands. With one, the lock decides.
+            Err(seen) => match fs.hold_lock_file(&lock_path, false) {
+                Ok(lock) => lock,
+                Err(_) => return Err(seen),
+            },
+        };
+        let Some(lock) = lock else {
             return Err(Error::Held {
                 root: root.to_path_buf(),
                 holder: files.holder(),
             });
         };
 
-        // The lock is held: no other writer is at work, and none can start. What was read
-        // before it may have been another writer's half-made change, so it is read again.
+        // The lock is held: no other writer is at work, and none can start. Everything is
+        // read again, and this reading is the one that counts: a refusal here is of the
+        // store as it is, and recovery goes by this and not by the look before the lock:
+        // since that look another writer may have published. Until here nothing was
+        // changed.
+        let current = files.place(create)?;
+        lock.record(holder().as_bytes())
+            .map_err(Error::io("write", &lock_path))?;
+
         // From here on the disk may change.
-        let current = files.place()?;
         let mut created = false;
         for dir in [layout.objects(), layout.generations(), layout.staging()] {
             if !files.exists(&dir)? {
@@ -617,7 +702,7 @@ impl Store {
             next_token: AtomicU64::new(0),
             publishing: Mutex::new(()),
             in_progress: Mutex::new(BTreeMap::new()),
-            _lock: lock,
+            lock,
         })
     }
 
@@ -825,6 +910,7 @@ impl Publication<'_> {
     /// a reference of this kind, replacing what that name of that run had. A run exists
     /// from its first name. Staging is as for [`Publication::put`].
     pub fn put_in(&mut self, run: &str, name: &str, kind: Kind, bytes: &[u8]) -> Result<Digest> {
+        check_run_id(run)?;
         let entry = self.stage(bytes, kind)?;
         let digest = entry.digest;
         self.run_names

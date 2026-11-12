@@ -235,6 +235,214 @@ fn a_writer_that_looks_while_another_finishes_creating_the_store_is_not_misled()
     }
 }
 
+// The look a writer takes before it holds the lock is of a store that another writer may
+// be changing. Whatever it seems to show, the answer is the truth: held, or what the store
+// is once nobody else writes it.
+
+/// Whether the other writer is still there when the one under test reaches the lock.
+const STAYS_OR_GOES: [bool; 2] = [true, false];
+
+#[test]
+fn a_look_that_meets_a_publication_and_a_prune_reports_no_damage() {
+    for holder_stays in STAYS_OR_GOES {
+        let dir = Scratch::new("store-look");
+        let root = with_old(&dir);
+        let holder = Arc::new(std::sync::Mutex::new(Some(
+            Store::open(&root, Arc::new(ShimFs::new())).unwrap(),
+        )));
+        // The second writer has read the pointer, which says 1. Before it reads
+        // generation 1, the holder publishes generation 2 and prunes: 1.json is gone.
+        let hook = {
+            let (root, holder) = (root.clone(), holder.clone());
+            move || {
+                let mut holder = holder.lock().unwrap();
+                let store = holder.as_ref().unwrap();
+                let mut publication = store.begin().unwrap();
+                publication.put("a", A2).unwrap();
+                publication.put("c", C).unwrap();
+                publication.publish().unwrap();
+                assert_eq!(store.prune().unwrap().generations_removed, vec![1]);
+                assert!(!root.join("generations/1.json").exists());
+                if !holder_stays {
+                    holder.take();
+                }
+            }
+        };
+        let fs = Arc::new(Hooked::new(
+            When::Reading(root.join("generations/1.json")),
+            hook,
+        ));
+        let result = Store::open(&root, fs);
+        if holder_stays {
+            let (_, name) = held(result);
+            assert!(name.unwrap().starts_with("process "));
+        } else {
+            let store = result.unwrap_or_else(|e| panic!("a false refusal: {e}"));
+            assert_eq!(store.snapshot().unwrap().number(), 2);
+            drop(store);
+        }
+        holder.lock().unwrap().take();
+        assert_eq!(seen(&root, Arc::new(RealFs)), (2, new()));
+    }
+}
+
+#[test]
+fn a_look_that_meets_the_end_of_a_stores_creation_does_not_say_it_is_not_a_store() {
+    for holder_stays in STAYS_OR_GOES {
+        let dir = Scratch::new("store-look");
+        let root = root(&dir);
+        std::fs::create_dir(&root).unwrap();
+        // The second writer has seen that there is no pointer. Before it lists the
+        // directory, the first makes the store: the listing shows CURRENT.
+        let holder = Arc::new(std::sync::Mutex::new(None));
+        let hook = {
+            let (root, holder) = (root.clone(), holder.clone());
+            move || {
+                let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+                *holder.lock().unwrap() = holder_stays.then_some(store);
+            }
+        };
+        let fs = Arc::new(Hooked::new(When::Listing(root.clone()), hook));
+        let result = Store::open(&root, fs);
+        if holder_stays {
+            held(result);
+        } else {
+            let store = result.unwrap_or_else(|e| panic!("a false refusal: {e}"));
+            assert_eq!(store.snapshot().unwrap().number(), 0);
+        }
+    }
+}
+
+#[test]
+fn recovery_goes_by_what_is_read_under_the_lock_not_by_the_look_before_it() {
+    let dir = Scratch::new("store-look");
+    let root = with_old(&dir);
+    // The second writer has looked: generation 1. Just before it takes the lock, another
+    // writer opens, publishes generation 2 and is gone. A recovery that went by the look
+    // would take 2.json for a leftover above the pointer and remove it.
+    let second = Arc::new(ShimFs::new());
+    let hook = {
+        let root = root.clone();
+        move || {
+            assert_eq!(
+                publish_new(&root, Arc::new(ShimFs::new()))
+                    .unwrap()
+                    .generation,
+                2
+            )
+        }
+    };
+    second.pause_before(0, hook);
+    let store = Store::open(&root, second.clone()).unwrap();
+    assert_eq!(second.events()[0], Event::Lock(root.join("LOCK")));
+    assert!(root.join("generations/2.json").exists());
+    assert_eq!(store.snapshot().unwrap().number(), 2);
+    drop(store);
+    assert_eq!(seen(&root, Arc::new(RealFs)), (2, new()));
+}
+
+#[test]
+fn a_writer_writes_its_name_once_the_store_is_sound_and_takes_it_out_when_it_ends() {
+    let dir = Scratch::new("store-name");
+    let root = with_old(&dir);
+    let name = || std::fs::read_to_string(root.join("LOCK")).unwrap();
+    assert_eq!(name(), "", "the writer that made the store has ended");
+
+    let fs = Arc::new(ShimFs::new());
+    let store = Store::open(&root, fs.clone()).unwrap();
+    assert_eq!(
+        name(),
+        format!(
+            "process {} ({})\n",
+            std::process::id(),
+            Path::new(&std::env::args().next().unwrap())
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+        )
+    );
+    // A writer that dies leaves its name; the next replaces it; a refused one, whether
+    // for the lock or for damage, writes nothing.
+    fs.crash(Lost::ContentOnly);
+    drop(store);
+    assert!(name().starts_with("process "));
+    std::fs::write(root.join("LOCK"), b"process 1 (long dead)\n").unwrap();
+    std::fs::write(root.join("CURRENT"), b"damaged").unwrap();
+    let result = Store::open(&root, Arc::new(ShimFs::new())).map(|_| ());
+    assert!(matches!(result, Err(Error::Corrupt { .. })), "{result:?}");
+    assert_eq!(name(), "process 1 (long dead)\n");
+    std::fs::write(root.join("CURRENT"), b"1\n").unwrap();
+
+    let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+    let mine = name();
+    assert!(mine.starts_with(&format!("process {} (", std::process::id())));
+    held(Store::open(&root, Arc::new(ShimFs::new())));
+    assert_eq!(name(), mine);
+    drop(store);
+    assert_eq!(name(), "");
+
+    // With no name to read, a refused writer is told of another process.
+    let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+    std::fs::write(root.join("LOCK"), b"").unwrap();
+    let error = Store::open(&root, Arc::new(ShimFs::new()))
+        .map(|_| ())
+        .unwrap_err();
+    assert!(
+        matches!(&error, Error::Held { holder: None, .. }),
+        "{error:?}"
+    );
+    assert!(
+        error.to_string().contains("written by another process"),
+        "{error}"
+    );
+    drop(store);
+}
+
+#[test]
+fn opening_a_store_that_must_exist_makes_nothing_and_completes_nothing() {
+    let dir = Scratch::new("store-existing");
+    // Nothing there.
+    let missing = dir.path().join("missing");
+    let result = Store::open_existing(&missing, Arc::new(ShimFs::new())).map(|_| ());
+    assert!(matches!(result, Err(Error::Missing { .. })), "{result:?}");
+    assert!(!missing.exists());
+
+    // An empty directory, and an unfinished creation: `open` would make a store of each.
+    for folders in [&[][..], &["objects", "staging"]] {
+        let root = dir.path().join(format!("unfinished-{}", folders.len()));
+        std::fs::create_dir(&root).unwrap();
+        for folder in folders {
+            std::fs::create_dir(root.join(folder)).unwrap();
+        }
+        let before = tree(&root);
+        let fs = Arc::new(ShimFs::new());
+        let result = Store::open_existing(&root, fs.clone()).map(|_| ());
+        assert!(
+            matches!(result, Err(Error::NotAStore { found: None, .. })),
+            "{result:?}"
+        );
+        assert_eq!(fs.events(), vec![]);
+        assert_eq!(tree(&root), before);
+    }
+
+    // A directory that holds something else: what was found is named, as by `open`.
+    let other = dir.path().join("other");
+    std::fs::create_dir(&other).unwrap();
+    std::fs::write(other.join(".DS_Store"), b"").unwrap();
+    match Store::open_existing(&other, Arc::new(ShimFs::new())).map(|_| ()) {
+        Err(Error::NotAStore { found, .. }) => assert_eq!(found, Some(other.join(".DS_Store"))),
+        other => panic!("{other:?}"),
+    }
+
+    // A store: opened, recovered and held, as by `open`.
+    let root = with_old(&dir);
+    std::fs::create_dir(root.join("staging/leftover")).unwrap();
+    let store = Store::open_existing(&root, Arc::new(ShimFs::new())).unwrap();
+    assert!(!root.join("staging/leftover").exists());
+    held(Store::open_existing(&root, Arc::new(ShimFs::new())));
+    drop(store);
+}
+
 // What is a store, and what is not, said so that the cause can be found.
 
 fn not_a_store(root: &Path) -> (Option<std::path::PathBuf>, String) {

@@ -34,6 +34,15 @@ pub enum Error {
         root: PathBuf,
         holder: Option<String>,
     },
+    /// This cannot be the id of a run: it is empty, or it holds a control character.
+    InvalidRun { run: String },
+    /// A generation file says it is of a format this build does not read. A store written
+    /// by other code is not migrated.
+    OtherFormat {
+        path: PathBuf,
+        format: u32,
+        reads: u32,
+    },
     /// No run has this id in the current generation. Nothing was published.
     NoSuchRun { run: String },
     /// The reference is a diagnostic. It can be read as one, and never used as an output.
@@ -95,6 +104,20 @@ impl fmt::Display for Error {
                 root.display(),
                 holder.as_deref().unwrap_or("another process")
             ),
+            Error::InvalidRun { run } => write!(
+                f,
+                "{run:?} cannot be a run's id: an id is not empty and holds no control \
+                 character"
+            ),
+            Error::OtherFormat {
+                path,
+                format,
+                reads,
+            } => write!(
+                f,
+                "{} is of another format: {format}, and this build reads format {reads}",
+                path.display()
+            ),
             Error::NoSuchRun { run } => write!(f, "the store holds no run {run:?}"),
             Error::NotAnOutput { digest } => write!(
                 f,
@@ -126,6 +149,8 @@ impl std::error::Error for Error {
             | Error::NotAStore { .. }
             | Error::Held { .. }
             | Error::NoSuchRun { .. }
+            | Error::InvalidRun { .. }
+            | Error::OtherFormat { .. }
             | Error::NotAnOutput { .. }
             | Error::Corrupt { .. } => None,
         }

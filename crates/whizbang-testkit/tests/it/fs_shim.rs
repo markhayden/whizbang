@@ -459,15 +459,20 @@ fn a_lock_file_is_held_by_one_file_system_until_it_is_dropped_or_the_crash() {
     let lock = dir.path().join("LOCK");
     let (first, second) = (ShimFs::new(), ShimFs::new());
 
-    let held = first.hold_lock_file(&lock, b"the first\n").unwrap();
-    assert!(held.is_some());
-    assert_eq!(first.events(), vec![Event::Lock(lock.clone())]);
-    assert!(
-        second
-            .hold_lock_file(&lock, b"the second\n")
-            .unwrap()
-            .is_none()
+    // Not made unless asked for.
+    assert_eq!(
+        first.hold_lock_file(&lock, false).err().unwrap().kind(),
+        std::io::ErrorKind::NotFound
     );
+    assert!(!lock.exists());
+
+    let held = first.hold_lock_file(&lock, true).unwrap().unwrap();
+    assert_eq!(first.events(), vec![Event::Lock(lock.clone())]);
+    assert_eq!(on_disk(&lock).unwrap(), b"", "taking it writes nothing");
+    held.record(b"the first\n").unwrap();
+    assert_eq!(first.events().len(), 1, "recording is not an event");
+    assert!(second.hold_lock_file(&lock, true).unwrap().is_none());
+    assert!(second.hold_lock_file(&lock, false).unwrap().is_none());
     assert_eq!(second.events(), vec![], "a refused attempt is not an event");
     assert_eq!(
         on_disk(&lock).unwrap(),
@@ -476,27 +481,19 @@ fn a_lock_file_is_held_by_one_file_system_until_it_is_dropped_or_the_crash() {
     );
 
     drop(held);
-    let held = second.hold_lock_file(&lock, b"2\n").unwrap();
-    assert!(held.is_some());
+    let held = second.hold_lock_file(&lock, false).unwrap().unwrap();
+    held.record(b"2\n").unwrap();
     assert_eq!(
         on_disk(&lock).unwrap(),
         b"2\n",
         "the whole content, replaced"
     );
 
-    assert!(
-        first
-            .hold_lock_file(&lock, b"the first\n")
-            .unwrap()
-            .is_none()
-    );
+    assert!(first.hold_lock_file(&lock, true).unwrap().is_none());
     second.crash(Lost::ContentOnly);
-    assert!(
-        first
-            .hold_lock_file(&lock, b"the first\n")
-            .unwrap()
-            .is_some()
-    );
+    assert!(held.record(b"late\n").is_err(), "its process is gone");
+    assert_eq!(on_disk(&lock).unwrap(), b"2\n");
+    assert!(first.hold_lock_file(&lock, true).unwrap().is_some());
     drop(held);
 }
 
@@ -506,7 +503,7 @@ fn a_lock_file_that_was_created_and_never_synced_is_gone_after_a_crash() {
         let dir = Scratch::new("shim");
         let lock = dir.path().join("LOCK");
         let fs = ShimFs::new();
-        let _held = fs.hold_lock_file(&lock, b"holder\n").unwrap().unwrap();
+        let _held = fs.hold_lock_file(&lock, true).unwrap().unwrap();
         if synced {
             fs.sync_dir(dir.path()).unwrap();
         }
