@@ -9,9 +9,18 @@
 //!
 //! The store reads through the same trait, so a store that goes on working after its file
 //! system has crashed is caught too.
+//!
+//! Locks go through it as well, because a lock belongs to the process that took it and a
+//! test's file system stands for a process: when it crashes, its locks are gone. A lock is
+//! advisory and is held on an open file: it ends when the value that holds it is dropped,
+//! or when the process ends, however it ends. Two holders in one process exclude each other
+//! exactly as two processes do.
 
 use std::io;
 use std::path::{Path, PathBuf};
+
+/// A lock that is held until this value is dropped.
+pub trait Held: Send + Sync {}
 
 /// What the store needs from a file system.
 pub trait Fs: Send + Sync {
@@ -35,6 +44,34 @@ pub trait Fs: Send + Sync {
     fn list(&self, path: &Path) -> io::Result<Vec<PathBuf>>;
     /// Whether something has this name.
     fn exists(&self, path: &Path) -> io::Result<bool>;
+    /// Takes the lock file at `path` for this process alone, without waiting, creating the
+    /// file when there is none, and then writes `holder` as its whole content, for whoever
+    /// is refused to read. `None` when another holder has it: nothing was created or
+    /// written.
+    fn hold_lock_file(&self, path: &Path, holder: &[u8]) -> io::Result<Option<Box<dyn Held>>>;
+    /// Shares the file at `path` with any number of others, so that nobody can take it
+    /// alone ([`Fs::try_alone`]) while this is held. Waits for one who has it alone. Writes
+    /// and creates nothing; fails with [`io::ErrorKind::NotFound`] when there is no file.
+    fn share(&self, path: &Path) -> io::Result<Box<dyn Held>>;
+    /// Takes the file at `path` alone, without waiting: `None` when anyone shares it.
+    /// Writes and creates nothing.
+    fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>>;
+}
+
+/// An open file with a lock on it. Closing the file releases the lock.
+struct LockedFile(#[allow(dead_code)] std::fs::File);
+
+impl Held for LockedFile {}
+
+fn taken(
+    file: std::fs::File,
+    lock: Result<(), std::fs::TryLockError>,
+) -> io::Result<Option<std::fs::File>> {
+    match lock {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(error)) => Err(error),
+    }
 }
 
 /// The real file system. What it creates is readable by its owner only.
@@ -102,5 +139,37 @@ impl Fs for RealFs {
 
     fn exists(&self, path: &Path) -> io::Result<bool> {
         path.try_exists()
+    }
+
+    fn hold_lock_file(&self, path: &Path, holder: &[u8]) -> io::Result<Option<Box<dyn Held>>> {
+        use std::io::Write;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(path)?;
+        let lock = file.try_lock();
+        let Some(mut file) = taken(file, lock)? else {
+            return Ok(None);
+        };
+        // Only now, with the lock held: the content is the holder's to write.
+        file.set_len(0)?;
+        file.write_all(holder)?;
+        Ok(Some(Box::new(LockedFile(file))))
+    }
+
+    fn share(&self, path: &Path) -> io::Result<Box<dyn Held>> {
+        let file = std::fs::File::open(path)?;
+        file.lock_shared()?;
+        Ok(Box::new(LockedFile(file)))
+    }
+
+    fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
+        let file = std::fs::File::open(path)?;
+        let lock = file.try_lock();
+        Ok(taken(file, lock)?.map(|file| Box::new(LockedFile(file)) as Box<dyn Held>))
     }
 }

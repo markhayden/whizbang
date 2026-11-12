@@ -16,10 +16,22 @@ pub enum Error {
     },
     /// There is no store here. Opening to read creates nothing.
     Missing { root: PathBuf },
-    /// There is a directory here, and it is not a store: it has no pointer, and it is not
-    /// an empty directory or a store whose creation did not finish. Nothing in it was
+    /// There is a directory here, and it is not a store: it has no pointer. To a writer,
+    /// which makes a store in an empty directory and in one whose creation did not finish,
+    /// it also holds `found`, the first thing met that neither of those holds. A reader
+    /// looks no further than the pointer and names nothing. Nothing in the directory was
     /// created, removed or changed.
-    NotAStore { root: PathBuf },
+    NotAStore {
+        root: PathBuf,
+        found: Option<PathBuf>,
+    },
+    /// Another writer holds the store: one process at a time may write it. `holder` is
+    /// what that writer wrote of itself in the lock file, when it could be read. Nothing
+    /// was removed or changed; reading is not refused.
+    Held {
+        root: PathBuf,
+        holder: Option<String>,
+    },
     /// A file of the store does not hold what it must.
     Corrupt { path: PathBuf, reason: String },
     /// Staging is not on the store's file system, so nothing can be renamed into place.
@@ -57,10 +69,25 @@ impl fmt::Display for Error {
                 source,
             } => write!(f, "cannot {doing} {}: {source}", path.display()),
             Error::Missing { root } => write!(f, "there is no store at {}", root.display()),
-            Error::NotAStore { root } => write!(
+            Error::NotAStore { root, found: None } => {
+                write!(f, "{} is not a store: it has no CURRENT", root.display())
+            }
+            Error::NotAStore {
+                root,
+                found: Some(found),
+            } => write!(
                 f,
-                "{} is not a store: it has no CURRENT, and it holds other things",
-                root.display()
+                "{} is not a store: it has no CURRENT, and it holds {}, which a store that \
+                 is being created does not",
+                root.display(),
+                found.display()
+            ),
+            Error::Held { root, holder } => write!(
+                f,
+                "the store at {} is being written by {}; one process at a time may write a \
+                 store",
+                root.display(),
+                holder.as_deref().unwrap_or("another process")
             ),
             Error::Corrupt { path, reason } => {
                 write!(f, "{} is damaged: {reason}", path.display())
@@ -83,7 +110,10 @@ impl std::error::Error for Error {
         match self {
             Error::Io { source, .. } | Error::OtherFileSystem { source, .. } => Some(source),
             Error::Unacknowledged { source, .. } => Some(source.as_ref()),
-            Error::Missing { .. } | Error::NotAStore { .. } | Error::Corrupt { .. } => None,
+            Error::Missing { .. }
+            | Error::NotAStore { .. }
+            | Error::Held { .. }
+            | Error::Corrupt { .. } => None,
         }
     }
 }

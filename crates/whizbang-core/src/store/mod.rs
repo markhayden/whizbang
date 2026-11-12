@@ -91,7 +91,7 @@ pub use digest::Digest;
 pub use error::Error;
 pub use generation::{Entry, GENERATION_FORMAT, Generation};
 
-use fs::Fs;
+use fs::{Fs, Held};
 
 /// The store's result.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -120,6 +120,9 @@ impl Layout {
     }
     fn staging(&self) -> PathBuf {
         self.root.join("staging")
+    }
+    fn lock(&self) -> PathBuf {
+        self.root.join("LOCK")
     }
 }
 
@@ -158,6 +161,7 @@ impl Files {
     fn snapshot(&self) -> Result<Generation> {
         let number = self.pointer()?.ok_or_else(|| Error::NotAStore {
             root: self.layout.root.clone(),
+            found: None,
         })?;
         if number == 0 {
             return Ok(Generation::empty());
@@ -217,34 +221,94 @@ impl Files {
         Ok(bytes)
     }
 
-    /// For a directory with no pointer: whether it holds nothing but what an unfinished
-    /// creation leaves (the module's description says exactly what), so that a store may
-    /// be made in it. Reads only.
-    fn is_unfinished_creation(&self) -> Result<bool> {
+    /// What is at the root, for a writer: the number of the current generation of the
+    /// store there, or 0 where a store may be made (nothing, or nothing but an unfinished
+    /// creation). Anything else is refused. Reads only.
+    fn place(&self) -> Result<u64> {
+        let root = &self.layout.root;
+        if !self.exists(root)? {
+            Ok(0)
+        } else if self.exists(&self.layout.pointer())? {
+            Ok(self.snapshot()?.number())
+        } else if let Some(found) = self.beyond_an_unfinished_creation()? {
+            Err(Error::NotAStore {
+                root: root.clone(),
+                found: Some(found),
+            })
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// For a directory with no pointer: the first thing in it that an unfinished creation
+    /// does not leave (the module's description says exactly what it leaves), or `None`
+    /// when a store may be made here. Reads only.
+    fn beyond_an_unfinished_creation(&self) -> Result<Option<PathBuf>> {
         let layout = &self.layout;
-        let list = |dir: &Path| self.fs.list(dir).map_err(Error::io("list", dir));
+        // The entries of a directory; `None` for what is not a directory.
+        let inside = |path: &Path| match self.fs.list(path) {
+            Ok(inside) => Ok(Some(inside)),
+            Err(error) if error.kind() == io::ErrorKind::NotADirectory => Ok(None),
+            Err(error) => Err(Error::io("list", path)(error)),
+        };
         let (objects, generations, staging) =
             (layout.objects(), layout.generations(), layout.staging());
-        for entry in list(&layout.root)? {
-            if ![&objects, &generations, &staging].contains(&&entry) {
-                return Ok(false);
+        for entry in self
+            .fs
+            .list(&layout.root)
+            .map_err(Error::io("list", &layout.root))?
+        {
+            let inside = inside(&entry)?;
+            if entry == layout.lock() {
+                // The lock file: a file, whatever it holds.
+                if inside.is_some() {
+                    return Ok(Some(entry));
+                }
+                continue;
             }
-            // Each must be a directory: listing a file fails.
-            let Ok(inside) = self.fs.list(&entry) else {
-                return Ok(false);
+            let Some(inside) = inside else {
+                return Ok(Some(entry));
             };
-            let allowed = if entry == staging {
-                let pointer = staging.join("CURRENT");
-                inside.is_empty()
-                    || (inside == [pointer.clone()] && self.fs.list(&pointer).is_err())
+            if entry == objects || entry == generations {
+                if let Some(first) = inside.into_iter().next() {
+                    return Ok(Some(first));
+                }
+            } else if entry == staging {
+                // Nothing, or the first pointer on its way: a file that holds what the
+                // first pointer holds, or the start of it when a crash cut it short.
+                for staged in inside {
+                    if staged != staging.join("CURRENT") {
+                        return Ok(Some(staged));
+                    }
+                    match self.fs.read(&staged) {
+                        Ok(bytes) if FIRST_POINTER.starts_with(&bytes) => {}
+                        Ok(_) => return Ok(Some(staged)),
+                        Err(error) if error.kind() == io::ErrorKind::IsADirectory => {
+                            return Ok(Some(staged));
+                        }
+                        Err(error) => return Err(Error::io("read", &staged)(error)),
+                    }
+                }
             } else {
-                inside.is_empty()
-            };
-            if !allowed {
-                return Ok(false);
+                return Ok(Some(entry));
             }
         }
-        Ok(true)
+        Ok(None)
+    }
+
+    /// Who holds the writer lock, as the holder wrote it: one line, kept short, and
+    /// nothing that is not printable. `None` when it cannot be read.
+    fn holder(&self) -> Option<String> {
+        let bytes = self.fs.read(&self.layout.lock()).ok()?;
+        let text = String::from_utf8_lossy(&bytes);
+        let line: String = text
+            .lines()
+            .next()?
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(200)
+            .collect();
+        (!line.trim().is_empty()).then(|| line.trim().to_string())
     }
 
     /// Renames a staged file to its place.
@@ -286,6 +350,7 @@ impl Reader {
         if !files.exists(&files.layout.pointer())? {
             return Err(Error::NotAStore {
                 root: root.to_path_buf(),
+                found: None,
             });
         }
         Ok(Reader { files })
@@ -309,13 +374,34 @@ pub struct Store {
     /// Held from the reading of the current generation to the end of a publication, so
     /// that two publications of one process never build on the same generation.
     publishing: Mutex<()>,
+    /// The writer lock, held for as long as this value lives.
+    _lock: Box<dyn Held>,
+}
+
+/// What the first pointer of a store holds.
+const FIRST_POINTER: &[u8] = b"0\n";
+
+/// What a writer writes in the lock file, for a writer that is refused to show: its
+/// process id and the name of its program.
+fn holder() -> String {
+    let program = std::env::args_os()
+        .next()
+        .and_then(|path| {
+            Path::new(&path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "a program without a name".to_string());
+    format!("process {} ({program})\n", std::process::id())
 }
 
 impl Store {
-    /// Opens the store at `root` to write, and recovers it: leftover staging and any
-    /// generation file above the pointer are removed. A store is created where there is
-    /// nothing, or nothing but an unfinished creation. Everything is read first: an open
-    /// that is refused has changed nothing.
+    /// Opens the store at `root` to write, takes the writer lock, and recovers it:
+    /// leftover staging and any generation file above the pointer are removed. A store is
+    /// created where there is nothing, or nothing but an unfinished creation. Everything
+    /// is read first, and nothing is removed before the lock is held: an open that is
+    /// refused, because this is not a store, because it is damaged or because another
+    /// writer holds it ([`Error::Held`]), has removed and changed nothing.
     pub fn open(root: &Path, fs: Arc<dyn Fs>) -> Result<Store> {
         let files = Files {
             fs,
@@ -326,21 +412,28 @@ impl Store {
         let fs = files.fs.as_ref();
         let layout = &files.layout;
 
-        // Reading only, down to the next comment.
-        let current = if !files.exists(root)? {
-            0
-        } else if files.exists(&layout.pointer())? {
-            files.snapshot()?.number()
-        } else if files.is_unfinished_creation()? {
-            0
-        } else {
-            return Err(Error::NotAStore {
+        // Reading only: a place that is not a store, or a damaged one, is refused before
+        // anything exists that was not there.
+        files.place()?;
+
+        // The lock file is in the root, so the root comes first. It is made only where
+        // there was nothing.
+        create_durably(fs, root)?;
+        let lock_path = layout.lock();
+        let Some(lock) = fs
+            .hold_lock_file(&lock_path, holder().as_bytes())
+            .map_err(Error::io("lock", &lock_path))?
+        else {
+            return Err(Error::Held {
                 root: root.to_path_buf(),
+                holder: files.holder(),
             });
         };
 
+        // The lock is held: no other writer is at work, and none can start. What was read
+        // before it may have been another writer's half-made change, so it is read again.
         // From here on the disk may change.
-        create_durably(fs, root)?;
+        let current = files.place()?;
         let mut created = false;
         for dir in [layout.objects(), layout.generations(), layout.staging()] {
             if !files.exists(&dir)? {
@@ -375,7 +468,7 @@ impl Store {
         // on this directory is a store.
         if files.pointer()?.is_none() {
             let staged = staging.join("CURRENT");
-            fs.write_new(&staged, b"0\n")
+            fs.write_new(&staged, FIRST_POINTER)
                 .map_err(Error::io("write", &staged))?;
             files.move_into_place(&staged, &layout.pointer())?;
             fs.sync_dir(root).map_err(Error::io("sync", root))?;
@@ -384,6 +477,7 @@ impl Store {
             files,
             next_token: AtomicU64::new(0),
             publishing: Mutex::new(()),
+            _lock: lock,
         })
     }
 
@@ -430,7 +524,12 @@ fn create_durably(fs: &dyn Fs, dir: &Path) -> Result<()> {
         _ => Path::new("."),
     };
     create_durably(fs, parent)?;
-    fs.create_dir(dir).map_err(Error::io("create", dir))?;
+    match fs.create_dir(dir) {
+        Ok(()) => {}
+        // Another process made it since the look: there is a directory, which is the aim.
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(Error::io("create", dir)(error)),
+    }
     fs.sync_dir(parent).map_err(Error::io("sync", parent))
 }
 

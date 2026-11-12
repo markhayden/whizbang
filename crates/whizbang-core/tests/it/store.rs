@@ -1,6 +1,10 @@
 //! The store's publication and recovery (plan 1A, task A2). Crashes come from the testkit's
 //! file-system shim, which drops what was not synced; no test here raises an error and
 //! reopens the same files to stand for a crash.
+//!
+//! The one writer, and what is and is not a store, are in `store/locking.rs` (task A3).
+
+mod locking;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1258,7 +1262,7 @@ fn a_directory_that_is_not_a_store_is_refused_and_left_exactly_as_it_is() {
         let fs = Arc::new(ShimFs::new());
         let result = Store::open(&root, fs.clone()).map(|_| ());
         match result {
-            Err(Error::NotAStore { root: named }) => assert_eq!(named, root, "{what}"),
+            Err(Error::NotAStore { root: named, .. }) => assert_eq!(named, root, "{what}"),
             other => panic!("{what}: {other:?}"),
         }
         let result = Reader::open(&root, fs.clone()).map(|_| ());

@@ -23,9 +23,9 @@
 use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
-use whizbang_core::store::fs::{Fs, RealFs};
+use whizbang_core::store::fs::{Fs, Held, RealFs};
 
 /// One recorded call that changes the disk or makes a change durable. Reads are not events.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +42,9 @@ pub enum Event {
     Rename(PathBuf, PathBuf),
     /// A file or a directory tree was removed.
     Remove(PathBuf),
+    /// A lock file was taken ([`Fs::hold_lock_file`]). A refused attempt is not an event,
+    /// and neither is sharing a file or taking one alone: those change nothing.
+    Lock(PathBuf),
 }
 
 /// What a crash loses. Under every choice, a file whose content was not synced is cut to
@@ -107,6 +110,20 @@ impl Pending {
     }
 }
 
+/// A lock on the real disk, shared between the value handed to the store and the shim, so
+/// that either can end it: the store by dropping its value, the shim by crashing.
+type Lock = Arc<Mutex<Option<Box<dyn Held>>>>;
+
+struct ShimHeld(Lock);
+
+impl Held for ShimHeld {}
+
+impl Drop for ShimHeld {
+    fn drop(&mut self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
+}
+
 type Hook = Box<dyn FnOnce() + Send>;
 type Matches = Box<dyn Fn(&Event) -> bool + Send>;
 
@@ -123,6 +140,8 @@ struct State {
     fail_matching: Option<(usize, Matches)>,
     cross_device: Option<PathBuf>,
     hook: Option<(usize, Hook)>,
+    /// The locks this file system holds, each until its holder drops it or the crash.
+    locks: Vec<Lock>,
     crashed: bool,
     crash_choices: usize,
     crash_names: usize,
@@ -222,6 +241,14 @@ impl ShimFs {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Keeps a lock taken on the real disk, to end it at a crash.
+    fn keep(state: &mut State, held: Box<dyn Held>) -> Box<dyn Held> {
+        state.locks.retain(|lock| Arc::strong_count(lock) > 1);
+        let lock: Lock = Arc::new(Mutex::new(Some(held)));
+        state.locks.push(lock.clone());
+        Box::new(ShimHeld(lock))
+    }
+
     /// The state, for a read: refused after a crash.
     fn alive(&self) -> io::Result<MutexGuard<'_, State>> {
         let state = self.lock();
@@ -280,6 +307,10 @@ fn crash(state: &mut State, lost: Lost) {
         return;
     }
     state.crashed = true;
+    // The process is gone, and its locks with it.
+    for lock in std::mem::take(&mut state.locks) {
+        lock.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
     // Content first, while every file still has the name the shim knows it by.
     for path in std::mem::take(&mut state.unsynced) {
         if let Ok(meta) = std::fs::metadata(&path)
@@ -480,5 +511,34 @@ impl Fs for ShimFs {
     fn exists(&self, path: &Path) -> io::Result<bool> {
         let _state = self.alive()?;
         self.real.exists(path)
+    }
+    fn hold_lock_file(&self, path: &Path, holder: &[u8]) -> io::Result<Option<Box<dyn Held>>> {
+        let event = Event::Lock(path.to_path_buf());
+        let mut state = self.next_event(&event)?;
+        let was_there = self.real.exists(path)?;
+        let Some(held) = self.real.hold_lock_file(path, holder)? else {
+            return Ok(None);
+        };
+        if !was_there {
+            state.pending.push(Pending::Created(path.to_path_buf()));
+        }
+        state.events.push(event);
+        Ok(Some(Self::keep(&mut state, held)))
+    }
+
+    fn share(&self, path: &Path) -> io::Result<Box<dyn Held>> {
+        // Not under the shim's own lock: this can wait for one who has the file alone.
+        drop(self.alive()?);
+        let held = self.real.share(path)?;
+        let mut state = self.alive()?;
+        Ok(Self::keep(&mut state, held))
+    }
+
+    fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
+        let mut state = self.alive()?;
+        Ok(self
+            .real
+            .try_alone(path)?
+            .map(|held| Self::keep(&mut state, held)))
     }
 }

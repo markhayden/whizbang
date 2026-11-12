@@ -449,3 +449,100 @@ fn syncing_a_directory_that_is_not_there_fails() {
     let fs = ShimFs::new();
     assert!(fs.sync_dir(&dir.path().join("missing")).is_err());
 }
+
+// Locks: a shim stands for a process, so two shims exclude each other, and a crash ends
+// every lock the crashed one held.
+
+#[test]
+fn a_lock_file_is_held_by_one_file_system_until_it_is_dropped_or_the_crash() {
+    let dir = Scratch::new("shim");
+    let lock = dir.path().join("LOCK");
+    let (first, second) = (ShimFs::new(), ShimFs::new());
+
+    let held = first.hold_lock_file(&lock, b"the first\n").unwrap();
+    assert!(held.is_some());
+    assert_eq!(first.events(), vec![Event::Lock(lock.clone())]);
+    assert!(
+        second
+            .hold_lock_file(&lock, b"the second\n")
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(second.events(), vec![], "a refused attempt is not an event");
+    assert_eq!(
+        on_disk(&lock).unwrap(),
+        b"the first\n",
+        "and it wrote nothing"
+    );
+
+    drop(held);
+    let held = second.hold_lock_file(&lock, b"2\n").unwrap();
+    assert!(held.is_some());
+    assert_eq!(
+        on_disk(&lock).unwrap(),
+        b"2\n",
+        "the whole content, replaced"
+    );
+
+    assert!(
+        first
+            .hold_lock_file(&lock, b"the first\n")
+            .unwrap()
+            .is_none()
+    );
+    second.crash(Lost::ContentOnly);
+    assert!(
+        first
+            .hold_lock_file(&lock, b"the first\n")
+            .unwrap()
+            .is_some()
+    );
+    drop(held);
+}
+
+#[test]
+fn a_lock_file_that_was_created_and_never_synced_is_gone_after_a_crash() {
+    for synced in [false, true] {
+        let dir = Scratch::new("shim");
+        let lock = dir.path().join("LOCK");
+        let fs = ShimFs::new();
+        let _held = fs.hold_lock_file(&lock, b"holder\n").unwrap().unwrap();
+        if synced {
+            fs.sync_dir(dir.path()).unwrap();
+        }
+        fs.crash(Lost::Unsynced);
+        assert_eq!(lock.exists(), synced);
+    }
+}
+
+#[test]
+fn a_file_that_is_shared_cannot_be_taken_alone_until_every_share_ends() {
+    let dir = Scratch::new("shim");
+    let file = dir.path().join("f");
+    let (reader, other, writer) = (ShimFs::new(), ShimFs::new(), ShimFs::new());
+    writer.write_new(&file, b"content").unwrap();
+    let before = writer.events().len();
+
+    let one = reader.share(&file).unwrap();
+    let two = other.share(&file).unwrap();
+    assert!(writer.try_alone(&file).unwrap().is_none());
+    drop(one);
+    assert!(writer.try_alone(&file).unwrap().is_none());
+    other.crash(Lost::Unsynced);
+    let alone = writer.try_alone(&file).unwrap();
+    assert!(alone.is_some(), "a crash ended the last share");
+    drop(two);
+    drop(alone);
+
+    assert_eq!(reader.events(), vec![], "sharing is not an event");
+    assert_eq!(writer.events().len(), before, "nor is taking a file alone");
+    assert_eq!(
+        reader
+            .share(&dir.path().join("missing"))
+            .err()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert!(other.share(&file).is_err(), "it has crashed");
+}
