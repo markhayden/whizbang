@@ -26,6 +26,7 @@ fn whizbang(args: &[&str]) -> (i32, String, String) {
     )
 }
 
+/// Imports into a store that must be there.
 fn import(file: &Path, store: &Path) -> (i32, String, String) {
     whizbang(&[
         "store",
@@ -34,6 +35,22 @@ fn import(file: &Path, store: &Path) -> (i32, String, String) {
         "--store",
         store.to_str().expect("a path of UTF-8"),
     ])
+}
+
+/// Imports, making the store if there is none.
+fn import_creating(file: &Path, store: &Path) -> (i32, String, String) {
+    whizbang(&[
+        "store",
+        "import",
+        file.to_str().expect("a path of UTF-8"),
+        "--create",
+        "--store",
+        store.to_str().expect("a path of UTF-8"),
+    ])
+}
+
+fn created(store: &Path) -> String {
+    format!("created a store at {}\n", store.display())
 }
 
 fn made_by(action: &str) -> Origin {
@@ -123,9 +140,12 @@ fn a_canonical_mask_file_is_imported_and_reads_back_as_the_same_mask() {
     let mask = mask();
     std::fs::write(&file, mask.to_bytes()).expect("the fixture is written");
 
-    let (code, printed, complaint) = import(&file, &store);
+    let (code, printed, complaint) = import_creating(&file, &store);
     assert_eq!((code, complaint.as_str()), (0, ""), "{printed}");
-    assert_eq!(printed, format!("imported mask {}\n", mask.id()));
+    assert_eq!(
+        printed,
+        format!("{}imported mask {}\n", created(&store), mask.id())
+    );
     let read = read_back(&store, ArtifactType::Mask, mask.id());
     assert_eq!(read, Artifact::from(mask.clone()));
     assert_eq!(read.origin(), mask.origin());
@@ -147,9 +167,12 @@ fn a_canonical_mask_file_is_imported_and_reads_back_as_the_same_mask() {
     // The same mask imported into a second store has the same identity there, and the
     // two stores hold the same bytes.
     let second = dir.path().join("second");
-    let (code, printed, _) = import(&file, &second);
+    let (code, printed, _) = import_creating(&file, &second);
     assert_eq!(code, 0);
-    assert_eq!(printed, format!("imported mask {}\n", mask.id()));
+    assert_eq!(
+        printed,
+        format!("{}imported mask {}\n", created(&second), mask.id())
+    );
     assert_eq!(read_back(&second, ArtifactType::Mask, mask.id()), read);
 }
 
@@ -182,10 +205,17 @@ fn an_artifact_of_any_type_is_imported_under_its_own_type() {
     for (n, artifact) in artifacts.iter().enumerate() {
         let file = dir.path().join(format!("{n}.artifact"));
         std::fs::write(&file, artifact.to_bytes()).expect("the fixture is written");
-        let (code, printed, complaint) = import(&file, &store);
+        // The first makes the store, and says so; with the store there, `--create`
+        // changes nothing.
+        let (code, printed, complaint) = import_creating(&file, &store);
         assert_eq!(code, 0, "{complaint}");
         let (kind, id) = (artifact.artifact_type(), artifact.id());
-        assert_eq!(printed, format!("imported {kind} {id}\n"));
+        let made = if n == 0 {
+            created(&store)
+        } else {
+            String::new()
+        };
+        assert_eq!(printed, format!("{made}imported {kind} {id}\n"));
         assert_eq!(read_back(&store, kind, id), *artifact);
     }
 }
@@ -229,4 +259,74 @@ fn a_file_that_is_no_canonical_artifact_is_refused_and_nothing_is_created() {
     let (code, _, complaint) = whizbang(&["store", "import", "anything"]);
     assert_eq!(code, 2);
     assert!(complaint.contains("--store"), "{complaint}");
+}
+
+#[test]
+fn import_makes_a_store_only_when_told_to_and_says_when_it_has() {
+    let dir = Scratch::new("import");
+    let file = dir.path().join("seam.mask");
+    let mask = mask();
+    std::fs::write(&file, mask.to_bytes()).expect("the fixture is written");
+
+    // Nothing there, and an empty directory: refused, like every store command, with
+    // nothing made; the complaint says how to have a store made.
+    let missing = dir.path().join("missing");
+    let (code, printed, complaint) = import(&file, &missing);
+    assert_eq!((code, printed.as_str()), (1, ""), "{complaint}");
+    assert!(complaint.contains("there is no store at"), "{complaint}");
+    assert!(complaint.contains("--create"), "{complaint}");
+    assert!(!missing.exists());
+    let empty = dir.path().join("empty");
+    std::fs::create_dir(&empty).expect("a directory");
+    let (code, printed, complaint) = import(&file, &empty);
+    assert_eq!((code, printed.as_str()), (1, ""), "{complaint}");
+    assert!(complaint.contains("is not a store"), "{complaint}");
+    assert!(complaint.contains("--create"), "{complaint}");
+    assert_eq!(std::fs::read_dir(&empty).expect("a directory").count(), 0);
+
+    // Told to, it makes one in either place, and says so.
+    for store in [&missing, &empty] {
+        let (code, printed, complaint) = import_creating(&file, store);
+        assert_eq!(code, 0, "{complaint}");
+        assert_eq!(
+            printed,
+            format!("{}imported mask {}\n", created(store), mask.id())
+        );
+        // From then on it is a store, with or without `--create`.
+        let (code, printed, _) = import(&file, store);
+        assert_eq!(code, 0);
+        assert_eq!(printed, format!("already there: mask {}\n", mask.id()));
+    }
+
+    // A directory that holds something else is no place for a store, told to or not.
+    let other = dir.path().join("other");
+    std::fs::create_dir(&other).expect("a directory");
+    std::fs::write(other.join("notes.txt"), b"mine").expect("a file");
+    for run in [import, import_creating] {
+        let (code, _, complaint) = run(&file, &other);
+        assert_eq!(code, 1);
+        assert!(complaint.contains("notes.txt"), "{complaint}");
+        assert!(!complaint.contains("--create"), "{complaint}");
+        assert_eq!(std::fs::read_dir(&other).expect("a directory").count(), 1);
+    }
+}
+
+#[test]
+fn import_is_a_writer_and_is_refused_while_another_process_holds_the_store() {
+    let dir = Scratch::new("import");
+    let (file, root) = (dir.path().join("seam.mask"), dir.path().join("store"));
+    std::fs::write(&file, mask().to_bytes()).expect("the fixture is written");
+    let holder = whizbang_core::store::Store::open(&root, Arc::new(RealFs)).expect("a store");
+    for run in [import, import_creating] {
+        let (code, printed, complaint) = run(&file, &root);
+        assert_eq!((code, printed.as_str()), (1, ""), "{complaint}");
+        assert!(
+            complaint.contains(&format!("process {} (", std::process::id())),
+            "{complaint}"
+        );
+        assert!(complaint.contains("one process at a time"), "{complaint}");
+    }
+    drop(holder);
+    let (code, printed, _) = import(&file, &root);
+    assert_eq!(code, 0, "{printed}");
 }

@@ -1,4 +1,9 @@
 //! `whizbang store list|delete|prune|import`: wiring from arguments to the core's store.
+//!
+//! One rule for all four: the store must be there. None of them makes a store at a path
+//! with nothing at it or completes one in an empty directory, except `import --create`,
+//! which says so when it has. The three that write take the writer lock and are refused
+//! while another process holds it.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -45,6 +50,10 @@ pub enum Command {
         file: PathBuf,
         #[command(flatten)]
         at: Where,
+        /// Make the store if there is none: at a path with nothing at it, or in an
+        /// empty directory. Without this a store must be there already.
+        #[arg(long)]
+        create: bool,
     },
 }
 
@@ -53,7 +62,7 @@ pub fn run(command: &Command) -> Result<String, String> {
     match command {
         Command::List { at } => list(&at.store),
         Command::Delete { at, runs } => delete(&at.store, runs),
-        Command::Import { file, at } => crate::import::import(file, &at.store),
+        Command::Import { file, at, create } => crate::import::import(file, &at.store, *create),
         Command::Prune { at } => {
             let pruned = writer(&at.store)?.prune().map_err(|e| e.to_string())?;
             Ok(report(&pruned))

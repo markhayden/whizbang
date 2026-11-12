@@ -28,7 +28,9 @@ pub fn put(publication: &mut Publication<'_>, artifact: &Artifact) -> Result<Art
 pub trait Contents {
     /// The current generation.
     fn snapshot(&self) -> store::Result<Generation>;
-    /// The content of an entry, checked against its length and its digest.
+    /// The content of an entry that is a committed output, checked against its length
+    /// and its digest. A diagnostic reference is refused: an artifact is an output, and
+    /// diagnostic evidence under an artifact's name is not one.
     fn read(&self, entry: &Entry) -> store::Result<Vec<u8>>;
 }
 
@@ -38,7 +40,7 @@ impl Contents for Store {
     }
 
     fn read(&self, entry: &Entry) -> store::Result<Vec<u8>> {
-        Store::read(self, entry)
+        Store::read_output(self, entry)
     }
 }
 
@@ -48,7 +50,7 @@ impl Contents for Reader {
     }
 
     fn read(&self, entry: &Entry) -> store::Result<Vec<u8>> {
-        Reader::read(self, entry)
+        Reader::read_output(self, entry)
     }
 }
 
