@@ -97,11 +97,11 @@ that the repos are frozen:
 
 - **rascal:** the remote branches `m14e-birefnet` and `m14e-hqsam` still exist, at the same
   commits as their archive tags. They are the only remote branches in the four repos that
-  are not on `main`. Local branches remain, all on `main`, and three worktrees.
-- **squint:** local branches remain, all on `main`, and two worktrees.
+  are not on `main`. Local branches remain, all on `main`, and two worktrees beside the checkout.
+- **squint:** local branches remain, all on `main`, and one worktree beside the checkout.
 - **wafflery:** the local branches `m5-03-session-grant-boundary` and
   `m5-03-stable-session-grants` remain, at the same commits as their archive tags, with
-  three worktrees.
+  two worktrees beside the checkout.
 - **All four:** merged remote branches were not deleted (rascal 17, squint 8, wafflery 5,
   table-manners 5); each is on `main`.
 
