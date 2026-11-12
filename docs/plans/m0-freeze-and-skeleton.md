@@ -195,9 +195,9 @@ request that ticks the third box.
 
 ### Checkpoint S
 
-- [ ] On a fresh clone on the Mac: `just setup`, `just check`, `just scan` pass.
-- [ ] `ci` is green on `main` on both runners, in under 10 minutes.
-- [ ] The timing table is in the milestone note.
+- [x] On a fresh clone on the Mac: `just setup`, `just check`, `just scan` pass.
+- [x] `ci` is green on `main` on both runners, in under 10 minutes.
+- [x] The timing table is in the milestone note.
 
 ## Track F: freeze the old repos
 
@@ -299,9 +299,9 @@ inventory shows the outcome of each ignored line.
 
 ### Checkpoint F
 
-- [ ] Four tags on four remotes.
-- [ ] `docs/plans/m0-inventory.md` has no line without an outcome.
-- [ ] The "To finish before the freeze" table in the carry-over list is empty.
+- [x] Four tags on four remotes.
+- [x] `docs/plans/m0-inventory.md` has no line without an outcome.
+- [x] The "To finish before the freeze" table in the carry-over list is empty.
 
 ## Track B: the baseline
 
@@ -421,14 +421,34 @@ missing file, and six recorded errors for one model.
 
 ### Checkpoint B
 
-- [ ] `docs/baseline/manifest.toml` is committed and its digest matches owner storage.
-- [ ] Both scans pass on everything track B added to the repo.
+- [x] `docs/baseline/manifest.toml` is committed and its digest matches owner storage.
+- [x] Both scans pass on everything track B added to the repo.
 
 ## Exit check for milestone 0
 
-- [ ] Checkpoints S, F and B pass.
-- [ ] `docs/plans/m0-note.md`: what shipped, the timing table, spend.
+- [x] Checkpoints S, F and B pass.
+- [x] `docs/plans/m0-note.md`: what shipped, the timing table, spend.
 - [ ] Tag `m0`.
+
+Checked on 2026-11-11 at `main` 27d3fc3; the evidence is in `m0-note.md`. The tag `m0` is made by
+the orchestrator on the merge commit of the pull request that adds that note, so its box is
+ticked by the first pull request of the next milestone.
+
+## Review rounds
+
+Recorded as `AGENTS.md`, "Working with the owner", requires. This plan and the plan for checkpoint 1A (`m1a-contracts-and-store.md`)
+were reviewed together, in three rounds on 2026-11-11, by the independent reviewing model. The
+counts are for the two plans together, per the orchestrator's record; the drafts between the
+rounds are not kept in this repo.
+
+| Round | Blockers | Majors |
+|---|---|---|
+| 1 | 3 | 17 |
+| 2 | 2 | 7 |
+| 3 | 0 | 6 |
+
+Every blocker and major finding was addressed in the draft that followed its round; the last
+six majors are addressed in this plan's draft 4 and that plan's draft 6. The owner approved both plans after the third round.
 
 ## Risks
 

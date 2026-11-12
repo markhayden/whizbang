@@ -3,7 +3,9 @@
 One toolkit for working on images with models: finding and editing things in an image
 (`rascal`), judging an image against rules (`squint`), and a playground for both.
 
-**State:** nothing usable yet. The design is in [SPEC.md](SPEC.md); the work in progress is in
+**State:** nothing usable yet. Milestone 0 (the skeleton, the freeze of the old projects and
+the baseline) is complete: [docs/plans/m0-note.md](docs/plans/m0-note.md). Checkpoint 1A, the
+contracts and the store, is next. The design is in [SPEC.md](SPEC.md); the plans are in
 [docs/plans/](docs/plans/). It replaces four earlier projects, which stay available as
 reference; their final commits are pinned in [docs/sources.toml](docs/sources.toml).
 

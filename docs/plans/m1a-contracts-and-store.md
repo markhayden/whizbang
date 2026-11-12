@@ -401,6 +401,23 @@ completed status, and every diagnostic written before it ended is readable.
       tool record.
 - [ ] Tag `m1a`.
 
+## Review rounds
+
+Recorded as `AGENTS.md`, "Working with the owner", requires. This plan and the plan for
+milestone 0 (`m0-freeze-and-skeleton.md`) were reviewed together, in three rounds on
+2026-11-11, by the independent reviewing model. The counts are for the two plans together,
+per the orchestrator's record; the drafts between the rounds are not kept in this repo.
+
+| Round | Blockers | Majors |
+|---|---|---|
+| 1 | 3 | 17 |
+| 2 | 2 | 7 |
+| 3 | 0 | 6 |
+
+Every blocker and major finding was addressed in the draft that followed its round; the last
+six majors are addressed in this plan's draft 6 and that plan's draft 4. The owner approved
+both plans after the third round.
+
 ## Risks
 
 | Risk | Effect | What we do |

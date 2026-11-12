@@ -49,7 +49,10 @@ If one is missing, ask the orchestrator. Do not guess.
       a script test passes only when it exits 0 and its last line is `finished: …`.
       Neither command is on the allow list, so each asks first.
 - [ ] 6. Update what the change affects: `SPEC.md`, the reference (`just docs`), and
-      `docs/carry-over.md`. Tick, in this branch, each box of the task that the branch
+      `docs/carry-over.md`. A change to the spec that alters scope, architecture or
+      what a milestone holds is not made inside a task: it needs the review rounds first
+      (`AGENTS.md`, "Working with the owner"), so stop and say so. Wording and accuracy,
+      to bring the spec in line with what the branch does, belong here. Tick, in this branch, each box of the task that the branch
       makes true once it merges. A box about something that happens after the pull request
       opens (a later exercise, a merge by someone else of something else)
       is ticked by a later pull request. Anything you defer gets a carry-over row with the
