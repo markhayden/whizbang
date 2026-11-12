@@ -163,9 +163,10 @@ expect_fail "settings that are not JSON" "settings: not valid JSON" check_settin
 # hooks or servers. A skill is one file, .claude/skills/<name>/SKILL.md, whose frontmatter
 # is `name` and `description` and nothing else: no `allowed-tools`, no model, no hooks; and
 # it runs no command when it is loaded (no `!` before a backtick, and no block fenced with
-# three backticks and a `!`). Nothing else may be in a folder named .claude, at any depth
-# and in any letter case: no commands, no hooks, no settings or skills of a folder further
-# down. A change to any of this needs the same change here.
+# three backticks or three tildes and a `!`, inside a `>` quote or not). Nothing else may
+# be in a folder named .claude, at any depth and in any letter case: no commands, no hooks,
+# no settings or skills of a folder further down; and no path is itself named .claude
+# without being a folder (a link to one somewhere else). A change to any of this needs the same change here.
 builder_tools="Bash, Read, Edit, Write, Grep, Glob"
 reviewer_tools="Bash, Read, Grep, Glob"
 
@@ -182,8 +183,9 @@ granted() {
     cd "$1"
     git ls-files -- .claude/settings.local.json .mcp.json '**/.mcp.json' | sed 's/^/tracked: /'
     grep -l -i -E '^[[:space:]]*permissionMode[[:space:]]*:' .claude/agents/*.md 2>/dev/null | sed 's/^/permission mode: /'
-    git -c core.excludesFile=/dev/null ls-files --cached --others --exclude-standard | { grep -i -E '(^|/)\.claude/' || true; } | while IFS= read -r f; do
+    git -c core.excludesFile=/dev/null ls-files --cached --others --exclude-standard | { grep -i -E '(^|/)\.claude(/|$)' || true; } | while IFS= read -r f; do
       tools=
+      if printf '%s\n' "$f" | grep -q -i -E '(^|/)\.claude$'; then echo "named .claude and not a folder: $f"; continue; fi
       case "$f" in
         .claude/settings.json) continue ;;
         .claude/agents/builder.md) keys="name description tools " tools=$builder_tools ;;
@@ -204,7 +206,7 @@ granted() {
           name=${f#.claude/skills/}
           name=${name%/SKILL.md}
           [ "$(front "$f" | sed -n 's/^name:[[:space:]]*//p')" = "$name" ] || echo "skill name: $f must be named $name, as its folder is"
-          if grep -q -E -e '!`|^[[:space:]]*```+[[:space:]]*!' "$f"; then echo "runs a command when it is loaded: $f"; fi
+          if grep -q -E -e '!`|^[[:space:]>]*(```+|~~~+)[[:space:]]*!' "$f"; then echo "runs a command when it is loaded: $f"; fi
           ;;
       esac
     done
@@ -266,6 +268,22 @@ planted "a skill with such a block, spaced" "runs a command when it is loaded: $
   ```` !\
 git push\
 ````/'
+planted "a skill with such a block, fenced with tildes" "runs a command when it is loaded: $skill" "$skill" '$s/$/\
+~~~!\
+git push\
+~~~/'
+planted "a skill with such a block, tildes and spaces" "runs a command when it is loaded: $skill" "$skill" '$s/$/\
+ ~~~~ !\
+git push\
+~~~~/'
+planted "a skill with such a block inside a quote" "runs a command when it is loaded: $skill" "$skill" '$s/$/\
+> ```!\
+> git push\
+> ```/'
+planted "a skill with such a block inside a quote in a quote" "runs a command when it is loaded: $skill" "$skill" '$s/$/\
+>> ~~~!\
+>> git push\
+>> ~~~/'
 
 # other <path> [<text>]: a file at the path, tracked or not, must fail, naming the path.
 other() {
@@ -293,6 +311,18 @@ other sub/deeper/.claude/agents/builder.md
 other crates/.claude/commands/x.md
 # In another letter case, which is the same folder where the file system ignores case.
 other docs/.CLAUDE/commands/x.md
+# A path that is itself named .claude and is no folder: a link to one somewhere else.
+for link in linked/.claude linked/deeper/.CLAUDE; do
+  mkdir -p "$tmp/repo/$(dirname "$link")"
+  [ ! -e "$tmp/repo/$link" ] || fail "$link is already there"
+  ln -s "$root/.claude" "$tmp/repo/$link"
+  [ -L "$tmp/repo/$link" ] || fail "$link is not a link"
+  expect_fail "an untracked link at $link" "named .claude and not a folder: $link" granted "$tmp/repo"
+  git -C "$tmp/repo" add -f -- "$link"
+  expect_fail "a tracked link at $link" "named .claude and not a folder: $link" granted "$tmp/repo"
+  git -C "$tmp/repo" rm -q -r -f --cached -- "$link"
+  rm "$tmp/repo/$link"
+done
 expect_pass "a folder whose name only starts the same" bash -c 'mkdir -p "$1/.claude-notes" && echo words >"$1/.claude-notes/a.md"' - "$tmp/repo"
 expect_pass "is no .claude folder" granted "$tmp/repo"
 rm -r "$tmp/repo/.claude-notes"
