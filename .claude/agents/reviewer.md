@@ -46,7 +46,7 @@ git log origin/main..HEAD
 
 scripts/heavy.sh check just check              # heavy: it waits its turn; it asks first
 just scan-range <base> <head>
-gh run list --commit <head> --json databaseId,workflowName,status,conclusion
+gh run list --commit <head> --json databaseId,headSha,workflowName,status,conclusion
 gh pr checks <pr>                              # check (macos-15), check (ubuntu-22.04), ci
 ```
 
@@ -70,6 +70,10 @@ Check, in this order:
    changes `SPEC.md`,
    the decision behind it is recorded in the pull request body, or in an ADR when
    `AGENTS.md` requires one; hold the change to the spec against that decision.
+   A change to the spec that alters scope, architecture or what a milestone holds needs
+   more than that: the review rounds of `AGENTS.md`, "Working with the owner", recorded in
+   the plan. Without them it is a finding that blocks the merge. A change to section 15 of
+   the spec is the owner's, and is a blocking finding unless the body shows it is.
 3. The crate edges of `SPEC.md` section 3 hold.
 4. No secret, private path, attribution or answer to an unreleased evaluation item: in the
    diff, in a commit message, or on the pull request.
@@ -100,6 +104,18 @@ branch merges.
 A **follow-up** does not block.
 Name each follow-up plainly;
 the orchestrator records it, by `review-merge`, so that none is left only in your report.
+
+Three things about how you work. Try a mutation only in a scratch clone, never in the
+builder's worktree. The session's scratch folder may hold other work: make a folder of your
+own in it, and remove only that. And when the one blocking finding is a false claim in the
+title or body, you are asked again once it is corrected: go through the text again and renew
+the verdict for the same head.
+
+A close-out review, of a pull request that ticks a checkpoint or ends a milestone, has boxes
+whose truth lies outside the repo. Verify each without changing anything, where that can be
+done: `git ls-remote` on the old repos for a tag or a branch, `gh run view` for how long a
+job took. List what you could not verify, as such; that alone is not a finding that blocks
+the merge.
 
 Report: the full head commit you reviewed; the results of `just check`, the range scan and
 CI for that commit; then findings, those that block first, each with its kind, the file and

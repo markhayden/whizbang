@@ -91,19 +91,65 @@ Recorded on 2026-11-11, after tasks F1 to F6.
 - **Freeze tags:** `final-before-whizbang` in all four repos. For each, local `main`, remote
   `main` and the peeled tag are the same commit, CI is green on it, and the tree was clean.
 
-Checked again on 2026-11-11 with `git ls-remote` and a read-only look at the local checkouts.
-The cleanup went less far than the dispositions above say, and nothing more is removed now
-that the repos are frozen:
+Checked again on 2026-11-11, and once more at the close of the milestone, with
+`git ls-remote`, `git worktree list` and `git branch` in each checkout; nothing was changed.
+The cleanup went less far than the dispositions say. Nothing more is removed now that the
+repos are frozen: "left as found" below is the outcome, not a task.
 
-- **rascal:** the remote branches `m14e-birefnet` and `m14e-hqsam` still exist, at the same
-  commits as their archive tags. They are the only remote branches in the four repos that
-  are not on `main`. Local branches remain, all on `main`, and two worktrees beside the checkout.
-- **squint:** local branches remain, all on `main`, and one worktree beside the checkout.
-- **wafflery:** the local branches `m5-03-session-grant-boundary` and
-  `m5-03-stable-session-grants` remain, at the same commits as their archive tags, with
-  two worktrees beside the checkout.
-- **All four:** merged remote branches were not deleted (rascal 17, squint 8, wafflery 5,
-  table-manners 5); each is on `main`.
+### Every line, and what became of it
+
+**rascal**
+
+| Line | Outcome |
+|---|---|
+| Branch `m14-close` | Merged through task F1: its commit is on `main`. The local branch is gone. The branch on the remote is left as found, on `main` |
+| Remote branch `m14e-birefnet` | Archive tag pushed and verified. The branch is left as found on the remote, at the tag's commit |
+| Remote branch `m14e-hqsam` | The same |
+| Worktree `rascal-m14-fix` | No longer present |
+| The eight worktrees `rascal-m14-default` to `rascal-m14r` | None is present any more |
+| Worktree under the owner's hand-check folder | Present; left alone, as its line says |
+| Worktrees under the restore drill folder and the lab folder | The one under the lab folder is present and left alone. The one under the restore drill folder is no longer present |
+| One worktree in a session's scratch space | No longer present |
+| Other local branches | Left as found: 13 local branches, every one on `main` |
+
+After this, rascal has three worktrees: the checkout, the one under the lab folder and the
+one under the hand-check folder. Its remote has 19 branches besides `main`: 17 on `main`,
+and the two `m14e` branches above.
+
+**squint**
+
+| Line | Outcome |
+|---|---|
+| 13 untracked files under `evalsets/matrix/` | Committed and merged (task F3); they are in the freeze commit |
+| Remote branch `contract-0.6` | Archive tag pushed and verified; the branch deleted from the remote |
+| Worktree `squint-m14` | No longer present |
+| A worktree under the owner's hand-check folder | Present; left alone. It is the only worktree besides the checkout |
+| Other local branches | Left as found: 16 local branches, every one on `main`. The remote has 8 branches besides `main`, all on `main` |
+| Ignored: `eval-out/` | In place. The baseline package was copied from it (track B) |
+| Ignored: `.env`, `docs/brief.md` | In place on this machine; in no repo |
+| Ignored: evaluation-set images | In place; they can be fetched again |
+
+**wafflery**
+
+| Line | Outcome |
+|---|---|
+| Local branch `m5-03-session-grant-boundary` | Archive tag pushed and verified. The local branch is left as found, at the tag's commit |
+| Local branch `m5-03-stable-session-grants` | The same |
+| Worktrees `wafflery-m14`, `wafflery-ui-tidy` | Neither is present any more |
+| A worktree inside the coordination repo, and one under the owner's hand-check folder | Both present; left alone. They are the only worktrees besides the checkout |
+| Ignored: `ui/dist/`, `ui/storybook-static/`, `ui/test-results/` | Left in place; build and test output |
+
+Wafflery's other local branches are left as found: every one is on `main` but the two above.
+Its remote has 5 branches besides `main`, all on `main`.
+
+**table-manners**
+
+| Line | Outcome |
+|---|---|
+| Nothing to do before the freeze tag | Tagged. The remote has 5 branches besides `main`, all on `main`; left as found |
+
+**Backlog reconciliation:** the missing items were added to `docs/carry-over.md`, where they
+still are, each with its milestone.
 
 Three boxes of the plan describe things outside the four repos, and were confirmed by the
 orchestrator on 2026-11-11: the two label corrections in owner storage (F3), the local images

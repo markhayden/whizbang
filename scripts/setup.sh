@@ -5,7 +5,8 @@
 #   scripts/setup.sh --check   check the tools only
 #
 # A tool that is missing, or at another version than scripts/tool-versions.txt pins, is
-# named with the command that installs the pinned version, and the script fails. The hooks
+# named with the command that installs the pinned version, and the script fails. jq and
+# python3 (3.9 or later, for scripts/baseline) are checked without a pin. The hooks
 # are installed either way. `just check` does not run this: only setup is strict about
 # versions.
 set -euo pipefail
@@ -55,4 +56,21 @@ else
   echo "tool problem: jq is missing; install it with your package manager (brew install jq, apt-get install jq)" >&2
   status=1
 fi
+
+# python3 runs scripts/baseline and its tests. Any version from 3.9 on will do.
+py=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)
+case "$py" in
+  [0-9]*.[0-9]*)
+    if [ "${py%%.*}" -gt 3 ] || { [ "${py%%.*}" -eq 3 ] && [ "${py#*.}" -ge 9 ]; }; then
+      echo "tool ok: python3 $py (3.9 or later)"
+    else
+      echo "tool problem: python3 is too old: found $py, and scripts/baseline needs 3.9 or later; install a newer one with your package manager" >&2
+      status=1
+    fi
+    ;;
+  *)
+    echo "tool problem: python3 is missing; scripts/baseline needs 3.9 or later; install it with your package manager (brew install python, apt-get install python3)" >&2
+    status=1
+    ;;
+esac
 exit "$status"

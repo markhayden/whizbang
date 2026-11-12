@@ -26,9 +26,17 @@ esac
 [ -n "$v" ] || { echo "error: no such command: \`$1\`" >&2; exit 101; }
 echo "cargo-$1 $v (a build note)"
 SH
-chmod +x "$tmp/bin/just" "$tmp/bin/cargo"
+# A fake `python3`: it answers the one question setup asks, with the version in its
+# variable; an empty variable means it is not installed.
+cat >"$tmp/bin/python3" <<'SH'
+#!/bin/sh
+[ -n "$FAKE_PYTHON" ] || exit 127
+echo "$FAKE_PYTHON"
+SH
+chmod +x "$tmp/bin/just" "$tmp/bin/cargo" "$tmp/bin/python3"
+# with_tools <just> <nextest> <deny> [python, 3.12 when not given; "" for not installed]
 with_tools() {
-  env PATH="$tmp/bin:$PATH" FAKE_JUST="$1" FAKE_NEXTEST="$2" FAKE_DENY="$3" "$setup" --check
+  env PATH="$tmp/bin:$PATH" FAKE_JUST="$1" FAKE_NEXTEST="$2" FAKE_DENY="$3" FAKE_PYTHON="${4-3.12}" "$setup" --check
 }
 
 expect_pass "every tool at its pin" with_tools "$(pin just)" "$(pin cargo-nextest)" "$(pin cargo-deny)"
@@ -47,6 +55,18 @@ grep -q -F "another version" "$tmp/out" && { cat "$tmp/out"; fail "a missing too
 expect_fail "two problems at once" "just is missing" with_tools "" 9.9.9 "$(pin cargo-deny)"
 grep -q -F "cargo-nextest is at another version: found 9.9.9" "$tmp/out" ||
   { cat "$tmp/out"; fail "the second problem is reported too"; }
+
+# python3 runs the baseline scripts and their tests: 3.9 or later, any later version.
+pins_ok() { with_tools "$(pin just)" "$(pin cargo-nextest)" "$(pin cargo-deny)" "$@"; }
+for v in 3.9 3.10 3.15 4.0; do
+  expect_pass "python3 $v" pins_ok "$v"
+  grep -q -F "tool ok: python3 $v (3.9 or later)" "$tmp/out" || { cat "$tmp/out"; fail "python3 $v is reported as ok"; }
+done
+for v in 3.8 2.7 3.0; do
+  expect_fail "python3 $v" "python3 is too old: found $v, and scripts/baseline needs 3.9 or later" pins_ok "$v"
+done
+expect_fail "no python3" "python3 is missing; scripts/baseline needs 3.9 or later" pins_ok ""
+expect_fail "a python3 that answers something else" "python3 is missing" pins_ok "Python"
 
 # CI installs exactly the pinned versions.
 pins=$(grep -v '^#' scripts/tool-versions.txt | awk 'NF { printf "%s%s@%s", sep, $1, $2; sep = "," }')
