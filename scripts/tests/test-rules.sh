@@ -12,7 +12,9 @@
 # and no folder named .claude, at any depth, holds any file but the ones listed below.
 #
 # AGENTS.md must still hold the fresh-clone checklist, the push and merge rows, the three
-# roles, who merges, and the attribution rule, and must give no location for the word list.
+# roles, who merges, the attribution rule, how the word list's variable is set and what may
+# be passed on, the temp folder, the heavy commands and when a plan box is ticked, and must
+# give no location for the word list.
 # Nothing here runs an agent.
 source "$(dirname "$0")/lib.sh"
 
@@ -164,9 +166,10 @@ expect_fail "settings that are not JSON" "settings: not valid JSON" check_settin
 # hooks or servers. A skill is one file, .claude/skills/<name>/SKILL.md, whose frontmatter
 # is `name` and `description` and nothing else: no `allowed-tools`, no model, no hooks; and
 # it runs no command when it is loaded (no `!` before a backtick, and no block fenced with
-# three backticks and a `!`). Nothing else may be in a folder named .claude, at any depth
-# and in any letter case: no commands, no hooks, no settings or skills of a folder further
-# down. A change to any of this needs the same change here.
+# three backticks or three tildes and a `!`, inside a `>` quote or not). Nothing else may
+# be in a folder named .claude, at any depth and in any letter case: no commands, no hooks,
+# no settings or skills of a folder further down; and no path is itself named .claude
+# without being a folder (a link to one somewhere else). A change to any of this needs the same change here.
 builder_tools="Bash, Read, Edit, Write, Grep, Glob"
 reviewer_tools="Bash, Read, Grep, Glob"
 
@@ -183,8 +186,9 @@ granted() {
     cd "$1"
     git ls-files -- .claude/settings.local.json .mcp.json '**/.mcp.json' | sed 's/^/tracked: /'
     grep -l -i -E '^[[:space:]]*permissionMode[[:space:]]*:' .claude/agents/*.md 2>/dev/null | sed 's/^/permission mode: /'
-    git -c core.excludesFile=/dev/null ls-files --cached --others --exclude-standard | { grep -i -E '(^|/)\.claude/' || true; } | while IFS= read -r f; do
+    git -c core.excludesFile=/dev/null ls-files --cached --others --exclude-standard | { grep -i -E '(^|/)\.claude(/|$)' || true; } | while IFS= read -r f; do
       tools=
+      if printf '%s\n' "$f" | grep -i -E '(^|/)\.claude$' >/dev/null; then echo "named .claude and not a folder: $f"; continue; fi
       case "$f" in
         .claude/settings.json) continue ;;
         .claude/agents/builder.md) keys="name description tools " tools=$builder_tools ;;
@@ -205,7 +209,7 @@ granted() {
           name=${f#.claude/skills/}
           name=${name%/SKILL.md}
           [ "$(front "$f" | sed -n 's/^name:[[:space:]]*//p')" = "$name" ] || echo "skill name: $f must be named $name, as its folder is"
-          if grep -q -E -e '!`|^[[:space:]]*```+[[:space:]]*!' "$f"; then echo "runs a command when it is loaded: $f"; fi
+          if grep -q -E -e '!`|^[[:space:]>]*(```+|~~~+)[[:space:]]*!' "$f"; then echo "runs a command when it is loaded: $f"; fi
           ;;
       esac
     done
@@ -267,6 +271,22 @@ planted "a skill with such a block, spaced" "runs a command when it is loaded: $
   ```` !\
 git push\
 ````/'
+planted "a skill with such a block, fenced with tildes" "runs a command when it is loaded: $skill" "$skill" '$s/$/\
+~~~!\
+git push\
+~~~/'
+planted "a skill with such a block, tildes and spaces" "runs a command when it is loaded: $skill" "$skill" '$s/$/\
+ ~~~~ !\
+git push\
+~~~~/'
+planted "a skill with such a block inside a quote" "runs a command when it is loaded: $skill" "$skill" '$s/$/\
+> ```!\
+> git push\
+> ```/'
+planted "a skill with such a block inside a quote in a quote" "runs a command when it is loaded: $skill" "$skill" '$s/$/\
+>> ~~~!\
+>> git push\
+>> ~~~/'
 
 # other <path> [<text>]: a file at the path, tracked or not, must fail, naming the path.
 other() {
@@ -294,6 +314,18 @@ other sub/deeper/.claude/agents/builder.md
 other crates/.claude/commands/x.md
 # In another letter case, which is the same folder where the file system ignores case.
 other docs/.CLAUDE/commands/x.md
+# A path that is itself named .claude and is no folder: a link to one somewhere else.
+for link in linked/.claude linked/deeper/.CLAUDE; do
+  mkdir -p "$tmp/repo/$(dirname "$link")"
+  [ ! -e "$tmp/repo/$link" ] || fail "$link is already there"
+  ln -s "$root/.claude" "$tmp/repo/$link"
+  [ -L "$tmp/repo/$link" ] || fail "$link is not a link"
+  expect_fail "an untracked link at $link" "named .claude and not a folder: $link" granted "$tmp/repo"
+  git -C "$tmp/repo" add -f -- "$link"
+  expect_fail "a tracked link at $link" "named .claude and not a folder: $link" granted "$tmp/repo"
+  git -C "$tmp/repo" rm -q -r -f --cached -- "$link"
+  rm "$tmp/repo/$link"
+done
 expect_pass "a folder whose name only starts the same" bash -c 'mkdir -p "$1/.claude-notes" && echo words >"$1/.claude-notes/a.md"' - "$tmp/repo"
 expect_pass "is no .claude folder" granted "$tmp/repo"
 rm -r "$tmp/repo/.claude-notes"
@@ -343,7 +375,8 @@ check_rules() {
     { echo "rules: the fresh-clone checklist must name, in order: just setup, WHIZBANG_WORDLIST, just scan"; return 1; }
 
   row=$(grep '^| Push |' "$file" || true)
-  for text in '`just check`' '`just scan`' 'pre-push hook' 'Never push with `--no-verify`'; do
+  for text in '`just check` passed on exactly the tree being pushed' '`git status --short` prints nothing after the commit' \
+    '`just scan`' 'pre-push hook' 'Never push with `--no-verify`'; do
     case "$row" in *"$text"*) ;; *) echo "rules: the Push row must say: $text"; return 1 ;; esac
   done
   row=$(grep '^| Merge |' "$file" || true)
@@ -353,12 +386,26 @@ check_rules() {
   done
 
   builder=$(awk '/^- \*\*Builder:\*\*/ { on = 1 } on && /^- \*\*Reviewer:\*\*/ { on = 0 } on' "$file")
-  case "$builder" in *'Pushes'*'opens the pull request'*'Never merges'*) ;; *)
+  case "$builder" in *'Pushes'*'opens the pull request'*'Never merges a pull'*'request or into `main`, never pushes to `main`, never tags.'*) ;; *)
     echo "rules: the builder pushes its branch, opens the pull request and never merges"; return 1 ;; esac
   for text in '- **Reviewer:**' '- **Orchestrator:**' 'Only the orchestrator merges.' 'never a squash' \
     'Run `just check` before a commit, and `just check` and `just scan` before a push.' \
     'Add `Co-Authored-By`, "Generated with", or any agent or model name to a commit, a pull' \
-    'They are not the boundary.'; do
+    'They are not the boundary.' \
+    'The path may be given to another agent working in this repo.' \
+    'never committed, opened, quoted, printed or copied' \
+    'as an `env` entry in `.claude/settings.local.json`, which is never committed' \
+    'and what it holds is never passed on.' \
+    'is not one of the exact allowed commands' \
+    '- **The system temp folder,**' \
+    '`gh pr diff <n> --name-only` lists the files an open pull request changes' \
+    'These are heavy:' \
+    'The path is never written into a hand-back, a pull request, a commit or a tracked file.' \
+    'The local settings file that may hold it is never committed.' \
+    'are a tripwire, not a proof' \
+    'Every change to these files is read in full by the reviewer and by the orchestrator.' \
+    'the clean-room scan prints a count and names nothing' \
+    'is ticked by a later pull request'; do
     grep -q -F -e "$text" "$file" || { echo "rules: must say: $text"; return 1; }
   done
 
@@ -383,11 +430,22 @@ changed '/^| Push |/s/`just scan`/the scans/' "the Push row must say"
 changed '/^| Push |/s/ Never push with `--no-verify`//' "the Push row must say"
 changed '/^- Add `Co-Authored-By`/d' 'must say: Add `Co-Authored-By`'
 changed 's/Only the orchestrator merges\.//' "must say: Only the orchestrator merges."
-changed 's/Never merges, pushes to/Never pushes to/' "the builder pushes its branch"
+changed 's/Never merges a pull$/Never pushes a pull/' "the builder pushes its branch"
+changed '/^| Push |/s/ passed on exactly the tree being pushed//' "the Push row must say"
 changed 's/^- \*\*Reviewer:\*\*/- Reviewer:/' "must say: - **Reviewer:**"
 changed 's/^- \*\*Orchestrator:\*\*/- Orchestrator:/' "must say: - **Orchestrator:**"
 changed 's/They are not the boundary\.//' "must say: They are not the boundary."
 changed 's/^1\. Run `just setup`/1. Run the setup/' "the fresh-clone checklist must name"
+changed 's/The path may be given to another agent working in this repo\.//' "must say: The path may be given"
+changed 's/never committed, opened, quoted, printed or copied/kept/' "must say: never committed, opened"
+changed 's/^- \*\*The system temp folder,\*\*/- The system temp folder,/' "must say: - **The system temp folder,**"
+changed 's/These are heavy:/Some are heavy:/' "must say: These are heavy:"
+changed 's/that may hold it is never committed\./that may hold it is committed./' "must say: The local settings file"
+changed 's/are a tripwire, not a proof/are the proof/' "must say: are a tripwire, not a proof"
+changed 's/`\.claude\/settings\.local\.json`, which is never committed/`.claude\/settings.local.json`, which is committed/' "must say: as an \`env\` entry"
+changed 's/and what it holds is never passed on\./and what it holds is passed on with care./' "must say: and what it holds is never passed on."
+changed 's/^   The path is never written into a hand-back/   The path is written into a hand-back/' "must say: The path is never written"
+changed 's/is ticked by a later pull request/is ticked at once/' "must say: is ticked by a later pull request"
 changed 's|a private word list the owner provides|~/words|' "no value or location"
 changed '$s|$| WHIZBANG_WORDLIST=words|' "no value or location"
 

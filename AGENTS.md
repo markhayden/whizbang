@@ -9,9 +9,17 @@ manifest. This file holds what you cannot work out from the code.
 
 1. Run `just setup`. It installs the git hooks and checks the pinned tools
    (`scripts/tool-versions.txt`), naming the install command for any that is missing.
-2. Set `WHIZBANG_WORDLIST` to the path of a private word list the owner provides. Never
-   commit it, open it, quote it, print it or pass it to another agent. Without it you cannot
-   push; ask the owner.
+2. Set `WHIZBANG_WORDLIST` to the path of a private word list the owner provides. Set it
+   where it lasts: in your shell profile, or
+   as an `env` entry in `.claude/settings.local.json`, which is never committed
+   (git ignores it, and `just check` fails on a tracked one). A variable does not last from one of
+   an agent's shell calls to the next, and a command that starts with `export`, the
+   variable and `&&` is not one of the exact allowed commands, so it asks first every time.
+   The path may be given to another agent working in this repo.
+   It travels only in a brief to an agent or in the local environment.
+   The path is never written into a hand-back, a pull request, a commit or a tracked file.
+   The list itself is never committed, opened, quoted, printed or copied,
+   and what it holds is never passed on. Without it you cannot push; ask the owner.
 3. Run `just scan` and see it pass. Then run `just check`. Both pass before you change
    anything.
 
@@ -20,7 +28,7 @@ manifest. This file holds what you cannot work out from the code.
 | Step | Must pass first | Who |
 |---|---|---|
 | Commit | `just check` | Whoever commits |
-| Push | `just check`, then `just scan`: the secrets scan and the clean-room scan. The pre-push hook runs both scans again over every commit the push would publish. Never push with `--no-verify` | Whoever pushes |
+| Push | `just check` passed on exactly the tree being pushed (it runs on the working tree, so `git status --short` prints nothing after the commit), then `just scan`: the secrets scan and the clean-room scan. The pre-push hook runs both scans again over every commit the push would publish. Never push with `--no-verify` | Whoever pushes |
 | Merge | CI green on both runners, and `just scan-range <base> <head>` on the exact head that was reviewed | The orchestrator, and nobody else |
 | Tag, release, publish | The same as a merge, on the commit being tagged | The orchestrator |
 
@@ -53,14 +61,24 @@ stopped half-way, so a test passes only when that line ran. A script that sets a
 copies the first lines and the trap of `scripts/scan.sh`; `scripts/tests/test-syntax.sh` holds
 it to that.
 
+These are heavy: `just check`, `just ci`, `just test`, `just timing`, `just clippy`,
+`just docs`, `just docs-check`, `just smoke`, `just test-scripts-slow`, and any `cargo`
+command that builds or tests. When another agent may be building on the machine, each goes
+through the lock, as in `scripts/heavy.sh check just check`. The scans, `just test-scripts`
+and one script test alone are not heavy.
+
 ## Where agents may work
 
 - **This repo,** in a git worktree: one task, one worktree, one branch. Do not edit files
-  that another task's worktree is changing.
+  that another task's worktree is changing:
+  `gh pr diff <n> --name-only` lists the files an open pull request changes.
 - **The four old repos** (rascal, squint, wafflery, table-manners), read-only, at the commits
   pinned in `docs/sources.toml`.
 - **Owner storage,** which is private and outside every repo, only when the task's plan
   names it. Nothing in it is copied here.
+- **The system temp folder,** for the scratch files of the task in hand and no others: the
+  title and body of a pull request while they are scanned, a test's throwaway repo.
+  Nothing is kept there.
 - **Nowhere else.** Do not read, list or search any other folder on the machine, even one
   that looks related. The clean room depends on it.
 
@@ -70,10 +88,13 @@ Development is trunk-based. After the bootstrap, one task is one branch and one 
 against `main`.
 
 - **Builder:** does one task from the plan in a worktree, on one branch, tests first. Pushes
-  the branch, opens the pull request and hands back its head commit. Never merges, pushes to
-  `main` or tags.
-- **Reviewer:** reads the branch against the spec and the task, and names the head commit it
-  reviewed. Changes nothing. Never merges.
+  the branch, opens the pull request and hands back its head commit. Never merges a pull
+  request or into `main`, never pushes to `main`, never tags. It merges `origin/main` into
+  its own branch when the orchestrator asks, and the new head is reviewed again.
+- **Reviewer:** reads the branch and its pull request against the spec and the task, runs
+  `just check` and the range scan itself, and names the head commit it reviewed. Each
+  finding either blocks the merge or is a follow-up, which the orchestrator records.
+  Changes nothing. Never merges.
 - **Orchestrator:** the session the owner is talking to. Only the orchestrator merges. It
   merges with a merge commit, never a squash and never a rebase merge, at the exact head
   that was reviewed, after CI is green on both runners and both scans pass over
@@ -91,9 +112,9 @@ as plain text. Each names its inputs, its commands and its hand-back format.
 
 | Skill | Who | When |
 |---|---|---|
-| `kickoff` | Builder | Starting any task from the plan: make the worktree, build with tests first, push, open the pull request, wait for CI, hand back the head commit |
+| `kickoff` | Builder | Starting any task from the plan: make the worktree, build with tests first, push, open the pull request, wait for CI, hand back the head commit; and again after a review asks for a change |
 | `port-module` | Builder | A task that brings code from an old repo: on top of `kickoff`, what to port, rewrite or drop, the tests to bring, and how the source is named |
-| `review-merge` | Orchestrator | After the reviewer's verdict: check that the head has not moved, test the merged result, run both scans over `base..head`, merge with a merge commit, confirm it, clean up |
+| `review-merge` | Orchestrator | After the reviewer's verdict: check that it allows the merge and that the head has not moved, test the merged result, run both scans over `base..head`, merge with a merge commit, confirm it, clean up |
 
 The orchestrator does not review its own build: a branch it wrote is reviewed by a reviewer
 that did not write it.
@@ -112,7 +133,19 @@ each subagent file to the keys `name`, `description` and `tools`, with its exact
 tools, and each skill to one `SKILL.md` whose frontmatter is `name` and `description` only: a
 skill grants nothing. It refuses any other file in a folder named `.claude`, at any depth: no
 commands, no hooks, no settings further down. `scripts/worktree.sh` is not on the list, so it
-asks first.
+asks first. So does one crate's tests (`cargo nextest run -p <crate>`), one script test
+(`bash scripts/tests/<name>.sh`), and any allowed command with something in front of it,
+such as an `export` and `&&`: a rule matches the exact text. That is why
+`WHIZBANG_WORDLIST` is set where it lasts ("On a fresh clone"), not at the front of each
+command. The local settings file that may hold it is never committed.
+
+The tests on this file, the subagent files and the skills are a tripwire, not a proof. They
+hold some phrases. They also hold to exact lists every line in which one of a set of words
+and command forms appears: those for a forced push, for the git hooks and ways past them,
+for the owner's private list and its variable, and for merging through the API. The set
+is at the top of that part of `scripts/tests/test-skills.sh`. A sentence on those
+subjects that uses none of the words, and any sentence on another subject, passes
+unseen. Every change to these files is read in full by the reviewer and by the orchestrator.
 
 ## When documents disagree
 
@@ -175,7 +208,7 @@ names, and the title and body of a pull request.
 - **The clean-room scan** reports counts, never text. When it fails, find the cause by
   reading your own change, not by opening the list.
 - **Pull requests.** No scan sees a title or a body. Read them against these rules yourself
-  before you open or edit one.
+  before you open or edit one. The builder, the reviewer and the orchestrator each do.
 - **A new place that receives data** (a service, a host, a provider) is the owner's
   decision.
 
@@ -192,7 +225,10 @@ it. There is no other backlog: no task files, no notes kept elsewhere.
 ## Definition of done
 
 The test tiers that apply to the change pass, with their output attached. The spec, the
-reference and the carry-over list are updated where the change affects them. Anything
+reference and the carry-over list are updated where the change affects them. The builder
+ticks, in its branch, each box of the plan that the branch makes true once it merges; a box
+about something that happens after the pull request opens
+is ticked by a later pull request. Anything
 deferred is on the carry-over list with a milestone. A tool is not done without its record
 (`SPEC.md` section 8). A decision that is costly to reverse has its ADR (`docs/adr/`).
 
@@ -213,8 +249,18 @@ deferred is on the carry-over list with a milestone. A tool is not done without 
   exits 0, so check a changed script with `bash -n`.
 - **`pipefail` and `grep`.** A `grep` that finds nothing exits 1 and fails the pipeline.
   Where no match is a valid answer, end that pipeline with `|| true`.
+- **`pipefail` and `grep -q`.** After a pipe, `grep -q` stops at its first match; the
+  command before it can be killed while still writing, and the pipeline then fails though
+  there was a match. It happened on the Linux runner only. Send the output to `/dev/null`
+  instead.
 - **The pre-push hook fails closed.** Without `WHIZBANG_WORDLIST` set in the shell you push
   from, the push is refused. That is intended; set the variable, do not bypass the hook.
+- **A refused push.** The secrets scan names what it found as `<commit>:<path>:<line>`;
+  the clean-room scan prints a count and names nothing. The commits that hold the material
+  come off the branch before the next push: those the secrets scan named, or, after a
+  clean-room refusal, every commit not yet on origin. They stay in the local repository
+  until git collects them and are never brought back. A real key is reported to the owner
+  at once and rotated. `kickoff` step 9 has the commands.
 - **A version bump needs `just docs`.** The description carries the crate version, so the
   committed reference goes stale and `just check` fails until it is regenerated.
 - **CI cannot run the clean-room scan,** because the word list never leaves the owner's

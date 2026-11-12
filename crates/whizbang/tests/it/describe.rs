@@ -21,13 +21,23 @@ fn indented_description() -> String {
     )
 }
 
+/// The one-line form, byte for byte: the same fields in the same order, with no space
+/// between them, and one newline at the end.
+fn compact_description() -> String {
+    format!(
+        "{{\"description_version\":1,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[]}}\n",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
 #[test]
 fn describe_json_is_one_line_with_one_newline_at_the_end() {
     let (ok, text) = whizbang(&["describe", "--json"]);
     assert!(ok);
     assert_eq!(text.matches('\n').count(), 1, "{text}");
     assert!(text.ends_with("}\n"), "{text}");
-    assert!(!text.contains(": "), "{text}");
+    // Not "holds no colon and space": a purpose may hold one.
+    assert_eq!(text, compact_description());
 }
 
 #[test]

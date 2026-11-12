@@ -230,6 +230,41 @@ expect_fail "add a slug that is a branch on origin" "origin already has a branch
 unchanged "$before" "add a name that is taken"
 git -C "$repo" tag -d tagged >/dev/null
 
+# A tag that only origin has: the repo has never fetched it, so origin is asked.
+git -C "$w/origin.git" tag far-tag refs/heads/main
+if git -C "$repo" show-ref --verify --quiet refs/tags/far-tag; then fail "the repo has no local tag far-tag"; fi
+before=$(state)
+expect_fail "add a slug that is a tag on origin" "origin already has a tag named far-tag" wt add far-tag
+unchanged "$before" "add a slug that is a tag on origin"
+git -C "$w/origin.git" tag -d far-tag >/dev/null
+# The same for an annotated tag, which origin lists twice.
+git -C "$w/origin.git" -c user.name="A Tester" -c user.email="tester@example.com" tag -a -m "a tag" far-note refs/heads/main
+expect_fail "add a slug that is an annotated tag on origin" "origin already has a tag named far-note" wt add far-note
+unchanged "$before" "add a slug that is an annotated tag on origin"
+git -C "$w/origin.git" tag -d far-note >/dev/null
+
+# origin answers the fetch but not the question: that is a refusal, never "not found".
+# Git's exit of 2 alone means "not found"; every other failure is tried on its own.
+mkdir "$tmp/no-answer"
+cat >"$tmp/no-answer/template" <<'SH'
+#!/bin/sh
+case " $* " in
+  *" ls-remote "*) echo "$0 $*" >>"$ASKED"; echo "fatal: could not read from remote repository" >&2; exit CODE ;;
+esac
+exec "$REAL_GIT" "$@"
+SH
+for code in 128 1 3; do
+  sed "s/exit CODE/exit $code/" "$tmp/no-answer/template" >"$tmp/no-answer/git"
+  chmod +x "$tmp/no-answer/git"
+  grep -q -x -F "  *\" ls-remote \"*) echo \"\$0 \$*\" >>\"\$ASKED\"; echo \"fatal: could not read from remote repository\" >&2; exit $code ;;" "$tmp/no-answer/git" ||
+    fail "the stand-in for git does not exit $code"
+  : >"$tmp/asked"
+  expect_fail "add when origin cannot be asked (exit $code)" "cannot ask origin for its branches and tags; nothing was created" \
+    env PATH="$tmp/no-answer:$PATH" REAL_GIT="$(command -v git)" ASKED="$tmp/asked" bash -c 'cd "$1" && scripts/worktree.sh add s12' - "$repo"
+  [ -s "$tmp/asked" ] || fail "add when origin cannot be asked (exit $code): the stand-in was not asked"
+  unchanged "$before" "add when origin cannot be asked (exit $code)"
+done
+
 # --- Git's own variables: each would make git act on another repo ------------------------
 
 git -C "$other" branch -q victim
@@ -324,6 +359,13 @@ unchanged "$before" "remove a worktree that holds a .env"
 rm "$w/whizbang-s11/.env"
 expect_fail "remove a worktree that holds a .env.local" "move or delete that file yourself" wt remove s11
 rm "$w/whizbang-s11/sub/.env.local"
+# In another letter case: where the file system ignores case, git ignores it as it does
+# a .env, and it may hold the same keys.
+echo "KEY=a-secret-value" >"$w/whizbang-s11/sub/.Env.Local"
+expect_fail "remove a worktree that holds a .Env.Local" "move or delete that file yourself" wt remove s11
+grep -q -x -F "worktree:   sub/.Env.Local" "$tmp/out" || fail "remove: names the .Env.Local"
+[ -f "$w/whizbang-s11/sub/.Env.Local" ] || fail "remove: the .Env.Local is still there"
+rm "$w/whizbang-s11/sub/.Env.Local"
 expect_pass "remove a worktree that holds only build output" wt remove s11
 grep -q -F "with what git ignores there" "$tmp/out" || fail "remove: says that ignored files went too"
 [ ! -e "$w/whizbang-s11" ] || fail "remove: the worktree and its build output are gone"

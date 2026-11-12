@@ -13,15 +13,15 @@
 # lead to another folder.
 #
 # `add` refuses when the hooks are not installed (`just setup`); when the folder is already
-# there; when the slug is `head`, or is already a local branch, a tag, or a branch on
-# origin. It leaves nothing behind when it refuses or fails. The new branch follows no
-# upstream: push it by name.
+# there; when the slug is `head`, or is already a local branch, a tag, or a branch or a
+# tag on origin; and when origin cannot be asked. It leaves nothing behind when it refuses
+# or fails. The new branch follows no upstream: push it by name.
 #
 # `remove` has no way to force it. It refuses, and removes nothing, when the branch is not
 # merged into a freshly fetched origin/main, when the branch is checked out anywhere but
 # its own worktree, when it is run from inside that worktree, when the worktree holds
-# changes or files that git does not ignore, or when it holds a `.env` file (which git
-# ignores, and which may be the only copy of its keys). Everything else that git ignores
+# changes or files that git does not ignore, or when it holds a `.env` file, in any letter
+# case (which git ignores, and which may be the only copy of its keys). Everything else that git ignores
 # there is deleted with the worktree: build output such as `target/`.
 #
 # Neither follows a symbolic link: a link where the worktree's folder should be is refused.
@@ -118,12 +118,19 @@ case "$command" in
     fi
     fetch_main
     # origin is asked, not the last fetch: 0 is found, 2 is not found, anything else failed.
+    # A tag of that name on origin counts too: a later fetch would bring it, and the name
+    # would then mean two things.
     status=0
-    git -C "$main" ls-remote --exit-code --heads origin "refs/heads/$slug" >/dev/null 2>&1 || status=$?
+    found=$(git -C "$main" ls-remote --exit-code origin "refs/heads/$slug" "refs/tags/$slug" 2>/dev/null) || status=$?
     case "$status" in
-      0) die "origin already has a branch named $slug; nothing was created" ;;
+      0)
+        case "$found" in
+          *"refs/heads/$slug"*) die "origin already has a branch named $slug; nothing was created" ;;
+        esac
+        die "origin already has a tag named $slug, so a branch of that name would be ambiguous; nothing was created"
+        ;;
       2) ;;
-      *) die "cannot ask origin for its branches; nothing was created" ;;
+      *) die "cannot ask origin for its branches and tags; nothing was created" ;;
     esac
 
     if ! git -C "$main" worktree add --quiet --no-track -b "$slug" -- "$path" refs/remotes/origin/main; then
@@ -182,7 +189,7 @@ case "$command" in
       esac
       # git removes ignored files without a word. A .env is ignored, and may be the only
       # copy of its keys: it is named, never read.
-      kept=$(git -C "$path" ls-files --others | grep -E '(^|/)\.env[^/]*$' | head -n 5 || true)
+      kept=$(git -C "$path" ls-files --others | grep -i -E '(^|/)\.env[^/]*$' | head -n 5 || true)
       if [ -n "$kept" ]; then
         echo "worktree: $path holds:" >&2
         printf '%s\n' "$kept" | sed 's/^/worktree:   /' >&2
