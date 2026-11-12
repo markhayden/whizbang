@@ -3,9 +3,12 @@
 //! identities of the six types, and the bytes of three files. A change to any of them is a
 //! change to the record, and a new version of the kind.
 
-use whizbang_core::artifact::{Artifact, Image, ImageRole, Location, Mask, Origin, Shape, Step};
+use whizbang_core::artifact::{
+    Artifact, Derivation, Image, ImageRole, Line, Location, Mask, Origin, Shape, Source, Step,
+    UseCase,
+};
 use whizbang_core::identity::{
-    Binding, Destination, Digest, Direction, Mapping, Projection, Topology,
+    Binding, Destination, Digest, Direction, Mapping, Point, Projection, Space, Topology,
 };
 
 use super::support::*;
@@ -112,7 +115,9 @@ fn the_identity_of_each_type_is_the_one_the_record_gives() {
         ),
         (
             "that mask, rebound onto a composite",
-            full.rebind(&composite).unwrap().into(),
+            full.rebind(&Derivation::stated(composite).unwrap())
+                .unwrap()
+                .into(),
             "facab84ab7790740f0c0705525a93d9bc0ef5e3168881c688de69fe4fd14b7b0",
         ),
         (
@@ -162,4 +167,165 @@ fn the_bytes_of_a_file_are_the_ones_the_record_gives() {
         Digest::of_bytes(&bytes).hex(),
         "4d3f29e48c3c8e0a1105f74b6a585134e26087794b591da87bc1e9717afd939e"
     );
+}
+
+#[test]
+fn every_shape_has_the_number_the_record_gives() {
+    // One location of each kind of shape, 0 to 6, and both ways to state a line. A kind
+    // given another number, or two that swap theirs, changes one of these.
+    let photo = on("photo");
+    let panorama = Binding::root(picture("panorama"), Space::panorama(400, 200).unwrap());
+    let path = vec![Point::new(1.0, 1.0), Point::new(7.5, 5.0)];
+    let cases: Vec<(&str, Binding, Shape, &str)> = vec![
+        (
+            "0, a box",
+            photo.clone(),
+            Shape::Box {
+                left: 1.0,
+                top: 0.5,
+                right: 6.25,
+                bottom: 5.0,
+            },
+            "78e39f0209000dd7fc09ef67a3e0de77c0e3fa8854e41b31a1d3d843a587487b",
+        ),
+        (
+            "1, a polygon",
+            photo.clone(),
+            Shape::Polygon {
+                points: vec![
+                    Point::new(1.0, 1.0),
+                    Point::new(6.0, 1.5),
+                    Point::new(3.0, 5.0),
+                ],
+            },
+            "b779213bb9eb0048c949a4777f817f07fe18fe98d080d46106a78b810dafd9bb",
+        ),
+        (
+            "2, a view",
+            panorama,
+            Shape::View {
+                yaw: -30.0,
+                pitch: 12.5,
+                fov: 60.0,
+            },
+            "d238069c651186c9e5af95974238cc350bb801517f9a79da0c5377f172aa3a66",
+        ),
+        (
+            "3, the whole image",
+            photo.clone(),
+            Shape::WholeImage,
+            "a22f8cddab19df3bd8a46e5ca6ce036ae3bf93fc26c64a5d475624fb351ae1a9",
+        ),
+        (
+            "4, absent",
+            photo.clone(),
+            Shape::Absent,
+            "27c43afd2890f2d4c4a75492623c3d0f6eadf4d0a690951bc7aee910e425a230",
+        ),
+        (
+            "5, a line that is a column",
+            photo.clone(),
+            Shape::Line {
+                line: Line::Column(4.0),
+                width: 3.0,
+            },
+            "e9b0aebddbb5826b0318481570a48bac922e8376bebae28de0db3349951caeab",
+        ),
+        (
+            "5, a line that is a path",
+            photo.clone(),
+            Shape::Line {
+                line: Line::Path(path.clone()),
+                width: 2.0,
+            },
+            "19f6da89972444f7c47765e3c5acc8dd32dfe469a5522cd0c51d625246f781e4",
+        ),
+        (
+            "6, a stroke",
+            photo,
+            Shape::Stroke { path, radius: 0.5 },
+            "b428e68b604231b2cbb44e5b2c1a63d383115f0ce05905fb290e3d9a7162a990",
+        ),
+    ];
+    for (what, binding, shape, expected) in cases {
+        let location = Location::new(binding, shape, made_by("find")).unwrap();
+        assert_eq!(location.id().0.hex(), expected, "{what}");
+        let read = Location::from_bytes(&location.to_bytes(), &limits()).unwrap();
+        assert_eq!(read, location, "{what}");
+    }
+}
+
+#[test]
+fn every_use_of_a_mask_has_the_number_the_record_gives() {
+    // The same planes on the same image, made for each of the five uses, 0 to 4.
+    let cases = [
+        (
+            UseCase::Seam,
+            "7c824f5454c366dca4333737ad57c49ff00fecef723ba6b05a6b31f781286cb1",
+        ),
+        (
+            UseCase::Remove,
+            "3440f92363df609296e5f8782c7ba3b2911424eec6dc7caef3542a61a804b282",
+        ),
+        (
+            UseCase::Repair,
+            "5318d8a92818329cabab65b7da2c1b95ee8be410b883402ce174e8f2a1d0476a",
+        ),
+        (
+            UseCase::Protect,
+            "cde86e1bacd601e40ddfeb0cebad93cd77e70001f6dcc08016300b4d721af0fb",
+        ),
+        (
+            UseCase::Custom,
+            "8a87ba2e2b2cafa64e8074079f899eac38c73adc560a992e3c88b56e934af793",
+        ),
+    ];
+    for (use_case, expected) in cases {
+        let mask = Mask::from_core(
+            on("photo"),
+            use_case,
+            rect(2, 1, 5, 4),
+            Source::default(),
+            made_by("rect"),
+        )
+        .unwrap();
+        assert_eq!(mask.id().0.hex(), expected, "{use_case:?}");
+        let read = Mask::from_bytes(&mask.to_bytes(), &limits()).unwrap();
+        assert_eq!(read.use_case(), use_case);
+    }
+}
+
+#[test]
+fn a_run_longer_than_65535_samples_is_one_run() {
+    // A flat plane of 300 by 300: 90,000 samples of one value. A run's length is four
+    // bytes, so each plane is one run, and the whole file is 340 bytes.
+    let large = Binding::root(picture("large"), Space::flat(300, 300).unwrap());
+    let mask = Mask::from_core(
+        large,
+        UseCase::Custom,
+        vec![255; 90_000],
+        Source::default(),
+        made_by("flood"),
+    )
+    .unwrap();
+    assert_eq!(
+        mask.id().0.hex(),
+        "cec516fa99ee7ff0c8f1e35690689fa1528bbed78e7602f155c166eacb556d65"
+    );
+    let bytes = mask.to_bytes();
+    assert_eq!(bytes.len(), 340);
+    assert_eq!(
+        Digest::of_bytes(&bytes).hex(),
+        "7f1d6e454db01a71604867c6cace09911677437e9fd567571341d119386e4717"
+    );
+    // The core: `p`, 90,000 samples, one run, of 255, 90,000 long (0x00015f90).
+    let plane = [
+        &b"p"[..],
+        &90_000u64.to_be_bytes(),
+        &1u64.to_be_bytes(),
+        &[255, 0x00, 0x01, 0x5f, 0x90],
+    ]
+    .concat();
+    assert!(bytes.windows(plane.len()).any(|window| window == plane));
+    assert_eq!(Mask::from_bytes(&bytes, &limits()).unwrap(), mask);
 }

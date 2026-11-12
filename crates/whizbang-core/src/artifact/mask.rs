@@ -2,7 +2,8 @@
 //! done to the pixels under them, and what they were made from. A mask belongs to a
 //! binding, and its planes are the size of that binding's source image.
 //!
-//! - **Core** is binary: 255 where a filler may paint, with a paste weight of 1.
+//! - **Core** is binary: 255 where a filler may paint, with a paste weight of 1. It is 0
+//!   under protect.
 //! - **Blend** holds the weights outside the core as 8-bit fractions. It is 0 inside the
 //!   core and under protect.
 //! - **Protect** is binary: 255 where nothing may change.
@@ -10,14 +11,12 @@
 //! One rule gives the weight of a pixel, [`effective_weight`], and everything that renders,
 //! refines or pastes through a mask uses it.
 
-use crate::identity::{
-    Binding, DecodeLimits, Destination, Digest, Fields, Mapping, PixelDigest, Space,
-};
+use crate::identity::{Binding, DecodeLimits, Digest, Fields, PixelDigest, Space};
 
 use super::wire::{Reader, Writer};
 use super::{
-    ArtifactError, ArtifactId, ArtifactType, BandProfile, Origin, Record, Result, Series, Step,
-    identity_of, read_inside,
+    ArtifactError, ArtifactId, ArtifactType, BandProfile, Derivation, Origin, Record, Result,
+    Series, Step, identity_of, read_inside,
 };
 
 /// What a mask was made for.
@@ -169,7 +168,7 @@ impl Mask {
         self.use_case
     }
 
-    /// The core plane, one byte a pixel, row by row: 0 or 255.
+    /// The core plane, one byte a pixel, row by row: 0 or 255, and 0 under protect.
     pub fn core(&self) -> &[u8] {
         &self.core
     }
@@ -200,11 +199,19 @@ impl Mask {
         &self.origin
     }
 
-    /// The effective weight of the pixel in column `x` of row `y`, which are inside the
-    /// image.
-    pub fn weight(&self, x: u32, y: u32) -> f32 {
-        let at = y as usize * self.space().width() as usize + x as usize;
-        effective_weight(self.core[at], self.blend[at], self.protect[at])
+    /// The effective weight of the pixel in column `x` of row `y`, or nothing when the
+    /// image has no such pixel.
+    pub fn weight(&self, x: u32, y: u32) -> Option<f32> {
+        let space = self.space();
+        if x >= space.width() || y >= space.height() {
+            return None;
+        }
+        let at = y as usize * space.width() as usize + x as usize;
+        Some(effective_weight(
+            self.core[at],
+            self.blend[at],
+            self.protect[at],
+        ))
     }
 
     // --- changes ------------------------------------------------------------------------
@@ -221,7 +228,9 @@ impl Mask {
     }
 
     /// Replaces the core. The blend is cleared, and the profile and every prescription are
-    /// removed: they were drawn from the old core. Protect is kept, and still wins.
+    /// removed: they were drawn from the old core. Protect is kept, and still wins: the
+    /// new core is cleared under it, so that two masks that weigh every pixel alike have
+    /// the same planes.
     pub fn replace_core(&mut self, core: Vec<u8>) -> Result<Refinement> {
         self.sized(&core, "core")?;
         let report = Refinement {
@@ -229,6 +238,11 @@ impl Mask {
             profile_cleared: self.profile.is_some() || !self.prescriptions.is_empty(),
         };
         self.core = binary(core);
+        for (sample, protect) in self.core.iter_mut().zip(&self.protect) {
+            if *protect != 0 {
+                *sample = 0;
+            }
+        }
         self.blend = vec![0; self.core.len()];
         self.profile = None;
         self.prescriptions.clear();
@@ -315,49 +329,34 @@ impl Mask {
     }
 
     /// The same mask on an image derived from its own, such as the composite a fill made
-    /// of it. `derivation` is the binding that places the new image onto the mask's image:
-    /// its destination is the mask's image, both its spaces are the mask's, and its
-    /// mapping is the identity, so every pixel of the planes keeps its place. Anything
-    /// else is refused: an image in its own space, an image placed onto another image, a
-    /// crop or any mapping that moves a pixel.
+    /// of it. A [`Derivation`] places the new image onto the image it was made from, by
+    /// the identity; here that image must be the mask's, in the mask's space, so every
+    /// pixel of the planes keeps its place. Anything else is refused: an image derived
+    /// from some other image, and an image in another space of as many samples.
     ///
-    /// The rebound mask belongs to `derivation`, so it names both images; it has a new
-    /// identity, the same planes, and one more step in its origin.
-    pub fn rebind(&self, derivation: &Binding) -> Result<Mask> {
+    /// This checks the statement and trusts that it is true (ADR 0002): it does not see
+    /// either picture.
+    ///
+    /// The rebound mask belongs to the derivation's binding, so it names both images; it
+    /// has a new identity, the same planes, and one more step in its origin, whose inputs
+    /// are this mask and that binding.
+    pub fn rebind(&self, derivation: &Derivation) -> Result<Mask> {
         let refuse = |why: String| Err(ArtifactError::Rebind(why));
-        match derivation.destination() {
-            Destination::Image(image) if image == self.image() => {}
-            Destination::Image(image) => {
-                return refuse(format!(
-                    "the binding places its image onto {image}, and the mask belongs to {}",
-                    self.image()
-                ));
-            }
-            Destination::Root => {
-                return refuse(format!(
-                    "the binding places its image onto nothing: it does not show that \
-                     image to be derived from the mask's image {}",
-                    self.image()
-                ));
-            }
-        }
-        if *derivation.mapping() != Mapping::Identity {
-            return refuse(
-                "a rebind keeps every pixel in its place: the binding's mapping must be the \
-                 identity"
-                    .to_owned(),
-            );
-        }
-        if derivation.source_space() != self.space()
-            || derivation.destination_space() != self.space()
-        {
+        if derivation.parent() != self.image() {
             return refuse(format!(
-                "the binding's spaces are not the mask's {:?}",
-                self.space()
+                "the derivation places its image onto {}, and the mask belongs to {}",
+                derivation.parent(),
+                self.image()
             ));
         }
-        if derivation.source() == self.image() {
-            return refuse("the binding's image is the mask's own image".to_owned());
+        let derivation = derivation.binding();
+        // The identity has two equal spaces (ADR 0001), so this holds both.
+        if derivation.source_space() != self.space() {
+            return refuse(format!(
+                "the derivation's spaces are {:?}, not the mask's {:?}",
+                derivation.source_space(),
+                self.space()
+            ));
         }
         let mut mask = self.clone();
         mask.binding = derivation.clone();
@@ -372,8 +371,8 @@ impl Mask {
         }
         mask.origin = mask.origin.then(
             Step::new("rebind", "1")
-                .argument("binding", &derivation.id().to_string())
-                .input("mask", self.id.0),
+                .input("mask", self.id.0)
+                .input("derivation", derivation.id().0),
         )?;
         mask.check()?;
         mask.id = identity_of(&mask);
@@ -473,6 +472,12 @@ impl Mask {
             if blend != 0 && protect != 0 {
                 return Err(invalid(format!(
                     "the blend is zero under protect, and holds {blend} {}",
+                    place()
+                )));
+            }
+            if core != 0 && protect != 0 {
+                return Err(invalid(format!(
+                    "the core is zero under protect, and holds {core} {}",
                     place()
                 )));
             }
