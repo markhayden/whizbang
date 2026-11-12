@@ -35,7 +35,10 @@ pub use prepare::{
     Backends, CallError, InputFault, Missing, ModelIdentity, Need, NoBackends, PreparedCall,
     Readiness, Refusal, ResolvedInput, StoreFailure, Unavailable,
 };
-pub use record::{RUN_RECORD, RUN_RECORD_SCHEMA, RecordError, RunRecord};
+pub use record::{
+    DIAGNOSTIC_NAME_LIMIT, RECORD_MAX_BYTES, RUN_RECORD, RUN_RECORD_SCHEMA, RecordError, RunRecord,
+    is_diagnostic_name,
+};
 pub use redact::{REDACTED, SECRET_MIN_BYTES, SecretRefused, Secrets};
 pub use registry::{Action, RegistrationError, Registry};
 pub use run::{Committed, Finished, Outcome, RUN_ID_LIMIT, RunId};

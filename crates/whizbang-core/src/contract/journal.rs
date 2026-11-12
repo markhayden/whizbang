@@ -40,8 +40,11 @@ pub fn read_journal(bytes: &[u8]) -> Result<Vec<JournalLine>, String> {
     }
     let mut lines = Vec::new();
     for (index, raw) in text.lines().enumerate() {
-        let line: JournalLine = serde_json::from_str(raw)
-            .map_err(|error| format!("line {} is not an event: {error}", index + 1))?;
+        let line: JournalLine = serde_json::from_str(raw).map_err(|error| {
+            // The reason can quote the line: it is shown escaped.
+            let why = error.to_string();
+            format!("line {} is not an event: {}", index + 1, why.escape_debug())
+        })?;
         if line.seq != index as u64 {
             return Err(format!(
                 "line {} is event {}, out of its place",

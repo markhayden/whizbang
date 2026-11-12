@@ -102,17 +102,31 @@ object in the order this record gives them, strings escaped as `serde_json` esca
 a number in the shortest form that reads back to the same double, with a point or an
 exponent, a whole number without one. One newline follows.
 
-Reading refuses:
+Reading refuses, in this order:
 
+- more than 4 MiB (4,194,304 bytes, `RECORD_MAX_BYTES`): a record is read whole and
+  written again to be compared, so what is read is bounded first. From a store, the
+  entry's length is looked at and the content is not read at all;
 - a record of another version, as another version: the `record` field is looked at first
-  and by itself, and a store written by other code is not migrated;
-- anything that is not of the shape: a field that is not known, a field left out, a
-  digest, a type or a status that is none, a value under two kinds or under none;
-- a record of the right shape that says what no run can: an `error` without the status
-  `error` or the status without it; the same for `invalid`; an output of a run that did not
-  complete; an end before the start; diagnostics out of the order of their names, or one
-  name twice;
+  and by itself, and a store written by other code is not migrated. What a record says
+  its version is can be anything, and the refusal keeps its first 64 characters;
+- anything that is not of the shape: a field that is not known; a field left out,
+  `request`, `parent`, `error` and `invalid` among them, which may be null and may not be
+  absent; a digest, a type or a status that is none; a value under two kinds or under
+  none; a number under zero where a time or a length goes;
+- a record of the right shape that says what no run can: an empty run id, version, action
+  name, argument name or port; an `error` without the status `error` or the status
+  without it; the same for `invalid`; an output of a run that did not complete; an end
+  before the start; a diagnostic whose name is neither `journal` nor `diagnostics/` and a
+  plain name (a lower-case letter or a digit, then lower-case letters, digits, `_`, `-`
+  or `.`, 64 characters at most), so that `record` itself is not one; diagnostics out of
+  the order of their names, or one name twice;
 - bytes that are not the bytes this code writes for the record they hold.
+
+A refusal can quote what was read: an unknown field's name, a version. What it quotes is
+shown escaped, so nothing stored reaches a terminal as a control character through a
+refusal. A failure of the store under a record is said as ADR 0004 says a store's failure:
+no path, as text or as `{:?}`, and the store's own error by name.
 
 The last rule is ADR 0002's for an artifact file, and for the same reason: one record has
 one form, so two stores that hold the same record hold the same bytes, and the digest the
@@ -127,17 +141,37 @@ name.
 
 `crates/whizbang-core/schemas/run-1.json` is the JSON Schema (2020-12) of a `run/1`
 record, written by hand, and the core carries it as text (`RUN_RECORD_SCHEMA`). It and the
-types are two statements of one shape. The tests hold them together: hand-written records
-are read by the types and validated against the schema, and each change that the types
-refuse is refused by the schema where the schema can say it.
+types are two statements of one shape, and the tests hold them together in three ways:
 
-The schema says less than the reading does. It does not hold a digest to its hex digits
-(only to its length), the consistency rules of the last section, the order of
-diagnostics, or the one way of writing.
+- Records written by hand, and records made from a prepared call and an outcome, are read
+  by the types and validated against the schema.
+- For every kind of thing the shape refuses (an unknown field at the top and in each
+  group, each field left out, a digest of the wrong length, a type or status that is
+  none, a value under two kinds or none, a number under zero, a name that is empty, each
+  list that must be empty holding something), one document is made with that one fault,
+  and both the types and the schema must refuse it
+  (`record::what_is_not_a_record_is_refused_by_the_types_and_by_the_schema` and the two
+  tests beside it). A schema that is loosened in one of these places fails a test.
+- What the schema cannot say is listed, and pinned as a document the schema takes and
+  the types refuse (`record::what_the_schema_cannot_say_the_types_still_refuse`).
+
+What the schema cannot say, with the vocabulary it uses (no pattern, no rule across two
+fields):
+
+- that a digest's 64 characters are hex digits: it holds a digest to its length only;
+- the rules across fields: `error` exactly with the status `error`, `invalid` exactly
+  with `invalid`, outputs only of a completed run, the end not before the start;
+- what a diagnostic's name may be, the order of the diagnostics, and that no name is
+  there twice;
+- the one way of writing, and the limit on a record's bytes: both are of the bytes, not
+  of the document.
 
 The validator is the test kit's (`whizbang_testkit::schema`): the keywords this schema
-uses and no others, and a keyword it does not know is an error, so a schema never passes
-for holding less than it says. No schema library is added to the build.
+uses and no others. It reads a schema whole before it holds a document to it, and
+refuses a keyword it does not know, a keyword whose value is not of the kind the keyword
+takes, and a reference that leads back to itself, wherever in the schema they are; so a
+schema never passes for holding less than it says. No schema library is added to the
+build.
 
 ### Redaction
 

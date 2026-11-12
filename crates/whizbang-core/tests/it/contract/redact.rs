@@ -64,6 +64,19 @@ fn a_redacted_json_body_is_still_json() {
     let stored = secrets.redact(&body);
     assert_eq!(stored, r#"{"t":"[redacted]"}"#);
     serde_json::from_str::<serde_json::Value>(&stored).unwrap();
+    // A secret with a slash and a quote, as a writer that leaves the slash alone gives
+    // it, and as one that escapes the slash gives it.
+    let both = "ab/cd\"efgh".to_owned();
+    let secrets = Secrets::new([both.clone()]).unwrap();
+    assert_eq!(serde_json::to_string(&both).unwrap(), r#""ab/cd\"efgh""#);
+    assert_eq!(
+        secrets.redact(r#"{"t":"ab/cd\"efgh"}"#),
+        r#"{"t":"[redacted]"}"#
+    );
+    assert_eq!(
+        secrets.redact(r#"{"t":"ab\/cd\"efgh"}"#),
+        r#"{"t":"[redacted]"}"#
+    );
     // As a map's key, and with a slash that the writer chose to escape.
     let slashed = "abc/defgh/ijk".to_owned();
     let secrets = Secrets::new([slashed.clone(), secret.clone()]).unwrap();
@@ -122,6 +135,11 @@ fn a_secret_that_holds_another_is_replaced_whole() {
     let long = format!("{short}-and-more");
     for secrets in [secrets(&[&short, &long]), secrets(&[&long, &short])] {
         assert_eq!(secrets.redact(&format!("a {long} b")), "a [redacted] b");
+    } // In the middle of the longer one, not at its start: the shorter is found later
+    // and ends sooner, and the stretch still runs to the longer one's end.
+    let around = format!("before-{short}-and-after");
+    for secrets in [secrets(&[&short, &around]), secrets(&[&around, &short])] {
+        assert_eq!(secrets.redact(&format!("a {around} b")), "a [redacted] b");
     }
 }
 

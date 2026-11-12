@@ -179,41 +179,271 @@ fn a_record_of_another_version_is_another_version_not_damage() {
 }
 
 #[test]
-fn what_is_not_a_record_is_refused() {
+fn what_is_not_a_record_is_refused_by_the_types_and_by_the_schema() {
     let malformed = |bytes: &[u8]| {
         let error = RunRecord::from_bytes(bytes).unwrap_err();
         assert!(matches!(error, RecordError::Malformed(_)), "{error}");
     };
     malformed(b"");
     malformed(b"not json\n");
+    // Each change makes a document that is JSON and is not a record: the types refuse
+    // it on reading, and the schema refuses the same document. A change to the schema
+    // that lets one of these through fails here.
+    let both = |what: &str, change: &dyn Fn(&mut Json)| {
+        let bytes = changed(change);
+        let error = RunRecord::from_bytes(&bytes).unwrap_err();
+        assert!(
+            matches!(error, RecordError::Malformed(_)),
+            "{what}: {error}"
+        );
+        let document: Json = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            validate(&schema(), &document).is_err(),
+            "the schema takes a record with {what}"
+        );
+    };
     malformed(b"{}\n");
-    // A field that is not known, at the top and inside a group.
-    malformed(&changed(|document| document["extra"] = json!(1)));
-    malformed(&changed(|document| {
-        document["identity"]["host"] = json!("x")
-    }));
-    // A field left out.
-    malformed(&changed(|document| {
-        document.as_object_mut().unwrap().remove("spend");
-    }));
+    assert!(validate(&schema(), &json!({})).is_err());
+    both("an unknown field at the top", &|d| d["extra"] = json!(1));
+    both("an unknown field in identity", &|d| {
+        d["identity"]["host"] = json!("x")
+    });
+    both("an unknown field in asked", &|d| {
+        d["asked"]["extra"] = json!(1)
+    });
+    both("an unknown field in outcome", &|d| {
+        d["outcome"]["extra"] = json!(1)
+    });
+    both("an unknown field in time", &|d| {
+        d["time"]["extra"] = json!(1)
+    });
+    both("an unknown field in an argument", &|d| {
+        d["asked"]["arguments"][0]["extra"] = json!(1)
+    });
+    both("an unknown field in a diagnostic", &|d| {
+        d["diagnostics"][0]["extra"] = json!(1)
+    });
+    both("an unknown field in an error", &|d| {
+        d["outcome"]["status"] = json!("error");
+        d["outcome"]["error"] = json!({"kind": "k", "message": "m", "extra": 1});
+    });
+    both("an unknown field in an input", &|d| {
+        d["inputs"] = json!([{"port": "image", "type": "image", "extra": 1,
+            "artifact": d["asked"]["config"], "binding": d["asked"]["config"]}]);
+    });
+    both("an unknown field in an output", &|d| {
+        d["outputs"] = json!([{"port": "mask", "type": "mask", "extra": 1,
+            "artifact": d["asked"]["config"]}]);
+    });
+    // A field left out, at the top and in each group.
+    for (group, field) in [
+        ("", "spend"),
+        ("", "record"),
+        ("identity", "run"),
+        ("identity", "request"),
+        ("identity", "parent"),
+        ("identity", "whizbang"),
+        ("asked", "settings"),
+        ("asked", "config"),
+        ("outcome", "error"),
+        ("outcome", "invalid"),
+        ("outcome", "refusals"),
+        ("time", "end_ms"),
+        ("time", "durations"),
+    ] {
+        both(&format!("no {group} {field}"), &|d| {
+            let object = if group.is_empty() { d } else { &mut d[group] };
+            object.as_object_mut().unwrap().remove(field);
+        });
+    }
+    both("a diagnostic without its digest", &|d| {
+        d["diagnostics"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("digest");
+    });
     // A digest that is not one, a type that is none, a status that is none.
-    malformed(&changed(|document| {
-        document["asked"]["config"] = json!("sha256:abc")
-    }));
-    malformed(&changed(|document| {
-        document["inputs"] = json!([{"port": "image", "type": "picture",
-            "artifact": document["asked"]["config"], "binding": document["asked"]["config"]}]);
-    }));
-    malformed(&changed(|document| {
-        document["outcome"]["status"] = json!("refused")
-    }));
+    both("a short digest as the config", &|d| {
+        d["asked"]["config"] = json!("sha256:abc")
+    });
+    both("a long digest in a diagnostic", &|d| {
+        let digest = format!("{}0", d["diagnostics"][0]["digest"].as_str().unwrap());
+        d["diagnostics"][0]["digest"] = json!(digest);
+    });
+    both("a type that is none", &|d| {
+        d["inputs"] = json!([{"port": "image", "type": "picture",
+            "artifact": d["asked"]["config"], "binding": d["asked"]["config"]}]);
+    });
+    both("a fifth status", &|d| {
+        d["outcome"]["status"] = json!("refused")
+    });
     // A value under two kinds, and under none.
-    malformed(&changed(|document| {
-        document["asked"]["arguments"][0]["value"] = json!({"text": "a", "integer": 1});
-    }));
-    malformed(&changed(|document| {
-        document["asked"]["arguments"][0]["value"] = json!({});
-    }));
+    both("a value under two kinds", &|d| {
+        d["asked"]["arguments"][0]["value"] = json!({"text": "a", "integer": 1});
+    });
+    both("a value under no kind", &|d| {
+        d["asked"]["arguments"][0]["value"] = json!({});
+    });
+    both("a value of the wrong type for its kind", &|d| {
+        d["asked"]["arguments"][0]["value"] = json!({"boolean": "yes"});
+    });
+    // A time before the epoch, a length under zero, a request id that is not a text.
+    both("a negative start", &|d| d["time"]["start_ms"] = json!(-1));
+    both("a negative end", &|d| d["time"]["end_ms"] = json!(-1));
+    both("a negative length", &|d| {
+        d["diagnostics"][0]["bytes"] = json!(-1)
+    });
+    both("a request id that is a number", &|d| {
+        d["identity"]["request"] = json!(7)
+    });
+    // Another version is refused by both too, the types as another version.
+    let other = changed(|d| d["record"] = json!("run/2"));
+    assert!(validate(&schema(), &serde_json::from_slice(&other).unwrap()).is_err());
+}
+
+#[test]
+fn a_name_that_the_schema_holds_to_one_character_cannot_be_empty() {
+    // The schema gives these a least length of one; the types hold them to the same.
+    for path in [
+        "/identity/run",
+        "/identity/whizbang",
+        "/asked/action",
+        "/asked/version",
+        "/asked/arguments/0/name",
+    ] {
+        let bytes = changed(|d| *d.pointer_mut(path).unwrap() = json!(""));
+        let error = RunRecord::from_bytes(&bytes).unwrap_err();
+        assert!(
+            matches!(error, RecordError::Inconsistent(_)),
+            "{path}: {error}"
+        );
+        assert!(error.to_string().contains("is empty"), "{error}");
+        let document: Json = serde_json::from_slice(&bytes).unwrap();
+        assert!(validate(&schema(), &document).is_err(), "{path}");
+    }
+    for (list, entry) in [
+        ("inputs", json!({"port": "", "type": "image"})),
+        ("outputs", json!({"port": "", "type": "mask"})),
+    ] {
+        let bytes = changed(|d| {
+            let mut entry = entry.clone();
+            entry["artifact"] = d["asked"]["config"].clone();
+            if list == "inputs" {
+                entry["binding"] = d["asked"]["config"].clone();
+            }
+            d[list] = json!([entry]);
+        });
+        let error = RunRecord::from_bytes(&bytes).unwrap_err();
+        assert!(
+            matches!(error, RecordError::Inconsistent(_)),
+            "{list}: {error}"
+        );
+        let document: Json = serde_json::from_slice(&bytes).unwrap();
+        assert!(validate(&schema(), &document).is_err(), "{list}");
+    }
+}
+
+#[test]
+fn what_the_schema_cannot_say_the_types_still_refuse() {
+    // ADR 0005, "The schema": the cases the schema lets through, because its vocabulary
+    // here has no pattern and no rule across two fields. Each is a document the schema
+    // takes and the types refuse. If the schema learns to refuse one, this test says so.
+    let only_the_types = |what: &str, change: &dyn Fn(&mut Json)| {
+        let bytes = changed(change);
+        // Refused for what it says, not for how `changed` wrote it.
+        let error = RunRecord::from_bytes(&bytes).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                RecordError::Malformed(_) | RecordError::Inconsistent(_)
+            ),
+            "the types take {what}: {error}"
+        );
+        let document: Json = serde_json::from_slice(&bytes).unwrap();
+        validate(&schema(), &document)
+            .unwrap_or_else(|error| panic!("the schema now refuses {what}: {error}"));
+    };
+    // A digest of the right length that is not hex digits.
+    only_the_types("a digest that is not hex", &|d| {
+        d["asked"]["config"] = json!(format!("sha256:{}", "z".repeat(64)));
+    });
+    // What no run can say: rules across two fields.
+    only_the_types("an error without the status", &|d| {
+        d["outcome"]["error"] = json!({"kind": "k", "message": "m"});
+    });
+    only_the_types("the status invalid without a reason", &|d| {
+        d["outcome"]["status"] = json!("invalid");
+    });
+    only_the_types("an output of a cancelled run", &|d| {
+        d["outcome"]["status"] = json!("cancelled");
+        d["outputs"] = json!([{"port": "mask", "type": "mask",
+            "artifact": d["asked"]["config"]}]);
+    });
+    only_the_types("an end before the start", &|d| {
+        d["time"]["end_ms"] = json!(999)
+    });
+    // The diagnostics: their order, a name twice, and what a name may be.
+    only_the_types("diagnostics out of order", &|d| {
+        let (first, second) = (d["diagnostics"][0].clone(), d["diagnostics"][1].clone());
+        d["diagnostics"] = json!([second, first]);
+    });
+    only_the_types("a diagnostic named record", &|d| {
+        d["diagnostics"][1]["name"] = json!("record");
+    });
+    only_the_types(
+        "a diagnostic with a name of its own outside diagnostics/",
+        &|d| {
+            d["diagnostics"][1]["name"] = json!("notes.txt");
+        },
+    );
+    only_the_types("a diagnostic whose name is not plain", &|d| {
+        d["diagnostics"][0]["name"] = json!("diagnostics/../record");
+    });
+    // The one way of writing: `changed` writes the same record with its fields in
+    // another order.
+    let rewritten = changed(|_| {});
+    assert_eq!(
+        RunRecord::from_bytes(&rewritten).unwrap_err(),
+        RecordError::NotCanonical
+    );
+    validate(&schema(), &serde_json::from_slice(&rewritten).unwrap()).unwrap();
+    // And the size, which is of the bytes and not of the document.
+    let mut large = completed().into_bytes();
+    large.truncate(large.len() - 1);
+    large.extend(std::iter::repeat_n(b' ', record::RECORD_MAX_BYTES as usize));
+    large.push(b'\n');
+    assert_eq!(
+        RunRecord::from_bytes(&large).unwrap_err(),
+        RecordError::TooLarge {
+            bytes: large.len() as u64
+        }
+    );
+    validate(&schema(), &serde_json::from_slice(&large).unwrap()).unwrap();
+}
+
+#[test]
+fn what_a_refusal_quotes_of_stored_bytes_is_escaped_and_cut() {
+    // A field's name with an escape sequence in it, which the reader's own sentence
+    // quotes; and a version five thousand characters long.
+    let bytes = b"{\"record\":\"run/1\",\"\\u001b[2J\\u0007\":1}\n";
+    let error = RunRecord::from_bytes(bytes).unwrap_err();
+    assert!(matches!(error, RecordError::Malformed(_)), "{error:?}");
+    let said = error.to_string();
+    assert!(said.contains("unknown field"), "{said}");
+    assert!(!said.chars().any(char::is_control), "{said:?}");
+    assert!(!format!("{error:?}").chars().any(char::is_control));
+    let long = format!("{{\"record\":\"run/{}\\u001b\"}}\n", "9".repeat(5000));
+    let error = RunRecord::from_bytes(long.as_bytes()).unwrap_err();
+    let RecordError::OtherVersion { found } = &error else {
+        panic!("{error:?}");
+    };
+    assert_eq!(found.chars().count(), 64);
+    let said = error.to_string();
+    assert!(said.len() < 200, "{said}");
+    assert!(!said.chars().any(char::is_control), "{said:?}");
+    // A journal's refusal quotes a line's field the same way.
+    let error = read_journal(b"{\"seq\":0,\"at_ms\":5,\"\\u001b[2J\":1}\n").unwrap_err();
+    assert!(!error.chars().any(char::is_control), "{error:?}");
 }
 
 #[test]
@@ -695,12 +925,72 @@ fn a_stored_record_is_read_by_whatever_id_the_store_holds_it_under() {
     ));
     let failed = record::stored(&generation, "1000-1", |entry| store.read_output(entry));
     assert!(matches!(failed, Some(Err(StoredRecordError::Store(_)))));
-    // What a refusal says of a stored record shows nothing as it was written.
+    // The id of another run that a record names is shown escaped.
     let said = StoredRecordError::OtherRun {
         names: "a\u{1b}[2J".to_owned(),
     }
     .to_string();
     assert!(!said.contains('\u{1b}'), "{said:?}");
+}
+
+#[test]
+fn a_store_that_fails_under_a_record_is_said_without_a_path() {
+    // The record's content goes missing under the store. What comes back names the
+    // content by its digest and says nothing of where the store is, as its text or as
+    // `{:?}`; whoever runs the store asks for the whole of it by name.
+    let dir = Scratch::new("record-lost");
+    let root = dir.path().join("store");
+    let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let mut publication = store.begin().unwrap();
+    let digest = publication
+        .put_in(
+            "1000-1",
+            record::RECORD_NAME,
+            record::RECORD_KIND,
+            completed().as_bytes(),
+        )
+        .unwrap();
+    publication.publish().unwrap();
+    std::fs::remove_file(root.join("objects").join(digest.hex())).unwrap();
+    let generation = store.snapshot().unwrap();
+    let Some(Err(error)) = record::stored(&generation, "1000-1", |entry| store.read(entry)) else {
+        panic!("a record whose content is gone was read");
+    };
+    let StoredRecordError::Store(failure) = &error else {
+        panic!("{error:?}");
+    };
+    for said in [error.to_string(), format!("{error:?}")] {
+        assert!(said.contains(&digest.hex()), "{said}");
+        assert!(!said.contains(root.to_str().unwrap()), "{said}");
+        assert!(!said.contains(std::path::MAIN_SEPARATOR), "{said}");
+    }
+    assert!(failure.cause().to_string().contains(root.to_str().unwrap()));
+}
+
+#[test]
+fn a_record_over_the_limit_is_refused_before_it_is_read() {
+    // The store's entry says how long the content is. A record over four mebibytes is
+    // refused on that, and the content is never read.
+    assert_eq!(record::RECORD_MAX_BYTES, 4 * 1024 * 1024);
+    let dir = Scratch::new("record-large");
+    let store = Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap();
+    let large = vec![b'x'; record::RECORD_MAX_BYTES as usize + 1];
+    let mut publication = store.begin().unwrap();
+    publication
+        .put_in("big", record::RECORD_NAME, record::RECORD_KIND, &large)
+        .unwrap();
+    publication.publish().unwrap();
+    let generation = store.snapshot().unwrap();
+    let read = record::stored(&generation, "big", |_| panic!("the content was read"));
+    let Some(Err(StoredRecordError::Record(RecordError::TooLarge { bytes }))) = read else {
+        panic!("a record over the limit was not refused for its size");
+    };
+    assert_eq!(bytes, record::RECORD_MAX_BYTES + 1);
+    let said = RecordError::TooLarge { bytes }.to_string();
+    assert!(
+        said.contains("4194305 bytes") && said.contains("4194304"),
+        "{said}"
+    );
 }
 
 #[test]
