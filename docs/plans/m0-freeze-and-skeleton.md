@@ -146,14 +146,14 @@ fails; a test that sleeps 31 seconds fails by timeout.
 
 **Depends on:** S0.
 
-- [ ] `AGENTS.md` in full, from the old coordination repo's rules cut to one repo: commands;
+- [x] `AGENTS.md` in full, from the old coordination repo's rules cut to one repo: commands;
       where agents may work; the boundaries of `SPEC.md` section 15; secrets and private data;
       precedence between documents; the definition of done; the three roles (builder, reviewer,
       orchestrator) and that only the orchestrator merges; how to work with the owner; gotchas.
-- [ ] A fresh-clone checklist at the top: run `just setup`; set the word-list variable; run
+- [x] A fresh-clone checklist at the top: run `just setup`; set the word-list variable; run
       `just scan` and see it pass.
-- [ ] `.claude/settings.json`: allow the `just` recipes, `scripts/*`, read-only git and `gh`.
-- [ ] `README.md`; `docs/adr/README.md` with the template and when an ADR is needed;
+- [x] `.claude/settings.json`: allow the `just` recipes, `scripts/*`, read-only git and `gh`.
+- [x] `README.md`; `docs/adr/README.md` with the template and when an ADR is needed;
       `docs/guides/README.md` listing the guides to come with their milestones.
 
 **Done when:** the reviewer subagent, given only a fresh clone and the question "what must
