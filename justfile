@@ -40,7 +40,7 @@ deny-advisories:
 test-scripts:
     scripts/tests/run.sh
 
-# Regenerate the reference (docs/reference/) from `whizbang describe --json`.
+# Regenerate the reference (docs/reference/) from `whizbang describe --json --pretty`.
 docs:
     scripts/docs.sh
 
@@ -58,11 +58,12 @@ test-timeout:
 test-scripts-slow:
     WHIZBANG_SLOW_TESTS=1 scripts/tests/run.sh
 
-# A smoke of the release binary: build it, run `describe`, and require success.
+# A smoke of the release binary: build it, run `describe` in each form, and require success.
 smoke:
     cargo build --release -p whizbang
     target/release/whizbang describe
     target/release/whizbang describe --json > /dev/null
+    target/release/whizbang describe --json --pretty > /dev/null
 
 # The secrets scan and the clean-room scan, over the working tree. A push runs them over
 # what it would publish (scripts/hooks/pre-push).
