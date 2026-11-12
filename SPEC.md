@@ -938,14 +938,17 @@ checkpoint; a tag where the result is an installable state worth returning to. A
 decisions that are costly to reverse. No mirrored task files.
 
 **Review before building.** A new milestone plan, or a change to this spec that changes what
-will be built (scope, architecture, a boundary, what a milestone holds), gets at least two
-review rounds by the independent reviewing model, through its command-line tool. Every blocker
-and major finding is fixed, and the outcome of each round is recorded in the plan. Building then
-starts without waiting for the owner, who is told what was decided. This replaces the owner's
-approval of each plan; it does not replace what section 15 keeps for the owner: spend beyond
-100 US dollars in a milestone, a new recipient for data, and a reset of the spend allowance. An
-edit that brings this spec in line with what a reviewed pull request did is reviewed with that
-pull request.
+will be built (scope, architecture, what a milestone holds), gets at least two review rounds by
+the independent reviewing model: a model from a different provider than the one that wrote the
+text, chosen by the owner, and run through its command-line tool in a read-only mode. Every
+blocker and major finding is fixed, and the outcome of each round is recorded in the plan.
+Building then starts without waiting for the owner, who is told what was decided. This replaces
+the owner's approval of each plan and nothing else. It replaces nothing in section 15: what
+that section keeps for the owner, what it says to ask first and what it says never to do all
+stand as written, and a change to section 15 itself is the owner's. An edit to this spec that
+changes no scope, architecture, boundary or milestone content, a matter of wording or accuracy
+that brings it in line with what a reviewed pull request did, is reviewed with that pull
+request; any other change gets the two rounds first.
 
 ## 15. Boundaries
 
