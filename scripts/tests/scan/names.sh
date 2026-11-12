@@ -187,6 +187,30 @@ ln -s readme.txt "link-$word"
 expect_fail "a link whose name holds a listed word" "clean-room scan: 1 matching lines (contents 0, paths 1)" "$scan"
 quiet "$word"
 rm "link-$word"
+# One link under two names, on any system: a hard link to a link is the same link again,
+# one inode with one target. Its target is read once: a listed word in it is one matching
+# line, as a match in a file known by two names is printed once.
+inode() { ls -di -- "$1" | awk '{print $1}'; }
+ln -s "it-says-$word" a-link
+ln -P a-link b-link
+[ "$(inode a-link)" = "$(inode b-link)" ] || fail "a hard link to a link is the same link under a second name"
+expect_fail "a link under two names, whose target holds a listed word" \
+  "clean-room scan: 1 matching lines (contents 1, paths 0)" "$scan"
+# Two links to the same place are two links: each is counted.
+ln -s "it-says-$word" another-link
+[ "$(inode a-link)" != "$(inode another-link)" ] || fail "a link made apart is another link"
+expect_fail "a link under two names and a link apart, their targets holding a listed word" \
+  "clean-room scan: 2 matching lines (contents 2, paths 0)" "$scan"
+rm a-link b-link another-link
+# Both of its names stay among the paths, though its target is read once: a listed word
+# in the name is counted under each name.
+ln -s readme.txt "$word-a"
+ln -P "$word-a" "$word-b"
+[ "$(inode "$word-a")" = "$(inode "$word-b")" ] || fail "a hard link to a named link is the same link under a second name"
+expect_fail "a link under two names, both holding a listed word" \
+  "clean-room scan: 2 matching lines (contents 0, paths 2)" "$scan"
+quiet "$word"
+rm "$word-a" "$word-b"
 # On macOS the index can hold one link under two names, composed and decomposed. Its
 # target is read once: a listed word in it is one matching line, as a match in a file
 # known by two names is printed once.
