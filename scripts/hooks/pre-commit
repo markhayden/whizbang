@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
 # Format check before every commit.
 set -euo pipefail
+# First, parse the scan and the hooks: the bash that ships with macOS (3.2) exits 0 from a
+# script that stopped at a syntax error after setting an `EXIT` trap, as the scan does.
+root=$(git rev-parse --show-toplevel)
+for f in "$root/scripts/scan.sh" "$root"/scripts/hooks/*; do
+  "$BASH" -n "$f" || { echo "pre-commit: ${f#"$root/"} has a syntax error; refusing the commit" >&2; exit 1; }
+done
 cargo fmt --all -- --check
