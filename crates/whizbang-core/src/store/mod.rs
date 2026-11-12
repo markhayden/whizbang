@@ -187,7 +187,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
 
 pub use digest::Digest;
 pub use error::Error;
@@ -694,8 +694,9 @@ impl Store {
     }
 
     /// For tests: how many publications of this value have come to the step that one
-    /// publication runs at a time, and are waiting there for a prune or for another
-    /// publication to end. One that is counted has made nothing visible yet.
+    /// publication runs at a time, found it taken by a prune or by another publication,
+    /// and are waiting there. One that found it free was never counted. One that is
+    /// counted has made nothing visible yet.
     #[doc(hidden)]
     pub fn publications_waiting(&self) -> usize {
         self.waiting.load(Ordering::SeqCst)
@@ -1076,13 +1077,19 @@ impl Publication<'_> {
 
         // The generation, immutable from its rename on. It is built on the generation that
         // is current now, not the one that was when this publication began.
-        self.store.waiting.fetch_add(1, Ordering::SeqCst);
-        let _publishing = self
-            .store
-            .publishing
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        self.store.waiting.fetch_sub(1, Ordering::SeqCst);
+        // A publication waits only when it finds the step taken, and only then is it
+        // counted as waiting: one that passes straight through never is.
+        let publishing = &self.store.publishing;
+        let _publishing = match publishing.try_lock() {
+            Ok(held) => held,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => {
+                self.store.waiting.fetch_add(1, Ordering::SeqCst);
+                let held = publishing.lock().unwrap_or_else(|e| e.into_inner());
+                self.store.waiting.fetch_sub(1, Ordering::SeqCst);
+                held
+            }
+        };
         let mut generation = files.snapshot()?;
         let number = generation.number.checked_add(1).ok_or_else(|| {
             Error::corrupt(

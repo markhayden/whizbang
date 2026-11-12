@@ -437,8 +437,9 @@ fn second_writers_and_readers_beside_a_writer_at_work_are_never_told_of_damage()
     //
     // Sixty runs of the binary, thirty of each, and more only while the writer has not
     // yet gone round three times: its rounds sync for real, and on a busy machine three
-    // of them can outlast sixty runs. The runs stop at 300 whatever the writer has done,
-    // and the test then fails. That is a sample, and it is not what
+    // of them can outlast sixty runs, or six hundred. So the loop ends on that event and
+    // on no count of its own; what bounds it is the time limit of a test. The runs are
+    // a sample, and they are not what
     // holds the rule: the two windows, each opened on purpose, are in the core's tests
     // (`store/locking.rs`: a look that meets a publication and a prune, and a look
     // that meets the end of a store's creation). What this adds is real processes: the
@@ -475,7 +476,7 @@ fn second_writers_and_readers_beside_a_writer_at_work_are_never_told_of_damage()
     };
     let holder = format!("process {} (", std::process::id());
     let mut wrong = Vec::new();
-    for attempt in 0..150 {
+    for attempt in 0.. {
         if attempt >= 30 && done.load(Ordering::Relaxed) >= 3 {
             break;
         }

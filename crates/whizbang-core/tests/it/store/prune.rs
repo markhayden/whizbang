@@ -387,7 +387,10 @@ fn no_publication_completes_inside_a_prune() {
     // The prune is stopped at its first event, the removal of generation 1's file: it
     // has read the current generation. Another thread publishes, and the prune goes on
     // only when that publication is waiting to be let in: the store says when
-    // (`publications_waiting`), so nothing here waits on a clock to learn it.
+    // (`publications_waiting`), so nothing here waits on a clock to learn it. A
+    // publication is counted there only if it found its way barred. Were the prune to
+    // bar nothing, the publication would never be counted: it would end, and this test
+    // would see that it had.
     let publisher = Arc::new(Mutex::new(None));
     let stopped: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let first_prune_event = fs.events().len();

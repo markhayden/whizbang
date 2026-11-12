@@ -22,6 +22,11 @@ pub fn holds(generation: &Generation, artifact: ArtifactType, id: ArtifactId) ->
 
 /// Adds the artifact to a publication, as its canonical file under its name. It is in the
 /// store once the publication is published.
+///
+/// One name holds one reference. Where the name held a diagnostic reference, which
+/// [`holds`] does not count, this replaces it with the output; what the diagnostic
+/// referenced is then named by nothing, unless another name has it, and goes at the
+/// next prune.
 pub fn put(publication: &mut Publication<'_>, artifact: &Artifact) -> Result<ArtifactId> {
     let id = artifact.id();
     publication.put(&name(artifact.artifact_type(), id), &artifact.to_bytes())?;

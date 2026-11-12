@@ -7,9 +7,13 @@
 //! it leads to is what is judged. A directory, a FIFO, a socket and a device are refused
 //! by a look at the path, before anything is opened, because opening a FIFO waits for a
 //! writer that may never come and a device may never end. The file that was opened is
-//! then looked at again through its handle, so what is judged is what is read. One gap
-//! is left: a path that is a regular file at the look and is made a FIFO before the open
-//! waits at the open. Nothing but the one who gave the path can do that.
+//! then looked at again through its handle, so what is judged is what is read: a path
+//! that was a regular file at the first look and is a directory, a device or a larger
+//! file by the time it is opened is refused at the second. One gap is left: a path that
+//! is a regular file at the look and is made a FIFO before the open waits inside the
+//! open, for a writer, and the second look is never reached. Whoever can replace the
+//! file at the path can do that. Closing it takes an open that does not wait
+//! (`O_NONBLOCK`), then the look; `docs/carry-over.md` holds it.
 //!
 //! The file is at most [`MAX_FILE_BYTES`], 65 MiB, which is checked by its size before
 //! a byte is read, and again while reading: the reader stops one byte past the limit, so
@@ -18,17 +22,24 @@
 //! The limit is the largest file an artifact is expected to have. That is an image: it
 //! holds its picture whole, and a picture is held to 64 MiB (ADR 0001's limit on a
 //! file). Around the picture an image has a kind, a digest, a space, a role and an
-//! origin, which are hundreds of bytes; a mebibyte is allowed for them. Every other
-//! type is far smaller: a location, a plan, a band profile and a series are a few
-//! numbers for each row at most, and a mask's planes are written as runs, 66 bytes for
-//! an empty mask of any size and some megabytes for a feathered band across the largest
-//! image.
+//! origin, which are hundreds of bytes as actions write them; a mebibyte is allowed for
+//! them. Every other type is far smaller: a location, a plan, a band profile and a
+//! series are a few numbers for each row at most, and a mask's planes are written as
+//! runs, 66 bytes for an empty mask of any size and some megabytes for a feathered band
+//! across the largest image.
 //!
-//! The format itself allows more than the limit in one case, and it is refused here: a
-//! plane costs five bytes for each run, so a mask whose every sample differs from the
-//! one before, at the limit of 50,000,000 pixels, has a file of hundreds of megabytes.
-//! No mask drawn from a shape is like that. `docs/carry-over.md` holds it, with the
-//! bound on masks.
+//! The format itself allows more than the limit in two ways, and both are refused
+//! here, though the file is canonical:
+//!
+//! - **An origin has no bound.** Nothing limits how many steps an origin has, or how
+//!   long a step's argument is, and every type has an origin. An image with a picture
+//!   of 64 MiB and an argument of a mebibyte is over the limit by the few hundred bytes
+//!   of the rest of its record; a location with one argument of 70 MiB is over it too.
+//! - **A plane costs five bytes for each run.** A mask whose every sample differs from
+//!   the one before, at the limit of 50,000,000 pixels, has a file of hundreds of
+//!   megabytes. No mask drawn from a shape is like that.
+//!
+//! `docs/carry-over.md` holds both, with the bound on masks.
 //!
 //! # What `--create` makes
 //!
@@ -129,9 +140,16 @@ fn read_within(from: impl Read, most: u64, expected: u64) -> std::io::Result<Opt
 /// The bytes of the file to import, within the limit. The module's description says what
 /// is refused and when.
 fn read(file: &Path) -> Result<Vec<u8>, String> {
+    read_with(file, &|| {})
+}
+
+/// [`read`]. `looked` runs once the path has been looked at and before it is opened: the
+/// moment a test needs.
+fn read_with(file: &Path, looked: &dyn Fn()) -> Result<Vec<u8>, String> {
     let cannot = |error: std::io::Error| format!("cannot read {}: {error}", file.display());
     // By the path first, which follows a link and opens nothing.
     judge(&std::fs::metadata(file).map_err(cannot)?, file)?;
+    looked();
     let opened = std::fs::File::open(file).map_err(cannot)?;
     // Then the file that was opened, which is the one that is read.
     let bytes = judge(&opened.metadata().map_err(cannot)?, file)?;
@@ -197,6 +215,46 @@ mod tests {
         assert_eq!(MAX_PICTURE_BYTES, DecodeLimits::default().max_bytes);
         assert_eq!(MAX_FILE_BYTES, 65 * 1024 * 1024);
         assert!(limit().starts_with("the limit of 65 MiB (68157440 bytes)"));
+    }
+
+    /// Reads the file at `path`, which `swap` changes once the path has been looked at.
+    fn read_swapped(path: &Path, swap: &dyn Fn()) -> Result<Vec<u8>, String> {
+        read_with(path, swap)
+    }
+
+    #[test]
+    fn what_is_judged_is_the_file_that_was_opened_and_not_only_the_path() {
+        use whizbang_testkit::scratch::Scratch;
+        let dir = Scratch::new("import-swap");
+        let path = dir.path().join("given");
+        let small = || std::fs::write(&path, b"a small file").unwrap();
+
+        // Nothing swapped: the file is read.
+        small();
+        assert_eq!(read_swapped(&path, &|| {}).unwrap(), b"a small file");
+
+        // After the look at the path and before the open, the file becomes a
+        // directory. A directory opens without waiting, so the look at what was opened
+        // is what refuses it.
+        let to_directory = || {
+            std::fs::remove_file(&path).unwrap();
+            std::fs::create_dir(&path).unwrap();
+        };
+        let complaint = read_swapped(&path, &to_directory).unwrap_err();
+        assert!(complaint.contains("is a directory"), "{complaint}");
+        assert!(complaint.contains("a regular file"), "{complaint}");
+        std::fs::remove_dir(&path).unwrap();
+
+        // Or it becomes a file over the limit: refused by the size of what was opened,
+        // unread. The file is sparse.
+        small();
+        let to_large = || {
+            let file = std::fs::File::create(&path).unwrap();
+            file.set_len(MAX_FILE_BYTES + 1).unwrap();
+        };
+        let complaint = read_swapped(&path, &to_large).unwrap_err();
+        let size = format!("is {} bytes, over the limit", MAX_FILE_BYTES + 1);
+        assert!(complaint.contains(&size), "{complaint}");
     }
 
     #[test]

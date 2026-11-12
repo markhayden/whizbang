@@ -414,6 +414,12 @@ fn import_reads_a_regular_file_or_a_link_to_one_and_refuses_anything_else_unread
             eprintln!("skip: no FIFO could be made here (mkfifo), so none was imported");
         }
 
+        // A socket, which cannot be opened as a file at all.
+        match std::os::unix::net::UnixListener::bind(path("socket")) {
+            Ok(_listener) => refused("a socket", &path("socket"), "is a socket"),
+            Err(error) => eprintln!("skip: no socket could be made here ({error})"),
+        }
+
         // A device that never ends, and is open to everyone.
         let zero = Path::new("/dev/zero");
         if zero.exists() {
@@ -520,6 +526,37 @@ fn create_makes_the_last_part_of_the_path_only_and_completes_an_unfinished_creat
     );
     assert_eq!(
         read_back(&unfinished, ArtifactType::Mask, mask.id()),
+        Artifact::from(mask)
+    );
+}
+
+#[test]
+fn create_makes_a_store_named_by_one_part_alone_in_the_current_directory() {
+    // `--store mine`: the path has no parent written in it, and the directory that
+    // holds it is the one the command runs in.
+    let dir = Scratch::new("import");
+    let mask = mask();
+    std::fs::write(dir.path().join("seam.mask"), mask.to_bytes()).expect("the fixture");
+    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+        .args([
+            "store",
+            "import",
+            "seam.mask",
+            "--create",
+            "--store",
+            "mine",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .expect("the binary runs");
+    let complaint = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{complaint}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("created a store at mine\nimported mask {}\n", mask.id())
+    );
+    assert_eq!(
+        read_back(&dir.path().join("mine"), ArtifactType::Mask, mask.id()),
         Artifact::from(mask)
     );
 }
