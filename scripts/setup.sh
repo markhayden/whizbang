@@ -26,6 +26,15 @@ installed() {
 }
 
 status=0
+# Git skips a hook it cannot execute, without a word: a push would then run no scan.
+for hook in pre-commit commit-msg pre-push; do
+  if [ -f "scripts/hooks/$hook" ] && [ -x "scripts/hooks/$hook" ]; then
+    echo "hook ok: $hook"
+  else
+    echo "hook problem: scripts/hooks/$hook is missing or cannot be executed, so git would skip it; restore it with: git checkout -- scripts/hooks/$hook && chmod +x scripts/hooks/$hook" >&2
+    status=1
+  fi
+done
 while read -r tool want; do
   case "$tool" in '' | '#'*) continue ;; esac
   have=$(installed "$tool")

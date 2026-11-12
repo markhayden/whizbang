@@ -33,7 +33,25 @@ scripts/setup.sh >/dev/null 2>&1 || true # the tools it checks are not this test
 [ "$(git config core.hooksPath)" = "scripts/hooks" ] || fail "setup installs the hooks from scripts/hooks"
 for hook in pre-commit commit-msg pre-push; do
   [ -x "scripts/hooks/$hook" ] || fail "scripts/hooks/$hook can be run"
+  # Git skips a hook it cannot execute, so the three are committed as files that can be.
+  [ "$(git -C "$root" ls-files -s "scripts/hooks/$hook" | cut -d' ' -f1)" = 100755 ] ||
+    fail "scripts/hooks/$hook is tracked with mode 100755"
 done
+# Setup says so, and fails, when a hook has lost that (the tools it also checks are not
+# this test's subject: their lines are not looked at).
+scripts/setup.sh --check >"$tmp/out" 2>&1 || true
+for hook in pre-commit commit-msg pre-push; do
+  grep -q -x -F "hook ok: $hook" "$tmp/out" || { cat "$tmp/out" >&2; fail "setup finds $hook in order"; }
+done
+grep -q -F "hook problem" "$tmp/out" && fail "setup finds no problem with the hooks"
+chmod -x scripts/hooks/pre-push
+expect_fail "setup --check with a hook that cannot be executed" \
+  "hook problem: scripts/hooks/pre-push is missing or cannot be executed, so git would skip it" scripts/setup.sh --check
+expect_fail "setup with a hook that cannot be executed" "hook problem: scripts/hooks/pre-push" scripts/setup.sh
+chmod +x scripts/hooks/pre-push
+rm scripts/hooks/commit-msg
+expect_fail "setup --check with a hook that is missing" "hook problem: scripts/hooks/commit-msg" scripts/setup.sh --check
+cp "$root/scripts/hooks/commit-msg" scripts/hooks/
 
 # Two stand-ins for the scan. The sound one records that it ran. The broken one sets a
 # trap, would record that it ran, and then has a syntax error: bash 3.2 exits 0 from it.
