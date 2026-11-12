@@ -592,6 +592,16 @@ fn the_image_an_output_names_is_one_image_returned_whenever_the_output_is() {
         )
         .build()
         .unwrap();
+    // An image returned for every call is there for an output returned only for some.
+    base()
+        .output(OutputPort::one("canvas", ArtifactType::Image, "A canvas."))
+        .output(
+            OutputPort::one("where", ArtifactType::Location, "A place.")
+                .on(PortRef::output("canvas"))
+                .when(When::given("filler")),
+        )
+        .build()
+        .unwrap();
     // A rebind is the one that waits for its image: it happens when the image is returned.
     draft()
         .input(InputPort::required(
@@ -785,6 +795,14 @@ fn a_capability_is_needed_once_by_any_one_call() {
         base()
             .needs(Requirement::new(Capability::Fill).when(When::given("filler")))
             .needs(Requirement::new(Capability::Fill).when(When::given("filler"))),
+        &["the need for fill", twice],
+    );
+    // One given and another left out can both be true of one call, too.
+    refused(
+        base()
+            .argument(Argument::optional("model", "A model.", ValueType::Text))
+            .needs(Requirement::new(Capability::Fill).when(When::given("filler")))
+            .needs(Requirement::new(Capability::Fill).when(When::not_given("model"))),
         &["the need for fill", twice],
     );
     refused(

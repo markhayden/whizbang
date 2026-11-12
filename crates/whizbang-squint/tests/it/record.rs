@@ -2,9 +2,14 @@
 //! run here, and its measurements are made here, so the page cannot drift from the tool.
 //!
 //! - The example images beside the record are what `view` gives, byte for byte.
-//! - The part of the record between the `measured` marks is what these tests measure.
+//! - The part of the record between the `measured` marks is what the tests measure: its
+//!   first table is held by the test of `locate.rs` that measures the known boxes, its
+//!   second by the test of `vectors.rs` that makes the fixed vectors' crops. Each makes
+//!   its table from what it has already worked out, so nothing is computed twice.
 //! - `write_the_record`, which `scripts/tool-record.sh view` runs, writes the images, that
-//!   part, and the part between the `timed` marks: times, and the other methods.
+//!   part, and the part between the `timed` marks: times, and the other methods. It
+//!   leaves the times as they are when nothing else in that part changed and no time
+//!   moved by more than a third (`settled`), so a run that changes nothing writes nothing.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -14,9 +19,9 @@ use whizbang_core::artifact::Image;
 use whizbang_core::identity::{Projection, Topology};
 use whizbang_squint::view::{Crop, Request, view};
 
-use super::locate::{KNOWN, measure};
+use super::locate::{KNOWN, Measured, measure};
 use super::support::*;
-use super::vectors::VECTORS;
+use super::vectors::{self, VECTORS};
 
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 800;
@@ -144,15 +149,15 @@ fn pixels(distance: f64) -> String {
     }
 }
 
-/// The measurements that are the same on every run and every machine.
-fn measured() -> String {
+/// The record's first table of measurements: one row for each known box, from what
+/// `locate::measure` found. The same on every run and every machine.
+pub fn mapping_table(measured: &[Measured]) -> String {
     let mut out = String::from(
-        "\n| Image | Box asked for | Cut, in pixels | Shown at | Source pixels to a crop pixel \
+        "| Image | Box asked for | Cut, in pixels | Shown at | Source pixels to a crop pixel \
          | Cut outside the box, at most | Corners | Points inside | Marked pixel | In crop pixels |\n\
          |---|---|---|---|---|---|---|---|---|---|\n",
     );
-    for known in KNOWN {
-        let m = measure(known);
+    for (known, m) in KNOWN.iter().zip(measured) {
         out.push_str(&format!(
             "| {}x{} | {:?} | {:?} | {}x{} | {:.3} | {} | {} | {} | {} | {} |\n",
             known.size.0,
@@ -169,17 +174,17 @@ fn measured() -> String {
             pixels(m.mark_in_crop),
         ));
     }
-    out.push_str(
-        "\n| Vector | Image | Box asked for | Cut, in pixels | Shown at | Samples | Pixel digest |\n\
+    out
+}
+
+/// The record's second table of measurements: one row for each fixed vector, from the
+/// crop `view` gave for it.
+pub fn vector_table(crops: &[Crop]) -> String {
+    let mut out = String::from(
+        "| Vector | Image | Box asked for | Cut, in pixels | Shown at | Samples | Pixel digest |\n\
          |---|---|---|---|---|---|---|\n",
     );
-    for vector in VECTORS {
-        let image = picture(
-            vector.size.0,
-            vector.size.1,
-            noisy(vector.seed, vector.alpha),
-        );
-        let crop = look(&image, vector.bbox);
+    for (vector, crop) in VECTORS.iter().zip(crops) {
         let space = crop.image.space();
         let same = crop.image.identity().pixels.to_string() == vector.pixels;
         out.push_str(&format!(
@@ -199,8 +204,29 @@ fn measured() -> String {
             },
         ));
     }
-    out.push('\n');
     out
+}
+
+/// The part of the record between the `measured` marks: the two tables.
+fn measured(tables: [&str; 2]) -> String {
+    format!("\n{}\n{}\n", tables[0], tables[1])
+}
+
+/// Fails unless the committed record's table of that number, among its measurements, is
+/// this one: 0 for the known boxes, 1 for the fixed vectors.
+pub fn holds(number: usize, table: &str) {
+    assert!(!table.contains("DIFFERS"), "{table}");
+    let record = std::fs::read_to_string(tools().join("view.md")).unwrap();
+    let part = between(&record, "measured");
+    let tables: Vec<&str> = part.trim_matches('\n').split("\n\n").collect();
+    assert!(
+        tables.len() == 2 && part == format!("\n{}\n\n{}\n\n", tables[0], tables[1]),
+        "the record's measurements are two tables: run scripts/tool-record.sh view"
+    );
+    assert!(
+        table.strip_suffix('\n') == Some(tables[number]),
+        "the record's measurements are stale: run scripts/tool-record.sh view\n{table}"
+    );
 }
 
 #[test]
@@ -265,14 +291,85 @@ fn the_records_examples_are_what_view_gives() {
     }
 }
 
+// --- Times: kept until one moves ---------------------------------------------------------
+
+/// Around each time in the text `timed` builds, so that the times can be told from the
+/// rest of it. It is taken out before anything is written.
+const MARK: char = '\u{1}';
+/// A time is written again only when it moved by more than this share of the time the
+/// record holds. Other work on the machine moves a time by less than that from run to
+/// run, and the record's times show proportions, not a benchmark.
+const MARGIN: f64 = 1.0 / 3.0;
+
+/// The part of the record between the `timed` marks as it is committed, when the fresh
+/// one (its times between [`MARK`]s) differs from it in times alone, and each of those
+/// by no more than [`MARGIN`] of the committed time. `None` when anything else differs,
+/// or a time moved further: the fresh part is then written.
+fn settled<'a>(committed: &'a str, fresh: &str) -> Option<&'a str> {
+    let mut rest = committed;
+    for (at, piece) in fresh.split(MARK).enumerate() {
+        if at % 2 == 0 {
+            rest = rest.strip_prefix(piece)?;
+            continue;
+        }
+        let digits = rest
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(rest.len());
+        let held: f64 = rest[..digits].parse().ok()?;
+        let now: f64 = piece.parse().ok()?;
+        if (now - held).abs() > MARGIN * held {
+            return None;
+        }
+        rest = &rest[digits..];
+    }
+    rest.is_empty().then_some(committed)
+}
+
 #[test]
-fn the_records_measurements_are_what_view_gives() {
-    let record = std::fs::read_to_string(tools().join("view.md")).unwrap();
-    let fresh = measured();
-    assert!(!fresh.contains("DIFFERS"), "{fresh}");
-    assert!(
-        between(&record, "measured") == fresh,
-        "the record's measurements are stale: run scripts/tool-record.sh view\n{fresh}"
+fn the_records_times_are_kept_until_one_moves_by_more_than_a_third() {
+    let committed = "\nOn a machine.\n\n| 1024x768 | 0.8 | 12 | 3.0 |\n| x | 12.8% | 33 | 90 |\n\n";
+    let fresh = |a: &str, b: &str, c: &str, text: &str| {
+        format!(
+            "\nOn a machine.\n\n| 1024x768 | 0.8 | {MARK}{a}{MARK} | {MARK}{b}{MARK} |\n\
+             | x | {text} | 33 | {MARK}{c}{MARK} |\n\n"
+        )
+    };
+    // The same times, and times that moved by a third at most: the committed part stays.
+    assert_eq!(
+        settled(committed, &fresh("12", "3.0", "90", "12.8%")),
+        Some(committed)
+    );
+    assert_eq!(
+        settled(committed, &fresh("16", "2.0", "61", "12.8%")),
+        Some(committed)
+    );
+    // One time moved further, up or down.
+    assert_eq!(settled(committed, &fresh("17", "3.0", "90", "12.8%")), None);
+    assert_eq!(settled(committed, &fresh("12", "1.9", "90", "12.8%")), None);
+    // Something that is not a time changed: a measured difference, the machine, a row.
+    assert_eq!(settled(committed, &fresh("12", "3.0", "90", "12.9%")), None);
+    let elsewhere = fresh("12", "3.0", "90", "12.8%").replace("a machine", "another");
+    assert_eq!(settled(committed, &elsewhere), None);
+    let longer = format!("{}| y |\n", fresh("12", "3.0", "90", "12.8%"));
+    assert_eq!(settled(committed, &longer), None);
+    let shorter = fresh("12", "3.0", "90", "12.8%");
+    assert_eq!(settled(committed, &shorter[..shorter.len() - 1]), None);
+    // A number that is not marked as a time is text: 33 for 34 is a change.
+    assert_eq!(
+        settled(
+            committed,
+            &fresh("12", "3.0", "90", "12.8%").replace("| 33 |", "| 34 |")
+        ),
+        None
+    );
+    // The committed record's own times are well formed: what is there now is kept
+    // against itself, each of its times marked.
+    assert_eq!(
+        settled(
+            "| 10 | 2.8 |\n",
+            &format!("| {MARK}10{MARK} | {MARK}2.8{MARK} |\n")
+        ),
+        Some("| 10 | 2.8 |\n")
     );
 }
 
@@ -291,12 +388,13 @@ fn time<T>(runs: usize, mut work: impl FnMut() -> T) -> Duration {
     times[runs / 2]
 }
 
+/// A time in milliseconds, between [`MARK`]s.
 fn millis(time: Duration) -> String {
     let ms = time.as_secs_f64() * 1000.0;
     if ms < 10.0 {
-        format!("{ms:.1}")
+        format!("{MARK}{ms:.1}{MARK}")
     } else {
-        format!("{ms:.0}")
+        format!("{MARK}{ms:.0}{MARK}")
     }
 }
 
@@ -411,7 +509,8 @@ fn timed() -> String {
     out
 }
 
-/// Writes the example images and the record's two generated parts again.
+/// Writes the example images and the record's two generated parts again. The times
+/// stay as they are when `settled` says so.
 #[test]
 #[ignore = "rewrites the committed record; run it with scripts/tool-record.sh view"]
 fn write_the_record() {
@@ -422,7 +521,14 @@ fn write_the_record() {
     }
     let path = tools().join("view.md");
     let record = std::fs::read_to_string(&path).unwrap();
-    let record = replaced(&record, "measured", &measured());
-    let record = replaced(&record, "timed", &timed());
+    let known: Vec<Measured> = KNOWN.iter().map(measure).collect();
+    let tables = [mapping_table(&known), vector_table(&vectors::crops())];
+    let record = replaced(&record, "measured", &measured([&tables[0], &tables[1]]));
+    let fresh = timed();
+    let times = match settled(between(&record, "timed"), &fresh) {
+        Some(kept) => kept.to_owned(),
+        None => fresh.replace(MARK, ""),
+    };
+    let record = replaced(&record, "timed", &times);
     std::fs::write(path, record).unwrap();
 }

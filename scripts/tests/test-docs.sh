@@ -337,8 +337,11 @@ while IFS=$'\t' read -r verdict field text || [ -n "$verdict" ]; do
   esac
   ran=$((ran + 1))
 done <"$cases"
-# The table as it was first written. A table that was not read, or was cut short, fails here.
-[ "$ran" -ge 51 ] || fail "$cases: $ran cases were run, and the table holds at least 51"
+# The table says how many cases it holds. A table that was not read whole, a case that was
+# lost, and a case added without the count, each fail here.
+said=$(sed -n 's/^# cases: \([0-9][0-9]*\)$/\1/p' "$cases")
+[ -n "$said" ] || fail "$cases: no line says how many cases it holds (# cases: N)"
+[ "$ran" -eq "$said" ] || fail "$cases: $ran cases were run, and the table says it holds $said"
 
 expect_fail "a description that does not exist" "no such description" \
   "$docs" --description "$tmp/absent.json" --out "$tmp/bad"

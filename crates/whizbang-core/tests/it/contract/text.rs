@@ -33,8 +33,20 @@ fn cases() -> Vec<(bool, bool, String)> {
 #[test]
 fn every_case_of_the_table_the_reference_is_held_to_gets_the_same_answer_here() {
     let cases = cases();
-    // The table as it was first written: one that was not read, or was cut short, fails.
-    assert!(cases.len() >= 51, "{} cases", cases.len());
+    // The table says how many cases it holds: one that was not read whole, a case that
+    // was lost, and a case added without the count, each fail here.
+    let said: Vec<usize> = CASES
+        .lines()
+        .filter_map(|line| line.strip_prefix("# cases: "))
+        .map(|count| count.parse().unwrap())
+        .collect();
+    assert_eq!(
+        said.len(),
+        1,
+        "one line says how many cases the table holds"
+    );
+    assert_eq!(cases.len(), said[0]);
+    assert!(said[0] > 0);
     for (accept, name, string) in &cases {
         let answer = if *name {
             text::action_name(string)
@@ -92,4 +104,21 @@ fn a_version_is_three_numbers() {
     ] {
         assert!(text::version(version).is_err(), "{version:?} was accepted");
     }
+}
+
+#[test]
+fn a_refusal_shows_the_first_sixty_characters_of_a_long_text() {
+    // Sixty characters are shown whole, with nothing after them.
+    let sixty = format!("{}|", "A".repeat(59));
+    let message = text::purpose(&sixty).unwrap_err();
+    assert!(message.contains(&format!("{sixty:?} holds")), "{message}");
+    assert!(!message.contains("..."), "{message}");
+    // One more and the text is cut after the sixtieth, and says so.
+    let longer = format!("{}|Z", "A".repeat(59));
+    let message = text::purpose(&longer).unwrap_err();
+    assert!(
+        message.contains(&format!("{sixty:?}... holds")),
+        "{message}"
+    );
+    assert!(!message.contains('Z'), "{message}");
 }

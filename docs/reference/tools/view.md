@@ -64,10 +64,12 @@ doubles, so the same request gives the same bytes on every machine.
    of column weight times row weight times source sample. That is the mean to the nearest
    level, a half going up. The four channels are averaged apart.
 6. **The file.** The crop is written as a PNG of 8 bits a channel, red, green, blue and
-   alpha, with no other chunk, by the `image` crate at the version pinned in
-   `crates/whizbang-squint/Cargo.toml`, with its default compression and its adaptive
-   filter. The file is then read back through the core's decoder, and must give the pixels
-   that were put in it.
+   alpha, with no other chunk, by the `image` crate, with its default compression and its
+   adaptive filter. The bytes come from the `png` crate and the compressor it calls at
+   that setting, `flate2` over `miniz_oxide`. All four are pinned to exact versions in
+   `crates/whizbang-squint/Cargo.toml`, and a test holds the pins to the lock file. The
+   file is then read back through the core's decoder, and must give the pixels that were
+   put in it.
 7. **The binding.** The crop's pixels onto the source's pixels, by a crop mapping with the
    box of step 2, stated from the crop.
 
@@ -208,19 +210,29 @@ Reading the image is most of a call, whatever the box: the whole image is decode
 time, and a crop is decoded once more to check its file. Other work was running on the
 machine, so the times show proportions and are not a benchmark.
 
+A rerun of `scripts/tool-record.sh view` leaves the times above as they are unless
+something else between the marks changed, or a time moved by more than a third of the one
+written here. So a run that changes nothing leaves nothing to commit, and a difference in
+the times alone means one of them really moved: commit it.
+
 ## Alternatives
 
 The second table under "Speed and cost" compares, on the same pictures, the three ways
 tried of scaling a cut down. Each ran the whole job: read the image, scale the cut, write
 the crop with the same encoder settings and read it back.
 
-- **The area mean in whole numbers** is the method. It is the only one of the three that is
-  exact against the reference and the analytic results, and the only one whose every step
-  is stated on this page, so its pixels do not depend on a library's version.
+- **The area mean in whole numbers** is the method. Every step of it is stated on this
+  page in whole numbers, so its pixels can be worked out apart from the code, as the
+  reference vectors were, and do not depend on a library's version.
 - **The `image` crate's `resize` with its triangle filter** is what squint's `view` did. It
-  works in floating point and is not the mean of each rectangle: it differs from the mean
-  by up to 41 levels on these pictures, so it cannot be held to an analytic result. It took
-  the longest on each picture in the run recorded above.
+  is reproducible: the review of this tool found its output the same bit for bit on three
+  platforms while `image` is pinned at 0.25.10. But it is reproducible only while the
+  library is pinned, and it matches no statement in whole numbers: it works in floating
+  point and is not the mean of each rectangle, from which it differs by up to 41 levels
+  on these pictures. That is why it was replaced. The cost of replacing it is in the
+  baseline comparison: a crop of a cut over 1024 pixels on a side no longer has squint's
+  pixels (the last row of "Limits"). It took the longest on each picture in the run
+  recorded above.
 - **The `image` crate's `thumbnail`** gave the exact mean at the one whole-number ratio
   tried, 4096 pixels to 1024. At the two ratios under two it is far from the mean, by up to
   215 levels, so it is not a method for a cut of any size.
@@ -229,6 +241,24 @@ The three take similar times, because reading the image and writing the crop are
 every call. Neither library method is in the code: both are called only by the script that
 writes this page.
 
+**Not tried: a mean weighted by alpha.** The method averages the four channels apart, so
+in a reduced crop the colour under a transparent pixel counts as much as the colour of an
+opaque one, and hidden colour bleeds into visible pixels at the edge of a transparent
+area. A mean of the colours weighted by alpha, with alpha averaged as now, would not let
+it. A worked example, at two source pixels to a crop pixel
+(`hidden_colour_bleeds_into_a_reduced_crop_at_the_edge_of_a_transparent_area`):
+
+| | Source pixel | Source pixel | Crop pixel | Shown over a white page |
+|---|---|---|---|---|
+| The source | white, alpha 255 | black, alpha 0 | | 255 and 255: white |
+| The method | | | `(128, 128, 128)`, alpha 128 | 191: a grey the source does not have |
+| Weighted by alpha | | | `(255, 255, 255)`, alpha 128 | 255: white |
+
+The method is kept as it is: it is the one stated and tested, and no judge has yet been
+shown a reduced crop with transparency. How one is shown to a judge is decided in
+milestone 2, with image preparation and the judge loop, and the comparison belongs here
+(`docs/carry-over.md`).
+
 ## Limits
 
 | Limit | Example |
@@ -236,12 +266,16 @@ writes this page.
 | Panoramas are not supported yet. An image in an equirectangular space is refused, as `image` and as `also`: there is no perspective view by yaw, pitch and field of view, and no crop of a panorama by box. Both are on `docs/carry-over.md` for milestone 2 | A 128 by 64 panorama with `bbox` `[0.0, 0.25, 0.25, 0.75]` is refused with "image is a panorama: view shows flat images only, so far" (`a_panorama_is_not_viewed_yet`) |
 | A large box loses fine detail, and can show a pattern the source does not have | The second example above |
 | A crop is never enlarged, and a cut under 8 pixels a side is refused | `[0.5, 0.5, 0.51, 0.51]` of a 256 by 192 image covers 3 by 2 pixels and is refused (`a_bad_request_is_the_callers_mistake`) |
-| A fraction meant to fall on a pixel edge can fall a hair past it, and the cut is then a whole pixel wider on that side | 0.07 of 100 pixels is 7.000000000000001 as a double, so the cut ends at pixel 8 (`a_fraction_a_hair_past_a_pixel_edge_widens_the_cut_by_a_pixel`) |
+| A fraction meant to fall on a pixel edge can fall a hair off it, and the cut is then a whole pixel wider on that side: past it on the high side, short of it on the low side. Squint's `view` did the same. Of the 78,989 pairs of a fraction from 0 to 1 written with one, two or three decimals and a width from 8 to 4096 pixels on which it names a whole number of pixels, 1,539 widen a high edge and 826 a low edge (`how_often_a_fraction_meant_as_a_pixel_edge_falls_a_hair_off_it`) | 0.07 of 100 pixels is 7.000000000000001 as a double, so the cut ends at pixel 8; 0.7 of 90 pixels is 62.99999999999999, so the cut starts at column 62 (`a_fraction_a_hair_past_a_pixel_edge_widens_the_cut_by_a_pixel`) |
+| `also` may have another aspect ratio than `image`. It is accepted, and the same fractions then cut another shape, so the two crops do not show the same region in any sense but the fractions | `[0.25, 0.25, 0.75, 0.75]` of a 200 by 100 image and of a 100 by 200 one gives a crop of 100 by 50 and one of 50 by 100 (`a_second_image_of_another_shape_is_cut_to_another_shape`) |
 | A location is as fine as the crop. In a reduced crop, what one crop pixel shows is found again within half a crop pixel, which is several source pixels when the crop is much reduced | The last row of the first table under "Rung 2 results": an 8000 pixel wide image shown 1024 wide |
-| Alpha is averaged apart from the colours, so in a reduced crop the colour under a transparent pixel counts as much as an opaque one | One opaque red pixel and three transparent green ones are shown as `(64, 191, 0)` at alpha 64 (`alpha_is_averaged_apart_from_the_colours`) |
+| Alpha is averaged apart from the colours, so in a reduced crop the colour under a transparent pixel counts as much as an opaque one, and hidden colour bleeds into visible pixels at the edge of a transparent area. A mean weighted by alpha was not tried ("Alternatives") | One opaque red pixel and three transparent green ones are shown as `(64, 191, 0)` at alpha 64 (`alpha_is_averaged_apart_from_the_colours`) |
 | The whole image is decoded on every call, however small the box | The last column of the first table under "Speed and cost" |
 | An image over the core's decode limits (50 megapixels and 64 MiB unless the caller changes them) is refused before anything is cut | ADR 0001, "Limits" |
-| The crops are not the bytes squint's `view` gave for the same request: alpha is kept, the pixels are canonical, and the scaling is another method. The baseline comparison of milestone 2 has to allow for it (`docs/carry-over.md`) | The triangle filter's rows of the second table under "Speed and cost" |
+| A box that reaches past the crop it is stated on is clipped to the crop by `box_to_root`, and flagged as partial. That is not what squint did: its `to_root` refused a box outside 0 to 1 of its frame, so a box on a flat crop was never clipped. Whether to refuse as squint did is decided with the scripted run (`docs/carry-over.md`) | `[-10, 20, 30, 80]` on a 50 by 50 crop is clipped to `[0, 20, 30, 50]` of it and maps to `[50, 70, 80, 100]` of its source, with `partial` set (`a_box_past_the_crop_is_clipped_and_flagged`) |
+| The sentences of a refusal are not squint's, and transcript format 1 compares the text of a tool's result: the size is written with "x" where squint wrote "×", the image's size is added, and "image" stands where squint said "frame" | Squint: "bbox … covers only 3×2 pixels; at least 8×8 are needed". Whizbang: "bbox … covers only 3x2 pixels of the 256x192 image; at least 8x8 are needed" |
+| The file's bytes depend on the encoder: a change of the `image`, `png`, `flate2` or `miniz_oxide` version that writes another file for the same pixels changes every crop's file digest, and so the identity of its artifact. The pixel digest and the binding do not change. The four are pinned, and the file digests of the fixed vectors fail on such a change, as ADR 0001's vectors do for the JPEG decoder | The `file` digests in `crates/whizbang-squint/tests/it/vectors.rs` |
+| A crop of a cut over 1024 pixels on a side does not have the pixels squint's `view` gave: the area mean replaced the triangle filter. That is the one difference from squint's pixels that was chosen here and not forced by ADR 0001, and the baseline comparison of milestone 2 has to decide what to do about it (`docs/carry-over.md`). A crop that is not scaled, of an opaque sRGB image, has squint's pixels. The crop's own PNG file differs from squint's too (alpha is kept), which the comparison does not look at: it compares the bytes prepared for the judge | The triangle filter's rows of the second table under "Speed and cost" |
 
 ## Mark and history
 
@@ -269,7 +303,17 @@ view is not ported.
   - the pixels are the canonical ones, so a colour profile is applied and alpha is kept,
     where squint took the decoder's red, green and blue;
   - the cut is scaled down by an exact area mean in whole numbers, where squint used the
-    `image` crate's triangle filter; the shorter side is worked out in whole numbers;
+    `image` crate's triangle filter; the shorter side is worked out in whole numbers. The
+    mean is stated step by step and does not depend on a library's version; the filter is
+    reproducible only while the library is pinned ("Alternatives");
+  - a box that reaches past the crop it is stated on is clipped to the crop and flagged
+    by `box_to_root`, where squint's `to_root` refused a box outside 0 to 1 of its frame;
+  - the sentences of a refusal are reworded ("Limits");
   - `also` is refused when it is the same picture as `image`, in any file, where squint
     compared frame ids;
   - any box on a panorama is refused for now, where squint cut one.
+- 2026-11-12, after the review of the port: the crates behind the PNG encoder (`png`,
+  `flate2`, `miniz_oxide`) are pinned beside `image`; the reason for replacing the triangle
+  filter is stated as it is; the limits name the low-side widening, a second image of
+  another shape, the clipping of a box past its crop, the reworded refusals and the
+  encoder; the alpha-weighted mean is named as not tried. No crop changed.

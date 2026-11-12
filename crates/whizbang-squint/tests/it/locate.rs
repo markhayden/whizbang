@@ -5,6 +5,7 @@ use whizbang_core::artifact::{ArtifactError, Image, Location, Origin, Shape, Ste
 use whizbang_core::identity::{Binding, Direction, IdentityError, Mapping, Point, Space};
 use whizbang_squint::view::{Located, ViewError, box_to_root};
 
+use super::record;
 use super::support::*;
 
 /// A known box on a known image, with one marked pixel inside the cut.
@@ -168,8 +169,8 @@ pub fn measure(known: &Known) -> Measured {
 
 #[test]
 fn a_location_in_a_crop_maps_back_to_its_source_within_a_pixel() {
-    for known in KNOWN {
-        let measured = measure(known);
+    let all: Vec<Measured> = KNOWN.iter().map(measure).collect();
+    for (known, measured) in KNOWN.iter().zip(&all) {
         let name = format!("{:?} of {:?}", known.bbox, known.size);
         // The box is only ever widened, and by less than a pixel.
         assert!(measured.snapped < 1.0, "{name}: {}", measured.snapped);
@@ -191,6 +192,8 @@ fn a_location_in_a_crop_maps_back_to_its_source_within_a_pixel() {
             assert_eq!(measured.mark, 0.0, "{name}");
         }
     }
+    // The record's table of these boxes is what was just measured.
+    record::holds(0, &record::mapping_table(&all));
 }
 
 /// A crop of `image` and the chain so far with the crop's binding put first.
@@ -290,8 +293,13 @@ fn a_box_past_the_crop_is_clipped_and_flagged() {
     assert!(refused([50.0, 10.0, 60.0, 20.0]).contains("wholly outside"));
     assert!(refused([10.0, -20.0, 20.0, 0.0]).contains("wholly outside"));
     assert!(refused([20.0, 10.0, 10.0, 20.0]).contains("left < right"));
+    assert!(refused([20.0, 10.0, 20.0, 20.0]).contains("left < right"));
     assert!(refused([10.0, 20.0, 20.0, 20.0]).contains("top < bottom"));
     assert!(refused([f64::NAN, 0.0, 10.0, 10.0]).contains("left < right"));
+    // An edge without end is not clipped to the crop: it is no box.
+    assert!(refused([0.0, 0.0, f64::INFINITY, 10.0]).contains("left < right"));
+    assert!(refused([f64::NEG_INFINITY, 0.0, 10.0, 10.0]).contains("left < right"));
+    assert!(refused([0.0, 0.0, 10.0, f64::INFINITY]).contains("top < bottom"));
 }
 
 #[test]

@@ -80,8 +80,8 @@ fn spans(source: u64, target: u64) -> Vec<(usize, Vec<u64>)> {
 /// weights are in units of one output pixel's share of a source pixel, so nothing is
 /// rounded before the one division.
 ///
-/// `None` when the sums could pass 64 bits, which takes a region of more than 2^54
-/// pixels.
+/// `None` when the sums could pass 64 bits, which takes a region of more than 2^64 / 511
+/// pixels, about 3.6 x 10^16.
 pub(super) fn downscale(
     pixels: &CanonicalPixels,
     region: &Region,

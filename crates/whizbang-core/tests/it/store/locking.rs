@@ -623,3 +623,82 @@ fn a_directory_that_cannot_be_listed_is_an_error_of_the_file_system_not_a_refusa
     let open = std::fs::Permissions::from_mode(0o700);
     std::fs::set_permissions(root.join("objects"), open).unwrap();
 }
+
+#[test]
+fn a_writer_knows_whether_its_open_made_the_store() {
+    let dir = Scratch::new("store-made");
+    let open = |root: &Path| Store::open(root, Arc::new(ShimFs::new())).unwrap();
+    // Where there was nothing, in an empty directory, and where a creation was left
+    // unfinished: the open made the store. Any open after it did not.
+    let nothing = dir.path().join("nothing");
+    let empty = dir.path().join("empty");
+    std::fs::create_dir(&empty).unwrap();
+    let unfinished = dir.path().join("unfinished");
+    std::fs::create_dir_all(unfinished.join("staging")).unwrap();
+    std::fs::create_dir(unfinished.join("objects")).unwrap();
+    std::fs::write(unfinished.join("LOCK"), b"process 1 (gone)\n").unwrap();
+    for root in [&nothing, &empty, &unfinished] {
+        assert!(open(root).created(), "{}", root.display());
+        assert!(!open(root).created(), "{}", root.display());
+        let existing = Store::open_existing(root, Arc::new(ShimFs::new())).unwrap();
+        assert!(!existing.created());
+        drop(existing);
+        let beside = Store::open_in_existing_parent(root, Arc::new(ShimFs::new())).unwrap();
+        assert!(!beside.created());
+    }
+}
+
+#[test]
+fn a_writer_that_makes_the_root_alone_is_refused_where_the_parent_is_missing() {
+    let dir = Scratch::new("store-made");
+    // A mistyped part in the middle of the path: nothing is made, not even that part.
+    let mistyped = dir.path().join("stroes");
+    let root = mistyped.join("mine");
+    let fs = Arc::new(ShimFs::new());
+    let error = Store::open_in_existing_parent(&root, fs.clone())
+        .map(|_| ())
+        .unwrap_err();
+    match &error {
+        Error::NoParent {
+            root: named,
+            parent,
+        } => {
+            assert_eq!((named, parent), (&root, &mistyped));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "there is no store at {}, and none is made there: there is no directory {} to \
+             make it in",
+            root.display(),
+            mistyped.display()
+        )
+    );
+    assert_eq!(fs.events(), vec![]);
+    assert!(!mistyped.exists());
+    // The same path through the open that makes parents is a store.
+    drop(Store::open(&root, Arc::new(ShimFs::new())).unwrap());
+
+    // With the parent there, the root is made, for its owner only, and it is a store.
+    let root = dir.path().join("mine");
+    let fs = Arc::new(ShimFs::new());
+    let store = Store::open_in_existing_parent(&root, fs.clone()).unwrap();
+    assert!(store.created());
+    assert_eq!(
+        fs.events()[..2],
+        [
+            Event::CreateDir(root.clone()),
+            Event::SyncDir(dir.path().to_path_buf())
+        ]
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&root).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+    drop(store);
+    assert_eq!(after_restart(&root), (0, Contents::new()));
+}

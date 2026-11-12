@@ -21,7 +21,9 @@ message; work put off belongs on `docs/carry-over.md`.
 - One file per decision: `docs/adr/NNNN-short-title.md`, numbered in order from `0001`.
 - When documents disagree, `SPEC.md` comes first, then the milestone plan, then an ADR.
 - An accepted ADR is not rewritten. A new ADR supersedes it, and each names the other in its
-  status line.
+  status line. One exception: until the milestone or checkpoint that introduced it closes,
+  an accepted ADR may be amended in place, with a dated `Amended:` line in its header that
+  says what changed. After that, only a new ADR changes it.
 - An ADR goes through the same pull request, review and scans as any change. It names no
   agent or model, and holds nothing private.
 

@@ -2,7 +2,10 @@
 # to a line: accept or refuse, name or purpose, and the string as JSON, with tabs between.
 # The rule is held twice, in scripts/docs.sh and in crates/whizbang-core/src/contract/text.rs;
 # scripts/tests/test-docs.sh and crates/whizbang-core/tests/it/contract/text.rs both read this
-# file and run every case, so a case added here is run against both.
+# file and run every case, so a case added here is run against both. Each reader counts
+# the cases it ran and fails unless that is the number on the next line, so a case that is
+# added changes that number, and one that is lost, or not read, is noticed.
+# cases: 51
 accept	name	"a"
 accept	name	"grow"
 accept	name	"zebra_map"

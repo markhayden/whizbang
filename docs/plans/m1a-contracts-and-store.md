@@ -196,7 +196,8 @@ behaviour in milestone 3.
 
 - **Part 1, merged:** the action descriptor (ADR 0003), registration, the static
   description and the two fixtures: boxes 3, 6 and 7, and of "Done when" the two fixtures
-  validating and the shipping description without `echo`.
+  validating, the shipping description without `echo`, and the crate-graph check showing
+  that the binary does not depend on the test kit.
 - **Part 2:** from box 2, the call, the prepared call, the context, the outcome, the
   executor interface and the capability handle types; box 4, the construction of the
   registry and the executor, with the entry point where a request id will be looked up; of

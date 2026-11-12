@@ -2,7 +2,7 @@
 //! of its type and its identity, so what a store holds of it is what any other store would.
 
 use crate::identity::DecodeLimits;
-use crate::store::{self, Entry, Generation, Publication, Reader, Store};
+use crate::store::{self, Entry, Generation, Kind, Publication, Reader, Store};
 
 use super::{Artifact, ArtifactError, ArtifactId, ArtifactType, Result};
 
@@ -11,13 +11,22 @@ pub fn name(artifact: ArtifactType, id: ArtifactId) -> String {
     format!("artifacts/{}/{}", artifact.name(), id.0.hex())
 }
 
-/// Whether this generation holds the artifact.
+/// Whether this generation holds the artifact: its name is there as a committed output.
+/// A diagnostic reference under an artifact's name is not the artifact, here as in
+/// [`get`], which refuses to read one: what this says is held, `get` will read.
 pub fn holds(generation: &Generation, artifact: ArtifactType, id: ArtifactId) -> bool {
-    generation.get(&name(artifact, id)).is_some()
+    generation
+        .get(&name(artifact, id))
+        .is_some_and(|entry| entry.kind == Kind::Output)
 }
 
 /// Adds the artifact to a publication, as its canonical file under its name. It is in the
 /// store once the publication is published.
+///
+/// One name holds one reference. Where the name held a diagnostic reference, which
+/// [`holds`] does not count, this replaces it with the output; what the diagnostic
+/// referenced is then named by nothing, unless another name has it, and goes at the
+/// next prune.
 pub fn put(publication: &mut Publication<'_>, artifact: &Artifact) -> Result<ArtifactId> {
     let id = artifact.id();
     publication.put(&name(artifact.artifact_type(), id), &artifact.to_bytes())?;

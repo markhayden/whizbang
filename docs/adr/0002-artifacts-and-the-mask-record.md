@@ -103,8 +103,9 @@ is bounded by the artifact, not by the file:
   only as its bytes are read, so it costs no more than a small multiple of the file's size.
   An image is held to ADR 0001's limits.
 
-Nothing here limits the size of the file itself; whoever reads the bytes does. A tighter
-bound for masks is on `docs/carry-over.md`.
+Nothing here limits the size of the file itself; whoever reads the bytes does. The first
+such reader is `whizbang store import`, which refuses a file over 65 MiB before it reads
+it. A tighter bound for masks is on `docs/carry-over.md`.
 
 ### The six types
 
@@ -117,7 +118,11 @@ them); what it is for (`u`): 0 a picture, 1 a rendering. The projection and topo
 stated by whoever makes the artifact; the size and both digests are taken from the file,
 which is decoded within ADR 0001's limits when the artifact is made and again when it is
 read. The same picture in two files is two artifacts with one pixel digest: bindings name
-images by pixel digest, and an artifact names the bytes.
+images by pixel digest, and an artifact names the bytes. So a change of the encoder that
+writes an image a tool makes, giving another file for the same pixels, changes that
+artifact's identity through its file digest and leaves its pixel digest and every binding
+that names it as they were, as ADR 0001 says of the JPEG decoder and the pixel digest;
+what writes a crop is pinned for that reason (`docs/reference/tools/view.md`).
 
 **`location/1`.** The binding; the shape's kind (`u`) and its parameters, in pixels of the
 binding's source space:
