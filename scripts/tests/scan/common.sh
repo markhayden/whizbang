@@ -81,7 +81,8 @@ says() {
 }
 # tree_says <place>: `says`, for a scan of the working tree. When the place is missing it
 # first reports what the folder held and what two more scans find, the second with git grep
-# on one thread: FLAKE-NOTE
+# on one thread. On CI's macOS runner git grep on several threads has lost a match at
+# random (docs/carry-over.md), and a scan on one thread has not.
 tree_says() {
   local f
   if ! grep -a -q -F -e "$1" "$tmp/out"; then
