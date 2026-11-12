@@ -15,9 +15,10 @@ Check, in this order:
 5. Tests wait on events, not sleeps. Nothing runs twice.
 6. The spec, reference and carry-over list were updated where the change affects them.
 
-7. Each changed file under `.github/`, and each that grants permissions
-   (`.claude/settings*.json`, `.claude/agents/*.md`, `.claude/skills/**`, `.mcp.json`), read
-   in full.
+7. Each changed file that grants permissions or checks the pull request, read in full:
+   any file under `.github/`; any file under a folder named `.claude`, at any depth;
+   `.mcp.json`, at any depth; `justfile`; any file under `scripts/hooks/`; and
+   `scripts/scan.sh`.
 
 Report: the full head commit you reviewed; then findings, most severe first, each with the
 file and line, what is wrong, and the fix; then each file of item 7 by name, saying you read

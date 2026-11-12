@@ -23,8 +23,8 @@ If one is missing, ask the orchestrator. Do not guess.
 
 - [ ] 1. Start with `kickoff`, steps 1 to 4.
 - [ ] 2. The source commit is the one `docs/sources.toml` pins for the source repo, and no
-      other. In your checkout of the old repo, the tag `final-before-whizbang` points at
-      that commit; if it does not, stop.
+      other. In your checkout of the old repo, the tag that entry names points at that
+      commit; if it does not, stop.
 - [ ] 3. The old repo is frozen and read-only. Read it at the pinned commit with `git show`,
       `git ls-tree` and `git grep`. Do not check out, commit, stash, fetch into or change
       anything there.
@@ -51,18 +51,19 @@ If one is missing, ask the orchestrator. Do not guess.
 - [ ] 10. Everything not ported goes in `docs/carry-over.md`: deferred, with the milestone
       that owns it, or dropped, with one line saying why. A row this port closes is removed.
 - [ ] 11. Finish with `kickoff`, steps 6 to 12.
+      Never merge: only the orchestrator merges.
 
 ## Commands
 
 ```sh
 # In your checkout of the old repo: read only.
-git -C <old-repo> rev-parse 'final-before-whizbang^{commit}'   # equals the pin
+git -C <old-repo> rev-parse '<tag>^{commit}'                   # equals the pin
 git -C <old-repo> ls-tree -r --name-only <commit> -- <path>
 git -C <old-repo> show <commit>:<path>
 git -C <old-repo> grep -n <text> <commit> -- <path>
 
 # In the worktree.
-grep -A 4 'name = "<source repo>"' docs/sources.toml           # the pinned commit
+grep -A 4 'name = "<source repo>"' docs/sources.toml           # its <tag> and <commit>
 just graph                                                     # the crate edges
 just check
 just scan
