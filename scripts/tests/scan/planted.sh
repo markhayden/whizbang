@@ -71,7 +71,30 @@ expect_fail "the planted cases, as CI runs a range" "secrets scan: found" \
 while IFS= read -r where; do says "$where"; done <"$tmp/in-commits"
 quiet "$key"
 expect_fail "the planted cases, in the working tree" "secrets scan: found" "$scan"
-while IFS= read -r where; do says "$where"; done <"$tmp/in-tree"
+# One run on CI (macOS, git 2.56) did not report `with space.txt:1` here and the next run of
+# the same commit did; it has not happened again (docs/carry-over.md). If a place is missing,
+# say what the folder held and what a second scan reports, before failing as usual.
+while IFS= read -r where; do
+  if ! grep -a -q -F -e "$where" "$tmp/out"; then
+    cp "$tmp/out" "$tmp/first"
+    {
+      echo "missing from the working-tree scan: $where"
+      git --version
+      echo "the files of the folder, with their sizes in bytes:"
+      for f in ./*; do [ -L "$f" ] || [ ! -f "$f" ] || wc -c "$f"; done
+      echo "files git lists: $(git ls-files -co --exclude-standard | wc -l | tr -d ' ')"
+      echo "files git grep finds a token in:"
+      git grep --untracked -a -c -e 'token = ' || true
+      if "$scan" 2>&1 | grep -a -q -F -e "$where"; then
+        echo "a second scan reports it"
+      else
+        echo "a second scan does not report it either"
+      fi
+    } >&2
+    cp "$tmp/first" "$tmp/out"
+  fi
+  says "$where"
+done <"$tmp/in-tree"
 says "link-targets/working-tree:1"
 says "link-targets/working-tree:2"
 quiet "$key"
