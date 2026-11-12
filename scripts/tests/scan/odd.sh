@@ -35,7 +35,8 @@ fresh name-repo
 git init -q inner
 git -C inner -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m "docs: nothing"
 git add inner 2>/dev/null
-expect_fail "a path that is neither a file nor a link" "neither a file nor a link" "$scan"
+expect_fail "a path that is neither a file nor a link" "1 paths that git lists are neither a file nor a link" "$scan"
+quiet "inner"
 git rm -q -f --cached inner
 rm -rf inner
 

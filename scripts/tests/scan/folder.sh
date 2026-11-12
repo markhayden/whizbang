@@ -92,16 +92,37 @@ done
 # rules in nested files, rules for folders, and what a rule under an ignored folder can
 # and cannot put back.
 fresh the-lister
+# The same name composed and decomposed: one file to macOS, where git composes the names
+# it reads from a folder and find does not; two files elsewhere.
+nfc=$(printf 'caf\303\251')
+nfd=$(printf 'cafe\314\201')
+# A character of four bytes, which no conversion of names knows how to compose.
+smile=$(printf '\360\237\230\200')
 printf '%s\n' '*.log' '!keep.log' 'out/*' '!out/keep/' 'build/' '!build/back.txt' '/top-only.txt' 'docs/**/*.png' '!docs/**/shown.png' \
   'gen/' '!gen/sub/' '!gen/sub/kept.txt' 'cache/**' '!cache/**/keep.me' 'logs/' 'with space ignored/' 'two*ignored/' '-dash-ignored/' \
-  'partly/*' '!partly/keep/' >.gitignore
+  'partly/*' '!partly/keep/' '*.gone' "ig-$nfc/" "$nfd/$smile.txt" >.gitignore
 printf '%s\n' 'local-*' >>.git/info/exclude
 two_lines=$(printf 'two\nlines')
 mkdir -p out/keep out/drop build/deep sub/inner docs/a/b "a folder" nested/top-only.txt.d \
   gen/sub cache/a/b deep/logs "with space ignored/in" "$two_lines ignored/in" "$two_lines kept" ./-dash-ignored/in ./-dash-kept \
-  partly/keep/deeper partly/drop/keep build/own-rules
+  partly/keep/deeper partly/drop/keep build/own-rules "dir-$nfd/in-$nfd" "dir-$nfc-too" "ig-$nfd" "ig-$nfc"
 printf '%s\n' '!special.log' 'secret-*' '*.tmp' >sub/.gitignore
 printf '%s\n' '!*.tmp' 'inner-only' >sub/inner/.gitignore
+# Files of rules in folders whose names git prints in quotes, or that read like the
+# place of a rule themselves.
+mkdir "odd:3:!source" n:5:y "$nfd" "$smile-folder"
+printf '%s\n' 'here-only' '!n' >n:5:y/.gitignore
+for f in n n:5:y/n n:5:y/here-only "$nfd/$smile.txt" "$nfd/beside.txt" "$smile-folder/$smile" "$smile.txt" \
+  'a "quoted" name.txt' "$(printf 'a\ttab.txt')" "$(printf 'ends in a newline\n.')"; do
+  printf 'content of %s\n' "$f" >"${f%.}"
+done
+printf '%s\n' 'here-only' >"$two_lines kept/.gitignore"
+printf '%s\n' 'here-only' '!back' >"dir-$nfd/.gitignore"
+printf '%s\n' 'here-only' 'ba*' '!back' >"odd:3:!source/.gitignore"
+for f in "$two_lines kept/here-only" "dir-$nfd/here-only" "dir-$nfd/back" "odd:3:!source/here-only" "odd:3:!source/back" \
+  "odd:3:!source/bat"; do
+  printf 'content of %s\n' "$f" >"$f"
+done
 # A file of rules inside an ignored folder puts nothing back.
 printf '%s\n' '!*' '!put-back.txt' >build/own-rules/.gitignore
 for f in keep.log drop.log out/keep/in.txt out/keep/in.log out/drop/x.txt out/file.txt build/back.txt build/deep/y.txt \
@@ -114,44 +135,61 @@ for f in keep.log drop.log out/keep/in.txt out/keep/in.log out/drop/x.txt out/fi
   "with space ignored/x.txt" "with space ignored/in/y.txt" "$two_lines ignored/x.txt" "$two_lines ignored/in/y.txt" \
   "$two_lines kept/x.txt" ./-dash-ignored/x.txt ./-dash-ignored/in/y.txt ./-dash-kept/x.txt \
   partly/file.txt partly/keep/x.txt partly/keep/deeper/y.txt partly/drop/x.txt partly/drop/keep/z.txt \
-  build/own-rules/put-back.txt; do
+  build/own-rules/put-back.txt \
+  axb.gone 'a*b.gone' 'a?b.gone' 'a[wxy]b.gone' 'star*.txt' 'query?.txt' 'set[a].txt' \
+  "nfd-$nfd.txt" "nfc-$nfc.txt" "both-$nfc.txt" "both-$nfd.txt" "dir-$nfd/in.txt" "dir-$nfd/in-$nfd/deep-$nfd.txt" \
+  "dir-$nfc-too/in.txt" "ig-$nfd/x.txt" "ig-$nfc/y.txt"; do
   printf 'content of %s\n' "$f" >"$f"
 done
 printf 'a name over two lines\n' >"$(printf 'two\nlines.txt')"
 : >empty.txt
 ln -s plain.txt a-link
 ln -s "a folder" a-folder-link
+# A link to an ignored file is a link, not that file.
+ln -s out/file.txt a-link-to-an-ignored-file
 # A link to a folder, inside a folder that is listed: the walk does not go through it.
 ln -s ../build partly/keep/a-way-in
 # Tracked files, in and out of what the rules match.
-git add -f plain.txt drop.log build/deep/y.txt sub/secret-1 gen/tracked.txt .gitignore
+# Among them a tracked file that an ignored one's name matches, when the name is read as
+# a pattern: `a*b.gone` is ignored whatever axb.gone is.
+# And a tracked link to an ignored file: the link is tracked, the file is not covered.
+git add -f plain.txt drop.log build/deep/y.txt sub/secret-1 gen/tracked.txt axb.gone a-link-to-an-ignored-file .gitignore
 git commit -q --no-verify -m "feat: tracked"
-rm -f "$tmp/spy.listed"
-expect_pass "a tree full of ignore rules" spied "$scan"
-[ -s "$tmp/spy.listed" ] || fail "the census's list was seen"
-git ls-files -z -co --exclude-standard >"$tmp/git-entries"
-while IFS= read -r -d '' f; do
-  if [ -f "$f" ] && [ ! -L "$f" ] && [ -s "$f" ]; then printf '%s\0' "$f"; fi
-done <"$tmp/git-entries" | tr '\n\0' '\002\n' | sort -u >"$tmp/git-listed"
-cmp -s "$tmp/git-listed" "$tmp/spy.listed" || {
-  diff "$tmp/git-listed" "$tmp/spy.listed" >&2 || true
-  fail "the census lists exactly what git lists (above: git's list, then the census's)"
-}
+lists_what_git_lists "a tree full of ignore rules"
 # The cases are really in there: put back by a rule, kept out by one, tracked though matched.
 for f in keep.log out/keep/in.txt docs/a/b/shown.png sub/special.log sub/inner/y.tmp drop.log build/deep/y.txt sub/secret-1 \
   "a folder/with space.txt" gen/tracked.txt cache/keep.me logs deep/beside.txt -dash-kept/x.txt \
-  partly/keep/x.txt partly/keep/deeper/y.txt "$(printf 'two\002lines kept/x.txt')" "$(printf 'two\002lines.txt')"; do
-  grep -q -x -F -e "$f" "$tmp/spy.listed" || { cat "$tmp/spy.listed" >&2; fail "the list holds $f"; }
+  partly/keep/x.txt partly/keep/deeper/y.txt "$two_lines kept/x.txt" "$two_lines.txt" \
+  axb.gone 'star*.txt' 'query?.txt' 'set[a].txt' "nfc-$nfc.txt" "dir-$nfc-too/in.txt" \
+  "nfd-$nfd.txt" "dir-$nfd/in.txt" "dir-$nfd/in-$nfd/deep-$nfd.txt" "both-$nfd.txt" "both-$nfc.txt" \
+  "dir-$nfd/back" "odd:3:!source/back" "$two_lines kept/.gitignore" \
+  n n:5:y/n "$nfd/beside.txt" "$smile-folder/$smile" "$smile.txt" 'a "quoted" name.txt' "$(printf 'a\ttab.txt')"; do
+  listed "$f" || fail "the list holds $f"
 done
 for f in out/drop/x.txt out/file.txt build/back.txt top-only.txt docs/a/b/hidden.png sub/other.log sub/x.tmp \
   sub/inner/inner-only local-notes.txt out/keep/in.log empty.txt a-link \
   gen/loose.txt gen/sub/kept.txt gen/sub/other.txt cache/other.txt cache/a/keep.me cache/a/b/keep.me cache/a/other.txt \
   deep/logs/day.txt "with space ignored/x.txt" "with space ignored/in/y.txt" -dash-ignored/x.txt -dash-ignored/in/y.txt \
-  "$(printf 'two\002lines ignored/x.txt')" "$(printf 'two\002lines ignored/in/y.txt')" \
+  "$two_lines ignored/x.txt" "$two_lines ignored/in/y.txt" \
   partly/file.txt partly/drop/x.txt partly/drop/keep/z.txt build/own-rules/put-back.txt build/own-rules/.gitignore \
-  partly/keep/a-way-in/back.txt partly/keep/a-way-in/deep/y.txt; do
-  grep -q -x -F -e "$f" "$tmp/spy.listed" && { cat "$tmp/spy.listed" >&2; fail "the list does not hold $f"; }
+  partly/keep/a-way-in/back.txt partly/keep/a-way-in/deep/y.txt 'a*b.gone' 'a?b.gone' 'a[wxy]b.gone' "ig-$nfc/y.txt" \
+  "$two_lines kept/here-only" "dir-$nfd/here-only" "odd:3:!source/here-only" "odd:3:!source/bat" n:5:y/here-only; do
+  listed "$f" && fail "the list does not hold $f"
 done
-grep -q -x -F -e "nested/top-only.txt" "$tmp/spy.listed" || fail "a rule for the top folder alone leaves nested/top-only.txt in"
+# The folder with the decomposed name: where git composes names, the rule written
+# composed ignores it; elsewhere it is another name, and its file is listed.
+if [ "$(uname -s)" = Darwin ] && [ "$(git config --type=bool core.precomposeunicode || true)" = true ]; then
+  listed "ig-$nfd/x.txt" && fail "a rule with a composed name ignores the folder with the decomposed one"
+else
+  listed "ig-$nfd/x.txt" || fail "the list holds ig-$nfd/x.txt, which no rule names"
+fi
+# A rule written decomposed for a file with a four-byte character in a decomposed
+# folder: where git composes names the rule no longer meets the name, elsewhere it does.
+if [ "$(uname -s)" = Darwin ] && [ "$(git config --type=bool core.precomposeunicode || true)" = true ]; then
+  listed "$nfd/$smile.txt" || fail "the list holds $nfd/$smile.txt, which the rule written decomposed does not meet"
+else
+  listed "$nfd/$smile.txt" && fail "the list does not hold $nfd/$smile.txt, which a rule names"
+fi
+listed nested/top-only.txt || fail "a rule for the top folder alone leaves nested/top-only.txt in"
 
 finished
