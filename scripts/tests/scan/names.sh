@@ -21,6 +21,27 @@ for name in 'a*b.tmp' 'a?b.tmp' 'a[wxy]b.tmp' '*.tmp'; do
   says "secrets scan: clean (3 files)"
   rm "$name"
 done
+# A tracked file that a rule matches is searched by its name, as a name: one that reads as
+# a pattern, or as an instruction to git about patterns, is searched all the same, and
+# only that file.
+for name in ':(glob)x.tmp' '*.tmp' ':!axb.tmp'; do
+  printf 'token = %s\n' "$key" >"$name"
+  git add -f -- "./$name"
+  expect_fail "a key in a tracked file named $name that a rule matches" "$name:1" "$scan"
+  quiet "were not looked in"
+  [ "$(grep -c -F -e ".tmp:1" "$tmp/out")" = 1 ] || { cat "$tmp/out" >&2; fail "only the file named $name holds a key"; }
+  git rm -q -f --cached -- "./$name"
+  rm "$name"
+done
+# A tracked link that a rule matches, to a tracked file that the rule matches too: the
+# link is a link, and the file is searched.
+printf 'token = %s\n' "$key" >z-real.tmp
+ln -s z-real.tmp a-link.tmp
+git add -f a-link.tmp z-real.tmp
+expect_fail "a key in a tracked file that a tracked link leads to, a rule matching both" "z-real.tmp:1" "$scan"
+quiet "were not looked in"
+git rm -q -f --cached a-link.tmp z-real.tmp
+rm a-link.tmp z-real.tmp
 
 # A name that holds a byte the scan uses to tell names and fields apart (\001, \002) is
 # refused, with a count and without the name: tracked or not, a file or a folder, in the
@@ -198,10 +219,41 @@ if (printf 'token = %s\n' "$key" >"$long/$name") 2>/dev/null; then
     says "secrets scan: clean (3 files)"
     listed "$long/$short" || fail "the list holds the file at the end of the longest path"
     [ "$(wc -l <"$tmp/spy.listed" | tr -d ' ')" = 3 ] || fail "the list holds three files"
+    # Where git does not compose names, it lists the file by the name that is too long:
+    # the file is there and cannot be looked up, which is not the same as gone.
+    if [ "$(uname -s)" = Darwin ]; then
+      git config core.precomposeunicode false
+      expect_fail "an untracked file whose only name is too long to open" \
+        "1 files of the working tree could not be looked up, though they may be there" "$scan"
+      quiet "no longer there"
+      never_clean "an untracked file whose only name is too long to open"
+      git config core.precomposeunicode true
+    fi
     (cd "$long" && rm "$name")
   else
     echo "skip: a path one byte too long; it cannot be made here"
   fi
+  # A tracked file in an ignored folder, at a path as long as the system's limit and so
+  # one byte too long to open: git says nothing of it, and it is not gone.
+  limit=$(getconf PATH_MAX . 2>/dev/null || echo 4096)
+  piece="$(printf 'd%.0s' $(seq 1 199))/"
+  folders="ig/$(printf "$piece%.0s" $(seq 1 $(((limit - 4) / 200))))"
+  last=$(printf 'k%.0s' $(seq 1 $((limit - ${#folders}))))
+  [ "$(printf '%s%s' "$folders" "$last" | LC_ALL=C wc -c | tr -d ' ')" = "$limit" ] || fail "the path is $limit bytes long"
+  mkdir -p "$folders"
+  if (cd "$folders" && printf 'token = %s\n' "$key" >"$last") 2>/dev/null; then
+    printf 'ig/\n' >>.git/info/exclude
+    git update-index --add --cacheinfo "100644,$(printf 'token = %s\n' "$key" | git hash-object -w --stdin),$folders$last"
+    expect_fail "a tracked file in an ignored folder at a path too long to open" \
+      "1 files of the working tree could not be looked up, though they may be there" "$scan"
+    quiet "kkkk"
+    never_clean "a tracked file in an ignored folder at a path too long to open"
+    git update-index --force-remove "$folders$last"
+    printf 'scripts/\n.env\n' >.git/info/exclude
+  else
+    echo "skip: a tracked file at a path of $limit bytes; it cannot be made here"
+  fi
+  rm -rf ig
   # The longest path, tracked. (Last: git cannot take such a file away again.)
   git -c core.precomposeunicode=false add -- "$long/$short"
   git commit -q --no-verify -m "feat: a long path"

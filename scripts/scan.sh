@@ -72,6 +72,8 @@ export LC_ALL=C
 # Anything git says on stderr during a search fails the scan, so git must not be told to
 # talk: tracing is switched off for this run.
 for name in ${!GIT_TRACE@} GIT_CURL_VERBOSE; do unset "$name"; done
+# Nor may grep be given options from outside (some greps read GREP_OPTIONS).
+unset GREP_OPTIONS
 # Configuration that comes in environment variables holding the settings themselves
 # (GIT_CONFIG_COUNT with its keys and values) is kept from every git the scan runs but
 # one: left in place it would set anything for the listings and searches that decide
@@ -365,20 +367,34 @@ names() { tr '\n\0' '\002\n' | sort -u; }
 # cannot hide anything a push publishes: a push is scanned commit by commit, from the
 # commits' trees, and tracked files are listed from the index.
 #
-# There the two lists are compared as files, not as names (`same_files`): each name on
+# There the two lists are compared as files, not as names (`look_up ids`): each name on
 # either side is looked up once and stands for its device and inode. On macOS one file
 # can go by two names (git composes the names it reads from a folder, the index holds
 # whichever form was committed), and they are then one file; where the two forms are two
 # files, they are two inodes. Two hard links to one file hold the same bytes, so a
 # search of one has covered both. A name the index holds for a file that is not there
-# (deleted and not yet committed) is nothing to cover; an untracked name, or a name the
-# search gave, that leads nowhere is a refusal, since something changed while the scan
-# ran.
+# ("no such file", or "not a folder" on the way to it) is a file deleted here and not yet
+# committed: nothing to cover. A file that may be there and cannot be looked up is
+# another matter and fails the scan (`look_up`). So does an untracked name, or a name
+# the search gave, that leads nowhere: something changed while the scan ran.
 #
-# What still refuses is on docs/carry-over.md: a tracked folder that has since become a
-# repository of its own (git's search does not look inside one), and on macOS a file
-# tracked under a decomposed name that a rule written composed ignores (git's search
-# leaves it out).
+# What a scan of the working tree refuses though nothing is wrong with the files, each
+# because git's search does not look where the list says a file is. They are on
+# docs/carry-over.md:
+#   - a tracked file that is now a folder, a submodule that is checked out, a repository
+#     inside this one, with or without a commit (counted, as paths that are neither a
+#     file nor a link, or as files not looked in);
+#   - a tracked file that a rule matches and that is marked skip-worktree, when it is on
+#     disk; and a sparse index;
+#   - a tracked file that a rule matches and that is marked assume-unchanged, when the
+#     index has it empty and the file is not;
+#   - a `.gitignore` that is a link (git does not read rules through one, and says so);
+#   - on macOS, a file or folder tracked under a decomposed name that a rule written
+#     composed ignores.
+# And one thing it passes that a reader might expect it to refuse, also there: a tracked
+# file that a rule matches and that is marked assume-unchanged is searched as the index
+# has it, not as the folder has it; while it is marked, a change to it cannot be
+# committed.
 census() {
   local f rev missing rc
   case "$target" in
@@ -390,10 +406,12 @@ census() {
       plain_names "$work/census-entries"
       plain_names "$work/entries-others"
       # A tracked name with no file behind it is a file deleted here: nothing to cover.
-      same_files "$work/census-entries" "$work/census-ids" "$work/census-gone"
-      same_files "$work/entries-others" "$work/census-ids-others" "$work/census-gone"
-      [ ! -s "$work/census-gone" ] ||
-        die "$(cat "$work/census-gone") untracked files that git listed are no longer there; something changed during the scan: run it again; refusing to pass"
+      look_up ids "$work/census-entries" >"$work/census-ids"
+      wrote "$work/census-ids" lines
+      look_up ids "$work/entries-others" >"$work/census-ids-others"
+      wrote "$work/census-ids-others" lines
+      [ "$rep_gone" -eq 0 ] ||
+        die "$rep_gone untracked files that git listed are no longer there; something changed during the scan: run it again; refusing to pass"
       sort -u "$work/census-ids" "$work/census-ids-others" >"$work/census-listed"
       ;;
     files)
@@ -415,9 +433,10 @@ census() {
   esac
   run_grep "$work/census-raw" -l -F -e ''
   if [ "$target" = worktree ]; then
-    same_files "$work/census-raw" "$work/census-ids" "$work/census-gone"
-    [ ! -s "$work/census-gone" ] ||
-      die "$(cat "$work/census-gone") names the search gave for the working tree lead to no file; something changed during the scan: run it again; refusing to pass"
+    look_up ids "$work/census-raw" >"$work/census-ids"
+    wrote "$work/census-ids" lines
+    [ "$rep_gone" -eq 0 ] ||
+      die "$rep_gone names the search gave for the working tree lead to no file; something changed during the scan: run it again; refusing to pass"
     sort -u "$work/census-ids" >"$work/census-searched"
     missing=$(comm -23 "$work/census-listed" "$work/census-searched" | wc -l | tr -d ' ')
     [ "$missing" -eq 0 ] ||
@@ -430,24 +449,130 @@ census() {
     die "$missing of the $(wc -l <"$work/census-listed" | tr -d ' ') files to cover were not looked in by the search ($target); they are not named here, since a path can hold a match; refusing to pass"
 }
 
-# same_files <names> <to> <gone>: for the NUL-ended names of the first file, relative to
-# the top of the working tree, writes to the second one line, device and inode, for each
-# that is a regular file with something in it (a link is not followed, so it is not
-# one); and to the third, if any name leads nowhere, how many do. perl, because it is on
-# every system the scan runs on and reads a NUL-ended list and looks a name up in one
-# process; `stat` would do, but its options differ between the systems. A perl that is
-# not there, or fails, fails the scan.
-same_files() {
-  local rc=0
-  perl -0 -ne '
-    chomp;
-    my @s = lstat($_);
-    if (!@s) { $gone++; next }
-    print "$s[0]:$s[1]\n" if -f _ && $s[7] > 0;
-    END { print STDERR "$gone\n" if $gone }
-  ' <"$1" >"$2" 2>"$3" || rc=$?
+# look_up <what> <file...>: looks up, once each, the NUL-ended names of the files given,
+# which are relative to the top of the working tree, and prints what <what> asks for:
+#
+#   ids <names>                  one line, device and inode, for each name that is a regular
+#                                file with something in it (a link is not followed, so it
+#                                is not one)
+#   kinds <names> <paths> <targets>
+#                                adds to <paths> the names that are files or links, one a
+#                                line, and to <targets> where each link leads
+#   by-name <others> <ignored>   the names of <ignored>, NUL-ended, whose file is not one
+#                                of <others> and has not been printed already
+#
+# perl, because it is on every system the scan runs on and reads a NUL-ended list and
+# looks a name up in one process; `stat` would do, but its options differ between the
+# systems.
+#
+# A name that is not there is one thing, a name that cannot be looked up another. Only
+# "no such file" and "not a folder" on the way mean the file is gone. Anything else (a
+# folder that cannot be searched, a path too long to open) leaves a file that may well be
+# there and is not covered: the scan fails, with a count.
+#
+# perl is not taken at its word either. It reports how many names it read and how many
+# lines it wrote, and ends its report with a line of its own; a perl that fails, stops
+# early or says nothing fails the scan. The report is left in the rep_ variables: read,
+# gone (names that are not there), out, and for `kinds` files and other (what is neither
+# a file nor a link).
+lookup='
+  use strict;
+  my $what = shift @ARGV;
+  my %n = (read => 0, gone => 0, barred => 0, out => 0, files => 0, other => 0);
+  sub names { open(my $in, "<", $_[0]) or die "$_[0]: $!\n"; $in }
+  sub look {
+    $n{read}++;
+    my @s = lstat($_[0]);
+    if (!@s) { $n{ $!{ENOENT} || $!{ENOTDIR} ? "gone" : "barred" }++ }
+    @s;
+  }
+  if ($what eq "ids") {
+    my $in = names($ARGV[0]);
+    while (<$in>) {
+      chomp;
+      my @s = look($_) or next;
+      next unless -f _ && $s[7] > 0;
+      print "$s[0]:$s[1]\n";
+      $n{out}++;
+    }
+  } elsif ($what eq "kinds") {
+    my ($in, $paths, $targets) = (names($ARGV[0]));
+    while (<$in>) {
+      chomp;
+      look($_) or next;
+      if (-l _) {
+        my $target = readlink($_);
+        if (!defined $target) { $n{barred}++; next }
+        $targets or open($targets, ">>", $ARGV[2]) or die "$ARGV[2]: $!\n";
+        print $targets "$target\n";
+      } elsif (-f _) {
+        $n{files}++;
+      } else {
+        $n{other}++;
+        next;
+      }
+      $paths or open($paths, ">>", $ARGV[1]) or die "$ARGV[1]: $!\n";
+      print $paths "$_\n";
+      $n{out}++;
+    }
+    !$paths or close($paths) or die "$ARGV[1]: $!\n";
+    !$targets or close($targets) or die "$ARGV[2]: $!\n";
+  } elsif ($what eq "by-name") {
+    my %seen;
+    my $in = names($ARGV[0]);
+    while (<$in>) { chomp; my @s = look($_) or next; $seen{"$s[0]:$s[1]"} = 1 }
+    $in = names($ARGV[1]);
+    while (<$in>) {
+      chomp;
+      my @s = look($_) or next;
+      next if $seen{"$s[0]:$s[1]"}++;
+      print "$_\0";
+      $n{out}++;
+    }
+  } else {
+    die "look_up: $what?\n";
+  }
+  close(STDOUT) or die "stdout: $!\n";
+  print STDERR "$_ $n{$_}\n" for sort keys %n;
+  print STDERR "end 1\n";
+'
+rep_read=0 rep_gone=0 rep_out=0 rep_files=0 rep_other=0
+look_up() {
+  local rc=0 key value barred= end= asked=0 f
+  perl -0 -e "$lookup" "$@" 2>"$work/lookup-report" || rc=$?
   [ "$rc" -eq 0 ] ||
-    die "the files of the working tree could not be looked up (perl: exit $rc); the scan needs perl to tell which files the search looked in; refusing to pass"
+    die "the files of the working tree could not be looked up (perl: exit $rc); the scan needs perl to tell which files there are and which the search looked in; refusing to pass"
+  rep_read= rep_gone= rep_out= rep_files= rep_other=
+  while read -r key value; do
+    case "$value" in '' | *[!0-9]*) continue ;; esac
+    case "$key" in
+      read) rep_read=$value ;;
+      gone) rep_gone=$value ;;
+      barred) barred=$value ;;
+      out) rep_out=$value ;;
+      files) rep_files=$value ;;
+      other) rep_other=$value ;;
+      end) end=$value ;;
+    esac
+  done <"$work/lookup-report"
+  # Every name of the lists it was given, and nothing left unsaid.
+  shift
+  for f in "$@"; do
+    case "$f" in "$text"/*) ;; *) asked=$((asked + $(tr -c -d '\0' <"$f" | wc -c))) ;; esac
+  done
+  [ "$end" = 1 ] && [ -n "$rep_gone" ] && [ -n "$barred" ] && [ -n "$rep_out" ] && [ -n "$rep_files" ] &&
+    [ -n "$rep_other" ] && [ "$rep_read" = "$asked" ] ||
+    die "perl did not finish looking the files of the working tree up (it reports ${rep_read:-nothing} of $asked names); refusing to pass"
+  [ "$barred" -eq 0 ] ||
+    die "$barred files of the working tree could not be looked up, though they may be there (a folder that cannot be read or searched, or a path too long to open); they are not covered; refusing to pass"
+}
+# wrote <file> <lines|names>: fails unless the file holds as many lines, or NUL-ended
+# names, as the last look_up reports it wrote.
+wrote() {
+  local held
+  if [ "$2" = lines ]; then held=$(($(wc -l <"$1"))); else held=$(($(tr -c -d '\0' <"$1" | wc -c))); fi
+  [ "$held" = "$rep_out" ] ||
+    die "perl did not finish looking the files of the working tree up (it reports $rep_out $2 written, and $held are there); refusing to pass"
 }
 
 # plain_names <file>: fails if any of the NUL-ended names in the file holds the byte \001
@@ -728,18 +853,13 @@ case "$mode" in
       die "the files of the working tree could not be listed (git ls-files failed); refusing to pass"
     [ ! -s "$work/list-errors" ] ||
       die "git said something while it listed the working tree ($(wc -l <"$work/list-errors" | tr -d ' ') lines of warnings or errors, such as a folder it could not read); what was not listed is not covered; refusing to pass"
-    while IFS= read -r -d '' f; do
-      if [ -L "$f" ]; then
-        readlink -- "$f" >>"$text/link-targets/working-tree"
-      elif [ -f "$f" ]; then
-        files=$((files + 1))
-      elif [ -e "$f" ]; then
-        die "$f is neither a file nor a link; the scan cannot cover it; refusing to pass"
-      else
-        continue # deleted here and not yet committed: nothing to publish
-      fi
-      printf '%s\n' "$f" >>"$text/tree-paths/working-tree"
-    done <"$work/entries"
+    # What each listed name is: a file, a link (its target is searched as text), nothing
+    # any more (deleted here and not yet committed: nothing to publish), or something the
+    # scan cannot cover.
+    look_up kinds "$work/entries" "$text/tree-paths/working-tree" "$text/link-targets/working-tree"
+    [ "$rep_other" -eq 0 ] ||
+      die "$rep_other paths that git lists are neither a file nor a link (a folder where a file is tracked, a submodule that is checked out, a repository inside this one); the scan cannot cover them; refusing to pass"
+    files=$rep_files
     rc=0
     git ls-files -z -ci --exclude-standard >"$work/entries-ignored" 2>"$work/list-errors" || rc=$?
     [ "$rc" -eq 0 ] && [ ! -s "$work/list-errors" ] ||
@@ -753,17 +873,8 @@ case "$mode" in
     # name (on macOS the index may hold a name decomposed and the walk compose it), and
     # not the same file twice: a match is then found once. (A link among them does no
     # harm: a search by name looks in regular files only.)
-    rc=0
-    perl -0 -e '
-      my ($others, $ignored) = @ARGV;
-      my %seen;
-      open(my $o, "<", $others) or die "$others: $!\n";
-      while (<$o>) { chomp; my @s = lstat($_) or next; $seen{"$s[0]:$s[1]"} = 1 }
-      open(my $i, "<", $ignored) or die "$ignored: $!\n";
-      while (<$i>) { chomp; my @s = lstat($_) or next; print "$_\0" if !$seen{"$s[0]:$s[1]"}++ }
-    ' "$work/entries-others" "$work/entries-ignored" >"$work/entries-by-name" 2>/dev/null || rc=$?
-    [ "$rc" -eq 0 ] ||
-      die "the files of the working tree could not be looked up (perl: exit $rc); the scan needs perl; refusing to pass"
+    look_up by-name "$work/entries-others" "$work/entries-ignored" >"$work/entries-by-name"
+    wrote "$work/entries-by-name" names
     while IFS= read -r -d '' f; do ignored_tracked+=("$f"); done <"$work/entries-by-name"
     look_in_worktree
     scan_contents

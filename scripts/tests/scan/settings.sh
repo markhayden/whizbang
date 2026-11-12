@@ -36,6 +36,15 @@ if grep -v -x -F -e "unset|unsetunset||scripts/hooks" -e "unset|unsetunset||" -e
   fail "configuration from the environment reached a listing or a search of a push"
 fi
 
+# GREP_OPTIONS, which some greps read their options from, changes nothing.
+expect_fail "a scan with GREP_OPTIONS in the environment" "lost.txt:1" env GREP_OPTIONS="-v -c" "$scan"
+quiet "GREP_OPTIONS"
+git rm -q -f lost.txt
+git commit -q --no-verify -m "feat: no key"
+expect_pass "a clean scan with GREP_OPTIONS in the environment" env GREP_OPTIONS="-v -c" "$scan"
+says "secrets scan: clean (1 files)"
+quiet "GREP_OPTIONS"
+
 # A remote that is reached only through a setting in the environment: the hook can ask
 # it, so a clean push arrives and one with a key is refused for the key.
 fresh by-another-name

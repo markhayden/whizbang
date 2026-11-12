@@ -106,6 +106,11 @@ expect_fail "git speaks while it lists the tracked files" "the tracked files cou
 quiet "something git says"
 never_clean "git speaks while it lists the tracked files"
 mkdir "$tmp/hush-bin"
+printf '#!/bin/sh\ncase " $* " in *" ls-files -z -co --exclude-standard "*) exit 3 ;; esac\nexec "%s" "$@"\n' "$real_git" >"$tmp/hush-bin/git"
+chmod +x "$tmp/hush-bin/git"
+expect_fail "git failing without a word (ls-files -z -co --exclude-standard)" "could not be listed (git ls-files failed)" \
+  env PATH="$tmp/hush-bin:$PATH" "$scan"
+never_clean "git failing without a word (ls-files -z -co --exclude-standard)"
 for listing in "ls-files -z -ci --exclude-standard" "ls-files -z -o --exclude-standard" "ls-files -z -c"; do
   printf '#!/bin/sh\ncase " $* " in *" %s "*) exit 3 ;; esac\nexec "%s" "$@"\n' "$listing" "$real_git" >"$tmp/hush-bin/git"
   chmod +x "$tmp/hush-bin/git"
@@ -136,20 +141,82 @@ expect_fail "a file replaced between the list and the search" "1 of the 4 files 
 says "a file that was replaced while the scan ran is one cause: run it again"
 never_clean "a file replaced between the list and the search"
 
+# --- A file that is there and cannot be looked up ---------------------------------------
+# A tracked file in an ignored folder that cannot be searched, or read at all: git says
+# nothing of it, and the file is not gone. The scan fails, with a count and no path.
+fresh barred
+printf '%s\n' 'd/' >.gitignore
+mkdir d
+printf 'token = %s\n' "$key" >d/k.txt
+git add -f d/k.txt .gitignore
+git commit -q --no-verify -m "feat: a tracked file in an ignored folder"
+expect_fail "a key in a tracked file in an ignored folder" "d/k.txt:1" "$scan"
+for mode in 400 000; do
+  chmod "$mode" d
+  if [ -e d/k.txt ]; then
+    echo "skip: a tracked file in a folder with mode $mode; this user can look it up all the same"
+  else
+    expect_fail "a tracked file in an ignored folder with mode $mode" \
+      "1 files of the working tree could not be looked up, though they may be there" "$scan"
+    says "refusing to pass"
+    quiet "k.txt"
+    never_clean "a tracked file in an ignored folder with mode $mode"
+  fi
+  chmod 755 d
+done
+# A tracked file that is gone, with its folder, is a file deleted here: nothing to cover.
+rm -r d
+expect_pass "a tracked file that is deleted, with its folder" "$scan"
+says "secrets scan: clean (2 files)"
+# ... and so is one whose folder is now a file ("not a folder" on the way).
+printf 'nothing to see\n' >d
+expect_pass "a tracked file whose folder is now a file" "$scan"
+rm d
+
 # --- perl ------------------------------------------------------------------------------
-# The scan looks files up with perl. One that cannot be run, or fails, fails the scan in
-# words, at either place it is used.
+# The scan looks files up with perl, in three places: what kind of thing each listed name
+# is, which tracked files to search by name, and which files the list and the search
+# hold. A perl that fails, says nothing or stops early fails the scan in words.
+fresh perl
+commit_file "docs: plain" plain.txt "nothing to see"
 real_perl=$(command -v perl)
 mkdir "$tmp/perl-bin"
-printf '#!/bin/sh\ncase " $* " in *" -e "*) exit 3 ;; esac\nexec "%s" "$@"\n' "$real_perl" >"$tmp/perl-bin/perl"
-chmod +x "$tmp/perl-bin/perl"
-expect_fail "a perl that fails when the files to search by name are chosen" \
-  "could not be looked up (perl: exit 3); the scan needs perl; refusing to pass" env PATH="$tmp/perl-bin:$PATH" "$scan"
-never_clean "a perl that fails when the files to search by name are chosen"
-printf '#!/bin/sh\ncase " $* " in *" -ne "*) exit 3 ;; esac\nexec "%s" "$@"\n' "$real_perl" >"$tmp/perl-bin/perl"
-expect_fail "a perl that fails when the files to cover are looked up" \
-  "could not be looked up (perl: exit 3); the scan needs perl to tell which files the search looked in" \
+perl_that() { # <what the scan asks of it> <what it does instead>
+  printf '#!/bin/sh\ncase " $* " in *" %s "*) %s ;; esac\nexec "%s" "$@"\n' "$1" "$2" "$real_perl" >"$tmp/perl-bin/perl"
+  chmod +x "$tmp/perl-bin/perl"
+}
+for what in kinds by-name ids; do
+  perl_that "$what" "exit 3"
+  expect_fail "a perl that fails ($what)" "could not be looked up (perl: exit 3)" env PATH="$tmp/perl-bin:$PATH" "$scan"
+  says "refusing to pass"
+  never_clean "a perl that fails ($what)"
+  perl_that "$what" "exit 0"
+  expect_fail "a perl that says nothing ($what)" "perl did not finish looking the files of the working tree up" \
+    env PATH="$tmp/perl-bin:$PATH" "$scan"
+  never_clean "a perl that says nothing ($what)"
+done
+# One that reports all it should and writes a line too few.
+perl_that ids "\"$real_perl\" \"\$@\" | sed 1d; exit 0"
+expect_fail "a perl that leaves out a line" "perl did not finish looking the files of the working tree up (it reports 2 lines written, and 1 are there)" \
   env PATH="$tmp/perl-bin:$PATH" "$scan"
-never_clean "a perl that fails when the files to cover are looked up"
+never_clean "a perl that leaves out a line"
+# One whose report has no last line, as when it was cut short; and one that reports
+# fewer names read than it was given.
+perl_that ids "\"$real_perl\" \"\$@\" 2>\"$tmp/report\"; grep -v '^end ' \"$tmp/report\" >&2; exit 0"
+expect_fail "a perl whose report has no end" "perl did not finish looking the files of the working tree up" \
+  env PATH="$tmp/perl-bin:$PATH" "$scan"
+never_clean "a perl whose report has no end"
+perl_that ids "\"$real_perl\" \"\$@\" 2>\"$tmp/report\"; sed 's/^read .*/read 1/' \"$tmp/report\" >&2; exit 0"
+expect_fail "a perl that read fewer names than it was given" "perl did not finish looking the files of the working tree up (it reports 1 of 2 names)" \
+  env PATH="$tmp/perl-bin:$PATH" "$scan"
+never_clean "a perl that read fewer names than it was given"
+# ... and one that leaves out a name of a file to search by name.
+printf '%s\n' '*.log' >.gitignore
+printf 'token = %s\n' "$key" >kept.log
+git add -f kept.log
+perl_that by-name "\"$real_perl\" \"\$@\" >/dev/null; exit 0"
+expect_fail "a perl that leaves out a name" "perl did not finish looking the files of the working tree up (it reports 1 names written, and 0 are there)" \
+  env PATH="$tmp/perl-bin:$PATH" "$scan"
+never_clean "a perl that leaves out a name"
 
 finished
