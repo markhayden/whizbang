@@ -36,6 +36,7 @@ manifest. This file holds what you cannot work out from the code.
 | `just scan-range-secrets <base> <head>` | The range scan without the clean-room scan: what CI runs over the commits of a pull request (with the base branch's copy of the scan), and of a push to `main` |
 | `just ci` | What a pull request runs: `check`, advisories, a smoke of the release binary, the secrets scan |
 | `just test-scripts-slow` | After changing `.config/nextest.toml` or `scripts/timing.sh`: about 40 seconds; a 31-second test really fails by timeout (CI runs that part as `just test-timeout`) |
+| `just search-canary` | When a scan test fails once and passes on a rerun: 30 seconds of the scan's search against its known output (CI runs it on macOS) |
 | `scripts/heavy.sh <label> <command...>` | Around any heavy command: one runs at a time on a machine, the next waits |
 
 An action's name and purpose are printed in the reference as they are, so `just docs` refuses

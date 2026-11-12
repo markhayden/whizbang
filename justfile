@@ -69,6 +69,11 @@ smoke:
 scan:
     scripts/scan.sh
 
+# The search the scan relies on, repeated for 30 seconds against its known output. CI runs
+# it on macOS, where the search once lost matches (scripts/tests/scan/canary.sh).
+search-canary:
+    WHIZBANG_CANARY_SECONDS=30 bash scripts/tests/scan/canary.sh
+
 # The secrets scan only: what CI can run without the private word list.
 scan-secrets:
     scripts/scan.sh --secrets-only

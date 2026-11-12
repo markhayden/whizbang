@@ -52,6 +52,11 @@ jobs:
             scan="$RUNNER_TEMP/scan.sh"
           fi
           bash "$scan" --secrets-only --range "$BASE" "$HEAD"
+      # 30 seconds, on the runner where git grep on several threads lost matches: the
+      # scan's search, on one thread, must give its known output every time.
+      - name: The search canary
+        if: matrix.os == 'macos-15'
+        run: just search-canary
       # About 35 seconds, so on one runner only: a test that sleeps 31 seconds really fails
       # by timeout under this repo's nextest config.
       - name: The 30-second test timeout, for real

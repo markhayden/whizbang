@@ -25,7 +25,7 @@ if [ -r locked.txt ]; then
   # Whoever runs this (root, for one) can read a file with no permissions: nothing to test.
   echo "skip: an unreadable file; this user can read a file with mode 000"
 else
-  expect_fail "a file that cannot be read" "a search reported 1 errors" "$scan"
+  expect_fail "a file that cannot be read" "git said something during a search (1 lines" "$scan"
   says "refusing to pass"
   quiet "locked.txt"
   grep -a -q -e "secrets scan: clean" "$tmp/out" && fail "an unreadable file is not reported clean"
