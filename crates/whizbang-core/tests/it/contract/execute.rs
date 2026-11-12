@@ -769,3 +769,57 @@ fn what_submit_hands_back_names_the_run() {
     let finished: Finished = world.engine().submit(&echo("hello")).unwrap();
     assert_eq!(finished.run().to_string(), "1000-1");
 }
+
+#[test]
+fn a_run_that_failed_on_a_store_failure_it_was_handed_holds_no_path_in_its_record() {
+    // A call's error whose cause was the store's failure, as an action will be handed
+    // one when calls nest. The action quotes it both ways, as its text and as `{:?}`,
+    // in its own error and in a diagnostic. Neither way writes where a store is.
+    let broken = World::new();
+    let image = image_of(photo(), ImageRole::Picture);
+    {
+        let store = broken.store();
+        let mut publication = store.begin().unwrap();
+        artifact::put(&mut publication, &Artifact::from(image.clone())).unwrap();
+        publication.publish().unwrap();
+    }
+    for entry in std::fs::read_dir(broken.root().join("objects")).unwrap() {
+        std::fs::remove_file(entry.unwrap().path()).unwrap();
+    }
+    let draft = ActionDescriptor::draft("look", "1.0.0", Kind::Primitive, "Looks.").input(
+        InputPort::required("image", ArtifactType::Image, "The image."),
+    );
+    let looker = broken.engine_with(vec![Arc::new(Described(draft.build().unwrap()))]);
+    let error = looker
+        .submit(&Call::new("look").input("image", image.id()))
+        .unwrap_err();
+    assert!(matches!(error, CallError::Store(_)), "{error:?}");
+
+    let world = World::new();
+    let engine = world.engine_with(vec![scripted("relay", move |_, context| {
+        let quoted = format!("{error} / {error:?}");
+        context
+            .diagnostics()
+            .write("inner-error.txt", quoted.as_bytes())
+            .unwrap();
+        Err(Failure::error("store", &quoted))
+    })]);
+    let finished = engine.submit(&Call::new("relay")).unwrap();
+    let Outcome::Error { message, .. } = finished.outcome() else {
+        panic!("{finished:?}");
+    };
+    assert!(message.contains("the store failed"), "{message}");
+    let private = [
+        broken.root().display().to_string(),
+        std::env::temp_dir().display().to_string(),
+    ];
+    for (name, _, bytes) in names_of(&world.root(), world.fs.clone(), finished.run().as_str()) {
+        for path in &private {
+            assert!(!holds(&bytes, path.as_bytes()), "{name} holds {path}");
+        }
+        assert!(
+            !holds(&bytes, b"objects/") && !holds(&bytes, b"objects\\"),
+            "{name}"
+        );
+    }
+}
