@@ -1,5 +1,7 @@
 //! The `whizbang` binary: argument parsing and wiring only.
 
+mod store;
+
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -26,6 +28,11 @@ enum Command {
         /// With --json: indent it, one field per line. The reference holds this form.
         #[arg(long, requires = "json")]
         pretty: bool,
+    },
+    /// What the store holds, and removing it: runs and what only they reference.
+    Store {
+        #[command(subcommand)]
+        command: store::Command,
     },
 }
 
@@ -65,6 +72,16 @@ fn main() -> ExitCode {
             Err(error) => {
                 eprintln!("whizbang: could not write the description: {error}");
                 ExitCode::from(3)
+            }
+        },
+        Command::Store { command } => match store::run(&command) {
+            Ok(text) => {
+                print!("{text}");
+                ExitCode::SUCCESS
+            }
+            Err(complaint) => {
+                eprintln!("whizbang: {complaint}");
+                ExitCode::from(1)
             }
         },
     }

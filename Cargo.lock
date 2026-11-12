@@ -307,6 +307,7 @@ dependencies = [
  "clap",
  "serde_json",
  "whizbang-core",
+ "whizbang-testkit",
 ]
 
 [[package]]
