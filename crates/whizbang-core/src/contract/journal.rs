@@ -8,16 +8,43 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::Secrets;
+
 /// One line of a journal: a progress event, with its place in the run and its time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JournalLine {
+    seq: u64,
+    at_ms: u64,
+    message: String,
+}
+
+impl JournalLine {
+    /// The event at this place and time, saying this, with the secrets taken out. It is
+    /// the one way to make a line, beside reading a stored journal: a line in a journal
+    /// was redacted when it was made.
+    pub fn new(seq: u64, at_ms: u64, message: &str, secrets: &Secrets) -> JournalLine {
+        JournalLine {
+            seq,
+            at_ms,
+            message: secrets.redact(message),
+        }
+    }
+
     /// Its place among the run's events, from 0.
-    pub seq: u64,
+    pub fn seq(&self) -> u64 {
+        self.seq
+    }
+
     /// When it was reported, in milliseconds since the Unix epoch.
-    pub at_ms: u64,
+    pub fn at_ms(&self) -> u64 {
+        self.at_ms
+    }
+
     /// What the action said, with the secrets taken out.
-    pub message: String,
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 /// A journal as it is stored: each event as JSON on a line of its own.

@@ -14,6 +14,7 @@ use whizbang_core::contract::{
     NoBackends, Outcome, PreparedCall, RUN_RECORD, RUN_RECORD_SCHEMA, RecordError, Registry, RunId,
     Secrets, Value, ValueType, journal_bytes, read_journal,
 };
+use whizbang_core::contract::{DIAGNOSTIC_NAME_LIMIT, JournalLine, is_diagnostic_name};
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{self, Reader, Store};
@@ -74,11 +75,7 @@ fn a_record_is_read_and_written_back_as_the_same_bytes() {
     assert_eq!(record.outcome().status, Status::Completed);
     assert_eq!(record.outcome().status.name(), "completed");
     assert_eq!((record.time().start_ms, record.time().end_ms), (1000, 1003));
-    let names: Vec<&str> = record
-        .diagnostics()
-        .iter()
-        .map(|d| d.name.as_str())
-        .collect();
+    let names: Vec<&str> = record.diagnostics().iter().map(Diagnostic::name).collect();
     assert_eq!(names, ["diagnostics/echo.txt", "journal"]);
 }
 
@@ -641,14 +638,6 @@ fn echo(world: &World, text: &str) -> PreparedCall {
     world.engine.prepare(&call).unwrap()
 }
 
-fn diagnostic(name: &str, bytes: &[u8]) -> Diagnostic {
-    Diagnostic {
-        name: name.to_owned(),
-        digest: Digest::of_bytes(bytes),
-        bytes: bytes.len() as u64,
-    }
-}
-
 /// The journal the hand-written record names.
 const JOURNAL: &str = concat!(
     r#"{"seq":0,"at_ms":1001,"message":"echo: hello"}"#,
@@ -677,8 +666,10 @@ fn a_record_made_from_a_prepared_call_and_an_outcome_is_these_bytes() {
             end_ms: 1003,
             // Given out of order: a record lists them by name.
             diagnostics: vec![
-                diagnostic("journal", JOURNAL.as_bytes()),
-                diagnostic("diagnostics/echo.txt", b"hello"),
+                Diagnostic::journal(&read_journal(JOURNAL.as_bytes()).unwrap()).0,
+                Diagnostic::written("echo.txt", b"hello", &Secrets::none())
+                    .unwrap()
+                    .0,
             ],
         },
         &Secrets::none(),
@@ -869,6 +860,64 @@ fn a_secret_is_taken_out_of_every_text_a_record_takes_from_outside() {
     // With no secret given, the text is as it was.
     let record = RunRecord::of(ran(&prepared, &outcome), &Secrets::none());
     assert!(String::from_utf8(record.to_bytes()).unwrap().contains(&key));
+}
+
+#[test]
+fn a_diagnostic_and_a_journal_line_cannot_be_made_with_a_secret_in_them() {
+    // Both are made through a constructor that takes the secrets, and in no other way
+    // but by reading what was stored: so what a record lists, and what a journal holds,
+    // was redacted when it was made.
+    let key = made_up_key("");
+    let secrets = Secrets::new([key.clone()]).unwrap();
+    let line = JournalLine::new(3, 77, &format!("sending {key}"), &secrets);
+    assert_eq!(
+        (line.seq(), line.at_ms(), line.message()),
+        (3, 77, "sending [redacted]")
+    );
+    let (journal, stored) = Diagnostic::journal(std::slice::from_ref(&line));
+    assert_eq!(journal.name(), "journal");
+    assert_eq!(
+        String::from_utf8(stored.clone()).unwrap(),
+        "{\"seq\":3,\"at_ms\":77,\"message\":\"sending [redacted]\"}\n"
+    );
+    assert_eq!(journal.digest(), Digest::of_bytes(&stored));
+    assert_eq!(journal.bytes(), stored.len() as u64);
+
+    // What an action wrote: the name it gave, under `diagnostics/`; the content with the
+    // secrets out, cut in the middle of a character or not; and the digest and length
+    // of what is stored, not of what was given.
+    let mut body = vec![0xc3];
+    body.extend_from_slice(format!(" auth {key}").as_bytes());
+    let (written, stored) = Diagnostic::written("worker.err", &body, &secrets).unwrap();
+    assert_eq!(written.name(), "diagnostics/worker.err");
+    assert_eq!(stored, [&[0xc3][..], b" auth [redacted]"].concat());
+    assert_eq!(written.digest(), Digest::of_bytes(&stored));
+    assert_eq!(written.bytes(), stored.len() as u64);
+    // A name that is not plain is refused, and the refusal is short.
+    for name in [
+        "",
+        "../record",
+        "a/b",
+        "A.txt",
+        ".hidden",
+        "a b",
+        &"x".repeat(65),
+    ] {
+        let refused = Diagnostic::written(name, b"x", &secrets).unwrap_err();
+        assert!(refused.contains("is no name for a diagnostic"), "{refused}");
+        assert!(refused.len() < 300);
+    }
+    for name in [
+        "a",
+        "echo.txt",
+        "turn-3.exchange.json",
+        "record",
+        &"x".repeat(64),
+    ] {
+        assert!(is_diagnostic_name(name), "{name}");
+        Diagnostic::written(name, b"x", &secrets).unwrap();
+    }
+    assert_eq!(DIAGNOSTIC_NAME_LIMIT, 64);
 }
 
 // --- a record in a store ----------------------------------------------------------------------

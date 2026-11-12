@@ -87,9 +87,17 @@ in the schema each has at most zero items. A record with anything in one of them
 The shape of what goes in them is not decided here, because it follows from things that
 do not exist: the request and response of a capability, the ledger's reservation, a
 recipient, a recipe step, a judge's turn. Whatever first fills one of these lists defines
-its elements and writes a new version of the record (`run/2`), with its own decision
-record or an amendment of this one. Until a store is kept, a new version costs nothing: a
-store written by earlier code of the checkpoint is discarded, as ADR 0002 says of masks.
+its elements and writes a new version of the record, with its own decision record or an
+amendment of this one.
+
+**When a store starts being kept, and what a version costs before and after.** A store is
+kept from the tag that closes checkpoint 1A. Before that tag a store written by earlier
+code of the checkpoint is discarded, as ADR 0002 says of masks, and the fills of the empty
+lists that the checkpoint's own tasks make (request ids and admission; nested calls,
+cancellation and publication; the capability interfaces; the two proofs) may share one
+step to `run/2`, each adding to it as it lands. `run/2` is frozen at that tag. After it,
+every fill is a new version, and whatever reads records goes on reading the frozen
+versions.
 
 `identity.request` and `identity.parent` are null in every record written today, because
 no call carries a request id and no call nests. They are strings when they are filled, and
@@ -224,6 +232,16 @@ above, and nothing else:
 A test pins the first three encoded forms as getting through, so that this list stays
 true. They are on `docs/carry-over.md` for checkpoint 1B, where a config first holds a
 key and a worker first returns a body.
+
+**By construction, where it is cheap.** A line of a journal is made by a constructor that
+takes the secrets (`JournalLine::new`), and a diagnostic by one of two
+(`Diagnostic::journal`, from such lines, and `Diagnostic::written`, which takes the
+content and the secrets, checks the name, and gives back the bytes to store with the
+digest of those bytes). Their fields are not public. Beside these, a line and a diagnostic
+come only from reading what was stored, which reading checks. So a record cannot list a
+diagnostic, and a journal cannot hold a line, that did not pass through redaction; what
+is not held by construction is that the bytes then stored are the bytes that were given
+back.
 
 In a record, redaction is applied to each text that comes from outside the build, before
 the record is encoded: an argument's value when it is a text, an error's kind and

@@ -25,6 +25,9 @@ coordinate at a wrapped right edge brought round to 0, and a replaced core kept 
 protect. Changed: the sentence that said a derivation stated by hand "is refused there
 (tasks A5 and A8)". ADR 0004 decided otherwise, and nothing can refuse the artifact: a
 mask made by hand on a derivation's binding is the same artifact as the rebound one.
+Amended: 2026-11-12, a third note, with ADR 0005. Changed: the sentence that said the run
+that made an artifact, and the models it used, "join the origin with the execution
+contract". ADR 0005 decided that they do not: the run record alone holds them.
 Spec: section 3, "Identities" and "Storage"; section 16, checkpoint 1A
 
 ## Context
@@ -69,7 +72,8 @@ record are in `crates/whizbang-core/tests/it/artifact/`.
   port. There is always at least one step, and a step always names its action; a file
   without one is refused. The origin is **not** part of the identity: the same artifact made
   twice, or held in two stores, is one artifact. The run that made the artifact, and the
-  models it used, join the origin with the execution contract (`docs/carry-over.md`).
+  models it used, are not in the origin: the run record holds them (ADR 0005, "The origin
+  does not name the run or the models").
 - **One canonical file.**
 
 ### The canonical file

@@ -16,6 +16,7 @@ use crate::artifact::ArtifactType;
 use crate::identity::Digest;
 use crate::store::{self, Entry, Generation, Kind};
 
+use super::journal::{JournalLine, journal_bytes};
 use super::{Outcome, PreparedCall, Secrets, StoreFailure, Value};
 
 /// The record's kind, with its version.
@@ -197,9 +198,66 @@ pub struct Time {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Diagnostic {
-    pub name: String,
-    pub digest: Digest,
-    pub bytes: u64,
+    name: String,
+    digest: Digest,
+    bytes: u64,
+}
+
+impl Diagnostic {
+    /// The journal of a run, as a diagnostic, with the bytes to store under its name.
+    /// Each line had the secrets taken out when it was made ([`JournalLine::new`]).
+    pub fn journal(lines: &[JournalLine]) -> (Diagnostic, Vec<u8>) {
+        let stored = journal_bytes(lines);
+        (Diagnostic::naming(JOURNAL_NAME.to_owned(), &stored), stored)
+    }
+
+    /// Something an action wrote under a name of its own, as a diagnostic, with the
+    /// bytes to store under its name: the content with the secrets taken out. The name
+    /// must be a plain one ([`is_diagnostic_name`]); in the run it is `diagnostics/` and
+    /// that name. The digest and the length are of what is stored.
+    ///
+    /// This and [`Diagnostic::journal`] are the two ways to make one, beside reading a
+    /// stored record: a diagnostic that a record lists was redacted when it was made.
+    pub fn written(
+        name: &str,
+        content: &[u8],
+        secrets: &Secrets,
+    ) -> Result<(Diagnostic, Vec<u8>), String> {
+        if !is_diagnostic_name(name) {
+            let shown: String = name.chars().take(DIAGNOSTIC_NAME_LIMIT).collect();
+            return Err(format!(
+                "{shown:?} is no name for a diagnostic: a name is a lower-case letter or a \
+                 digit, then lower-case letters, digits, _, - or ., {DIAGNOSTIC_NAME_LIMIT} \
+                 characters at most"
+            ));
+        }
+        let stored = secrets.redact_bytes(content);
+        let diagnostic = Diagnostic::naming(format!("{DIAGNOSTICS_PREFIX}{name}"), &stored);
+        Ok((diagnostic, stored))
+    }
+
+    fn naming(name: String, stored: &[u8]) -> Diagnostic {
+        Diagnostic {
+            name,
+            digest: Digest::of_bytes(stored),
+            bytes: stored.len() as u64,
+        }
+    }
+
+    /// Its name among the run's names in the store.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The digest of what is stored under the name.
+    pub fn digest(&self) -> Digest {
+        self.digest
+    }
+
+    /// The length of what is stored under the name.
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
 }
 
 /// The record of one run.
