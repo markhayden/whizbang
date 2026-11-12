@@ -1,6 +1,6 @@
 # Whizbang
 
-Draft 13, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
+Draft 14, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
 is edited as things change and is not a history.
 
 Where this spec says a detail is "decided at" a checkpoint, the constraint written here binds
@@ -845,7 +845,7 @@ GitHub redirects; the old name must never be reused.
 |---|---|---|
 | Fast | Format check and lint; Rust and Python logic against fakes; the real pack speaking the real protocol with fake models; UI type checks and unit tests; a smoke of the release binary | Every change |
 | Model | Real models through the pack | When the pack or a model-using tool changes; before a release |
-| Slow | Chrome end to end; a live call to each provider; install from a release archive | Chrome on every pull request; the rest before a release |
+| Slow | Chrome end to end; a live call to each provider; install from a release archive | Chrome on every pull request, from milestone 5, when the playground exists; the rest before a release |
 
 **Budgets.**
 
@@ -902,8 +902,10 @@ them as plain checklists.
 
 The three milestone 0 skills are written before first use and corrected after it.
 
-**Subagents** in `.claude/agents/`: a builder, which does one task in a worktree and hands back
-commits without merging; and a reviewer, which reads a branch against this spec.
+**Subagents** in `.claude/agents/`: a builder, which does one task in a worktree, pushes its
+branch, opens the pull request and never merges; and a reviewer, which reads a branch against
+this spec and never merges. The session the owner is talking to is the orchestrator. Only the
+orchestrator merges.
 
 **Definition of done.** The tiers that apply to the change pass, with their output attached.
 The spec, the reference and the carry-over list are updated when the change affects them;
@@ -923,7 +925,7 @@ spends.
 
 | Workflow | Runs | Contains |
 |---|---|---|
-| `ci` | Every pull request | Fast tier on both targets; Chrome end to end; reference check; secrets scan; the secrets scan and attribution check over every commit |
+| `ci` | Every pull request | Fast tier on both targets; Chrome end to end, from milestone 5, when the playground exists; reference check; secrets scan; the secrets scan and attribution check over every commit |
 | `prerelease` | On a release candidate tag | Model tier; a live call to each provider; install from the built archive on both targets. A release is refused unless this passed on the same commit |
 | `release` | On a version tag | Binaries for both targets and the pack |
 
@@ -934,7 +936,8 @@ decisions that are costly to reverse. No mirrored task files.
 ## 15. Boundaries
 
 **Always**
-- Run `just check` before a commit and `just scan` before a push.
+- Run `just check` before a commit, and `just check` and `just scan` before a push. The
+  pre-push hook runs the scans again over what the push publishes.
 - Name the source path and commit in every porting commit.
 - Record the backend, model and version in every result.
 

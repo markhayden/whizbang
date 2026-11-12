@@ -22,11 +22,10 @@ Nothing of rascal, squint or wafflery is ported in this milestone.
   deliberately discarded. Nothing is force-deleted to make a check pass.
 - **Old repos are verified by their own rules,** not by whizbang's new scan. Whizbang's scan
   applies to whizbang.
-- **The baseline package is private** and lives in owner storage at
-  `~/whizbang-owner/baseline/2026-11/`. It holds every model's verdict and reasons per item of
-  an exposed set. The public repo holds a manifest limited to an allowlist of fields. The
-  offline gate of milestone 2 runs on the owner's Mac and leaves a receipt; the comparison
-  code itself is tested in public CI on synthetic data.
+- **The baseline package is private** and lives in owner storage. It holds every model's
+  verdict and reasons per item of an exposed set. The public repo holds a manifest limited to
+  an allowlist of fields. The offline gate of milestone 2 runs on the owner's Mac and leaves a
+  receipt; the comparison code itself is tested in public CI on synthetic data.
 - **The clean-room scan cannot run in CI,** because its word list never leaves the owner's
   machine. It runs locally before every push and again in `review-merge` before every merge.
 - **A walking skeleton.** The skeleton ends with one command that works end to end,
@@ -38,8 +37,9 @@ Nothing of rascal, squint or wafflery is ported in this milestone.
 - **The bootstrap (S0) is one commit pushed to `main`,** because the things that would check
   it do not exist yet. It is verified by hand with the commands it adds.
 - **After S0, one task is one branch and one pull request.** The builder subagent does the
-  work and cannot merge. The reviewer subagent reviews it. The orchestrating session merges,
-  with a merge commit, once CI and both scans pass on the exact head it reviewed.
+  work, pushes its branch and opens the pull request, and cannot merge. The reviewer subagent
+  reviews it. The orchestrating session merges, with a merge commit, once CI and both scans
+  pass on the exact head it reviewed.
 - **`main` is always green.** History on `main` is never rewritten.
 - **Commits inside a task** are whatever coherent steps pass the checks. Messages follow
   `type(scope): summary` and name no agent or model.
@@ -79,12 +79,13 @@ One commit to `main`, by the orchestrating session.
       a word list whose path comes from an environment variable; fails closed when the
       variable is unset or the list is unreadable or empty).
 - [x] `scripts/hooks/`: `pre-commit` (format check), `commit-msg` (rejects attribution),
-      `pre-push` (`just scan`). `just setup` installs them and prints what it installed.
+      `pre-push` (`scan.sh --pre-push`, over what the push publishes). `just setup` installs
+      them and prints what it installed.
 - [x] `AGENTS.md` (first version: commands, boundaries, the no-attribution rule, where the spec
       and plans are) and `CLAUDE.md` importing it.
 - [x] `.claude/agents/builder.md` and `reviewer.md` as checklists: the builder works in a
-      worktree and hands back a branch; the reviewer checks a branch against the spec and the
-      task; neither merges.
+      worktree, pushes its branch and opens the pull request; the reviewer checks a branch
+      against the spec and the task; neither merges.
 - [x] `.github/workflows/ci.yml`: `macos-15` and `ubuntu-22.04` jobs that run `just ci`, and
       one aggregate job named `ci` that passes only when both do.
 - [x] After the first green run: branch protection on `main` requiring the `ci` job.
@@ -146,14 +147,14 @@ fails; a test that sleeps 31 seconds fails by timeout.
 
 **Depends on:** S0.
 
-- [ ] `AGENTS.md` in full, from the old coordination repo's rules cut to one repo: commands;
+- [x] `AGENTS.md` in full, from the old coordination repo's rules cut to one repo: commands;
       where agents may work; the boundaries of `SPEC.md` section 15; secrets and private data;
       precedence between documents; the definition of done; the three roles (builder, reviewer,
       orchestrator) and that only the orchestrator merges; how to work with the owner; gotchas.
-- [ ] A fresh-clone checklist at the top: run `just setup`; set the word-list variable; run
+- [x] A fresh-clone checklist at the top: run `just setup`; set the word-list variable; run
       `just scan` and see it pass.
-- [ ] `.claude/settings.json`: allow the `just` recipes, `scripts/*`, read-only git and `gh`.
-- [ ] `README.md`; `docs/adr/README.md` with the template and when an ADR is needed;
+- [x] `.claude/settings.json`: allow the `just` recipes, `scripts/*`, read-only git and `gh`.
+- [x] `README.md`; `docs/adr/README.md` with the template and when an ADR is needed;
       `docs/guides/README.md` listing the guides to come with their milestones.
 
 **Done when:** the reviewer subagent, given only a fresh clone and the question "what must
@@ -252,7 +253,7 @@ inventory shows the outcome of each ignored line.
 
 - [x] Pull `main`.
 - [x] Commit the 13 matrix and config files under `evalsets/matrix/`.
-- [ ] Record the two agreed label corrections in owner storage, as a versioned corrections
+- [x] Record the two agreed label corrections in owner storage, as a versioned corrections
       file beside the owner's labels.
 
 **Done when:** `git status` is clean; CI green for that commit; `just sets-check` passes.
@@ -266,14 +267,14 @@ inventory shows the outcome of each ignored line.
       raw-content address into an empty folder, so every file is really downloaded, and check
       every hash. Check each seal digest is unchanged.
 - [x] If any fetch fails: rename back at once, and stop.
-- [ ] Only then update the local clone's remote.
+- [x] Only then update the local clone's remote.
 
 **Done when:** every pinned revision fetched and verified through the old address.
 **Sealed manifests are not edited** to point at the new name.
 
 ### F5. Retire the coordination repo
 
-- [ ] Commit a first line to its `AGENTS.md` and README (retired; see whizbang), and push it
+- [x] Commit a first line to its `AGENTS.md` and README (retired; see whizbang), and push it
       with its 8 local commits.
 - [x] Archive it.
 
@@ -305,7 +306,7 @@ The recorded material is under squint's `eval-out/`: the run named
 
 **Depends on:** F6, S2.
 
-Two parts, in `~/whizbang-owner/baseline/2026-11/`:
+Two parts, in owner storage:
 
 **Replay fixtures (the arm the old harness calls C).**
 - [x] For each decision, the authoritative attempt is the one its `result.json` names.
