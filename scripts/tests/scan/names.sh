@@ -176,6 +176,39 @@ for name in -dash -- -n; do
   expect_fail "a link named $name whose target holds a listed word" "clean-room scan: 1 matching lines (contents 1, paths 0)" "$scan"
   rm "./$name"
 done
+# A link's own name is a path like any other: a key in it is found, and a listed word in
+# it is counted, among the paths.
+ln -s readme.txt "$key.link"
+expect_fail "a link whose name holds a key" "tree-paths/working-tree:" "$scan"
+quiet "$key"
+never_clean "a link whose name holds a key"
+rm "$key.link"
+ln -s readme.txt "link-$word"
+expect_fail "a link whose name holds a listed word" "clean-room scan: 1 matching lines (contents 0, paths 1)" "$scan"
+quiet "$word"
+rm "link-$word"
+# On macOS the index can hold one link under two names, composed and decomposed. Its
+# target is read once: a listed word in it is one matching line, as a match in a file
+# known by two names is printed once.
+if [ "$(uname -s)" = Darwin ] && [ "$(git config --type=bool core.precomposeunicode || true)" = true ]; then
+  nfc=$(printf 'caf\303\251')
+  nfd=$(printf 'cafe\314\201')
+  ln -s "it-says-$word" "link-$nfd"
+  git -c core.precomposeunicode=false add -- "link-$nfd"
+  git -c core.precomposeunicode=false update-index --add --cacheinfo \
+    "120000,$(printf '%s' "it-says-$word" | git hash-object -w --stdin),link-$nfc"
+  [ "$(git ls-files | wc -l | tr -d ' ')" = 3 ] || fail "the index holds the link under two names"
+  expect_fail "a link the index holds under two names, whose target holds a listed word" \
+    "clean-room scan: 1 matching lines (contents 1, paths 0)" "$scan"
+  # Two links to the same place are two links: each is counted.
+  ln -s "it-says-$word" another-link
+  expect_fail "two links whose targets hold a listed word" "clean-room scan: 2 matching lines (contents 2, paths 0)" "$scan"
+  rm another-link
+  git -c core.precomposeunicode=false update-index --force-remove "link-$nfc" "link-$nfd"
+  rm "link-$nfd"
+else
+  echo "skip: a link the index holds under two names; git does not compose names here"
+fi
 # The same for a message file.
 mkdir "$tmp/messages"
 printf 'fix: a thing\n' >"$tmp/messages/-n"

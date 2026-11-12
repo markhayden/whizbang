@@ -134,3 +134,34 @@ fn alpha_is_averaged_apart_from_the_colours() {
             .all(|pixel| *pixel == [64, 191, 0, 64])
     );
 }
+
+#[test]
+fn hidden_colour_bleeds_into_a_reduced_crop_at_the_edge_of_a_transparent_area() {
+    // The record's worked example for that limit. Opaque white in the even columns, and
+    // in the odd ones nothing to see: black at alpha 0. Over a white page the source
+    // shows white everywhere. Each crop pixel is the plain mean of one of each: grey at
+    // half alpha, which over a white page shows as 191, a grey the source does not have.
+    // A mean weighted by alpha, which was not tried, would give white at half alpha.
+    let image = picture(2048, 16, |x, _| {
+        if x % 2 == 0 {
+            [255, 255, 255, 255]
+        } else {
+            [0, 0, 0, 0]
+        }
+    });
+    let crop = look(&image, [0.0, 0.0, 1.0, 1.0]);
+    let rgba = rgba_of(&crop.image);
+    assert!(
+        rgba.as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == [128, 128, 128, 128])
+    );
+    // Shown over white, to the nearest level: the crop's colour by its alpha, and white
+    // by the rest.
+    let over_white =
+        |colour: u32, alpha: u32| (2 * (colour * alpha + 255 * (255 - alpha)) + 255) / 510;
+    assert_eq!(over_white(128, 128), 191);
+    // The alpha-weighted mean of the same two pixels: (255 x 255 + 0 x 0) / (255 + 0).
+    assert_eq!(over_white(255, 128), 255);
+}
