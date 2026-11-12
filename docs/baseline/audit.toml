@@ -2,10 +2,11 @@
 # see transcript.md beside this file. It holds no item names, file names or verdicts.
 
 transcript_version = 1
-tools_version = "1"
+tools_version = "2"
 package_digest = "sha256:d2edd3bb789370d2e99e85a212c07f31a7b1e00e76d98ce38b7170ea9db7e726"
-transcripts_digest = "sha256:ec82b1fe428b0926709d05adce63a592c3395e6392e353f0a8a03ed228b88b2e"
+transcripts_digest = "sha256:9b9e76336c34d289925cae941032d3210e62aa561d42d058c4df4faa4bb8eaae"
 
+fixtures = 1144
 decisions = 1144
 complete = 1144
 incomplete = 0

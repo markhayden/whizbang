@@ -14,10 +14,10 @@ Python 3.9 or later, standard library only.
 
 import argparse
 import collections
-import json
 import os
 import sys
 
+sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common  # noqa: E402
 
@@ -34,12 +34,12 @@ def is_ref(value):
 class Fixture:
     """One decision's attempt folder inside the package."""
 
-    def __init__(self, package, journal_path):
+    def __init__(self, package, decision_dir, run_dir):
         self.package = package
-        self.run_dir = os.path.dirname(journal_path)
-        self.decision_dir = os.path.dirname(self.run_dir)
-        self.repetition_dir = os.path.dirname(self.decision_dir)
-        self.journal_path = journal_path
+        self.run_dir = run_dir
+        self.decision_dir = decision_dir
+        self.repetition_dir = os.path.dirname(decision_dir)
+        self.journal_path = os.path.join(run_dir, "journal.jsonl")
         self.files = []
         self.problems = []
 
@@ -89,19 +89,10 @@ class Fixture:
         if data is None:
             return None
         try:
-            return json.loads(data.decode("utf-8"))
+            return common.loads(data.decode("utf-8"))
         except ValueError:
             self.problems.append("stored file is not whole JSON: %s" % role)
             return None
-
-
-def read_journal(path):
-    events = []
-    with open(path, "rb") as f:
-        for line in f.read().decode("utf-8").split("\n"):
-            if line.strip():
-                events.append(json.loads(line))
-    return events
 
 
 def tool_results(history):
@@ -118,14 +109,15 @@ def tool_results(history):
     return out
 
 
-def convert(package, journal_path, origin, package_digest, preparation):
-    fx = Fixture(package, journal_path)
-    events = read_journal(journal_path)
-    fx.plain_file("journal", journal_path)
+def convert(package, subdir, decision_dir, run_dir, origin, package_digest, preparation):
+    fx = Fixture(package, decision_dir, run_dir)
+    events = common.load_lines(fx.journal_path)
+    fx.plain_file("journal", fx.journal_path)
     result_path = os.path.join(fx.repetition_dir, "result.json")
     fx.plain_file("result", result_path)
     decision_path = os.path.join(fx.decision_dir, "decision.json")
     fx.plain_file("decision", decision_path)
+    fx.plain_file("report", os.path.join(fx.decision_dir, "report.json"))
     result = common.load_json(result_path) if os.path.isfile(result_path) else {}
     decision = common.load_json(decision_path) if os.path.isfile(decision_path) else {}
 
@@ -133,7 +125,7 @@ def convert(package, journal_path, origin, package_digest, preparation):
     for e in events:
         by_event[e["event"]].append(e["data"])
 
-    run_name = fx.rel(fx.decision_dir).split("/")[1]
+    run_name = os.path.relpath(fx.decision_dir, os.path.join(package, subdir)).split(os.sep)[0]
     model = (decision.get("config", {}).get("provider", {}) or {}).get("model")
     evidence_tools = []
     images = []
@@ -233,6 +225,16 @@ def convert(package, journal_path, origin, package_digest, preparation):
         if requests[number] is not None:
             results.update(tool_results(requests[number].get("history", [])))
 
+    offered = []
+    for number in sorted(requests):
+        if requests[number] is not None:
+            offered = [tool["name"] for tool in requests[number].get("tools", [])]
+            break
+    others = [name for name in offered if name not in evidence_tools]
+    submission_tool = others[0] if len(others) == 1 else None
+    if submission_tool is None:
+        fx.problems.append("the tools offered do not name one submission tool")
+
     terminal = None
     for data in by_event["verdict"]:
         terminal = {"kind": "verdict", "verdict": data["verdict"]}
@@ -299,16 +301,25 @@ def convert(package, journal_path, origin, package_digest, preparation):
                     entry["meta"] = {"reason": reason or refusals.get(turn["turn"])}
             elif (
                 turn["turn"] == last_answered
-                and call["name"] not in evidence_tools
+                and call["name"] == submission_tool
+                and terminal is not None
                 and (
-                    call["id"] in submission_ids
-                    or (terminal is not None and terminal["kind"] != "verdict")
+                    (terminal["kind"] == "verdict" and call["id"] in submission_ids)
+                    or (terminal["kind"] == "error" and terminal["class"] == "submission_invalid")
                 )
             ):
+                # The submission that ended the run: with a verdict, or, when it did not
+                # validate and no repair was left, with that error.
                 entry["disposition"] = "final"
             else:
                 fx.problems.append("a call has neither a result nor an end of the run")
             turn["calls"].append(entry)
+
+    arm = str(result.get("cell") or "").rsplit("/", 1)[-1] or None
+    if prep_version is None or settings is None:
+        fx.problems.append("the preparation's version or settings are not known")
+    if None in (result.get("set"), result.get("item"), model, arm, result.get("repetition"), decision.get("use_case")):
+        fx.problems.append("the subject is not fully known")
 
     transcript = {
         "transcript_version": common.TRANSCRIPT_VERSION,
@@ -319,12 +330,13 @@ def convert(package, journal_path, origin, package_digest, preparation):
             "set": result.get("set"),
             "item": result.get("item"),
             "model": model,
-            "arm": "C",
+            "arm": arm,
             "repetition": result.get("repetition"),
             "use_case": decision.get("use_case"),
         },
         "preparation": {"version": prep_version, "settings": settings},
         "evidence_tools": evidence_tools,
+        "submission_tool": submission_tool,
         "images": images,
         "turns": turns,
         "repairs": [
@@ -335,27 +347,19 @@ def convert(package, journal_path, origin, package_digest, preparation):
         "volatile": list(common.VOLATILE),
         "files": fx.files,
         "meta": {
+            "fixtures": subdir,
             "tools_version": common.TOOLS_VERSION,
             "package_digest": package_digest,
             "harness": "squint",
             "harness_version": decision.get("harness_version"),
             "run": run_name,
             "decision": fx.rel(fx.decision_dir),
+            "name": os.path.relpath(fx.decision_dir, os.path.join(package, subdir)).replace(os.sep, "/"),
             "attempt": os.path.basename(fx.run_dir),
             "prompt_version": decision.get("prompt_version"),
         },
     }
     return transcript
-
-
-def find_journals(package, subdir):
-    out = []
-    base = os.path.join(package, subdir)
-    for folder, _dirs, files in os.walk(base):
-        if "journal.jsonl" in files:
-            out.append(os.path.join(folder, "journal.jsonl"))
-    out.sort()
-    return out
 
 
 def main(argv=None):
@@ -367,42 +371,40 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     package = os.path.abspath(args.package)
-    digest_path = os.path.join(package, "PACKAGE.digest")
-    if not os.path.isfile(digest_path):
+    package_digest = common.package_digest(package)
+    if package_digest is None:
         print("convert: no PACKAGE.digest under the package root", file=sys.stderr)
         return 2
-    with open(digest_path) as f:
-        package_digest = "sha256:" + f.read().strip()
     prep_path = os.path.join(package, "assembly", "generated", "preparation.json")
     preparation = common.load_json(prep_path) if os.path.isfile(prep_path) else None
 
-    journals = find_journals(package, args.fixtures)
-    if not journals:
+    try:
+        found = common.fixtures(package, args.fixtures)
+    except common.FixtureError as e:
+        print("convert: %s" % e, file=sys.stderr)
+        return 2
+    if not found:
         print("convert: no fixtures found", file=sys.stderr)
         return 2
-    out_root = os.path.join(os.path.abspath(args.out), args.origin)
+    top = os.path.abspath(args.out)
+    out_root = os.path.join(top, args.origin)
+    if os.path.exists(out_root) and os.listdir(out_root):
+        print("convert: the output folder already holds transcripts of this origin", file=sys.stderr)
+        return 2
     complete = 0
-    for journal in journals:
-        t = convert(package, journal, args.origin, package_digest, preparation)
-        rel = os.path.relpath(os.path.dirname(os.path.dirname(journal)), os.path.join(package, args.fixtures))
-        target = os.path.join(out_root, rel + ".json")
+    for name, decision_dir, run_dir in found:
+        t = convert(package, args.fixtures, decision_dir, run_dir, args.origin, package_digest, preparation)
+        target = os.path.join(out_root, *name.split("/")) + ".json"
         os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
-        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "wb") as f:
-            f.write(common.canonical(t))
+        common.write_private(target, common.canonical(t))
         complete += 1 if t["complete"] else 0
 
-    top = os.path.abspath(args.out)
-    names = ("TRANSCRIPTS.sha256", "TRANSCRIPTS.digest")
-    data, count = common.listing(top, leave_out=names + ("audit-findings.jsonl",))
-    for name, content in (
-        (names[0], data),
-        (names[1], (common.digest_of_listing(data)[len("sha256:"):] + "\n").encode()),
-    ):
-        fd = os.open(os.path.join(top, name), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "wb") as f:
-            f.write(content)
-    print("convert: %d transcripts written (%d complete, %d incomplete)" % (len(journals), complete, len(journals) - complete))
+    data, count = common.listing(top, leave_out=(common.LISTING, common.DIGEST, common.FINDINGS))
+    common.write_private(os.path.join(top, common.LISTING), data)
+    common.write_private(
+        os.path.join(top, common.DIGEST), (common.digest_of_listing(data)[len("sha256:"):] + "\n").encode()
+    )
+    print("convert: %d transcripts written (%d complete, %d incomplete)" % (len(found), complete, len(found) - complete))
     print("convert: %d files listed, digest %s" % (count, common.digest_of_listing(data)))
     return 0
 
