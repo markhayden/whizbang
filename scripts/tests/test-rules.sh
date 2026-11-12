@@ -12,7 +12,9 @@
 # and no folder named .claude, at any depth, holds any file but the ones listed below.
 #
 # AGENTS.md must still hold the fresh-clone checklist, the push and merge rows, the three
-# roles, who merges, and the attribution rule, and must give no location for the word list.
+# roles, who merges, the attribution rule, how the word list's variable is set and what may
+# be passed on, the temp folder, the heavy commands and when a plan box is ticked, and must
+# give no location for the word list.
 # Nothing here runs an agent.
 source "$(dirname "$0")/lib.sh"
 
@@ -387,7 +389,15 @@ check_rules() {
   for text in '- **Reviewer:**' '- **Orchestrator:**' 'Only the orchestrator merges.' 'never a squash' \
     'Run `just check` before a commit, and `just check` and `just scan` before a push.' \
     'Add `Co-Authored-By`, "Generated with", or any agent or model name to a commit, a pull' \
-    'They are not the boundary.'; do
+    'They are not the boundary.' \
+    'The path may be given to another agent working in this repo.' \
+    'never committed, opened, quoted, printed or copied' \
+    'as an `env` entry in `.claude/settings.local.json`' \
+    'is not one of the exact allowed commands' \
+    '- **The system temp folder,**' \
+    '`gh pr diff <n> --name-only` lists the files an open pull request changes' \
+    'These are heavy:' \
+    'is ticked by a later pull request'; do
     grep -q -F -e "$text" "$file" || { echo "rules: must say: $text"; return 1; }
   done
 
@@ -417,6 +427,11 @@ changed 's/^- \*\*Reviewer:\*\*/- Reviewer:/' "must say: - **Reviewer:**"
 changed 's/^- \*\*Orchestrator:\*\*/- Orchestrator:/' "must say: - **Orchestrator:**"
 changed 's/They are not the boundary\.//' "must say: They are not the boundary."
 changed 's/^1\. Run `just setup`/1. Run the setup/' "the fresh-clone checklist must name"
+changed 's/The path may be given to another agent working in this repo\.//' "must say: The path may be given"
+changed 's/never committed, opened, quoted, printed or copied/kept/' "must say: never committed, opened"
+changed 's/^- \*\*The system temp folder,\*\*/- The system temp folder,/' "must say: - **The system temp folder,**"
+changed 's/These are heavy:/Some are heavy:/' "must say: These are heavy:"
+changed 's/is ticked by a later pull request/is ticked at once/' "must say: is ticked by a later pull request"
 changed 's|a private word list the owner provides|~/words|' "no value or location"
 changed '$s|$| WHIZBANG_WORDLIST=words|' "no value or location"
 

@@ -12,6 +12,12 @@ first, small commits, `just check` and `just scan` before every push, the pull r
 and the hand-back in its format. When the task brings code from an old repo, follow
 `.claude/skills/port-module/SKILL.md` as well.
 
+The same checklist covers what comes after: a change the review asks for (its step 14: tests
+first again, a new head, a new hand-back), and a push the hook refuses (its step 9). You
+need `WHIZBANG_WORDLIST` in your environment to scan and to push: it is set where it lasts
+(`AGENTS.md`, "On a fresh clone"), or the orchestrator gives you its path.
+Never open, print, quote or copy the word list, and never pass on what it holds.
+
 Nothing you write names an agent or a model: no commit, no pull request, no code, no
 document.
 

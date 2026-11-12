@@ -50,7 +50,7 @@ If one is missing, ask the orchestrator. Do not guess.
       in its message. The pull request's body names them too.
 - [ ] 10. Everything not ported goes in `docs/carry-over.md`: deferred, with the milestone
       that owns it, or dropped, with one line saying why. A row this port closes is removed.
-- [ ] 11. Finish with `kickoff`, steps 6 to 12.
+- [ ] 11. Finish with `kickoff`, steps 6 to 14.
       Never merge: only the orchestrator merges.
 
 ## Commands

@@ -21,8 +21,11 @@ If the verdict names no commit, or a short one, ask the reviewer for the full co
 
 ## Checklist
 
-- [ ] 1. The verdict says the branch may merge, and says it for exactly the reviewed head.
-      A verdict with open findings, or for another commit, is a refusal.
+- [ ] 1. The verdict says `may merge at <full head>`, and the commit it names is exactly
+      the reviewed head.
+      A finding that blocks the merge and is still open, or a verdict for another commit, is a
+      refusal. A follow-up does not block: note each one and where the verdict says it is
+      recorded, for the hand-back.
 - [ ] 2. The pull request is open, is not a draft, and is against `main`. Its head on GitHub
       is the reviewed head. If the head has moved since the review, refuse: it is reviewed
       again.
@@ -36,9 +39,9 @@ If the verdict names no commit, or a short one, ask the reviewer for the full co
       failure is a refusal: abort the merge if it stopped half-way, remove the scratch
       worktree, and hand back; the builder merges `main` into the branch, and the new head
       is reviewed again.
-- [ ] 5. CI is green for the head: the two `check` jobs (macOS and Linux) and the aggregate
-      `ci`, in a run whose commit is the head. If a job was rerun, note the job and the
-      reason; a rerun with no stated reason is a refusal.
+- [ ] 5. CI is green for the head: the jobs `check (macos-15)` and `check (ubuntu-22.04)`
+      and the aggregate `ci`, in a run whose commit is the head. If a job was rerun, note
+      the job and the reason; a rerun with no stated reason is a refusal.
 - [ ] 6. With `WHIZBANG_WORDLIST` set, `just scan-range <base> <head>` passes: secrets,
       attribution and the clean-room scan, over every commit in the range and the tree of
       the head. CI cannot run the clean-room scan, so this run is the only one.
@@ -46,13 +49,18 @@ If the verdict names no commit, or a short one, ask the reviewer for the full co
       and scan it (the commands below), then read them yourself: no attribution line, no
       agent or model name, no private path or address, and every claim true of the final
       diff. Reading is the only check for a bare agent or model name in a sentence, a path
-      that starts with `~`, and a value from the repo's local `.env`: the scans of this
-      step do not find them. If the text is wrong, the builder corrects it; a change to
-      the text does not move the head.
+      that starts with `~`, a value from the repo's local `.env`, and a credit line behind
+      a mark the copy keeps (a number, a `+`, a table bar): the scans of this step do not
+      find them, and the last `grep` of this step lists every line to look at.
+      You may correct the title or body yourself: a change to the text does not move the
+      head. Scan and go through the corrected text again, and say what you changed in the
+      hand-back. A correction that changes a claim about the code
+      goes back to the builder.
 - [ ] 8. Files that grant permissions or check the pull request. List the changed files.
-      These count: any file under `.github/`; any file under a folder named `.claude`, at
-      any depth; `.mcp.json`, at any depth; `justfile`; any file under `scripts/hooks/`;
-      and `scripts/scan.sh`. For each one that changed: the reviewer's verdict names it and
+      These count, because they grant permissions or are what `just check` and `just ci`
+      run: any file under `.github/`; any file under a folder named `.claude`, at
+      any depth; `.mcp.json`, at any depth; `justfile`; and any file under `scripts/`.
+      For each one that changed: the reviewer's verdict names it and
       says it was read, and you read its diff yourself. Otherwise refuse. Each such file
       gets its own line in the hand-back.
 - [ ] 9. Fetch `main` once more. If it has moved since step 4, do step 4 again.
@@ -68,6 +76,8 @@ If the verdict names no commit, or a short one, ask the reviewer for the full co
       that `scripts/worktree.sh` did not make, where the branch is not named for the
       folder, use the plain commands below: they hold the same rule, that nothing is
       removed unless the branch is merged into `origin/main`.
+      Earlier merged branches that are still on origin may be deleted the same way, each
+      only once it is shown to be merged into `origin/main`; each delete asks first.
 - [ ] 13. Hand back in the format below.
 
 ## Commands
@@ -105,14 +115,20 @@ repo=$PWD
 (cd "$text" && "$repo/scripts/scan.sh")        # secrets and clean-room, over the text
 # The attribution check is made for commit messages: it skips a line that starts with #
 # and everything after a scissors line. So it is given a copy without the marks that
-# start a line.
-sed 's/^[#*>[:space:]-]*//' "$text/pull-request.txt" >"$text/plain.txt"
-scripts/scan.sh --message "$text/plain.txt"
-rm -rf "$text"
+# start a line. The copy is kept outside the scanned folder.
+# It prints nothing when it passes: exit 0 is the pass.
+plain=$(mktemp)
+sed 's/^[#*>[:space:]-]*//' "$text/pull-request.txt" >"$plain"
+scripts/scan.sh --message "$plain"
+# A second net: you go through every line it prints. No line, and exit 1, is the pass.
+grep -n -i -E 'co-authored-by|generated with' "$text/pull-request.txt"
+# Only to correct the text yourself: write the two files, then scan them as above.
+gh pr edit <pr> --title "$(cat "$text/title.txt")" --body-file "$text/body.md"
+rm -rf "$text" "$plain"
 
 # 8
 gh pr diff <pr> --name-only
-git diff <base> <head> -- .github justfile scripts/hooks scripts/scan.sh ':(glob)**/.claude/**' ':(glob)**/.mcp.json'
+git diff <base> <head> -- .github justfile scripts ':(glob)**/.claude/**' ':(glob)**/.mcp.json'
 
 # 9 and 10
 git fetch origin main
@@ -136,6 +152,11 @@ git merge-base --is-ancestor <branch> origin/main   # exit 0, or stop: it is not
 git worktree remove <folder>
 git branch -d <branch>
 git push origin --delete <branch>
+
+# 12, for an earlier merged branch that is still on origin
+git fetch origin
+git merge-base --is-ancestor origin/<branch> origin/main   # exit 0, or stop: it is not merged
+git push origin --delete <branch>              # this asks first
 ```
 
 ## Hand-back format
@@ -147,20 +168,23 @@ Base: <full commit>
 Merge commit: <full commit>, on main; second parent is the reviewed head
 
 Verified
-- Verdict: may merge, for the reviewed head
+- Verdict: may merge at the reviewed head; no finding that blocks the merge is open
 - Head unmoved: GitHub and the fetched head both at the reviewed head
 - Merged result: <the head contains main | just check passed on the merge with main at <commit>>
-- CI on the head: check (macOS) <result>, check (Linux) <result>, ci <result>
+- CI on the head: check (macos-15) <result>, check (ubuntu-22.04) <result>, ci <result>
   <any rerun: the job and the reason; otherwise "no rerun">
 - just scan-range <base> <head>: secrets <result>, attribution <result>, clean-room <result>
-- Title and body: scanned and read; <accurate | what was corrected>
-- Read: <each changed file under .github/ or that grants permissions, one line each; or
-  "no file under .github/ and none that grants permissions">
+- Title and body: scanned and read; <accurate | corrected by the orchestrator: what was
+  changed | sent back to the builder: why>
+- Read: <each changed file that grants permissions or that just check and just ci run
+  (.github, a .claude folder, .mcp.json, justfile, scripts), one line each; or "none">
 - CI on main for the merge commit: <result>
 - Cleaned up: worktree and local branch <branch> removed; the branch on origin deleted
+  <any earlier merged branch deleted on origin, by name>
 
 Follow-ups
-- <item> -> <its row in docs/carry-over.md, or the pull request that adds it; "none" if none>
+- <each follow-up of the verdict> -> <where the verdict says it is recorded: its row in
+  docs/carry-over.md, or the later pull request named for it; "none" if none>
 ```
 
 A refusal is handed back as: the pull request, the reviewed head, the step that failed, what
