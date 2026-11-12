@@ -1,7 +1,8 @@
 # Whizbang
 
-Draft 14, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
-is edited as things change and is not a history.
+Draft 15, 2026-11-11. Approved by the owner; changes since then follow the review rule under
+"Process" in section 14. This is the living description of how whizbang works; it is edited as
+things change and is not a history.
 
 Where this spec says a detail is "decided at" a checkpoint, the constraint written here binds
 that decision, and the decision is recorded as an ADR before code depends on it.
@@ -935,6 +936,16 @@ spends.
 **Process.** One short plan per milestone in `docs/plans/`. A note and a timing report at each
 checkpoint; a tag where the result is an installable state worth returning to. ADRs only for
 decisions that are costly to reverse. No mirrored task files.
+
+**Review before building.** A new milestone plan, or a change to this spec that changes what
+will be built (scope, architecture, a boundary, what a milestone holds), gets at least two
+review rounds by the independent reviewing model, through its command-line tool. Every blocker
+and major finding is fixed, and the outcome of each round is recorded in the plan. Building then
+starts without waiting for the owner, who is told what was decided. This replaces the owner's
+approval of each plan; it does not replace what section 15 keeps for the owner: spend beyond
+100 US dollars in a milestone, a new recipient for data, and a reset of the spend allowance. An
+edit that brings this spec in line with what a reviewed pull request did is reviewed with that
+pull request.
 
 ## 15. Boundaries
 

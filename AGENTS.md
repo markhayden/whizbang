@@ -145,7 +145,8 @@ and command forms appears: those for a forced push, for the git hooks and ways p
 for the owner's private list and its variable, and for merging through the API. The set
 is at the top of that part of `scripts/tests/test-skills.sh`. A sentence on those
 subjects that uses none of the words, and any sentence on another subject, passes
-unseen. Every change to these files is read in full by the reviewer and by the orchestrator.
+unseen. The heading **Never** under "Boundaries" and its bullets are held too, in order.
+When a line trips that test, its message names the word and says what to do. Every change to these files is read in full by the reviewer and by the orchestrator.
 
 ## When documents disagree
 
@@ -238,7 +239,16 @@ deferred is on the carry-over list with a milestone. A tool is not done without 
 - One question at a time, with a recommendation. Explain mechanism, cost and trade-offs
   once, then recommend.
 - When blocked on something only the owner can do, give the exact command.
-- A new milestone plan needs the owner's approval before building starts.
+- A new milestone plan, or a change to the spec that changes what will be built (scope,
+  architecture, a boundary, what a milestone holds), is reviewed before building starts:
+  at least two rounds by the independent reviewing model, through its command-line tool,
+  with every blocker and major finding fixed and the outcome of each round recorded in
+  the plan. After that, building starts without waiting for the owner, who is told what
+  was decided. The owner gave this rule on 2026-11-11; until then each plan waited for
+  the owner's approval. An edit that brings the spec in line with what a reviewed pull
+  request did is reviewed with that pull request.
+- Spend above 100 US dollars in a milestone, and any new recipient of data, still need
+  the owner, whatever the reviews said.
 - Check a claim about a provider or a model before stating it.
 - Do not invent work: if the plan and the carry-over list do not ask for it, propose it.
 
