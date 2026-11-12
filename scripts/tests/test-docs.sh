@@ -321,3 +321,5 @@ done
 expect_fail "a description that does not exist" "no such description" \
   "$docs" --description "$tmp/absent.json" --out "$tmp/bad"
 expect_fail "an unknown argument" "unknown argument" "$docs" --nope
+
+finished

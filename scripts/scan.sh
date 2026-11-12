@@ -40,6 +40,19 @@
 # Clean-room scan: reads a private word list from the path in WHIZBANG_WORDLIST. It fails
 # closed when the variable is unset, or the list is unreadable or empty. It prints counts
 # only: never a word, never a matching line.
+#
+# The first line below parses this whole file before anything runs. The bash that ships
+# with macOS (3.2) runs a script up to its first syntax error and then, if the script has
+# set an `EXIT` trap, exits 0: without this line a broken scan would pass. Every script
+# here that sets such a trap starts the same way (scripts/tests/test-syntax.sh holds them
+# to it).
+#
+# That bash also exits 0, once the trap is set, from faults no parse finds: an unset
+# variable, a bad substitution, an assignment to a readonly variable, a syntax error in an
+# `eval` or a sourced file; and any bash exits 0 from a file whose rest was swallowed by a
+# here-document with no end. So the trap turns an exit of 0 into 70, and says so, unless
+# `done_ok` is 1, and that is set only on the line before an exit that is meant to succeed.
+"$BASH" -n "${BASH_SOURCE[0]}" || { echo "scan: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
 set -euo pipefail
 umask 077
 # Bytes, not characters: a byte that is not valid UTF-8 must not hide the rest of its line.
@@ -122,7 +135,8 @@ while [ $# -gt 0 ]; do
 done
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+done_ok=0
+trap 'rc=$?; rm -rf "$work"; [ "$done_ok" = 1 ] || [ "$rc" -ne 0 ] || { echo "scan: stopped before its end; failing" >&2; rc=70; }; exit "$rc"' EXIT
 
 if [ "$mode" = message ]; then
   [ -r "$message" ] || die "cannot read the message file"
@@ -141,6 +155,7 @@ if [ "$mode" = message ]; then
     echo "commit-msg: remove the line; commits here name no agent or model" >&2
     exit 1
   }
+  done_ok=1
   exit 0
 fi
 
@@ -222,22 +237,37 @@ look_in_files() { # <folder> <sha label> <path label, or empty for the file's na
 
 # search <git grep options...>: writes what was found to $work/found, one line each, as
 # sha, path, line number and text, separated by $S. Every backend is git grep, so the
-# matching is the same everywhere. No match is fine; a search that could not run is not.
+# matching is the same everywhere. No match is fine; a search that could not run, or that
+# reported any error, is not.
+#
+# Every search runs on one thread (`-c grep.threads=1`). On CI's macOS runner (macOS 15),
+# git grep with an extended regular expression, in the C locale this script sets, on git's
+# default of several threads, lost a match or returned a wrong `-o` match at random: about
+# 4 to 10 searches in 100, with no error and the usual exit status, in the working tree, in
+# commits and in plain files, with git 2.56 and with Apple's 2.39. On one thread it was
+# wrong in none of 6,740 searches; nor was it in a UTF-8 locale, with a fixed string or
+# with `-P`. The locale stays C, because in UTF-8 a byte that is not UTF-8 hides the rest
+# of its line. Where the fault lies below git has not been established.
+# scripts/tests/test-syntax.sh holds every git grep under scripts/ to one thread.
 search() {
   local rc=0
   case "$target" in
     worktree)
-      git grep --untracked -a -n -z "$@" >"$work/raw" || rc=$?
+      git -c grep.threads=1 grep --untracked -a -n -z "$@" >"$work/raw" 2>"$work/search-errors" || rc=$?
       ;;
     files)
       (cd "$target_dir" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
-        git grep --no-index -a -n -z "$@" -- "${target_items[@]}") >"$work/raw" || rc=$?
+        git -c grep.threads=1 grep --no-index -a -n -z "$@" -- "${target_items[@]}") >"$work/raw" 2>"$work/search-errors" || rc=$?
       ;;
     commits)
-      git --literal-pathspecs grep -a -n -z "$@" "${target_revs[@]}" -- ${target_items[@]+"${target_items[@]}"} >"$work/raw" || rc=$?
+      git --literal-pathspecs -c grep.threads=1 grep -a -n -z "$@" "${target_revs[@]}" -- ${target_items[@]+"${target_items[@]}"} >"$work/raw" 2>"$work/search-errors" || rc=$?
       ;;
   esac
   [ "$rc" -le 1 ] || die "a search failed (exit $rc); refusing to pass"
+  # git grep goes on past a file it cannot read, says so and still exits 0 or 1. What it
+  # said is not printed: it names paths, and a path can hold a match.
+  [ ! -s "$work/search-errors" ] ||
+    die "a search reported $(wc -l <"$work/search-errors" | tr -d ' ') errors, such as a file it could not read; what it did not read is not covered; refusing to pass"
   : >"$work/found"
   [ -s "$work/raw" ] || return 0
   # A line that is not path, number, text is the first part of a path with a newline in
@@ -610,4 +640,5 @@ if [ "$secrets_only" -eq 0 ]; then
   [ "$count" -eq 0 ] || status=1
 fi
 
+done_ok=1
 exit "$status"

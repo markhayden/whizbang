@@ -54,3 +54,5 @@ expect_fail "an address in a file named with a key, as CI runs it" "<path withhe
 quiet "$key"
 expect_fail "the same, in the working tree" "<path withheld>:1" "$scan"
 quiet "$key"
+
+finished

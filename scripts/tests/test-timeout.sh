@@ -32,3 +32,5 @@ if [ "${WHIZBANG_TIMEOUT_TEST:-}" = "1" ] || [ "${WHIZBANG_SLOW_TESTS:-}" = "1" 
 else
   echo "skip: the 31-second run; set WHIZBANG_TIMEOUT_TEST=1 (just test-timeout; also in just test-scripts-slow and CI)"
 fi
+
+finished

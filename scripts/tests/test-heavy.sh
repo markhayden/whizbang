@@ -101,3 +101,5 @@ wait
 [ ! -e "$tmp/lock" ] || fail "the lock is released at the end"
 
 expect_fail "no command" "usage" "$heavy" only-a-label
+
+finished

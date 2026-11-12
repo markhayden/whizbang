@@ -71,7 +71,7 @@ expect_fail "the planted cases, as CI runs a range" "secrets scan: found" \
 while IFS= read -r where; do says "$where"; done <"$tmp/in-commits"
 quiet "$key"
 expect_fail "the planted cases, in the working tree" "secrets scan: found" "$scan"
-while IFS= read -r where; do says "$where"; done <"$tmp/in-tree"
+while IFS= read -r where; do tree_says "$where"; done <"$tmp/in-tree"
 says "link-targets/working-tree:1"
 says "link-targets/working-tree:2"
 quiet "$key"
@@ -84,3 +84,5 @@ git commit -q --no-verify -F "$tmp/message" 2>/dev/null
 expect_fail "a key after a Latin-1 byte in a message" "commit-message/" git push origin HEAD
 quiet "$key"
 unset LC_ALL
+
+finished

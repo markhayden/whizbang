@@ -2,4 +2,14 @@
 # No attribution to an agent or a model, in any commit (SPEC.md section 15). The scan holds
 # the rule, so a push and CI apply the same one.
 set -euo pipefail
-exec "$(git rev-parse --show-toplevel)/scripts/scan.sh" --message "$1"
+# First, parse the scan and the hooks: the bash that ships with macOS (3.2) exits 0 from a
+# script that stopped at a syntax error after setting an `EXIT` trap, as the scan does.
+root=$(git rev-parse --show-toplevel)
+[ -f "$root/scripts/scan.sh" ] && [ -r "$root/scripts/scan.sh" ] ||
+  { echo "commit-msg: scripts/scan.sh is missing or cannot be read; refusing the commit" >&2; exit 1; }
+for f in "$root/scripts/scan.sh" "$root"/scripts/hooks/*; do
+  # Git runs a hook only if it is a file it can execute; anything else in the folder is no hook.
+  [ -f "$f" ] && [ -x "$f" ] || continue
+  "$BASH" -n "$f" || { echo "commit-msg: ${f#"$root/"} has a syntax error; refusing the commit" >&2; exit 1; }
+done
+exec "$root/scripts/scan.sh" --message "$1"

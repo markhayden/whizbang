@@ -115,3 +115,5 @@ named=$(grep -E '^profile = ' "$study.toml" | sed -E 's/^profile = "(.*)"$/\1/' 
 
 # The example on the format's page is the file the tests check, and the page says so.
 grep -q -F 'example-transcript.json' docs/baseline/transcript.md || fail "transcript.md does not point at the example"
+
+finished

@@ -55,3 +55,5 @@ grep -q -F "group: ci-\${{ github.event_name == 'pull_request' && github.ref || 
   "$root/.github/workflows/ci.yml" || fail "CI: the concurrency group is not one per push to main"
 grep -q -F "cancel-in-progress: \${{ github.event_name == 'pull_request' }}" \
   "$root/.github/workflows/ci.yml" || fail "CI: only pull request runs may be cancelled"
+
+finished

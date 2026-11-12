@@ -43,3 +43,5 @@ says "clean-room scan: 0 matching lines"
 expect_pass "published commits under a new name" git push origin clean-work:refs/heads/again
 says "secrets scan: clean (0 commits, 1 trees, 0 tags)"
 expect_pass "a deletion" git push origin :refs/heads/again
+
+finished

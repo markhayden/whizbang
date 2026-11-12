@@ -88,3 +88,5 @@ expect_fail "a star in the edge list is not expanded" "forbidden edge: whizbang 
 # A line the check cannot read fails rather than being skipped.
 { cat scripts/crate-graph.txt; echo "whizbang => whizbang-core"; } >"$tmp/edges.txt"
 expect_fail "a malformed line" "cannot read" "$check" --edges "$tmp/edges.txt"
+
+finished
