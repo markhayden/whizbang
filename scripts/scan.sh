@@ -57,6 +57,10 @@ set -euo pipefail
 umask 077
 # Bytes, not characters: a byte that is not valid UTF-8 must not hide the rest of its line.
 export LC_ALL=C
+# Anything git says on stderr during a search fails the scan, so git must not be told to
+# talk: tracing is switched off for this run.
+for name in ${!GIT_TRACE@} GIT_CURL_VERBOSE; do unset "$name"; done
+unset name
 
 die() {
   echo "scan: $*" >&2
@@ -134,9 +138,19 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-work=$(mktemp -d)
+# In TMPDIR when it is set (a bare `mktemp -d` on macOS does not look at it); only this
+# user can enter the folder.
+work=$(mktemp -d "${TMPDIR:-/tmp}/whizbang-scan.XXXXXX")
 done_ok=0
 trap 'rc=$?; rm -rf "$work"; [ "$done_ok" = 1 ] || [ "$rc" -ne 0 ] || { echo "scan: stopped before its end; failing" >&2; rc=70; }; exit "$rc"' EXIT
+# A signal ends the scan through the same trap, so the folder is removed then too. Two
+# cases leave it behind: a kill -9, and a signal that lands while the trap is already
+# running. What is left is readable by this user alone: this run's findings with the text
+# of each matching line (so a listed word that is in the repository is there, in its
+# line), and the values of a local .env. The word list itself is never there.
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [ "$mode" = message ]; then
   [ -r "$message" ] || die "cannot read the message file"
@@ -174,6 +188,7 @@ if [ "$secrets_only" -eq 0 ]; then
 fi
 # The words, without blank lines or the spaces and carriage returns that end a line.
 words() { sed 's/[[:space:]]*$//' "$list" | grep -a -v '^$'; }
+# No copy of the list is made: each run of a search reads it again through `words`.
 
 cd "$(git rev-parse --show-toplevel)"
 text="$work/text"
@@ -226,19 +241,148 @@ target_revs=()
 target_items=()
 label_sha=
 label_path=
-look_in_worktree() { target=worktree; }
+# Set by each of the three below: the next search starts with a census of its target.
+censused=0
+# The tracked files that an ignore rule matches (working tree only).
+ignored_tracked=()
+look_in_worktree() { target=worktree censused=0; }
 # The commits in $target_revs, and of them the paths in $target_items (none: whole trees).
-look_in_commits() { target=commits; }
+look_in_commits() { target=commits censused=0; }
 look_in_files() { # <folder> <sha label> <path label, or empty for the file's name> <file...>
-  target=files target_dir=$1 label_sha=$2 label_path=$3
+  target=files target_dir=$1 label_sha=$2 label_path=$3 censused=0
   shift 3
   target_items=("$@")
+}
+
+# run_grep <to> <git grep options...>: one git grep over the current target. When
+# $with_words is 1 the listed words are added as fixed patterns; they are read from the
+# list anew for this one run, through a pipe, so the search can run twice and no copy of
+# the list is ever written.
+with_words=0
+run_grep() {
+  local to=$1
+  shift
+  : >"$work/search-errors"
+  run_part "$target" "$to" "$@"
+  # --untracked leaves out what an ignore rule matches, tracked or not. A tracked file is
+  # published whatever the rules say, so those are searched by name. (Such a file that is
+  # also marked assume-unchanged is searched as the index has it, not as the folder has
+  # it; while it is marked, a change to it cannot be committed.)
+  if [ "$target" = worktree ] && [ "${#ignored_tracked[@]}" -gt 0 ]; then
+    run_part ignored "$work/raw-ignored" "$@"
+    cat "$work/raw-ignored" >>"$to"
+  fi
+  # git grep goes on past a file it cannot read, says so and still exits 0 or 1. Anything
+  # at all that git says on stderr counts, a warning too. It is not printed: it names
+  # paths, and a path can hold a match.
+  [ ! -s "$work/search-errors" ] ||
+    die "git said something during a search ($(wc -l <"$work/search-errors" | tr -d ' ') lines of warnings or errors, such as a file it could not read); any such line counts, because what git did not read is not covered; refusing to pass. The lines are not shown, since they name paths; to see them, run a search by hand, for example: git -c grep.threads=1 grep --untracked -c -e . >/dev/null"
+}
+# run_part <which> <to> <options...>: one git grep. The words come through a pipe, which
+# one git grep reads once, so each part of a search gets its own.
+run_part() {
+  if [ "$with_words" -eq 1 ]; then
+    run_grep_once "$@" -i -F -f <(words)
+  else
+    run_grep_once "$@"
+  fi
+}
+run_grep_once() {
+  local which=$1 to=$2 rc=0
+  shift 2
+  case "$which" in
+    worktree)
+      git -c grep.threads=1 grep --untracked -a -n -z "$@" >"$to" 2>>"$work/search-errors" || rc=$?
+      ;;
+    ignored)
+      git --literal-pathspecs -c grep.threads=1 grep -a -n -z "$@" -- "${ignored_tracked[@]}" >"$to" 2>>"$work/search-errors" || rc=$?
+      ;;
+    files)
+      (cd "$target_dir" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+        git -c grep.threads=1 grep --no-index -a -n -z "$@" -- "${target_items[@]}") >"$to" 2>>"$work/search-errors" || rc=$?
+      ;;
+    commits)
+      git --literal-pathspecs -c grep.threads=1 grep -a -n -z "$@" "${target_revs[@]}" -- ${target_items[@]+"${target_items[@]}"} >"$to" 2>>"$work/search-errors" || rc=$?
+      ;;
+  esac
+  [ "$rc" -le 1 ] || die "a search failed (exit $rc); refusing to pass"
+}
+
+# names: NUL-ended names on stdin become sorted lines, a newline in a name held as \002.
+names() { tr '\n\0' '\002\n' | sort -u; }
+
+# census: fails unless git grep looks in every file of the current target that has anything
+# in it. What the target should hold is listed without git grep (the working tree's files,
+# the regular files of each commit's tree, the scan's own text files); what git grep looks
+# in is every file where the empty pattern matches a line, which is every file that is not
+# empty. A link is not a file here: its target is searched as text elsewhere.
+#
+# What it can and cannot see. It sees a file the search never opened; it does not see a
+# match lost inside a file that was opened (the two runs of every search, and the canary
+# in CI, are for that). In the working tree the tracked files come from the index and the
+# untracked ones from `find`, with the ignored ones taken out by `git check-ignore`, so the
+# list shares no folder-walking code with the search.
+census() {
+  local f rev missing rc
+  case "$target" in
+    worktree)
+      git ls-files -z -c >"$work/census-entries"
+      # find does not follow a link, so what a link leads to is not listed (nor searched).
+      # What find says is not printed: it names paths.
+      rc=0
+      find . -name .git -prune -o -type f -print0 >"$work/census-found" 2>"$work/census-errors" || rc=$?
+      [ "$rc" -eq 0 ] && [ ! -s "$work/census-errors" ] ||
+        die "the files of the working tree could not all be listed (find: exit $rc, $(wc -l <"$work/census-errors" | tr -d ' ') lines of errors, such as a folder it could not read); what was not listed is not covered; refusing to pass"
+      # check-ignore prints four fields for each path: where the rule is, its line, the
+      # rule, the path. No rule matched when the rule is empty; and a rule that starts with
+      # `!` puts the path back, so that is not ignored either.
+      rc=0
+      git check-ignore -z --stdin -v -n <"$work/census-found" >"$work/census-rules" 2>"$work/census-errors" || rc=$?
+      [ "$rc" -le 1 ] && [ ! -s "$work/census-errors" ] ||
+        die "the files of the working tree could not be told from the ignored ones (git check-ignore: exit $rc); refusing to pass"
+      tr '\n\0' '\002\n' <"$work/census-rules" |
+        awk 'NR % 4 == 3 { free = ($0 == "" || substr($0, 1, 1) == "!") } NR % 4 == 0 && free { print substr($0, 3) }' |
+        tr '\002\n' '\n\0' >>"$work/census-entries"
+      while IFS= read -r -d '' f; do
+        if [ -f "$f" ] && [ ! -L "$f" ] && [ -s "$f" ]; then printf '%s\0' "$f"; fi
+      done <"$work/census-entries" | names >"$work/census-listed"
+      ;;
+    files)
+      for f in "${target_items[@]}"; do
+        if [ -s "$target_dir/$f" ]; then printf '%s\0' "$f"; fi
+      done | names >"$work/census-listed"
+      ;;
+    commits)
+      for rev in "${target_revs[@]}"; do
+        git --literal-pathspecs ls-tree -r -l -z "$rev" -- ${target_items[@]+"${target_items[@]}"} |
+          tr '\n\0' '\002\n' | REV=$rev awk '{
+            tab = index($0, "\t")
+            split(substr($0, 1, tab - 1), field, " ")
+            if ((field[1] == "100644" || field[1] == "100755") && field[4] + 0 > 0)
+              print ENVIRON["REV"] ":" substr($0, tab + 1)
+          }'
+      done | sort -u >"$work/census-listed"
+      ;;
+  esac
+  run_grep "$work/census-raw" -l -F -e ''
+  names <"$work/census-raw" >"$work/census-searched"
+  missing=$(comm -23 "$work/census-listed" "$work/census-searched" | wc -l | tr -d ' ')
+  [ "$missing" -eq 0 ] ||
+    die "$missing of the $(wc -l <"$work/census-listed" | tr -d ' ') files to cover were not looked in by the search ($target); they are not named here, since a path can hold a match; refusing to pass"
+}
+
+# search_words: a search for the listed words, in any case, as fixed strings.
+search_words() {
+  with_words=1
+  search
+  with_words=0
 }
 
 # search <git grep options...>: writes what was found to $work/found, one line each, as
 # sha, path, line number and text, separated by $S. Every backend is git grep, so the
 # matching is the same everywhere. No match is fine; a search that could not run, or that
-# reported any error, is not.
+# reported any error, is not. Nor is one whose target git grep did not look through (the
+# census), or whose two runs differ.
 #
 # Every search runs on one thread (`-c grep.threads=1`). On CI's macOS runner (macOS 15),
 # git grep with an extended regular expression, in the C locale this script sets, on git's
@@ -250,24 +394,17 @@ look_in_files() { # <folder> <sha label> <path label, or empty for the file's na
 # of its line. Where the fault lies below git has not been established.
 # scripts/tests/test-syntax.sh holds every git grep under scripts/ to one thread.
 search() {
-  local rc=0
-  case "$target" in
-    worktree)
-      git -c grep.threads=1 grep --untracked -a -n -z "$@" >"$work/raw" 2>"$work/search-errors" || rc=$?
-      ;;
-    files)
-      (cd "$target_dir" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
-        git -c grep.threads=1 grep --no-index -a -n -z "$@" -- "${target_items[@]}") >"$work/raw" 2>"$work/search-errors" || rc=$?
-      ;;
-    commits)
-      git --literal-pathspecs -c grep.threads=1 grep -a -n -z "$@" "${target_revs[@]}" -- ${target_items[@]+"${target_items[@]}"} >"$work/raw" 2>"$work/search-errors" || rc=$?
-      ;;
-  esac
-  [ "$rc" -le 1 ] || die "a search failed (exit $rc); refusing to pass"
-  # git grep goes on past a file it cannot read, says so and still exits 0 or 1. What it
-  # said is not printed: it names paths, and a path can hold a match.
-  [ ! -s "$work/search-errors" ] ||
-    die "a search reported $(wc -l <"$work/search-errors" | tr -d ' ') errors, such as a file it could not read; what it did not read is not covered; refusing to pass"
+  # The first search of a target is preceded by a census of it.
+  if [ "$censused" -eq 0 ]; then
+    censused=1
+    census
+  fi
+  # Twice, and the two must agree: a search that loses a match now and then (as git grep
+  # did on several threads, on CI's macOS runner) is not trusted on its first answer.
+  run_grep "$work/raw" "$@"
+  run_grep "$work/raw-again" "$@"
+  cmp -s "$work/raw" "$work/raw-again" ||
+    die "two runs of the same search disagree, so neither is trusted; refusing to pass. The ordinary cause is a file that changed during the scan: run it again. If it happens twice with nothing changing, see the comment above \`search\` in scripts/scan.sh"
   : >"$work/found"
   [ -s "$work/raw" ] || return 0
   # A line that is not path, number, text is the first part of a path with a newline in
@@ -328,7 +465,7 @@ words_add() { # <kind> <count>
 words_here() {
   [ "$secrets_only" -eq 0 ] || return 0
   local kind n
-  search -i -F -f <(words)
+  search_words
   [ -s "$work/found" ] || return 0
   if [ "$1" = text ]; then
     awk -F "$S" '{ split($2, part, "/"); count[part[1]]++ }
@@ -494,7 +631,11 @@ mkdir "$text/tree-paths" "$text/link-targets"
 case "$mode" in
   tree)
     files=0
-    git ls-files -z -co --exclude-standard >"$work/entries"
+    # What git says while it lists is not printed either: it names paths.
+    git ls-files -z -co --exclude-standard >"$work/entries" 2>"$work/list-errors" ||
+      die "the files of the working tree could not be listed (git ls-files failed); refusing to pass"
+    [ ! -s "$work/list-errors" ] ||
+      die "git said something while it listed the working tree ($(wc -l <"$work/list-errors" | tr -d ' ') lines of warnings or errors, such as a folder it could not read); what was not listed is not covered; refusing to pass"
     while IFS= read -r -d '' f; do
       if [ -L "$f" ]; then
         readlink "$f" >>"$text/link-targets/working-tree"
@@ -507,6 +648,7 @@ case "$mode" in
       fi
       printf '%s\n' "$f" >>"$text/tree-paths/working-tree"
     done <"$work/entries"
+    while IFS= read -r -d '' f; do [ ! -f "$f" ] || [ -L "$f" ] || ignored_tracked+=("$f"); done < <(git ls-files -z -ci --exclude-standard)
     look_in_worktree
     scan_contents
     covered="$files files"
@@ -600,7 +742,7 @@ if [ -s "$work/hits" ]; then
       cut -d "$S" -f 3 "$work/found" >>"$work/withheld-lines"
     fi
     if [ "$secrets_only" -eq 0 ]; then
-      search -i -F -f <(words)
+      search_words
       cut -d "$S" -f 3 "$work/found" >>"$work/withheld-lines"
     fi
   fi

@@ -79,6 +79,82 @@ says() {
     fail "expected the output to say: $1"
   }
 }
+# The stand-in: any git command but a search goes to git as it is. A search's output loses
+# every record and every name of the file LOSE names, when LOSE_WHEN says so: `always`, or
+# `sometimes` (every other search for a pattern, never the census). With `always`, git's
+# own list of files loses the name too, as it would if the fault were in how git walks a
+# folder. BREAK names a git command that fails outright. It can also speak on
+# stderr during one kind of search (NOISY: worktree, files or commits), wait a moment
+# (SLOW), and note what the scan's own folder holds at that moment (SPY).
+stand_in_for_git() {
+real_git=$(command -v git)
+mkdir "$tmp/bin"
+cat >"$tmp/bin/git" <<SH
+#!/usr/bin/env bash
+real="$real_git"
+sep=\$(printf '\\001')
+SH
+cat >>"$tmp/bin/git" <<'SH'
+search=0 census=0
+for arg in "$@"; do
+  # BREAK names a git command that fails outright, with a message, as on a broken install.
+  if [ -n "${BREAK:-}" ] && [ "$arg" = "$BREAK" ]; then
+    echo "fatal: this command is broken" >&2
+    exit 128
+  fi
+  case "$arg" in
+    grep) search=1 ;;
+    -l) census=1 ;;
+    ls-files) [ "${LOSE_WHEN:-}" != always ] || search=1 census=1 ;;
+  esac
+done
+if [ "$search" -eq 1 ]; then
+  kind=commits
+  case " $* " in *" --untracked "*) kind=worktree ;; *" --no-index "*) kind=files ;; esac
+  [ "${NOISY:-}" != "$kind" ] || echo "warning: something git says" >&2
+  if [ -n "${SPY:-}" ]; then
+    # Anything in the scan's folder that another user could read; and the word, anywhere.
+    ls -lAR "$TMPDIR" | grep -E '^[-d]' | grep -v -E '^.{4}------' >>"$SPY.loose" || true
+    ls -A "$TMPDIR" >>"$SPY.seen"
+    ! grep -r -a -q -i -F -e "$SPY_WORD" "$TMPDIR" || echo found >>"$SPY.word"
+    # The census's list of the working tree, once it is there.
+    for listed in "$TMPDIR"/whizbang-scan.*/census-listed; do
+      [ ! -f "$listed" ] || [ "$kind" != worktree ] || cp "$listed" "$SPY.listed"
+    done
+  fi
+  if [ -n "${SLOW:-}" ]; then
+    echo started >>"$SLOW"
+    sleep 0.3
+  fi
+fi
+lose=0
+if [ "$search" -eq 1 ] && [ -n "${LOSE:-}" ]; then
+  case "${LOSE_WHEN:-}" in
+    always) lose=1 ;;
+    sometimes)
+      if [ "$census" -eq 0 ]; then
+        echo x >>"$LOSE_COUNT"
+        [ $(($(wc -l <"$LOSE_COUNT") % 2)) -eq 0 ] || lose=1
+      fi
+      ;;
+  esac
+fi
+[ "$lose" -eq 1 ] || exec "$real" "$@"
+status=0
+"$real" "$@" >"$LOSE_COUNT.out" || status=$?
+# Records are lines; a list of names (-l, the census) is one line of names, each ended by
+# the separator.
+if [ "$census" -eq 1 ]; then
+  edit="s|\([0-9a-f]\{40,64\}:\)\{0,1\}$LOSE$sep||g"
+else
+  edit="\\|^\([0-9a-f]*:\)\{0,1\}$LOSE$sep|d"
+fi
+LC_ALL=C tr '\0' "$sep" <"$LOSE_COUNT.out" | LC_ALL=C sed -e "$edit" | LC_ALL=C tr "$sep" '\0'
+exit "$status"
+SH
+chmod +x "$tmp/bin/git"
+}
+
 # tree_says <place>: `says`, for a scan of the working tree. When the place is missing it
 # first reports what the folder held and what two more scans find, the second with git grep
 # on one thread. On CI's macOS runner git grep on several threads has lost a match at
