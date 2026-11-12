@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(just *)",
+      "Bash(scripts/*)",
+      "Bash(git status *)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(git show *)",
+      "Bash(git ls-files *)",
+      "Bash(git ls-remote *)",
+      "Bash(git rev-parse *)",
+      "Bash(git branch --list *)",
+      "Bash(git worktree list *)",
+      "Bash(git fetch *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr checks *)",
+      "Bash(gh pr list *)",
+      "Bash(gh pr diff *)",
+      "Bash(gh run view *)",
+      "Bash(gh run list *)",
+      "Bash(gh api repos/*)"
+    ],
+    "ask": [
+      "Bash(*git push*)",
+      "Bash(*git merge*)",
+      "Bash(*git tag*)",
+      "Bash(*gh pr merge*)",
+      "Bash(*gh release*)",
+      "Bash(*cargo publish*)",
+      "Bash(*--no-verify*)",
+      "Bash(gh api * -X*)",
+      "Bash(gh api * --method*)",
+      "Bash(gh api * -f*)",
+      "Bash(gh api * -F*)",
+      "Bash(gh api * --field*)",
+      "Bash(gh api * --raw-field*)",
+      "Bash(gh api * --input*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)"
+    ]
+  }
+}
