@@ -259,6 +259,19 @@ fn deleting_a_run_the_store_does_not_hold_fails_and_changes_nothing() {
     assert_eq!(whizbang(&["list"], &root).out, listing_of_the_three_runs());
     assert!(object(&root, RENDER).exists());
 
+    // A run named twice is one run.
+    let twice = whizbang(&["delete", "one", "one"], &root);
+    assert_eq!(twice.code, Some(0), "{}", twice.err);
+    assert!(
+        twice.out.starts_with("runs deleted: 1\ngeneration: 2\n"),
+        "{}",
+        twice.out
+    );
+    // And once deleted it is a run the store does not hold.
+    let again = whizbang(&["delete", "one"], &root);
+    assert_eq!(again.code, Some(1));
+    assert!(again.err.contains("no run \"one\""), "{}", again.err);
+
     // No run named at all is a usage error.
     let none = whizbang(&["delete"], &root);
     assert_eq!(none.code, Some(2), "{}", none.err);
@@ -274,14 +287,133 @@ fn no_store_command_makes_a_store_where_there_is_none() {
         assert!(ran.err.contains("there is no store at"), "{}", ran.err);
         assert!(!missing.exists(), "{args:?}");
     }
-    // Nor in a directory that is not one.
+    // Nor in a directory that is not one, and each says what it found there.
     let other = dir.path().join("other");
     std::fs::create_dir(&other).unwrap();
-    std::fs::write(other.join("notes.txt"), b"mine").unwrap();
+    std::fs::write(other.join(".DS_Store"), b"").unwrap();
     for args in [&["list"][..], &["prune"], &["delete", "one"]] {
         let ran = whizbang(args, &other);
         assert_eq!(ran.code, Some(1), "{args:?}");
         assert!(ran.err.contains("is not a store"), "{}", ran.err);
+        let found = other.join(".DS_Store").display().to_string();
+        assert!(ran.err.contains(&found), "{args:?}: {}", ran.err);
         assert_eq!(std::fs::read_dir(&other).unwrap().count(), 1, "{args:?}");
     }
+    // Nor in an empty directory, where a writer would make one.
+    let empty = dir.path().join("empty");
+    std::fs::create_dir(&empty).unwrap();
+    for args in [&["list"][..], &["prune"], &["delete", "one"]] {
+        let ran = whizbang(args, &empty);
+        assert_eq!(ran.code, Some(1), "{args:?}");
+        assert!(ran.err.contains("it has no CURRENT"), "{}", ran.err);
+        assert_eq!(std::fs::read_dir(&empty).unwrap().count(), 0, "{args:?}");
+    }
+}
+
+/// Replaces the current generation's file of a store with one made by hand.
+fn hand_made(root: &Path, runs: &str) {
+    let text = format!(r#"{{"format": 2, "number": 1, "entries": {{}}, "runs": {{{runs}}}}}"#);
+    std::fs::write(root.join("generations/1.json"), text).unwrap();
+}
+
+#[test]
+fn list_adds_sizes_without_overflowing() {
+    let dir = Scratch::new("cli-store");
+    let root = with_runs(&dir);
+    let digest = Digest::of(MASK);
+    let huge = u64::MAX - 1;
+    hand_made(
+        &root,
+        &format!(
+            r#""big": {{"entries": {{
+                "a": {{"digest": "{digest}", "bytes": {huge}, "kind": "output"}},
+                "b": {{"digest": "{digest}", "bytes": {huge}, "kind": "diagnostic"}}
+            }}}}"#
+        ),
+    );
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(listed.code, Some(0), "{}", listed.err);
+    assert_eq!(
+        listed.out,
+        format!(
+            "generation: 1\nnames outside runs: 0\nruns: 1\n\
+             big\toutputs 1\tdiagnostics 1\tbytes {}\n",
+            u64::MAX
+        ),
+        "the sum stops at the largest number"
+    );
+}
+
+#[test]
+fn list_escapes_a_run_id_that_would_break_its_lines() {
+    // The store refuses such an id; a generation file made by hand can still hold one.
+    let dir = Scratch::new("cli-store");
+    let root = with_runs(&dir);
+    hand_made(
+        &root,
+        r#""two\nlines\tand a tab \u001b[31m": {"entries": {}}, "café \"7\"": {"entries": {}}"#,
+    );
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(listed.code, Some(0), "{}", listed.err);
+    assert_eq!(
+        listed.out,
+        "generation: 1\nnames outside runs: 0\nruns: 2\n\
+         caf\u{e9} \\\"7\\\"\toutputs 0\tdiagnostics 0\tbytes 0\n\
+         two\\nlines\\tand a tab \\u{1b}[31m\toutputs 0\tdiagnostics 0\tbytes 0\n"
+    );
+}
+
+#[test]
+fn second_writers_and_readers_beside_a_writer_at_work_are_never_told_of_damage() {
+    // This process writes the store without pause: it publishes a run, deletes the one
+    // before and prunes, over and over, so the pointer moves and generation files go
+    // while other processes look. Each of those is the binary, run to its exit. A
+    // writer must be refused as held, every time, and a reader must read. The loop is
+    // counted, not timed: the writer stops when the last of them has run.
+    let dir = Scratch::new("cli-store");
+    let root = with_runs(&dir);
+    let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writer = {
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            let mut rounds = 0u64;
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let mut publication = store.begin().unwrap();
+                let run = format!("r{rounds}");
+                publication
+                    .put_in(&run, "out", Kind::Output, run.as_bytes())
+                    .unwrap();
+                publication.publish().unwrap();
+                if rounds > 0 {
+                    store.delete(&[&format!("r{}", rounds - 1)]).unwrap();
+                }
+                store.prune().unwrap();
+                rounds += 1;
+            }
+            rounds
+        })
+    };
+    let holder = format!("process {} (", std::process::id());
+    let mut wrong = Vec::new();
+    for attempt in 0..150 {
+        let second = whizbang(&["prune"], &root);
+        if second.code != Some(1) || !second.err.contains("one process at a time") {
+            wrong.push(format!("prune {attempt}: {:?} {}", second.code, second.err));
+        } else if !second.err.contains(&holder) && !second.err.contains("another process") {
+            wrong.push(format!("prune {attempt}: no holder: {}", second.err));
+        }
+        let reader = whizbang(&["list"], &root);
+        if reader.code != Some(0) || !reader.out.starts_with("generation: ") {
+            wrong.push(format!("list {attempt}: {:?} {}", reader.code, reader.err));
+        }
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let rounds = writer.join().unwrap();
+    assert!(
+        wrong.is_empty(),
+        "{} wrong answers: {wrong:#?}",
+        wrong.len()
+    );
+    assert!(rounds >= 2, "the writer was at work: {rounds} rounds");
 }

@@ -18,11 +18,11 @@ pub enum Error {
     },
     /// There is no store here. Opening to read creates nothing.
     Missing { root: PathBuf },
-    /// There is a directory here, and it is not a store: it has no pointer. To a writer,
-    /// which makes a store in an empty directory and in one whose creation did not finish,
-    /// it also holds `found`, the first thing met that neither of those holds. A reader
-    /// looks no further than the pointer and names nothing. Nothing in the directory was
-    /// created, removed or changed.
+    /// There is a directory here, and it is not a store: it has no pointer. `found` is
+    /// the first thing met in it that a store being created does not hold, which is why
+    /// a writer does not make a store here; `None` when there is no such thing, as in an
+    /// empty directory, which is not a store to a reader or to a writer that must find
+    /// one. Nothing in the directory was created, removed or changed.
     NotAStore {
         root: PathBuf,
         found: Option<PathBuf>,

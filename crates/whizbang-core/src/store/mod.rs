@@ -89,7 +89,14 @@
 //! Deleting a run ([`Store::delete`]) publishes a generation without that run's names.
 //! Content that another reference still names, in another run or outside runs, is still
 //! named. Nothing removes a name that belongs to no run: that is where the records that
-//! must outlive every run, of spend and of request ids, are published.
+//! must outlive every run, of spend and of request ids, are published. That is all the
+//! protection there is: a publication can give such a name other content, and what it
+//! had is then named by nothing and is pruned. A record that must be kept is published
+//! under a name that is never used twice.
+//!
+//! A run's id is not empty and holds no control character; [`Publication::put_in`]
+//! refuses any other ([`Error::InvalidRun`]). Deleting a run the store does not hold is
+//! refused ([`Error::NoSuchRun`]), and then none of the runs named with it is deleted.
 //!
 //! # Prune
 //!
@@ -499,7 +506,8 @@ pub struct Reader {
 impl Reader {
     /// Opens the store at `root` to read. A path with nothing at it, and a directory that
     /// has no pointer, are refused; nothing is created, and nothing a writer left behind
-    /// is touched.
+    /// is touched. The refusal of a directory names what was found in it that a store
+    /// being created does not hold, if anything was ([`Error::NotAStore`]).
     pub fn open(root: &Path, fs: Arc<dyn Fs>) -> Result<Reader> {
         let files = Files {
             fs,
@@ -513,10 +521,16 @@ impl Reader {
             });
         }
         if !files.exists(&files.layout.pointer())? {
-            return Err(Error::NotAStore {
-                root: root.to_path_buf(),
-                found: None,
-            });
+            // Not a store. What else is here says why, when it can be read. A writer may
+            // be finishing the creation of this very store: if the pointer is there after
+            // the look, what the look found is no longer the answer.
+            let found = files.beyond_an_unfinished_creation().ok().flatten();
+            if !files.exists(&files.layout.pointer())? {
+                return Err(Error::NotAStore {
+                    root: root.to_path_buf(),
+                    found,
+                });
+            }
         }
         Ok(Reader {
             files,

@@ -546,21 +546,58 @@ fn a_lock_file_alone_is_what_an_unfinished_creation_leaves() {
 }
 
 #[test]
-fn a_reader_says_only_that_there_is_no_pointer() {
+fn a_reader_says_that_there_is_no_pointer_and_names_what_it_found_if_anything() {
     let dir = Scratch::new("store-what");
     let root = root(&dir);
     std::fs::create_dir(&root).unwrap();
-    let error = Reader::open(&root, Arc::new(RealFs))
-        .map(|_| ())
-        .unwrap_err();
+    let refused = |root: &Path| {
+        let fs = Arc::new(ShimFs::new());
+        let error = Reader::open(root, fs.clone()).map(|_| ()).unwrap_err();
+        assert_eq!(fs.events(), vec![]);
+        error
+    };
+    // Of an empty directory, and of an unfinished creation, only that.
+    for folder in ["", "staging", "objects"] {
+        std::fs::create_dir_all(root.join(folder)).unwrap();
+        let error = refused(&root);
+        assert!(
+            matches!(&error, Error::NotAStore { found: None, .. }),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!("{} is not a store: it has no CURRENT", root.display())
+        );
+    }
+    // Of a directory that holds something else, that too.
+    std::fs::write(root.join(".DS_Store"), b"").unwrap();
+    let error = refused(&root);
+    match &error {
+        Error::NotAStore { found, .. } => assert_eq!(*found, Some(root.join(".DS_Store"))),
+        other => panic!("{other:?}"),
+    }
     assert!(
-        matches!(&error, Error::NotAStore { found: None, .. }),
-        "{error:?}"
+        error
+            .to_string()
+            .contains(&root.join(".DS_Store").display().to_string()),
+        "{error}"
     );
-    assert_eq!(
-        error.to_string(),
-        format!("{} is not a store: it has no CURRENT", root.display())
-    );
+}
+
+#[test]
+fn a_reader_that_looks_while_a_writer_finishes_creating_the_store_reads_it() {
+    let dir = Scratch::new("store-what");
+    let root = root(&dir);
+    std::fs::create_dir(&root).unwrap();
+    // The reader has seen no pointer. Before it lists the directory, a writer makes the
+    // store: the listing shows CURRENT, which is no reason to call this not a store.
+    let hook = {
+        let root = root.clone();
+        move || drop(Store::open(&root, Arc::new(ShimFs::new())).unwrap())
+    };
+    let fs = Arc::new(Hooked::new(When::Listing(root.clone()), hook));
+    let reader = Reader::open(&root, fs).unwrap_or_else(|e| panic!("a false refusal: {e}"));
+    assert_eq!(reader.snapshot().unwrap().number(), 0);
 }
 
 #[cfg(unix)]

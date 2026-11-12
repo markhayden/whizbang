@@ -1,5 +1,6 @@
 //! `whizbang store list|delete|prune`: wiring from arguments to the core's store.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -22,7 +23,8 @@ pub enum Command {
         at: Where,
     },
     /// Delete runs, and remove what only they referenced. What another run shares is
-    /// kept; spend and request-id records are never removed.
+    /// kept; spend and request-id records are never removed. If the store does not hold
+    /// one of the runs, none is deleted.
     Delete {
         #[command(flatten)]
         at: Where,
@@ -63,9 +65,17 @@ fn list(root: &Path) -> Result<String, String> {
             let of_kind = run.entries().values().filter(|entry| entry.kind == kind);
             of_kind.count()
         };
-        let bytes: u64 = run.entries().values().map(|entry| entry.bytes).sum();
+        // The sizes are what the store's files say, and a sum of them stops at the
+        // largest number there is.
+        let bytes = run
+            .entries()
+            .values()
+            .fold(0u64, |sum, entry| sum.saturating_add(entry.bytes));
+        // One run, one line: an id is printed with anything that is not printable, and
+        // the quote and backslash that the escapes use, escaped.
         text.push_str(&format!(
-            "{id}\toutputs {}\tdiagnostics {}\tbytes {bytes}\n",
+            "{}\toutputs {}\tdiagnostics {}\tbytes {bytes}\n",
+            id.escape_debug(),
             count(Kind::Output),
             count(Kind::Diagnostic)
         ));
@@ -75,7 +85,9 @@ fn list(root: &Path) -> Result<String, String> {
 
 fn delete(root: &Path, runs: &[String]) -> Result<String, String> {
     let store = writer(root)?;
-    let runs: Vec<&str> = runs.iter().map(String::as_str).collect();
+    // A run named twice is one run.
+    let runs: BTreeSet<&str> = runs.iter().map(String::as_str).collect();
+    let runs: Vec<&str> = runs.into_iter().collect();
     let published = store.delete(&runs).map_err(|e| e.to_string())?;
     let mut text = format!(
         "runs deleted: {}\ngeneration: {}\n",
@@ -90,11 +102,10 @@ fn delete(root: &Path, runs: &[String]) -> Result<String, String> {
     Ok(text)
 }
 
-/// Opens an existing store to write. A writer makes a store where there is none, and a
-/// command that removes things has no business doing that, so a reader looks first.
+/// Opens the store to write. A command that removes things makes no store where there
+/// is none, and completes none.
 fn writer(root: &Path) -> Result<Store, String> {
-    Reader::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())?;
-    Store::open(root, Arc::new(RealFs)).map_err(|e| e.to_string())
+    Store::open_existing(root, Arc::new(RealFs)).map_err(|e| e.to_string())
 }
 
 fn report(pruned: &Pruned) -> String {
