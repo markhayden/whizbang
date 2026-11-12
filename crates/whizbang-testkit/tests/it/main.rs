@@ -3,3 +3,4 @@
 
 mod echo;
 mod fs_shim;
+mod schema;

@@ -205,10 +205,12 @@ behaviour in milestone 3.
   capabilities and readiness. With it: prepare has no side effects and spends nothing, and
   is tested as such; who may state a derivation, and the run id's rule
   (`docs/carry-over.md`).
-- **Part 3:** box 1, the run record and `whizbang runs list|show`; the rest of box 2, the
-  run record's type; box 5, `echo` running; of "Done when", `echo` through the executor with
-  its record in the store, and a failed `echo`. With it: the run and the models in an
-  artifact's origin, and diagnostics written through the store and redacted
+- **Part 3, in two pull requests.** First, the run record (ADR 0005): the rest of box 2,
+  the run record's type, with its schema, its redaction and its reading from a store; and
+  the decision that the run record, not an artifact's origin, names the run and the
+  models. Then: box 1, the record written by a run, and `whizbang runs list|show`; box 5,
+  `echo` running; of "Done when", `echo` through the executor with its record in the
+  store, and a failed `echo`; diagnostics written through the store and redacted
   (`docs/carry-over.md`).
 
 **Depends on:** A3, A4. **Reads:** rascal `crates/rascal-core/src/op.rs` and the recipes
@@ -218,7 +220,7 @@ behaviour in milestone 3.
 
 - [ ] The run record as a versioned type holding every group of `SPEC.md` section 3, "What
       every run records", with `whizbang runs list|show` to read it.
-- [ ] In `whizbang-core`: the action descriptor, call, prepared call, context, outcome, run
+- [x] In `whizbang-core`: the action descriptor, call, prepared call, context, outcome, run
       record and the executor interface; and the handle types through which a context offers
       capabilities, with their contents left to A8.
 - [x] Also reads rascal `crates/rascal-mask/src/describe.rs`: the optional filler argument

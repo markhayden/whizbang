@@ -492,6 +492,7 @@ dependencies = [
 name = "whizbang-testkit"
 version = "0.0.1"
 dependencies = [
+ "serde_json",
  "whizbang-core",
 ]
 
