@@ -22,6 +22,32 @@ grep -q -E '^ci:( [a-z-]+)* check( [a-z-]+)*$' justfile ||
   fail "justfile: ci must depend on check"
 [ "$(recipe docs-check)" = "scripts/docs.sh --check" ] ||
   fail "justfile: docs-check must run exactly: scripts/docs.sh --check"
+# A check that regenerated first would always pass: docs-check depends on nothing, and no
+# recipe that check or ci reaches is `docs`.
+grep -q -x 'docs-check:' justfile || fail "justfile: docs-check must have no dependencies"
+# reached <recipe>: every recipe it depends on, directly or through another, one per line.
+reached() {
+  local todo=$1 seen="" name
+  while [ -n "$todo" ]; do
+    name=${todo%% *}
+    todo=${todo#"$name"}
+    todo=${todo# }
+    case " $seen " in *" $name "*) continue ;; esac
+    seen="$seen $name"
+    # shellcheck disable=SC2046  # one word per dependency
+    todo="$todo $(awk -v name="$name" '
+      /^[a-z][a-z0-9-]*( [a-z]+)*:/ { head = $0; sub(/:.*/, "", head); split(head, w, " ")
+        if (w[1] == name) { sub(/^[^:]*:/, ""); print } }' justfile | tr '\n' ' ')"
+    todo=$(echo $todo)
+  done
+  echo "$seen" | tr ' ' '\n' | grep -v -x -e "$1" -e ''
+}
+reached check | grep -q -x 'docs-check' || fail "justfile: reached does not see docs-check under check"
+for top in check ci; do
+  if reached "$top" | grep -q -x 'docs'; then
+    fail "justfile: $top must not reach docs: a check that regenerates first cannot fail"
+  fi
+done
 [ "$(recipe docs)" = "scripts/docs.sh" ] ||
   fail "justfile: docs must run exactly: scripts/docs.sh"
 grep -q -E '^ +run: just ci$' .github/workflows/ci.yml ||
@@ -134,6 +160,7 @@ expect_fail "a missing folder" "$tmp/nowhere is stale" \
 [ ! -e "$tmp/nowhere" ] || fail "the check wrote to the folder it checks"
 
 # The folder holds the two generated files and the tool records under tools/, nothing else.
+# A file that nothing generates has its own message: regenerating would not remove it.
 mkdir -p "$tmp/again/tools"
 echo "a record" >"$tmp/again/tools/some_tool.md"
 expect_pass "tool records beside the generated files" \
@@ -145,6 +172,57 @@ rm "$tmp/again/notes.md"
 : >"$tmp/again/.hidden"
 expect_fail "a hidden file nothing generates" ".hidden is not generated" \
   "$docs" --check --description "$tmp/empty.json" --out "$tmp/again"
+if grep -q -F "just docs" "$tmp/out"; then
+  fail "a stray file is answered with advice to regenerate"
+fi
+rm "$tmp/again/.hidden"
+newline_name=$(printf 'actions.md\nmore')
+: >"$tmp/again/$newline_name"
+expect_fail "a file whose name holds a newline" "is not generated" \
+  "$docs" --check --description "$tmp/empty.json" --out "$tmp/again"
+rm "$tmp/again/$newline_name"
+: >"$tmp/again/tools/.keep"
+expect_pass "anything under tools/" "$docs" --check --description "$tmp/empty.json" --out "$tmp/again"
+rm -r "$tmp/again/tools"
+: >"$tmp/again/tools"
+expect_fail "tools as a file" "tools is not a folder" \
+  "$docs" --check --description "$tmp/empty.json" --out "$tmp/again"
+
+# Inside a repository the folder is listed as git sees it: what is ignored (a file the
+# system drops there) is not a stray file; what is untracked and not ignored is.
+git init -q "$tmp/repo"
+echo ".DS_Store" >"$tmp/repo/.gitignore"
+# in_repo <arguments...>: the script, run from inside that repository.
+in_repo() { (cd "$tmp/repo" && "$root/$docs" "$@"); }
+expect_pass "generate inside a repository" in_repo --description "$tmp/empty.json" --out docs/reference
+expect_pass "a fresh copy inside a repository" in_repo --check --description "$tmp/empty.json" --out docs/reference
+grep -q -F "docs/reference matches" "$tmp/out" || fail "the folder is not named as the caller gave it"
+: >"$tmp/repo/docs/reference/.DS_Store"
+expect_pass "an ignored file" in_repo --check --description "$tmp/empty.json" --out docs/reference
+: >"$tmp/repo/docs/reference/notes.md"
+expect_fail "an untracked file that is not ignored" "docs/reference/notes.md is not generated" \
+  in_repo --check --description "$tmp/empty.json" --out docs/reference
+if grep -q -F "just docs" "$tmp/out"; then
+  fail "a stray file in a repository is answered with advice to regenerate"
+fi
+rm "$tmp/repo/docs/reference/notes.md"
+: >"$tmp/repo/docs/reference/$newline_name"
+expect_fail "a newline in a name, inside a repository" "is not generated" \
+  in_repo --check --description "$tmp/empty.json" --out docs/reference
+rm "$tmp/repo/docs/reference/$newline_name"
+git -C "$tmp/repo" add -A
+: >"$tmp/repo/docs/reference/tracked.md"
+git -C "$tmp/repo" add docs/reference/tracked.md
+expect_fail "a tracked file nothing generates" "tracked.md is not generated" \
+  in_repo --check --description "$tmp/empty.json" --out docs/reference
+git -C "$tmp/repo" rm -q -f --cached docs/reference/tracked.md
+rm "$tmp/repo/docs/reference/tracked.md"
+# Stale and stray together: the advice to regenerate is given, and the stray file is named.
+echo "by hand" >>"$tmp/repo/docs/reference/actions.md"
+: >"$tmp/repo/docs/reference/notes.md"
+expect_fail "stale and stray" "docs/reference is stale: run \`just docs\`" \
+  in_repo --check --description "$tmp/empty.json" --out docs/reference
+grep -q -F "notes.md is not generated" "$tmp/out" || fail "stale and stray: the stray file is not named"
 
 # Actions are listed in the description's order (recipes come first there), each with its
 # purpose as written.
@@ -188,6 +266,21 @@ refuse "an array" "an object" '[]'
 refuse "no description_version" "description_version" "$(with 'del(.description_version)')"
 refuse "a description_version that is text" "description_version" "$(with '.description_version = "1"')"
 refuse "a description_version that is not whole" "description_version" "$(with '.description_version = 1.5')"
+refuse "a negative description_version" "description_version" "$(with '.description_version = -1')"
+refuse "a description_version past 32 bits" "description_version" "$(with '.description_version = 4294967296')"
+# Written out, because jq would rewrite these numbers.
+refuse "a description_version of 1e400" "description_version" \
+  '{"description_version":1e400,"name":"whizbang","version":"9.9.9","actions":[]}'
+refuse "a description_version of 20 digits" "description_version" \
+  '{"description_version":12345678901234567890,"name":"whizbang","version":"9.9.9","actions":[]}'
+# A whole number however it is written, and printed one way by every jq.
+for pair in "1.0 1" "1E2 100" "4294967295 4294967295" "0 0"; do
+  printf '{"description_version":%s,"name":"whizbang","version":"9.9.9","actions":[]}\n' "${pair% *}" >"$tmp/dv.json"
+  expect_pass "a description_version of ${pair% *}" "$docs" --description "$tmp/dv.json" --out "$tmp/dv"
+  grep -q -F "(version ${pair#* })." "$tmp/dv/actions.md" ||
+    { cat "$tmp/dv/actions.md" >&2; fail "a description_version of ${pair% *} is not printed as ${pair#* }"; }
+  cmp -s "$tmp/dv.json" "$tmp/dv/description.json" || fail "description.json was rewritten"
+done
 refuse "no name" "name" "$(with 'del(.name)')"
 refuse "a name that is a number" "name" "$(with '.name = 7')"
 refuse "no version" "version" "$(with 'del(.version)')"
@@ -204,6 +297,9 @@ refuse "a version that is not three numbers" "version" "$(with '.version = "1.2"
 refuse "a version with a newline" "version" "$(with '.version = "1.2.3\n# Forged"')"
 refuse "a version with a space" "version" "$(with '.version = "1.2.3 beta"')"
 refuse "a version with an empty part" "version" "$(with '.version = "1..3"')"
+refuse "a version of 65 characters" "version" "$(with ".version = \"1.2.3-$(printf 'x%.0s' $(seq 1 59))\"")"
+refuse "two actions with one name" "more than once" "$(with '.actions[1].name = .actions[0].name')"
+grep -q -F "zebra_map" "$tmp/out" || fail "the repeated name is not given"
 for name in "" "Zebra" "9lives" "-dash" "two words" 'tick`' "a.b" "a|b" 'new\nline' "café" \
   "$(printf 'x%.0s' $(seq 1 65))"; do
   refuse "the action name '$name'" "action 1" "$(with ".actions[0].name = \"$name\"")"
@@ -216,7 +312,8 @@ for purpose in "" " Leading space." "Trailing space. " "# A heading" "2. A list 
   'Two\nlines.' 'Text\n\n## `forged`\n\nA forged action.' 'A carriage\rreturn.' 'A\ttab.' \
   'A bell\u0007.' 'A <b>tag</b>.' 'An <!-- unclosed comment.' 'A quote > mark.' 'A `tick`.' \
   'A | bar.' 'A [link](https://example.com).' 'An *emphasis*.' 'An _emphasis_.' \
-  'A back\\slash.' 'An &amp; entity.' 'A line separator here.' 'Café.' \
+  'A back\\slash.' 'See https://example.com/page for more.' 'See www.example.com for more.' \
+  'See WWW.example.com for more.' 'See example.com://x.' 'An &amp; entity.' 'A line separator here.' 'Café.' \
   "$(printf 'A%.0s' $(seq 1 201))"; do
   refuse "the purpose '$purpose'" "action 1" "$(with ".actions[0].purpose = \"$purpose\"")"
 done
