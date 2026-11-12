@@ -182,7 +182,7 @@ granted() {
     cd "$1"
     git ls-files -- .claude/settings.local.json .mcp.json '**/.mcp.json' | sed 's/^/tracked: /'
     grep -l -i -E '^[[:space:]]*permissionMode[[:space:]]*:' .claude/agents/*.md 2>/dev/null | sed 's/^/permission mode: /'
-    git ls-files --cached --others --exclude-standard | { grep -i -E '(^|/)\.claude/' || true; } | while IFS= read -r f; do
+    git -c core.excludesFile=/dev/null ls-files --cached --others --exclude-standard | { grep -i -E '(^|/)\.claude/' || true; } | while IFS= read -r f; do
       tools=
       case "$f" in
         .claude/settings.json) continue ;;
@@ -224,11 +224,11 @@ expect_pass "a copy of the agent files and the skills" granted "$tmp/repo"
 echo '{}' >"$tmp/repo/.claude/settings.local.json"
 git -C "$tmp/repo" add -f .claude/settings.local.json
 expect_fail "local settings committed" "tracked: .claude/settings.local.json" granted "$tmp/repo"
-git -C "$tmp/repo" rm -q -f --cached .claude/settings.local.json
+git -C "$tmp/repo" rm -q -f .claude/settings.local.json
 echo '{}' >"$tmp/repo/.mcp.json"
 git -C "$tmp/repo" add -f .mcp.json
 expect_fail "MCP servers committed" "tracked: .mcp.json" granted "$tmp/repo"
-git -C "$tmp/repo" rm -q -f --cached .mcp.json
+git -C "$tmp/repo" rm -q -f .mcp.json
 
 # planted <name> <expected text> <file> <sed script>: the copy with one file edited must fail,
 # saying the text. The file is put back afterwards.
