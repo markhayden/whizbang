@@ -244,21 +244,24 @@ unchanged "$before" "add a slug that is an annotated tag on origin"
 git -C "$w/origin.git" tag -d far-note >/dev/null
 
 # origin answers the fetch but not the question: that is a refusal, never "not found".
+# Git's exit of 2 alone means "not found"; every other failure is tried on its own.
 mkdir "$tmp/no-answer"
-cat >"$tmp/no-answer/git" <<'SH'
+cat >"$tmp/no-answer/template" <<'SH'
 #!/bin/sh
 case " $* " in
-  *" ls-remote "*) echo "fatal: could not read from remote repository" >&2; exit 128 ;;
+  *" ls-remote "*) echo "$0 $*" >>"$ASKED"; echo "fatal: could not read from remote repository" >&2; exit CODE ;;
 esac
 exec "$REAL_GIT" "$@"
 SH
-chmod +x "$tmp/no-answer/git"
 for code in 128 1 3; do
-  sed "s/exit 128/exit $code/" "$tmp/no-answer/git" >"$tmp/no-answer/git.new"
-  chmod +x "$tmp/no-answer/git.new"
-  mv "$tmp/no-answer/git.new" "$tmp/no-answer/git"
+  sed "s/exit CODE/exit $code/" "$tmp/no-answer/template" >"$tmp/no-answer/git"
+  chmod +x "$tmp/no-answer/git"
+  grep -q -x -F "  *\" ls-remote \"*) echo \"\$0 \$*\" >>\"\$ASKED\"; echo \"fatal: could not read from remote repository\" >&2; exit $code ;;" "$tmp/no-answer/git" ||
+    fail "the stand-in for git does not exit $code"
+  : >"$tmp/asked"
   expect_fail "add when origin cannot be asked (exit $code)" "cannot ask origin for its branches and tags; nothing was created" \
-    env PATH="$tmp/no-answer:$PATH" REAL_GIT="$(command -v git)" bash -c 'cd "$1" && scripts/worktree.sh add s12' - "$repo"
+    env PATH="$tmp/no-answer:$PATH" REAL_GIT="$(command -v git)" ASKED="$tmp/asked" bash -c 'cd "$1" && scripts/worktree.sh add s12' - "$repo"
+  [ -s "$tmp/asked" ] || fail "add when origin cannot be asked (exit $code): the stand-in was not asked"
   unchanged "$before" "add when origin cannot be asked (exit $code)"
 done
 
