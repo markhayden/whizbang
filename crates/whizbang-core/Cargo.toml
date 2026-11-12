@@ -13,12 +13,27 @@ name = "it"
 path = "tests/it/main.rs"
 
 [dependencies]
+# Decoding, to reach an image's canonical pixels. PNG and JPEG are what the old tools read.
+# The decoders are pinned exactly: for a lossy file, what the decoder makes of it is part of
+# what the pixel digest means (ADR 0001). The JPEG and PNG decoders are named here only to
+# pin them; `image` is what the code calls.
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
+png = "=0.18.1"
+zune-core = "=0.5.3"
+zune-jpeg = "=0.5.15"
+# Powers that round the same on every machine, for the colour conversion. Pinned exactly: a
+# change in a power's last bit could change a converted sample.
+libm = "=0.2.16"
+# Inflating a PNG's colour profile inside a limit. The version the PNG decoder uses.
+miniz_oxide = "=0.8.9"
 serde.workspace = true
 serde_json.workspace = true
-# The digest that names stored content.
+# The digest that names stored content, and every identity.
 sha2.workspace = true
 
 [dev-dependencies]
+# A second lossless container, for the tests only: the same pixels in PNG and in BMP.
+image = { version = "=0.25.10", default-features = false, features = ["bmp"] }
 whizbang-testkit.workspace = true
 
 [lints]

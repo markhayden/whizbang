@@ -89,13 +89,13 @@ after A4. Nothing else is parallel.
 identity is kept as it is: rascal's frame ignores image content, and squint's decoder records
 a colour profile without applying it.
 
-- [ ] ADR 0001: the file digest; the canonical pixel digest and exactly what canonical means
+- [x] ADR 0001: the file digest; the canonical pixel digest and exactly what canonical means
       for orientation, channel order, alpha and colour profiles; coordinate space; binding
       (source image, destination image or root, both spaces, direction, mapping); the order in
       which identities depend on each other, with content first, bindings next and run
       provenance last, and nothing local (ids, timestamps, paths) in any of them.
-- [ ] The types in `whizbang-core`. No masks and no store in this task.
-- [ ] Fixed vectors for the canonical digest: the same picture stored with each orientation
+- [x] The types in `whizbang-core`. No masks and no store in this task.
+- [x] Fixed vectors for the canonical digest: the same picture stored with each orientation
       tag; with and without an alpha channel; with and without a colour profile. Re-encoding
       means the same samples in another container, not a lossy recompression.
 
