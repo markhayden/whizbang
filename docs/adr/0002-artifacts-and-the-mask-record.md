@@ -179,11 +179,22 @@ The planes and the one rule for a pixel's weight are rascal's (its ADR 0006):
 - Replacing the core clears the blend, the profile and every prescription, which were
   drawn from the old core; protect is kept and still wins: the new core is cleared under
   it. Adding to protect clears the core and the blend under it.
-- So the planes are one way to state a mask's weights: two masks with the same weights and
-  the same protect have the same planes, in whatever order they were refined, and a file
-  whose core is not 0 under protect is refused. Rascal kept a replaced core under protect,
-  where its weight was 0 all the same; such a mask and the one without that core weighed
-  alike and would have had two identities here.
+- So the core is never set under protect: replacing the core and adding to protect give
+  the same mask, with the same identity, in either order, and a file whose core is not 0
+  under protect is refused. Rascal's mask type kept a replaced core under protect, where
+  its weight was 0 all the same; its operations cleared it there themselves before every
+  replacement (`replaced_core` in `crates/rascal-ops/src/refine.rs`), and the type now
+  does.
+- The planes are still a statement, and not the weights alone. A weight of 1 can be stated
+  as core, or as a blend of 255 with no core: the two masks weigh every pixel alike, both
+  are accepted, and they have two identities. Equal identities mean the same mask, and not
+  the reverse, as with a binding (ADR 0001) and a location.
+- This narrows `mask/1` without a new version. A mask file that the code merged with task
+  A4 wrote after replacing a core over protect is refused by this code, and the same calls
+  now give a mask with another identity. The version stays at 1 because the fields and
+  their encoding are as they were, every mask this code accepts has the identity it had,
+  and nothing has shipped: a store written by earlier code of checkpoint 1A is discarded.
+  Once a store is kept, a narrowing like this one is a new version of the kind.
 - The profile's band and sigma, and a tone ramp's step, belong to the mask's own binding.
   The sigma has one channel and an entry for every row; a step has three channels and an
   entry for every row; a share is from 0 to 1.
@@ -294,9 +305,10 @@ not a rule a rebind could hold; and a comparison would make every rebind decode 
 pictures.
 
 **Protected pixels never change, on the new image as on the old.** That rule does not rest
-on the rebind. It is held where a composite is made (the fill composite, task A8), against
-the mask it is given and the image it is given, whichever they are: every protected pixel
-and every pixel outside the support comes out exactly as it went in. A mask rebound onto a
+on the rebind. It will be held where a composite is made (the fill composite, task A8, which
+does not exist yet), against the mask it is given and the image it is given, whichever
+they are: every protected pixel and every pixel outside the support comes out exactly as
+it went in. A mask rebound onto a
 composite protects the same places of the composite, and the next composite keeps them. A
 false derivation moves the planes onto the wrong picture, where they protect the wrong
 things; it does not let a protected pixel of that picture change.
@@ -318,7 +330,9 @@ things; it does not let a protected pixel of that picture change.
 - Reversing this costs every stored artifact. A store written under these kinds is
   discarded or migrated. A change to a type's fields is a new version of its kind and a
   record that supersedes this one; a new shape or prescription is a new number in its
-  kind, and its own record.
+  kind, and its own record. So is a rule that refuses what an earlier build wrote, once a
+  store is kept; the one such narrowing made before that, the core under protect, is
+  stated with the mask record above.
 
 ## Alternatives
 
@@ -351,5 +365,7 @@ things; it does not let a protected pixel of that picture change.
   place would have one identity, for a point alone; a box and a polygon cannot be brought
   round without changing their shape, so the rule would hold for some shapes and not for
   others.
-- **Keep a replaced core under protect,** as rascal did. Two masks that weigh every pixel
-  alike would have two identities, for a difference nothing reads.
+- **Keep a replaced core under protect,** as rascal's mask type did. The same core and the
+  same protect, applied in the two orders, would be two masks with two identities, for a
+  difference nothing reads; and every operation would have to clear the core itself, as
+  rascal's did.

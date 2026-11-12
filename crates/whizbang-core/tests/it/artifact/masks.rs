@@ -334,7 +334,7 @@ fn a_weight_is_asked_of_a_pixel_the_image_has() {
 }
 
 #[test]
-fn two_masks_that_weigh_alike_have_the_same_planes_and_one_identity() {
+fn a_core_replaced_and_a_protect_added_give_the_same_mask_in_either_order() {
     let protect = rect(0, 0, 3, 2);
     let core = rect(1, 1, 5, 4);
     // Protect first and then the core, and the core first and then protect.
@@ -354,4 +354,43 @@ fn two_masks_that_weigh_alike_have_the_same_planes_and_one_identity() {
     assert_eq!(one.core(), other.core());
     assert_eq!(one.id(), other.id());
     assert_eq!(Mask::from_bytes(&one.to_bytes(), &limits()).unwrap(), one);
+}
+
+#[test]
+fn a_weight_of_one_stated_as_core_and_as_blend_is_two_masks() {
+    // The planes are a statement, not the weights alone. One pixel with a weight of 1: in
+    // the core of one mask, and as a blend of 255 with no core in the other. Both are
+    // masks, both files are read, and they are two identities.
+    let empty = vec![0; (WIDTH * HEIGHT) as usize];
+    let mut pixel = empty.clone();
+    pixel[at(4, 3)] = 255;
+    let make = |core: Vec<u8>| {
+        Mask::from_core(
+            on("photo"),
+            UseCase::Custom,
+            core,
+            Source::default(),
+            made_by("rect"),
+        )
+        .unwrap()
+    };
+    let as_core = make(pixel.clone());
+    let mut as_blend = make(empty);
+    as_blend.set_blend(pixel).unwrap();
+    assert_eq!(as_blend.blend()[at(4, 3)], 255);
+    assert_eq!(as_blend.core()[at(4, 3)], 0);
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            assert_eq!(as_core.weight(x, y), as_blend.weight(x, y), "({x}, {y})");
+        }
+    }
+    assert_eq!(as_core.weight(4, 3), Some(1.0));
+    assert_eq!(as_core.protect(), as_blend.protect());
+    assert_ne!(as_core.id(), as_blend.id());
+    for mask in [&as_core, &as_blend] {
+        assert_eq!(
+            Mask::from_bytes(&mask.to_bytes(), &limits()).unwrap(),
+            *mask
+        );
+    }
 }

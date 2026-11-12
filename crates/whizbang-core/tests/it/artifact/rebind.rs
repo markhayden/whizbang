@@ -229,6 +229,13 @@ fn a_derivation_in_another_space_of_as_many_samples_is_refused() {
     assert!(why.contains("spaces"), "{why}");
     // In the mask's own space it is accepted.
     rebind(&mask, &in_space(space())).unwrap();
+
+    // A mask on a part of a panorama, and a derivation in a complete panorama of the same
+    // size: the two spaces differ in their topology alone.
+    let mask = rect_mask(Binding::root(picture("photo"), partial));
+    let why = refused(rebind(&mask, &in_space(panorama)));
+    assert!(why.contains("spaces"), "{why}");
+    rebind(&mask, &in_space(partial)).unwrap();
 }
 
 #[test]

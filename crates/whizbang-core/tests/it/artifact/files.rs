@@ -517,6 +517,25 @@ fn a_run_past_the_end_of_its_plane_is_refused_before_it_is_set_aside() {
         matches!(&refusal, ArtifactError::Format(why) if why.contains("past the end")),
         "{refusal}"
     );
+    // A later run, no longer than the plane itself, that carries the total past the end:
+    // the first run one sample longer, so that the last, of 19, would end at 49. It is
+    // refused where it passes the end, before the plane grows by it.
+    let mut later = bytes.clone();
+    later[at + 9..at + 13].copy_from_slice(&11u32.to_be_bytes());
+    let refusal = Mask::from_bytes(&later, &limits()).unwrap_err();
+    assert!(
+        matches!(&refusal, ArtifactError::Format(why)
+            if why.contains("a run of 19 samples goes past the end")),
+        "{refusal}"
+    );
+    // A run of no samples is refused as that.
+    let mut none = bytes.clone();
+    none[at + 9..at + 13].copy_from_slice(&0u32.to_be_bytes());
+    let refusal = Mask::from_bytes(&none, &limits()).unwrap_err();
+    assert!(
+        matches!(&refusal, ArtifactError::Format(why) if why.contains("a run of no samples")),
+        "{refusal}"
+    );
     // A run that stops short leaves runs that do not add up, which is another refusal.
     let mut short = bytes.clone();
     short[at + 9..at + 13].copy_from_slice(&9u32.to_be_bytes());

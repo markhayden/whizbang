@@ -229,8 +229,8 @@ impl Mask {
 
     /// Replaces the core. The blend is cleared, and the profile and every prescription are
     /// removed: they were drawn from the old core. Protect is kept, and still wins: the
-    /// new core is cleared under it, so that two masks that weigh every pixel alike have
-    /// the same planes.
+    /// new core is cleared under it. The core is so never set under protect, and
+    /// replacing the core and adding to protect give the same mask in either order.
     pub fn replace_core(&mut self, core: Vec<u8>) -> Result<Refinement> {
         self.sized(&core, "core")?;
         let report = Refinement {
