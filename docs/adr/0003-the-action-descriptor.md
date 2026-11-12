@@ -2,6 +2,13 @@
 
 Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-12, after the review of the code that came with it. Five rules were
+tightened: a `text` default is one plain line; an image port has no `belongs_to`; the image
+that `belongs_to` or `derived_from` names is exactly one image, returned whenever the port
+that names it is; a version part has no leading zero; no call needs a capability twice. A
+description's fields became private, its actions are listed by kind, and its version went
+from 2 to 3. "What changes the version" was added, with what this record does not decide
+about marks and about conditions on a value.
 Spec: section 3, "The execution contract" and "Primitives, recipes and loops"; section 6,
 "Readiness"; section 14, "Documentation that cannot drift"
 
@@ -115,8 +122,9 @@ calls: the rebind happens when the image is returned.
 a name, and a condition. No call needs a capability twice: a capability is stated once, or
 twice under `given` and `not_given` of one argument, which no call satisfies together, and
 which may ask for different features. Stated `always` and again under a condition, or under
-conditions on two different arguments, it is refused; so features that vary with two
-arguments cannot be said.
+conditions on two different arguments, it is refused. So two things cannot be said: features
+that vary with two arguments, and a capability needed when either of two arguments is given
+("fill when `f` is given" beside "fill when `g` is given").
 
 **A condition** (`when`) is `always`, `given` an argument, or `not_given` an argument. The
 argument must be one a call may leave without a value. So which capabilities a call needs
@@ -162,7 +170,13 @@ field or its order means. There are no optional fields, since every field is alw
 present, so an added field is such a change and bumps the version like any other. A new
 action, a new artifact type or a new version of whizbang is content, not shape, and does
 not. A rule that only refuses descriptors that were accepted before does not either: every
-document written under it is still a document a reader of the same version understands.
+document written under it is still a document a reader of the same version understands. A
+rule that is loosened does bump it: a reader that held values to the old rule could meet
+one it refuses (a `text` default that is not a plain line, say).
+
+The rule is kept from the first change on, though nothing reads a description yet. Until
+the first release, no older description version is supported: a reader is changed with
+the writer.
 
 ## Consequences
 
