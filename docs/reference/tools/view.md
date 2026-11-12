@@ -172,7 +172,9 @@ thing seen in a crop pixel is found again within half a crop pixel, which is wit
 source pixel while the crop is at most twice reduced, and exact when it is not reduced.
 
 A box on a crop of a crop maps to the root image through both bindings, with each edge of
-the inner crop landing on its edge of the cut exactly (`tests/it/locate.rs`).
+the inner crop landing on its edge of the cut exactly (`tests/it/locate.rs`). A box maps back
+by additions, multiplications and divisions alone, so a location made from one has the same
+identity on every machine: two fixed identities, computed apart from the tool, hold that.
 
 ## Speed and cost
 

@@ -1,7 +1,7 @@
 //! Mapping back: a point of a crop through its binding, and a box on a crop of a crop to
 //! the root image (squint's `to_root`, `crates/squint-core/src/frames/mod.rs`).
 
-use whizbang_core::artifact::{ArtifactError, Image};
+use whizbang_core::artifact::{ArtifactError, Image, Location, Origin, Shape, Step};
 use whizbang_core::identity::{Binding, Direction, IdentityError, Mapping, Point, Space};
 use whizbang_squint::view::{Located, ViewError, box_to_root};
 
@@ -326,4 +326,65 @@ fn a_chain_that_is_not_crops_end_to_end_is_refused() {
     )
     .unwrap();
     assert!(refused(&[shift]).contains("is not one"));
+}
+
+#[test]
+fn a_location_made_by_mapping_a_box_back_has_a_fixed_identity() {
+    // A location's coordinates are hashed (ADR 0002), so a mapped box that becomes a
+    // location must be the same doubles on every machine. A box maps back through crops
+    // by additions, multiplications and divisions alone, with no function of a
+    // mathematics library. Both identities were computed apart from this crate, from ADR
+    // 0001's rule for a crop's edges and the two records' encodings.
+    let made = || Origin::new(Step::new("fixture", "1")).unwrap();
+
+    // Through two crops: the whole of a 3000 by 375 image shown 1024 by 128, then the
+    // box (512, 32) to (1024, 96) of that.
+    let root = picture(3000, 375, |x, y| [(x / 12) as u8, (y / 2) as u8, 0, 255]);
+    let (outer, chain) = crop_of(&root, [0.0, 0.0, 1.0, 1.0], &[]);
+    let (_, chain) = crop_of(&outer, [0.5, 0.25, 1.0, 0.75], &chain);
+    let located = box_to_root([10.3, 7.7, 300.1, 50.9], &chain).unwrap();
+    assert_eq!(
+        located.bbox,
+        [1530.17578125, 116.30859375, 2379.19921875, 242.87109375]
+    );
+    let [left, top, right, bottom] = located.bbox;
+    let shape = Shape::Box {
+        left,
+        top,
+        right,
+        bottom,
+    };
+    let location = Location::new(root.binding(), shape, made()).unwrap();
+    assert_eq!(
+        location.id().to_string(),
+        "sha256:9858545f6866760ec109d4c6c10c6d6f8fb9b7ec774f5183bf215b0ed70275f0"
+    );
+
+    // Through one crop whose ratio is not a binary fraction: 1500 by 110 shown 1024 by
+    // 75, so a row of the crop is 110 / 75 rows of the image.
+    let root = picture(1500, 110, |x, y| [(x / 6) as u8, y as u8, 7, 255]);
+    let (crop, chain) = crop_of(&root, [0.0, 0.0, 1.0, 1.0], &[]);
+    assert_eq!(crop.space(), Space::flat(1024, 75).unwrap());
+    let located = box_to_root([100.3, 10.1, 900.7, 70.9], &chain).unwrap();
+    assert_eq!(
+        located.bbox,
+        [
+            146.923828125,
+            14.813333333333333,
+            1319.384765625,
+            103.98666666666668
+        ]
+    );
+    let [left, top, right, bottom] = located.bbox;
+    let shape = Shape::Box {
+        left,
+        top,
+        right,
+        bottom,
+    };
+    let location = Location::new(root.binding(), shape, made()).unwrap();
+    assert_eq!(
+        location.id().to_string(),
+        "sha256:a5631806bcd1413c8dba192a9fc695fc21a72ae6a50ce5a0d774b3e7c82f993a"
+    );
 }

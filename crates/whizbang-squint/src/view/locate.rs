@@ -25,6 +25,10 @@ pub struct Located {
 /// A box that reaches past the crop is clipped to it and flagged. A box with no area, or
 /// one that lies wholly outside the crop, is the caller's mistake. Each edge of the crop
 /// maps onto its edge of the cut exactly, however many crops the chain holds (ADR 0001).
+///
+/// The result may enter hashed bytes, as a location's coordinates do (ADR 0002): it is
+/// worked out by additions, multiplications and divisions alone, which every machine
+/// rounds alike, and by no function of a mathematics library.
 pub fn box_to_root(bbox: [f64; 4], chain: &[Binding]) -> Result<Located, ViewError> {
     let refuse = |why: String| Err(ViewError::from(IdentityError::Binding(why)));
     let Some((first, rest)) = chain.split_first() else {
