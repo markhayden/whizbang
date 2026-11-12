@@ -5,7 +5,14 @@ milestone 2 can prove whizbang reproduces it (SPEC section 16) and so the study 
 up from the records alone.
 
 The package is owner-only. It holds evaluation items, their labels and every recorded model
-exchange, so it is never published. This folder holds what can be public: `manifest.toml`.
+exchange, so it is never published. This folder holds what can be public:
+
+- `manifest.toml`: what the package is, without what is in it (below);
+- `transcript.md`: the format each replay fixture is converted to, the audit of those
+  transcripts and the comparison the gate uses;
+- `example-transcript.json`: one transcript of an invented decision, kept in step with the
+  converter by the tests;
+- `audit.toml`: the result of that audit, as counts.
 
 ## What the package holds
 

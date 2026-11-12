@@ -235,6 +235,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "whizbang-eval"
+version = "0.0.1"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
