@@ -1,10 +1,9 @@
 //! The comparison of two transcripts (docs/baseline/transcript.md).
 //!
 //! The baseline gate of milestone 2 replays each recorded decision and compares the transcript
-//! whizbang produces with the recorded one. The comparison is exact: the whole ordered sequence
-//! of requests, calls and results, and the terminal outcome. The only differences let through
-//! are in fields the recorded transcript declares volatile, and a transcript cannot declare
-//! volatile anything the gate exists to compare.
+//! whizbang produces with the recorded one. The comparison is exact: everything in a transcript
+//! is compared except the places the format declares volatile. A field nobody has heard of is
+//! compared like any other, and a recorded transcript cannot widen what is let through.
 
 use std::fmt;
 
@@ -12,43 +11,21 @@ use serde_json::Value;
 
 /// The version of this comparison, written into the gate receipt (docs/baseline/README.md).
 /// It changes whenever what counts as a difference changes.
-pub const COMPARISON_VERSION: &str = "1";
+pub const COMPARISON_VERSION: &str = "2";
 
 /// The transcript format this comparison reads.
 pub const TRANSCRIPT_VERSION: u64 = 1;
 
-/// What version 1 of the format declares volatile (docs/baseline/transcript.md). The converter
-/// writes exactly this list; `scripts/tests/test-baseline.sh` holds the two copies together.
+/// The only places that are not compared: what version 1 of the format declares volatile
+/// (docs/baseline/transcript.md). `*` stands for any one position in a list. A recorded
+/// transcript must declare exactly this list. The converter writes it;
+/// `scripts/tests/test-baseline.sh` holds the two copies together.
 pub const VOLATILE: &[&str] = &[
     "/origin",
     "/meta",
     "/files",
     "/turns/*/meta",
     "/turns/*/calls/*/meta",
-];
-
-/// Paths a transcript may never declare volatile, nor anything above or below them. `*` stands
-/// for any one position in a list.
-const COMPARED: &[&str] = &[
-    "/transcript_version",
-    "/complete",
-    "/incomplete",
-    "/subject",
-    "/preparation",
-    "/evidence_tools",
-    "/images",
-    "/turns/*/turn",
-    "/turns/*/request",
-    "/turns/*/response",
-    "/turns/*/excluded",
-    "/turns/*/calls/*/id",
-    "/turns/*/calls/*/name",
-    "/turns/*/calls/*/arguments",
-    "/turns/*/calls/*/disposition",
-    "/turns/*/calls/*/result",
-    "/repairs",
-    "/terminal",
-    "/volatile",
 ];
 
 /// How two transcripts differ at one place.
@@ -81,19 +58,17 @@ impl fmt::Display for Difference {
 }
 
 /// Why a comparison could not be made at all.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
     /// A transcript is not of the version this comparison reads.
     Version { which: Side },
-    /// The recorded transcript is not marked complete, so it is not a baseline.
+    /// A transcript is not an object with its turns and its terminal outcome.
+    Shape { which: Side },
+    /// The recorded transcript is not marked complete, or lists something missing, so it is
+    /// not a baseline.
     RecordedIncomplete,
-    /// The recorded transcript has no list of volatile paths, or an entry is not a path.
-    VolatileMalformed,
-    /// The recorded transcript declares volatile something the gate compares.
-    VolatileCovers {
-        declared: String,
-        compared: &'static str,
-    },
+    /// The recorded transcript's volatile list is not exactly the format's.
+    Volatile,
 }
 
 /// Which of the two transcripts.
@@ -103,17 +78,28 @@ pub enum Side {
     Replayed,
 }
 
+impl fmt::Display for Side {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Side::Recorded => "recorded",
+            Side::Replayed => "replayed",
+        })
+    }
+}
+
 impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Refusal::Version { which } => {
-                let which = match which {
-                    Side::Recorded => "recorded",
-                    Side::Replayed => "replayed",
-                };
                 write!(
                     f,
                     "the {which} transcript is not version {TRANSCRIPT_VERSION}"
+                )
+            }
+            Refusal::Shape { which } => {
+                write!(
+                    f,
+                    "the {which} transcript has no turns or no terminal outcome"
                 )
             }
             Refusal::RecordedIncomplete => {
@@ -122,16 +108,12 @@ impl fmt::Display for Refusal {
                     "the recorded transcript is not complete, so nothing is compared with it"
                 )
             }
-            Refusal::VolatileMalformed => {
+            Refusal::Volatile => {
                 write!(
                     f,
-                    "the recorded transcript's volatile list is not a list of paths"
+                    "the recorded transcript's volatile list is not the format's"
                 )
             }
-            Refusal::VolatileCovers { declared, compared } => write!(
-                f,
-                "the recorded transcript declares {declared} volatile, which covers {compared}"
-            ),
         }
     }
 }
@@ -139,18 +121,37 @@ impl fmt::Display for Refusal {
 impl std::error::Error for Refusal {}
 
 /// Compares what whizbang replayed with what was recorded. `Ok` holds every difference, in the
-/// order of the recorded transcript; an empty list is a match. Only the recorded transcript's
-/// volatile list is honoured.
+/// order of the recorded transcript; an empty list is a match. Numbers are compared by the
+/// text they were written with, so `1` and `1.0` differ and no two large numbers are confused.
 pub fn compare(recorded: &Value, replayed: &Value) -> Result<Vec<Difference>, Refusal> {
     for (which, t) in [(Side::Recorded, recorded), (Side::Replayed, replayed)] {
         if t.get("transcript_version").and_then(Value::as_u64) != Some(TRANSCRIPT_VERSION) {
             return Err(Refusal::Version { which });
         }
+        let turns = t.get("turns").is_some_and(Value::is_array);
+        let terminal = t.get("terminal").is_some_and(Value::is_object);
+        if !turns || !terminal {
+            return Err(Refusal::Shape { which });
+        }
     }
-    if recorded.get("complete") != Some(&Value::Bool(true)) {
+    let nothing_missing = recorded
+        .get("incomplete")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    if recorded.get("complete") != Some(&Value::Bool(true)) || !nothing_missing {
         return Err(Refusal::RecordedIncomplete);
     }
-    let volatile = volatile_paths(recorded)?;
+    let declared: Option<Vec<&str>> = recorded
+        .get("volatile")
+        .and_then(Value::as_array)
+        .and_then(|list| list.iter().map(Value::as_str).collect());
+    if declared.as_deref() != Some(VOLATILE) {
+        return Err(Refusal::Volatile);
+    }
+    let volatile: Vec<Vec<&str>> = VOLATILE
+        .iter()
+        .map(|path| path.trim_start_matches('/').split('/').collect())
+        .collect();
     let mut differences = Vec::new();
     let mut path = Vec::new();
     walk(
@@ -163,52 +164,12 @@ pub fn compare(recorded: &Value, replayed: &Value) -> Result<Vec<Difference>, Re
     Ok(differences)
 }
 
-/// The recorded transcript's volatile list as path segments, refused if it reaches anything
-/// the gate compares.
-fn volatile_paths(recorded: &Value) -> Result<Vec<Vec<String>>, Refusal> {
-    let list = recorded
-        .get("volatile")
-        .and_then(Value::as_array)
-        .ok_or(Refusal::VolatileMalformed)?;
-    let mut out = Vec::new();
-    for entry in list {
-        let declared = entry.as_str().ok_or(Refusal::VolatileMalformed)?;
-        let segments = segments(declared).ok_or(Refusal::VolatileMalformed)?;
-        for compared in COMPARED {
-            let kept = segments_of(compared);
-            let shared = segments.len().min(kept.len());
-            let overlaps =
-                (0..shared).all(|i| segments[i] == "*" || kept[i] == "*" || segments[i] == kept[i]);
-            if overlaps {
-                return Err(Refusal::VolatileCovers {
-                    declared: declared.to_string(),
-                    compared,
-                });
-            }
-        }
-        out.push(segments);
-    }
-    Ok(out)
-}
-
-fn segments(path: &str) -> Option<Vec<String>> {
-    let rest = path.strip_prefix('/')?;
-    if rest.is_empty() || rest.split('/').any(str::is_empty) {
-        return None;
-    }
-    Some(rest.split('/').map(str::to_string).collect())
-}
-
-fn segments_of(path: &'static str) -> Vec<&'static str> {
-    path.trim_start_matches('/').split('/').collect()
-}
-
-fn is_volatile(path: &[String], volatile: &[Vec<String>]) -> bool {
+fn is_volatile(path: &[String], volatile: &[Vec<&str>]) -> bool {
     volatile.iter().any(|v| {
         v.len() == path.len()
             && v.iter()
                 .zip(path)
-                .all(|(want, have)| want == "*" || want == have)
+                .all(|(want, have)| *want == "*" || want == have)
     })
 }
 
@@ -223,7 +184,7 @@ fn walk(
     recorded: Option<&Value>,
     replayed: Option<&Value>,
     path: &mut Vec<String>,
-    volatile: &[Vec<String>],
+    volatile: &[Vec<&str>],
     out: &mut Vec<Difference>,
 ) {
     if is_volatile(path, volatile) {

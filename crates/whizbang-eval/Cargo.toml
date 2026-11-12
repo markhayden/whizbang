@@ -13,7 +13,8 @@ name = "it"
 path = "tests/it/main.rs"
 
 [dependencies]
-serde_json.workspace = true
+# Numbers keep the text they were written with, so a comparison never rounds one.
+serde_json = { workspace = true, features = ["arbitrary_precision"] }
 
 [lints]
 workspace = true

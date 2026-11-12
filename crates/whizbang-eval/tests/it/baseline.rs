@@ -56,6 +56,7 @@ fn transcript() -> Value {
         "subject": {"set": "set-1", "item": "synthetic-item", "model": "provider:model-x", "arm": "C", "repetition": 1, "use_case": "source-fidelity"},
         "preparation": {"version": "1", "settings": {"long_edge_px": 1024, "jpeg_quality": 90}},
         "evidence_tools": ["view"],
+        "submission_tool": "submit_verdict",
         "images": [
             {"id": "source", "frame": "raw:source", "origin": "job", "prepared": {"sha256": "aa", "bytes": 10}},
             {"id": "candidate", "frame": "raw:candidate", "origin": "job", "prepared": {"sha256": "bb", "bytes": 11}},
@@ -144,7 +145,7 @@ fn an_unchanged_transcript_matches() {
 
 #[test]
 fn the_comparison_has_a_version_for_the_gate_receipt() {
-    assert_eq!(COMPARISON_VERSION, "1");
+    assert_eq!(COMPARISON_VERSION, "2");
 }
 
 #[test]
@@ -460,6 +461,98 @@ fn a_recorded_transcript_with_a_file_cut_short_is_not_a_baseline() {
 }
 
 #[test]
+fn a_recorded_transcript_marked_complete_that_lists_something_missing_is_not_a_baseline() {
+    let mut recorded = transcript();
+    recorded["incomplete"] = json!(["missing stored file: response 2"]);
+    assert_eq!(
+        compare(&recorded, &recorded.clone()),
+        Err(Refusal::RecordedIncomplete)
+    );
+    for bad in [json!(null), json!("none"), json!({})] {
+        let mut recorded = transcript();
+        recorded["incomplete"] = bad;
+        assert_eq!(
+            compare(&recorded, &recorded.clone()),
+            Err(Refusal::RecordedIncomplete)
+        );
+    }
+    let mut recorded = transcript();
+    recorded.as_object_mut().unwrap().remove("incomplete");
+    assert_eq!(
+        compare(&recorded, &recorded.clone()),
+        Err(Refusal::RecordedIncomplete)
+    );
+}
+
+#[test]
+fn a_pair_without_turns_or_a_terminal_outcome_is_refused() {
+    for (field, bad) in [
+        ("turns", None),
+        ("turns", Some(json!(null))),
+        ("turns", Some(json!({}))),
+        ("terminal", None),
+        ("terminal", Some(json!(null))),
+        ("terminal", Some(json!("pass"))),
+    ] {
+        let mut t = transcript();
+        match &bad {
+            None => {
+                t.as_object_mut().unwrap().remove(field);
+            }
+            Some(value) => t[field] = value.clone(),
+        }
+        // The same defect on both sides would otherwise compare as equal.
+        assert_eq!(
+            compare(&t, &t.clone()),
+            Err(Refusal::Shape {
+                which: Side::Recorded
+            }),
+            "{field} {bad:?}"
+        );
+        assert_eq!(
+            compare(&transcript(), &t),
+            Err(Refusal::Shape {
+                which: Side::Replayed
+            }),
+            "{field} {bad:?}"
+        );
+    }
+    assert_eq!(
+        compare(&json!([]), &transcript()),
+        Err(Refusal::Version {
+            which: Side::Recorded
+        })
+    );
+}
+
+#[test]
+fn numbers_are_compared_by_the_text_they_were_written_with() {
+    let parse = |number: &str| -> Value {
+        let mut t = transcript();
+        t["turns"][1]["calls"][0]["arguments"]["scale"] = serde_json::from_str(number).unwrap();
+        // Through text, as a transcript read from a file is.
+        serde_json::from_str(&serde_json::to_string(&t).unwrap()).unwrap()
+    };
+    for (a, b) in [
+        ("12345678901234567890123", "12345678901234567890124"),
+        ("9007199254740993", "9007199254740992"),
+        ("1", "1.0"),
+        ("100", "1e2"),
+        ("0.1", "0.10"),
+        ("0.30000000000000004", "0.3"),
+        ("-0.0", "0.0"),
+    ] {
+        let differences = compare(&parse(a), &parse(b)).unwrap();
+        assert_eq!(
+            paths(&differences),
+            vec!["/turns/1/calls/0/arguments/scale"],
+            "{a} and {b}"
+        );
+        assert_eq!(compare(&parse(a), &parse(a)).unwrap(), vec![], "{a}");
+    }
+}
+
+#[test]
 fn a_replay_that_is_not_complete_fails() {
     let differences = after(|t| {
         t["complete"] = json!(false);
@@ -483,60 +576,200 @@ fn a_changed_subject_or_preparation_fails() {
 }
 
 #[test]
-fn a_volatile_list_that_reaches_what_is_compared_is_refused() {
+fn a_volatile_list_that_is_not_exactly_the_formats_is_refused() {
+    // One more path, whatever it names: something compared, something new, something nested.
     for declared in [
         "/turns",
         "/turns/*",
-        "/turns/1",
         "/terminal",
         "/terminal/verdict",
         "/turns/*/request",
         "/turns/*/request/system",
-        "/turns/0/response/content",
-        "/turns/*/calls",
-        "/turns/*/calls/*",
         "/turns/*/calls/*/result",
-        "/turns/*/calls/0/arguments/box",
         "/images",
-        "/images/*/prepared",
         "/subject",
         "/volatile",
         "/complete",
+        "/newtop",
+        "/turns/*/extra",
+        "/turns/*/calls/*/extra",
         "/*",
-        "/*/*/request",
+        "/meta",
     ] {
         let mut recorded = transcript();
         recorded["volatile"]
             .as_array_mut()
             .unwrap()
             .push(json!(declared));
-        let refusal = compare(&recorded, &recorded.clone()).unwrap_err();
-        assert!(
-            matches!(&refusal, Refusal::VolatileCovers { declared: d, .. } if d == declared),
-            "{declared}: {refusal:?}"
+        assert_eq!(
+            compare(&recorded, &recorded.clone()),
+            Err(Refusal::Volatile),
+            "{declared}"
         );
     }
-}
-
-#[test]
-fn a_malformed_volatile_list_is_refused() {
+    // One path fewer, another order, or not a list of text at all.
+    let mut fewer = transcript();
+    fewer["volatile"].as_array_mut().unwrap().pop();
+    assert_eq!(compare(&fewer, &fewer.clone()), Err(Refusal::Volatile));
+    let mut reordered = transcript();
+    reordered["volatile"].as_array_mut().unwrap().swap(0, 1);
+    assert_eq!(
+        compare(&reordered, &reordered.clone()),
+        Err(Refusal::Volatile)
+    );
     for bad in [
         json!(null),
         json!("/meta"),
         json!([1]),
-        json!(["meta"]),
-        json!(["/"]),
-        json!(["/a//b"]),
-        json!([""]),
+        json!([]),
+        json!({}),
     ] {
         let mut recorded = transcript();
         recorded["volatile"] = bad.clone();
         assert_eq!(
             compare(&recorded, &transcript()),
-            Err(Refusal::VolatileMalformed),
+            Err(Refusal::Volatile),
             "{bad}"
         );
     }
+}
+
+/// Every place in a value, as JSON pointers, leaves and containers alike.
+fn places(value: &Value, at: &str, out: &mut Vec<String>) {
+    out.push(at.to_string());
+    match value {
+        Value::Object(map) => {
+            for (key, inner) in map {
+                places(inner, &format!("{at}/{key}"), out);
+            }
+        }
+        Value::Array(list) => {
+            for (index, inner) in list.iter().enumerate() {
+                places(inner, &format!("{at}/{index}"), out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_declared_volatile(place: &str) -> bool {
+    let have: Vec<&str> = place.trim_start_matches('/').split('/').collect();
+    VOLATILE.iter().any(|declared| {
+        let want: Vec<&str> = declared.trim_start_matches('/').split('/').collect();
+        have.len() >= want.len() && want.iter().zip(&have).all(|(w, h)| *w == "*" || w == h)
+    })
+}
+
+#[test]
+fn every_place_in_a_transcript_is_compared_unless_the_format_declares_it_volatile() {
+    let recorded = transcript();
+    let mut all = Vec::new();
+    places(&recorded, "", &mut all);
+    let (mut compared, mut let_through) = (0, 0);
+    for place in all.iter().filter(|p| !p.is_empty()) {
+        // A changed value, a removed value and a new field beside it.
+        let mut changed = transcript();
+        *changed.pointer_mut(place).unwrap() = json!("a value no transcript holds");
+        let mut removed = transcript();
+        let (parent, key) = place.rsplit_once('/').unwrap();
+        match removed.pointer_mut(parent).unwrap() {
+            Value::Object(map) => {
+                map.remove(key);
+            }
+            Value::Array(list) => {
+                list.remove(key.parse().unwrap());
+            }
+            _ => unreachable!(),
+        }
+        let mut added = transcript();
+        if let Some(Value::Object(map)) = added.pointer_mut(parent) {
+            map.insert("a_field_no_format_names".to_string(), json!(1));
+        }
+        // A refusal is not a match either: the replay does not pass.
+        let matches = |replayed: &Value| compare(&recorded, replayed).is_ok_and(|d| d.is_empty());
+        for (what, replayed) in [("changed", changed), ("removed", removed)] {
+            if is_declared_volatile(place) {
+                assert!(matches(&replayed), "{what} {place} is declared volatile");
+            } else {
+                assert!(!matches(&replayed), "{what} {place} was let through");
+            }
+        }
+        let parent_volatile = is_declared_volatile(parent) && !parent.is_empty();
+        if added != recorded && !parent_volatile {
+            assert!(
+                !matches(&added),
+                "a new field beside {place} was let through"
+            );
+        }
+        if is_declared_volatile(place) {
+            let_through += 1;
+        } else {
+            compared += 1;
+        }
+    }
+    // The walk really covered the transcript, and both kinds of place.
+    assert!(compared > 300, "{compared}");
+    assert!(let_through > 20, "{let_through}");
+}
+
+#[test]
+fn every_top_level_field_and_every_field_of_a_turn_and_a_call_is_covered_by_the_walk() {
+    let t = transcript();
+    let keys = |v: &Value| -> Vec<String> { v.as_object().unwrap().keys().cloned().collect() };
+    assert_eq!(
+        keys(&t),
+        [
+            "complete",
+            "evidence_tools",
+            "files",
+            "images",
+            "incomplete",
+            "meta",
+            "origin",
+            "preparation",
+            "repairs",
+            "subject",
+            "submission_tool",
+            "terminal",
+            "transcript_version",
+            "turns",
+            "volatile"
+        ]
+    );
+    assert_eq!(
+        keys(&t["turns"][1]),
+        ["calls", "excluded", "meta", "request", "response", "turn"]
+    );
+    assert_eq!(
+        keys(&t["turns"][1]["calls"][0]),
+        ["arguments", "disposition", "id", "meta", "name", "result"]
+    );
+}
+
+#[test]
+fn the_example_on_the_formats_page_compares_with_itself_and_not_with_a_changed_copy() {
+    let example: Value = serde_json::from_str(include_str!(
+        "../../../../docs/baseline/example-transcript.json"
+    ))
+    .unwrap();
+    assert_eq!(example["volatile"], json!(VOLATILE));
+    assert_eq!(compare(&example, &example), Ok(vec![]));
+    // The example has the same fields as the transcript these tests are written against.
+    let keys = |v: &Value| -> Vec<String> { v.as_object().unwrap().keys().cloned().collect() };
+    assert_eq!(keys(&example), keys(&transcript()));
+    assert_eq!(keys(&example["turns"][1]), keys(&transcript()["turns"][1]));
+    assert_eq!(
+        keys(&example["turns"][1]["calls"][0]),
+        keys(&transcript()["turns"][1]["calls"][0])
+    );
+    let mut changed = example.clone();
+    changed["terminal"]["verdict"] = json!("fail");
+    changed["turns"][0]["meta"] = json!({});
+    one(
+        compare(&example, &changed).unwrap(),
+        "/terminal/verdict",
+        Kind::Changed,
+    );
 }
 
 #[test]
