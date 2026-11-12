@@ -2,6 +2,13 @@
 
 Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-12, after the review of the code that came with it. Five rules were
+tightened: a `text` default is one plain line; an image port has no `belongs_to`; the image
+that `belongs_to` or `derived_from` names is exactly one image, returned whenever the port
+that names it is; a version part has no leading zero; no call needs a capability twice. A
+description's fields became private, its actions are listed by kind, and its version went
+from 2 to 3. "What changes the version" was added, with what this record does not decide
+about marks and about conditions on a value.
 Spec: section 3, "The execution contract" and "Primitives, recipes and loops"; section 6,
 "Readiness"; section 14, "Documentation that cannot drift"
 
@@ -54,7 +61,7 @@ no separate validation step for a caller to forget.
 | Field | Meaning | Rule |
 |---|---|---|
 | `name` | The action's name | A lower-case letter, then lower-case letters, digits, `_` or `-`; 64 characters at most |
-| `version` | The version of the action itself, which an artifact's origin records with the name | Three numbers with dots between them |
+| `version` | The version of the action itself, which an artifact's origin records with the name | Three numbers with dots between them, each with no leading zero and nine digits at most |
 | `kind` | `primitive`, `recipe` or `loop`: the three levels of section 3 | |
 | `purpose` | What it is for | The purpose rule, below |
 | `arguments` | Named values that are not artifacts | Below |
@@ -67,8 +74,9 @@ no separate validation step for a caller to forget.
 200 characters that starts with an ASCII letter, does not end with a space, holds only ASCII
 letters, digits, spaces and `. , ; : ' " ( ) / % + -`, and holds neither `://` nor `www.`
 in any letter case. It is the rule at the top of `scripts/docs.sh`, now also in
-`contract::text`; the accepted and refused cases of `scripts/tests/test-docs.sh` are run
-against the Rust functions too.
+`contract::text`. One table of accepted and refused names and purposes
+(`scripts/tests/fixtures/names-and-purposes.tsv`) is run against both, by
+`scripts/tests/test-docs.sh` and by the Rust tests.
 
 **Names of arguments and ports** are an action's name without `-`. A call gives arguments
 and input ports under one set of names, so no two of them share one; output names are a
@@ -76,30 +84,47 @@ second set.
 
 **An argument** has a type and is one of three things: required; optional with a default;
 or optional without one, which a call may leave with no value. A required argument has no
-default, and a default must be a value its type accepts. The types are `number` and
+default, and a default must be a value its type accepts. A `text` default also keeps the
+purpose rule, because a description prints it: one plain line of at most 200 characters.
+The types are `number` and
 `integer` (each with optional inclusive bounds; a number is finite), `boolean`, `text` and
 `choice` (a list of distinct names, not empty). A type that accepts nothing (a lower bound
 above the upper, a bound that is not finite, no choices) is refused. A value is accepted by
 its own type only: a whole number is not a `number`.
 
 **An input port** has an artifact type (ADR 0002) and a count: exactly one (required), none
-or one (optional), or a stated minimum and an optional maximum (variadic). It may say that
-what it takes belongs to the image at another input port, which must take exactly one image.
+or one (optional), or a stated minimum and an optional maximum (variadic). A port that is
+not an image may say that what it takes belongs to the image at another input port, which
+must take exactly one image. An image port never says so: an image is what the others
+belong to (ADR 0002), so no port belongs to itself and no two belong to each other.
 
 **An output port** has an artifact type and a count whose maximum is always stated: these
 are the bounds of section 3. It may say:
 
 - `when`: that it returns something only for some calls (below);
-- `belongs_to`: the image, among the inputs or the other outputs, that what it returns
-  belongs to;
+- `belongs_to`, on anything but an image: the image, among the inputs or the outputs, that
+  what it returns belongs to;
 - `derived_from`, on an image only: the image, among the inputs or the other outputs, that
   it was made from pixel for pixel in place, as a fill's composite is (ADR 0002). A chain of
   derivations never returns to its start;
-- `rebound_onto`, on a mask only: an output image that is derived from the very image the
-  mask belongs to. When the action returns that image, the mask is returned rebound onto it.
+- `rebound_onto`, on a mask only: an output that returns exactly one image, derived from
+  the very image the mask belongs to. When the action returns that image, the mask is
+  returned rebound onto it.
+
+"The image" that `belongs_to` or `derived_from` names is one image that is there whenever
+the port that names it returns something: an input that takes exactly one image, or an
+output that returns exactly one image either for every call or under the same condition as
+the port that names it. An output that returns up to eight images, or one returned only
+for other calls, is refused. `rebound_onto` alone may name an image returned only for some
+calls: the rebind happens when the image is returned.
 
 **A need** is a capability (`segment`, `fill` or `judge`), the features it must have, each
-a name, and a condition. The same capability is not stated twice under the same condition.
+a name, and a condition. No call needs a capability twice: a capability is stated once, or
+twice under `given` and `not_given` of one argument, which no call satisfies together, and
+which may ask for different features. Stated `always` and again under a condition, or under
+conditions on two different arguments, it is refused. So two things cannot be said: features
+that vary with two arguments, and a capability needed when either of two arguments is given
+("fill when `f` is given" beside "fill when `g` is given").
 
 **A condition** (`when`) is `always`, `given` an argument, or `not_given` an argument. The
 argument must be one a call may leave without a value. So which capabilities a call needs
@@ -116,21 +141,42 @@ names exists is a question for prepare.
 ### Registration
 
 `Registry::register` takes an action, which gives its descriptor, and keeps actions in the
-order they were registered. A second action of the same name is refused and changes
+order they were registered. The description does not list them in that order (below). A second action of the same name is refused and changes
 nothing. The binary builds its registry in one function (`crates/whizbang/src/wiring.rs`)
 that its tests call too; a test then registers its fakes, which live in
 `whizbang-testkit`, a development dependency only (`scripts/crate-graph.txt`).
 
-### The static description, version 2
+### The static description, version 3
 
-`whizbang describe --json` is one object: `description_version` (now 2), `name`, `version`,
-`actions` and `artifact_types`.
+`whizbang describe --json` is one object: `description_version` (now 3), `name`, `version`,
+`actions` and `artifact_types`. A `Description` is made from a registry and in no other
+way: its fields are private, so one cannot be written by hand with a name listed twice.
 
-- `actions` holds each registered action's whole descriptor, in registration order, with
-  every field present; one that is not set is `null`.
+- `actions` holds each registered action's whole descriptor, with every field present; one
+  that is not set is `null`. Recipes come first, then loops, then primitives, each kind in
+  the order its actions were registered (section 3: recipes are what is advertised, and
+  primitives follow). The order does not depend on the order a build registers its tools in.
+  Version 2 listed actions in registration order.
 - `artifact_types` holds the six types in ADR 0002's order, each with its `name`, a
   `purpose` that keeps the purpose rule, and `travels_as`, which is `canonical_file` for
   all six: a copy of the file is the artifact, and `whizbang store import` reads it.
+
+### What changes the version
+
+`description_version` goes up by one with any change a reader of the document could
+observe: a field added, removed, renamed or given another type; a new value of an existing
+field (a new kind, argument type, capability or condition); or a change in what an existing
+field or its order means. There are no optional fields, since every field is always
+present, so an added field is such a change and bumps the version like any other. A new
+action, a new artifact type or a new version of whizbang is content, not shape, and does
+not. A rule that only refuses descriptors that were accepted before does not either: every
+document written under it is still a document a reader of the same version understands. A
+rule that is loosened does bump it: a reader that held values to the old rule could meet
+one it refuses (a `text` default that is not a plain line, say).
+
+The rule is kept from the first change on, though nothing reads a description yet. Until
+the first release, no older description version is supported: a reader is changed with
+the writer.
 
 ## Consequences
 
@@ -139,9 +185,10 @@ that its tests call too; a test then registers its fakes, which live in
   (`tests/it/contract/fixtures.rs`). Neither recipe is ported.
 - An action whose name or purpose breaks the rule cannot be registered, because its
   descriptor cannot be made. The rule is now written twice, in `scripts/docs.sh` and in
-  `contract::text`; a case added to one belongs in the tests of both.
-- The description changed shape, so its version is 2 and a reader of version 1 must be
-  changed. Nothing outside this repo reads it yet.
+  `contract::text`; the one table of cases is what holds the two together, and a new case
+  goes there.
+- The description changed shape twice, so its version is 3 and a reader of version 1 or 2
+  must be changed. Nothing outside this repo reads it yet.
 - A descriptor cannot be loaded from a file. A user's own recipe or an experimental tool
   file (section 3, section 4) will need a reader that goes through `Draft::build`; that is
   a new function, not a change to the rules.
@@ -156,6 +203,12 @@ What this record does not decide, and the code does not do:
 - What a feature is. A need names features; the capability interfaces say which exist.
 - A result that is not an artifact, such as a verdict. An output port returns one of the
   six artifact types (`docs/carry-over.md`).
+- A tool's mark. Section 8 says `whizbang describe` shows whether a tool is experimental,
+  unverified or admitted; the descriptor has a kind and no mark (`docs/carry-over.md`).
+- A condition on the value of an argument, on the configuration, or on an optional input
+  port. Rascal's `remove_prompt` has one: its `check` argument, a boolean that defaults to
+  true, asks for a judge when it is true and a checker is configured. The fixture leaves
+  `check` out (`docs/carry-over.md`).
 - Bounds on the size of what is returned (bytes, the long edge of an image), guidance text
   for a model, cost and duration hints, and list-valued arguments. The old manifests have
   them (`docs/carry-over.md`).
@@ -173,8 +226,11 @@ What this record does not decide, and the code does not do:
   the conditions here ("needed when `filler` is given") have no plain form in one. A door
   that needs a schema can derive it from the typed arguments.
 - **Capabilities and outputs conditional on argument values or on arbitrary expressions.**
-  Turned down until a tool needs it: every case in the two fixtures is "this argument is
-  given, or it is not", and that can be decided without running anything.
+  Turned down until a tool that is being ported needs it. Every case the two fixtures hold
+  is "this argument is given, or it is not", which can be decided without running
+  anything; that is so only because the `remove_prompt` fixture leaves out the recipe's
+  `check` argument, whose value decides whether a judge is needed. Nothing in checkpoint 1A
+  depends on a value, so the question goes with rascal's recipes to milestone 3.
 - **A descriptor built from the configuration,** as rascal's was. Turned down: section 6
   wants the static description identical on every machine for the same build.
 - **Keeping description version 1 and adding fields.** Turned down: an action went from two

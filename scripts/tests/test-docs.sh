@@ -309,23 +309,39 @@ refuse "a version with an empty part" "version" "$(with '.version = "1..3"')"
 refuse "a version of 65 characters" "version" "$(with ".version = \"1.2.3-$(printf 'x%.0s' $(seq 1 59))\"")"
 refuse "two actions with one name" "more than once" "$(with '.actions[1].name = .actions[0].name')"
 grep -q -F "zebra_map" "$tmp/out" || fail "the repeated name is not given"
-for name in "" "Zebra" "9lives" "-dash" "two words" 'tick`' "a.b" "a|b" 'new\nline' "café" \
-  "$(printf 'x%.0s' $(seq 1 65))"; do
-  refuse "the action name '$name'" "action 1" "$(with ".actions[0].name = \"$name\"")"
-done
 with '.version = "1.2.3-rc.1+build.5"' >"$tmp/pre.json"
 expect_pass "a pre-release version with build data" "$docs" --description "$tmp/pre.json" --out "$tmp/pre"
 
-# Purposes: one plain line.
-for purpose in "" " Leading space." "Trailing space. " "# A heading" "2. A list item" "- A list item" \
-  'Two\nlines.' 'Text\n\n## `forged`\n\nA forged action.' 'A carriage\rreturn.' 'A\ttab.' \
-  'A bell\u0007.' 'A <b>tag</b>.' 'An <!-- unclosed comment.' 'A quote > mark.' 'A `tick`.' \
-  'A | bar.' 'A [link](https://example.com).' 'An *emphasis*.' 'An _emphasis_.' \
-  'A back\\slash.' 'See https://example.com/page for more.' 'See www.example.com for more.' \
-  'See WWW.example.com for more.' 'See example.com://x.' 'An &amp; entity.' 'A line separator here.' 'Café.' \
-  "$(printf 'A%.0s' $(seq 1 201))"; do
-  refuse "the purpose '$purpose'" "action 1" "$(with ".actions[0].purpose = \"$purpose\"")"
-done
+# Names and purposes: every case of the table, which the rule in Rust is run against too
+# (crates/whizbang-core/tests/it/contract/text.rs). A string is given to jq as a value, never
+# as part of a filter.
+cases=scripts/tests/fixtures/names-and-purposes.tsv
+ran=0
+while IFS=$'\t' read -r verdict field text || [ -n "$verdict" ]; do
+  case "$verdict" in '' | '#'*) continue ;; esac
+  case "$field" in name | purpose) ;; *) fail "$cases: a case of neither a name nor a purpose: $field" ;; esac
+  case "$verdict" in
+    accept)
+      # One action, so that an accepted name is not refused for being listed twice.
+      jq -c --arg f "$field" --argjson v "$text" 'del(.actions[1]) | .actions[0][$f] = $v' "$tmp/two.json" >"$tmp/ok.json" ||
+        fail "$cases: not a JSON string: $text"
+      rm -rf "$tmp/ok"
+      expect_pass "the $field $text" "$docs" --description "$tmp/ok.json" --out "$tmp/ok"
+      ;;
+    refuse)
+      changed=$(jq -c --arg f "$field" --argjson v "$text" '.actions[0][$f] = $v' "$tmp/two.json") ||
+        fail "$cases: not a JSON string: $text"
+      refuse "the $field $text" "action 1" "$changed"
+      ;;
+    *) fail "$cases: a case that neither accepts nor refuses: $verdict" ;;
+  esac
+  ran=$((ran + 1))
+done <"$cases"
+# The table says how many cases it holds. A table that was not read whole, a case that was
+# lost, and a case added without the count, each fail here.
+said=$(sed -n 's/^# cases: \([0-9][0-9]*\)$/\1/p' "$cases")
+[ -n "$said" ] || fail "$cases: no line says how many cases it holds (# cases: N)"
+[ "$ran" -eq "$said" ] || fail "$cases: $ran cases were run, and the table says it holds $said"
 
 expect_fail "a description that does not exist" "no such description" \
   "$docs" --description "$tmp/absent.json" --out "$tmp/bad"

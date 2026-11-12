@@ -765,7 +765,7 @@ impl ActionDescriptor {
     }
 
     /// The capabilities a call needs that gives exactly these arguments, by name, in the
-    /// order they were declared.
+    /// order they were declared. No capability is listed twice.
     pub fn needs_for(&self, given: &BTreeSet<String>) -> Vec<&Requirement> {
         self.needs
             .iter()
@@ -804,6 +804,12 @@ impl ActionDescriptor {
                     .value_type
                     .accepts(default)
                     .map_err(|why| of(format!("its default is refused by its type: {why}")))?;
+                // A default is printed with the description, so a text is held as a
+                // purpose is. A choice is a name already.
+                if let (ValueType::Text, Value::Text(line)) = (&argument.value_type, default) {
+                    text::plain_line("default", line)
+                        .map_err(|why| of(format!("its default is no plain line: {why}")))?;
+                }
             }
             if !given.insert(name.as_str()) {
                 return Err(format!("the name {name} is declared twice"));
@@ -823,15 +829,18 @@ impl ActionDescriptor {
         }
         for port in &self.inputs {
             if let Some(image) = &port.belongs_to {
-                self.one_image_in(image)
-                    .filter(|_| *image != port.name)
-                    .ok_or_else(|| {
-                        format!(
-                            "the input {} belongs to {image}, which is no input that takes \
-                             exactly one image",
-                            port.name
-                        )
-                    })?;
+                let name = &port.name;
+                if port.artifact == ArtifactType::Image {
+                    return Err(format!(
+                        "the input {name} is an image, and an image belongs to no other"
+                    ));
+                }
+                if self.one_image_in(image).is_none() {
+                    return Err(format!(
+                        "the input {name} belongs to {image}, which is no input that takes \
+                         exactly one image"
+                    ));
+                }
             }
         }
 
@@ -853,13 +862,14 @@ impl ActionDescriptor {
         }
         for port in &self.outputs {
             let name = &port.name;
-            if let Some(image) = &port.belongs_to
-                && !self.is_another_image(image, name)
-            {
-                return Err(format!(
-                    "the output {name} belongs to {image}, which is no image this action \
-                     takes or returns beside it"
-                ));
+            if let Some(image) = &port.belongs_to {
+                if port.artifact == ArtifactType::Image {
+                    return Err(format!(
+                        "the output {name} is an image, and an image belongs to no other"
+                    ));
+                }
+                self.the_image(image, &port.when)
+                    .map_err(|why| format!("the output {name} belongs to {image}, {why}"))?;
             }
             if let Some(parent) = &port.derived_from {
                 if port.artifact != ArtifactType::Image {
@@ -868,13 +878,9 @@ impl ActionDescriptor {
                         port.artifact.with_article()
                     ));
                 }
-                if !self.is_another_image(parent, name) {
-                    return Err(format!(
-                        "the output {name} is derived from {parent}, which is no image this \
-                         action takes or returns beside it"
-                    ));
-                }
                 self.check_no_circle(port)?;
+                self.the_image(parent, &port.when)
+                    .map_err(|why| format!("the output {name} is derived from {parent}, {why}"))?;
             }
             if let Some(onto) = &port.rebound_onto {
                 if port.artifact != ArtifactType::Mask {
@@ -889,21 +895,25 @@ impl ActionDescriptor {
                          image it is on"
                     ));
                 };
-                let derived = self
+                let target = self
                     .output(onto)
-                    .filter(|image| image.artifact == ArtifactType::Image)
-                    .and_then(|image| image.derived_from.as_ref());
-                if derived != Some(on) {
+                    .filter(|image| image.artifact == ArtifactType::Image);
+                if target.and_then(|image| image.derived_from.as_ref()) != Some(on) {
                     return Err(format!(
                         "the output {name} is rebound onto {onto}, which is no output image \
                          derived from {on}"
                     ));
                 }
+                if target.is_some_and(|image| image.count != Count::exactly(1)) {
+                    return Err(format!(
+                        "the output {name} is rebound onto {onto}, which does not return \
+                         exactly one image"
+                    ));
+                }
             }
         }
 
-        let mut stated = BTreeSet::new();
-        for requirement in &self.needs {
+        for (index, requirement) in self.needs.iter().enumerate() {
             let capability = requirement.capability.name();
             self.check_when(&requirement.when)
                 .map_err(|why| format!("the need for {capability} {why}"))?;
@@ -917,9 +927,22 @@ impl ActionDescriptor {
                     ));
                 }
             }
-            if !stated.insert((requirement.capability, &requirement.when)) {
+            // No call needs a capability twice: two needs for one capability are stated
+            // only for calls that can never be the same call.
+            let apart = |other: &Requirement| {
+                matches!(
+                    (&requirement.when, &other.when),
+                    (When::Given(a), When::NotGiven(b)) | (When::NotGiven(a), When::Given(b))
+                        if a == b
+                )
+            };
+            if self.needs[..index]
+                .iter()
+                .any(|other| other.capability == requirement.capability && !apart(other))
+            {
                 return Err(format!(
-                    "the need for {capability} is stated twice for the same calls"
+                    "the need for {capability} is stated more than once for calls that can \
+                     be the same"
                 ));
             }
         }
@@ -931,16 +954,30 @@ impl ActionDescriptor {
         self.input(name).filter(|port| port.is_one_image())
     }
 
-    /// Whether the reference names an image of this action other than the output `but`:
-    /// an input that takes exactly one image, or another output that returns images.
-    fn is_another_image(&self, image: &PortRef, but: &str) -> bool {
+    /// Whether the reference names the image something belongs to or is derived from:
+    /// an input that takes exactly one image, or an output that returns exactly one
+    /// image for every call that returns the thing itself (`when` is its condition).
+    /// Otherwise, why not, as the end of a sentence.
+    fn the_image(&self, image: &PortRef, when: &When) -> Result<(), &'static str> {
         match image {
-            PortRef::Input(port) => self.one_image_in(port).is_some(),
+            PortRef::Input(port) => match self.one_image_in(port) {
+                Some(_) => Ok(()),
+                None => Err("which is no input that takes exactly one image"),
+            },
             PortRef::Output(port) => {
-                port != but
-                    && self
-                        .output(port)
-                        .is_some_and(|output| output.artifact == ArtifactType::Image)
+                let Some(output) = self
+                    .output(port)
+                    .filter(|output| output.artifact == ArtifactType::Image)
+                else {
+                    return Err("which is no output that returns an image");
+                };
+                if output.count != Count::exactly(1) {
+                    return Err("which does not return exactly one image");
+                }
+                if output.when != When::Always && output.when != *when {
+                    return Err("which is not returned for every call that this is");
+                }
+                Ok(())
             }
         }
     }

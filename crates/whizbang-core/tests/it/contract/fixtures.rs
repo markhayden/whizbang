@@ -5,11 +5,21 @@
 //! commit `docs/sources.toml` pins. Neither recipe is ported here: the fixtures show that
 //! the descriptor can say what they need.
 //!
-//! Two of the five common properties are not arguments of an action in whizbang, and are
-//! left out: `set`, the step overrides, belongs to the recipe runner, and `max_spend_usd`
-//! to the call's spend cap (`docs/carry-over.md`). A recipe output that passes an input
-//! through (`image = "inputs.image"`) is left out too: an action's outputs are what it
-//! commits.
+//! What the fixtures leave out of the recipes and the task descriptions, each with its
+//! reason and its row on `docs/carry-over.md`:
+//!
+//! - `set`, the step overrides, and `max_spend_usd`, two of the five common properties:
+//!   the first belongs to the recipe runner and the second to the call's spend cap.
+//! - A recipe output that passes an input through (`image = "inputs.image"`): an action's
+//!   outputs are what it commits.
+//! - The `render` output of both recipes, the grey rendering of the mask.
+//! - `remove_prompt`'s `check` argument, a boolean that defaults to true, and the verdict
+//!   the action then answers with. With it, a judge is needed when the argument's value
+//!   is true and a checker is configured, which a condition here cannot say: a condition
+//!   is "this argument is given, or it is not".
+//! - The minimum length of 1 on `prompt`: a text has no bounds.
+//! - `model` as a choice among the installed segmenters: what is installed is the
+//!   machine's state, and a descriptor holds none. It is a text here.
 
 use std::collections::BTreeSet;
 
