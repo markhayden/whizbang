@@ -10,13 +10,15 @@ python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
 
 # The unit tests. -B: leave no bytecode behind in the repository.
 expect_pass "the unit tests" python3 -B -m unittest -q scripts/baseline/tests/test_baseline.py
+expect_pass "the unit tests of the tables" python3 -B -m unittest -q scripts/baseline/tests/test_tables.py
 [ -z "$(find scripts/baseline -name __pycache__ -o -name '*.pyc')" ] \
   || fail "the baseline scripts left bytecode in the repository"
 
 # The scripts import nothing outside the standard library and their own folder.
-others=$(grep -h -E '^(import|from) ' scripts/baseline/*.py scripts/baseline/tests/*.py \
-  | sed -E 's/^(import|from) +([A-Za-z0-9_]+).*/\2/' | sort -u \
-  | grep -v -x -E 'argparse|collections|contextlib|copy|hashlib|io|json|os|shutil|sys|tempfile|unittest|common|convert|audit' || true)
+# An import inside a function counts too.
+others=$(grep -h -E '^ *(import|from) +[A-Za-z0-9_]+( |$)' scripts/baseline/*.py scripts/baseline/tests/*.py \
+  | sed -E 's/^ *(import|from) +([A-Za-z0-9_]+).*/\2/' | sort -u \
+  | grep -v -x -E 'argparse|collections|contextlib|copy|hashlib|io|json|os|re|shutil|sys|tempfile|tomllib|unittest|common|convert|audit|tables' || true)
 [ -z "$others" ] || fail "scripts/baseline imports outside the standard library: $others"
 
 # The converter and the comparison declare the same fields volatile.
@@ -51,6 +53,36 @@ grep -q -E '^invalid = 0$' "$record" || fail "$record: the baseline has invalid 
 manifest=$(grep -E '^digest = ' docs/baseline/manifest.toml | sed -E 's/^digest = //')
 audited=$(grep -E '^package_digest = ' "$record" | sed -E 's/^package_digest = //')
 [ "$manifest" = "$audited" ] || fail "$record audits another package than manifest.toml names"
+
+# The study's write-up (docs/results/): its tables and the figures in its prose are the
+# numbers file's, and the numbers file's counts and spend are the manifest's.
+study=docs/results/2026-11-tool-study
+[ -f "$study.toml" ] && [ -f "$study.md" ] || fail "$study.toml or $study.md is missing"
+expect_pass "the study's document against its numbers" \
+  python3 -B scripts/baseline/tables.py check "$study.toml" "$study.md" --manifest docs/baseline/manifest.toml
+sed -E 's/\| 97\.3% \(71 of 73\)/| 98.3% (71 of 73)/' "$study.md" >"$tmp/edited.md"
+cmp -s "$study.md" "$tmp/edited.md" && fail "the study's document has no line this test can change"
+expect_fail "a changed figure in a table" "generated block differs" \
+  python3 -B scripts/baseline/tables.py check "$study.toml" "$tmp/edited.md"
+printf '\nThe tool added 12.3%% to the catch rate.\n' | cat "$study.md" - >"$tmp/edited.md"
+expect_fail "a figure in the prose that the numbers do not hold" "the prose states 12.3%" \
+  python3 -B scripts/baseline/tables.py check "$study.toml" "$tmp/edited.md"
+grep -q -E '^tables_version = "'"$(grep -E '^TABLES_VERSION = ' scripts/baseline/tables.py | grep -o -E '[0-9.]+' | head -1)"'"$' "$study.toml" \
+  || fail "$study.toml was not written by this version of tables.py"
+# The numbers file holds aggregates: a number, a truth value, or one of a few plain names.
+bad=$(awk '
+  /^#/ || /^$/ { next }
+  /^\[\[(run|cell|effect|sealed_effect|repeat|error|error_kind)\]\]$/ { next }
+  /^[a-z_0-9]+ = -?[0-9]+(\.[0-9]+)?$/ { next }
+  /^[a-z_]+ = (true|false)$/ { next }
+  /^(study|tables_version|policy_on_unsure|policy_on_error|run|profile|model|arm|tool|kind|error_classes) = "[A-Za-z0-9._,-]+"$/ { next }
+  /^package_digest = "sha256:[0-9a-f]+"$/ { next }
+  { print }' "$study.toml")
+[ -z "$bad" ] || fail "$study.toml holds a line that is not an aggregate: $bad"
+# Every model and run it names is one the manifest or the frozen matrices already name.
+known=$(grep -E '^model = ' docs/baseline/manifest.toml | sed -E 's/^model = "[^:]*:(.*)"$/\1/' | sort -u)
+named=$(grep -E '^model = ' "$study.toml" | sed -E 's/^model = "(.*)"$/\1/' | sort -u)
+[ "$known" = "$named" ] || fail "$study.toml names other models than manifest.toml"
 
 # The example on the format's page is the file the tests check, and the page says so.
 grep -q -F 'example-transcript.json' docs/baseline/transcript.md || fail "transcript.md does not point at the example"
