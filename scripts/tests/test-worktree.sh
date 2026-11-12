@@ -32,7 +32,8 @@ for hook in pre-commit commit-msg pre-push; do
   printf '%s\n' '#!/bin/sh' 'exit 0' >"$repo/scripts/hooks/$hook"
   chmod +x "$repo/scripts/hooks/$hook"
 done
-git -C "$repo" add scripts
+printf '%s\n' '.env' '.env.*' 'target/' >"$repo/.gitignore"
+git -C "$repo" add scripts .gitignore
 git -C "$repo" commit -q -m "build: the script and its hooks"
 git -C "$repo" push -q origin main
 new_clone "$other"
@@ -88,9 +89,13 @@ for bad in '' '-' '-x' '--force' '--detach' 'a/b' '/abs' '..' '../x' 'a..b' 'x.y
   expect_fail "remove with the slug [$bad]" "a slug is" wt remove "$bad"
   unchanged "$before" "remove with the slug [$bad]"
 done
-expect_fail "add main" "the slug main is not a task" wt add main
-expect_fail "remove main" "the slug main is not a task" wt remove main
-unchanged "$before" "the slug main"
+for name in main head; do
+  expect_fail "add $name" "the slug $name is not a task" wt add "$name"
+  expect_fail "remove $name" "the slug $name is not a task" wt remove "$name"
+done
+expect_fail "add HEAD" "a slug is" wt add HEAD
+expect_fail "add Head" "a slug is" wt add Head
+unchanged "$before" "the slugs main and head"
 
 # --- add ---------------------------------------------------------------------------------
 
@@ -205,4 +210,122 @@ expect_fail "add when origin cannot be fetched" "cannot fetch origin/main; nothi
 unchanged "$before" "origin cannot be fetched"
 mv "$w/origin.gone" "$w/origin.git"
 expect_pass "remove the rest" wt remove s3
+
+# main gets its pre-push hook back, so that add passes again.
+git -C "$other" pull -q origin main
+printf '%s\n' '#!/bin/sh' 'exit 0' >"$other/scripts/hooks/pre-push"
+chmod +x "$other/scripts/hooks/pre-push"
+git -C "$other" add scripts/hooks/pre-push
+git -C "$other" commit -q -m "build: the pre-push hook again"
+git -C "$other" push -q origin main
+
+# --- A name that is taken somewhere else -------------------------------------------------
+
+git -C "$repo" tag tagged
+git -C "$w/origin.git" show-ref --verify --quiet refs/heads/s1 || fail "origin still has the branch s1"
+if git -C "$repo" show-ref --verify --quiet refs/heads/s1; then fail "the repo has no local branch s1"; fi
+before=$(state)
+expect_fail "add a slug that is a tag" "there is a tag named tagged" wt add tagged
+expect_fail "add a slug that is a branch on origin" "origin already has a branch named s1" wt add s1
+unchanged "$before" "add a name that is taken"
+git -C "$repo" tag -d tagged >/dev/null
+
+# --- Git's own variables: each would make git act on another repo ------------------------
+
+git -C "$other" branch -q victim
+before=$(state)
+other_before=$(git -C "$other" for-each-ref)
+for var in GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE; do
+  for value in "$other/.git" ""; do
+    expect_fail "remove with $var=$value" "$var is set" \
+      env "$var=$value" bash -c 'cd "$1" && scripts/worktree.sh remove victim' - "$repo"
+    expect_fail "add with $var=$value" "$var is set" \
+      env "$var=$value" bash -c 'cd "$1" && scripts/worktree.sh add s7' - "$repo"
+    expect_fail "list with $var=$value" "$var is set" \
+      env "$var=$value" bash -c 'cd "$1" && scripts/worktree.sh list' - "$repo"
+  done
+done
+unchanged "$before" "git's own variables"
+[ "$(git -C "$other" for-each-ref)" = "$other_before" ] || fail "git's own variables: the other repo was changed"
+
+# --- A symbolic link where the folder should be is never followed ------------------------
+
+git -C "$repo" worktree add -q --no-track -b linked "$w/elsewhere/real" refs/remotes/origin/main
+ln -s "$w/elsewhere/real" "$w/whizbang-linked"
+ln -s "$w/elsewhere" "$w/whizbang-s8"
+ln -s "$w/nowhere" "$w/whizbang-s9"
+before=$(state)
+expect_fail "remove through a link to a worktree elsewhere" "is a symbolic link" wt remove linked
+[ -d "$w/elsewhere/real/scripts" ] || fail "remove: the worktree behind the link is still there"
+expect_fail "add where a link to a folder is" "is a symbolic link" wt add s8
+expect_fail "add where a link to nothing is" "is a symbolic link" wt add s9
+unchanged "$before" "a symbolic link"
+[ ! -e "$w/nowhere" ] || fail "add: nothing was made behind the link"
+rm "$w/whizbang-linked" "$w/whizbang-s8" "$w/whizbang-s9"
+git -C "$repo" worktree remove "$w/elsewhere/real"
+git -C "$repo" branch -q -D linked
+
+# --- The branch is deleted only if it is still the commit that was checked ---------------
+
+# A git that moves the branch to a commit that is not merged, just before the delete.
+git -C "$repo" branch -q --no-track moving refs/remotes/origin/main
+unmerged=$(git -C "$repo" commit-tree "$(git -C "$repo" rev-parse 'refs/remotes/origin/main^{tree}')" \
+  -p refs/remotes/origin/main -m "feat: not merged")
+mkdir "$tmp/fake"
+cat >"$tmp/fake/git" <<'SH'
+#!/bin/sh
+case " $* " in
+  *" update-ref -d refs/heads/moving "*) "$REAL_GIT" -C "$MOVE_IN" update-ref refs/heads/moving "$MOVE_TO" ;;
+esac
+exec "$REAL_GIT" "$@"
+SH
+chmod +x "$tmp/fake/git"
+expect_fail "a branch that moves between the check and the delete" "the branch moving moved while it was being removed; it was kept" \
+  env PATH="$tmp/fake:$PATH" REAL_GIT="$(command -v git)" MOVE_IN="$repo" MOVE_TO="$unmerged" \
+  bash -c 'cd "$1" && scripts/worktree.sh remove moving' - "$repo"
+[ "$(git -C "$repo" rev-parse refs/heads/moving)" = "$unmerged" ] || fail "remove: the branch that moved is kept, at its new commit"
+git -C "$repo" branch -q -D moving
+
+# --- add leaves nothing behind when git cannot make the folder ---------------------------
+
+before=$(state)
+chmod a-w "$w"
+if (: >"$w/probe") 2>/dev/null; then
+  chmod u+w "$w"
+  rm "$w/probe"
+  echo "skip: add where the folder cannot be made; this user can write anywhere"
+else
+  status=0
+  wt add s10 >"$tmp/out" 2>&1 || status=$?
+  chmod u+w "$w"
+  [ "$status" -ne 0 ] || fail "add where the folder cannot be made: expected failure"
+  grep -q -F "the branch s10 it had made was deleted again, so nothing was created" "$tmp/out" ||
+    { cat "$tmp/out" >&2; fail "add where the folder cannot be made: says the branch was deleted again"; }
+  unchanged "$before" "add where the folder cannot be made"
+  expect_pass "the worktrees are still in order" git -C "$repo" worktree list
+  expect_pass "add once the folder can be made" wt add s10
+  expect_pass "remove it again" wt remove s10
+fi
+
+# --- remove names a .env, and deletes the rest of what git ignores -----------------------
+
+expect_pass "add a worktree to leave files in" wt add s11
+mkdir -p "$w/whizbang-s11/sub" "$w/whizbang-s11/target"
+echo "KEY=a-secret-value" >"$w/whizbang-s11/.env"
+echo "KEY=a-secret-value" >"$w/whizbang-s11/sub/.env.local"
+echo built >"$w/whizbang-s11/target/out"
+before=$(state)
+expect_fail "remove a worktree that holds a .env" "move or delete that file yourself" wt remove s11
+grep -q -x -F "worktree:   .env" "$tmp/out" || fail "remove: names the .env"
+grep -q -x -F "worktree:   sub/.env.local" "$tmp/out" || fail "remove: names the .env.local in a folder"
+if grep -q -F "a-secret-value" "$tmp/out"; then fail "remove: printed what a .env holds"; fi
+unchanged "$before" "remove a worktree that holds a .env"
+[ -f "$w/whizbang-s11/.env" ] || fail "remove: the .env is still there"
+rm "$w/whizbang-s11/.env"
+expect_fail "remove a worktree that holds a .env.local" "move or delete that file yourself" wt remove s11
+rm "$w/whizbang-s11/sub/.env.local"
+expect_pass "remove a worktree that holds only build output" wt remove s11
+grep -q -F "with what git ignores there" "$tmp/out" || fail "remove: says that ignored files went too"
+[ ! -e "$w/whizbang-s11" ] || fail "remove: the worktree and its build output are gone"
+
 finished
