@@ -2,7 +2,7 @@
 
 # Actions
 
-What `whizbang` 0.0.1 can do, from its static description (version 1).
+What `whizbang` 0.0.1 can do, from its static description (version 2).
 The same as data: [description.json](description.json).
 
 This build registers no actions yet.

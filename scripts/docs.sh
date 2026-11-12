@@ -28,6 +28,11 @@
 #
 # Nothing those rules allow can start a heading, a list, a table, a link, a code span, a
 # tag, a comment or a new line, so a description cannot forge a section of the page.
+#
+# The rules for an action's name and purpose are held a second time where an action's
+# descriptor is made (crates/whizbang-core/src/contract/text.rs, ADR 0003), so that no
+# action that breaks them is registered. A case added to scripts/tests/test-docs.sh belongs
+# in crates/whizbang-core/tests/it/contract/text.rs too.
 # Parse the whole file first: see the top of scripts/scan.sh.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "docs: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
 set -euo pipefail
