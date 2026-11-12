@@ -13,8 +13,9 @@
 //! Locks go through it as well, because a lock belongs to the process that took it and a
 //! test's file system stands for a process: when it crashes, its locks are gone. A lock is
 //! advisory and is held on an open file: it ends when the value that holds it is dropped,
-//! or when the process ends, however it ends. Two holders in one process exclude each other
-//! exactly as two processes do.
+//! or when the process ends, however it ends, unless a child of that process still has a
+//! copy of the open file then ("A child being started holds a copy", below). Two holders
+//! in one process exclude each other exactly as two processes do.
 //!
 //! # What these locks are, and are not
 //!
@@ -40,13 +41,21 @@
 //!   the copy for that moment, and one who asked for it then would be refused though
 //!   nobody holds it: it happened to a thread that opened a store again while another
 //!   thread started a child. So a lock here is let go, not only closed, when its value is
-//!   dropped: that ends it for every copy at once. Two cases are left, and neither admits
-//!   a second holder; each only keeps one out. A process that ends without dropping its
-//!   locks (killed, aborted, or ended by `exit`) while one of its threads is starting a
-//!   child leaves them to that child for the moment until its program starts. And a child
-//!   that never starts a program, or is made to keep the file across the start, keeps the
-//!   locks of a parent that ended so for as long as it lives; nothing in whizbang makes
-//!   such a child.
+//!   dropped: that ends it for every copy at once. Only the process that took a lock
+//!   lets it go: a forked copy of the holder that runs on has the holding value too, and
+//!   when it drops that value the file is closed and no more, so the lock stays its
+//!   parent's (the value keeps the id of the process that took the lock, and compares).
+//!   Two cases are left, and neither admits a second holder; each only keeps one out,
+//!   or keeps one waiting. A process that ends without dropping its locks (killed by a
+//!   signal, which is how Ctrl-C ends it, aborted, or ended by `exit`) while one of its
+//!   threads is starting a child leaves them to that child for the moment until its
+//!   program starts. And a child that never starts a program, or is made to keep the
+//!   file across the start, keeps the locks of a parent that ended so for as long as it
+//!   lives; nothing in whizbang makes such a child. For that moment, or that life, a
+//!   writer is refused; a prune leaves a generation it finds shared, for the next prune;
+//!   and a reader is not refused but waits: [`Fs::share`] waits for one who has a file
+//!   alone, so where the process that ended so was pruning, a reader's snapshot of that
+//!   generation does not return until the child's copy is gone.
 //!
 //!   What else was weighed for the child's copy. Opening the file so that a child never
 //!   has it: every file here is already closed where a child's program starts, and
@@ -113,16 +122,40 @@ pub trait Fs: Send + Sync {
     fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>>;
 }
 
-/// An open file with a lock on it, which ends when this value is dropped.
-struct LockedFile(std::fs::File);
+/// An open file with a lock on it, which ends when this value is dropped, and the id of
+/// the process that took the lock.
+struct LockedFile(std::fs::File, u32);
+
+impl LockedFile {
+    /// A file this process has just locked.
+    fn of(file: std::fs::File) -> LockedFile {
+        LockedFile(file, std::process::id())
+    }
+
+    /// Whether this is the process that took the lock. It is not in a forked copy of
+    /// that process: the copy has this value, over a copy of the open file, and the lock
+    /// is its parent's. What the copy does with the value must change nothing for the
+    /// parent.
+    fn is_ours(&self) -> bool {
+        self.1 == std::process::id()
+    }
+}
 
 impl Drop for LockedFile {
     /// Lets the lock go, and then the file is closed. Closing alone ends the lock only
     /// when no copy of the open file is left, and a child process that another thread is
     /// starting holds one until its program starts (the module's description). A failure
     /// leaves the lock to the close that follows, as before.
+    ///
+    /// Only the process that took the lock lets it go. Letting go ends the lock for
+    /// every copy of the open file, the holder's own among them: a forked copy of the
+    /// holder that ran on and dropped this value would otherwise end a lock its parent
+    /// still relies on, and a second holder would be admitted beside the parent. In such
+    /// a copy the file is only closed, which ends nothing while the parent has it open.
     fn drop(&mut self) {
-        let _ = self.0.unlock();
+        if self.is_ours() {
+            let _ = self.0.unlock();
+        }
     }
 }
 
@@ -131,6 +164,10 @@ impl Held for LockedFile {}
 impl LockFile for LockedFile {
     fn record(&self, holder: &[u8]) -> io::Result<()> {
         use std::io::{Seek, Write};
+        // The name in the file is the holder's: a forked copy leaves it alone.
+        if !self.is_ours() {
+            return Ok(());
+        }
         let mut file = &self.0;
         file.set_len(0)?;
         file.seek(io::SeekFrom::Start(0))?;
@@ -186,7 +223,7 @@ fn hold_lock_file(path: &Path, create: bool, locked: &dyn Fn()) -> io::Result<Op
 fn share(path: &Path) -> io::Result<LockedFile> {
     let file = std::fs::File::open(path)?;
     file.lock_shared()?;
-    Ok(LockedFile(file))
+    Ok(LockedFile::of(file))
 }
 
 /// [`Fs::try_alone`] for the real file system.
@@ -202,7 +239,7 @@ fn taken(
     lock: Result<(), std::fs::TryLockError>,
 ) -> io::Result<Option<LockedFile>> {
     match lock {
-        Ok(()) => Ok(Some(LockedFile(file))),
+        Ok(()) => Ok(Some(LockedFile::of(file))),
         Err(std::fs::TryLockError::WouldBlock) => Ok(None),
         Err(std::fs::TryLockError::Error(error)) => Err(error),
     }
@@ -370,6 +407,34 @@ mod tests {
         assert!(hold_lock_file(&path, true, &|| {}).unwrap().is_none());
         drop(copy);
         assert!(hold_lock_file(&path, true, &|| {}).unwrap().is_none());
+    }
+
+    /// A copy of the holder itself, in a process that was forked and runs on, is another
+    /// matter: when that copy is dropped, the lock is its parent's still. No process is
+    /// forked here: the value is given the id of another process, which is all that a
+    /// forked copy of it differs by.
+    #[test]
+    fn a_lock_dropped_in_a_process_that_did_not_take_it_is_still_held() {
+        let dir = Scratch::new("core-fs-forked-copy");
+        let path = dir.path().join("LOCK");
+        let held = hold_lock_file(&path, true, &|| {}).unwrap().unwrap();
+        // The parent's own descriptor, and the forked copy of the value over a copy of it.
+        let parent = held.0.try_clone().unwrap();
+        held.record(b"the parent\n").unwrap();
+        let mut forked = held;
+        forked.1 = std::process::id().wrapping_add(1);
+        // What a store does when it is dropped: it takes its name out, then lets go.
+        forked.record(b"").unwrap();
+        drop(forked);
+        assert_eq!(std::fs::read(&path).unwrap(), b"the parent\n");
+        assert!(
+            hold_lock_file(&path, true, &|| {}).unwrap().is_none(),
+            "a copy in another process let go of its parent's lock"
+        );
+        // The same value in the process that took the lock lets it go.
+        drop(LockedFile::of(parent.try_clone().unwrap()));
+        assert!(hold_lock_file(&path, true, &|| {}).unwrap().is_some());
+        drop(parent);
     }
 
     #[test]
