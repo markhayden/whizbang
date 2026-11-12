@@ -32,26 +32,29 @@ pub(super) fn is_jpeg(bytes: &[u8]) -> bool {
     bytes.starts_with(&[0xff, 0xd8])
 }
 
-/// Walks a PNG's chunks. The first `iCCP` chunk is the profile: a chunk whose checksum
-/// fails, whose layout is wrong or whose data does not inflate is refused, and one that
-/// inflates to more than `max_profile_bytes` is over the limit. A walk that runs off the
-/// end of the file stops quietly: the decoder refuses such a file.
+/// Walks a PNG's chunks to its end chunk. The first `iCCP` chunk is the profile: a chunk
+/// whose checksum fails, whose layout is wrong or whose data does not inflate is refused,
+/// and one that inflates to more than `max_profile_bytes` is over the limit. A file whose
+/// chunks do not reach a well-formed `IEND` (no data, and a checksum that holds) is
+/// refused: a decoder is content once the image data is whole, and a file cut inside a
+/// later chunk would be read without it. What follows the end chunk is not read.
 pub(super) fn png(bytes: &[u8], max_profile_bytes: u64) -> Result<Png> {
+    let cut_short = || IdentityError::Image("the PNG ends before its end chunk".to_owned());
     let mut found = Png {
         profile: Found::Nothing,
         exif: None,
     };
     let mut seen_profile = false;
     let mut at = PNG_SIGNATURE.len();
-    while let Some(header) = bytes.get(at..at + 8) {
+    loop {
+        let header = bytes.get(at..at + 8).ok_or_else(cut_short)?;
         let length = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
         let name = &header[4..8];
-        let Some(end) = at.checked_add(12).and_then(|v| v.checked_add(length)) else {
-            break;
-        };
-        let Some(chunk) = bytes.get(at + 4..end) else {
-            break;
-        };
+        let end = at
+            .checked_add(12)
+            .and_then(|v| v.checked_add(length))
+            .ok_or_else(cut_short)?;
+        let chunk = bytes.get(at + 4..end).ok_or_else(cut_short)?;
         let (covered, stored) = chunk.split_at(4 + length);
         let sound = crc32(covered).to_be_bytes() == stored;
         let data = &covered[4..];
@@ -64,11 +67,15 @@ pub(super) fn png(bytes: &[u8], max_profile_bytes: u64) -> Result<Png> {
         } else if name == b"eXIf" && found.exif.is_none() && sound {
             found.exif = Some(data.to_vec());
         } else if name == b"IEND" {
-            break;
+            if !sound || !data.is_empty() {
+                return Err(IdentityError::Image(
+                    "the PNG's end chunk is not well formed".to_owned(),
+                ));
+            }
+            return Ok(found);
         }
         at = end;
     }
-    Ok(found)
 }
 
 fn unreadable(why: &str) -> IdentityError {
@@ -119,7 +126,8 @@ fn crc32(bytes: &[u8]) -> u32 {
 }
 
 /// Walks a JPEG's markers and returns its colour profile. Refuses a file whose data ends
-/// before its end marker, a file that is not 8 bits a sample, a file with other than one
+/// before its end marker, a segment whose length is under 2, a file that is not 8 bits a
+/// sample, a file with other than one
 /// or three components (four is CMYK, whose reading no rule here defines), and a profile
 /// whose segments do not make one whole or pass `max_profile_bytes`.
 pub(super) fn jpeg(bytes: &[u8], max_profile_bytes: u64) -> Result<Found> {
@@ -148,8 +156,15 @@ pub(super) fn jpeg(bytes: &[u8], max_profile_bytes: u64) -> Result<Found> {
         }
         let size = bytes.get(at..at + 2).ok_or_else(cut_short)?;
         let size = usize::from(u16::from_be_bytes([size[0], size[1]]));
-        let segment = bytes.get(at + 2..at + size.max(2)).ok_or_else(cut_short)?;
-        at += size.max(2);
+        // A length counts its own two bytes. One that does not is no length, and a walk
+        // that took it would not move.
+        if size < 2 {
+            return Err(IdentityError::Image(
+                "a JPEG segment's length counts fewer than its own two bytes".to_owned(),
+            ));
+        }
+        let segment = bytes.get(at + 2..at + size).ok_or_else(cut_short)?;
+        at += size;
         match code {
             // A frame header: every start-of-frame marker but the three that are tables.
             0xc0..=0xcf if !matches!(code, 0xc4 | 0xc8 | 0xcc) => {

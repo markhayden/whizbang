@@ -145,8 +145,8 @@ impl Mapping {
                 right,
                 bottom,
             } => Point::new(
-                left + point.x * (right - left) / f64::from(from.width()),
-                top + point.y * (bottom - top) / f64::from(from.height()),
+                between(*left, *right, point.x, f64::from(from.width())),
+                between(*top, *bottom, point.y, f64::from(from.height())),
             ),
             Mapping::Homography { matrix } => project(matrix, point)?,
             Mapping::Rotation { matrix } => rotate(matrix, from, to, point),
@@ -177,8 +177,8 @@ impl Mapping {
                     point.x
                 };
                 Point::new(
-                    (x - left) * f64::from(from.width()) / (right - left),
-                    (point.y - top) * f64::from(from.height()) / (bottom - top),
+                    within(*left, *right, x, f64::from(from.width())),
+                    within(*top, *bottom, point.y, f64::from(from.height())),
                 )
             }
             Mapping::Homography { matrix } => project(&inverse(matrix)?, point)?,
@@ -381,4 +381,27 @@ fn rotate(m: &Matrix, from: &Space, to: &Space, point: Point) -> Point {
         (lon + PI) / (2.0 * PI) * f64::from(to.width()),
         (FRAC_PI_2 - lat) / PI * f64::from(to.height()),
     )
+}
+
+/// The place between `low` and `high` that `at` has between 0 and `size`, measured from
+/// the nearer end: `low + at (high - low) / size` in the first half, and
+/// `high - (size - at) (high - low) / size` in the second. At 0 it is `low` and at `size`
+/// it is `high`, exactly, and it is never outside the two.
+pub(super) fn between(low: f64, high: f64, at: f64, size: f64) -> f64 {
+    if at <= size / 2.0 {
+        low + at * (high - low) / size
+    } else {
+        high - (size - at) * (high - low) / size
+    }
+}
+
+/// The inverse of [`between`]: the place between 0 and `size` that `value` has between
+/// `low` and `high`, measured from the nearer end. At `low` it is 0 and at `high` it is
+/// `size`, exactly.
+fn within(low: f64, high: f64, value: f64, size: f64) -> f64 {
+    if value - low <= high - value {
+        (value - low) * size / (high - low)
+    } else {
+        size - (high - value) * size / (high - low)
+    }
 }

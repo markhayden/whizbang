@@ -1014,3 +1014,54 @@ fn a_crop_that_touches_a_panoramas_right_edge_maps_there_and_back() {
         Point::new(0.0, 60.0)
     );
 }
+
+#[test]
+fn crops_that_touch_a_panoramas_right_edge_map_their_right_edge_there_and_back() {
+    // Boxes whose left edge is on a tenth of a pixel and whose right edge is the
+    // panorama's. The crop's right edge must land on column 0 exactly and come back
+    // exactly, whatever the scale; the columns between go there and back within rounding.
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut next = |below: u32| -> u32 {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        ((state >> 33) % u64::from(below)) as u32
+    };
+    for case in 0..3000 {
+        let (width, height) = (2 + next(4000), 1 + next(200));
+        let panorama = Space::panorama(width, height).unwrap();
+        let left = f64::from(next(width * 10 - 1) + 1) / 10.0;
+        let size = (1 + next(300), 1 + next(50));
+        let crop = crop_of(
+            "crop",
+            size,
+            "panorama",
+            panorama,
+            (left, 0.0, f64::from(width), f64::from(height)),
+        )
+        .unwrap();
+        let edge = Point::new(f64::from(size.0), f64::from(size.1) / 2.0);
+        let there = crop
+            .to_destination(edge)
+            .unwrap_or_else(|error| panic!("case {case}: {error}"));
+        assert_eq!(
+            there.x, 0.0,
+            "case {case}: left {left} of {width}, {size:?}"
+        );
+        let back = crop.to_source(there).unwrap_or_else(|error| {
+            panic!("case {case}: left {left} of {width}, {size:?}: {error}")
+        });
+        assert_eq!(back.x, edge.x, "case {case}");
+        assert_eq!(crop.to_destination(Point::new(0.0, 0.0)).unwrap().x, left);
+        assert_eq!(crop.to_source(Point::new(left, 0.0)).unwrap().x, 0.0);
+        for step in 1..8 {
+            let point = Point::new(f64::from(size.0) * f64::from(step) / 8.0, edge.y);
+            let there = crop.to_destination(point).unwrap();
+            let back = crop.to_source(there).unwrap();
+            assert!(
+                close(back, point, 1e-9),
+                "case {case}: {point:?} {there:?} {back:?}"
+            );
+        }
+    }
+}

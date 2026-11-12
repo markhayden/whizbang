@@ -223,6 +223,8 @@ pub fn built() -> Vec<(String, &'static str, Vec<u8>)> {
         unhex(jpeg_sources::PROGRESSIVE),
     );
     add("jpeg-grey", "jpeg-grey", unhex(jpeg_sources::GREY));
+    // The coefficients of `jpeg-444`, with a restart marker after every block.
+    add("jpeg-restarts", "jpeg-444", unhex(jpeg_sources::RESTARTS));
     let mut exif = b"Exif\0\0".to_vec();
     exif.extend_from_slice(&exif_orientation(6));
     add(
@@ -270,7 +272,7 @@ pub fn vector(name: &str) -> Vec<u8> {
 
 #[test]
 fn every_vector_has_its_two_digests() {
-    assert_eq!(VECTORS.len(), 35);
+    assert_eq!(VECTORS.len(), 36);
     for vector in VECTORS {
         let bytes = unhex(vector.bytes);
         let identified = identify(&bytes, &DecodeLimits::default())
@@ -358,7 +360,10 @@ fn the_vectors_of_one_picture_share_a_pixel_digest_and_no_file_digest() {
     assert_eq!(of("grey"), ["grey-four-bit", "grey-eight-bit"]);
     assert_eq!(of("keyed"), ["key-colour", "key-alpha"]);
     assert_eq!(of("jpeg-420"), ["jpeg-420", "jpeg-progressive"]);
-    assert_eq!(of("jpeg-444"), ["jpeg-444", "jpeg-profile-srgb"]);
+    assert_eq!(
+        of("jpeg-444"),
+        ["jpeg-444", "jpeg-restarts", "jpeg-profile-srgb"]
+    );
     assert_eq!(pictures.len(), 13);
 }
 

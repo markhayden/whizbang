@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::digest::{Digest, Encoder, PixelDigest};
-use super::mapping::{Mapping, Matrix, inverse, multiply, transpose};
+use super::mapping::{Mapping, Matrix, between, inverse, multiply, transpose};
 use super::space::{Point, Space};
 use super::{IdentityError, Result};
 
@@ -349,17 +349,5 @@ impl Binding {
             Direction::SourceToDestination => matrix,
             Direction::DestinationToSource => inverse(&matrix)?,
         }))
-    }
-}
-
-/// The place between `low` and `high` that `at` has between 0 and `size`, measured from
-/// the nearer end: `low + at (high - low) / size` in the first half, and
-/// `high - (size - at) (high - low) / size` in the second. At 0 it is `low` and at `size`
-/// it is `high`, exactly, and it is never outside the two.
-fn between(low: f64, high: f64, at: f64, size: f64) -> f64 {
-    if at <= size / 2.0 {
-        low + at * (high - low) / size
-    } else {
-        high - (size - at) * (high - low) / size
     }
 }

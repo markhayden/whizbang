@@ -169,6 +169,100 @@ fn a_profile_over_the_limit_is_refused_before_it_is_held() {
     ));
 }
 
+#[test]
+fn a_png_profile_chunk_is_held_to_its_checksum_and_its_name_to_79_bytes() {
+    let picture = picture_grid();
+    // The data whole and the checksum wrong.
+    let whole = RawPng::rgb(&picture).before(b"iCCP", iccp(&wide())).bytes();
+    let at = whole.windows(4).position(|w| w == b"iCCP").unwrap();
+    let length = u32::from_be_bytes(whole[at - 4..at].try_into().unwrap()) as usize;
+    for byte in 0..4 {
+        let mut damaged = whole.clone();
+        damaged[at + 4 + length + byte] ^= 1;
+        unsupported(&damaged, "a wrong checksum over whole data");
+    }
+    // A name of 79 bytes is the longest there is.
+    let named = |length: usize| {
+        let mut data = vec![b'n'; length];
+        data.extend_from_slice(&[0, 0]);
+        data.extend_from_slice(&zlib_stored(&wide()));
+        RawPng::rgb(&picture).before(b"iCCP", data).bytes()
+    };
+    for length in [1, 79] {
+        let identified = identify(&named(length), &limits()).unwrap();
+        assert_eq!(identified.stored.profile, Profile::Converted, "{length}");
+    }
+    unsupported(&named(80), "a name of 80 bytes");
+    unsupported(&named(0), "a name of no bytes");
+}
+
+// --- a PNG's end --------------------------------------------------------------------------
+
+#[test]
+fn a_png_cut_short_anywhere_is_refused() {
+    // A decoder is content once the image data is whole. A file cut inside a chunk that
+    // follows it, a profile or an orientation tag, would be read without that chunk, as
+    // another picture.
+    let picture = picture_grid();
+    let turned = picture.stored_under(6);
+    for (name, whole) in [
+        ("plain", RawPng::rgb(&picture).bytes()),
+        (
+            "a profile after the data",
+            RawPng::rgb(&picture).after(b"iCCP", iccp(&wide())).bytes(),
+        ),
+        (
+            "a tag after the data",
+            RawPng::rgb(&turned)
+                .after(b"eXIf", exif_orientation(6))
+                .bytes(),
+        ),
+        (
+            "both after the data",
+            RawPng::rgb(&turned)
+                .after(b"iCCP", iccp(&wide()))
+                .after(b"eXIf", exif_orientation(6))
+                .bytes(),
+        ),
+        ("from the encoder", rgb_png(&picture, Extras::default())),
+    ] {
+        let identified = identify(&whole, &limits()).unwrap();
+        for length in 0..whole.len() {
+            let result = identify(&whole[..length], &limits());
+            assert!(
+                matches!(result, Err(IdentityError::Image(_))),
+                "{name} cut at {length} of {}: {result:?}",
+                whole.len()
+            );
+        }
+        // What follows the end chunk is not part of the picture, as with a JPEG.
+        let mut padded = whole.clone();
+        padded.extend_from_slice(b"\0\0\0\0IEND and more");
+        let after = identify(&padded, &limits()).unwrap();
+        assert_eq!(after.identity.pixels, identified.identity.pixels, "{name}");
+        assert_ne!(after.identity.file, identified.identity.file);
+    }
+    // An end chunk that is not well formed is no end: one with data, and one whose
+    // checksum fails.
+    let whole = RawPng::rgb(&picture).bytes();
+    let (body, end) = whole.split_at(whole.len() - 12);
+    let mut with_data = body.to_vec();
+    with_data.extend_from_slice(&chunk(b"IEND", &[0]));
+    let mut bad_checksum = whole.clone();
+    *bad_checksum.last_mut().unwrap() ^= 1;
+    assert_eq!(end[4..8], *b"IEND");
+    for (bytes, what) in [
+        (with_data, "an end chunk with data"),
+        (bad_checksum, "a wrong checksum"),
+    ] {
+        let result = identify(&bytes, &limits());
+        assert!(
+            matches!(result, Err(IdentityError::Image(_))),
+            "{what}: {result:?}"
+        );
+    }
+}
+
 // --- a PNG's orientation tag --------------------------------------------------------------
 
 #[test]
@@ -239,6 +333,47 @@ fn a_jpeg_cut_short_anywhere_is_refused() {
 }
 
 #[test]
+fn a_jpeg_with_restart_markers_is_read_to_its_end() {
+    // A restart marker sits inside a scan's data and does not end it.
+    let bytes = vector("jpeg-restarts");
+    let restarts = bytes
+        .windows(2)
+        .filter(|w| matches!(w, [0xff, 0xd0..=0xd7]))
+        .count();
+    assert_eq!(restarts, 3);
+    let identified = identify(&bytes, &limits()).unwrap();
+    assert_eq!(
+        identified.identity.pixels,
+        identify(&vector("jpeg-444"), &limits())
+            .unwrap()
+            .identity
+            .pixels
+    );
+}
+
+#[test]
+fn a_jpeg_segment_shorter_than_its_own_length_field_is_refused() {
+    // A length counts its own two bytes, so 0 and 1 are not lengths. The walk must refuse
+    // them, and must not stand still on one: it is run apart and given five seconds.
+    for length in [0u16, 1] {
+        let mut bytes = vec![0xff, 0xd8, 0xff, 0xe5];
+        bytes.extend_from_slice(&length.to_be_bytes());
+        bytes.extend_from_slice(&flat_jpeg(3, 8)[2..]);
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = send.send(identify(&bytes, &DecodeLimits::default()));
+        });
+        let result = receive
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the walk did not end");
+        let Err(IdentityError::Image(why)) = result else {
+            panic!("length {length}: {result:?}");
+        };
+        assert!(why.contains("fewer than its own two bytes"), "{why}");
+    }
+}
+
+#[test]
 fn a_jpeg_of_four_components_is_refused() {
     // One and three components are grey and colour, and are read.
     for components in [1, 3] {
@@ -300,6 +435,30 @@ fn a_jpeg_profile_is_whole_or_refused() {
             vec![profile_piece(1, 2, first), profile_piece(2, 3, second)],
             "two counts",
         ),
+        (
+            vec![
+                profile_piece(1, 2, first),
+                profile_piece(2, 2, second),
+                profile_piece(3, 2, second),
+            ],
+            "a piece past the count",
+        ),
+        (
+            vec![
+                profile_piece(1, 2, first),
+                profile_piece(2, 2, second),
+                profile_piece(2, 2, second),
+            ],
+            "the last piece twice",
+        ),
+        (
+            vec![
+                profile_piece(1, 1, &profile),
+                profile_piece(1, 2, first),
+                profile_piece(2, 2, second),
+            ],
+            "a whole profile and another in pieces",
+        ),
         (vec![profile_piece(0, 1, &profile)], "piece zero"),
         (vec![profile_piece(1, 0, &profile)], "a count of zero"),
     ] {
@@ -308,6 +467,33 @@ fn a_jpeg_profile_is_whole_or_refused() {
     // A segment of another kind under the same marker is not a profile.
     let other = identify(&add(&[b"MPF\0whatever".to_vec()]), &limits()).unwrap();
     assert_eq!(other.stored.profile, Profile::None);
+}
+
+#[test]
+fn a_jpeg_profile_is_held_to_the_limit_to_the_byte() {
+    // A profile of exactly the limit, in seventeen pieces, is read, and refused only for
+    // what it is: zeros are no profile. One byte more is over the limit.
+    let jpeg = vector("jpeg-444");
+    let with_profile = |length: usize| {
+        let profile = vec![0u8; length];
+        let pieces: Vec<&[u8]> = profile.chunks(65_000).collect();
+        let mut out = jpeg.clone();
+        for (index, piece) in pieces.iter().enumerate().rev() {
+            out = with_segment(
+                &out,
+                0xe2,
+                &profile_piece(index as u8 + 1, pieces.len() as u8, piece),
+            );
+        }
+        identify(&out, &limits())
+    };
+    let at_the_limit = with_profile(1024 * 1024);
+    let Err(IdentityError::Unsupported(why)) = at_the_limit else {
+        panic!("{at_the_limit:?}");
+    };
+    assert!(why.contains("cannot be applied"), "{why}");
+    let over = with_profile(1024 * 1024 + 1);
+    assert!(matches!(over, Err(IdentityError::Limit(_))), "{over:?}");
 }
 
 // --- limits -------------------------------------------------------------------------------

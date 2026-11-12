@@ -95,14 +95,14 @@ guessed:
   inks become colours is not defined here), or samples that are not 8 bits;
 - any other sample layout that is not grey or red, green and blue in whole numbers: CMYK
   or floating point from any decoder;
-- a JPEG that ends before its end marker (below).
+- a JPEG that ends before its end marker, and a PNG that ends before its end chunk (below).
 
 **Where the profile comes from.** The container is read apart from the decoder, because a
 decoder says nothing of a profile it cannot read, and the picture read without it would be
 another picture.
 
 - In a PNG, the profile is the first `iCCP` chunk, wherever it sits; later ones are not
-  read. The chunk is refused when its checksum fails, when it has no name of 1 to 79 bytes
+  applied. The chunk is refused when its checksum fails, when it has no name of 1 to 79 bytes
   ending in a zero byte, when its compression method is not 0, or when its data does not
   inflate. A PNG's gamma, chromaticity, sRGB and coding-independent chunks (`gAMA`, `cHRM`,
   `sRGB`, `cICP`) are not read.
@@ -157,8 +157,9 @@ machine's own library, so the bytes are the same on every machine.
    taken.
 
 **Lossy files and the decoder.** A PNG's samples are what the file says. A JPEG's are what
-a decoder makes of it, and two decoders, or two versions of one, may differ by a level
-here and there. So for a lossy file the decoder and its version are part of what `pixels/1`
+a decoder makes of it. Two decoders, or two versions of one, can differ: by a level or two
+where they round differently, and by up to about 20 levels in a file whose colour is
+stored at lower resolution, which each fills in its own way. So for a lossy file the decoder and its version are part of what `pixels/1`
 means: the `image` crate and the JPEG decoder it uses (`zune-jpeg`, with `zune-core`) are
 pinned to exact versions in `crates/whizbang-core/Cargo.toml`, and the JPEG vectors fail if
 a decoder decodes them differently. A change in a decoder's output is carried by the
@@ -166,11 +167,24 @@ version in the kind: it is a new `pixels/2`, by a new record, or the proof that 
 vector is unchanged. How a store is brought from one to the next is not designed here, and
 is on `docs/carry-over.md`.
 
-**A JPEG that ends early.** The decoder fills in what a truncated JPEG lacks and reports
-nothing. So a JPEG's markers are walked first, through each scan's data, and the file is
-refused unless they reach the end marker. What follows the end marker is not part of the
-picture. This does not see a file that has its end marker and too little data inside a
-scan; that is on `docs/carry-over.md`.
+**A file that ends early.** A decoder is content with less than the whole file, and reports
+nothing, so both containers are walked to their end before anything is decoded.
+
+- A PNG's chunks are walked from the signature, each by its length, and the file is
+  refused unless they reach an end chunk (`IEND`) that is well formed: no data, and a
+  checksum that holds. A decoder stops caring once the image data is whole; a file cut
+  inside a profile or an orientation tag that follows the image data would otherwise be
+  read without it, as another picture.
+- A JPEG's markers are walked, through each scan's data (in which a stuffed zero, a
+  restart marker and a fill byte are not the end of the scan), and the file is refused
+  unless they reach the end marker. A segment whose length is under 2, which is less than
+  the length's own two bytes, is refused.
+- What follows the end chunk or the end marker is not part of the picture and is not read.
+  Two files that differ only there have two file digests and one pixel digest.
+
+For a JPEG this sees only the markers. A file that has its end marker and too little data
+before it is decoded as far as it goes and is given an identity; that is on
+`docs/carry-over.md`.
 
 **Limits.** Checked before anything is decoded, each with a default the caller may change:
 64 MiB of file, 50,000,000 pixels as stored, and 1 MiB of profile. One more is fixed: the
@@ -240,6 +254,9 @@ direction decides:
   is a point that lands outside the space it maps to: a point of an image that a crop does
   not cover has no place in the crop. A computed point up to 1e-9 of a pixel past an edge
   of a bounded space is on the edge.
+- A crop maps a point from the nearer edge of its box, as two crops compose (below), and
+  back the same way, so each edge of the crop maps onto its edge of the box exactly, and
+  back exactly.
 - In a wrapped space the right edge is column 0. A crop whose box reaches the right edge
   of a wrapped space holds that column as its own right edge: the crop's right edge maps to
   column 0, and column 0 maps back to the crop's right edge. A crop cannot cross the seam;
