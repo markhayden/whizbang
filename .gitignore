@@ -11,3 +11,6 @@
 .claude/worktrees/
 # The nextest results of the script-test fixtures.
 scripts/tests/fixtures/*/target/
+# Python bytecode (scripts/baseline).
+__pycache__/
+*.pyc

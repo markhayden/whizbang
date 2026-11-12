@@ -1,0 +1,710 @@
+{
+  "complete": true,
+  "evidence_tools": [
+    "view"
+  ],
+  "files": [
+    {
+      "bytes": 5362,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/run-1/journal.jsonl",
+      "role": "journal",
+      "sha256": "8ce728b045abc81e057fbbd373ca9070b8bd3e408a188a5375ce202c4e517546",
+      "truncated": false
+    },
+    {
+      "bytes": 190,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/result.json",
+      "role": "result",
+      "sha256": "80c6ac2652d6ac69676bb3ec90fa08903899894202d34ba7845b334f2699c987",
+      "truncated": false
+    },
+    {
+      "bytes": 150,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/decision.json",
+      "role": "decision",
+      "sha256": "0e5a453ee5141a61b234d9288c446ed460efb44bb500ea91d5ce2c41d118452f",
+      "truncated": false
+    },
+    {
+      "bytes": 1281,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/report.json",
+      "role": "report",
+      "sha256": "6a1220f989e7acf739b53a14367c93cde766da56c02a93e83c446c889187422c",
+      "truncated": false
+    },
+    {
+      "bytes": 15,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/run-1/artifacts/1d6b351aba692960a372500fc867c053c4598b58b862b2fc4b102b186d683669",
+      "role": "image raw:source",
+      "sha256": "1d6b351aba692960a372500fc867c053c4598b58b862b2fc4b102b186d683669",
+      "truncated": false
+    },
+    {
+      "bytes": 18,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/run-1/artifacts/5cc2aa5d60cf53916592f41e3fd3d4f3faa7bf7b919a56046faea602f3c012f4",
+      "role": "image raw:candidate",
+      "sha256": "5cc2aa5d60cf53916592f41e3fd3d4f3faa7bf7b919a56046faea602f3c012f4",
+      "truncated": false
+    },
+    {
+      "bytes": 445,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/run-1/artifacts/261cc5ba5fc8b61216c2060f9951f40174a6d2602087c6907700cbc127fe9af7",
+      "role": "request 1",
+      "sha256": "261cc5ba5fc8b61216c2060f9951f40174a6d2602087c6907700cbc127fe9af7",
+      "truncated": false
+    },
+    {
+      "bytes": 304,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/run-1/artifacts/aa3f77f2479effc88c5a6ef778047eab14af7f03f0948657185abab51ad72cda",
+      "role": "response 1",
+      "sha256": "aa3f77f2479effc88c5a6ef778047eab14af7f03f0948657185abab51ad72cda",
+      "truncated": false
+    },
+    {
+      "bytes": 445,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/run-1/artifacts/261cc5ba5fc8b61216c2060f9951f40174a6d2602087c6907700cbc127fe9af7",
+      "role": "request 2",
+      "sha256": "261cc5ba5fc8b61216c2060f9951f40174a6d2602087c6907700cbc127fe9af7",
+      "truncated": false
+    },
+    {
+      "bytes": 302,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/run-1/artifacts/d38f8d454ae61a106814325d524a96a155e207381b536a050d55b9861a39e1a2",
+      "role": "response 2",
+      "sha256": "d38f8d454ae61a106814325d524a96a155e207381b536a050d55b9861a39e1a2",
+      "truncated": false
+    },
+    {
+      "bytes": 809,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/run-1/artifacts/5c646801d908bfbe1a6255edc2f273f977b997b8b520044e740c005e203ca711",
+      "role": "request 3",
+      "sha256": "5c646801d908bfbe1a6255edc2f273f977b997b8b520044e740c005e203ca711",
+      "truncated": false
+    },
+    {
+      "bytes": 323,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/run-1/artifacts/350f1bbce7087c1683ad9df7769638bca3997e825e8b7b07630edb6ade721d42",
+      "role": "response 3",
+      "sha256": "350f1bbce7087c1683ad9df7769638bca3997e825e8b7b07630edb6ade721d42",
+      "truncated": false
+    },
+    {
+      "bytes": 1082,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/run-1/artifacts/f79bdd9c7e8619c666734b6bb0b611fbb7c6328a5ae223a3353ad6ca9de712cd",
+      "role": "request 4",
+      "sha256": "f79bdd9c7e8619c666734b6bb0b611fbb7c6328a5ae223a3353ad6ca9de712cd",
+      "truncated": false
+    },
+    {
+      "bytes": 387,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/run-1/artifacts/b8024ef5afcaa95bd53a5a2dfe5c81ad7f421f4654ef162e89195e81864e5584",
+      "role": "response 4",
+      "sha256": "b8024ef5afcaa95bd53a5a2dfe5c81ad7f421f4654ef162e89195e81864e5584",
+      "truncated": false
+    },
+    {
+      "bytes": 129,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/run-1/artifacts/ab932ea7595cacaa98bdc23110aec70b7fef87ffcd37d267f4913c5c9a3c36ca",
+      "role": "envelope call:0",
+      "sha256": "ab932ea7595cacaa98bdc23110aec70b7fef87ffcd37d267f4913c5c9a3c36ca",
+      "truncated": false
+    },
+    {
+      "bytes": 11,
+      "path": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1/run-1/artifacts/5c893e148fe837549c8f70bb9b98a0ca3a741032e816740efae0a936be3ac3ba",
+      "role": "image crop:call:0:0",
+      "sha256": "5c893e148fe837549c8f70bb9b98a0ca3a741032e816740efae0a936be3ac3ba",
+      "truncated": false
+    }
+  ],
+  "images": [
+    {
+      "frame": "raw:source",
+      "height": 8,
+      "id": "source",
+      "origin": "job",
+      "prepared": {
+        "bytes": 15,
+        "sha256": "1d6b351aba692960a372500fc867c053c4598b58b862b2fc4b102b186d683669"
+      },
+      "role": "source",
+      "source": {
+        "pixel_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "width": 8
+    },
+    {
+      "frame": "raw:candidate",
+      "height": 8,
+      "id": "candidate",
+      "origin": "job",
+      "prepared": {
+        "bytes": 18,
+        "sha256": "5cc2aa5d60cf53916592f41e3fd3d4f3faa7bf7b919a56046faea602f3c012f4"
+      },
+      "role": "candidate",
+      "source": {
+        "pixel_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "width": 8
+    },
+    {
+      "frame": "crop:call:0:0",
+      "height": 4,
+      "id": "crop:call:0:0",
+      "mapping": {
+        "kind": "crop"
+      },
+      "origin": "c1",
+      "parent": "raw:candidate",
+      "prepared": {
+        "bytes": 11,
+        "sha256": "5c893e148fe837549c8f70bb9b98a0ca3a741032e816740efae0a936be3ac3ba"
+      },
+      "root": "raw:candidate",
+      "width": 4
+    }
+  ],
+  "incomplete": [],
+  "meta": {
+    "attempt": "run-1",
+    "decision": "replay/run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1",
+    "fixtures": "replay",
+    "harness": "squint",
+    "harness_version": "0.0.0 (synthetic)",
+    "name": "run-a/set-1/synthetic-item-7/provider_model-x/C/rep-1/decision-1-1",
+    "package_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "prompt_version": "p1",
+    "run": "run-a",
+    "tools_version": "2"
+  },
+  "origin": "historical",
+  "preparation": {
+    "settings": {
+      "jpeg_quality": 90,
+      "long_edge_px": 1024
+    },
+    "version": "1"
+  },
+  "repairs": [
+    {
+      "after_turn": 1,
+      "form": "reissue",
+      "reason": "truncated"
+    },
+    {
+      "after_turn": 3,
+      "form": "rejected",
+      "reason": "invalid_submission"
+    }
+  ],
+  "subject": {
+    "arm": "C",
+    "item": "synthetic-item-7",
+    "model": "provider:model-x",
+    "repetition": 1,
+    "set": "set-1",
+    "use_case": "source-fidelity"
+  },
+  "submission_tool": "submit_verdict",
+  "terminal": {
+    "kind": "verdict",
+    "verdict": "pass"
+  },
+  "transcript_version": 1,
+  "turns": [
+    {
+      "calls": [
+        {
+          "arguments": {
+            "image": "candidate"
+          },
+          "disposition": "excluded",
+          "id": "c0",
+          "meta": {},
+          "name": "view",
+          "result": null
+        }
+      ],
+      "excluded": {
+        "reason": "truncated"
+      },
+      "meta": {
+        "answered": true,
+        "attempts": 1,
+        "bound_usd": 0.1,
+        "cost_usd": 0.01,
+        "estimated": false,
+        "provider_request_id": "req-1",
+        "request_file": "261cc5ba5fc8b61216c2060f9951f40174a6d2602087c6907700cbc127fe9af7",
+        "response_file": "aa3f77f2479effc88c5a6ef778047eab14af7f03f0948657185abab51ad72cda",
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 5
+        }
+      },
+      "request": {
+        "history": [
+          {
+            "content": [
+              {
+                "text": "Compare these.",
+                "type": "text"
+              },
+              {
+                "image_id": "source",
+                "type": "image"
+              },
+              {
+                "image_id": "candidate",
+                "type": "image"
+              }
+            ],
+            "role": "user"
+          }
+        ],
+        "max_output_tokens": 512,
+        "system": "You compare a candidate image with its source.",
+        "tools": [
+          {
+            "description": "Look closer.",
+            "input_schema": {
+              "type": "object"
+            },
+            "name": "view"
+          },
+          {
+            "description": "Answer.",
+            "input_schema": {
+              "type": "object"
+            },
+            "name": "submit_verdict"
+          }
+        ]
+      },
+      "response": {
+        "content": [
+          {
+            "adapter": "synthetic",
+            "block": {
+              "call": "c0",
+              "sig": "s-c0"
+            },
+            "type": "opaque"
+          }
+        ],
+        "stop_reason": "max_tokens",
+        "text": [],
+        "tool_calls": [
+          {
+            "arguments": {
+              "image": "candidate"
+            },
+            "id": "c0",
+            "name": "view"
+          }
+        ]
+      },
+      "turn": 1
+    },
+    {
+      "calls": [
+        {
+          "arguments": {
+            "image": "candidate"
+          },
+          "disposition": "executed",
+          "id": "c1",
+          "meta": {
+            "call_id": "call:0",
+            "duration_ms": 3,
+            "envelope_file": "ab932ea7595cacaa98bdc23110aec70b7fef87ffcd37d267f4913c5c9a3c36ca",
+            "status": "ok"
+          },
+          "name": "view",
+          "result": {
+            "content": "{\"call_id\": \"call:0\", \"status\": \"ok\", \"summary\": \"A closer look at call:0.\", \"score\": 0.5}",
+            "images": [
+              "crop:call:0:0"
+            ],
+            "is_error": false
+          }
+        }
+      ],
+      "excluded": null,
+      "meta": {
+        "answered": true,
+        "attempts": 1,
+        "bound_usd": 0.1,
+        "cost_usd": 0.01,
+        "estimated": false,
+        "provider_request_id": "req-2",
+        "request_file": "261cc5ba5fc8b61216c2060f9951f40174a6d2602087c6907700cbc127fe9af7",
+        "response_file": "d38f8d454ae61a106814325d524a96a155e207381b536a050d55b9861a39e1a2",
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 5
+        }
+      },
+      "request": {
+        "history": [
+          {
+            "content": [
+              {
+                "text": "Compare these.",
+                "type": "text"
+              },
+              {
+                "image_id": "source",
+                "type": "image"
+              },
+              {
+                "image_id": "candidate",
+                "type": "image"
+              }
+            ],
+            "role": "user"
+          }
+        ],
+        "max_output_tokens": 512,
+        "system": "You compare a candidate image with its source.",
+        "tools": [
+          {
+            "description": "Look closer.",
+            "input_schema": {
+              "type": "object"
+            },
+            "name": "view"
+          },
+          {
+            "description": "Answer.",
+            "input_schema": {
+              "type": "object"
+            },
+            "name": "submit_verdict"
+          }
+        ]
+      },
+      "response": {
+        "content": [
+          {
+            "adapter": "synthetic",
+            "block": {
+              "call": "c1",
+              "sig": "s-c1"
+            },
+            "type": "opaque"
+          }
+        ],
+        "stop_reason": "tool_use",
+        "text": [],
+        "tool_calls": [
+          {
+            "arguments": {
+              "image": "candidate"
+            },
+            "id": "c1",
+            "name": "view"
+          }
+        ]
+      },
+      "turn": 2
+    },
+    {
+      "calls": [
+        {
+          "arguments": {
+            "findings": [],
+            "items": "none"
+          },
+          "disposition": "rejected",
+          "id": "c2",
+          "meta": {
+            "reason": "invalid_submission"
+          },
+          "name": "submit_verdict",
+          "result": {
+            "content": "That submission is not valid.",
+            "images": [],
+            "is_error": true
+          }
+        }
+      ],
+      "excluded": null,
+      "meta": {
+        "answered": true,
+        "attempts": 1,
+        "bound_usd": 0.1,
+        "cost_usd": 0.01,
+        "estimated": false,
+        "provider_request_id": "req-3",
+        "request_file": "5c646801d908bfbe1a6255edc2f273f977b997b8b520044e740c005e203ca711",
+        "response_file": "350f1bbce7087c1683ad9df7769638bca3997e825e8b7b07630edb6ade721d42",
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 5
+        }
+      },
+      "request": {
+        "history": [
+          {
+            "content": [
+              {
+                "text": "Compare these.",
+                "type": "text"
+              },
+              {
+                "image_id": "source",
+                "type": "image"
+              },
+              {
+                "image_id": "candidate",
+                "type": "image"
+              }
+            ],
+            "role": "user"
+          },
+          {
+            "content": [
+              {
+                "adapter": "synthetic",
+                "block": {
+                  "call": "c1",
+                  "sig": "s-c1"
+                },
+                "type": "opaque"
+              }
+            ],
+            "role": "assistant"
+          },
+          {
+            "content": [
+              {
+                "content": "{\"call_id\": \"call:0\", \"status\": \"ok\", \"summary\": \"A closer look at call:0.\", \"score\": 0.5}",
+                "images": [
+                  "crop:call:0:0"
+                ],
+                "is_error": false,
+                "tool_use_id": "c1",
+                "type": "tool_result"
+              }
+            ],
+            "role": "user"
+          }
+        ],
+        "max_output_tokens": 512,
+        "system": "You compare a candidate image with its source.",
+        "tools": [
+          {
+            "description": "Look closer.",
+            "input_schema": {
+              "type": "object"
+            },
+            "name": "view"
+          },
+          {
+            "description": "Answer.",
+            "input_schema": {
+              "type": "object"
+            },
+            "name": "submit_verdict"
+          }
+        ]
+      },
+      "response": {
+        "content": [
+          {
+            "adapter": "synthetic",
+            "block": {
+              "call": "c2",
+              "sig": "s-c2"
+            },
+            "type": "opaque"
+          }
+        ],
+        "stop_reason": "tool_use",
+        "text": [],
+        "tool_calls": [
+          {
+            "arguments": {
+              "findings": [],
+              "items": "none"
+            },
+            "id": "c2",
+            "name": "submit_verdict"
+          }
+        ]
+      },
+      "turn": 3
+    },
+    {
+      "calls": [
+        {
+          "arguments": {
+            "findings": [],
+            "items": [
+              {
+                "id": "i1",
+                "state": "met"
+              }
+            ],
+            "opinion": "pass",
+            "schema_version": 1
+          },
+          "disposition": "final",
+          "id": "c3",
+          "meta": {},
+          "name": "submit_verdict",
+          "result": null
+        }
+      ],
+      "excluded": null,
+      "meta": {
+        "answered": true,
+        "attempts": 1,
+        "bound_usd": 0.1,
+        "cost_usd": 0.01,
+        "estimated": false,
+        "provider_request_id": "req-4",
+        "request_file": "f79bdd9c7e8619c666734b6bb0b611fbb7c6328a5ae223a3353ad6ca9de712cd",
+        "response_file": "b8024ef5afcaa95bd53a5a2dfe5c81ad7f421f4654ef162e89195e81864e5584",
+        "usage": {
+          "input_tokens": 10,
+          "output_tokens": 5
+        }
+      },
+      "request": {
+        "history": [
+          {
+            "content": [
+              {
+                "text": "Compare these.",
+                "type": "text"
+              },
+              {
+                "image_id": "source",
+                "type": "image"
+              },
+              {
+                "image_id": "candidate",
+                "type": "image"
+              }
+            ],
+            "role": "user"
+          },
+          {
+            "content": [
+              {
+                "adapter": "synthetic",
+                "block": {
+                  "call": "c1",
+                  "sig": "s-c1"
+                },
+                "type": "opaque"
+              }
+            ],
+            "role": "assistant"
+          },
+          {
+            "content": [
+              {
+                "content": "{\"call_id\": \"call:0\", \"status\": \"ok\", \"summary\": \"A closer look at call:0.\", \"score\": 0.5}",
+                "images": [
+                  "crop:call:0:0"
+                ],
+                "is_error": false,
+                "tool_use_id": "c1",
+                "type": "tool_result"
+              }
+            ],
+            "role": "user"
+          },
+          {
+            "content": [
+              {
+                "adapter": "synthetic",
+                "block": {
+                  "call": "c2",
+                  "sig": "s-c2"
+                },
+                "type": "opaque"
+              }
+            ],
+            "role": "assistant"
+          },
+          {
+            "content": [
+              {
+                "content": "That submission is not valid.",
+                "images": [],
+                "is_error": true,
+                "tool_use_id": "c2",
+                "type": "tool_result"
+              }
+            ],
+            "role": "user"
+          }
+        ],
+        "max_output_tokens": 512,
+        "system": "You compare a candidate image with its source.",
+        "tools": [
+          {
+            "description": "Look closer.",
+            "input_schema": {
+              "type": "object"
+            },
+            "name": "view"
+          },
+          {
+            "description": "Answer.",
+            "input_schema": {
+              "type": "object"
+            },
+            "name": "submit_verdict"
+          }
+        ]
+      },
+      "response": {
+        "content": [
+          {
+            "adapter": "synthetic",
+            "block": {
+              "call": "c3",
+              "sig": "s-c3"
+            },
+            "type": "opaque"
+          }
+        ],
+        "stop_reason": "tool_use",
+        "text": [],
+        "tool_calls": [
+          {
+            "arguments": {
+              "findings": [],
+              "items": [
+                {
+                  "id": "i1",
+                  "state": "met"
+                }
+              ],
+              "opinion": "pass",
+              "schema_version": 1
+            },
+            "id": "c3",
+            "name": "submit_verdict"
+          }
+        ]
+      },
+      "turn": 4
+    }
+  ],
+  "volatile": [
+    "/origin",
+    "/meta",
+    "/files",
+    "/turns/*/meta",
+    "/turns/*/calls/*/meta"
+  ]
+}

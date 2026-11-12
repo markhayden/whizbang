@@ -357,23 +357,23 @@ arm; every recorded digest matches; and the private inventory has no unexplained
 
 **Depends on:** B1.
 
-- [ ] A versioned transcript format, independent of any provider, written down in
+- [x] A versioned transcript format, independent of any provider, written down in
       `docs/baseline/transcript.md`: per decision, the ordered judge requests (system text,
       history, tool definitions, limits), each response with its content kept whole including
       provider-opaque parts, each tool call tied to its result, the image ids and how each
       image was prepared, repairs, excluded turns, and the terminal outcome.
-- [ ] `scripts/baseline/convert.py` turns each replay fixture into a transcript.
-- [ ] Every call a judge made gets one of four dispositions, and the audit checks what each
+- [x] `scripts/baseline/convert.py` turns each replay fixture into a transcript.
+- [x] Every call a judge made gets one of four dispositions, and the audit checks what each
       requires: executed, with its result; rejected, with its result; excluded, never
       dispatched because its turn was excluded; or the final submission, which ends the run
       and has no result message.
-- [ ] `scripts/baseline/audit.py` checks every transcript: every referenced file exists and
+- [x] `scripts/baseline/audit.py` checks every transcript: every referenced file exists and
       its hash matches; no stored file is marked truncated; requests are in order; every call
       satisfies its disposition; the terminal outcome matches the old result.
-- [ ] A stored file cut short by the recorder is incomplete. A response the model itself cut
+- [x] A stored file cut short by the recorder is incomplete. A response the model itself cut
       short at its token limit is complete and is kept as recorded. Nothing is added to a
       history to make the audit pass.
-- [ ] A decision whose record is whole is complete, even when its outcome is an error. A
+- [x] A decision whose record is whole is complete, even when its outcome is an error. A
       recorded model error is kept as it is and never run again to get a verdict.
 - [ ] A decision whose record is incomplete is listed. It is captured again with the tagged
       squint, stored under `recaptured/`, converted and audited like any other, and excluded
@@ -381,7 +381,10 @@ arm; every recorded digest matches; and the private inventory has no unexplained
 - [ ] If a recapture is incomplete for the same reason (the recorder cuts files over 2 MiB),
       recapturing stops. The recorder is fixed in squint, tagged `final-before-whizbang.1` and
       pinned, and the replacement is captured with that.
-- [ ] The comparison code that milestone 2 will use. It compares the whole ordered sequence
+      *The two boxes above (capture again; the recorder fix) are left open because neither
+      was needed: the audit found no incomplete decision (`docs/baseline/audit.toml`), so
+      nothing was captured again and nothing was spent.*
+- [x] The comparison code that milestone 2 will use. It compares the whole ordered sequence
       of requests, calls and results, and the terminal outcome; any difference not declared
       volatile fails. Its tests run in public CI on synthetic transcripts: an unchanged
       transcript passes; each of these fails: a changed prompt, image, tool definition or
