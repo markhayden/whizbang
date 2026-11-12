@@ -242,6 +242,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "whizbang-testkit"
+version = "0.0.1"
+dependencies = [
+ "whizbang-core",
+]
+
+[[package]]
 name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
