@@ -235,6 +235,27 @@ search() {
   case "$target" in
     worktree)
       git grep --untracked -a -n -z "$@" >"$work/raw" || rc=$?
+      # HUNT: repeat the same search, and once more on one thread; keep any disagreement.
+      case "${HUNT_DIR:-}:$*" in
+        :* | */dev/fd/*) ;;
+        *)
+          hunt_n=$((${hunt_n:-0} + 1))
+          hunt_rc2=0 hunt_rc3=0
+          git grep --untracked -a -n -z "$@" >"$work/raw2" 2>"$work/err2" || hunt_rc2=$?
+          git -c grep.threads=1 grep --untracked -a -n -z "$@" >"$work/raw3" 2>"$work/err3" || hunt_rc3=$?
+          echo x >>"$HUNT_DIR/searches"
+          if ! cmp -s "$work/raw" "$work/raw2" || ! cmp -s "$work/raw" "$work/raw3"; then
+            hunt_d="$HUNT_DIR/mismatch.$$.$hunt_n"
+            mkdir -p "$hunt_d"
+            cp "$work/raw" "$work/raw2" "$work/raw3" "$work/err2" "$work/err3" "$hunt_d/"
+            echo "rc=$rc rc2=$hunt_rc2 rc3=$hunt_rc3" >"$hunt_d/status"
+            printf '%s\n' "$@" >"$hunt_d/args"
+            git ls-files -co --exclude-standard >"$hunt_d/ls-files" 2>&1 || true
+            find . -path ./.git -prune -o -type f -print >"$hunt_d/find" 2>&1 || true
+            git grep --untracked -a -n -z "$@" >"$hunt_d/raw4" 2>&1 || true
+          fi
+          ;;
+      esac
       ;;
     files)
       (cd "$target_dir" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \

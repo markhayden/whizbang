@@ -1,0 +1,25 @@
+name: hunt
+
+# Temporary: hunting a file dropped from the working-tree scan on this runner. Not for main.
+on:
+  pull_request:
+
+jobs:
+  hunt:
+    name: hunt (${{ matrix.job }})
+    strategy:
+      fail-fast: false
+      matrix:
+        job: [planted-par, planted-serial, planted-threads1, planted-nocache, planted-applegit, planted-plain, testscan, parts-serial, min]
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hunt
+        run: bash scripts/hunt.sh "${{ matrix.job }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hunt-${{ matrix.job }}
+          path: hunt-out
+          if-no-files-found: ignore
