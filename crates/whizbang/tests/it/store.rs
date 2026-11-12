@@ -364,21 +364,100 @@ fn list_escapes_a_run_id_that_would_break_its_lines() {
 }
 
 #[test]
+fn runs_whose_ids_the_store_would_refuse_are_listed_and_deleted() {
+    // An empty id, and one with a control character: no publication makes such a run,
+    // and a generation file made by hand can hold one. It is not refused on reading,
+    // or nothing could remove it.
+    let dir = Scratch::new("cli-store");
+    let root = with_runs(&dir);
+    let entry = format!(
+        r#"{{"digest": "{}", "bytes": {}, "kind": "output"}}"#,
+        Digest::of_bytes(MASK).hex(),
+        MASK.len()
+    );
+    hand_made(
+        &root,
+        &format!(
+            r#""": {{"entries": {{"mask": {entry}}}}},
+               "a\u0001b": {{"entries": {{"mask": {entry}}}}}"#
+        ),
+    );
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(listed.code, Some(0), "{}", listed.err);
+    assert_eq!(
+        listed.out,
+        format!(
+            "generation: 1\nnames outside runs: 0\nruns: 2\n\
+             \toutputs 1\tdiagnostics 0\tbytes {size}\n\
+             a\\u{{1}}b\toutputs 1\tdiagnostics 0\tbytes {size}\n",
+            size = MASK.len()
+        )
+    );
+
+    // Each is deleted by its id, given as it is.
+    let deleted = whizbang(&["delete", ""], &root);
+    assert_eq!(deleted.code, Some(0), "{}", deleted.err);
+    assert!(
+        deleted.out.starts_with("runs deleted: 1\n"),
+        "{}",
+        deleted.out
+    );
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(
+        listed.out,
+        format!(
+            "generation: 2\nnames outside runs: 0\nruns: 1\n\
+             a\\u{{1}}b\toutputs 1\tdiagnostics 0\tbytes {}\n",
+            MASK.len()
+        )
+    );
+    assert!(object(&root, MASK).exists(), "the other run still names it");
+    let deleted = whizbang(&["delete", "a\u{1}b"], &root);
+    assert_eq!(deleted.code, Some(0), "{}", deleted.err);
+    assert!(
+        deleted.out.starts_with("runs deleted: 1\n"),
+        "{}",
+        deleted.out
+    );
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(
+        listed.out,
+        "generation: 3\nnames outside runs: 0\nruns: 0\n"
+    );
+    assert!(!object(&root, MASK).exists(), "nothing names it any more");
+}
+
+#[test]
 fn second_writers_and_readers_beside_a_writer_at_work_are_never_told_of_damage() {
     // This process writes the store without pause: it publishes a run, deletes the one
     // before and prunes, over and over, so the pointer moves and generation files go
     // while other processes look. Each of those is the binary, run to its exit. A
     // writer must be refused as held, every time, and a reader must read. The loop is
     // counted, not timed: the writer stops when the last of them has run.
+    //
+    // Sixty runs of the binary, thirty of each, and more only while the writer has not
+    // yet gone round three times: its rounds sync for real, and on a busy machine three
+    // of them can outlast sixty runs, or six hundred. So the loop ends on that event and
+    // on no count of its own; what bounds it is the time limit of a test. The runs are
+    // a sample, and they are not what
+    // holds the rule: the two windows, each opened on purpose, are in the core's tests
+    // (`store/locking.rs`: a look that meets a publication and a prune, and a look
+    // that meets the end of a store's creation). What this adds is real processes: the
+    // answers hold across the boundary of a process, on the real file system and its
+    // locks, while generations really come and go. It ran 300 times once, which took
+    // up to 28 seconds where the machine is emulated; a fifth of that leaves room
+    // under the time limit of a test.
     let dir = Scratch::new("cli-store");
     let root = with_runs(&dir);
     let store = Store::open(&root, Arc::new(RealFs)).unwrap();
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    let stop = Arc::new(AtomicBool::new(false));
+    let done = Arc::new(AtomicU64::new(0));
     let writer = {
-        let stop = stop.clone();
+        let (stop, done) = (stop.clone(), done.clone());
         std::thread::spawn(move || {
             let mut rounds = 0u64;
-            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+            while !stop.load(Ordering::Relaxed) {
                 let mut publication = store.begin().unwrap();
                 let run = format!("r{rounds}");
                 publication
@@ -390,13 +469,17 @@ fn second_writers_and_readers_beside_a_writer_at_work_are_never_told_of_damage()
                 }
                 store.prune().unwrap();
                 rounds += 1;
+                done.store(rounds, Ordering::Relaxed);
             }
             rounds
         })
     };
     let holder = format!("process {} (", std::process::id());
     let mut wrong = Vec::new();
-    for attempt in 0..150 {
+    for attempt in 0.. {
+        if attempt >= 30 && done.load(Ordering::Relaxed) >= 3 {
+            break;
+        }
         let second = whizbang(&["prune"], &root);
         if second.code != Some(1) || !second.err.contains("one process at a time") {
             wrong.push(format!("prune {attempt}: {:?} {}", second.code, second.err));
@@ -408,12 +491,12 @@ fn second_writers_and_readers_beside_a_writer_at_work_are_never_told_of_damage()
             wrong.push(format!("list {attempt}: {:?} {}", reader.code, reader.err));
         }
     }
-    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    stop.store(true, Ordering::Relaxed);
     let rounds = writer.join().unwrap();
     assert!(
         wrong.is_empty(),
         "{} wrong answers: {wrong:#?}",
         wrong.len()
     );
-    assert!(rounds >= 2, "the writer was at work: {rounds} rounds");
+    assert!(rounds >= 3, "the writer was at work: {rounds} rounds");
 }

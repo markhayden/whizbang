@@ -2,8 +2,8 @@
 //!
 //! One rule for all four: the store must be there. None of them makes a store at a path
 //! with nothing at it or completes one in an empty directory, except `import --create`,
-//! which says so when it has. The three that write take the writer lock and are refused
-//! while another process holds it.
+//! which says so when it has (the module `import` says what it makes). The three that
+//! write take the writer lock and are refused while another process holds it.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -43,15 +43,20 @@ pub enum Command {
         at: Where,
     },
     /// For developers: bring a canonical artifact file into a store, under its type and
-    /// identity. A picture is not an artifact file.
+    /// identity. A picture is not an artifact file. The file is a regular file, or a
+    /// link to one, of at most 65 MiB: the largest picture an image artifact holds, and
+    /// the record around it.
     Import {
         /// The canonical file of a mask, a location, an image, a band profile, a series
-        /// or a plan.
+        /// or a plan: a regular file, or a link to one, of at most 65 MiB.
         file: PathBuf,
         #[command(flatten)]
         at: Where,
-        /// Make the store if there is none: at a path with nothing at it, or in an
-        /// empty directory. Without this a store must be there already.
+        /// Make the store if there is none: at a path with nothing at it, in an empty
+        /// directory, or in a directory that holds only what an unfinished creation of
+        /// a store left, which is completed. Only the last part of the path is made: a
+        /// path whose parent directory is missing is refused. Without this a store
+        /// must be there already.
         #[arg(long)]
         create: bool,
     },

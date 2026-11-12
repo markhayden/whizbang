@@ -103,8 +103,9 @@ is bounded by the artifact, not by the file:
   only as its bytes are read, so it costs no more than a small multiple of the file's size.
   An image is held to ADR 0001's limits.
 
-Nothing here limits the size of the file itself; whoever reads the bytes does. A tighter
-bound for masks is on `docs/carry-over.md`.
+Nothing here limits the size of the file itself; whoever reads the bytes does. The first
+such reader is `whizbang store import`, which refuses a file over 65 MiB before it reads
+it. A tighter bound for masks is on `docs/carry-over.md`.
 
 ### The six types
 
