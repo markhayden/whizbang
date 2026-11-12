@@ -171,12 +171,12 @@ reference says; every created path has owner-only permissions.
 **Depends on:** A1, A2. **Reads:** rascal `crates/rascal-core/src/artifact.rs`, `mask.rs`,
 ADR 0006 and ADR 0016.
 
-- [ ] ADR 0002: the six types (`Mask`, `Location`, `Image`, `BandProfile`, `Series`, `Plan`),
+- [x] ADR 0002: the six types (`Mask`, `Location`, `Image`, `BandProfile`, `Series`, `Plan`),
       each with its format, its identity and what it records of its origin; the mask's core,
       blend and protect planes and its prescriptions; what a mask must carry to be read in
       another store.
-- [ ] The types, serialised canonically.
-- [ ] A dev command, `whizbang store import <file>`, that brings a canonical artifact file
+- [x] The types, serialised canonically.
+- [x] A dev command, `whizbang store import <file>`, that brings a canonical artifact file
       into the store, so fixtures can become inputs.
 
 **Done when** these pass: each type is created, stored, read back and has the same identity;

@@ -16,6 +16,7 @@ pub const GENERATION_FORMAT: u32 = 1;
 #[serde(deny_unknown_fields)]
 pub struct Entry {
     /// The stored file.
+    #[serde(with = "super::digest::bare_hex")]
     pub digest: Digest,
     /// Its length. Reading checks it, so a file cut short is told from the right one
     /// before its digest is worked out, and a reader knows the size without reading.

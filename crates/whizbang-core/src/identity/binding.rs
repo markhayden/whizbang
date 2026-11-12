@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::digest::{Digest, Encoder, PixelDigest};
+use super::digest::{Digest, Encoder, FieldSource, Fields, PixelDigest};
 use super::mapping::{Mapping, Matrix, between, inverse, multiply, transpose};
 use super::space::{Point, Space};
 use super::{IdentityError, Result};
@@ -191,9 +191,18 @@ impl Binding {
     /// destination (the root, or an image's pixel digest), the destination space, the
     /// direction, and the mapping's kind and parameters.
     pub fn id(&self) -> BindingId {
-        let mut encoder = Encoder::new("binding/1");
+        let mut encoder = Encoder::new(Binding::KIND);
+        self.encode(&mut encoder);
+        BindingId(encoder.finish())
+    }
+
+    /// The kind, with its version, that a binding's identity is hashed under.
+    pub(crate) const KIND: &'static str = "binding/1";
+
+    /// Writes the fields of the binding's identity, in the order ADR 0001 gives.
+    pub(crate) fn encode(&self, encoder: &mut dyn Fields) {
         encoder.digest(&self.source.0);
-        self.source_space.encode(&mut encoder);
+        self.source_space.encode(encoder);
         match &self.destination {
             Destination::Root => encoder.unsigned(0),
             Destination::Image(image) => {
@@ -201,13 +210,48 @@ impl Binding {
                 encoder.digest(&image.0);
             }
         }
-        self.destination_space.encode(&mut encoder);
+        self.destination_space.encode(encoder);
         encoder.unsigned(match self.direction {
             Direction::SourceToDestination => 0,
             Direction::DestinationToSource => 1,
         });
-        self.mapping.encode(&mut encoder);
-        BindingId(encoder.finish())
+        self.mapping.encode(encoder);
+    }
+
+    /// Reads back what [`Binding::encode`] wrote, and checks the binding as a new one is
+    /// checked: a mapping that does not fit its two spaces is refused here too.
+    pub(crate) fn decode(source: &mut dyn FieldSource) -> Result<Binding> {
+        let image = PixelDigest(source.digest()?);
+        let source_space = Space::decode(source)?;
+        let destination = match source.unsigned()? {
+            0 => Destination::Root,
+            1 => Destination::Image(PixelDigest(source.digest()?)),
+            other => {
+                return Err(IdentityError::Binding(format!(
+                    "{other} is not a destination"
+                )));
+            }
+        };
+        let destination_space = Space::decode(source)?;
+        let direction = match source.unsigned()? {
+            0 => Direction::SourceToDestination,
+            1 => Direction::DestinationToSource,
+            other => {
+                return Err(IdentityError::Binding(format!(
+                    "{other} is not a direction"
+                )));
+            }
+        };
+        let binding = Binding {
+            source: image,
+            source_space,
+            destination,
+            destination_space,
+            direction,
+            mapping: Mapping::decode(source)?,
+        };
+        binding.check()?;
+        Ok(binding)
     }
 
     /// Maps a point of the source to its place on the destination. A point outside the
