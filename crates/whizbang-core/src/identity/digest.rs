@@ -16,6 +16,11 @@ impl Digest {
         Digest(Sha256::digest(bytes).into())
     }
 
+    /// The digest these 32 bytes are.
+    pub fn from_bytes(bytes: [u8; 32]) -> Digest {
+        Digest(bytes)
+    }
+
     /// The 32 bytes.
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
@@ -116,15 +121,31 @@ impl std::fmt::Display for PixelDigest {
     }
 }
 
+/// Where the fields of an identity are written, in the one encoding ADR 0001 gives. A
+/// field is one tag byte and its value: `u` and eight bytes, big-endian; `f` and the eight
+/// bytes of an IEEE 754 double, big-endian, with negative zero written as zero; `d` and the
+/// 32 bytes of a digest; `b`, the length as eight bytes, big-endian, and the bytes.
+pub(crate) trait Fields {
+    fn unsigned(&mut self, value: u64);
+    /// The caller has refused a value that is not finite.
+    fn float(&mut self, value: f64);
+    fn digest(&mut self, value: &Digest);
+    fn bytes(&mut self, value: &[u8]);
+}
+
+/// Where the fields of an identity are read back from, in the order they were written.
+pub(crate) trait FieldSource {
+    fn unsigned(&mut self) -> Result<u64>;
+    fn float(&mut self) -> Result<f64>;
+    fn digest(&mut self) -> Result<Digest>;
+}
+
 /// Hashes one identity. The bytes hashed are `whizbang:`, the kind (which carries its
-/// version, as in `pixels/1`), a zero byte, then each field in a fixed order. A field is one
-/// tag byte and its value: `u` and eight bytes, big-endian; `f` and the eight bytes of an
-/// IEEE 754 double, big-endian, with negative zero written as zero; `d` and the 32 bytes of
-/// a digest; `b`, the length as eight bytes, big-endian, and the bytes.
-pub(super) struct Encoder(Sha256);
+/// version, as in `pixels/1`), a zero byte, then each field in a fixed order.
+pub(crate) struct Encoder(Sha256);
 
 impl Encoder {
-    pub(super) fn new(kind: &str) -> Encoder {
+    pub(crate) fn new(kind: &str) -> Encoder {
         let mut hasher = Sha256::new();
         hasher.update(b"whizbang:");
         hasher.update(kind.as_bytes());
@@ -132,30 +153,31 @@ impl Encoder {
         Encoder(hasher)
     }
 
-    pub(super) fn unsigned(&mut self, value: u64) {
+    pub(crate) fn finish(self) -> Digest {
+        Digest(self.0.finalize().into())
+    }
+}
+
+impl Fields for Encoder {
+    fn unsigned(&mut self, value: u64) {
         self.0.update(b"u");
         self.0.update(value.to_be_bytes());
     }
 
-    /// The caller has refused a value that is not finite.
-    pub(super) fn float(&mut self, value: f64) {
+    fn float(&mut self, value: f64) {
         let value = if value == 0.0 { 0.0 } else { value };
         self.0.update(b"f");
         self.0.update(value.to_bits().to_be_bytes());
     }
 
-    pub(super) fn digest(&mut self, value: &Digest) {
+    fn digest(&mut self, value: &Digest) {
         self.0.update(b"d");
         self.0.update(value.as_bytes());
     }
 
-    pub(super) fn bytes(&mut self, value: &[u8]) {
+    fn bytes(&mut self, value: &[u8]) {
         self.0.update(b"b");
         self.0.update((value.len() as u64).to_be_bytes());
         self.0.update(value);
-    }
-
-    pub(super) fn finish(self) -> Digest {
-        Digest(self.0.finalize().into())
     }
 }
