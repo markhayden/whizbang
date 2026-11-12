@@ -15,7 +15,12 @@ whizbang-core = { path = "crates/whizbang-core" }
 whizbang-testkit = { path = "crates/whizbang-testkit" }
 clap = { version = "4.6", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# `float_roundtrip`: a double written to JSON is read back as the same double. Without
+# it the reader's fast path is wrong in the last bit for about one double of seventeen
+# digits in nine, and a run record, which is compared with its own bytes on reading, or a
+# binding, whose numbers are part of its identity, would not survive being read. It is on
+# for every crate, so that no crate that reads JSON can be the one without it.
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
 sha2 = "0.11"
 
 [workspace.lints.rust]

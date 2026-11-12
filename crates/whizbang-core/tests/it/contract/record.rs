@@ -10,9 +10,9 @@ use whizbang_core::contract::record::{
     self, ArgumentValue, Diagnostic, Ran, RunRecord, Status, StoredRecordError,
 };
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Call, Committed, Engine, Executor, InputPort, Kind, NoBackends,
-    Outcome, PreparedCall, RUN_RECORD, RUN_RECORD_SCHEMA, RecordError, Registry, RunId, Secrets,
-    Value, journal_bytes, read_journal,
+    Action, ActionDescriptor, Argument, Call, Committed, Engine, Executor, InputPort, Kind,
+    NoBackends, Outcome, PreparedCall, RUN_RECORD, RUN_RECORD_SCHEMA, RecordError, Registry, RunId,
+    Secrets, Value, ValueType, journal_bytes, read_journal,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::RealFs;
@@ -387,6 +387,12 @@ fn world() -> World {
     registry
         .register(Arc::new(Fake(look.build().unwrap())))
         .unwrap();
+    let scale = ActionDescriptor::draft("scale", "1.0.0", Kind::Primitive, "Scales.").argument(
+        Argument::required("by", "The factor.", ValueType::number(None, None)),
+    );
+    registry
+        .register(Arc::new(Fake(scale.build().unwrap())))
+        .unwrap();
     let engine = Engine::new(
         registry,
         Arc::new(NoBackends),
@@ -541,6 +547,44 @@ fn the_inputs_and_the_committed_outputs_of_a_run_are_in_its_record() {
     let written = record.to_bytes();
     validate(&schema(), &serde_json::from_slice(&written).unwrap()).unwrap();
     assert_eq!(RunRecord::from_bytes(&written).unwrap(), record);
+}
+
+#[test]
+fn a_record_with_any_number_in_it_is_read_back() {
+    // A record is read by comparing what was read, written again, with the bytes. So
+    // every double must read back to itself. These are the first two a reader that
+    // takes the fast path gets wrong; a ratio, as a scale or a gamma is, is one such in
+    // about nine.
+    let world = world();
+    let mut values = vec![
+        1.6290118483412321_f64,
+        1.0715660391465826e-75,
+        0.1,
+        1e300,
+        5e-324,
+        f64::MAX,
+        -2.5,
+    ];
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+    for _ in 0..2000 {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let a = (state >> 20) % 1_000_000 + 1;
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let b = (state >> 20) % 1_000_000 + 1;
+        values.push(a as f64 / b as f64);
+    }
+    for value in values {
+        let call = Call::new("scale").argument("by", Value::Number(value));
+        let prepared = world.engine.prepare(&call).unwrap();
+        let record = RunRecord::of(ran(&prepared, &Outcome::Cancelled), &Secrets::none());
+        let read = RunRecord::from_bytes(&record.to_bytes())
+            .unwrap_or_else(|error| panic!("{value:?} was written and not read: {error}"));
+        assert_eq!(read, record, "{value:?}");
+    }
 }
 
 #[test]
