@@ -673,6 +673,9 @@ impl Store {
     /// A crash at any point leaves the current generation whole, and at worst some of
     /// what was to go still there; a prune can always be run again. What a prune leaves
     /// behind for a reader goes at the first prune after that reader has finished.
+    ///
+    /// This writer's own [`Store::snapshot`] holds nothing: a process that prunes decides
+    /// for itself what it still reads of an older generation.
     pub fn prune(&self) -> Result<Pruned> {
         let files = &self.files;
         let fs = files.fs.as_ref();
