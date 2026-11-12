@@ -25,7 +25,9 @@ done
 command -v jq >/dev/null || { echo "crate graph: jq is not installed" >&2; exit 2; }
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+# An exit of 0 that is not one meant to succeed becomes 70: see the top of scripts/scan.sh.
+done_ok=0
+trap 'rc=$?; rm -rf "$tmp"; [ "$done_ok" = 1 ] || [ "$rc" -ne 0 ] || { echo "crate graph: stopped before its end; failing" >&2; rc=70; }; exit "$rc"' EXIT
 
 # The edge list becomes three files: the crates it names, the edges allowed for any kind of
 # dependency, and the edges allowed for a development dependency. No associative arrays: the
@@ -121,3 +123,4 @@ if [ "$status" -ne 0 ]; then
   exit 1
 fi
 echo "crate graph: ok ($crates crates, $found edges between them, all listed in $edges)"
+done_ok=1

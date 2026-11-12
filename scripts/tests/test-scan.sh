@@ -14,11 +14,12 @@ source "$(dirname "$0")/lib.sh"
 parts=()
 pids=()
 for part in "${1:-scripts/tests/scan}"/*.sh; do
-  [ "${part##*/}" != common.sh ] || continue
+  [ -f "$part" ] && [ "${part##*/}" != common.sh ] || continue
   bash "$part" >"$tmp/${part##*/}.log" 2>&1 &
   parts+=("$part")
   pids+=($!)
 done
+[ "${#parts[@]}" -gt 0 ] || fail "no part under ${1:-scripts/tests/scan}"
 failed=0
 i=0
 while [ "$i" -lt "${#parts[@]}" ]; do

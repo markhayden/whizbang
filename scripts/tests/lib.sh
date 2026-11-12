@@ -11,7 +11,9 @@ set -euo pipefail
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+# An exit of 0 before `finished` becomes 70: see the top of scripts/scan.sh.
+done_ok=0
+trap 'rc=$?; rm -rf "$tmp"; [ "$done_ok" = 1 ] || [ "$rc" -ne 0 ] || { echo "test: stopped before its end; failing" >&2; rc=70; }; exit "$rc"' EXIT
 
 fail() {
   echo "failed: $*" >&2
@@ -23,6 +25,7 @@ fail() {
 # output: a file that exits 0 without reaching its end has not passed.
 finished() {
   echo "finished: $0"
+  done_ok=1
 }
 
 # expect_pass <name> <command...>: the command must exit 0.

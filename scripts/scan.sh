@@ -46,6 +46,12 @@
 # set an `EXIT` trap, exits 0: without this line a broken scan would pass. Every script
 # here that sets such a trap starts the same way (scripts/tests/test-syntax.sh holds them
 # to it).
+#
+# That bash also exits 0, once the trap is set, from faults no parse finds: an unset
+# variable, a bad substitution, an assignment to a readonly variable, a syntax error in an
+# `eval` or a sourced file; and any bash exits 0 from a file whose rest was swallowed by a
+# here-document with no end. So the trap turns an exit of 0 into 70, and says so, unless
+# `done_ok` is 1, and that is set only on the line before an exit that is meant to succeed.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "scan: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
 set -euo pipefail
 umask 077
@@ -129,7 +135,8 @@ while [ $# -gt 0 ]; do
 done
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+done_ok=0
+trap 'rc=$?; rm -rf "$work"; [ "$done_ok" = 1 ] || [ "$rc" -ne 0 ] || { echo "scan: stopped before its end; failing" >&2; rc=70; }; exit "$rc"' EXIT
 
 if [ "$mode" = message ]; then
   [ -r "$message" ] || die "cannot read the message file"
@@ -148,6 +155,7 @@ if [ "$mode" = message ]; then
     echo "commit-msg: remove the line; commits here name no agent or model" >&2
     exit 1
   }
+  done_ok=1
   exit 0
 fi
 
@@ -617,4 +625,5 @@ if [ "$secrets_only" -eq 0 ]; then
   [ "$count" -eq 0 ] || status=1
 fi
 
+done_ok=1
 exit "$status"

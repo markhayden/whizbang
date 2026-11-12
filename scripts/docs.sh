@@ -52,7 +52,9 @@ cd "$(git rev-parse --show-toplevel)"
 command -v jq >/dev/null || { echo "docs: jq is not installed" >&2; exit 2; }
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+# An exit of 0 that is not one meant to succeed becomes 70: see the top of scripts/scan.sh.
+done_ok=0
+trap 'rc=$?; rm -rf "$tmp"; [ "$done_ok" = 1 ] || [ "$rc" -ne 0 ] || { echo "docs: stopped before its end; failing" >&2; rc=70; }; exit "$rc"' EXIT
 
 if [ -n "$description" ]; then
   [ -f "$description" ] || { echo "docs: no such description: $description" >&2; exit 2; }
@@ -127,6 +129,7 @@ if [ "$check" -eq 0 ]; then
   mkdir -p "$out"
   cp "$tmp/description.json" "$tmp/actions.md" "$out/"
   echo "docs: wrote $shown/description.json and $shown/actions.md"
+  done_ok=1
   exit 0
 fi
 
@@ -175,3 +178,4 @@ if [ "$stray" -ne 0 ]; then
 fi
 [ "$stale" -eq 0 ] && [ "$stray" -eq 0 ] || exit 1
 echo "docs: ok ($shown matches a fresh generation)"
+done_ok=1

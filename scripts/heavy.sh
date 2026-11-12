@@ -99,7 +99,9 @@ release() {
     rm -rf "$lock"
   fi
 }
-trap release EXIT
+# An exit of 0 that is not one meant to succeed becomes 70: see the top of scripts/scan.sh.
+done_ok=0
+trap 'rc=$?; release; [ "$done_ok" = 1 ] || [ "$rc" -ne 0 ] || { echo "heavy: stopped before its end; failing" >&2; rc=70; }; exit "$rc"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
@@ -107,4 +109,5 @@ echo "heavy: [$label] running" >&2
 status=0
 "$@" || status=$?
 echo "heavy: [$label] finished with status $status" >&2
+done_ok=1
 exit "$status"
