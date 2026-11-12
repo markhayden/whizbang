@@ -251,8 +251,8 @@ impl Binding {
 
     /// This binding followed by `next`, as one binding from this source onto `next`'s
     /// destination. `next` must start where this one ends: the same image in the same
-    /// space. Crops compose into a crop, crops and homographies into a homography, and
-    /// rotations into a rotation. Any other pair does not make one mapping and is refused:
+    /// space. Two crops, each stated from its source, compose into a crop; any other pair
+    /// of crops and homographies into a homography; rotations into a rotation. Any other pair does not make one mapping and is refused:
     /// map its points through each binding in turn.
     pub fn then(&self, next: &Binding) -> Result<Binding> {
         let refuse = |why: &str| Err(IdentityError::Binding(why.to_owned()));
@@ -288,24 +288,41 @@ impl Binding {
                 },
             );
         }
+        // Two crops, each stated from its source: the inner box's edges, placed between
+        // the outer box's edges. An edge the inner crop shares with the outer one comes out
+        // as the outer one's edge exactly, and no edge can pass it.
+        if let (
+            Mapping::Crop {
+                left,
+                top,
+                right,
+                bottom,
+            },
+            Direction::SourceToDestination,
+            Mapping::Crop {
+                left: outer_left,
+                top: outer_top,
+                right: outer_right,
+                bottom: outer_bottom,
+            },
+            Direction::SourceToDestination,
+        ) = (&self.mapping, self.direction, &next.mapping, next.direction)
+        {
+            let width = f64::from(next.source_space.width());
+            let height = f64::from(next.source_space.height());
+            let mapping = Mapping::Crop {
+                left: between(*outer_left, *outer_right, *left, width),
+                top: between(*outer_top, *outer_bottom, *top, height),
+                right: between(*outer_left, *outer_right, *right, width),
+                bottom: between(*outer_top, *outer_bottom, *bottom, height),
+            };
+            return build(Direction::SourceToDestination, mapping);
+        }
         let (Some(first), Some(second)) = (self.planar()?, next.planar()?) else {
             return refuse("these two mappings do not compose into one");
         };
-        let matrix = multiply(&second, &first);
-        let crops = matches!(self.mapping, Mapping::Crop { .. })
-            && matches!(next.mapping, Mapping::Crop { .. })
-            && self.direction == Direction::SourceToDestination
-            && next.direction == Direction::SourceToDestination;
-        let mapping = if crops {
-            // Two crops: the source's corners on the last destination.
-            Mapping::Crop {
-                left: matrix[2],
-                top: matrix[5],
-                right: matrix[0] * f64::from(self.source_space.width()) + matrix[2],
-                bottom: matrix[4] * f64::from(self.source_space.height()) + matrix[5],
-            }
-        } else {
-            Mapping::Homography { matrix }
+        let mapping = Mapping::Homography {
+            matrix: multiply(&second, &first),
         };
         build(Direction::SourceToDestination, mapping)
     }
@@ -332,5 +349,17 @@ impl Binding {
             Direction::SourceToDestination => matrix,
             Direction::DestinationToSource => inverse(&matrix)?,
         }))
+    }
+}
+
+/// The place between `low` and `high` that `at` has between 0 and `size`, measured from
+/// the nearer end: `low + at (high - low) / size` in the first half, and
+/// `high - (size - at) (high - low) / size` in the second. At 0 it is `low` and at `size`
+/// it is `high`, exactly, and it is never outside the two.
+fn between(low: f64, high: f64, at: f64, size: f64) -> f64 {
+    if at <= size / 2.0 {
+        low + at * (high - low) / size
+    } else {
+        high - (size - at) * (high - low) / size
     }
 }

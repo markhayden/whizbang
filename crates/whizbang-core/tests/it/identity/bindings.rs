@@ -656,3 +656,361 @@ fn a_binding_is_checked_again_when_it_is_read() {
     assert_ne!(moved, text);
     assert!(serde_json::from_str::<Binding>(&moved).is_err());
 }
+
+// --- the encoding, part by part -----------------------------------------------------------
+
+#[test]
+fn the_topology_alone_tells_two_bindings_apart() {
+    let whole = Space::panorama(400, 200).unwrap();
+    let part = Space::new(400, 200, Projection::Equirectangular, Topology::Bounded).unwrap();
+    assert_ne!(
+        Binding::root(image("a"), whole).id(),
+        Binding::root(image("a"), part).id()
+    );
+}
+
+#[test]
+fn the_identity_of_each_kind_of_mapping_is_fixed() {
+    // Computed apart from this code, from the encoding ADR 0001 states. Each pins the
+    // kind's number and the order of its parameters.
+    let onto = |source_space, destination_space, direction, mapping| {
+        Binding::new(
+            image("a"),
+            source_space,
+            image("b"),
+            destination_space,
+            direction,
+            mapping,
+        )
+        .unwrap()
+        .id()
+        .to_string()
+    };
+    let crop = onto(
+        Space::flat(64, 60).unwrap(),
+        Space::flat(320, 200).unwrap(),
+        Direction::SourceToDestination,
+        Mapping::Crop {
+            left: 64.0,
+            top: 40.5,
+            right: 128.0,
+            bottom: 100.25,
+        },
+    );
+    assert_eq!(
+        crop,
+        "sha256:5d21789e426d597f46f0b66db3b9533e819faff1c950925083292e8e1f5ae9f4"
+    );
+    let rotation = onto(
+        Space::panorama(400, 200).unwrap(),
+        Space::panorama(800, 400).unwrap(),
+        Direction::DestinationToSource,
+        Mapping::Rotation {
+            matrix: [0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        },
+    );
+    assert_eq!(
+        rotation,
+        "sha256:f436f7decebc8ca88bba71e38b628d9fadcb6d690dc553b98ef939cd2e2a8c80"
+    );
+    let wrap = onto(
+        Space::flat(16, 6).unwrap(),
+        Space::panorama(40, 6).unwrap(),
+        Direction::SourceToDestination,
+        Mapping::Wrap { strip: 8 },
+    );
+    assert_eq!(
+        wrap,
+        "sha256:889eca0cbc19667a28da178b22ebbeac80e99eac3588dbc36d947184e6123a67"
+    );
+}
+
+#[test]
+fn negative_zero_is_zero_in_an_identity() {
+    let space = Space::flat(100, 100).unwrap();
+    let with = |zero: f64| {
+        Binding::new(
+            image("a"),
+            space,
+            image("b"),
+            space,
+            Direction::SourceToDestination,
+            Mapping::Homography {
+                matrix: [1.0, zero, 12.0, zero, 1.0, zero, zero, zero, 1.0],
+            },
+        )
+        .unwrap()
+    };
+    assert_eq!(with(0.0).id(), with(-0.0).id());
+    assert_eq!(with(0.0), with(-0.0));
+}
+
+#[test]
+fn two_rotations_compose_in_the_order_they_are_taken() {
+    let space = Space::panorama(400, 200).unwrap();
+    let step = |source: &str, destination: &str, matrix| {
+        Binding::new(
+            image(source),
+            space,
+            image(destination),
+            space,
+            Direction::SourceToDestination,
+            Mapping::Rotation { matrix },
+        )
+        .unwrap()
+    };
+    // A quarter turn about the vertical, then a quarter turn about a level axis: the two
+    // do not commute.
+    let first = step("a", "b", yaw(90.0));
+    let second = step("b", "c", pitch(90.0));
+    let both = first.then(&second).unwrap();
+    let Mapping::Rotation { matrix } = both.mapping() else {
+        panic!("{:?}", both.mapping());
+    };
+    for (got, want) in matrix.iter().zip(times(&pitch(90.0), &yaw(90.0))) {
+        assert!((got - want).abs() < 1e-12, "{matrix:?}");
+    }
+    for (x, y) in [(10.0, 20.0), (130.5, 99.0), (399.0, 170.0), (250.0, 60.5)] {
+        let point = Point::new(x, y);
+        let one_by_one = second
+            .to_destination(first.to_destination(point).unwrap())
+            .unwrap();
+        let at_once = both.to_destination(point).unwrap();
+        assert!(
+            close(at_once, one_by_one, 1e-9),
+            "{point:?}: {at_once:?} {one_by_one:?}"
+        );
+    }
+    // The same when one of the two is stated the other way round.
+    let second_reversed = step("c", "b", pitch(-90.0)).reversed().unwrap();
+    let both = first.then(&second_reversed).unwrap();
+    let point = Point::new(130.5, 99.0);
+    let one_by_one = second
+        .to_destination(first.to_destination(point).unwrap())
+        .unwrap();
+    assert!(close(both.to_destination(point).unwrap(), one_by_one, 1e-9));
+}
+
+// --- crops that touch an edge -------------------------------------------------------------
+
+/// A crop of `source` (width by height) onto `destination`.
+fn crop_of(
+    source: &str,
+    size: (u32, u32),
+    destination: &str,
+    destination_space: Space,
+    edges: (f64, f64, f64, f64),
+) -> Result<Binding, IdentityError> {
+    Binding::new(
+        image(source),
+        Space::flat(size.0, size.1).unwrap(),
+        image(destination),
+        destination_space,
+        Direction::SourceToDestination,
+        Mapping::Crop {
+            left: edges.0,
+            top: edges.1,
+            right: edges.2,
+            bottom: edges.3,
+        },
+    )
+}
+
+#[test]
+fn a_crop_of_a_crop_that_touches_the_far_edge_composes() {
+    // The outer crop is the right two thirds of a 3 by 3 root, rendered 5 by 5; the inner
+    // one is the right two fifths of that. Its right edge is the root's right edge, and
+    // must come out as exactly 3: a multiplication and a division do not give that.
+    let root = Space::flat(3, 3).unwrap();
+    let outer = crop_of("outer", (5, 5), "root", root, (1.0, 0.0, 3.0, 3.0)).unwrap();
+    let inner = crop_of(
+        "inner",
+        (5, 5),
+        "outer",
+        Space::flat(5, 5).unwrap(),
+        (3.0, 0.0, 5.0, 5.0),
+    )
+    .unwrap();
+    let both = inner.then(&outer).unwrap();
+    let Mapping::Crop {
+        left,
+        top,
+        right,
+        bottom,
+    } = *both.mapping()
+    else {
+        panic!("{:?}", both.mapping());
+    };
+    assert_eq!((top, right, bottom), (0.0, 3.0, 3.0));
+    assert!((left - 2.2).abs() < 1e-12, "{left}");
+}
+
+#[test]
+fn crops_of_crops_compose_whatever_edges_they_touch() {
+    // Random pairs from a fixed seed; every edge has one chance in three of touching its
+    // parent's. Each pair must compose, into a box that lies inside the root, that keeps
+    // exactly every edge the two crops share with their parents, and that maps as the two
+    // crops do one after the other.
+    struct Random(u64);
+    impl Random {
+        fn next(&mut self, below: u32) -> u32 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((self.0 >> 33) % u64::from(below)) as u32
+        }
+        /// Two edges inside `size`, on tenths of a pixel: most are not exact in binary.
+        fn span(&mut self, size: u32) -> (f64, f64) {
+            let tenths = size * 10;
+            let low = if self.next(3) == 0 {
+                0
+            } else {
+                self.next(tenths)
+            };
+            let high = if self.next(3) == 0 {
+                tenths
+            } else {
+                low + 1 + self.next(tenths - low)
+            };
+            (f64::from(low) / 10.0, f64::from(high) / 10.0)
+        }
+        /// A box inside `width` by `height`.
+        fn edges(&mut self, width: u32, height: u32) -> (f64, f64, f64, f64) {
+            let (left, right) = self.span(width);
+            let (top, bottom) = self.span(height);
+            (left, top, right, bottom)
+        }
+        fn size(&mut self) -> (u32, u32) {
+            (1 + self.next(64), 1 + self.next(64))
+        }
+    }
+    let mut random = Random(0x2545_f491_4f6c_dd1d);
+    let mut touching = 0;
+    for pair in 0..4000 {
+        let (root_size, outer_size, inner_size) = (random.size(), random.size(), random.size());
+        let root = Space::flat(root_size.0, root_size.1).unwrap();
+        let outer_edges = random.edges(root_size.0, root_size.1);
+        let inner_edges = random.edges(outer_size.0, outer_size.1);
+        let outer = crop_of("outer", outer_size, "root", root, outer_edges).unwrap();
+        let outer_space = Space::flat(outer_size.0, outer_size.1).unwrap();
+        let inner = crop_of("inner", inner_size, "outer", outer_space, inner_edges).unwrap();
+        let both = inner.then(&outer).unwrap_or_else(|error| {
+            panic!("pair {pair}: {outer_edges:?} of {root_size:?}, {inner_edges:?} of {outer_size:?}: {error}")
+        });
+        let Mapping::Crop {
+            left,
+            top,
+            right,
+            bottom,
+        } = *both.mapping()
+        else {
+            panic!("pair {pair}: {:?}", both.mapping());
+        };
+        // An edge the inner crop shares with the outer one is the outer one's edge on the
+        // root, exactly.
+        let (width, height) = (f64::from(outer_size.0), f64::from(outer_size.1));
+        for (shared, got, want) in [
+            (inner_edges.0 == 0.0, left, outer_edges.0),
+            (inner_edges.1 == 0.0, top, outer_edges.1),
+            (inner_edges.2 == width, right, outer_edges.2),
+            (inner_edges.3 == height, bottom, outer_edges.3),
+        ] {
+            if shared {
+                assert_eq!(got, want, "pair {pair}");
+                touching += 1;
+            }
+        }
+        assert!(
+            outer_edges.0 <= left && right <= outer_edges.2,
+            "pair {pair}"
+        );
+        assert!(
+            outer_edges.1 <= top && bottom <= outer_edges.3,
+            "pair {pair}"
+        );
+        for (x, y) in [(0.0, 0.0), (0.5, 0.5), (1.0, 1.0), (0.25, 0.875)] {
+            let point = Point::new(x * f64::from(inner_size.0), y * f64::from(inner_size.1));
+            let one_by_one = outer
+                .to_destination(inner.to_destination(point).unwrap())
+                .unwrap();
+            let at_once = both.to_destination(point).unwrap();
+            assert!(
+                close(at_once, one_by_one, 1e-9),
+                "pair {pair}: {at_once:?} {one_by_one:?}"
+            );
+        }
+    }
+    assert!(touching > 3000, "{touching}");
+}
+
+#[test]
+fn a_crop_that_touches_a_panoramas_right_edge_maps_there_and_back() {
+    // The last 100 columns of a panorama. The crop's right edge is the panorama's right
+    // edge, which is also its column 0: it maps back to the crop's right edge, not out of
+    // the crop.
+    let panorama = Space::panorama(400, 200).unwrap();
+    let crop = crop_of(
+        "crop",
+        (100, 50),
+        "panorama",
+        panorama,
+        (300.0, 50.0, 400.0, 100.0),
+    )
+    .unwrap();
+    let edge = Point::new(100.0, 10.0);
+    let on_panorama = crop.to_destination(edge).unwrap();
+    assert_eq!(on_panorama, Point::new(0.0, 60.0));
+    assert_eq!(crop.to_source(on_panorama).unwrap(), edge);
+    assert_eq!(crop.to_source(Point::new(400.0, 60.0)).unwrap(), edge);
+    // Every other column goes there and back as before, and the columns just right of the
+    // seam are not in the crop.
+    for column in 0..100 {
+        let point = Point::new(f64::from(column) + 0.5, 10.0);
+        let there = crop.to_destination(point).unwrap();
+        assert_eq!(there, Point::new(300.5 + f64::from(column), 60.0));
+        assert_eq!(crop.to_source(there).unwrap(), point);
+    }
+    assert!(crop.to_source(Point::new(0.5, 60.0)).is_err());
+    assert!(crop.to_source(Point::new(299.5, 60.0)).is_err());
+    // A crop that starts at the left edge keeps column 0 as its own left edge.
+    let left = crop_of(
+        "crop",
+        (100, 50),
+        "panorama",
+        panorama,
+        (0.0, 50.0, 100.0, 100.0),
+    )
+    .unwrap();
+    assert_eq!(
+        left.to_source(Point::new(0.0, 60.0)).unwrap(),
+        Point::new(0.0, 10.0)
+    );
+    assert_eq!(
+        left.to_source(Point::new(400.0, 60.0)).unwrap(),
+        Point::new(0.0, 10.0)
+    );
+    // The whole panorama at half the size is a panorama: its column 0 is column 0.
+    let half = Binding::new(
+        image("half"),
+        Space::panorama(200, 100).unwrap(),
+        image("panorama"),
+        panorama,
+        Direction::SourceToDestination,
+        Mapping::Crop {
+            left: 0.0,
+            top: 0.0,
+            right: 400.0,
+            bottom: 200.0,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        half.to_source(Point::new(0.0, 60.0)).unwrap(),
+        Point::new(0.0, 30.0)
+    );
+    assert_eq!(
+        half.to_destination(Point::new(200.0, 30.0)).unwrap(),
+        Point::new(0.0, 60.0)
+    );
+}

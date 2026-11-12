@@ -166,10 +166,21 @@ impl Mapping {
                 top,
                 right,
                 bottom,
-            } => Point::new(
-                (point.x - left) * f64::from(from.width()) / (right - left),
-                (point.y - top) * f64::from(from.height()) / (bottom - top),
-            ),
+            } => {
+                // In a wrapped space the right edge is column 0. A box that reaches the
+                // right edge holds that column as its own right edge.
+                let width = f64::from(to.width());
+                let wrapped = to.topology() == Topology::Wrap;
+                let x = if wrapped && point.x < *left && point.x + width <= *right {
+                    point.x + width
+                } else {
+                    point.x
+                };
+                Point::new(
+                    (x - left) * f64::from(from.width()) / (right - left),
+                    (point.y - top) * f64::from(from.height()) / (bottom - top),
+                )
+            }
             Mapping::Homography { matrix } => project(&inverse(matrix)?, point)?,
             Mapping::Rotation { matrix } => rotate(&transpose(matrix), to, from, point),
             Mapping::Wrap { strip } => {

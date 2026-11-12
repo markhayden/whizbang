@@ -192,6 +192,15 @@ fn a_singular_homography_is_refused() {
         let mapping = Mapping::Homography { matrix };
         assert!(refused(mapping.check(&space, &space)), "{matrix:?}");
     }
+    // The test is made between the two spaces' unit squares, not on the matrix as given: a
+    // plain move of 15,000 pixels in a large image has entries of very different sizes,
+    // and is no nearer to singular for that.
+    let large = Space::flat(20_000, 20_000).unwrap();
+    Mapping::Homography {
+        matrix: [1.0, 0.0, 15_000.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+    }
+    .check(&large, &large)
+    .unwrap();
     // A small matrix is not a singular one: the scale of a homography means nothing.
     Mapping::Homography {
         matrix: [1e-8, 0.0, 0.0, 0.0, 1e-8, 0.0, 0.0, 0.0, 1e-8],
@@ -302,6 +311,30 @@ fn a_rotation_needs_two_panoramas_and_a_proper_rotation() {
     assert!(refused(turn.check(&flat, &panorama)));
     assert!(refused(turn.check(&panorama, &flat)));
     assert!(refused(turn.check(&part, &panorama)));
+    // A rotation is one to within 1e-9, and no further off than that.
+    let mut nearly = yaw(10.0);
+    nearly[0] += 1e-11;
+    Mapping::Rotation { matrix: nearly }
+        .check(&panorama, &panorama)
+        .unwrap();
+    let mut off = yaw(10.0);
+    off[0] += 1e-6;
+    assert!(refused(
+        Mapping::Rotation { matrix: off }.check(&panorama, &panorama)
+    ));
+    // A shear of one part in a million: its determinant is exactly 1, and its rows are
+    // not at right angles.
+    assert!(refused(
+        Mapping::Rotation {
+            matrix: [1.0, 1e-6, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        }
+        .check(&panorama, &panorama)
+    ));
+    let mut stretched = yaw(10.0);
+    stretched[8] += 1e-6;
+    assert!(refused(
+        Mapping::Rotation { matrix: stretched }.check(&panorama, &panorama)
+    ));
     for matrix in [
         // A mirror: orthogonal, but its determinant is -1.
         [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, -1.0],
@@ -315,6 +348,25 @@ fn a_rotation_needs_two_panoramas_and_a_proper_rotation() {
         let mapping = Mapping::Rotation { matrix };
         assert!(refused(mapping.check(&panorama, &panorama)), "{matrix:?}");
     }
+}
+
+#[test]
+fn a_rotation_carries_a_pole_to_a_pole_whatever_rounding_does() {
+    // A matrix inside the tolerance whose last row is a hair longer than 1: the pole's
+    // direction comes out a hair past the sphere, and is brought back onto it.
+    let space = Space::panorama(400, 200).unwrap();
+    let mapping = Mapping::Rotation {
+        matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0 + 4e-10],
+    };
+    mapping.check(&space, &space).unwrap();
+    let top = mapping
+        .forward(&space, &space, Point::new(120.0, 0.0))
+        .unwrap();
+    assert_eq!(top.y, 0.0);
+    let bottom = mapping
+        .forward(&space, &space, Point::new(120.0, 200.0))
+        .unwrap();
+    assert_eq!(bottom.y, 200.0);
 }
 
 // --- the wrapped cut ----------------------------------------------------------------------
@@ -338,6 +390,20 @@ fn a_wrapped_cut_puts_the_seam_in_the_middle_of_its_canvas() {
             on_canvas
         );
     }
+    // The column where the right strip ends is the canvas's right edge, and the column
+    // where the left strip begins is its left edge.
+    assert_eq!(
+        mapping
+            .backward(&canvas, &panorama, Point::new(280.0, 7.5))
+            .unwrap(),
+        Point::new(560.0, 7.5)
+    );
+    assert_eq!(
+        mapping
+            .backward(&canvas, &panorama, Point::new(3720.0, 7.5))
+            .unwrap(),
+        Point::new(0.0, 7.5)
+    );
     // The middle of the panorama is not on the canvas.
     assert!(outside(mapping.backward(
         &canvas,
