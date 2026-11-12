@@ -11,8 +11,13 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 # A stand-in for cargo, so the format check of pre-commit passes anywhere.
 mkdir "$tmp/bin"
-printf '#!/bin/sh\nexit 0\n' >"$tmp/bin/cargo"
-chmod +x "$tmp/bin/cargo"
+# It and a stand-in for just also answer with the pinned versions, so that setup finds the
+# tools in order and its status here is about the hooks alone.
+pin() { awk -v tool="$1" '$1 == tool { print $2 }' "$root/scripts/tool-versions.txt"; }
+printf '#!/bin/sh\ncase "$1" in\n  nextest) echo "cargo-nextest %s" ;;\n  deny) echo "cargo-deny %s" ;;\nesac\nexit 0\n' \
+  "$(pin cargo-nextest)" "$(pin cargo-deny)" >"$tmp/bin/cargo"
+printf '#!/bin/sh\necho "just %s"\n' "$(pin just)" >"$tmp/bin/just"
+chmod +x "$tmp/bin/cargo" "$tmp/bin/just"
 export PATH="$tmp/bin:$PATH"
 
 # A throwaway repository with this repo's hooks and setup script, installed by the setup
@@ -29,7 +34,7 @@ mkdir -p scripts
 cp -R "$root/scripts/hooks" scripts/hooks
 cp "$root/scripts/setup.sh" "$root/scripts/tool-versions.txt" scripts/
 printf 'scripts/\n' >.git/info/exclude
-scripts/setup.sh >/dev/null 2>&1 || true # the tools it checks are not this test's subject
+expect_pass "setup, with the hooks and the tools in order" scripts/setup.sh
 [ "$(git config core.hooksPath)" = "scripts/hooks" ] || fail "setup installs the hooks from scripts/hooks"
 for hook in pre-commit commit-msg pre-push; do
   [ -x "scripts/hooks/$hook" ] || fail "scripts/hooks/$hook can be run"
@@ -37,9 +42,9 @@ for hook in pre-commit commit-msg pre-push; do
   [ "$(git -C "$root" ls-files -s "scripts/hooks/$hook" | cut -d' ' -f1)" = 100755 ] ||
     fail "scripts/hooks/$hook is tracked with mode 100755"
 done
-# Setup says so, and fails, when a hook has lost that (the tools it also checks are not
-# this test's subject: their lines are not looked at).
-scripts/setup.sh --check >"$tmp/out" 2>&1 || true
+# Setup says so, and fails, when a hook has lost that. With the hooks in order it passes,
+# so the failures below are the hook's.
+expect_pass "setup --check, with the hooks in order" scripts/setup.sh --check
 for hook in pre-commit commit-msg pre-push; do
   grep -q -x -F "hook ok: $hook" "$tmp/out" || { cat "$tmp/out" >&2; fail "setup finds $hook in order"; }
 done
