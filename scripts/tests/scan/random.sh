@@ -6,7 +6,9 @@
 #
 #   WHIZBANG_SCAN_SEEDS="1 2 3"   other seeds; WHIZBANG_SCAN_TREES=18 trees for each
 #
-# The trees hold no repository inside a repository: the scan refuses those earlier.
+# The trees hold no repository inside a repository: the scan refuses those earlier. A
+# seed gives the same trees on every system: nothing in the generator asks the file
+# system what is there.
 source "$(dirname "$0")/common.sh"
 stand_in_for_git
 
@@ -33,13 +35,17 @@ sub rules {
   print $out rule(), "\n" for 1 .. $most - int(rand(3));
   close($out);
 }
-my @tracked;
+my (@tracked, %used);
 sub fill {
   my ($dir, $depth) = @_;
   rules("$dir/.gitignore", 3) if $depth > 0 && rand() < 0.2;
   for (1 .. 2 + int(rand(4))) {
     my $path = "$dir/" . name();
-    next if -e $path || -l $path;
+    # One name for each folder, whatever the file system takes for the same name: the
+    # two forms of the accented name count as one, so a seed gives the same trees on
+    # every system.
+    (my $same = $path) =~ s/cafe\314\201/caf\303\251/g;
+    next if $used{$same}++;
     my $kind = rand();
     if ($kind < 0.35 && $depth < 3) {
       mkdir($path) or die "$path: $!";

@@ -88,8 +88,9 @@ says() {
 # arguments hold the words of NOISY_ON in a row (`ls-files -z -c` is one listing and no
 # other), and then go on as git would; answer nothing when asked which paths are ignored
 # (MUTE=check-ignore), or answer for one path more than it was asked about
-# (EXTRA=check-ignore); wait a moment (SLOW); and note what the scan's own folder holds at
-# that moment (SPY).
+# (EXTRA=check-ignore); wait a moment (SLOW); note what the scan's own folder holds at
+# that moment (SPY); and note, for every call, whether configuration came with the
+# environment (its count, and a key and a value) and what two settings then are (ENV_LOG).
 stand_in_for_git() {
 real_git=$(command -v git)
 mkdir "$tmp/bin"
@@ -112,6 +113,10 @@ for arg in "$@"; do
     ls-files) [ "${LOSE_WHEN:-}" != always ] || search=1 census=1 ;;
   esac
 done
+if [ -n "${ENV_LOG:-}" ]; then
+  printf '%s|%s|%s|%s\n' "${GIT_CONFIG_COUNT:-unset}" "${GIT_CONFIG_KEY_0:-unset}${GIT_CONFIG_VALUE_1:-unset}" "$("$real" config --get grep.threads)" \
+    "$("$real" config --get core.hooksPath)" >>"$ENV_LOG"
+fi
 if [ -n "${NOISY_ON:-}" ]; then
   case " $* " in *" $NOISY_ON "*) echo "warning: something git says" >&2 ;; esac
 fi

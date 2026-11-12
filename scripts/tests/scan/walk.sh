@@ -283,5 +283,22 @@ expect_fail "a key in a tracked file with a decomposed name" ".txt:1" "$scan"
 printf '%s\n' '*.txt' >.gitignore
 expect_fail "a key in a tracked file with a decomposed name that a rule matches" ".txt:1" "$scan"
 quiet "were not looked in"
+# Two cases that are still refused on macOS, each in words that name the cause
+# (docs/carry-over.md): a file tracked under a decomposed name that a rule written
+# composed ignores, which git's search then leaves out; and one name in the index in both
+# forms, which are one file there.
+if [ "$(uname -s)" = Darwin ] && [ "$(git config --type=bool core.precomposeunicode || true)" = true ]; then
+  printf 'nothing to see\n' >"file-$nfd.txt"
+  printf '%s\n' "file-$nfc.txt" >.gitignore
+  expect_fail "a tracked decomposed name that a composed rule ignores" "files to cover were not looked in" "$scan"
+  says "tracked under a decomposed name that an ignore rule written composed matches"
+  rm .gitignore
+  git -c core.precomposeunicode=false update-index --add --cacheinfo "100644,$(git rev-parse "HEAD:file-$nfd.txt"),file-$nfc.txt"
+  expect_fail "one name in the index, composed and decomposed" "could not be composed as git composes them (4 names became 3)" "$scan"
+  says "the index holds a name both composed and decomposed"
+  quiet "$nfc"
+else
+  echo "skip: the two refusals of macOS for names the index holds decomposed; git does not compose names here"
+fi
 
 finished

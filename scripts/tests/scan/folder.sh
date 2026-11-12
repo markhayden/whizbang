@@ -35,6 +35,19 @@ rm lost.txt kept.txt
 expect_pass "a scan with git's tracing on" env GIT_TRACE=1 GIT_TRACE2=1 GIT_TRACE_SETUP=1 GIT_CURL_VERBOSE=1 "$scan"
 says "secrets scan: clean"
 git checkout -q -- lost.txt kept.txt
+# Configuration put into the environment of every git (GIT_CONFIG_COUNT and its keys and
+# values) does not reach the gits the scan runs.
+rm -f "$tmp/env-log"
+expect_fail "a scan with configuration in the environment" "lost.txt:1" \
+  env PATH="$tmp/bin:$PATH" ENV_LOG="$tmp/env-log" GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=grep.threads GIT_CONFIG_VALUE_0=8 \
+  GIT_CONFIG_KEY_1=core.hooksPath GIT_CONFIG_VALUE_1=/injected "$scan"
+says "kept.txt:1"
+[ -s "$tmp/env-log" ] || fail "the scan's gits were seen"
+grep -q -x -F -e "unset|unsetunset||scripts/hooks" "$tmp/env-log" || fail "the scan's gits were seen in the repository"
+# (A search of the scan's own text files runs outside the repository: no hooks path there.)
+if grep -v -x -F -e "unset|unsetunset||scripts/hooks" -e "unset|unsetunset||" "$tmp/env-log" >&2; then
+  fail "configuration from the environment reached a git of the scan (above: the count, a key and a value, grep.threads, core.hooksPath)"
+fi
 
 # The scan's own folder: only this user can read anything in it, the word list is never
 # copied into it, and it is gone when the scan ends, however it ends.

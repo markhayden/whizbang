@@ -60,6 +60,15 @@ export LC_ALL=C
 # Anything git says on stderr during a search fails the scan, so git must not be told to
 # talk: tracing is switched off for this run.
 for name in ${!GIT_TRACE@} GIT_CURL_VERBOSE; do unset "$name"; done
+# Nor is configuration taken from the environment variables that hold settings
+# themselves (GIT_CONFIG_COUNT with its keys and values): whoever starts the scan could
+# otherwise set anything for every git it runs. The variables that name configuration
+# files (GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM) are left alone: they
+# choose among files this user's git reads anyway, and the options of a `git -c` that
+# started a hook (GIT_CONFIG_PARAMETERS) are left too, since the push they belong to
+# may need them to reach its remote. Every search sets its own thread count with `-c`,
+# which outranks all of these.
+for name in GIT_CONFIG_COUNT ${!GIT_CONFIG_KEY_@} ${!GIT_CONFIG_VALUE_@}; do unset "$name"; done
 unset name
 
 die() {
@@ -153,6 +162,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 if [ "$mode" = message ]; then
+  # A name that starts with a dash is a file, not an option.
+  case "$message" in /*) ;; *) message="./$message" ;; esac
   [ -r "$message" ] || die "cannot read the message file"
   # What git will drop is not the message: comment lines, and the diff of `commit -v`.
   sed -e '/^# -* >8 -*$/,$d' -e '/^#/d' "$message" >"$work/message"
@@ -297,8 +308,7 @@ run_grep_once() {
     ignored)
       # The names are the index's. Where git composes names (macOS), it would compose
       # these too and then not find one that the index holds decomposed: not here.
-      GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.precomposeunicode GIT_CONFIG_VALUE_0=false \
-        git --literal-pathspecs -c grep.threads=1 grep -a -n -z "$@" -- "${ignored_tracked[@]}" >"$to" 2>>"$work/search-errors" || rc=$?
+      git -c core.precomposeunicode=false --literal-pathspecs -c grep.threads=1 grep -a -n -z "$@" -- "${ignored_tracked[@]}" >"$to" 2>>"$work/search-errors" || rc=$?
       ;;
     files)
       (cd "$target_dir" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
@@ -341,10 +351,15 @@ names() { tr '\n\0' '\002\n' | sort -u; }
 # Names. Files are asked about by the rules alone too: otherwise git reads the name as a
 # pattern, and an ignored `a*b.tmp` beside a tracked `axb.tmp` counts as tracked. A name
 # that holds the byte \001 or \002 is refused (`plain_names`). And where git composes the
-# names it reads from a folder (macOS: `core.precomposeUnicode`), the names find gives
-# are composed the same way (`compose`) before git is asked about them, and so are both
-# lists before they are compared: there the search names a file as its folder does, and
-# the index may hold the same name decomposed.
+# names it reads from a folder (on macOS, with `core.precomposeUnicode` on, and nowhere
+# else), the names find gives are composed the same way (`compose`) before git is asked
+# about them, and so are the index's names and the names the search looked in before the
+# two lists are compared: there the search names a file as its folder does, and the
+# index may hold the same name decomposed.
+#
+# What still refuses, rightly or not, is on docs/carry-over.md: a tracked folder that
+# has since become a repository of its own (git's search does not look inside one), and
+# on macOS a file tracked under a decomposed name that a rule written composed ignores.
 census() {
   local f rev missing rc
   case "$target" in
@@ -354,8 +369,12 @@ census() {
       [ "$rc" -eq 0 ] && [ ! -s "$work/census-errors" ] ||
         die "the tracked files could not be listed (git ls-files: exit $rc, $(wc -l <"$work/census-errors" | tr -d ' ') lines of warnings or errors); refusing to pass"
       plain_names "$work/census-entries"
+      # Git composes names on macOS alone, and there only with the setting on.
       composing=0
-      [ "$(git config --type=bool core.precomposeunicode 2>/dev/null || true)" != true ] || composing=1
+      if [ "$(uname -s)" = Darwin ] && [ "$(git config --type=bool core.precomposeunicode 2>/dev/null || true)" = true ]; then
+        composing=1
+      fi
+      compose "$work/census-entries"
       printf '.\0' >"$work/census-level"
       : >"$work/census-folders"
       while [ -s "$work/census-level" ]; do
@@ -367,7 +386,6 @@ census() {
       done
       walk f <"$work/census-folders"
       unignored 3 --no-index >>"$work/census-entries"
-      compose "$work/census-entries"
       while IFS= read -r -d '' f; do
         if [ -f "$f" ] && [ ! -L "$f" ] && [ -s "$f" ]; then printf '%s\0' "$f"; fi
       done <"$work/census-entries" | names >"$work/census-listed"
@@ -393,6 +411,8 @@ census() {
   [ "$target" != worktree ] || compose "$work/census-raw"
   names <"$work/census-raw" >"$work/census-searched"
   missing=$(comm -23 "$work/census-listed" "$work/census-searched" | wc -l | tr -d ' ')
+  [ "$missing" -eq 0 ] || [ "$composing" -eq 0 ] ||
+    die "$missing of the $(wc -l <"$work/census-listed" | tr -d ' ') files to cover were not looked in by the search ($target); they are not named here, since a path can hold a match; on macOS one cause is a file tracked under a decomposed name that an ignore rule written composed matches; refusing to pass"
   [ "$missing" -eq 0 ] ||
     die "$missing of the $(wc -l <"$work/census-listed" | tr -d ' ') files to cover were not looked in by the search ($target); they are not named here, since a path can hold a match; refusing to pass"
 }
@@ -407,15 +427,96 @@ plain_names() {
   [ "$odd" -eq 0 ] ||
     die "$odd names hold the byte \\001 or \\002, which the scan uses to tell names and fields apart, so it cannot cover them; rename them; refusing to pass"
 }
-# compose <file>: rewrites the NUL-ended names in the file, each part of a path composed
-# as git composes a name it reads from a folder: a part with a byte that is not ASCII goes
-# through the same conversion (iconv, UTF-8-MAC to UTF-8), and stays as it is when that
-# fails. Only where git does it, and only when some name has such a byte.
+# compose <file>: rewrites the NUL-ended names in the file, composed as git composes a
+# name it reads from a folder: each part of a path that has a byte that is not ASCII goes
+# through the same conversion (iconv, UTF-8-MAC to UTF-8), and stays as it is when iconv
+# refuses it. Only where git does it (`composing`), and only for names with such a byte.
+#
+# Not one iconv for each part, which takes seconds for a thousand names, and not one
+# iconv over the whole list either: iconv reads its input in blocks (of 4096 bytes on the
+# Mac this was measured on) and does not compose a letter that ends one block with the
+# accent that starts the next. So each name goes into a small file of its own and one
+# iconv is given some hundreds of those files: it reads each file by itself, and gave,
+# for 3,000 made-up names, exactly what one iconv for each name gave. A whole name gives
+# what its parts would: the `/` between two parts composes with nothing. And a path is
+# at most 1024 bytes there, so no file reaches the end of a block. The names of a batch
+# that iconv refuses are done part by part, one iconv each (`compose_each`).
+#
+# iconv is not taken at its word. The scan fails unless iconv gives as many names as it
+# was given, there are as many different names after as before, every name has as many
+# parts as before, and every name that led to a file or a folder still leads to one: a name that came out wrong would otherwise
+# be dropped from the list as a file that is not there. Two names of the index that
+# differ only in this (a tree made on a system that keeps them apart) are one file here,
+# and are refused the same way.
 composing=0
+compose_batch=()
 compose() {
-  local f rest part new out
+  local f g before gave lost=0 n=0
   [ "$composing" -eq 1 ] || return 0
   [ "$(($(tr -d '\000-\177' <"$1" | wc -c)))" -gt 0 ] || return 0
+  mkdir -p "$work/compose"
+  : >"$work/compose-done"
+  compose_batch=()
+  while IFS= read -r -d '' f; do
+    case "$f" in
+      *[!$'\001'-$'\177']*)
+        n=$((n + 1))
+        printf '%s\0' "$f" >"$work/compose/$n"
+        compose_batch+=("$n")
+        [ "${#compose_batch[@]}" -lt 500 ] || compose_flush
+        ;;
+    esac
+  done <"$1"
+  compose_flush
+  # The composed names take the places of the ones they came from.
+  while IFS= read -r -d '' f; do
+    case "$f" in
+      *[!$'\001'-$'\177']*)
+        IFS= read -r -d '' g <&3 || g=
+        f=$g
+        ;;
+    esac
+    printf '%s\0' "$f"
+  done <"$1" 3<"$work/compose-done" >"$work/census-composed"
+  before=$(($(names <"$1" | wc -l)))
+  gave=$(($(names <"$work/census-composed" | wc -l)))
+  [ "$gave" -eq "$before" ] ||
+    die "the names of the working tree could not be composed as git composes them ($before names became $gave); either iconv is at fault, or the index holds a name both composed and decomposed, which are one file here; refusing to pass"
+  while IFS= read -r -d '' f <&3 && IFS= read -r -d '' g <&4; do
+    [ "$f" != "$g" ] || continue
+    # As many parts as before, none of them empty: a folder that came back as the folder
+    # it is in would be walked for ever.
+    case "/$g/" in
+      *//*) lost=$((lost + 1)) && continue ;;
+    esac
+    [ "${f//[!\/]/}" = "${g//[!\/]/}" ] || { lost=$((lost + 1)) && continue; }
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    [ -e "$g" ] || [ -L "$g" ] || lost=$((lost + 1))
+  done 3<"$1" 4<"$work/census-composed"
+  [ "$lost" -eq 0 ] ||
+    die "the names of the working tree could not be composed as git composes them ($lost names no longer lead to what they named); refusing to pass"
+  mv "$work/census-composed" "$1"
+}
+# compose_flush: one iconv for the names of $compose_batch, each in its file under
+# $work/compose; what it gives is added to $work/compose-done.
+compose_flush() {
+  local gave
+  [ "${#compose_batch[@]}" -gt 0 ] || return 0
+  if ! (cd "$work/compose" && iconv -f UTF-8-MAC -t UTF-8 "${compose_batch[@]}") >"$work/compose-out" 2>/dev/null; then
+    (cd "$work/compose" && cat "${compose_batch[@]}") >"$work/compose-in"
+    compose_each "$work/compose-in" >"$work/compose-out"
+  fi
+  gave=$(($(tr -c -d '\0' <"$work/compose-out" | wc -c)))
+  [ "$gave" -eq "${#compose_batch[@]}" ] && [ "$(tail -c 1 "$work/compose-out" | tr '\0' x)" = x ] ||
+    die "the names of the working tree could not be composed as git composes them (iconv gave $gave names for ${#compose_batch[@]}); refusing to pass"
+  cat "$work/compose-out" >>"$work/compose-done"
+  compose_batch=()
+}
+# compose_each <file>: the same for the names of the file, as git does it: one iconv
+# for each part of a path that has a byte that is not ASCII. A part iconv refuses stays
+# as it is.
+compose_each() {
+  local f rest part new out
   while IFS= read -r -d '' f; do
     case "$f" in
       *[!$'\001'-$'\177']*)
@@ -424,7 +525,7 @@ compose() {
           part=${rest%%/*}
           case "$part" in
             *[!$'\001'-$'\177']*)
-              # The dot keeps a newline that ends the name.
+              # The dot keeps a newline that ends the part.
               if new=$(printf '%s.' "$part" | iconv -f UTF-8-MAC -t UTF-8 2>/dev/null); then part=${new%.}; fi
               ;;
           esac
@@ -435,8 +536,7 @@ compose() {
         ;;
     esac
     printf '%s\0' "$f"
-  done <"$1" >"$work/census-composed"
-  mv "$work/census-composed" "$1"
+  done <"$1"
 }
 # walk <d|f>: writes to $work/census-found the folders (d) or the files (f) directly
 # inside each folder named on stdin, NUL-ended, as `./path`. find does not follow a link,
@@ -746,7 +846,7 @@ case "$mode" in
       die "git said something while it listed the working tree ($(wc -l <"$work/list-errors" | tr -d ' ') lines of warnings or errors, such as a folder it could not read); what was not listed is not covered; refusing to pass"
     while IFS= read -r -d '' f; do
       if [ -L "$f" ]; then
-        readlink "$f" >>"$text/link-targets/working-tree"
+        readlink -- "$f" >>"$text/link-targets/working-tree"
       elif [ -f "$f" ]; then
         files=$((files + 1))
       elif [ -e "$f" ]; then
