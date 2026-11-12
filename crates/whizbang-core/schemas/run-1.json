@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A whizbang run record, version run/1 (ADR 0005)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["record", "identity", "asked", "inputs", "outputs", "outcome", "time", "models", "spend", "egress", "steps", "judge", "diagnostics"],
+  "properties": {
+    "record": { "const": "run/1" },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run", "request", "parent", "whizbang"],
+      "properties": {
+        "run": { "type": "string", "minLength": 1 },
+        "request": { "type": ["string", "null"] },
+        "parent": { "type": ["string", "null"] },
+        "whizbang": { "type": "string", "minLength": 1 }
+      }
+    },
+    "asked": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "version", "arguments", "settings", "config"],
+      "properties": {
+        "action": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "value": {
+                "type": "object",
+                "additionalProperties": false,
+                "minProperties": 1,
+                "maxProperties": 1,
+                "properties": {
+                  "number": { "type": "number" },
+                  "integer": { "type": "integer" },
+                  "boolean": { "type": "boolean" },
+                  "text": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "settings": { "type": "array", "maxItems": 0 },
+        "config": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["port", "type", "artifact", "binding"],
+        "properties": {
+          "port": { "type": "string", "minLength": 1 },
+          "type": { "$ref": "#/$defs/artifact_type" },
+          "artifact": { "$ref": "#/$defs/digest" },
+          "binding": { "$ref": "#/$defs/digest" }
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["port", "type", "artifact"],
+        "properties": {
+          "port": { "type": "string", "minLength": 1 },
+          "type": { "$ref": "#/$defs/artifact_type" },
+          "artifact": { "$ref": "#/$defs/digest" }
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "error", "invalid", "refusals"],
+      "properties": {
+        "status": { "enum": ["completed", "cancelled", "error", "invalid"] },
+        "error": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["kind", "message"],
+          "properties": {
+            "kind": { "type": "string" },
+            "message": { "type": "string" }
+          }
+        },
+        "invalid": { "type": ["string", "null"] },
+        "refusals": { "type": "array", "maxItems": 0 }
+      }
+    },
+    "time": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_ms", "end_ms", "durations"],
+      "properties": {
+        "start_ms": { "type": "integer", "minimum": 0 },
+        "end_ms": { "type": "integer", "minimum": 0 },
+        "durations": { "type": "array", "maxItems": 0 }
+      }
+    },
+    "models": { "type": "array", "maxItems": 0 },
+    "spend": { "type": "array", "maxItems": 0 },
+    "egress": { "type": "array", "maxItems": 0 },
+    "steps": { "type": "array", "maxItems": 0 },
+    "judge": { "type": "array", "maxItems": 0 },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "digest", "bytes"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "digest": { "$ref": "#/$defs/digest" },
+          "bytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "digest": { "type": "string", "minLength": 71, "maxLength": 71 },
+    "artifact_type": { "enum": ["mask", "location", "image", "band_profile", "series", "plan"] }
+  }
+}

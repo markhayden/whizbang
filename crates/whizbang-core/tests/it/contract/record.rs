@@ -1,0 +1,688 @@
+//! The run record (ADR 0005): its shape, written one way, read strictly and held to its
+//! schema; how one is made from a prepared call and an outcome, with the secrets taken
+//! out; and how one is read from a store.
+
+use std::sync::Arc;
+
+use serde_json::{Value as Json, json};
+use whizbang_core::artifact::{self, Artifact, ArtifactId, ArtifactType, ImageRole};
+use whizbang_core::contract::record::{
+    self, ArgumentValue, Diagnostic, Ran, RunRecord, Status, StoredRecordError,
+};
+use whizbang_core::contract::{
+    Action, ActionDescriptor, Call, Committed, Engine, Executor, InputPort, Kind, NoBackends,
+    Outcome, PreparedCall, RUN_RECORD, RUN_RECORD_SCHEMA, RecordError, Registry, RunId, Secrets,
+    Value, journal_bytes, read_journal,
+};
+use whizbang_core::identity::Digest;
+use whizbang_core::store::fs::RealFs;
+use whizbang_core::store::{self, Reader, Store};
+use whizbang_testkit::echo::Echo;
+use whizbang_testkit::schema::validate;
+use whizbang_testkit::scratch::Scratch;
+
+use super::redact::made_up_key;
+use crate::artifact::support::{image_of, photo};
+
+/// A record as the executor writes one for a completed `echo`, by hand.
+pub fn completed() -> String {
+    concat!(
+        r#"{"record":"run/1","#,
+        r#""identity":{"run":"1000-1","request":null,"parent":null,"whizbang":"0.0.1"},"#,
+        r#""asked":{"action":"echo","version":"1.0.0","#,
+        r#""arguments":[{"name":"text","value":{"text":"hello"}}],"settings":[],"#,
+        r#""config":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"#,
+        r#""inputs":[],"outputs":[],"#,
+        r#""outcome":{"status":"completed","error":null,"invalid":null,"refusals":[]},"#,
+        r#""time":{"start_ms":1000,"end_ms":1003,"durations":[]},"#,
+        r#""models":[],"spend":[],"egress":[],"steps":[],"judge":[],"#,
+        r#""diagnostics":[{"name":"diagnostics/echo.txt","#,
+        r#""digest":"sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","#,
+        r#""bytes":5},{"name":"journal","#,
+        r#""digest":"sha256:4e5c3fcb6d7895e1a136823744faf1f979561eabaaf96e46b6ba04c04f511336","#,
+        r#""bytes":93}]}"#,
+        "\n"
+    )
+    .to_owned()
+}
+
+pub fn schema() -> Json {
+    serde_json::from_str(RUN_RECORD_SCHEMA).unwrap()
+}
+
+fn as_json(text: &str) -> Json {
+    serde_json::from_str(text).unwrap()
+}
+
+/// The record with one change made to its JSON, written back on one line.
+fn changed(change: impl FnOnce(&mut Json)) -> Vec<u8> {
+    let mut document = as_json(&completed());
+    change(&mut document);
+    let mut bytes = serde_json::to_vec(&document).unwrap();
+    bytes.push(b'\n');
+    bytes
+}
+
+#[test]
+fn a_record_is_read_and_written_back_as_the_same_bytes() {
+    let bytes = completed();
+    let record = RunRecord::from_bytes(bytes.as_bytes()).unwrap();
+    assert_eq!(record.to_bytes(), bytes.as_bytes());
+    assert_eq!(RUN_RECORD, "run/1");
+    assert_eq!(record.identity().run, "1000-1");
+    assert_eq!(record.asked().action, "echo");
+    assert_eq!(record.outcome().status, Status::Completed);
+    assert_eq!(record.outcome().status.name(), "completed");
+    assert_eq!((record.time().start_ms, record.time().end_ms), (1000, 1003));
+    let names: Vec<&str> = record
+        .diagnostics()
+        .iter()
+        .map(|d| d.name.as_str())
+        .collect();
+    assert_eq!(names, ["diagnostics/echo.txt", "journal"]);
+}
+
+#[test]
+fn the_hand_written_record_validates_against_the_schema() {
+    validate(&schema(), &as_json(&completed())).unwrap();
+}
+
+#[test]
+fn every_group_of_the_spec_is_in_the_schema_and_required() {
+    // `SPEC.md` section 3, "What every run records": eleven groups. Inputs and outputs
+    // are two fields; the judge runs are `judge`.
+    let schema = schema();
+    let required: Vec<&str> = schema["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|name| name.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        required,
+        [
+            "record",
+            "identity",
+            "asked",
+            "inputs",
+            "outputs",
+            "outcome",
+            "time",
+            "models",
+            "spend",
+            "egress",
+            "steps",
+            "judge",
+            "diagnostics"
+        ]
+    );
+    // The fields of a record are these and no others, written in this order.
+    let document = as_json(&completed());
+    assert_eq!(document.as_object().unwrap().len(), required.len());
+    let written = completed();
+    let mut at = 0;
+    for name in required {
+        at += written[at..]
+            .find(&format!("\"{name}\":"))
+            .unwrap_or_else(|| panic!("{name} is not after the field before it"));
+    }
+}
+
+#[test]
+fn a_group_that_nothing_fills_yet_cannot_hold_anything() {
+    // By the type, on reading, and by the schema: a record of this version with a model,
+    // a spend, an egress, a step, a judge turn, a setting, a duration or a refusal in
+    // it is not a record of this version.
+    for path in [
+        "/models",
+        "/spend",
+        "/egress",
+        "/steps",
+        "/judge",
+        "/asked/settings",
+        "/time/durations",
+        "/outcome/refusals",
+    ] {
+        let bytes = changed(|document| {
+            *document.pointer_mut(path).unwrap() = json!([{ "anything": 1 }]);
+        });
+        let error = RunRecord::from_bytes(&bytes).unwrap_err();
+        assert!(
+            matches!(error, RecordError::Malformed(_)),
+            "{path}: {error}"
+        );
+        let document: Json = serde_json::from_slice(&bytes).unwrap();
+        assert!(validate(&schema(), &document).is_err(), "{path}");
+    }
+}
+
+#[test]
+fn a_record_of_another_version_is_another_version_not_damage() {
+    let bytes = changed(|document| document["record"] = json!("run/2"));
+    assert_eq!(
+        RunRecord::from_bytes(&bytes).unwrap_err(),
+        RecordError::OtherVersion {
+            found: "run/2".to_owned()
+        }
+    );
+    // Whatever else it holds: another version need not have this one's shape.
+    let other = b"{\"record\":\"run/9\",\"something\":\"new\"}\n";
+    assert!(matches!(
+        RunRecord::from_bytes(other).unwrap_err(),
+        RecordError::OtherVersion { .. }
+    ));
+    let said = RunRecord::from_bytes(other).unwrap_err().to_string();
+    assert!(
+        said.contains("run/9") && said.contains("this build reads run/1"),
+        "{said}"
+    );
+}
+
+#[test]
+fn what_is_not_a_record_is_refused() {
+    let malformed = |bytes: &[u8]| {
+        let error = RunRecord::from_bytes(bytes).unwrap_err();
+        assert!(matches!(error, RecordError::Malformed(_)), "{error}");
+    };
+    malformed(b"");
+    malformed(b"not json\n");
+    malformed(b"{}\n");
+    // A field that is not known, at the top and inside a group.
+    malformed(&changed(|document| document["extra"] = json!(1)));
+    malformed(&changed(|document| {
+        document["identity"]["host"] = json!("x")
+    }));
+    // A field left out.
+    malformed(&changed(|document| {
+        document.as_object_mut().unwrap().remove("spend");
+    }));
+    // A digest that is not one, a type that is none, a status that is none.
+    malformed(&changed(|document| {
+        document["asked"]["config"] = json!("sha256:abc")
+    }));
+    malformed(&changed(|document| {
+        document["inputs"] = json!([{"port": "image", "type": "picture",
+            "artifact": document["asked"]["config"], "binding": document["asked"]["config"]}]);
+    }));
+    malformed(&changed(|document| {
+        document["outcome"]["status"] = json!("refused")
+    }));
+    // A value under two kinds, and under none.
+    malformed(&changed(|document| {
+        document["asked"]["arguments"][0]["value"] = json!({"text": "a", "integer": 1});
+    }));
+    malformed(&changed(|document| {
+        document["asked"]["arguments"][0]["value"] = json!({});
+    }));
+}
+
+#[test]
+fn a_record_that_says_what_no_run_can_is_refused() {
+    let inconsistent = |bytes: Vec<u8>, what: &str| {
+        let error = RunRecord::from_bytes(&bytes).unwrap_err();
+        assert!(
+            matches!(error, RecordError::Inconsistent(_)),
+            "{what}: {error}"
+        );
+        assert!(error.to_string().contains(what), "{error}");
+    };
+    inconsistent(
+        changed(|d| d["outcome"]["status"] = json!("error")),
+        "an error has its type and message",
+    );
+    inconsistent(
+        changed(|d| d["outcome"]["error"] = json!({"kind": "x", "message": "y"})),
+        "an error has its type and message",
+    );
+    inconsistent(
+        changed(|d| d["outcome"]["invalid"] = json!("why")),
+        "an invalid run has its reason",
+    );
+    inconsistent(
+        changed(|d| d["outcome"]["status"] = json!("invalid")),
+        "an invalid run has its reason",
+    );
+    inconsistent(
+        changed(|d| {
+            d["outcome"]["status"] = json!("cancelled");
+            d["outputs"] = json!([{"port": "mask", "type": "mask",
+                "artifact": d["asked"]["config"]}]);
+        }),
+        "only a completed run has outputs",
+    );
+    inconsistent(
+        changed(|d| d["time"]["end_ms"] = json!(999)),
+        "ends before it starts",
+    );
+    inconsistent(
+        changed(|d| {
+            let journal = d["diagnostics"][1].clone();
+            d["diagnostics"] = json!([journal, journal]);
+        }),
+        "in the order of their names",
+    );
+}
+
+#[test]
+fn a_record_is_written_one_way() {
+    // The same record with a space in it, without its newline, with its fields in
+    // another order, or with a letter written as its escape, is refused.
+    let canonical = completed();
+    let not_canonical = |bytes: &[u8]| {
+        assert_eq!(
+            RunRecord::from_bytes(bytes).unwrap_err(),
+            RecordError::NotCanonical
+        );
+    };
+    not_canonical(canonical.replace("\"record\":", "\"record\": ").as_bytes());
+    not_canonical(canonical.trim_end().as_bytes());
+    not_canonical(format!("{canonical}\n").as_bytes());
+    not_canonical(
+        canonical
+            .replace(
+                "\"start_ms\":1000,\"end_ms\":1003",
+                "\"end_ms\":1003,\"start_ms\":1000",
+            )
+            .as_bytes(),
+    );
+    // A letter written as its escape.
+    not_canonical(canonical.replace("hello", "hell\\u006f").as_bytes());
+    // A whole number written with a point is not a whole number at all.
+    assert!(matches!(
+        RunRecord::from_bytes(
+            canonical
+                .replace("\"bytes\":5}", "\"bytes\":5.0}")
+                .as_bytes()
+        ),
+        Err(RecordError::Malformed(_))
+    ));
+    // A completed run with an output, and an invalid one, are records too.
+    let with_output = canonical.replace(
+        r#""outputs":[]"#,
+        concat!(
+            r#""outputs":[{"port":"mask","type":"band_profile","artifact":"#,
+            r#""sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}]"#
+        ),
+    );
+    let record = RunRecord::from_bytes(with_output.as_bytes()).unwrap();
+    assert_eq!(record.outputs()[0].port, "mask");
+    validate(&schema(), &as_json(&with_output)).unwrap();
+    let invalid = canonical.replace(
+        r#""status":"completed","error":null,"invalid":null"#,
+        r#""status":"invalid","error":null,"invalid":"the text is empty""#,
+    );
+    let record = RunRecord::from_bytes(invalid.as_bytes()).unwrap();
+    assert_eq!(
+        record.outcome().invalid.as_deref(),
+        Some("the text is empty")
+    );
+    validate(&schema(), &as_json(&invalid)).unwrap();
+}
+
+#[test]
+fn an_argument_of_each_kind_keeps_its_kind() {
+    let text = completed().replace(
+        r#"[{"name":"text","value":{"text":"hello"}}]"#,
+        concat!(
+            r#"[{"name":"amount","value":{"number":2.5}},"#,
+            r#"{"name":"whole","value":{"number":8.0}},"#,
+            r#"{"name":"count","value":{"integer":-3}},"#,
+            r#"{"name":"keep","value":{"boolean":true}},"#,
+            r#"{"name":"label","value":{"text":"café"}}]"#
+        ),
+    );
+    // A number that is whole is still written as a number, and read back as one.
+    let record = RunRecord::from_bytes(text.as_bytes()).unwrap();
+    assert_eq!(record.asked().arguments.len(), 5);
+    assert_eq!(
+        record.asked().arguments[1].value,
+        ArgumentValue::Number(8.0)
+    );
+    assert_eq!(
+        record.asked().arguments[2].value,
+        ArgumentValue::Integer(-3)
+    );
+    validate(&schema(), &as_json(&text)).unwrap();
+    // A whole number under `number` without its point is not how it is written.
+    let loose = text.replace(r#"{"number":8.0}"#, r#"{"number":8}"#);
+    assert_eq!(
+        RunRecord::from_bytes(loose.as_bytes()).unwrap_err(),
+        RecordError::NotCanonical
+    );
+}
+
+// --- a record made from a run -----------------------------------------------------------------
+
+struct Fake(ActionDescriptor);
+
+impl Action for Fake {
+    fn descriptor(&self) -> &ActionDescriptor {
+        &self.0
+    }
+}
+
+/// `echo`, and `look`, which takes an image, prepared against a store that holds one
+/// photograph.
+struct World {
+    _dir: Scratch,
+    engine: Engine,
+    photo: whizbang_core::artifact::Image,
+}
+
+fn world() -> World {
+    let dir = Scratch::new("record");
+    let root = dir.path().join("store");
+    let photo = image_of(photo(), ImageRole::Picture);
+    let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let mut publication = store.begin().unwrap();
+    artifact::put(&mut publication, &Artifact::from(photo.clone())).unwrap();
+    publication.publish().unwrap();
+    drop(store);
+    let mut registry = Registry::new();
+    registry.register(Arc::new(Echo::new())).unwrap();
+    let look =
+        ActionDescriptor::draft("look", "2.1.0", Kind::Primitive, "Looks at an image.").input(
+            InputPort::required("image", ArtifactType::Image, "The image."),
+        );
+    registry
+        .register(Arc::new(Fake(look.build().unwrap())))
+        .unwrap();
+    let engine = Engine::new(
+        registry,
+        Arc::new(NoBackends),
+        Arc::new(Reader::open(&root, Arc::new(RealFs)).unwrap()),
+        Digest::of_bytes(b""),
+    );
+    World {
+        _dir: dir,
+        engine,
+        photo,
+    }
+}
+
+fn echo(world: &World, text: &str) -> PreparedCall {
+    let call = Call::new("echo").argument("text", Value::text(text));
+    world.engine.prepare(&call).unwrap()
+}
+
+fn diagnostic(name: &str, bytes: &[u8]) -> Diagnostic {
+    Diagnostic {
+        name: name.to_owned(),
+        digest: Digest::of_bytes(bytes),
+        bytes: bytes.len() as u64,
+    }
+}
+
+/// The journal the hand-written record names.
+const JOURNAL: &str = concat!(
+    r#"{"seq":0,"at_ms":1001,"message":"echo: hello"}"#,
+    "\n",
+    r#"{"seq":1,"at_ms":1002,"message":"echo: done"}"#,
+    "\n"
+);
+
+#[test]
+fn a_record_made_from_a_prepared_call_and_an_outcome_is_these_bytes() {
+    // The fixed vector: the record of a completed `echo`, written by hand from ADR 0005.
+    // The two digests in it were computed from the bytes of the journal and of `hello`
+    // with SHA-256 from another library, apart from this code.
+    let world = world();
+    let prepared = echo(&world, "hello");
+    let completed_outcome = Outcome::Completed {
+        outputs: Vec::new(),
+    };
+    let made = RunRecord::of(
+        Ran {
+            run: "1000-1",
+            whizbang: "0.0.1",
+            prepared: &prepared,
+            outcome: &completed_outcome,
+            start_ms: 1000,
+            end_ms: 1003,
+            // Given out of order: a record lists them by name.
+            diagnostics: vec![
+                diagnostic("journal", JOURNAL.as_bytes()),
+                diagnostic("diagnostics/echo.txt", b"hello"),
+            ],
+        },
+        &Secrets::none(),
+    );
+    assert_eq!(String::from_utf8(made.to_bytes()).unwrap(), completed());
+    assert_eq!(RunRecord::from_bytes(&made.to_bytes()).unwrap(), made);
+    // The journal those bytes name is a journal.
+    let lines = read_journal(JOURNAL.as_bytes()).unwrap();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(journal_bytes(&lines), JOURNAL.as_bytes());
+}
+
+fn ran<'a>(prepared: &'a PreparedCall, outcome: &'a Outcome) -> Ran<'a> {
+    Ran {
+        run: "run-7",
+        whizbang: "0.0.1",
+        prepared,
+        outcome,
+        start_ms: 50,
+        end_ms: 75,
+        diagnostics: Vec::new(),
+    }
+}
+
+#[test]
+fn a_failed_run_has_the_same_record_with_its_error_and_no_output() {
+    let world = world();
+    let prepared = echo(&world, "hello");
+    let outcome = Outcome::Error {
+        kind: "echo".to_owned(),
+        message: "it broke".to_owned(),
+    };
+    let record = RunRecord::of(ran(&prepared, &outcome), &Secrets::none());
+    let written = String::from_utf8(record.to_bytes()).unwrap();
+    assert!(written.contains(concat!(
+        r#""outputs":[],"outcome":{"status":"error","#,
+        r#""error":{"kind":"echo","message":"it broke"},"invalid":null,"refusals":[]}"#
+    )));
+    assert!(!written.contains("completed"));
+    // The same thirteen fields as a completed run's.
+    let fields = |text: &str| -> Vec<String> {
+        as_json(text).as_object().unwrap().keys().cloned().collect()
+    };
+    assert_eq!(fields(&written), fields(&completed()));
+    validate(&schema(), &as_json(&written)).unwrap();
+    assert_eq!(RunRecord::from_bytes(written.as_bytes()).unwrap(), record);
+
+    // Invalid, and cancelled.
+    let outcome = Outcome::Invalid {
+        why: "the text is empty".to_owned(),
+    };
+    let record = RunRecord::of(ran(&prepared, &outcome), &Secrets::none());
+    assert_eq!(record.outcome().status, Status::Invalid);
+    assert_eq!(
+        record.outcome().invalid.as_deref(),
+        Some("the text is empty")
+    );
+    assert!(record.outcome().error.is_none());
+    validate(
+        &schema(),
+        &as_json(std::str::from_utf8(&record.to_bytes()).unwrap()),
+    )
+    .unwrap();
+    let record = RunRecord::of(ran(&prepared, &Outcome::Cancelled), &Secrets::none());
+    assert_eq!(record.outcome().status, Status::Cancelled);
+    assert!(record.outcome().error.is_none() && record.outcome().invalid.is_none());
+    RunRecord::from_bytes(&record.to_bytes()).unwrap();
+}
+
+#[test]
+fn the_inputs_and_the_committed_outputs_of_a_run_are_in_its_record() {
+    let world = world();
+    let call = Call::new("look").input("image", world.photo.id());
+    let prepared = world.engine.prepare(&call).unwrap();
+    let made = ArtifactId(Digest::of_bytes(b"a mask the run made"));
+    let outcome = Outcome::Completed {
+        outputs: vec![Committed::new("mask", ArtifactType::Mask, made)],
+    };
+    let record = RunRecord::of(ran(&prepared, &outcome), &Secrets::none());
+    assert_eq!(record.asked().action, "look");
+    assert_eq!(record.asked().version, "2.1.0");
+    assert!(record.asked().arguments.is_empty());
+    // An input is recorded with the identity of the binding it belongs to.
+    assert_eq!(record.inputs().len(), 1);
+    let input = &record.inputs()[0];
+    assert_eq!(input.port, "image");
+    assert_eq!(input.artifact_type, ArtifactType::Image);
+    assert_eq!(input.artifact, world.photo.id().0);
+    assert_eq!(input.binding, world.photo.binding().id().0);
+    assert_eq!(prepared.inputs()[0].binding(), world.photo.binding().id());
+    let output = &record.outputs()[0];
+    assert_eq!(
+        (output.port.as_str(), output.artifact_type, output.artifact),
+        ("mask", ArtifactType::Mask, made.0)
+    );
+    let written = record.to_bytes();
+    validate(&schema(), &serde_json::from_slice(&written).unwrap()).unwrap();
+    assert_eq!(RunRecord::from_bytes(&written).unwrap(), record);
+}
+
+#[test]
+fn a_clock_that_went_back_does_not_make_a_run_end_before_it_started() {
+    let world = world();
+    let prepared = echo(&world, "hello");
+    let outcome = Outcome::Cancelled;
+    let mut ran = ran(&prepared, &outcome);
+    (ran.start_ms, ran.end_ms) = (90, 40);
+    let record = RunRecord::of(ran, &Secrets::none());
+    assert_eq!((record.time().start_ms, record.time().end_ms), (90, 90));
+    RunRecord::from_bytes(&record.to_bytes()).unwrap();
+}
+
+#[test]
+fn a_secret_is_taken_out_of_every_text_a_record_takes_from_outside() {
+    // A made-up key in an argument, in an error's type and message, and in the reason a
+    // run was invalid; and a second secret that JSON would escape.
+    let key = made_up_key("");
+    let quoted = "pa\"ss\\word".to_owned();
+    let secrets = Secrets::new([key.clone(), quoted.clone()]);
+    let world = world();
+    let prepared = echo(&world, &format!("my key is {key} and {quoted}"));
+    let outcome = Outcome::Error {
+        kind: format!("auth {key}"),
+        message: format!("the service refused {key}"),
+    };
+    let record = RunRecord::of(ran(&prepared, &outcome), &secrets);
+    let written = String::from_utf8(record.to_bytes()).unwrap();
+    assert!(!written.contains(&key), "{written}");
+    assert!(!written.contains("ss\\\\word"), "{written}");
+    assert!(
+        written.contains(r#"{"text":"my key is [redacted] and [redacted]"}"#),
+        "{written}"
+    );
+    let error = record.outcome().error.as_ref().unwrap();
+    assert_eq!(error.kind, "auth [redacted]");
+    assert_eq!(error.message, "the service refused [redacted]");
+    // Still a record, of the same shape.
+    validate(&schema(), &as_json(&written)).unwrap();
+    assert_eq!(RunRecord::from_bytes(written.as_bytes()).unwrap(), record);
+
+    let outcome = Outcome::Invalid {
+        why: format!("{key} is not a prompt"),
+    };
+    let record = RunRecord::of(ran(&prepared, &outcome), &secrets);
+    assert_eq!(
+        record.outcome().invalid.as_deref(),
+        Some("[redacted] is not a prompt")
+    );
+    assert!(!String::from_utf8(record.to_bytes()).unwrap().contains(&key));
+    // With no secret given, the text is as it was.
+    let record = RunRecord::of(ran(&prepared, &outcome), &Secrets::none());
+    assert!(String::from_utf8(record.to_bytes()).unwrap().contains(&key));
+}
+
+// --- a record in a store ----------------------------------------------------------------------
+
+#[test]
+fn a_stored_record_is_read_by_whatever_id_the_store_holds_it_under() {
+    // A store can hold runs that other code made: one with no record, one whose id is no
+    // `RunId`, one whose record names another run, one whose record is not a record.
+    let dir = Scratch::new("record-stored");
+    let store = Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap();
+    let record = RunRecord::from_bytes(completed().as_bytes()).unwrap();
+    let loose = "Loose Run/1";
+    assert!(RunId::parse(loose).is_err());
+    let renamed = completed().replace(r#""run":"1000-1""#, r#""run":"Loose Run/1""#);
+    let mut publication = store.begin().unwrap();
+    let mut put = |run: &str, name: &str, bytes: &[u8]| {
+        publication
+            .put_in(run, name, record::RECORD_KIND, bytes)
+            .unwrap();
+    };
+    put("1000-1", record::RECORD_NAME, completed().as_bytes());
+    put("1000-1", record::JOURNAL_NAME, JOURNAL.as_bytes());
+    put("bare", "notes", b"x");
+    put(loose, "record", renamed.as_bytes());
+    put("stolen", "record", completed().as_bytes());
+    put("broken", "record", b"not a record\n");
+    publication.publish().unwrap();
+    assert_eq!(record::RECORD_KIND, store::Kind::Diagnostic);
+    assert_eq!(record::DIAGNOSTICS_PREFIX, "diagnostics/");
+
+    let generation = store.snapshot().unwrap();
+    let read = |id: &str| record::stored(&generation, id, |entry| store.read(entry));
+    assert!(read("absent").is_none());
+    assert!(matches!(
+        read("bare"),
+        Some(Err(StoredRecordError::NoRecord))
+    ));
+    assert_eq!(read(loose).unwrap().unwrap().identity().run, loose);
+    let Some(Err(StoredRecordError::OtherRun { names })) = read("stolen") else {
+        panic!("a record that names another run was taken for this run's");
+    };
+    assert_eq!(names, "1000-1");
+    assert!(matches!(
+        read("broken"),
+        Some(Err(StoredRecordError::Record(RecordError::Malformed(_))))
+    ));
+    assert_eq!(read("1000-1").unwrap().unwrap(), record);
+    // A record is a diagnostic reference: readable, and refused where an output is asked
+    // for, so nothing can take one as an input.
+    let entry = generation.run("1000-1").unwrap().get("record").unwrap();
+    assert!(matches!(
+        store.read_output(entry),
+        Err(store::Error::NotAnOutput { .. })
+    ));
+    let failed = record::stored(&generation, "1000-1", |entry| store.read_output(entry));
+    assert!(matches!(failed, Some(Err(StoredRecordError::Store(_)))));
+    // What a refusal says of a stored record shows nothing as it was written.
+    let said = StoredRecordError::OtherRun {
+        names: "a\u{1b}[2J".to_owned(),
+    }
+    .to_string();
+    assert!(!said.contains('\u{1b}'), "{said:?}");
+}
+
+#[test]
+fn a_journal_is_read_strictly() {
+    assert_eq!(read_journal(JOURNAL.as_bytes()).unwrap().len(), 2);
+    assert!(read_journal(b"").unwrap().is_empty());
+    assert!(journal_bytes(&[]).is_empty());
+    // A journal is stored whole: a line cut short is not forgiven, nor a line out of its
+    // place, nor a field that is not known.
+    let refused = |bytes: &[u8], what: &str| {
+        let error = read_journal(bytes).unwrap_err();
+        assert!(error.contains(what), "{error}");
+    };
+    refused(JOURNAL.trim_end().as_bytes(), "ends with a newline");
+    refused(
+        &JOURNAL.as_bytes()[..JOURNAL.len() - 12],
+        "ends with a newline",
+    );
+    refused(b"{\"seq\":0,\"at_ms\":5,\"mess\n", "line 1 is not an event");
+    refused(
+        b"{\"seq\":1,\"at_ms\":5,\"message\":\"a\"}\n",
+        "out of its place",
+    );
+    refused(
+        b"{\"seq\":0,\"at_ms\":5,\"message\":\"a\",\"extra\":1}\n",
+        "line 1 is not an event",
+    );
+    refused(&[0xff, b'\n'], "UTF-8");
+}

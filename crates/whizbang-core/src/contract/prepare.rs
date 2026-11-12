@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::artifact::{self, Artifact, ArtifactError, ArtifactId, ArtifactType, Contents};
-use crate::identity::{Binding, DecodeLimits, Digest, Encoder, Fields};
+use crate::identity::{Binding, BindingId, DecodeLimits, Digest, Encoder, Fields};
 
 use crate::store;
 
@@ -146,12 +146,14 @@ pub enum Readiness {
     NotReady(Vec<Missing>),
 }
 
-/// One input of a prepared call: the port, the type the port takes, and the artifact.
+/// One input of a prepared call: the port, the type the port takes, the artifact, and
+/// the binding the artifact belongs to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedInput {
     port: String,
     artifact: ArtifactType,
     id: ArtifactId,
+    binding: BindingId,
 }
 
 impl ResolvedInput {
@@ -165,6 +167,13 @@ impl ResolvedInput {
 
     pub fn id(&self) -> ArtifactId {
         self.id
+    }
+
+    /// The identity of the binding the artifact belongs to, as it was read from the
+    /// artifact. The artifact's identity names the artifact, so the fingerprint does not
+    /// hash this beside it.
+    pub fn binding(&self) -> BindingId {
+        self.binding
     }
 }
 
@@ -558,6 +567,7 @@ pub(super) fn prepare(
                 port: port.name().to_owned(),
                 artifact: port.artifact(),
                 id: *id,
+                binding: binding_of(&artifact).id(),
             });
             found.push((port, artifact));
         }

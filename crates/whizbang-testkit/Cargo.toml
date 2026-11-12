@@ -14,6 +14,8 @@ path = "tests/it/main.rs"
 
 [dependencies]
 whizbang-core.workspace = true
+# For the schema validator the tests hold a record to.
+serde_json.workspace = true
 
 [lints]
 workspace = true
