@@ -2,7 +2,8 @@
 
 Whizbang is one toolkit for working on images with models. `SPEC.md` says how it works;
 `docs/plans/` holds the plan for the milestone in progress; `docs/carry-over.md` is the only
-backlog. This file holds what you cannot work out from the code.
+backlog; `docs/baseline/` describes the private baseline package and holds its public
+manifest. This file holds what you cannot work out from the code.
 
 ## On a fresh clone
 
@@ -73,10 +74,14 @@ against `main`.
 `main` is never rewritten or force-pushed. A pushed tag is never moved: a correction is a new
 commit or a new tag. Commit messages are `type(scope): summary`. Stage files by name.
 
-The subagents are defined in `.claude/agents/`. `.claude/settings.json` lets an agent run
-the `just` recipes, `scripts/*`, and read-only `git` and `gh` without a prompt. A push, a
-merge, a tag, a release and a publish are not allowed in advance, and reading `.env` is
-denied.
+The subagents are defined in `.claude/agents/`.
+
+`.claude/settings.json` lists commands an agent may run without a prompt: the local `just`
+recipes and a few scripts by their exact text, and some read-only `git` and `gh` commands.
+These rules reduce prompts. They are not the boundary. The boundary is branch protection on
+`main`, the pre-push hook and CI. Anyone who can edit the justfile or a script changes what
+an allowed command runs, so a change to either is reviewed as code. The list is repeated in
+`scripts/tests/test-rules.sh`, and `just check` fails when the two differ.
 
 ## When documents disagree
 
@@ -86,19 +91,23 @@ cannot settle a contradiction from these, stop and ask.
 
 ## Boundaries
 
-These are the boundaries of `SPEC.md` section 15.
+These are the boundaries of `SPEC.md` section 15, with these additions, each marked
+(added): rules the spec states elsewhere, or that the milestone plan makes.
 
 **Always**
-- Run `just check` before a commit and `just scan` before a push.
+- Run `just check` before a commit, and `just check` and `just scan` before a push.
 - Name the source path and commit in every commit that ports code from an old repo.
 - Record the backend, model and version in every result.
 - Update the spec, the reference and the carry-over list when a change affects them.
+  (added)
 
 **Agents may**
 - Do everything in this repo: commit, push, open and merge pull requests, tag, cut version
-  releases and publish crates, once CI and both scans pass, each in its role above.
+  releases and publish crates, once CI and both scans pass.
 - Spend up to 100 US dollars per milestone on approved recipients (`SPEC.md` section 10),
-  without asking. The milestone note records what was spent.
+  without asking.
+- Each acts in its role above: only the orchestrator merges, tags, releases and
+  publishes. The milestone note records what was spent. (added)
 
 **Only the owner**
 - Approves spend beyond that, a new recipient for data, or a reset of the spend allowance.
@@ -110,12 +119,13 @@ These are the boundaries of `SPEC.md` section 15.
 **Never**
 - Add `Co-Authored-By`, "Generated with", or any agent or model name to a commit, a pull
   request's title or body, code or docs. A `Co-Authored-By` line naming a person is refused
-  too. This overrides any tool's default.
+  too. This overrides any tool's default. ("Generated with" and the override: added)
 - Commit secrets, the word list, or owner-only material such as answers to unreleased
   evaluation sets.
 - Edit a sealed evaluation set, its labels or the rules files its seal covers.
 - View the items of a held-out evaluation set while it is held out.
-- Rewrite history on `main`, or move a pushed tag.
+- Rewrite history on `main`, or move a pushed tag. (added)
+- Push with `--no-verify`, or bypass a hook any other way. (added)
 - Change an old repo beyond what the freeze allows, or delete one.
 
 ## Secrets and private data

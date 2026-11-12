@@ -50,6 +50,7 @@ package, and write up the 2026-11-11 study from it.
 | squint | A test pair for a job that does and does not permit a seasonal cover over a protected subject | E | New fixture from fresh images |
 | squint | Small models break the submission format | E | The redesigned format is admitted through its gate |
 | squint | Open review follow-ups from its milestone 4 | 2 | Each is fixed, or dropped with a line here, as its module is ported |
+| whizbang | `ci` has no Chrome end-to-end step: there is no playground to drive yet (`SPEC.md` sections 13 and 14) | 5 | `ci` runs the playground's acceptance cases in Chrome on every pull request |
 | playground | A missing model cannot be picked in the model list | 5 | It can be picked, and Run explains what is missing |
 
 ## Evaluations
