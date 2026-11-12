@@ -374,7 +374,10 @@ fn an_artifact_file_without_an_origin_is_refused() {
     let last = none.len() - 1;
     none[last] = 0;
     let refusal = Location::from_bytes(&none, &limits()).unwrap_err();
-    assert!(refusal.to_string().contains("origin"), "{refusal}");
+    assert!(
+        matches!(&refusal, ArtifactError::Origin(why) if why.contains("no step")),
+        "{refusal}"
+    );
     // An origin of a version this build does not read.
     let mut newer = bytes.clone();
     newer[at + 9] = 2;

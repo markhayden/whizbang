@@ -47,14 +47,17 @@ fn an_artifact_always_records_what_produced_it() {
     // There is no origin without a step, and no step without an action.
     assert!(matches!(
         Origin::new(Step::new("", "1")),
-        Err(ArtifactError::Format(_))
+        Err(ArtifactError::Origin(_))
     ));
     let origin = made_by("find")
         .then(Step::new("grow", "2").argument("by", "3"))
         .unwrap();
     assert_eq!(origin.steps().len(), 2);
     assert_eq!(origin.steps()[1].arguments, [("by".into(), "3".into())]);
-    assert!(origin.then(Step::new("", "1")).is_err());
+    assert!(matches!(
+        origin.then(Step::new("", "1")),
+        Err(ArtifactError::Origin(_))
+    ));
 }
 
 #[test]

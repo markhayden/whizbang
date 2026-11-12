@@ -127,6 +127,8 @@ pub enum ArtifactError {
         expected: ArtifactType,
         found: String,
     },
+    /// The steps do not make an origin: there is none, or one names no action.
+    Origin(String),
     /// The parts do not make an artifact of this type.
     Invalid { artifact: ArtifactType, why: String },
     /// The artifact does not belong to the image it was asked to be used on.
@@ -159,6 +161,7 @@ impl std::fmt::Display for ArtifactError {
             ArtifactError::Invalid { artifact, why } => {
                 write!(f, "not {}: {why}", artifact.with_article())
             }
+            ArtifactError::Origin(why) => write!(f, "not an origin: {why}"),
             ArtifactError::WrongImage(why) => write!(f, "wrong image: {why}"),
             ArtifactError::Rebind(why) => write!(f, "rebind refused: {why}"),
             ArtifactError::Identity(error) => error.fmt(f),
@@ -244,14 +247,12 @@ impl Origin {
 
     pub(crate) fn from_steps(steps: Vec<Step>) -> Result<Origin> {
         if steps.is_empty() {
-            return Err(ArtifactError::Format(
-                "an artifact records what produced it: the origin has no step".to_owned(),
+            return Err(ArtifactError::Origin(
+                "an artifact records what produced it, and this has no step".to_owned(),
             ));
         }
         if steps.iter().any(|step| step.action.is_empty()) {
-            return Err(ArtifactError::Format(
-                "a step of the origin names no action".to_owned(),
-            ));
+            return Err(ArtifactError::Origin("a step names no action".to_owned()));
         }
         Ok(Origin { steps })
     }
