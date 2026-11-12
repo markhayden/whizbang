@@ -21,6 +21,25 @@ impl Digest {
         &self.0
     }
 
+    /// Reads the 64 lower-case hex digits alone, as [`Digest::hex`] writes them: the form a
+    /// stored file is named by.
+    pub fn from_hex(hex: &str) -> Option<Digest> {
+        let hex = hex.as_bytes();
+        if hex.len() != 64 {
+            return None;
+        }
+        let nibble = |digit: u8| match digit {
+            b'0'..=b'9' => Some(digit - b'0'),
+            b'a'..=b'f' => Some(digit - b'a' + 10),
+            _ => None,
+        };
+        let mut bytes = [0u8; 32];
+        for (byte, pair) in bytes.iter_mut().zip(hex.as_chunks::<2>().0) {
+            *byte = (nibble(pair[0])? << 4) | nibble(pair[1])?;
+        }
+        Some(Digest(bytes))
+    }
+
     /// The 64 lower-case hex digits, without the `sha256:` prefix.
     pub fn hex(&self) -> String {
         const DIGITS: &[u8; 16] = b"0123456789abcdef";
@@ -54,21 +73,9 @@ impl std::str::FromStr for Digest {
                 "{text:?} is not sha256: and 64 lower-case hex digits"
             ))
         };
-        let hex = text.strip_prefix("sha256:").ok_or_else(refuse)?.as_bytes();
-        if hex.len() != 64 {
-            return Err(refuse());
-        }
-        let nibble = |digit: u8| match digit {
-            b'0'..=b'9' => Some(digit - b'0'),
-            b'a'..=b'f' => Some(digit - b'a' + 10),
-            _ => None,
-        };
-        let mut bytes = [0u8; 32];
-        for (byte, pair) in bytes.iter_mut().zip(hex.as_chunks::<2>().0) {
-            let (high, low) = nibble(pair[0]).zip(nibble(pair[1])).ok_or_else(refuse)?;
-            *byte = (high << 4) | low;
-        }
-        Ok(Digest(bytes))
+        text.strip_prefix("sha256:")
+            .and_then(Digest::from_hex)
+            .ok_or_else(refuse)
     }
 }
 

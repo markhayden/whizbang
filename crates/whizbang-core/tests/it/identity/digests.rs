@@ -38,6 +38,24 @@ fn a_digest_reads_back_from_its_own_text_and_from_nothing_else() {
 }
 
 #[test]
+fn the_hex_digits_alone_read_back_and_nothing_else_does() {
+    let digest = Digest::of_bytes(b"abc");
+    let hex = digest.hex();
+    assert_eq!(Digest::from_hex(&hex), Some(digest));
+    for wrong in [
+        digest.to_string(),
+        hex.to_uppercase(),
+        hex[1..].to_owned(),
+        format!("{hex}0"),
+        format!("{}g", &hex[1..]),
+        format!("{}é", &hex[2..]),
+        String::new(),
+    ] {
+        assert_eq!(Digest::from_hex(&wrong), None, "{wrong:?}");
+    }
+}
+
+#[test]
 fn digests_are_written_as_their_text_and_checked_when_read() {
     let digest = Digest::of_bytes(b"abc");
     let text = format!("\"{digest}\"");
