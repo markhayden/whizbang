@@ -11,6 +11,7 @@
 
 mod binding;
 mod colour;
+mod container;
 mod digest;
 mod mapping;
 mod pixels;

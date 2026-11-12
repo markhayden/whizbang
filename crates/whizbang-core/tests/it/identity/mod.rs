@@ -2,7 +2,9 @@
 //! vectors of the canonical pixel digest.
 
 mod bindings;
+mod containers;
 mod digests;
+mod jpeg_sources;
 mod mappings;
 mod pixels;
 mod spaces;

@@ -7,10 +7,11 @@ use whizbang_core::identity::{
 };
 
 use super::support::{
-    Curve, Extras, Grid, HEIGHT, SRGB_COLORANTS, WIDE_COLORANTS, WIDTH, exif_orientation,
-    matrix_profile, matrix_tags, picture_grid, picture_rgba, png, profile_of, rgb_bmp, rgb_jpeg,
-    rgb_png, rgb16_png, rgba_png,
+    Curve, Extras, Grid, HEIGHT, RawPng, SRGB_COLORANTS, WIDE_COLORANTS, WIDTH, crc32,
+    exif_orientation, matrix_profile, matrix_tags, packed, picture_grid, picture_rgba, png,
+    profile_of, rgb_bmp, rgb_jpeg, rgb_png, rgb16_png, rgba_png, srgb_decode,
 };
+use super::vectors::{grey_samples, vector};
 
 fn limits() -> DecodeLimits {
     DecodeLimits::default()
@@ -301,7 +302,143 @@ fn sixteen_bit_samples_are_rounded_to_eight() {
     assert_eq!(identified.pixels.rgba(), [0, 0, 1, 255, 255, 255, 254, 255]);
 }
 
+#[test]
+fn samples_of_fewer_than_eight_bits_are_stretched_to_the_whole_range() {
+    // A sample of n bits is multiplied by 255 / (2^n - 1): by 255, by 85, by 17.
+    let grey = grey_samples();
+    for (name, scale) in [
+        ("grey-one-bit", &(|v: u8| v % 2 * 255) as &dyn Fn(u8) -> u8),
+        ("grey-two-bit", &|v| v % 4 * 85),
+        ("grey-four-bit", &|v| v * 17),
+        ("grey-eight-bit", &|v| v * 17),
+    ] {
+        let identified = identify(&vector(name), &limits()).unwrap();
+        let expected: Vec<u8> = grey
+            .iter()
+            .flat_map(|v| [scale(*v), scale(*v), scale(*v), 255])
+            .collect();
+        assert_eq!(identified.pixels.rgba(), expected, "{name}");
+        assert!(!identified.stored.alpha);
+    }
+}
+
+#[test]
+fn a_palette_is_looked_up_and_its_transparency_is_alpha() {
+    for name in ["palette", "palette-four-bit", "interlaced"] {
+        let identified = identify(&vector(name), &limits()).unwrap();
+        assert_eq!(identified.pixels.rgba(), picture_rgba(), "{name}");
+        assert!(!identified.stored.alpha);
+    }
+    let graded: Vec<u8> = picture_grid()
+        .pixels
+        .iter()
+        .enumerate()
+        .flat_map(|(i, [r, g, b])| [*r, *g, *b, (i * 23) as u8])
+        .collect();
+    let identified = identify(&vector("palette-alpha"), &limits()).unwrap();
+    assert_eq!(identified.pixels.rgba(), graded);
+    assert!(identified.stored.alpha);
+    // Fewer alpha values than palette entries: the rest are opaque.
+    let palette: Vec<u8> = picture_grid().pixels.iter().flatten().copied().collect();
+    let short = RawPng::new(WIDTH, 1, 8, 3, vec![vec![0, 1, 2, 3]])
+        .before(b"PLTE", palette)
+        .before(b"tRNS", vec![9, 8])
+        .bytes();
+    let identified = identify(&short, &limits()).unwrap();
+    let alpha: Vec<u8> = identified
+        .pixels
+        .rgba()
+        .iter()
+        .skip(3)
+        .step_by(4)
+        .copied()
+        .collect();
+    assert_eq!(alpha, [9, 8, 255, 255]);
+}
+
+#[test]
+fn a_colour_named_transparent_is_alpha_and_is_matched_at_full_depth() {
+    let mut keyed = picture_rgba();
+    keyed[15] = 0;
+    for name in ["key-colour", "key-alpha"] {
+        let identified = identify(&vector(name), &limits()).unwrap();
+        assert_eq!(identified.pixels.rgba(), keyed, "{name}");
+        assert!(identified.stored.alpha);
+    }
+    // At 16 bits, 0x8000 and 0x8001 are both 128 at 8 bits, and only the one the key names
+    // is transparent: the key is matched before the samples are narrowed.
+    let row: Vec<u8> = [0x8000u16, 0x8000, 0x8000, 0x8001, 0x8001, 0x8001]
+        .iter()
+        .flat_map(|v| v.to_be_bytes())
+        .collect();
+    let file = RawPng::new(2, 1, 16, 2, vec![row])
+        .before(b"tRNS", [0x80, 0x01].repeat(3))
+        .bytes();
+    let identified = identify(&file, &limits()).unwrap();
+    assert_eq!(
+        identified.pixels.rgba(),
+        [128, 128, 128, 255, 128, 128, 128, 0]
+    );
+    // A grey key, at two bits.
+    let file = RawPng::new(4, 1, 2, 0, vec![packed(&[0, 1, 2, 3], 2)])
+        .before(b"tRNS", vec![0, 2])
+        .bytes();
+    let identified = identify(&file, &limits()).unwrap();
+    assert_eq!(
+        identified.pixels.rgba(),
+        [
+            0, 0, 0, 255, 85, 85, 85, 255, 170, 170, 170, 0, 255, 255, 255, 255
+        ]
+    );
+}
+
 // --- colour profiles ----------------------------------------------------------------------
+
+/// Every colour whose three samples are multiples of 15: 18 values a channel.
+fn sweep() -> Grid<[u8; 3]> {
+    let mut pixels = Vec::new();
+    for r in 0..18u8 {
+        for g in 0..18u8 {
+            for b in 0..18u8 {
+                pixels.push([r * 15, g * 15, b * 15]);
+            }
+        }
+    }
+    Grid::new(108, 54, pixels)
+}
+
+#[test]
+fn the_conversion_of_a_sweep_of_colours_is_fixed() {
+    // 5,832 colours under three profiles: wider primaries under the sRGB curve, the same
+    // under a plain power, and the sRGB primaries under a table of seven entries. Each
+    // digest was computed apart from this code, from the steps ADR 0001 states. A power
+    // that rounds another way, anywhere in the sweep, changes one.
+    let under = |colorants: &[[f64; 3]; 3], curve: Curve| {
+        let file = rgb_png(
+            &sweep(),
+            Extras {
+                profile: Some(matrix_profile(colorants, &curve)),
+                ..Extras::default()
+            },
+        );
+        let identified = identify(&file, &limits()).unwrap();
+        assert_eq!(identified.stored.profile, Profile::Converted);
+        identified.identity.pixels.to_string()
+    };
+    assert_eq!(
+        under(&WIDE_COLORANTS, Curve::SrgbParametric),
+        "sha256:aa0089d204e8060078d67e0c88d02be46ec9552c3f5d09fe8fd1c011940c6465"
+    );
+    assert_eq!(
+        under(&WIDE_COLORANTS, Curve::Gamma(1.8)),
+        "sha256:b77354e748f678f1682f5e152a0c4a7f75a244ae7f18595d23b729c5a76e11a1"
+    );
+    let table = (0..7u32).map(|i| (i * i * 65535 / 36) as u16).collect();
+    assert_eq!(
+        under(&SRGB_COLORANTS, Curve::Table(table)),
+        "sha256:48853384fc9647554896d8f5ae9f3779eeaa38e6bc93ee1e83ab73a51d1dcb0a"
+    );
+}
 
 #[test]
 fn an_srgb_profile_is_no_profile() {
@@ -320,6 +457,35 @@ fn an_srgb_profile_is_no_profile() {
         );
         assert_ne!(identified.identity.file, plain.identity.file);
     }
+}
+
+#[test]
+fn a_profile_is_srgb_within_a_thousandth_and_not_beyond() {
+    let stored = |colorants: &[[f64; 3]; 3], curve: Curve| {
+        identify(&with_profile(matrix_profile(colorants, &curve)), &limits())
+            .unwrap()
+            .stored
+            .profile
+    };
+    // One colorant value off by 0.0008, and by 0.0012.
+    let mut near = SRGB_COLORANTS;
+    near[1][1] += 0.0008;
+    assert_eq!(stored(&near, Curve::SrgbParametric), Profile::Srgb);
+    let mut far = SRGB_COLORANTS;
+    far[1][1] += 0.0012;
+    assert_eq!(stored(&far, Curve::SrgbParametric), Profile::Converted);
+    // The curve lifted by 0.0008 of full scale everywhere, and by 0.0012.
+    let lifted = |by: f64| {
+        let entries = (0..1024)
+            .map(|i| {
+                let light = srgb_decode(f64::from(i) / 1023.0) + by;
+                (light.min(1.0) * 65535.0).round() as u16
+            })
+            .collect();
+        Curve::Table(entries)
+    };
+    assert_eq!(stored(&SRGB_COLORANTS, lifted(0.0008)), Profile::Srgb);
+    assert_eq!(stored(&SRGB_COLORANTS, lifted(0.0012)), Profile::Converted);
 }
 
 #[test]
@@ -606,6 +772,7 @@ fn a_file_over_a_limit_is_refused_before_it_is_decoded() {
     let exact = DecodeLimits {
         max_bytes: file.len() as u64,
         max_pixels: 12,
+        ..DecodeLimits::default()
     };
     identify(&file, &exact).unwrap();
     let few = DecodeLimits {
@@ -631,21 +798,6 @@ fn a_file_over_a_limit_is_refused_before_it_is_decoded() {
     ));
     assert_eq!(limits().max_pixels, 50_000_000);
     assert_eq!(limits().max_bytes, 64 * 1024 * 1024);
-}
-
-fn crc32(bytes: &[u8]) -> u32 {
-    let mut crc = 0xffff_ffffu32;
-    for byte in bytes {
-        crc ^= u32::from(*byte);
-        for _ in 0..8 {
-            crc = if crc & 1 == 1 {
-                (crc >> 1) ^ 0xedb8_8320
-            } else {
-                crc >> 1
-            };
-        }
-    }
-    !crc
 }
 
 #[test]

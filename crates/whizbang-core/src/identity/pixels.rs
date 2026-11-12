@@ -8,10 +8,11 @@
 use std::io::Cursor;
 
 use image::metadata::Orientation;
-use image::{DynamicImage, ImageDecoder, ImageReader, RgbaImage};
+use image::{DynamicImage, ExtendedColorType, ImageDecoder, ImageError, ImageReader, RgbaImage};
 use serde::{Deserialize, Serialize};
 
 use super::colour::MatrixProfile;
+use super::container::{self, Found};
 use super::digest::{Digest, Encoder, FileDigest, PixelDigest};
 use super::{IdentityError, Result};
 
@@ -81,6 +82,44 @@ pub struct DecodeLimits {
     pub max_pixels: u64,
     /// The most bytes a file may have.
     pub max_bytes: u64,
+    /// The most bytes a colour profile may have, once inflated.
+    pub max_profile_bytes: u64,
+}
+
+/// The most bytes the decoded samples of one image may take, and the most the decoder may
+/// allocate, whatever the other limits say: 512 MiB.
+const MAX_DECODER_ALLOCATION: u64 = 512 * 1024 * 1024;
+
+/// True for the sample layouts ADR 0001 gives canonical pixels: grey or red, green and
+/// blue in whole numbers, with or without alpha. CMYK, floating point and anything unknown
+/// are not.
+fn defined_colour_model(model: ExtendedColorType) -> bool {
+    use ExtendedColorType as C;
+    matches!(
+        model,
+        C::L1
+            | C::L2
+            | C::L4
+            | C::L8
+            | C::L16
+            | C::La1
+            | C::La2
+            | C::La4
+            | C::La8
+            | C::La16
+            | C::Rgb1
+            | C::Rgb2
+            | C::Rgb4
+            | C::Rgb8
+            | C::Rgb16
+            | C::Rgba1
+            | C::Rgba2
+            | C::Rgba4
+            | C::Rgba8
+            | C::Rgba16
+            | C::Bgr8
+            | C::Bgra8
+    )
 }
 
 impl Default for DecodeLimits {
@@ -88,6 +127,7 @@ impl Default for DecodeLimits {
         DecodeLimits {
             max_pixels: 50_000_000,
             max_bytes: 64 * 1024 * 1024,
+            max_profile_bytes: 1024 * 1024,
         }
     }
 }
@@ -136,14 +176,25 @@ pub fn identify(bytes: &[u8], limits: &DecodeLimits) -> Result<Identified> {
             limits.max_bytes
         )));
     }
-    let cannot = |what: &str, error: &dyn std::fmt::Display| {
-        IdentityError::Image(format!("cannot {what}: {error}"))
+    // What the container says apart from the decoder, before anything is decoded.
+    let png = container::is_png(bytes)
+        .then(|| container::png(bytes, limits.max_profile_bytes))
+        .transpose()?;
+    let jpeg_profile = container::is_jpeg(bytes)
+        .then(|| container::jpeg(bytes, limits.max_profile_bytes))
+        .transpose()?;
+
+    let cannot = |what: &str, error: ImageError| match error {
+        ImageError::Limits(_) => IdentityError::Limit(format!(
+            "cannot {what} within the decoder's limits: {error}"
+        )),
+        _ => IdentityError::Image(format!("cannot {what}: {error}")),
     };
     let mut decoder = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
-        .map_err(|e| cannot("read", &e))?
+        .map_err(|e| cannot("read", ImageError::IoError(e)))?
         .into_decoder()
-        .map_err(|e| cannot("read the header", &e))?;
+        .map_err(|e| cannot("read the header", e))?;
     let (stored_width, stored_height) = decoder.dimensions();
     let count = u64::from(stored_width) * u64::from(stored_height);
     if count > limits.max_pixels {
@@ -152,25 +203,69 @@ pub fn identify(bytes: &[u8], limits: &DecodeLimits) -> Result<Identified> {
             limits.max_pixels
         )));
     }
-    // A tag that cannot be read, or that is not 1 to 8, is no tag.
-    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
-    let profile = decoder
-        .icc_profile()
-        .map_err(|e| cannot("read the colour profile", &e))?
-        .filter(|profile| !profile.is_empty());
-    let decoded = DynamicImage::from_decoder(decoder).map_err(|e| cannot("decode", &e))?;
+    // The decoded samples are held whole before they are made canonical.
+    if decoder.total_bytes() > MAX_DECODER_ALLOCATION {
+        return Err(IdentityError::Limit(format!(
+            "{stored_width}x{stored_height} decodes to {} bytes, over the limit of \
+             {MAX_DECODER_ALLOCATION}",
+            decoder.total_bytes()
+        )));
+    }
+    let mut decoder_limits = image::Limits::default();
+    decoder_limits.max_alloc = Some(MAX_DECODER_ALLOCATION);
+    decoder
+        .set_limits(decoder_limits)
+        .map_err(|e| cannot("decode", e))?;
+    let model = decoder.original_color_type();
+    if !defined_colour_model(model) {
+        return Err(IdentityError::Unsupported(format!(
+            "{model:?} samples have no canonical pixels"
+        )));
+    }
+    // A tag that is absent, cannot be read, or is not 1 to 8 is no tag. A PNG's tag is
+    // read from its chunk wherever that sits; the decoder sees it only before the image
+    // data.
+    let orientation = match &png {
+        Some(png) => png
+            .exif
+            .as_deref()
+            .and_then(Orientation::from_exif_chunk)
+            .unwrap_or(Orientation::NoTransforms),
+        None => decoder.orientation().unwrap_or(Orientation::NoTransforms),
+    };
+    // A PNG's and a JPEG's profile are read from the container, not by the decoder, which
+    // says nothing of one it cannot read.
+    let profile = match (png, jpeg_profile) {
+        (Some(png), _) => png.profile,
+        (None, Some(profile)) => profile,
+        (None, None) => match decoder
+            .icc_profile()
+            .map_err(|e| cannot("read the colour profile", e))?
+        {
+            Some(profile) if profile.len() as u64 > limits.max_profile_bytes => {
+                return Err(IdentityError::Limit(format!(
+                    "the colour profile is {} bytes, over the limit of {}",
+                    profile.len(),
+                    limits.max_profile_bytes
+                )));
+            }
+            Some(profile) if !profile.is_empty() => Found::Profile(profile),
+            _ => Found::Nothing,
+        },
+    };
+    let decoded = DynamicImage::from_decoder(decoder).map_err(|e| cannot("decode", e))?;
     let alpha = decoded.color().has_alpha();
     let grey = !decoded.color().has_color();
     let mut rgba = straight_rgba(decoded)?;
 
     let profile = match profile {
-        None => Profile::None,
-        Some(_) if grey => {
+        Found::Nothing => Profile::None,
+        Found::Profile(_) if grey => {
             return Err(IdentityError::Unsupported(
                 "a grey image with a colour profile has no canonical pixels".to_owned(),
             ));
         }
-        Some(profile) => {
+        Found::Profile(profile) => {
             let profile = MatrixProfile::parse(&profile).map_err(|why| {
                 IdentityError::Unsupported(format!("the colour profile cannot be applied: {why}"))
             })?;

@@ -459,9 +459,13 @@ version = "0.0.1"
 dependencies = [
  "image",
  "libm",
+ "miniz_oxide 0.8.9",
+ "png",
  "serde",
  "serde_json",
  "sha2",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
