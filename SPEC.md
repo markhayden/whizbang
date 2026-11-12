@@ -1,6 +1,6 @@
 # Whizbang
 
-Draft 12, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
+Draft 13, 2026-11-11. Approved by the owner. This is the living description of how whizbang works; it
 is edited as things change and is not a history.
 
 Where this spec says a detail is "decided at" a checkpoint, the constraint written here binds
@@ -782,12 +782,14 @@ Developer commands:
 ```
 just setup              # install the git hooks; check the pinned tools
 just check              # fast tier: format check, lint, the crate graph, licences and
-                        # sources, the script tests, then the fast tests with seconds
-                        # per suite and the 180-second limit
+                        # sources, the script tests, the reference against a fresh
+                        # copy, then the fast tests with seconds per suite and the
+                        # 180-second limit
 just test-scripts-slow  # the script tests with their opt-in parts (about 40 seconds)
 just test-models        # model tier
 just test-slow          # slow tier
-just docs               # regenerate the reference
+just docs               # regenerate the reference (docs/reference/) from
+                        # `whizbang describe --json`
 just scan               # the secrets scan and the clean-room scan, over the working tree
 just scan-range <base> <head>
                         # the two scans and the attribution check over every commit in
@@ -800,11 +802,11 @@ just ci                 # what a pull request runs: check, advisories, a smoke o
                         # release binary, the secrets scan
 ```
 
-`just setup`, `check`, `test-scripts-slow`, `scan`, `scan-range`, `scan-range-secrets` and
-`ci` exist; the others arrive with the milestone that needs them. `just check` is made of
-recipes that also run alone: `fmt-check`, `clippy`, `graph`, `deny`, `test-scripts`,
-`timing`. CI also runs `just test-timeout` on one runner: a test that sleeps 31 seconds must
-fail by timeout.
+`just setup`, `check`, `test-scripts-slow`, `docs`, `scan`, `scan-range`,
+`scan-range-secrets` and `ci` exist; the others arrive with the milestone that needs them.
+`just check` is made of recipes that also run alone: `fmt-check`, `clippy`, `graph`, `deny`,
+`test-scripts`, `docs-check`, `timing`. CI also runs `just test-timeout` on one runner: a test
+that sleeps 31 seconds must fail by timeout.
 
 ## 12. Project structure
 
@@ -823,8 +825,8 @@ docs/
   sources.toml          the old repos' final commits, fixed before porting starts
 .claude/                skills, subagents and permission settings (versioned)
 scripts/                scan.sh, heavy.sh, timing.sh, setup.sh with tool-versions.txt,
-                        check-crate-graph.sh with crate-graph.txt, hooks/, and tests/ (the
-                        tests of the scripts); later worktree.sh and dev.sh
+                        check-crate-graph.sh with crate-graph.txt, docs.sh, hooks/, and
+                        tests/ (the tests of the scripts); later worktree.sh and dev.sh
 .github/workflows/      CI
 SPEC.md                 this file
 AGENTS.md               rules for any agent; CLAUDE.md imports it
@@ -905,7 +907,11 @@ anything deferred goes on the carry-over list with a milestone.
 
 **Documentation that cannot drift.** `whizbang describe` is static: it reports what the build
 can do and contains no installed models, credentials or reachability. The reference is
-generated from it, and CI fails if the committed copy is stale. Guide examples are marked with
+generated from it, and CI fails if the committed copy is stale. The generator prints names
+and purposes as they are, so it refuses any that could be read as markup: an action's name is
+a lower-case letter followed by lower-case letters, digits, `_` or `-` (64 characters at
+most), and its purpose is one plain line of at most 200 characters (the exact characters
+are listed at the top of `scripts/docs.sh`). Guide examples are marked with
 the tier that runs them and use offline fixtures in the fast tier; a documentation check never
 spends.
 
