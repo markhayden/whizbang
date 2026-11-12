@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::colour::MatrixProfile;
 use super::container::{self, Found};
-use super::digest::{Digest, Encoder, FileDigest, PixelDigest};
+use super::digest::{Digest, Encoder, Fields, FileDigest, PixelDigest};
 use super::{IdentityError, Result};
 
 /// What an image is: two digests. Two files that hold the same picture differ in the first

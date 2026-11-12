@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::digest::Encoder;
+use super::digest::{FieldSource, Fields};
 use super::{IdentityError, Result};
 
 /// How an image's pixels map onto the world.
@@ -199,7 +199,7 @@ impl Space {
     }
 
     /// Writes the space into an identity.
-    pub(super) fn encode(&self, encoder: &mut Encoder) {
+    pub(crate) fn encode(&self, encoder: &mut dyn Fields) {
         encoder.unsigned(u64::from(self.width));
         encoder.unsigned(u64::from(self.height));
         encoder.unsigned(match self.projection {
@@ -210,5 +210,28 @@ impl Space {
             Topology::Bounded => 0,
             Topology::Wrap => 1,
         });
+    }
+
+    /// Reads back what [`Space::encode`] wrote, and checks it as a new space is checked.
+    pub(crate) fn decode(source: &mut dyn FieldSource) -> Result<Space> {
+        let mut side = |what: &str| -> Result<u32> {
+            let value = source.unsigned()?;
+            u32::try_from(value)
+                .map_err(|_| IdentityError::Space(format!("a {what} of {value} is too large")))
+        };
+        let (width, height) = (side("width")?, side("height")?);
+        let projection = match source.unsigned()? {
+            0 => Projection::Flat,
+            1 => Projection::Equirectangular,
+            other => {
+                return Err(IdentityError::Space(format!("{other} is not a projection")));
+            }
+        };
+        let topology = match source.unsigned()? {
+            0 => Topology::Bounded,
+            1 => Topology::Wrap,
+            other => return Err(IdentityError::Space(format!("{other} is not a topology"))),
+        };
+        Space::new(width, height, projection, topology)
     }
 }

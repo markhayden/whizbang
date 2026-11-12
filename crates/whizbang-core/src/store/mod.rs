@@ -116,7 +116,7 @@ impl Layout {
         self.root.join("objects")
     }
     fn object(&self, digest: &Digest) -> PathBuf {
-        self.objects().join(digest.to_string())
+        self.objects().join(digest.hex())
     }
     fn staging(&self) -> PathBuf {
         self.root.join("staging")
@@ -207,7 +207,7 @@ impl Files {
                 ),
             ));
         }
-        let found = Digest::of(&bytes);
+        let found = Digest::of_bytes(&bytes);
         if found != digest {
             return Err(Error::corrupt(
                 &path,
@@ -459,7 +459,7 @@ impl Publication<'_> {
     /// error the same call can be made again.
     pub fn put(&mut self, name: &str, bytes: &[u8]) -> Result<Digest> {
         let fs = self.files.fs.as_ref();
-        let digest = Digest::of(bytes);
+        let digest = Digest::of_bytes(bytes);
         if !self.staged.contains(&digest)
             && !self.files.exists(&self.files.layout.object(&digest))?
         {
@@ -484,7 +484,7 @@ impl Publication<'_> {
     }
 
     fn staged_path(&self, digest: &Digest) -> PathBuf {
-        self.dir.join(digest.to_string())
+        self.dir.join(digest.hex())
     }
 
     /// Publishes: the steps and the two guarantees are in the module's description. `Ok`
