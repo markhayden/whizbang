@@ -76,10 +76,13 @@ Recorded on 2026-11-11, after tasks F1 to F6.
   `archive/m5-03-session-grant-boundary` and `archive/m5-03-stable-session-grants` in wafflery.
   For each, the tag's commit was read from the remote and shown to contain the commit it
   preserves.
-- **rascal:** `m14` and `m13` tagged by the rascal session; its merged worktrees and branches
-  removed by that session.
-- **squint:** the 13 matrix and config files merged; the merged worktree removed; the
-  archived remote branch deleted. Two label corrections recorded in owner storage.
+- **rascal:** `m14` and `m13` tagged by the rascal session. The checkpoint file at the freeze
+  tag (`docs/reviews/m14-checkpoint.md`) records the second attempt, with part B run on the
+  command line and the checker's per-call cap raised from 0.01 to 1.50. On the remote, `m14`
+  points at `d8423e0`, which is `main` and the freeze tag, and `m13` at `661bd68`; every
+  check run on both commits succeeded.
+- **squint:** the 13 matrix and config files merged, and CI is green on the freeze commit; the
+  remote branch `contract-0.6` deleted after its archive tag.
 - **The images repo** is renamed `whizbang-evalsets`. Before the rename every sealed set was
   fetched into an empty copy (13 sets, 355 images, every hash checked). After it the same
   fetch through the old address gave identical files; no seal or manifest changed; and a
@@ -87,6 +90,25 @@ Recorded on 2026-11-11, after tasks F1 to F6.
 - **The coordination repo** is retired and archived.
 - **Freeze tags:** `final-before-whizbang` in all four repos. For each, local `main`, remote
   `main` and the peeled tag are the same commit, CI is green on it, and the tree was clean.
+
+Checked again on 2026-11-11 with `git ls-remote` and a read-only look at the local checkouts.
+The cleanup went less far than the dispositions above say, and nothing more is removed now
+that the repos are frozen:
+
+- **rascal:** the remote branches `m14e-birefnet` and `m14e-hqsam` still exist, at the same
+  commits as their archive tags. They are the only remote branches in the four repos that
+  are not on `main`. Local branches remain, all on `main`, and three worktrees.
+- **squint:** local branches remain, all on `main`, and two worktrees.
+- **wafflery:** the local branches `m5-03-session-grant-boundary` and
+  `m5-03-stable-session-grants` remain, at the same commits as their archive tags, with
+  three worktrees.
+- **All four:** merged remote branches were not deleted (rascal 17, squint 8, wafflery 5,
+  table-manners 5); each is on `main`.
+
+Three boxes of the plan rest on the orchestrator's record alone, because what they describe
+is outside the four repos, and are left unticked until it confirms them: the two label
+corrections in owner storage (F3), the local images clone pointing at the new address (F4),
+and the retirement line pushed to the coordination repo (F5).
 
 Left as found, by the owner's decision:
 

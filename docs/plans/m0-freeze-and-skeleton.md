@@ -252,7 +252,7 @@ inventory shows the outcome of each ignored line.
 
 - [x] Pull `main`.
 - [x] Commit the 13 matrix and config files under `evalsets/matrix/`.
-- [x] Record the two agreed label corrections in owner storage, as a versioned corrections
+- [ ] Record the two agreed label corrections in owner storage, as a versioned corrections
       file beside the owner's labels.
 
 **Done when:** `git status` is clean; CI green for that commit; `just sets-check` passes.
@@ -266,14 +266,14 @@ inventory shows the outcome of each ignored line.
       raw-content address into an empty folder, so every file is really downloaded, and check
       every hash. Check each seal digest is unchanged.
 - [x] If any fetch fails: rename back at once, and stop.
-- [x] Only then update the local clone's remote.
+- [ ] Only then update the local clone's remote.
 
 **Done when:** every pinned revision fetched and verified through the old address.
 **Sealed manifests are not edited** to point at the new name.
 
 ### F5. Retire the coordination repo
 
-- [x] Commit a first line to its `AGENTS.md` and README (retired; see whizbang), and push it
+- [ ] Commit a first line to its `AGENTS.md` and README (retired; see whizbang), and push it
       with its 8 local commits.
 - [x] Archive it.
 
