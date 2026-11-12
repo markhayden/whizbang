@@ -177,7 +177,7 @@ pass before you push, and who merges?", answers correctly from the repo.
 
 **Depends on:** S1, S2, S3, S5.
 
-- [ ] One small code-and-test task (add `--pretty` to `describe --json`, with a test) is done
+- [x] One small code-and-test task (add `--pretty` to `describe --json`, with a test) is done
       by the builder following `kickoff`, reviewed by the reviewer, and merged by the
       orchestrator following `review-merge`.
 - [ ] One push that must be refused is attempted from the builder's worktree: a commit with a

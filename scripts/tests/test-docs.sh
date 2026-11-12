@@ -58,7 +58,7 @@ grep -q -E '^ +run: just ci$' .github/workflows/ci.yml ||
 mkdir "$tmp/bin"
 cat >"$tmp/bin/cargo" <<'SH'
 #!/usr/bin/env bash
-if [ "$*" != "run --quiet -p whizbang -- describe --json" ]; then
+if [ "$*" != "run --quiet -p whizbang -- describe --json --pretty" ]; then
   echo "stand-in cargo: unexpected arguments: $*" >&2
   exit 97
 fi

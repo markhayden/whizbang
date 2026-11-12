@@ -8,7 +8,7 @@ One toolkit for working on images with models: finding and editing things in an 
 reference; their final commits are pinned in [docs/sources.toml](docs/sources.toml).
 
 What a build can do is listed in [docs/reference/actions.md](docs/reference/actions.md), which
-is generated from `whizbang describe --json` and never edited by hand.
+is generated from `whizbang describe --json --pretty` and never edited by hand.
 
 ## Working on it
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The generated reference (SPEC.md section 14, "Documentation that cannot drift"):
-# docs/reference/description.json is `whizbang describe --json` byte for byte, and
+# docs/reference/description.json is `whizbang describe --json --pretty` byte for byte, and
 # docs/reference/actions.md is rendered from that JSON alone.
 #
 #   scripts/docs.sh                       write both files (`just docs`)
@@ -59,8 +59,8 @@ trap 'rc=$?; rm -rf "$tmp"; [ "$done_ok" = 1 ] || [ "$rc" -ne 0 ] || { echo "doc
 if [ -n "$description" ]; then
   [ -f "$description" ] || { echo "docs: no such description: $description" >&2; exit 2; }
   cp "$description" "$tmp/description.json"
-elif ! cargo run --quiet -p whizbang -- describe --json >"$tmp/description.json"; then
-  echo "docs: could not run \`whizbang describe --json\`" >&2
+elif ! cargo run --quiet -p whizbang -- describe --json --pretty >"$tmp/description.json"; then
+  echo "docs: could not run \`whizbang describe --json --pretty\`" >&2
   exit 1
 fi
 
