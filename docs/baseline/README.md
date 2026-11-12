@@ -10,6 +10,8 @@ exchange, so it is never published. This folder holds what can be public:
 - `manifest.toml`: what the package is, without what is in it (below);
 - `transcript.md`: the format each replay fixture is converted to, the audit of those
   transcripts and the comparison the gate uses;
+- `example-transcript.json`: one transcript of an invented decision, kept in step with the
+  converter by the tests;
 - `audit.toml`: the result of that audit, as counts.
 
 ## What the package holds

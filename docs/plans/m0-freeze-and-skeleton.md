@@ -381,7 +381,8 @@ arm; every recorded digest matches; and the private inventory has no unexplained
 - [ ] If a recapture is incomplete for the same reason (the recorder cuts files over 2 MiB),
       recapturing stops. The recorder is fixed in squint, tagged `final-before-whizbang.1` and
       pinned, and the replacement is captured with that.
-      *Not needed: the audit found no incomplete decision (`docs/baseline/audit.toml`), so
+      *The two boxes above (capture again; the recorder fix) are left open because neither
+      was needed: the audit found no incomplete decision (`docs/baseline/audit.toml`), so
       nothing was captured again and nothing was spent.*
 - [x] The comparison code that milestone 2 will use. It compares the whole ordered sequence
       of requests, calls and results, and the terminal outcome; any difference not declared
