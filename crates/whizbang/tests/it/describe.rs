@@ -11,8 +11,9 @@ fn whizbang(args: &[&str]) -> (bool, String) {
     )
 }
 
-/// What `describe --json` printed before `--pretty` existed, byte for byte: two-space
-/// indentation, one field per line, one newline at the end.
+/// The indented form, byte for byte: what `describe --json` printed before `--pretty`
+/// existed, and what the reference holds. Two-space indentation, one field per line, one
+/// newline at the end.
 fn indented_description() -> String {
     format!(
         "{{\n  \"description_version\": 1,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": []\n}}\n",
@@ -21,19 +22,36 @@ fn indented_description() -> String {
 }
 
 #[test]
-fn describe_json_without_pretty_prints_the_same_bytes_as_before() {
+fn describe_json_is_one_line_with_one_newline_at_the_end() {
     let (ok, text) = whizbang(&["describe", "--json"]);
     assert!(ok);
-    assert_eq!(text, indented_description());
+    assert_eq!(text.matches('\n').count(), 1, "{text}");
+    assert!(text.ends_with("}\n"), "{text}");
+    assert!(!text.contains(": "), "{text}");
 }
 
 #[test]
-fn describe_json_pretty_is_the_indented_form_and_equals_plain_json() {
+fn describe_json_and_pretty_hold_the_same_value() {
+    let (_, compact) = whizbang(&["describe", "--json"]);
+    let (_, pretty) = whizbang(&["describe", "--json", "--pretty"]);
+    assert_ne!(compact, pretty);
+    let compact: serde_json::Value = serde_json::from_str(&compact).expect("valid JSON");
+    let pretty: serde_json::Value = serde_json::from_str(&pretty).expect("valid JSON");
+    assert_eq!(compact, pretty);
+}
+
+#[test]
+fn describe_json_pretty_prints_the_bytes_json_printed_before() {
     let (ok, pretty) = whizbang(&["describe", "--json", "--pretty"]);
     assert!(ok);
     assert_eq!(pretty, indented_description());
-    let (_, plain) = whizbang(&["describe", "--json"]);
-    assert_eq!(pretty, plain);
+}
+
+#[test]
+fn describe_json_pretty_is_byte_identical_across_runs() {
+    let (_, first) = whizbang(&["describe", "--json", "--pretty"]);
+    let (_, second) = whizbang(&["describe", "--json", "--pretty"]);
+    assert_eq!(first, second);
 }
 
 #[test]

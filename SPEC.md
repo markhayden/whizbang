@@ -774,7 +774,7 @@ whizbang spend status|reset
 whizbang serve [--http <addr>]
 whizbang play
 whizbang describe [--json [--pretty]]  # static: identical on every machine; --json is
-                                       # indented, and --pretty asks for that by name
+                                       # one line, and --pretty indents it
 whizbang setup                         # install the Python pack
 ```
 
@@ -790,7 +790,7 @@ just test-scripts-slow  # the script tests with their opt-in parts (about 40 sec
 just test-models        # model tier
 just test-slow          # slow tier
 just docs               # regenerate the reference (docs/reference/) from
-                        # `whizbang describe --json`
+                        # `whizbang describe --json --pretty`
 just scan               # the secrets scan and the clean-room scan, over the working tree
 just scan-range <base> <head>
                         # the two scans and the attribution check over every commit in

@@ -20,11 +20,10 @@ struct Cli {
 enum Command {
     /// What this build can do. Identical on every machine for the same build.
     Describe {
-        /// Print the description as JSON.
+        /// Print the description as JSON, on one line: the form a program reads.
         #[arg(long)]
         json: bool,
-        /// With --json: indent it, one field per line. That is how --json prints already,
-        /// so the output is the same; the flag makes the request explicit.
+        /// With --json: indent it, one field per line. The reference holds this form.
         #[arg(long, requires = "json")]
         pretty: bool,
     },
@@ -35,10 +34,15 @@ fn registered_actions() -> Vec<ActionSummary> {
     Vec::new()
 }
 
-fn describe(json: bool) -> Result<String, serde_json::Error> {
+fn describe(json: bool, pretty: bool) -> Result<String, serde_json::Error> {
     let description = Description::new(env!("CARGO_PKG_VERSION"), registered_actions());
     if json {
-        return Ok(format!("{}\n", serde_json::to_string_pretty(&description)?));
+        let document = if pretty {
+            serde_json::to_string_pretty(&description)?
+        } else {
+            serde_json::to_string(&description)?
+        };
+        return Ok(format!("{document}\n"));
     }
     let mut text = format!("{} {}\n", description.name, description.version);
     if description.actions.is_empty() {
@@ -53,9 +57,7 @@ fn describe(json: bool) -> Result<String, serde_json::Error> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
-        // `--pretty` asks for the form `--json` has always printed, so it changes nothing
-        // here: the reference is that output byte for byte (scripts/docs.sh).
-        Command::Describe { json, pretty: _ } => match describe(json) {
+        Command::Describe { json, pretty } => match describe(json, pretty) {
             Ok(text) => {
                 print!("{text}");
                 ExitCode::SUCCESS
