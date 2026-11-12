@@ -299,6 +299,144 @@ fn a_reader_whose_generation_is_pruned_before_it_holds_it_reads_the_current_one(
 }
 
 #[test]
+fn a_reader_that_shares_a_generation_file_already_pruned_reads_the_current_one() {
+    let dir = Scratch::new("store-prune");
+    let root = root(&dir);
+    with_runs(&root);
+    // The reader has opened generation 1's file and not yet locked it. The writer, which
+    // finds it shared by nobody, deletes two runs and prunes. The reader's lock is then
+    // on a file that has no name: it holds nothing, and what generation 1 named is gone.
+    let hook = {
+        let root = root.clone();
+        move || {
+            let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+            store.delete(&["one", "two"]).unwrap();
+            let pruned = store.prune().unwrap();
+            assert_eq!(pruned.generations_removed, vec![1]);
+            assert_eq!(pruned.objects_removed, 2);
+        }
+    };
+    let reader = Reader::open(&root, Arc::new(Hooked::new(When::Opened, hook))).unwrap();
+    let generation = reader.snapshot().unwrap();
+    assert_eq!(generation.number(), 2, "it looked for the name again");
+    assert_eq!(
+        read_all(|entry| reader.read(entry).unwrap(), &generation),
+        3
+    );
+
+    // And what it holds now is generation 2: a later prune leaves that for it.
+    let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+    store.delete(&["failed"]).unwrap();
+    assert_eq!(store.prune().unwrap().generations_in_use, vec![2]);
+    assert_eq!(
+        read_all(|entry| reader.read(entry).unwrap(), &generation),
+        3
+    );
+}
+
+#[test]
+fn content_a_publication_looks_for_is_kept_from_before_the_look() {
+    let dir = Scratch::new("store-prune");
+    let root = with_old(&dir);
+    // Content the store holds and nothing names: a dead publication's `a2` and `c`.
+    let points = points();
+    let dead = Arc::new(ShimFs::new().crash_before(points.pointer, Lost::ContentOnly));
+    assert!(publish_new(&root, dead).is_err());
+
+    // A publication looks for `a2`, finds it, and so will not stage it. Between that
+    // look and whatever the publication does next, a prune runs. The publication must
+    // have named the content before it looked, or the prune removes what it found.
+    let slot: Arc<Mutex<Option<Arc<Store>>>> = Arc::new(Mutex::new(None));
+    let pruned = Arc::new(Mutex::new(None));
+    let hook = {
+        let (slot, pruned) = (slot.clone(), pruned.clone());
+        move || {
+            let store = slot.lock().unwrap().clone().unwrap();
+            *pruned.lock().unwrap() = Some(store.prune().unwrap());
+        }
+    };
+    let fs = Arc::new(Hooked::new(When::Looked(object(&root, A2)), hook));
+    let store = Arc::new(Store::open(&root, fs).unwrap());
+    *slot.lock().unwrap() = Some(store.clone());
+    let mut publication = store.begin().unwrap();
+    publication.put("found", A2).unwrap();
+    let pruned = pruned.lock().unwrap().take().expect("the prune ran");
+    assert_eq!(
+        pruned.objects_removed, 1,
+        "the dead c, and not the a2 just found"
+    );
+    assert_eq!(publication.publish().unwrap().generation, 2);
+    let generation = store.snapshot().unwrap();
+    assert_eq!(read_all(|entry| store.read(entry).unwrap(), &generation), 3);
+    slot.lock().unwrap().take();
+}
+
+#[test]
+fn no_publication_completes_inside_a_prune() {
+    // A prune reads the current generation and later removes the content it does not
+    // name. A publication that completed in between would have its new content removed.
+    // So a prune keeps publications out from its reading to its end.
+    let dir = Scratch::new("store-prune");
+    let root = with_old(&dir);
+    let fs = Arc::new(ShimFs::new());
+    let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+    let mut publication = store.begin().unwrap();
+    publication.put("a", A2).unwrap();
+    assert_eq!(publication.publish().unwrap().generation, 2);
+
+    // The prune is stopped at its first event, the removal of generation 1's file: it
+    // has read the current generation. Another thread publishes.
+    let (done, is_done) = std::sync::mpsc::channel();
+    let publisher = Arc::new(Mutex::new(None));
+    let early = Arc::new(Mutex::new(false));
+    let first_prune_event = fs.events().len();
+    let hook = {
+        let (store, fs, root) = (store.clone(), fs.clone(), root.clone());
+        let (publisher, early) = (publisher.clone(), early.clone());
+        move || {
+            let thread = {
+                let store = store.clone();
+                std::thread::spawn(move || {
+                    let mut publication = store.begin().unwrap();
+                    publication.put("new", b"published beside a prune").unwrap();
+                    let published = publication.publish().unwrap();
+                    let _ = done.send(());
+                    published
+                })
+            };
+            *publisher.lock().unwrap() = Some(thread);
+            // Wait for the publication to have its payload in place and synced: its last
+            // step before it needs the generation. This waits on an event.
+            let objects = root.join("objects");
+            while !fs.events()[first_prune_event..].contains(&Event::SyncDir(objects.clone())) {
+                std::thread::yield_now();
+            }
+            // From there a publication that is not kept out needs a few calls to finish.
+            // One that is kept out never does, and that cannot be seen, only waited out:
+            // this wait runs its full length when the store is right, and can only make
+            // the test pass wrongly, never fail wrongly.
+            *early.lock().unwrap() = is_done
+                .recv_timeout(std::time::Duration::from_millis(100))
+                .is_ok();
+        }
+    };
+    fs.pause_before(first_prune_event, hook);
+    let pruned = store.prune().unwrap();
+    assert_eq!(pruned.generations_removed, vec![1]);
+    let published = publisher.lock().unwrap().take().unwrap().join().unwrap();
+    assert_eq!(published.generation, 3);
+    assert!(
+        !*early.lock().unwrap(),
+        "a publication completed inside the prune"
+    );
+
+    // Whatever the order was, nothing the current generation names is gone.
+    let generation = store.snapshot().unwrap();
+    assert_eq!(generation.number(), 3);
+    assert_eq!(read_all(|entry| store.read(entry).unwrap(), &generation), 3);
+}
+
+#[test]
 fn a_prune_keeps_what_a_publication_in_progress_has_named() {
     let dir = Scratch::new("store-prune");
     let root = with_old(&dir);

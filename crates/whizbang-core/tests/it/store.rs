@@ -176,7 +176,17 @@ enum When {
     Reading(PathBuf),
     /// Just before the first listing of this directory.
     Listing(PathBuf),
+    /// Just after the first look for this name, before the caller has its answer: the
+    /// answer it then gets is what was true before the hook ran.
+    Looked(PathBuf),
+    /// Inside the first sharing of a file: after the file is opened, before it is locked.
+    Opened,
 }
+
+/// A file shared by this test's own file system.
+struct SharedFile(#[allow(dead_code)] std::fs::File);
+
+impl Held for SharedFile {}
 
 /// The real file system, running a hook once at a chosen call: what another process does
 /// between two calls of the one under test, at a point the shim's events do not reach.
@@ -229,7 +239,11 @@ impl Fs for Hooked {
         RealFs.list(path)
     }
     fn exists(&self, path: &Path) -> io::Result<bool> {
-        RealFs.exists(path)
+        let found = RealFs.exists(path);
+        if matches!(&self.when, When::Looked(name) if name == path) {
+            self.run();
+        }
+        found
     }
     fn hold_lock_file(&self, path: &Path, create: bool) -> io::Result<Option<Box<dyn LockFile>>> {
         RealFs.hold_lock_file(path, create)
@@ -237,6 +251,12 @@ impl Fs for Hooked {
     fn share(&self, path: &Path) -> io::Result<Box<dyn Held>> {
         if matches!(self.when, When::Sharing) {
             self.run();
+        }
+        if matches!(self.when, When::Opened) {
+            let file = std::fs::File::open(path)?;
+            self.run();
+            file.lock_shared()?;
+            return Ok(Box::new(SharedFile(file)));
         }
         RealFs.share(path)
     }
