@@ -2,6 +2,15 @@
 
 Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-12, inside checkpoint 1A, after the reviews of the code that came with it
+and of what was built on it. Added: what the rebind checks and what it trusts, with the
+derivation as a type of its own; "Limits and memory", and that `whizbang store import`
+refuses a file over 65 MiB; a location as a statement, and mapped coordinates and `libm`;
+the counts in the mask's prescriptions and sources; that a run passing the end of its plane
+and a binding that breaks ADR 0001's rules are refused. Changed: the core is 0 under
+protect, which narrows `mask/1` without a new version, as the record says where it states
+it. Added to `image/1`: what a change of the encoder that writes an image does to its
+identity.
 Spec: section 3, "Identities" and "Storage"; section 16, checkpoint 1A
 
 ## Context

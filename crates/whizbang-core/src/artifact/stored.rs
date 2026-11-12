@@ -68,7 +68,7 @@ impl Contents for Reader {
 /// type, so a rendering never comes back where a mask was asked for; what comes back has
 /// been read whole, checked, and found to have the identity it is stored under.
 pub fn get(
-    store: &impl Contents,
+    store: &(impl Contents + ?Sized),
     expected: ArtifactType,
     id: ArtifactId,
     limits: &DecodeLimits,

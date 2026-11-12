@@ -1,0 +1,552 @@
+//! Prepare (`SPEC.md` section 3, ADR 0004): can this exact call run now?
+//!
+//! Preparing a call checks it against its action's descriptor, finds its inputs in the
+//! store, and asks which model would answer each capability it needs. It answers with a
+//! [`PreparedCall`], which says whether the call is ready and carries a fingerprint of
+//! everything that was seen, or with a [`Refusal`].
+//!
+//! It has no side effects and spends nothing, and this is so by what it is given: a read
+//! of the store ([`Contents`], which has no way to write), and [`Backends`], which
+//! answers what is configured and has no way to send a request or to reserve.
+
+use std::collections::BTreeSet;
+
+use crate::artifact::{self, Artifact, ArtifactId, ArtifactType, Contents};
+use crate::identity::{Binding, DecodeLimits, Digest, Encoder, Fields};
+
+use super::{ActionDescriptor, Call, Capability, Count, InputPort, Value};
+
+/// Which model answers a capability: the backend, the model, and the model's version or
+/// reported identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelIdentity {
+    backend: String,
+    model: String,
+    version: String,
+}
+
+impl ModelIdentity {
+    pub fn new(backend: &str, model: &str, version: &str) -> ModelIdentity {
+        ModelIdentity {
+            backend: backend.to_owned(),
+            model: model.to_owned(),
+            version: version.to_owned(),
+        }
+    }
+
+    pub fn backend(&self) -> &str {
+        &self.backend
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+}
+
+/// Why nothing answers a capability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unavailable {
+    why: String,
+}
+
+impl Unavailable {
+    pub fn new(why: &str) -> Unavailable {
+        Unavailable {
+            why: why.to_owned(),
+        }
+    }
+
+    pub fn why(&self) -> &str {
+        &self.why
+    }
+}
+
+/// What prepare may ask about capabilities: which model would answer one, with these
+/// features. It is answered from what is configured, with no network; nothing is sent to
+/// a model and nothing is reserved. How a choice and a default are resolved is the
+/// capability interfaces' to define.
+pub trait Backends: Send + Sync {
+    fn resolve(
+        &self,
+        capability: Capability,
+        features: &[String],
+    ) -> Result<ModelIdentity, Unavailable>;
+}
+
+/// No backend at all: what a build has until one is configured.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoBackends;
+
+impl Backends for NoBackends {
+    fn resolve(&self, capability: Capability, _: &[String]) -> Result<ModelIdentity, Unavailable> {
+        Err(Unavailable::new(&format!(
+            "no backend is configured for {}",
+            capability.name()
+        )))
+    }
+}
+
+/// One capability a call needs, and the model that would answer it, if one would.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Need {
+    capability: Capability,
+    features: Vec<String>,
+    model: Option<ModelIdentity>,
+}
+
+impl Need {
+    pub fn capability(&self) -> Capability {
+        self.capability
+    }
+
+    pub fn features(&self) -> &[String] {
+        &self.features
+    }
+
+    /// The model that would answer, or none when nothing does.
+    pub fn model(&self) -> Option<&ModelIdentity> {
+        self.model.as_ref()
+    }
+}
+
+/// One capability a call needs and nothing answers, with the reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Missing {
+    capability: Capability,
+    features: Vec<String>,
+    why: String,
+}
+
+impl Missing {
+    pub fn capability(&self) -> Capability {
+        self.capability
+    }
+
+    pub fn features(&self) -> &[String] {
+        &self.features
+    }
+
+    pub fn why(&self) -> &str {
+        &self.why
+    }
+}
+
+/// Whether a call can run now, with these exact arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Readiness {
+    Ready,
+    /// It cannot: each capability it needs that nothing answers. Never empty.
+    NotReady(Vec<Missing>),
+}
+
+/// One input of a prepared call: the port, the type the port takes, and the artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedInput {
+    port: String,
+    artifact: ArtifactType,
+    id: ArtifactId,
+}
+
+impl ResolvedInput {
+    pub fn port(&self) -> &str {
+        &self.port
+    }
+
+    pub fn artifact(&self) -> ArtifactType {
+        self.artifact
+    }
+
+    pub fn id(&self) -> ArtifactId {
+        self.id
+    }
+}
+
+/// A call that was checked and resolved, and what was seen while doing it.
+///
+/// It is made by preparing a call and in no other way.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedCall {
+    action: String,
+    version: String,
+    arguments: Vec<(String, Value)>,
+    inputs: Vec<ResolvedInput>,
+    needs: Vec<Need>,
+    outputs: Vec<String>,
+    readiness: Readiness,
+    config: Digest,
+    fingerprint: Digest,
+}
+
+impl PreparedCall {
+    /// The action's name.
+    pub fn action(&self) -> &str {
+        &self.action
+    }
+
+    /// The action's version, as its descriptor gives it.
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    /// Every argument that has a value, in the descriptor's order: what the call gave,
+    /// and the default of what it left out. An argument left out that has no default is
+    /// not here.
+    pub fn arguments(&self) -> &[(String, Value)] {
+        &self.arguments
+    }
+
+    /// Every input, by port in the descriptor's order, and within a port in the order
+    /// the call gave them. Each was found in the store as the type its port takes.
+    pub fn inputs(&self) -> &[ResolvedInput] {
+        &self.inputs
+    }
+
+    /// The capabilities this call needs, in the descriptor's order.
+    pub fn needs(&self) -> &[Need] {
+        &self.needs
+    }
+
+    /// The output ports that return something for this call, in the descriptor's order.
+    pub fn outputs(&self) -> &[String] {
+        &self.outputs
+    }
+
+    pub fn readiness(&self) -> &Readiness {
+        &self.readiness
+    }
+
+    /// The digest of the config the preparation was made under.
+    pub fn config(&self) -> Digest {
+        self.config
+    }
+
+    /// The digest of everything this preparation saw: the action and its version, every
+    /// argument's value, every input's identity, the config, and for each capability
+    /// needed the model that would answer or that none would. Two preparations with one
+    /// fingerprint saw the same things; a preparation whose fingerprint is no longer what
+    /// preparing the call again gives is stale.
+    pub fn fingerprint(&self) -> Digest {
+        self.fingerprint
+    }
+}
+
+/// Why a call was turned away before any run existed. A refusal is not an outcome
+/// (`SPEC.md` section 3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    /// No action of this name is registered.
+    UnknownAction { name: String },
+    /// The call is not one the action's descriptor allows.
+    Invalid { action: String, why: String },
+    /// An input is not in the store, is of another type, or does not belong to the image
+    /// its port says it belongs to.
+    Input {
+        action: String,
+        port: String,
+        why: String,
+    },
+    /// The call is well formed and cannot run now: what is missing.
+    NotReady {
+        action: String,
+        missing: Vec<Missing>,
+    },
+    /// The call is ready, and this build cannot run an action yet.
+    NothingRunsYet,
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Refusal::UnknownAction { name } => write!(f, "no action named {name} is registered"),
+            Refusal::Invalid { action, why } => write!(f, "not a call of {action}: {why}"),
+            Refusal::Input { action, port, why } => {
+                write!(f, "{action}: the input {port}: {why}")
+            }
+            Refusal::NotReady { action, missing } => {
+                write!(f, "{action} cannot run now:")?;
+                for (index, one) in missing.iter().enumerate() {
+                    let comma = if index == 0 { "" } else { ";" };
+                    write!(f, "{comma} it needs {}", one.capability.name())?;
+                    if !one.features.is_empty() {
+                        write!(f, " with {}", one.features.join(", "))?;
+                    }
+                    write!(f, ", and {}", one.why)?;
+                }
+                Ok(())
+            }
+            Refusal::NothingRunsYet => {
+                write!(
+                    f,
+                    "the call is ready, and this build cannot run an action yet"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for Refusal {}
+
+/// The binding an artifact belongs to.
+fn binding_of(artifact: &Artifact) -> Binding {
+    match artifact {
+        Artifact::Mask(mask) => mask.binding().clone(),
+        Artifact::Location(location) => location.binding().clone(),
+        Artifact::Image(image) => image.binding(),
+        Artifact::BandProfile(band) => band.binding().clone(),
+        Artifact::Series(series) => series.binding().clone(),
+        Artifact::Plan(plan) => plan.binding().clone(),
+    }
+}
+
+/// How many a port takes, in words.
+fn takes(count: Count) -> String {
+    match (count.min(), count.max()) {
+        (min, Some(max)) if min == max => format!("{min}"),
+        (min, Some(max)) => format!("{min} to {max}"),
+        (min, None) => format!("{min} or more"),
+    }
+}
+
+/// Prepares `call` against `descriptor`: the whole of prepare once the action is found.
+pub(super) fn prepare(
+    descriptor: &ActionDescriptor,
+    call: &Call,
+    contents: &(dyn Contents + Send + Sync),
+    backends: &dyn Backends,
+    config: Digest,
+    limits: &DecodeLimits,
+) -> Result<PreparedCall, Refusal> {
+    let action = descriptor.name();
+    let invalid = |why: String| Refusal::Invalid {
+        action: action.to_owned(),
+        why,
+    };
+
+    // The arguments: only declared ones, every required one, each a value of its type.
+    if let Some(name) = call
+        .arguments()
+        .keys()
+        .find(|name| descriptor.argument(name).is_none())
+    {
+        return Err(invalid(format!("{name} is no argument of it")));
+    }
+    let mut arguments = Vec::new();
+    let mut given = BTreeSet::new();
+    for argument in descriptor.arguments() {
+        let name = argument.name();
+        match call.arguments().get(name) {
+            Some(value) => {
+                argument
+                    .value_type()
+                    .accepts(value)
+                    .map_err(|why| invalid(format!("the argument {name}: {why}")))?;
+                given.insert(name.to_owned());
+                arguments.push((name.to_owned(), value.clone()));
+            }
+            None if argument.is_required() => {
+                return Err(invalid(format!("the argument {name} is required")));
+            }
+            None => {
+                if let Some(default) = argument.default() {
+                    arguments.push((name.to_owned(), default.clone()));
+                }
+            }
+        }
+    }
+
+    // The inputs: only declared ports, each with as many artifacts as it takes.
+    if let Some(port) = call
+        .inputs()
+        .keys()
+        .find(|port| descriptor.input(port).is_none())
+    {
+        return Err(invalid(format!("{port} is no input of it")));
+    }
+    let given_at = |port: &InputPort| -> &[ArtifactId] {
+        call.inputs()
+            .get(port.name())
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    };
+    for port in descriptor.inputs() {
+        let count = given_at(port).len() as u64;
+        let (min, max) = (port.count().min(), port.count().max());
+        if count < u64::from(min) || max.is_some_and(|max| count > u64::from(max)) {
+            return Err(invalid(format!(
+                "the input {} takes {}, and was given {count}",
+                port.name(),
+                takes(port.count())
+            )));
+        }
+    }
+
+    // Each input, read from the store as the type its port takes.
+    let mut inputs = Vec::new();
+    let mut found: Vec<(&InputPort, Artifact)> = Vec::new();
+    for port in descriptor.inputs() {
+        for id in given_at(port) {
+            let artifact =
+                artifact::get(contents, port.artifact(), *id, limits).map_err(|error| {
+                    Refusal::Input {
+                        action: action.to_owned(),
+                        port: port.name().to_owned(),
+                        why: error.to_string(),
+                    }
+                })?;
+            inputs.push(ResolvedInput {
+                port: port.name().to_owned(),
+                artifact: port.artifact(),
+                id: *id,
+            });
+            found.push((port, artifact));
+        }
+    }
+
+    // What belongs to an image belongs to the image this call gives, and to no other:
+    // the same pixels in the same space. A mask on another image of the same size is
+    // refused here.
+    for (port, artifact) in &found {
+        let Some(on) = port.belongs_to() else {
+            continue;
+        };
+        let Some(Artifact::Image(image)) = found
+            .iter()
+            .find(|(other, _)| other.name() == on)
+            .map(|(_, artifact)| artifact)
+        else {
+            continue;
+        };
+        let (pixels, space) = (image.identity().pixels, image.space());
+        let refuse = |why: String| Refusal::Input {
+            action: action.to_owned(),
+            port: port.name().to_owned(),
+            why,
+        };
+        match artifact {
+            Artifact::Mask(mask) => mask
+                .require_image(pixels, space)
+                .map_err(|error| refuse(error.to_string()))?,
+            other => {
+                let binding = binding_of(other);
+                if binding.source() != pixels || binding.source_space() != space {
+                    return Err(refuse(format!(
+                        "wrong image: the {} belongs to the image {}, not to {pixels}, the \
+                         image at {on}",
+                        other.artifact_type(),
+                        binding.source()
+                    )));
+                }
+            }
+        }
+    }
+
+    // What this call needs, and which model would answer each need.
+    let mut needs = Vec::new();
+    let mut missing = Vec::new();
+    for requirement in descriptor.needs_for(&given) {
+        let (capability, features) = (requirement.capability(), requirement.features());
+        let model = match backends.resolve(capability, features) {
+            Ok(model) => Some(model),
+            Err(unavailable) => {
+                missing.push(Missing {
+                    capability,
+                    features: features.to_vec(),
+                    why: unavailable.why,
+                });
+                None
+            }
+        };
+        needs.push(Need {
+            capability,
+            features: features.to_vec(),
+            model,
+        });
+    }
+    let readiness = if missing.is_empty() {
+        Readiness::Ready
+    } else {
+        Readiness::NotReady(missing)
+    };
+    let outputs = descriptor
+        .outputs_for(&given)
+        .iter()
+        .map(|port| port.name().to_owned())
+        .collect();
+
+    let mut prepared = PreparedCall {
+        action: action.to_owned(),
+        version: descriptor.version().to_owned(),
+        arguments,
+        inputs,
+        needs,
+        outputs,
+        readiness,
+        config,
+        fingerprint: config,
+    };
+    prepared.fingerprint = fingerprint(&prepared);
+    Ok(prepared)
+}
+
+/// The fingerprint, kind `prepared/1`, in the encoding ADR 0001 gives every identity: the
+/// action and its version; the count of arguments, and each as its name and its value;
+/// the count of inputs, and each as its port and its identity; the config's digest; the
+/// count of needs, and each as its capability, the count of its features and each
+/// feature, then 1 and the backend, the model and the version of the model that would
+/// answer, or 0 where none would. A value is its kind (0 a number, 1 a whole number, 2 a
+/// boolean, 3 a text) and then itself.
+fn fingerprint(prepared: &PreparedCall) -> Digest {
+    let mut fields = Encoder::new("prepared/1");
+    fields.bytes(prepared.action.as_bytes());
+    fields.bytes(prepared.version.as_bytes());
+    fields.unsigned(prepared.arguments.len() as u64);
+    for (name, value) in &prepared.arguments {
+        fields.bytes(name.as_bytes());
+        match value {
+            Value::Number(number) => {
+                fields.unsigned(0);
+                fields.float(*number);
+            }
+            Value::Integer(number) => {
+                fields.unsigned(1);
+                fields.unsigned(u64::from_be_bytes(number.to_be_bytes()));
+            }
+            Value::Boolean(boolean) => {
+                fields.unsigned(2);
+                fields.unsigned(u64::from(*boolean));
+            }
+            Value::Text(text) => {
+                fields.unsigned(3);
+                fields.bytes(text.as_bytes());
+            }
+        }
+    }
+    fields.unsigned(prepared.inputs.len() as u64);
+    for input in &prepared.inputs {
+        fields.bytes(input.port.as_bytes());
+        fields.digest(&input.id.0);
+    }
+    fields.digest(&prepared.config);
+    fields.unsigned(prepared.needs.len() as u64);
+    for need in &prepared.needs {
+        fields.bytes(need.capability.name().as_bytes());
+        fields.unsigned(need.features.len() as u64);
+        for feature in &need.features {
+            fields.bytes(feature.as_bytes());
+        }
+        match &need.model {
+            Some(model) => {
+                fields.unsigned(1);
+                fields.bytes(model.backend.as_bytes());
+                fields.bytes(model.model.as_bytes());
+                fields.bytes(model.version.as_bytes());
+            }
+            None => fields.unsigned(0),
+        }
+    }
+    fields.finish()
+}

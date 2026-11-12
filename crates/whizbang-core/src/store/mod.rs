@@ -115,6 +115,7 @@
 //! hold a run whose id is empty or has a control character in it, and that run is read,
 //! listed and deleted like any other. Refusing it on reading would make it a run that
 //! nothing can remove, in a store that nothing can read. Whoever prints an id escapes it.
+//! The ids the executor gives runs keep a narrower rule ([`crate::contract::RunId`]).
 //! Deleting a run the store does not hold is
 //! refused ([`Error::NoSuchRun`]), and then none of the runs named with it is deleted.
 //!
@@ -628,8 +629,9 @@ impl Drop for Store {
     }
 }
 
-/// A run's id: not empty, and no control character (a line break, a tab, an escape). The
-/// task that makes runs may ask for more.
+/// A run's id: not empty, and no control character (a line break, a tab, an escape). This
+/// is the floor. The executor names a run with a [`crate::contract::RunId`], whose rule is
+/// narrower, and nothing else makes a run.
 fn check_run_id(run: &str) -> Result<()> {
     if run.is_empty() || run.chars().any(char::is_control) {
         return Err(Error::InvalidRun {

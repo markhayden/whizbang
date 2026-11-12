@@ -5,10 +5,14 @@
 //! It is a type so that a binding an alignment or a crop returned is not taken for one by
 //! accident: [`Mask::rebind`](super::Mask::rebind) takes a derivation and nothing else.
 //!
-//! What it does not do is prove the statement. Stating one is open to any caller, and
-//! nothing here can tell a true derivation from an identity binding between two unrelated
-//! images of one size. Who may state one, and where one stated by hand is refused, belong
-//! to the executor and the fill composite (`docs/carry-over.md`).
+//! What it does not do is prove the statement. Nothing here can tell a true derivation
+//! from an identity binding between two unrelated images of one size.
+//!
+//! Who may state one (ADR 0004): code, and no caller. A call names artifacts by identity
+//! and has no place for a derivation, so none reaches the executor from a door.
+//! [`Derivation::stated`] stays open to code because nothing else makes a derivation yet:
+//! the fill composite will, after checking the pixels, and `stated` closes with it
+//! (`docs/carry-over.md`).
 
 use crate::identity::{Binding, Destination, Mapping, PixelDigest};
 
@@ -25,7 +29,8 @@ pub struct Derivation {
 impl Derivation {
     /// States that the binding's source image was derived from its destination image,
     /// pixel for pixel in place. The binding must be able to say so: it places its image
-    /// onto another image, and by the identity. Whether it is true is the caller's word.
+    /// onto another image, and by the identity. Whether it is true is the caller's word,
+    /// and the caller is code: no call can ask for this.
     pub fn stated(binding: Binding) -> Result<Derivation> {
         let refuse = |why: &str| Err(ArtifactError::Rebind(why.to_owned()));
         let parent = match binding.destination() {
