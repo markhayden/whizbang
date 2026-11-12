@@ -438,7 +438,9 @@ fn second_writers_and_readers_beside_a_writer_at_work_are_never_told_of_damage()
     // Sixty runs of the binary, thirty of each, and more only while the writer has not
     // yet gone round three times: its rounds sync for real, and on a busy machine three
     // of them can outlast sixty runs, or six hundred. So the loop ends on that event and
-    // on no count of its own; what bounds it is the time limit of a test. The runs are
+    // on no count of its own; what bounds it is the time limit of a test. A writer that
+    // has died never gets there, so the loop ends on that too, and the join below then
+    // fails the test with the writer's own panic. The runs are
     // a sample, and they are not what
     // holds the rule: the two windows, each opened on purpose, are in the core's tests
     // (`store/locking.rs`: a look that meets a publication and a prune, and a look
@@ -480,6 +482,11 @@ fn second_writers_and_readers_beside_a_writer_at_work_are_never_told_of_damage()
         if attempt >= 30 && done.load(Ordering::Relaxed) >= 3 {
             break;
         }
+        if writer.is_finished() {
+            // Nothing has asked it to stop yet, so it panicked.
+            eprintln!("the writer stopped by itself, before run {attempt} of the binary");
+            break;
+        }
         let second = whizbang(&["prune"], &root);
         if second.code != Some(1) || !second.err.contains("one process at a time") {
             wrong.push(format!("prune {attempt}: {:?} {}", second.code, second.err));
@@ -492,7 +499,9 @@ fn second_writers_and_readers_beside_a_writer_at_work_are_never_told_of_damage()
         }
     }
     stop.store(true, Ordering::Relaxed);
-    let rounds = writer.join().unwrap();
+    let rounds = writer
+        .join()
+        .expect("the writer panicked; its message is above");
     assert!(
         wrong.is_empty(),
         "{} wrong answers: {wrong:#?}",

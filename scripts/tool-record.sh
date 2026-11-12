@@ -8,7 +8,9 @@
 # It builds in release mode and times real work, so it is heavy: run it through
 # scripts/heavy.sh when another agent may be building. The fast tests then hold the record
 # to the tool: the images byte for byte, and the measurements that do not depend on the
-# machine. The times are only as fresh as the last run of this script.
+# machine. The script keeps the times the record holds unless one of them moved by more
+# than a third, or something else beside them changed. That assumes a quiet machine: when
+# a run on a busy one changes the times alone, discard the change and run this again.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 

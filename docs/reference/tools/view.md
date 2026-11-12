@@ -212,8 +212,11 @@ machine, so the times show proportions and are not a benchmark.
 
 A rerun of `scripts/tool-record.sh view` leaves the times above as they are unless
 something else between the marks changed, or a time moved by more than a third of the one
-written here. So a run that changes nothing leaves nothing to commit, and a difference in
-the times alone means one of them really moved: commit it.
+written here. So a run that changes nothing leaves nothing to commit. That rule assumes a
+quiet machine, where other work moves a time by less than a third. There, a difference in
+the times alone means one of them really moved: commit it. On a busy machine every time
+can double from one run to the next, so a difference in the times alone says nothing
+about the tool: discard it, and run the script again when the machine is quiet.
 
 ## Alternatives
 

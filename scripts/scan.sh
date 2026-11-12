@@ -459,7 +459,10 @@ census() {
 #                                adds to <paths> the names that are files or links, one a
 #                                line, and to <targets> where each link leads; a link
 #                                that goes by two names (on macOS the index can hold one
-#                                composed and decomposed) is two paths and one target
+#                                composed and decomposed) is two paths and one target:
+#                                the same device, inode and target. Two links that
+#                                lead to different places are two targets, whatever
+#                                the file system says of their inodes
 #   by-name <others> <ignored>   the names of <ignored>, NUL-ended, whose file is not one
 #                                of <others> and has not been printed already
 #
@@ -507,7 +510,7 @@ lookup='
       if (-l _) {
         my $target = readlink($_);
         if (!defined $target) { $n{barred}++; next }
-        if (!$link{"$s[0]:$s[1]"}++) {
+        if (!$link{"$s[0]:$s[1]:$target"}++) {
           $targets or open($targets, ">>", $ARGV[2]) or die "$ARGV[2]: $!\n";
           print $targets "$target\n";
           $n{targets} += length($target) + 1;

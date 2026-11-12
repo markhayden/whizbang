@@ -206,8 +206,20 @@ if [ "$(uname -s)" = Darwin ] && [ "$(git config --type=bool core.precomposeunic
   rm another-link
   git -c core.precomposeunicode=false update-index --force-remove "link-$nfc" "link-$nfd"
   rm "link-$nfd"
+  # Both of its names stay among the paths, though its target is read once: a listed
+  # word in the name is counted under each name.
+  ln -s readme.txt "$word-$nfd"
+  git -c core.precomposeunicode=false add -- "$word-$nfd"
+  git -c core.precomposeunicode=false update-index --add --cacheinfo \
+    "120000,$(printf '%s' readme.txt | git hash-object -w --stdin),$word-$nfc"
+  [ "$(git ls-files | wc -l | tr -d ' ')" = 3 ] || fail "the index holds the named link under two names"
+  expect_fail "a link the index holds under two names, both holding a listed word" \
+    "clean-room scan: 2 matching lines (contents 0, paths 2)" "$scan"
+  quiet "$word"
+  git -c core.precomposeunicode=false update-index --force-remove "$word-$nfc" "$word-$nfd"
+  rm "$word-$nfd"
 else
-  echo "skip: a link the index holds under two names; git does not compose names here"
+  echo "skip: two cases of a link the index holds under two names; git does not compose names here"
 fi
 # The same for a message file.
 mkdir "$tmp/messages"
