@@ -234,14 +234,14 @@ search() {
   local rc=0
   case "$target" in
     worktree)
-      git grep --untracked -a -n -z "$@" >"$work/raw" || rc=$?
+      git -c grep.threads=1 grep --untracked -a -n -z "$@" >"$work/raw" || rc=$?
       # HUNT: repeat the same search, and once more on one thread; keep any disagreement.
       case "${HUNT_DIR:-}:$*" in
         :* | */dev/fd/*) ;;
         *)
           hunt_n=$((${hunt_n:-0} + 1))
           hunt_rc2=0 hunt_rc3=0
-          git grep --untracked -a -n -z "$@" >"$work/raw2" 2>"$work/err2" || hunt_rc2=$?
+          git -c grep.threads=1 grep --untracked -a -n -z "$@" >"$work/raw2" 2>"$work/err2" || hunt_rc2=$?
           git -c grep.threads=1 grep --untracked -a -n -z "$@" >"$work/raw3" 2>"$work/err3" || hunt_rc3=$?
           echo x >>"$HUNT_DIR/searches"
           if ! cmp -s "$work/raw" "$work/raw2" || ! cmp -s "$work/raw" "$work/raw3"; then
@@ -259,10 +259,10 @@ search() {
       ;;
     files)
       (cd "$target_dir" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
-        git grep --no-index -a -n -z "$@" -- "${target_items[@]}") >"$work/raw" || rc=$?
+        git -c grep.threads=1 grep --no-index -a -n -z "$@" -- "${target_items[@]}") >"$work/raw" || rc=$?
       ;;
     commits)
-      git --literal-pathspecs grep -a -n -z "$@" "${target_revs[@]}" -- ${target_items[@]+"${target_items[@]}"} >"$work/raw" || rc=$?
+      git --literal-pathspecs -c grep.threads=1 grep -a -n -z "$@" "${target_revs[@]}" -- ${target_items[@]+"${target_items[@]}"} >"$work/raw" || rc=$?
       ;;
   esac
   [ "$rc" -le 1 ] || die "a search failed (exit $rc); refusing to pass"
