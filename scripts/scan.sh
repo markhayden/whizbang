@@ -239,18 +239,28 @@ look_in_files() { # <folder> <sha label> <path label, or empty for the file's na
 # sha, path, line number and text, separated by $S. Every backend is git grep, so the
 # matching is the same everywhere. No match is fine; a search that could not run, or that
 # reported any error, is not.
+#
+# Every search runs on one thread (`-c grep.threads=1`). On CI's macOS runner (macOS 15),
+# git grep with an extended regular expression, in the C locale this script sets, on git's
+# default of several threads, lost a match or returned a wrong `-o` match at random: about
+# 4 to 10 searches in 100, with no error and the usual exit status, in the working tree, in
+# commits and in plain files, with git 2.56 and with Apple's 2.39. On one thread it was
+# wrong in none of 6,740 searches; nor was it in a UTF-8 locale, with a fixed string or
+# with `-P`. The locale stays C, because in UTF-8 a byte that is not UTF-8 hides the rest
+# of its line. Where the fault lies below git has not been established.
+# scripts/tests/test-syntax.sh holds every git grep under scripts/ to one thread.
 search() {
   local rc=0
   case "$target" in
     worktree)
-      git grep --untracked -a -n -z "$@" >"$work/raw" 2>"$work/search-errors" || rc=$?
+      git -c grep.threads=1 grep --untracked -a -n -z "$@" >"$work/raw" 2>"$work/search-errors" || rc=$?
       ;;
     files)
       (cd "$target_dir" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
-        git grep --no-index -a -n -z "$@" -- "${target_items[@]}") >"$work/raw" 2>"$work/search-errors" || rc=$?
+        git -c grep.threads=1 grep --no-index -a -n -z "$@" -- "${target_items[@]}") >"$work/raw" 2>"$work/search-errors" || rc=$?
       ;;
     commits)
-      git --literal-pathspecs grep -a -n -z "$@" "${target_revs[@]}" -- ${target_items[@]+"${target_items[@]}"} >"$work/raw" 2>"$work/search-errors" || rc=$?
+      git --literal-pathspecs -c grep.threads=1 grep -a -n -z "$@" "${target_revs[@]}" -- ${target_items[@]+"${target_items[@]}"} >"$work/raw" 2>"$work/search-errors" || rc=$?
       ;;
   esac
   [ "$rc" -le 1 ] || die "a search failed (exit $rc); refusing to pass"

@@ -269,7 +269,7 @@ changed '$s|$| WHIZBANG_WORDLIST=words|' "no value or location"
 homes='(^|[^A-Za-z0-9_.])~[A-Za-z0-9_-]*/|\$HOME/|\$\{HOME\}|/Volumes/'
 # home_paths <folder>: prints where a tracked file of a checkout holds such a path.
 home_paths() {
-  if git -C "$1" grep -n -I -E -e "$homes" -- '*.md' '*.toml' '*.json' '*.yml' justfile scripts .claude \
+  if git -C "$1" -c grep.threads=1 grep -n -I -E -e "$homes" -- '*.md' '*.toml' '*.json' '*.yml' justfile scripts .claude \
     ':!scripts/tests' >"$tmp/homes"; then
     cut -d: -f1,2 "$tmp/homes"
     return 1

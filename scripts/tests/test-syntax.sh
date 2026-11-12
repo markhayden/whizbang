@@ -265,6 +265,35 @@ case "$(check_rule "$tmp/no-parse.sh")" in
 esac
 [ -z "$(check_rule scripts/scan.sh)" ] || fail "the rule passes scripts/scan.sh"
 
+# --- Every search with git's grep, anywhere under scripts/, runs on one thread: on several
+# it has lost matches at random on CI's macOS runner (the comment above `search` in
+# scripts/scan.sh has the measurements). The command's name is put together here so that
+# these lines are not themselves taken for a search.
+tool="git"
+search_word="grep"
+one_thread="-c ${search_word}.threads=1 "
+# unthreaded <folder>: the lines under it that run the search without the option. Between
+# the two words there may be options, each with at most one argument.
+unthreaded() {
+  grep -r -n -E -e "(^|[^[:alnum:]_.-])${tool}[[:space:]]+(-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?[[:space:]]+)*${search_word}([[:space:]]|\$)" "$1" |
+    grep -v -E -e "^[^:]*:[0-9]+:[[:space:]]*#" |
+    grep -v -F -e "$one_thread$search_word " || true
+}
+found=$(unthreaded scripts)
+[ -z "$found" ] || fail "a search with $tool $search_word that is not on one thread (add: $one_thread): $found"
+[ "$(grep -c -F -e "$tool -c ${search_word}.threads=1 $search_word" -e "$tool --literal-pathspecs -c ${search_word}.threads=1 $search_word" scripts/scan.sh)" = 3 ] ||
+  fail "scripts/scan.sh runs its three searches on one thread"
+grep -q -x -F "export LC_ALL=C" scripts/scan.sh || fail "scripts/scan.sh keeps the C locale"
+# The rule itself, on lines that break it and lines that do not.
+mkdir "$tmp/threads"
+printf '%s\n' "$tool $search_word -n x" "  if $tool -C there $search_word -q x; then" \
+  "(cd there && env X=1 $tool $search_word --no-index x)" >"$tmp/threads/bad.sh"
+printf '%s\n' "# $tool $search_word -n x" "$tool ${one_thread}$search_word -n x" "$tool -C there ${one_thread}$search_word x" \
+  "$tool log --$search_word=x" "$tool status | $search_word x" "echo dig$tool $search_word" \
+  "for t in $tool bash $search_word awk; do" >"$tmp/threads/good.sh"
+[ "$(unthreaded "$tmp/threads" | wc -l | tr -d ' ')" = 3 ] || { unthreaded "$tmp/threads" >&2; fail "the rule finds three searches not on one thread"; }
+unthreaded "$tmp/threads" | grep -q -F "good.sh" && fail "the rule passes searches on one thread and what is not a search"
+
 # --- run.sh: the syntax check comes before any test, and a test file passes only when it
 # printed its last line.
 mkdir "$tmp/tests"
