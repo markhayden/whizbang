@@ -27,8 +27,8 @@ You run `just check` and `just scan-range <base> <head>` yourself,
 so you need `WHIZBANG_WORDLIST` in your environment. It is set where it lasts (`AGENTS.md`,
 "On a fresh clone"), or the orchestrator gives you its path; a command with that path set
 in front of it is not one of the exact allowed commands and asks first.
-That path travels only in a brief to an agent or in the local environment: it is never
-written into a report, a pull request, a commit or a tracked file.
+That path travels only in a brief to an agent or in the local environment.
+The path is never written into a report, a pull request, a commit or a tracked file.
 Never open, print, quote or copy the word list, and never pass on what it holds.
 
 First establish the head, then run the checks.
@@ -54,8 +54,11 @@ If the worktree is not clean, or the three commits are not one commit, stop and 
 is no head to review. `just check` is a heavy command (`AGENTS.md`, "Commands"), so it goes
 through `scripts/heavy.sh`, which is not on the allow list.
 
-CI counts only for a run whose commit is the head, which `gh run list --commit <head>`
-shows. While it is still running, wait for it. A red job is a finding that blocks the
+Both CI commands are needed. `gh pr checks` gives the three job names and their results,
+but for the pull request's latest run, whichever commit that was;
+`gh run list --commit <head>` shows that there is a run whose commit is the head, and CI
+counts only for that run.
+While it is still running, wait for it. A red job is a finding that blocks the
 merge. Whether the branch still passes once merged with a `main` that has moved is not
 yours to settle: that is step 4 of `.claude/skills/review-merge/SKILL.md`.
 
@@ -73,7 +76,7 @@ Check, in this order:
    The pull request's title and body are yours to check as well, in two ways. Go through
    them yourself: every claim in them is true of the final diff. And run the checks of
    step 7 of `review-merge` on them (the scan of the two files, the attribution check on
-   the stripped copy, the `grep`), without its last command, which changes the pull
+   the stripped copy, the `grep`), without the command that puts the text on the pull
    request. A false claim there is a finding that blocks the merge; the builder, or the
    orchestrator by that step 7, settles it without moving the head.
 5. Tests wait on events, not sleeps. No work is done twice: what the branch adds does not
@@ -93,7 +96,9 @@ they hold some lines and cannot see a new sentence that contradicts them. Every 
 those files is gone through in full, by you and by the orchestrator.
 
 A finding is one of two kinds. One that **blocks the merge** must be settled before the
-branch merges. A **follow-up** does not block. Name each follow-up plainly;
+branch merges.
+A **follow-up** does not block.
+Name each follow-up plainly;
 the orchestrator records it, by `review-merge`, so that none is left only in your report.
 
 Report: the full head commit you reviewed; the results of `just check`, the range scan and

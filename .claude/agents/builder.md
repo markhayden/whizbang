@@ -17,8 +17,8 @@ the review asks for (its step 14: tests first again, a new head, a new hand-back
 `main` moving under the branch (its step 15). You
 need `WHIZBANG_WORDLIST` in your environment to scan and to push: it is set where it lasts
 (`AGENTS.md`, "On a fresh clone"), or the orchestrator gives you its path.
-That path travels only in a brief to an agent or in the local environment: it is never
-written into a hand-back, a pull request, a commit or a tracked file.
+That path travels only in a brief to an agent or in the local environment.
+The path is never written into a hand-back, a pull request, a commit or a tracked file.
 Never open, print, quote or copy the word list, and never pass on what it holds.
 
 Nothing you write names an agent or a model: no commit, no pull request, no code, no

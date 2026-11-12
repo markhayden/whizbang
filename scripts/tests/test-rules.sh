@@ -394,12 +394,13 @@ check_rules() {
     'They are not the boundary.' \
     'The path may be given to another agent working in this repo.' \
     'never committed, opened, quoted, printed or copied' \
-    'as an `env` entry in `.claude/settings.local.json`' \
+    'as an `env` entry in `.claude/settings.local.json`, which is never committed' \
+    'and what it holds is never passed on.' \
     'is not one of the exact allowed commands' \
     '- **The system temp folder,**' \
     '`gh pr diff <n> --name-only` lists the files an open pull request changes' \
     'These are heavy:' \
-    'written into a hand-back, a pull request, a commit or a tracked file.' \
+    'The path is never written into a hand-back, a pull request, a commit or a tracked file.' \
     'The local settings file that may hold it is never committed.' \
     'are a tripwire, not a proof' \
     'Every change to these files is read in full by the reviewer and by the orchestrator.' \
@@ -441,6 +442,9 @@ changed 's/^- \*\*The system temp folder,\*\*/- The system temp folder,/' "must 
 changed 's/These are heavy:/Some are heavy:/' "must say: These are heavy:"
 changed 's/that may hold it is never committed\./that may hold it is committed./' "must say: The local settings file"
 changed 's/are a tripwire, not a proof/are the proof/' "must say: are a tripwire, not a proof"
+changed 's/`\.claude\/settings\.local\.json`, which is never committed/`.claude\/settings.local.json`, which is committed/' "must say: as an \`env\` entry"
+changed 's/and what it holds is never passed on\./and what it holds is passed on with care./' "must say: and what it holds is never passed on."
+changed 's/^   The path is never written into a hand-back/   The path is written into a hand-back/' "must say: The path is never written"
 changed 's/is ticked by a later pull request/is ticked at once/' "must say: is ticked by a later pull request"
 changed 's|a private word list the owner provides|~/words|' "no value or location"
 changed '$s|$| WHIZBANG_WORDLIST=words|' "no value or location"

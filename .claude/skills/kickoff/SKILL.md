@@ -36,8 +36,8 @@ If one is missing, ask the orchestrator. Do not guess.
       one). A command that starts with `export`, the variable and `&&` is not one of the
       exact allowed commands and asks first every time; the lasting setting avoids that.
       The path may be given to another agent working in this repo.
-      It travels only in a brief to an agent or in the local environment: it is never
-      written into a hand-back, a pull request, a commit or a tracked file.
+      It travels only in a brief to an agent or in the local environment.
+      The path is never written into a hand-back, a pull request, a commit or a tracked file.
       Never open, print, quote or copy the word list, and never pass on what it holds.
       Without it you cannot push; ask the owner. Run `just check` and `just scan` and see
       both pass before you change anything.
@@ -74,7 +74,10 @@ If one is missing, ask the orchestrator. Do not guess.
       refusal: every commit that is not yet on origin, back to origin's tip of the branch,
       or to the base when the branch was never pushed; find the material by going through
       your own change. Go no further back than what origin already has. Then take the
-      material out and commit again. A new commit on top is the fix only when the
+      material out and commit again. If one of the commits taken off was a merge of
+      `main`, the reset has folded what `main` brought into the staged work: commit only
+      your own files, drop the rest, and merge `origin/main` again (step 15), so that the
+      head still contains `main`. A new commit on top is the fix only when the
       material is in no commit the push would publish, as when `just scan` found it in the
       working tree. The commits taken off stay in the local repository, in its object
       store and reflog, which every worktree shares, until git collects them: never
@@ -119,7 +122,9 @@ If one is missing, ask the orchestrator. Do not guess.
       the new head, and hand back again with the new commit: the next review is of that
       commit.
 - [ ] 15. When the orchestrator says that `main` has moved: merge `origin/main` into your
-      branch with a merge commit (this asks first), never with a rebase. Then steps 7, 8
+      branch with a merge commit (this asks first), never with a rebase. On a conflict,
+      resolve it only in your own files; when it is in a file you did not change, stop,
+      abort the merge, and say why in the hand-back. Then steps 7, 8
       and 11 again: `just check`, `just scan`, the push, CI.
       Hand back the new head: it is reviewed again.
 
@@ -147,7 +152,6 @@ just check                                     # before a commit; holds for the 
 git add <file> <file>                          # by name
 git commit -m "type(scope): summary"
 git status --short                             # prints nothing: the commit is what was checked
-git rev-parse 'HEAD^{tree}'                    # the tree that was checked
 just scan                                      # before every push
 git push -u origin <slug>
 
@@ -203,6 +207,7 @@ gh pr view <number> --json headRefOid,url      # the same commit
 # 15: main has moved, and the orchestrator asked (the merge asks first)
 git fetch origin main
 git merge --no-ff --no-edit origin/main
+git merge --abort                              # only on a conflict outside your own files
 ```
 
 ## Hand-back format

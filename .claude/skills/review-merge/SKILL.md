@@ -55,8 +55,7 @@ If the verdict names no commit, or a short one, ask the reviewer for the full co
       head. The corrected files get every check of this step again, the two scans, the
       attribution check on the stripped copy and the `grep`, and are gone through again,
       before they are put on the pull request; say what you changed in the hand-back.
-      A correction that changes a claim about the code
-      goes back to the builder.
+      A correction that changes a claim about the code goes back to the builder.
 - [ ] 8. Files that grant permissions or check the pull request. List the changed files.
       These count, because they grant permissions or are what `just check` and `just ci`
       run: any file under `.github/`; any file under a folder named `.claude`, at
@@ -68,7 +67,10 @@ If the verdict names no commit, or a short one, ask the reviewer for the full co
       each follow-up of the verdict is one of two things: fixed on the branch, which gives
       a new head that is reviewed again; or yours to record, as a row in
       `docs/carry-over.md` that your next pull request adds, and that pull request is
-      named in the hand-back. Nothing is left only in a verdict.
+      named in the hand-back. Nothing is left only in a verdict. Until that pull request
+      exists, your hand-back to the owner is the record of each follow-up. Open the pull
+      request that records or fixes them before you start other work; it is reviewed
+      like any other.
 - [ ] 10. Fetch `main` once more. If it has moved since step 4, do step 4 again.
 - [ ] 11. Merge with a merge commit, matched to the head. Never a squash, never a rebase
       merge, never past a failing check.

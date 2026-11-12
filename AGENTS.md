@@ -11,15 +11,15 @@ manifest. This file holds what you cannot work out from the code.
    (`scripts/tool-versions.txt`), naming the install command for any that is missing.
 2. Set `WHIZBANG_WORDLIST` to the path of a private word list the owner provides. Set it
    where it lasts: in your shell profile, or
-   as an `env` entry in `.claude/settings.local.json`, which git ignores and which stays
-   untracked (`just check` fails on a tracked one). A variable does not last from one of
+   as an `env` entry in `.claude/settings.local.json`, which is never committed
+   (git ignores it, and `just check` fails on a tracked one). A variable does not last from one of
    an agent's shell calls to the next, and a command that starts with `export`, the
    variable and `&&` is not one of the exact allowed commands, so it asks first every time.
    The path may be given to another agent working in this repo.
-   It travels only in a brief to an agent or in the local environment: it is never
-   written into a hand-back, a pull request, a commit or a tracked file.
-   The list itself is never committed, opened, quoted, printed or copied, and what it holds
-   is never passed on. Without it you cannot push; ask the owner.
+   It travels only in a brief to an agent or in the local environment.
+   The path is never written into a hand-back, a pull request, a commit or a tracked file.
+   The list itself is never committed, opened, quoted, printed or copied,
+   and what it holds is never passed on. Without it you cannot push; ask the owner.
 3. Run `just scan` and see it pass. Then run `just check`. Both pass before you change
    anything.
 
@@ -139,10 +139,13 @@ such as an `export` and `&&`: a rule matches the exact text. That is why
 `WHIZBANG_WORDLIST` is set where it lasts ("On a fresh clone"), not at the front of each
 command. The local settings file that may hold it is never committed.
 
-The tests on this file, the subagent files and the skills are a tripwire, not a proof: they
-hold some lines, and hold every line about a push that skips the hook, a forced push or the
-private list to an exact list, but they cannot see a new sentence that contradicts the
-rest. Every change to these files is read in full by the reviewer and by the orchestrator.
+The tests on this file, the subagent files and the skills are a tripwire, not a proof. They
+hold some phrases. They also hold to exact lists every line in which one of a set of words
+and command forms appears: those for a forced push, for the git hooks and ways past them,
+for the owner's private list and its variable, and for merging through the API. The set
+is at the top of that part of `scripts/tests/test-skills.sh`. A sentence on those
+subjects that uses none of the words, and any sentence on another subject, passes
+unseen. Every change to these files is read in full by the reviewer and by the orchestrator.
 
 ## When documents disagree
 
