@@ -297,8 +297,10 @@ fn the_records_examples_are_what_view_gives() {
 /// rest of it. It is taken out before anything is written.
 const MARK: char = '\u{1}';
 /// A time is written again only when it moved by more than this share of the time the
-/// record holds. Other work on the machine moves a time by less than that from run to
-/// run, and the record's times show proportions, not a benchmark.
+/// record holds. That assumes a quiet machine: there, other work moves a time by less
+/// than that from run to run, and the record's times show proportions, not a benchmark.
+/// Under load every time can double on every run. A change in the times alone on a busy
+/// machine is discarded, not committed, and the script is run again.
 const MARGIN: f64 = 1.0 / 3.0;
 
 /// The part of the record between the `timed` marks as it is committed, when the fresh
