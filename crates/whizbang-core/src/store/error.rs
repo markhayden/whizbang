@@ -79,6 +79,58 @@ impl Error {
     }
 }
 
+impl Error {
+    /// The failure in words that hold no path: what may be handed to a caller who is not
+    /// on this machine. A file of the store is named by its last part alone, which is a
+    /// digest, a generation's number or a fixed name, and never by where the store is.
+    /// The reason a file was found damaged is left out: it can quote what the file holds.
+    /// [`fmt::Display`] gives the whole of it, paths included, for whoever runs the store.
+    pub fn without_paths(&self) -> String {
+        let file = |path: &Path| match path.file_name() {
+            Some(name) => name.to_string_lossy().into_owned(),
+            None => "a file".to_owned(),
+        };
+        match self {
+            Error::Io {
+                doing,
+                path,
+                source,
+            } => format!(
+                "the store cannot {doing} its file {}: {}",
+                file(path),
+                source.kind()
+            ),
+            Error::Missing { .. } | Error::NoParent { .. } => "there is no store".to_owned(),
+            Error::NotAStore { .. } => "what was opened is not a store".to_owned(),
+            Error::Held { .. } => "the store is being written by another process".to_owned(),
+            Error::InvalidRun { .. } => "the store was given a run id it does not take".to_owned(),
+            Error::OtherFormat {
+                path,
+                format,
+                reads,
+            } => format!(
+                "the store's file {} is of another format: {format}, and this build reads \
+                 format {reads}",
+                file(path)
+            ),
+            Error::NoSuchRun { .. } => "the store does not hold that run".to_owned(),
+            Error::NotAnOutput { digest } => format!(
+                "the reference to {digest} is a diagnostic: it can be read, and never used \
+                 as an output"
+            ),
+            Error::Corrupt { path, .. } => {
+                format!("the store's file {} is missing or damaged", file(path))
+            }
+            Error::OtherFileSystem { .. } => {
+                "the store's staging is not on the store's file system".to_owned()
+            }
+            Error::Unacknowledged { generation, .. } => {
+                format!("generation {generation} is visible but was not confirmed durable")
+            }
+        }
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

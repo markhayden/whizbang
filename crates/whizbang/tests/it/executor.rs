@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use whizbang_core::contract::{Call, Executor, Readiness, Refusal, Value};
+use whizbang_core::contract::{Call, CallError, Executor, Readiness, Refusal, Value};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Reader, Store};
 use whizbang_testkit::echo::Echo;
@@ -22,9 +22,9 @@ fn the_shipping_executor_knows_no_echo() {
     let call = Call::new("echo").argument("text", Value::text("hello"));
     assert_eq!(
         executor.prepare(&call),
-        Err(Refusal::UnknownAction {
+        Err(CallError::Refused(Refusal::UnknownAction {
             name: "echo".to_owned()
-        })
+        }))
     );
 }
 
@@ -44,10 +44,22 @@ fn a_test_prepares_echo_on_the_executor_the_binary_builds() {
         prepared.arguments(),
         [("text".to_owned(), Value::text("hello"))]
     );
+    // There is no config yet, and the binary says so with the digest of no bytes.
+    assert_eq!(
+        prepared.config(),
+        whizbang_core::identity::Digest::of_bytes(b"")
+    );
+    assert_eq!(
+        prepared.config().to_string(),
+        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
     // The entry point takes it as far as there is anything built to take it.
-    assert_eq!(executor.submit(&call), Err(Refusal::NothingRunsYet));
+    assert_eq!(
+        executor.submit(&call),
+        Err(CallError::Refused(Refusal::NothingRunsYet))
+    );
     assert!(matches!(
         executor.submit(&Call::new("echo")),
-        Err(Refusal::Invalid { .. })
+        Err(CallError::Refused(Refusal::Invalid { .. }))
     ));
 }
