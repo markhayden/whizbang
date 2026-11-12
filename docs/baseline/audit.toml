@@ -1,0 +1,41 @@
+# The audit of the baseline transcripts: counts only. Written by scripts/baseline/audit.py;
+# see transcript.md beside this file. It holds no item names, file names or verdicts.
+
+transcript_version = 1
+tools_version = "1"
+package_digest = "sha256:d2edd3bb789370d2e99e85a212c07f31a7b1e00e76d98ce38b7170ea9db7e726"
+transcripts_digest = "sha256:ec82b1fe428b0926709d05adce63a592c3395e6392e353f0a8a03ed228b88b2e"
+
+decisions = 1144
+complete = 1144
+incomplete = 0
+invalid = 0
+turns = 2848
+calls = 3550
+
+[origin]
+historical = 1144
+
+[calls_by_disposition]
+excluded = 1
+executed = 2293
+final = 1144
+rejected = 112
+
+[terminal_outcomes]
+error_submission_invalid = 6
+verdict = 1138
+
+[responses_by_stop_reason]
+end_turn = 2
+max_tokens = 1
+tool_use = 2845
+
+[excluded_turns]
+no_call = 2
+truncated = 1
+
+[repairs]
+reissue_no_call = 2
+reissue_truncated = 1
+rejected_invalid_submission = 109
