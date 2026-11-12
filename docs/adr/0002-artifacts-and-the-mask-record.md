@@ -66,20 +66,45 @@ order, ends with the origin, and has nothing after it. A binding is written with
 of its identity (ADR 0001), under the kind `binding/1`.
 
 A plane's runs are as long as they can be: a run ends where the value changes, or at
-4,294,967,295 samples. Planes are large and mostly flat; as runs, the three planes of an
-empty mask are 66 bytes, whatever its size.
+4,294,967,295 samples, the most its four bytes can say. Planes are large and mostly flat; as
+runs, the three planes of an empty mask are 66 bytes at any size up to 4,294,967,295
+samples, which is far over the limit on pixels (below). A plane over that would take one
+more run of five bytes for each 4,294,967,295 samples.
 
 **One way to write each artifact.** A file is read, checked as a new artifact is checked,
 and then written again: unless that gives the same bytes, the file is refused. That one
 rule refuses a run split in two, a zero with its sign set, and anything after the end.
 Also refused: a number that is not finite; a kind or an origin version this build does not
 read; a count the file cannot back (nothing is set aside for a count: reading runs out of
-bytes instead); a plane over the limit on pixels, before any of it is read; an image whose
+bytes instead); a plane over the limit on pixels, before any of it is read; a run that
+passes the end of its plane, before anything is set aside for it; a binding inside the file
+that breaks one of ADR 0001's rules, which is checked as a new binding is; an image whose
 record does not describe the picture it holds.
 
 **The file is not the identity.** The identity is hashed from the content, not from the
 file's bytes. A change to how a file is written (another coding of planes, a longer
 origin) is a new version of the file that leaves every identity as it was.
+
+**Limits and memory.** A small file can stand for a large artifact, so what reading costs
+is bounded by the artifact, not by the file:
+
+- A mask's planes are held to ADR 0001's limit on pixels, 50,000,000 unless the caller
+  changes it: the width times the height of its binding's source space, checked before any
+  plane is read.
+- A mask in memory is its three planes, one byte a pixel: 150 MB at the limit, whatever
+  its file holds. An empty mask of 50,000,000 pixels is a file of under a kilobyte and
+  150 MB once read.
+- Each plane is set aside whole when its size has been read, before its runs. A file that
+  is refused later (a run that does not fit, a broken invariant, a file not written the one
+  way) can have cost as much as the mask it claimed to be: up to 150 MB before the refusal.
+- Reading writes the file again to compare it, which costs the file's size once more.
+  Working out the identity copies nothing. A rebind holds both masks while both are kept.
+- Everything else a file holds (half-widths, rows, values, points, an origin) is set aside
+  only as its bytes are read, so it costs no more than a small multiple of the file's size.
+  An image is held to ADR 0001's limits.
+
+Nothing here limits the size of the file itself; whoever reads the bytes does. A tighter
+bound for masks is on `docs/carry-over.md`.
 
 ### The six types
 
@@ -110,6 +135,25 @@ binding's source space:
 Whether a polygon's edges cross is not checked, and nothing ties together the parts of a
 shape that was split at a panorama's seam; both are on `docs/carry-over.md`.
 
+"Inside the image" includes its edges: `x` from 0 to the width and `y` from 0 to the
+height, as ADR 0001's coordinates run.
+
+**A location is a statement, as a binding is.** Its identity holds the coordinates as they
+were given. In a wrapped space the right edge is column 0 (ADR 0001), so a column, a point
+or a box's edge at `x` equal to the width and the same one at `x` equal to 0 are one place
+with two identities, and both are accepted. Nothing is brought round before hashing: a box
+whose right edge is the width would lose its area, and a polygon would turn inside out.
+Two equal location identities are the same location; two different ones may still be the
+same place. As ADR 0001 says of bindings, later code must never take two different
+identities to mean two different places.
+
+**Mapped coordinates and `libm`.** A location's coordinates are hashed. ADR 0001 requires
+that a mapped point that enters hashed bytes be computed with `libm`, because the machine's
+own sine, cosine and arc functions may differ in their last bits. Nothing maps a location
+yet. Whatever first carries a location through a rotation, or through any mapping that
+uses those functions, computes its points with `libm`, so that the mapped location has the
+same identity on every machine; that is on `docs/carry-over.md`.
+
 **`mask/1`.** The mask record:
 
 1. the binding;
@@ -118,22 +162,28 @@ shape that was split at a panorama's seam; both are on `docs/carry-over.md`.
    binding's source image: **core**, **blend**, **protect**;
 4. the profile: `u` 0 for none, or `u` 1, the band profile and the feather's sigma (a
    series);
-5. the prescriptions: for each, its kind (`u`; 0 is a tone ramp), and for a tone ramp its
-   version (`u`, 1), its step (a series) and its share (`f`);
-6. what it was made from: the identities of the locations (`d` each), then of the
-   instances a segmenter found (`d` each).
+5. the prescriptions: their count (`u`), then for each its kind (`u`; 0 is a tone ramp),
+   and for a tone ramp its version (`u`, 1), its step (a series) and its share (`f`);
+6. what it was made from: the count of locations (`u`) and the identity of each (`d`), then
+   the count of instances a segmenter found (`u`) and the identity of each (`d`).
 
 The planes and the one rule for a pixel's weight are rascal's (its ADR 0006):
 
-- Core is binary, 0 or 255: where a filler may paint, with a weight of 1.
+- Core is binary, 0 or 255: where a filler may paint, with a weight of 1. It is 0 under
+  protect.
 - Blend holds the weights outside the core as fractions of 255. It is 0 inside the core
   and under protect.
 - Protect is binary: where nothing may change.
 - **The effective weight** of a pixel is 0 where protected, else 1 in the core, else its
   blend over 255. Everything that renders, refines or pastes through a mask uses that rule.
 - Replacing the core clears the blend, the profile and every prescription, which were
-  drawn from the old core; protect is kept and still wins. Adding to protect clears the
-  core and the blend under it.
+  drawn from the old core; protect is kept and still wins: the new core is cleared under
+  it. Adding to protect clears the core and the blend under it.
+- So the planes are one way to state a mask's weights: two masks with the same weights and
+  the same protect have the same planes, in whatever order they were refined, and a file
+  whose core is not 0 under protect is refused. Rascal kept a replaced core under protect,
+  where its weight was 0 all the same; such a mask and the one without that core weighed
+  alike and would have had two identities here.
 - The profile's band and sigma, and a tone ramp's step, belong to the mask's own binding.
   The sigma has one channel and an entry for every row; a step has three channels and an
   entry for every row; a share is from 0 to 1.
@@ -142,14 +192,17 @@ A prescription is data on the record, not pixels. Applying one, drawing a band, 
 and rendering arrive with the operations of milestone 3.
 
 **`band_profile/1`.** The binding; the identity of the line location the band follows
-(`d`); the centre column (`u`); the least half-width (`f`, positive); the half-width of
-every row (`f` each, one for each row of the image, none under the least); the sampling
-windows: gap, step columns, texture columns (`u` each); the name of the set of constants
-that produced it (text).
+(`d`); the centre column (`u`), from 0 to the width: it is a place between columns, as an
+`x` is, so the right edge is allowed; the least half-width (`f`, positive); the count of
+half-widths (`u`), which is the count of the image's rows, and then the half-width of each
+row (`f` each), none more than 1e-9 under the least, the tolerance rascal's profile
+allowed; the sampling windows: gap, step columns, texture columns (`u` each); the name of
+the set of constants that produced it (text).
 
 **`series/1`.** The binding; what was measured and its unit (texts); the channels (`u`, at
-least 1); the rows (`u` each, ascending, inside the image); the values (`f` each, one for
-each channel of each row, row by row).
+least 1); the count of rows (`u`) and then each row (`u` each, ascending, inside the
+image); the count of values (`u`), which is the rows times the channels, and then each
+value (`f` each, one for each channel of each row, row by row).
 
 **`plan/1`.** The binding of the panorama that is cut; the strip width (`u`). The space is
 a complete panorama, and the strip is even, at least 2 and at most half the width: the rule
@@ -189,8 +242,8 @@ identity, and the store holds the same bytes.
 ### Where an artifact is stored
 
 Under the name `artifacts/<type>/<the identity's 64 hex digits>`, as its canonical file.
-`whizbang store import <file>` reads a canonical file of any type and publishes it under
-that name; an artifact the store already holds is left as it is.
+`whizbang store import <file> --store <dir>` reads a canonical file of any type and
+publishes it under that name; an artifact the store already holds is left as it is.
 
 ### A mask on another image: the checked rebind
 
@@ -198,25 +251,55 @@ A mask may be used on one image: its binding's source, by canonical pixel digest
 space. Any other image is refused, the same size or not.
 
 To use it on an image derived from its own (the composite a fill made of it), it is
-**rebound**. The rebind is given a binding, the *derivation*, that places the new image
-onto the mask's image, and checks that:
+**rebound**. The rebind is given a *derivation*: the statement that a new image was made
+from another, pixel for pixel in place. A derivation holds a binding that places the new
+image onto the one it was made from, and it is a type of its own (`Derivation`): the
+rebind takes nothing else, so a binding that an alignment or a crop returned is not taken
+for one by accident. Stating a derivation checks the binding, and the rebind checks it
+against the mask:
 
-- the derivation's destination is the mask's image;
-- both of its spaces are the mask's space;
+- the derivation's destination is an image, and for the rebind it is the mask's image;
 - its mapping is the identity, so that every pixel of the planes keeps its place;
-- its source is not the mask's own image.
+- both of its spaces are the mask's space: an identity has two equal spaces (ADR 0001), so
+  a space of as many samples that is not the mask's (6 by 8 for 8 by 6, a panorama of the
+  same size) is refused;
+- its source is not the image it is placed onto.
 
 An image in its own space, an image placed onto some other image, a crop, a resize and a
-homography are each refused. The rebound mask belongs to the derivation, so it names both
-images. It has a new identity and the same planes; its profile and its prescriptions' series
-move to the derivation with it; and its origin gains a step, `rebind`, that names the mask
-it came from and the derivation.
+homography are each refused. The rebound mask belongs to the derivation's binding, so it
+names both images. It has a new identity and the same planes; its profile and its
+prescriptions' series move to that binding with it; and its origin gains a step, `rebind`,
+whose inputs are the identity of the mask it came from (`mask`) and the identity of the
+derivation's binding (`derivation`).
 
-What the rebind checks is the statement, not the pixels: a derivation is made by the action
-that made the new image from the old, and says so. The rebind does not compare the two
-pictures. A mask is often used on a composite that an earlier mask changed elsewhere, so
-"unchanged outside this mask" is not a rule a rebind could hold. That protected pixels
-never change is checked where a composite is made (the fill composite, task A8).
+**What the rebind checks, and what it trusts.** It checks the four things above, which are
+all about the statement. It trusts that the statement is true: that the new image really
+was made from the mask's image with every pixel in its place. A derivation's binding has
+the same identity as an identity binding between two images of one size that anyone can
+build (ADR 0001 keeps `binding/1` as it is, and to ADR 0001 such a binding is an ordinary
+alignment), and stating a derivation is open to any caller. So a caller who states a false
+derivation can move a mask onto an unrelated image of the same size. The type stops that
+happening by mistake; it does not stop it being done on purpose. This boundary is accepted
+here, and closed where derivations are made: only the executor or the fill composite will
+state one, and a derivation stated by hand is refused there (tasks A5 and A8, on
+`docs/carry-over.md`). A rebound mask read from a file is a mask on a binding like any
+other: the file does not say whether its binding was a derivation.
+
+Nothing at this layer can check more. A mask and a binding hold digests of pictures, not
+pictures, and two digests say nothing of how alike two pictures are. Comparing the pixels
+is not the check either, even where both pictures are at hand: a derived image differs
+from its parent by design, inside whatever mask the fill used, and a mask is often used on
+a composite that an earlier mask changed elsewhere, so "unchanged outside this mask" is
+not a rule a rebind could hold; and a comparison would make every rebind decode two
+pictures.
+
+**Protected pixels never change, on the new image as on the old.** That rule does not rest
+on the rebind. It is held where a composite is made (the fill composite, task A8), against
+the mask it is given and the image it is given, whichever they are: every protected pixel
+and every pixel outside the support comes out exactly as it went in. A mask rebound onto a
+composite protects the same places of the composite, and the next composite keeps them. A
+false derivation moves the planes onto the wrong picture, where they protect the wrong
+things; it does not let a protected pixel of that picture change.
 
 ## Consequences
 
@@ -260,3 +343,13 @@ never change is checked where a composite is made (the fill composite, task A8).
   decoded.
 - **A rebind that takes only the new image.** Nothing would say the image is derived from
   the mask's, and an unrelated image of the same size would pass.
+- **Make a derivation a kind of binding, with its own number in `binding/1`.** It would
+  say in the identity that the image was derived, and it would change what ADR 0001 hashes
+  for a statement that places exactly as the identity does. The statement is kept apart
+  from the placement instead: a type in the code, and no new bytes.
+- **Bring a coordinate at a wrapped space's right edge round to 0 before hashing.** One
+  place would have one identity, for a point alone; a box and a polygon cannot be brought
+  round without changing their shape, so the rule would hold for some shapes and not for
+  others.
+- **Keep a replaced core under protect,** as rascal did. Two masks that weigh every pixel
+  alike would have two identities, for a difference nothing reads.
