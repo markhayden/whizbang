@@ -80,6 +80,16 @@ impl ArtifactType {
     }
 }
 
+impl ArtifactType {
+    /// The name with its article, for a sentence: `a mask`, `an image`.
+    pub(crate) fn with_article(self) -> String {
+        match self {
+            ArtifactType::Image => "an image".to_owned(),
+            other => format!("a {}", other.name()),
+        }
+    }
+}
+
 impl std::fmt::Display for ArtifactType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name())
@@ -140,9 +150,15 @@ impl std::fmt::Display for ArtifactError {
         match self {
             ArtifactError::Format(why) => write!(f, "not a canonical artifact file: {why}"),
             ArtifactError::WrongType { expected, found } => {
-                write!(f, "a {expected} is required, and this is {found}")
+                write!(
+                    f,
+                    "{} is required, and this is {found}",
+                    expected.with_article()
+                )
             }
-            ArtifactError::Invalid { artifact, why } => write!(f, "not a {artifact}: {why}"),
+            ArtifactError::Invalid { artifact, why } => {
+                write!(f, "not {}: {why}", artifact.with_article())
+            }
             ArtifactError::WrongImage(why) => write!(f, "wrong image: {why}"),
             ArtifactError::Rebind(why) => write!(f, "rebind refused: {why}"),
             ArtifactError::Identity(error) => error.fmt(f),
@@ -325,7 +341,7 @@ pub(crate) fn parse<R: Record>(bytes: &[u8], limits: &DecodeLimits) -> Result<R>
     if found != R::TYPE {
         return Err(ArtifactError::WrongType {
             expected: R::TYPE,
-            found: format!("a {found}"),
+            found: found.with_article(),
         });
     }
     let record = R::read(&mut reader, limits)?;
@@ -432,7 +448,7 @@ impl Artifact {
                     Artifact::Image(image) if image.role() == ImageRole::Rendering => {
                         "a rendering, which is an image".to_owned()
                     }
-                    other => format!("a {}", other.artifact_type()),
+                    other => other.artifact_type().with_article(),
                 },
             }),
         }

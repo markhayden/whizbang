@@ -155,12 +155,16 @@ fn a_rendering_is_refused_where_a_mask_is_required() {
             if found.contains("rendering")),
         "{refusal:?}"
     );
+    assert_eq!(
+        refusal.to_string(),
+        "a mask is required, and this is a rendering, which is an image"
+    );
     assert_eq!(Artifact::from(mask.clone()).into_mask().unwrap(), mask);
     // As a file: its artifact file is an image's.
     let refusal = Mask::from_bytes(&rendering.to_bytes(), &limits()).unwrap_err();
     assert!(
         matches!(&refusal, ArtifactError::WrongType { expected: ArtifactType::Mask, found }
-            if found == "a image"),
+            if found == "an image"),
         "{refusal:?}"
     );
     // As a picture: the PNG itself, which is what the old tools would have read as a mask.

@@ -71,7 +71,7 @@ pub fn get(
             {
                 Some(other) => ArtifactError::WrongType {
                     expected,
-                    found: format!("a {other}"),
+                    found: other.with_article(),
                 },
                 None => ArtifactError::Missing {
                     artifact: expected,

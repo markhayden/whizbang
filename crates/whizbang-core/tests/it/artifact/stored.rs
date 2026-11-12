@@ -115,7 +115,7 @@ fn a_rendering_in_the_store_is_refused_where_a_mask_is_required() {
     assert!(
         matches!(
             &refusal,
-            Err(ArtifactError::WrongType { expected: ArtifactType::Mask, found }) if found == "a image"
+            Err(ArtifactError::WrongType { expected: ArtifactType::Mask, found }) if found == "an image"
         ),
         "{refusal:?}"
     );
