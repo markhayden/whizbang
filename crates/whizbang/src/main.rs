@@ -23,6 +23,10 @@ enum Command {
         /// Print the description as JSON.
         #[arg(long)]
         json: bool,
+        /// With --json: indent it, one field per line. That is how --json prints already,
+        /// so the output is the same; the flag makes the request explicit.
+        #[arg(long, requires = "json")]
+        pretty: bool,
     },
 }
 
@@ -49,7 +53,9 @@ fn describe(json: bool) -> Result<String, serde_json::Error> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
-        Command::Describe { json } => match describe(json) {
+        // `--pretty` asks for the form `--json` has always printed, so it changes nothing
+        // here: the reference is that output byte for byte (scripts/docs.sh).
+        Command::Describe { json, pretty: _ } => match describe(json) {
             Ok(text) => {
                 print!("{text}");
                 ExitCode::SUCCESS

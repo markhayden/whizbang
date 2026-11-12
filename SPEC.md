@@ -773,7 +773,8 @@ whizbang runs list|show|stats|export
 whizbang spend status|reset
 whizbang serve [--http <addr>]
 whizbang play
-whizbang describe [--json]             # static: identical on every machine
+whizbang describe [--json [--pretty]]  # static: identical on every machine; --json is
+                                       # indented, and --pretty asks for that by name
 whizbang setup                         # install the Python pack
 ```
 
