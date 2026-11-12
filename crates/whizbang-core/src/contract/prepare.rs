@@ -10,9 +10,12 @@
 //! answers what is configured and has no way to send a request or to reserve.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
-use crate::artifact::{self, Artifact, ArtifactId, ArtifactType, Contents};
+use crate::artifact::{self, Artifact, ArtifactError, ArtifactId, ArtifactType, Contents};
 use crate::identity::{Binding, DecodeLimits, Digest, Encoder, Fields};
+
+use crate::store;
 
 use super::{ActionDescriptor, Call, Capability, Count, InputPort, Value};
 
@@ -234,6 +237,119 @@ impl PreparedCall {
     }
 }
 
+/// What is wrong with an input, so that a door can tell the cases apart without reading
+/// a sentence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputFault {
+    /// The store holds no artifact of the port's type with this identity.
+    Missing,
+    /// The store holds this identity as another type: `found` names it with its article,
+    /// as in "a mask".
+    WrongType { found: String },
+    /// The artifact belongs to another image, or to another space, than the image at the
+    /// port it must belong to.
+    WrongImage { why: String },
+    /// The store holds something under the artifact's name that is not that artifact:
+    /// not a canonical file of the type, one over the limits it is read within, or one
+    /// with another identity.
+    NotTheArtifact { why: String },
+}
+
+impl std::fmt::Display for InputFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InputFault::Missing => f.write_str("the store does not hold it"),
+            InputFault::WrongType { found } => write!(f, "this is {found}"),
+            InputFault::WrongImage { why } => write!(f, "wrong image: {why}"),
+            InputFault::NotTheArtifact { why } => f.write_str(why),
+        }
+    }
+}
+
+/// The store failed while a call was being answered. This says nothing about the call:
+/// the same call may be answered once the store is sound.
+///
+/// Its text holds no path, so it can be handed to a caller who is not on this machine:
+/// a file of the store is named by its last part, a digest or a generation's number.
+/// The whole failure, paths included, is [`StoreFailure::cause`].
+#[derive(Debug, Clone)]
+pub struct StoreFailure {
+    what: String,
+    cause: Arc<store::Error>,
+}
+
+impl StoreFailure {
+    pub(super) fn new(cause: store::Error) -> StoreFailure {
+        StoreFailure {
+            what: cause.without_paths(),
+            cause: Arc::new(cause),
+        }
+    }
+
+    /// The store's own error, with the paths it names: for whoever runs the store, and
+    /// never for a caller elsewhere.
+    pub fn cause(&self) -> &store::Error {
+        &self.cause
+    }
+}
+
+/// Two failures are equal when they say the same thing.
+impl PartialEq for StoreFailure {
+    fn eq(&self, other: &StoreFailure) -> bool {
+        self.what == other.what
+    }
+}
+
+impl Eq for StoreFailure {}
+
+impl std::fmt::Display for StoreFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.what)
+    }
+}
+
+/// Why a call got no answer: it was refused, which is a judgement of the call, or the
+/// store failed, which is not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallError {
+    Refused(Refusal),
+    Store(StoreFailure),
+}
+
+impl CallError {
+    /// The refusal, when the call was refused.
+    pub fn refusal(&self) -> Option<&Refusal> {
+        match self {
+            CallError::Refused(refusal) => Some(refusal),
+            CallError::Store(_) => None,
+        }
+    }
+}
+
+impl From<Refusal> for CallError {
+    fn from(refusal: Refusal) -> CallError {
+        CallError::Refused(refusal)
+    }
+}
+
+impl std::fmt::Display for CallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CallError::Refused(refusal) => refusal.fmt(f),
+            CallError::Store(failure) => write!(f, "the store failed: {failure}"),
+        }
+    }
+}
+
+impl std::error::Error for CallError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            CallError::Refused(refusal) => Some(refusal),
+            CallError::Store(failure) => Some(failure.cause()),
+        }
+    }
+}
+
 /// Why a call was turned away before any run existed. A refusal is not an outcome
 /// (`SPEC.md` section 3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -242,12 +358,14 @@ pub enum Refusal {
     UnknownAction { name: String },
     /// The call is not one the action's descriptor allows.
     Invalid { action: String, why: String },
-    /// An input is not in the store, is of another type, or does not belong to the image
-    /// its port says it belongs to.
+    /// An input is not what its port takes: which artifact, of the type the port takes,
+    /// and what is wrong with it.
     Input {
         action: String,
         port: String,
-        why: String,
+        artifact: ArtifactType,
+        id: ArtifactId,
+        fault: InputFault,
     },
     /// The call is well formed and cannot run now: what is missing.
     NotReady {
@@ -263,8 +381,25 @@ impl std::fmt::Display for Refusal {
         match self {
             Refusal::UnknownAction { name } => write!(f, "no action named {name} is registered"),
             Refusal::Invalid { action, why } => write!(f, "not a call of {action}: {why}"),
-            Refusal::Input { action, port, why } => {
-                write!(f, "{action}: the input {port}: {why}")
+            Refusal::Input {
+                action,
+                port,
+                artifact,
+                id,
+                fault,
+            } => {
+                write!(f, "{action}: the input {port}: ")?;
+                match fault {
+                    InputFault::Missing => write!(f, "the store holds no {artifact} {id}"),
+                    InputFault::WrongType { found } => write!(
+                        f,
+                        "{} is required, and this is {found}",
+                        artifact.with_article()
+                    ),
+                    InputFault::WrongImage { .. } | InputFault::NotTheArtifact { .. } => {
+                        fault.fmt(f)
+                    }
+                }
             }
             Refusal::NotReady { action, missing } => {
                 write!(f, "{action} cannot run now:")?;
@@ -319,11 +454,19 @@ pub(super) fn prepare(
     backends: &dyn Backends,
     config: Digest,
     limits: &DecodeLimits,
-) -> Result<PreparedCall, Refusal> {
+) -> Result<PreparedCall, CallError> {
     let action = descriptor.name();
-    let invalid = |why: String| Refusal::Invalid {
-        action: action.to_owned(),
-        why,
+    let invalid = |why: String| {
+        CallError::Refused(Refusal::Invalid {
+            action: action.to_owned(),
+            why,
+        })
+    };
+    // Negative zero is zero: the fingerprint hashes it so, and what is prepared is what
+    // is bound.
+    let settled = |value: &Value| match value {
+        Value::Number(number) if *number == 0.0 => Value::Number(0.0),
+        other => other.clone(),
     };
 
     // The arguments: only declared ones, every required one, each a value of its type.
@@ -345,14 +488,14 @@ pub(super) fn prepare(
                     .accepts(value)
                     .map_err(|why| invalid(format!("the argument {name}: {why}")))?;
                 given.insert(name.to_owned());
-                arguments.push((name.to_owned(), value.clone()));
+                arguments.push((name.to_owned(), settled(value)));
             }
             None if argument.is_required() => {
                 return Err(invalid(format!("the argument {name} is required")));
             }
             None => {
                 if let Some(default) = argument.default() {
-                    arguments.push((name.to_owned(), default.clone()));
+                    arguments.push((name.to_owned(), settled(default)));
                 }
             }
         }
@@ -389,14 +532,28 @@ pub(super) fn prepare(
     let mut found: Vec<(&InputPort, Artifact)> = Vec::new();
     for port in descriptor.inputs() {
         for id in given_at(port) {
-            let artifact =
-                artifact::get(contents, port.artifact(), *id, limits).map_err(|error| {
-                    Refusal::Input {
-                        action: action.to_owned(),
-                        port: port.name().to_owned(),
-                        why: error.to_string(),
+            let refuse = |fault: InputFault| {
+                CallError::Refused(Refusal::Input {
+                    action: action.to_owned(),
+                    port: port.name().to_owned(),
+                    artifact: port.artifact(),
+                    id: *id,
+                    fault,
+                })
+            };
+            let artifact = artifact::get(contents, port.artifact(), *id, limits).map_err(
+                |error| match error {
+                    // The store failing is not a fault of the call.
+                    ArtifactError::Store(error) => CallError::Store(StoreFailure::new(error)),
+                    ArtifactError::Missing { .. } => refuse(InputFault::Missing),
+                    ArtifactError::WrongType { found, .. } => {
+                        refuse(InputFault::WrongType { found })
                     }
-                })?;
+                    other => refuse(InputFault::NotTheArtifact {
+                        why: other.to_string(),
+                    }),
+                },
+            )?;
             inputs.push(ResolvedInput {
                 port: port.name().to_owned(),
                 artifact: port.artifact(),
@@ -421,23 +578,37 @@ pub(super) fn prepare(
             continue;
         };
         let (pixels, space) = (image.identity().pixels, image.space());
-        let refuse = |why: String| Refusal::Input {
-            action: action.to_owned(),
-            port: port.name().to_owned(),
-            why,
+        let refuse = |why: String| {
+            CallError::Refused(Refusal::Input {
+                action: action.to_owned(),
+                port: port.name().to_owned(),
+                artifact: port.artifact(),
+                id: artifact.id(),
+                fault: InputFault::WrongImage { why },
+            })
         };
         match artifact {
-            Artifact::Mask(mask) => mask
-                .require_image(pixels, space)
-                .map_err(|error| refuse(error.to_string()))?,
+            Artifact::Mask(mask) => {
+                mask.require_image(pixels, space)
+                    .map_err(|error| match error {
+                        ArtifactError::WrongImage(why) => refuse(why),
+                        other => refuse(other.to_string()),
+                    })?
+            }
             other => {
                 let binding = binding_of(other);
-                if binding.source() != pixels || binding.source_space() != space {
+                if binding.source() != pixels {
                     return Err(refuse(format!(
-                        "wrong image: the {} belongs to the image {}, not to {pixels}, the \
-                         image at {on}",
+                        "the {} belongs to the image {}, not to {pixels}, the image at {on}",
                         other.artifact_type(),
                         binding.source()
+                    )));
+                }
+                if binding.source_space() != space {
+                    return Err(refuse(format!(
+                        "the {}'s image is in {:?}, not in {space:?}",
+                        other.artifact_type(),
+                        binding.source_space()
                     )));
                 }
             }

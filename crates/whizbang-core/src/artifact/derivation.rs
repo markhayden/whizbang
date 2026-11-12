@@ -12,7 +12,8 @@
 //! and has no place for a derivation, so none reaches the executor from a door.
 //! [`Derivation::stated`] stays open to code because nothing else makes a derivation yet:
 //! the fill composite will, after checking the pixels, and `stated` closes with it
-//! (`docs/carry-over.md`).
+//! (`docs/carry-over.md`). That closes a way of making a moved mask, not the mask: one
+//! made by hand on the same binding is the same artifact.
 
 use crate::identity::{Binding, Destination, Mapping, PixelDigest};
 

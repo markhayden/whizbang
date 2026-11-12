@@ -1530,3 +1530,88 @@ fn a_crash_at_any_event_of_a_stores_creation_leaves_no_store_or_an_empty_one() {
         });
     }
 }
+
+#[test]
+fn every_failure_can_be_said_without_a_path() {
+    // What a caller elsewhere may be told: no place on this machine, whatever failed. A
+    // file is named by its last part alone.
+    let root = PathBuf::from("/somewhere/private/store");
+    let object = root.join("objects").join(Digest::of_bytes(b"x").hex());
+    let digest = Digest::of_bytes(b"x");
+    let io = || {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "/somewhere/private said no",
+        )
+    };
+    let failures = [
+        Error::Io {
+            doing: "read",
+            path: object.clone(),
+            source: io(),
+        },
+        Error::Missing { root: root.clone() },
+        Error::NoParent {
+            root: root.clone(),
+            parent: PathBuf::from("/somewhere/private"),
+        },
+        Error::NotAStore {
+            root: root.clone(),
+            found: Some(root.join("notes.txt")),
+        },
+        Error::Held {
+            root: root.clone(),
+            holder: Some("process 7 (/somewhere/private/bin/whizbang)".to_owned()),
+        },
+        Error::InvalidRun {
+            run: "/somewhere/private".to_owned(),
+        },
+        Error::OtherFormat {
+            path: root.join("generations").join("7.json"),
+            format: 9,
+            reads: 1,
+        },
+        Error::NoSuchRun {
+            run: "/somewhere/private".to_owned(),
+        },
+        Error::NotAnOutput { digest },
+        Error::Corrupt {
+            path: object.clone(),
+            reason: "it quotes /somewhere/private".to_owned(),
+        },
+        Error::OtherFileSystem {
+            staging: root.join("staging"),
+            source: io(),
+        },
+        Error::Unacknowledged {
+            generation: 3,
+            source: Box::new(Error::Missing { root: root.clone() }),
+        },
+    ];
+    for failure in &failures {
+        let said = failure.without_paths();
+        assert!(!said.contains('/'), "{said}");
+        assert!(!said.contains("private"), "{said}");
+        assert!(!said.is_empty());
+    }
+    // What it keeps: which file, by its last part, and what was being done.
+    assert_eq!(
+        failures[0].without_paths(),
+        format!(
+            "the store cannot read its file {}: permission denied",
+            digest.hex()
+        )
+    );
+    assert_eq!(
+        failures[6].without_paths(),
+        "the store's file 7.json is of another format: 9, and this build reads format 1"
+    );
+    assert_eq!(
+        failures[9].without_paths(),
+        format!("the store's file {} is missing or damaged", digest.hex())
+    );
+    assert_eq!(
+        failures[11].without_paths(),
+        "generation 3 is visible but was not confirmed durable"
+    );
+}

@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use whizbang_core::artifact::{ArtifactId, ArtifactType};
 use whizbang_core::contract::{
-    Allowance, Call, Cancellation, Capabilities, Committed, Context, Events, Executor, Finished,
-    Outcome, PreparedCall, Refusal, RunId,
+    Allowance, Call, CallError, Cancellation, Capabilities, Committed, Context, Events, Executor,
+    Finished, Outcome, PreparedCall, Refusal, RunId,
 };
 use whizbang_core::identity::Digest;
 
@@ -29,6 +29,14 @@ fn a_run_id_is_a_short_name_safe_in_a_path_and_on_a_command_line() {
         "a\nb",
         "a\tb",
         "caf\u{e9}",
+        // Upper case after the first character, and digits that are not ASCII, first
+        // and later: an Arabic-Indic three and a full-width one.
+        "rUn",
+        "aB",
+        "run-1A",
+        "a\u{663}",
+        "\u{663}a",
+        "run-\u{ff11}",
         &"x".repeat(65),
     ] {
         let error = RunId::parse(id)
@@ -36,6 +44,21 @@ fn a_run_id_is_a_short_name_safe_in_a_path_and_on_a_command_line() {
             .unwrap_or_else(|| panic!("{id:?} was accepted"));
         assert!(error.contains("a run id is"), "{error}");
     }
+}
+
+#[test]
+fn a_refused_run_id_is_echoed_up_to_the_limit_and_no_further() {
+    // What is refused may be anything, of any length: the refusal shows its first 64
+    // characters, escaped, and says how long it was.
+    let long = format!("Run {}", "y".repeat(5000));
+    let error = RunId::parse(&long).unwrap_err();
+    assert!(error.len() < 400, "{} bytes", error.len());
+    assert!(error.contains(&format!("Run {}", "y".repeat(60))));
+    assert!(!error.contains(&"y".repeat(61)));
+    assert!(error.contains("5004 characters"), "{error}");
+    // A short one is shown whole, and a control character in it escaped.
+    let error = RunId::parse("a\nb").unwrap_err();
+    assert!(error.starts_with("\"a\\nb\" is no run id"), "{error}");
 }
 
 #[test]
@@ -81,12 +104,12 @@ impl Events for Heard {
 struct Nothing;
 
 impl Executor for Nothing {
-    fn prepare(&self, _: &Call) -> Result<PreparedCall, Refusal> {
-        Err(Refusal::NothingRunsYet)
+    fn prepare(&self, _: &Call) -> Result<PreparedCall, CallError> {
+        Err(Refusal::NothingRunsYet.into())
     }
 
-    fn submit(&self, _: &Call) -> Result<Finished, Refusal> {
-        Err(Refusal::NothingRunsYet)
+    fn submit(&self, _: &Call) -> Result<Finished, CallError> {
+        Err(Refusal::NothingRunsYet.into())
     }
 }
 
@@ -129,7 +152,7 @@ fn a_context_carries_what_section_3_lists() {
     // And the executor, for a call to another action.
     assert_eq!(
         context.executor().submit(&Call::new("echo")),
-        Err(Refusal::NothingRunsYet)
+        Err(Refusal::NothingRunsYet.into())
     );
 }
 

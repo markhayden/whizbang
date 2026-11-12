@@ -278,8 +278,10 @@ fn a_derivation_is_a_statement_of_its_own_and_adds_nothing_to_its_binding() {
 fn a_derivation_is_trusted_to_be_true() {
     // The boundary ADR 0002 states. The rebind checks the statement; it cannot see either
     // picture. A caller who states that an unrelated image of the same size was derived
-    // from the mask's image is believed here, and the mask moves. Refusing a derivation
-    // stated by hand belongs to the executor and the fill composite (the carry-over list).
+    // from the mask's image is believed here, and the mask moves. Closing
+    // `Derivation::stated`, so that only the fill composite states one, is task A8's (the
+    // carry-over list), and inverts this test. It does not unmake the artifact: the same
+    // mask can be made by hand on the same binding (ADR 0004).
     let mask = full_mask(on("photo"));
     let untrue = Derivation::stated(derived("another photo", picture("photo"))).unwrap();
     let moved = mask.rebind(&untrue).unwrap();
