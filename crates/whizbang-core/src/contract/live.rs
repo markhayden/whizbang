@@ -101,6 +101,14 @@ impl LiveRun {
         Told::TooLate
     }
 
+    /// Sets the run's signal if its end has not begun, and waits for nothing: for the
+    /// thread that deleted the run from the store, which the run's end would wait for.
+    pub(super) fn stop(&self) {
+        if *self.phase() == Phase::Executing {
+            self.signal.cancel();
+        }
+    }
+
     /// The executor begins the run's end: from here on a cancellation is too late.
     /// What comes back is whether the run was cancelled before this, which is read
     /// under the same lock a cancellation is accepted under.

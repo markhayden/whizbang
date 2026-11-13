@@ -11,12 +11,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use whizbang_core::artifact::{self, Artifact, ArtifactType};
 use whizbang_core::capability::{FaultKind, FillRequest, Picture, Support};
 use whizbang_core::contract::record::{DIAGNOSTICS_PREFIX, JOURNAL_NAME, Status};
 use whizbang_core::contract::{
-    Action, Answer, Call, CallError, Cancel, Cancellation, Capabilities, Clock, Context, Declined,
-    Ending, Engine, Executor, Failure, Ledger, NoBackends, Outcome, Produced, Refusal, Registry,
-    Request, RequestId, Reservation, RunId, RunState, Step, StoreFailure, Value, read_journal,
+    Action, ActionDescriptor, Answer, Call, CallError, Cancel, Cancellation, Capabilities, Clock,
+    Context, Declined, Ending, Engine, Executor, Failure, Finished, InputPort, Kind, Ledger,
+    NoBackends, Outcome, Produced, Refusal, Registry, Request, RequestId, Reservation, RunId,
+    RunState, Step, StoreFailure, Value, Watched, read_journal,
 };
 use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::store::fs::{Fs, RealFs};
@@ -29,7 +31,7 @@ use whizbang_testkit::ledger::FakeLedger;
 use whizbang_testkit::schema::validate;
 use whizbang_testkit::scratch::Scratch;
 
-use super::commit::{World, both, committed, engine_over, held, pair};
+use super::commit::{Scripted as Told, World, both, committed, engine_over, held, pair, the_mask};
 use super::execute::Taker;
 use super::record::schema;
 use super::watch::{AfterTheLook, asked, busy, engine, the_run, work};
@@ -680,77 +682,160 @@ fn a_cancel_asked_the_moment_a_run_becomes_visible_is_accepted_and_its_action_ne
     );
 }
 
-#[test]
-fn a_cancel_asked_the_moment_a_runs_end_becomes_visible_is_told_how_it_ended() {
-    // Stopped straight after the rename that makes the end visible, on the thread that
-    // publishes it, while the store still has the run in its table: the cancel is
-    // answered from the record. It does not wait for the thread it is on.
-    let dir = Scratch::new("cancel");
-    let root = dir.path().join("store");
-    let fs = Arc::new(ShimFs::new());
-    let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+/// Stops the publishing thread straight after the rename that makes the end of `work`'s
+/// run visible, before its last sync, and has a cancel and a wait of the run asked there
+/// by two other threads. Once both are waiting for the run, `then` is done on the
+/// publishing thread, which goes on. What comes back: the answer of whoever ran the
+/// run, of the cancel, and of the wait.
+type Asked = (
+    Result<Finished, CallError>,
+    Result<Cancel, CallError>,
+    Result<Watched, CallError>,
+);
+
+fn asked_before_the_last_sync(
+    root: &Path,
+    fs: &Arc<ShimFs>,
+    then: impl Fn(&ShimFs) + Send + Sync + 'static,
+) -> Asked {
+    let store = Arc::new(Store::open(root, fs.clone()).unwrap());
     let seen = Arc::new(Mutex::new(None));
-    let asking: Arc<Mutex<Option<Engine>>> = Arc::new(Mutex::new(None));
+    let asking = engine(store.clone(), Vec::new());
+    let then = Arc::new(then);
     let arming = {
-        let (fs, root, store, asking, seen) = (
-            fs.clone(),
-            root.clone(),
-            store.clone(),
-            asking.clone(),
-            seen.clone(),
-        );
+        let (fs, root, seen) = (fs.clone(), root.to_path_buf(), seen.clone());
         work(move |_, _| {
-            let (root, store, asking, seen) =
-                (root.clone(), store.clone(), asking.clone(), seen.clone());
+            let (hooked, root, asking, seen, then) = (
+                fs.clone(),
+                root.clone(),
+                asking.clone(),
+                seen.clone(),
+                then.clone(),
+            );
             fs.pause_after_rename_onto("CURRENT", move || {
                 let run = the_run(&root);
-                let open = store.made_here(run.as_str());
-                let asking = asking.lock().unwrap().clone().unwrap();
-                *seen.lock().unwrap() = Some((open, asking.cancel(&run)));
+                let cancelling = {
+                    let (asking, run) = (asking.clone(), run.clone());
+                    whizbang_testkit::threads::spawn(move || asking.cancel(&run))
+                };
+                let waiting = {
+                    let (asking, run) = (asking.clone(), run.clone());
+                    whizbang_testkit::threads::spawn(move || asking.wait(&run))
+                };
+                let limit = Instant::now() + LIMIT;
+                while asking.waiting_for(&run) < 2
+                    && !(cancelling.is_finished() || waiting.is_finished())
+                {
+                    assert!(Instant::now() < limit, "neither waits nor answers");
+                    std::thread::yield_now();
+                }
+                let early = cancelling.is_finished() || waiting.is_finished();
+                *seen.lock().unwrap() = Some((early, cancelling, waiting));
+                then(&hooked);
             });
             Ok(Produced::nothing())
         })
     };
-    let executor = engine(store.clone(), vec![arming]);
-    *asking.lock().unwrap() = Some(executor.clone());
-    executor.submit(&Call::new("work")).unwrap();
-    let (open, cancel) = seen.lock().unwrap().take().expect("the hook ran");
-    assert!(open, "the store had already forgotten the run");
-    assert_eq!(cancel, Ok(Cancel::NotAccepted(completed())));
+    let executor = engine(store, vec![arming]);
+    let ran = executor.submit(&Call::new("work"));
+    let (early, cancelling, waiting) = seen.lock().unwrap().take().expect("the hook ran");
+    let answers = (ran, cancelling.join().unwrap(), waiting.join().unwrap());
+    assert!(!early, "answered before the end's last sync: {answers:?}");
+    answers
 }
 
 #[test]
-fn a_cancel_that_races_the_end_of_its_run_is_told_how_it_ended() {
-    // The cancel looks at the store while the run executes: admitted, no record.
-    // Before it looks at the table of open runs, the run ends and leaves the table.
-    // The answer must not be that no process will end the run, and must not be that
-    // the cancellation was accepted: the second look at the store is the answer.
+fn a_cancel_and_a_wait_asked_when_an_end_is_visible_wait_for_its_last_sync() {
+    // The end is visible and not yet confirmed. A status says what the store says; a
+    // cancel and a wait are for the executor, and are answered when it is done.
     let dir = Scratch::new("cancel");
     let root = dir.path().join("store");
-    let fs = Arc::new(AfterTheLook {
-        hook: Mutex::new(None),
-    });
-    let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+    let (ran, cancel, wait) = asked_before_the_last_sync(&root, &Arc::new(ShimFs::new()), |_| {});
+    assert_eq!(ran.unwrap().outcome().name(), "completed");
+    assert_eq!(cancel, Ok(Cancel::NotAccepted(completed())));
+    assert_eq!(wait.unwrap().state(), &completed());
+}
+
+#[test]
+fn what_a_cancel_and_a_wait_say_of_an_end_is_what_the_store_holds_after_a_loss_of_power() {
+    // Power is lost between the rename that makes the end visible and its last sync,
+    // with a cancel and a wait of the run in flight. Neither may say the run completed:
+    // the store that is opened again holds the run as it was admitted, with no record.
+    let dir = Scratch::new("cancel");
+    let root = dir.path().join("store");
+    let fs = Arc::new(ShimFs::new());
+    let (ran, cancel, wait) = asked_before_the_last_sync(&root, &fs, |fs| fs.crash(Lost::Unsynced));
+    let Err(CallError::Store(failure)) = ran else {
+        panic!("the run was reported: {ran:?}");
+    };
+    let state = RunState::Abandoned {
+        failure: Some(failure),
+    };
+    assert_eq!(cancel, Ok(Cancel::NotAccepted(state.clone())));
+    assert_eq!(wait.unwrap().state(), &state);
+
+    let fs: Arc<dyn Fs> = Arc::new(ShimFs::new());
+    drop(Store::open(&root, fs.clone()).unwrap());
+    let reader = Reader::open(&root, fs).unwrap();
+    let generation = reader.snapshot().unwrap();
+    let run = generation
+        .runs()
+        .values()
+        .next()
+        .expect("the run was admitted, durably");
+    assert_eq!(
+        run.entries().len(),
+        1,
+        "the run holds more than its admission"
+    );
+}
+
+#[test]
+fn an_executing_run_that_is_deleted_is_told_to_stop() {
+    // The run is deleted from the store while its action is busy. Its end will find no
+    // run, so nothing it does can be kept: its signal is set by the deletion itself,
+    // and nobody has to cancel a run the store no longer holds.
+    let dir = Scratch::new("cancel");
+    let root = dir.path().join("store");
+    let store = Arc::new(Store::open(&root, Arc::new(ShimFs::new())).unwrap());
     let barriers = Barriers::new();
-    let first = engine(store.clone(), vec![busy(&barriers, "nothing")]);
-    let second = engine(store.clone(), Vec::new());
-    whizbang_testkit::threads::scope(|scope| {
-        let running = scope.spawn(|| first.request(&asked("order-5")));
-        barriers.arrived("busy", 1);
-        let run = the_run(&root);
-        *fs.hook.lock().unwrap() = Some(Box::new({
-            let (barriers, first, run) = (barriers.clone(), first.clone(), run.clone());
-            move || {
-                barriers.release("busy");
-                // The run is over, and out of the table, when this returns.
-                first.wait(&run).unwrap();
-            }
-        }));
-        let cancel = second.cancel(&run);
-        assert!(fs.hook.lock().unwrap().is_none(), "the hook never ran");
-        assert_eq!(cancel, Ok(Cancel::NotAccepted(completed())));
-        running.join().unwrap().unwrap();
-    });
+    let saw = Arc::new(Mutex::new(Vec::new()));
+    let looking = {
+        let (barriers, saw) = (barriers.clone(), saw.clone());
+        work(move |_, context| {
+            let before = context.cancellation().is_cancelled();
+            barriers.stop_at("busy");
+            saw.lock()
+                .unwrap()
+                .push((before, context.cancellation().is_cancelled()));
+            barriers.stop_at("done");
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(store.clone(), vec![looking]);
+    let Ok(Answer::Started(run)) = executor.start(&asked("order-1")) else {
+        panic!("the request was not started");
+    };
+    barriers.arrived("busy", 1);
+    // A wait that began before the deletion.
+    let waiting = {
+        let (executor, run) = (executor.clone(), run.clone());
+        whizbang_testkit::threads::spawn(move || executor.wait(&run))
+    };
+    let limit = Instant::now() + LIMIT;
+    while executor.waiting_for(&run) == 0 {
+        assert!(Instant::now() < limit, "the wait does not wait");
+        std::thread::yield_now();
+    }
+    store.delete(&[run.as_str()]).unwrap();
+    barriers.release("busy");
+    barriers.arrived("done", 1);
+    assert_eq!(*saw.lock().unwrap(), [(false, true)]);
+    // The store holds no such run, for a cancel now and for the wait that was there.
+    let no_run = CallError::Refused(Refusal::NoSuchRun { run: run.clone() });
+    assert_eq!(executor.cancel(&run), Err(no_run.clone()));
+    barriers.release("done");
+    assert_eq!(waiting.join().unwrap(), Err(no_run));
 }
 
 // --- none or all ------------------------------------------------------------------------------
@@ -1029,6 +1114,10 @@ fn starving(
     let (store, asked) = (store.clone(), asked.clone());
     Arc::new(Scripted(move |_: &Reservation, step: &mut Step<'_, '_>| {
         let count = asked.fetch_add(1, Ordering::SeqCst) + 1;
+        assert!(
+            count <= at,
+            "the ledger was asked again after the admission was stopped"
+        );
         if count == at {
             then();
         }
@@ -1270,4 +1359,142 @@ fn a_run_reads_the_generation_it_was_admitted_against_through_a_deletion_and_a_p
     assert!(pruned.generations_removed.contains(&admitted_against));
     assert!(pruned.generations_in_use.is_empty());
     assert!(pruned.objects_removed >= 2, "{pruned:?}");
+}
+
+// --- what the review's mutants survived -------------------------------------------------------
+
+#[test]
+fn a_request_that_is_cancelled_is_refused_as_cancelled_before_its_call_is_looked_at() {
+    // The signal is looked at before the call is prepared: a call that would be
+    // refused for itself, as unknown or as invalid, is refused as cancelled.
+    let dir = Scratch::new("cancel");
+    let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(ShimFs::new())).unwrap());
+    let executor = engine(store.clone(), vec![work(|_, _| Ok(Produced::nothing()))]);
+    let signal = Cancellation::new();
+    signal.cancel();
+    let invalid = Call::new("work").argument("nope", Value::text("x"));
+    assert!(matches!(
+        executor.submit(&invalid),
+        Err(CallError::Refused(Refusal::Invalid { .. }))
+    ));
+    for call in [Call::new("nothing-of-that-name"), invalid] {
+        let action = call.action().to_owned();
+        let request = Request::new(call).cancelled_by(signal.clone());
+        let refused = CallError::Refused(Refusal::Cancelled { action });
+        assert_eq!(executor.request(&request), Err(refused));
+    }
+    assert_eq!(store.snapshot().unwrap().number(), 0);
+}
+
+#[test]
+fn a_call_is_prepared_from_the_generation_that_was_held_and_not_from_a_later_one() {
+    // The store changes between the hold and the preparation: the mask the call takes
+    // is published straight after the held generation was read. The call is prepared
+    // from what was held, where there is no such mask, and is refused; the next
+    // request, admitted against the later generation, runs.
+    let dir = Scratch::new("cancel");
+    let fs = Arc::new(AfterTheLook {
+        hook: Mutex::new(None),
+    });
+    let store = Arc::new(Store::open(&dir.path().join("store"), fs.clone()).unwrap());
+    let mut publication = store.begin().unwrap();
+    publication.put("notes/one", b"first").unwrap();
+    publication.publish().unwrap();
+    let look = {
+        let draft = ActionDescriptor::draft("look", "1.0.0", Kind::Primitive, "Looks.")
+            .input(InputPort::required("mask", ArtifactType::Mask, "The mask."));
+        Arc::new(Told(
+            draft.build().unwrap(),
+            Box::new(|_, _| Ok(Produced::nothing())),
+        ))
+    };
+    let executor = engine_over(store.clone(), vec![look]);
+    *fs.hook.lock().unwrap() = Some(Box::new({
+        let store = store.clone();
+        move || {
+            let mut publication = store.begin().unwrap();
+            artifact::put(&mut publication, &Artifact::from(the_mask())).unwrap();
+            publication.publish().unwrap();
+        }
+    }));
+    let call = Call::new("look").input("mask", the_mask().id());
+    let refused = executor.submit(&call);
+    assert!(fs.hook.lock().unwrap().is_none(), "the hook never ran");
+    assert_eq!(store.snapshot().unwrap().number(), 2);
+    assert!(
+        matches!(refused, Err(CallError::Refused(Refusal::Input { .. }))),
+        "{refused:?}"
+    );
+    assert_eq!(
+        executor.submit(&call).unwrap().outcome().name(),
+        "completed"
+    );
+}
+
+#[test]
+fn a_handle_holds_its_runs_deadline_to_the_executors_clock() {
+    // One clock for a deadline: the one admission goes by. The action asks its filler,
+    // moves the executor's clock past the run's deadline, and asks again: the handle
+    // sends nothing more, though by the machine's clock the deadline is an hour away.
+    let dir = Scratch::new("cancel");
+    let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(ShimFs::new())).unwrap());
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(3600);
+    let clock = Arc::new(Moved(Mutex::new(start)));
+    let filler = Arc::new(FakeFiller::new(Paint::Inverse));
+    let faults = Arc::new(Mutex::new(Vec::new()));
+    let asking = {
+        let (clock, faults) = (clock.clone(), faults.clone());
+        work(move |_, context| {
+            let fill = context.capabilities().fill().unwrap();
+            for _ in 0..2 {
+                let fault = fill.fill(&fill_request()).err().map(|fault| fault.kind());
+                faults.lock().unwrap().push(fault);
+                *clock.0.lock().unwrap() = deadline;
+            }
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(store, vec![asking])
+        .with_clock(clock.clone())
+        .with_capabilities(Capabilities::none().with_fill(filler.clone()));
+    executor.request(&asked("order-1").until(deadline)).unwrap();
+    assert_eq!(*faults.lock().unwrap(), [None, Some(FaultKind::TimedOut)]);
+    assert_eq!(filler.requests(), 1);
+}
+
+/// The executor of the test below, for its spawner, which is a plain function.
+static NO_THREAD: std::sync::OnceLock<Engine> = std::sync::OnceLock::new();
+static CANCELLED_FIRST: Mutex<Option<Result<Cancel, CallError>>> = Mutex::new(None);
+
+/// A spawner that makes no thread, and before it says so cancels the run it was asked
+/// to make a thread for.
+fn cancels_and_makes_no_thread(
+    name: String,
+    _: Box<dyn FnOnce() + Send + 'static>,
+) -> std::io::Result<()> {
+    let run = RunId::parse(name.trim_start_matches("run ")).unwrap();
+    let cancel = NO_THREAD.get().unwrap().cancel(&run);
+    *CANCELLED_FIRST.lock().unwrap() = Some(cancel);
+    Err(std::io::Error::other("no thread is left"))
+}
+
+#[test]
+fn a_run_that_was_cancelled_before_its_thread_could_not_be_made_ends_cancelled() {
+    // The run is admitted, a cancel of it is accepted, and then no thread can be made
+    // for it. It is ended where it is, through the same entry to the end: the
+    // cancellation came first, so it ends as cancelled, and not as an error.
+    let dir = Scratch::new("cancel");
+    let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(ShimFs::new())).unwrap());
+    let executor = engine(store, vec![work(|_, _| panic!("the action started"))])
+        .with_spawn(cancels_and_makes_no_thread);
+    assert!(NO_THREAD.set(executor.clone()).is_ok());
+    let Err(CallError::NotStarted { run, .. }) = executor.start(&asked("order-1")) else {
+        panic!("the run was started");
+    };
+    assert_eq!(
+        CANCELLED_FIRST.lock().unwrap().take(),
+        Some(Ok(Cancel::Accepted))
+    );
+    assert_eq!(executor.wait(&run).unwrap().state(), &cancelled());
 }

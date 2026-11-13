@@ -660,7 +660,7 @@ pub struct Store {
     /// closing publication asked for that ([`Publication::keep_until_let_go`]), until
     /// its closer lets it go ([`Store::let_go`]). The flag says that the run's closing
     /// is visible and it is kept for its closer.
-    made_runs: Mutex<BTreeMap<String, (Attached, bool)>>,
+    made_runs: Mutex<BTreeMap<String, OpenRun>>,
     /// How many places are taken now among the runs of this value that were started on
     /// threads of their own ([`Store::start_place`]). It is kept here, beside the table
     /// of open runs, because it is this writer's count, whoever starts the runs.
@@ -694,6 +694,14 @@ impl Drop for Place {
 /// code that works on the run shares with whoever asks after it in this process. The
 /// store keeps it and never looks inside.
 pub type Attached = Arc<dyn std::any::Any + Send + Sync>;
+
+/// One run in the table of open runs: what was attached to it, whether its closing is
+/// visible and it is kept for its closer, and what to do if it is deleted meanwhile.
+type OpenRun = (Attached, bool, Option<WhenDeleted>);
+
+/// What the maker of a run has the store do when the run is deleted while it is open
+/// ([`Publication::tell_when_deleted`]).
+pub type WhenDeleted = Arc<dyn Fn() + Send + Sync>;
 
 /// A run's id: not empty, and no control character (a line break, a tab, an escape). This
 /// is the floor. The executor names a run with a [`crate::contract::RunId`], whose rule is
@@ -811,7 +819,7 @@ impl Store {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(run)
-            .map(|(attached, _)| attached.clone())
+            .map(|(attached, _, _)| attached.clone())
     }
 
     /// Takes out of the table of open runs a run whose closing is visible and that was
@@ -820,7 +828,7 @@ impl Store {
     /// publication never became visible.
     pub fn let_go(&self, run: &str) {
         let mut made = self.made_runs.lock().unwrap_or_else(|e| e.into_inner());
-        if made.get(run).is_some_and(|(_, closed)| *closed) {
+        if made.get(run).is_some_and(|(_, closed, _)| *closed) {
             made.remove(run);
         }
     }
@@ -979,6 +987,7 @@ impl Store {
             held_closed: BTreeSet::new(),
             kept: BTreeMap::new(),
             attached: BTreeMap::new(),
+            when_deleted: BTreeMap::new(),
         })
     }
 
@@ -1166,6 +1175,8 @@ pub struct Publication<'s> {
     kept: BTreeMap<String, Entry>,
     /// What it attaches to the runs it makes.
     attached: BTreeMap<String, Attached>,
+    /// What it has the store do when a run it makes is deleted while it is open.
+    when_deleted: BTreeMap<String, WhenDeleted>,
 }
 
 impl Publication<'_> {
@@ -1222,6 +1233,16 @@ impl Publication<'_> {
     /// on a run this publication does not make.
     pub fn attach(&mut self, run: &str, what: Attached) {
         self.attached.insert(run.to_string(), what);
+    }
+
+    /// Has the store do `this` when the run `run`, which this publication makes, is
+    /// deleted while this writer still has it open: once, straight after the deletion
+    /// is visible, on the thread that deleted it. For a maker that has something
+    /// working on the run, to tell it that the run is gone. What it does is the
+    /// maker's, and the store never looks inside; it must not publish, and must not
+    /// wait for anything that does.
+    pub fn tell_when_deleted(&mut self, run: &str, this: WhenDeleted) {
+        self.when_deleted.insert(run.to_string(), this);
     }
 
     /// Makes `name`, which belongs to no run, with this content, as a reference of this
@@ -1462,7 +1483,8 @@ impl Publication<'_> {
                 if !made.contains_key(run) {
                     let what = self.attached.get(run).cloned();
                     let what = what.unwrap_or_else(|| Arc::new(()));
-                    made.insert(run.clone(), (what, false));
+                    let told = self.when_deleted.get(run).cloned();
+                    made.insert(run.clone(), (what, false, told));
                     added.push(run);
                 }
             }
@@ -1475,6 +1497,7 @@ impl Publication<'_> {
             }
             return Err(error);
         }
+        let mut deleted_open = Vec::new();
         // Visible. What this value remembers is bounded by the runs that are open now:
         // a run that was closed or deleted is forgotten, and only from here on.
         {
@@ -1483,13 +1506,20 @@ impl Publication<'_> {
                 // Kept for its closer, a closed run is marked and stays; a deletion
                 // below takes it out all the same.
                 match made.get_mut(run) {
-                    Some((_, closed)) if self.held_closed.contains(run) => *closed = true,
+                    Some((_, closed, _)) if self.held_closed.contains(run) => *closed = true,
                     _ => drop(made.remove(run)),
                 }
             }
             for run in &self.deleted {
-                made.remove(run);
+                // A run that was open, or kept for its closer, and whose maker asked
+                // to be told: told below, with the table's lock let go.
+                if let Some((_, _, Some(told))) = made.remove(run) {
+                    deleted_open.push(told);
+                }
             }
+        }
+        for told in deleted_open {
+            told();
         }
         fs.sync_dir(&layout.root)
             .map_err(Error::io("sync", &layout.root))

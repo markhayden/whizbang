@@ -16,6 +16,11 @@ which is built: the rule for a cancellation and the commit step, `cancel`, cance
 admission, the handles a context binds to its own signal, the generation a run
 reads, and one state for a run this process abandoned. Changed: the paragraph that says which part builds what; "What is not built";
 what this record does not decide yet.
+Amended: 2026-11-13, in the same pull request, after an early review. Changed: a
+cancel asks the table of open runs before the store, and with a wait says nothing of an
+end until the executor confirmed it; a run that is deleted while it executes is told to
+stop; a run's capability handles hold its deadline to the executor's clock. Added: what
+a handle kept past its run still does.
 Spec: section 3, "The execution contract", "What a run publishes", "Storage" and "What
 every run records"
 
@@ -349,7 +354,8 @@ caller answers when that call has all but returned.
 deleted is waiting for the run's action, and answers when the action has come back and
 the executor is done: with `NoSuchRun`, since the end of a deleted run is refused and
 the run is not made again. A `wait` that begins after the deletion is visible answers at
-once, with `NoSuchRun`. Deleting a run does not stop its action.
+once, with `NoSuchRun`. Deleting a run tells its action to stop ("A run that is deleted
+while it executes", below).
 
 **A run whose end was refused stays in the table.** The store takes a run out of its
 table of open runs when the generation that closes or deletes it is visible. A run
@@ -529,15 +535,15 @@ another does the same and reads the status of a second run, and cancels it
 (`cancel::a_status_of_another_run_is_answered_while_a_cancel_waits_for_a_commit`).
 
 **What a cancel is answered.** `Executor::cancel` takes a run's id, and no reason:
-nothing a caller says is written. It answers as a status does: the store, the table,
-the store.
+nothing a caller says is written. It asks the table of open runs first, and the store
+only for a run that is not there, or that the table says is done with.
 
 | The run | `cancel` answers |
 |---|---|
 | Executing in this process, by any executor over the same store value | `Accepted`, at once. It does not wait for the action to come back: `wait` does, and has no bound on an action that never looks at its signal and never returns |
-| In its commit step | It waits for the end of the run, then answers as for a run that ended |
-| Ended, in the store | `NotAccepted(Ended)`, with the outcome. Nothing is written |
-| In its commit step, and the store then refuses the commit | It waits, then `NotAccepted(Abandoned)`, with the store's failure: the run is neither cancelled nor completed |
+| In its commit step, or its end visible and its last sync not yet done | It waits until the executor is done with the run. Then `NotAccepted(Ended)`, with the outcome, if the executor confirmed the end, and otherwise the next row |
+| In its commit step, and the store then refuses the commit, or does not confirm it | It waits, then `NotAccepted(Abandoned)`, with the store's failure: the run is neither cancelled nor known to be completed |
+| Ended, and the executor done with it | `NotAccepted(Ended)`, with the outcome, from the store. Nothing is written |
 | Abandoned by this process | `NotAccepted(Abandoned)`, without waiting |
 | Made by other code of this process, with no executor's state attached | `NotAccepted(NotEnded { here: true })` |
 | Admitted by a process that is gone | `NotAccepted(NotEnded { here: false })`: nothing can be told to stop |
@@ -565,18 +571,21 @@ return and by any unwinding: unless the executor said first that the run's end w
 published and confirmed, the run's phase becomes abandoned. A status, a wait, a cancel
 and a repeat of the run's request all say `Abandoned`, and none waits
 (`cancel::a_run_with_nothing_behind_it_is_abandoned_for_whoever_waits_asks_or_cancels`).
-Each looks at the store once more before it says so: an end that became visible and
-was not confirmed also leaves the phase abandoned, and that run ended, which the store
-says. Only the process that abandoned a run says so. After it is gone the run is
+An end that became visible and was not confirmed leaves the phase abandoned too. A
+status and a repeat look at the store once more and say what it shows, `Ended`; a wait
+and a cancel that were in flight say `Abandoned` ("Visible before durable", below).
+Only the process that abandoned a run says so. After it is gone the run is
 `NotEnded { here: false }` to everyone, as before.
 
 **Visible before durable.** A run's end is visible before the publication's last sync,
 and its caller is answered only after that sync. Between the two, a status says
 `Ended`, with the outcome, while the caller that ran it has no answer yet and a `wait`
-is still waiting ("A status and a wait at the end of a run", above); and if that
-sync fails, the caller is told of the store's failure though every status, then and
-later, says `Ended`. The record is in the store in that case; what is not known is
-that it would survive a loss of power.
+and a cancel are still waiting ("A status and a wait at the end of a run", above); and
+if that sync fails, the caller is told of the store's failure, the wait and the cancel
+that were waiting say `Abandoned` with that failure, and every status, then and later,
+says `Ended`, as does a wait or a cancel that begins after the executor let the run go.
+The record is in the store in that case; what is not known is that it would survive a
+loss of power. So `status` alone can run ahead of the disk, and says what is visible.
 
 **The table and a run that is named again.** A run can be named up to eight times
 before its admission is published, and an admission can be given up at several
@@ -589,21 +598,38 @@ so there is none to remove or to key again
 (`cancel::a_run_that_was_named_again_is_in_the_table_of_open_runs_under_its_last_id_alone`).
 What the executor attaches is opaque to the store.
 
-**Why the answer is never from a stale look.** The first look at the store answers a
-run that ended or is not there. For a run that was open, the table is asked, and what
-it holds is the run's live state, whose phase is read under the run's lock: that is the
-decision, and it is not a snapshot. A cancel that finds the run ending or over, or not
-in the table, looks at the store again, as a status does, and that look is conclusive
-for the same reason ("Why the last look is conclusive", above). Three tests stop at the
-edges. Straight after the rename that makes an admission visible, a cancel is accepted,
-and the action is never run
+**Why the answer is never from a stale look, and never ahead of the disk.** A run this
+process made is in the table from before it is visible until the executor is done with
+it, which is after its end publication's last sync ("A status and a wait at the end of
+a run", above). So a cancel finds it there for as long as anything about it is
+undecided, and what it finds is the run's live state, whose phase is read under the
+run's lock: that is the decision, and it is not a snapshot. A run that is not in the
+table is one this process is done with, or never made, and the store says which.
+
+The early review of this part showed why the table comes first. Asked straight after
+the rename that makes a commit visible, a cancel that looked at the store first said
+`Ended(Completed)`; power was then lost before the last sync, the caller that ran the
+run was told of the store's failure, and the store that was opened again held no record
+and no output. Now a cancel and a wait asked at that moment both wait, and say
+`Completed` only when the executor confirmed the end; when it did not, both say
+`Abandoned`, with the store's failure, whatever the store shows
+(`cancel::a_cancel_and_a_wait_asked_when_an_end_is_visible_wait_for_its_last_sync`,
+`cancel::what_a_cancel_and_a_wait_say_of_an_end_is_what_the_store_holds_after_a_loss_of_power`).
+A cancel on the publishing thread itself, inside a hook of the file system, would wait
+for the thread it is on: nothing but a test can ask one. Straight after the rename that
+makes an admission visible, a cancel is accepted, and the action is never run
 (`cancel::a_cancel_asked_the_moment_a_run_becomes_visible_is_accepted_and_its_action_never_runs`).
-Straight after the rename that makes an end visible, on the publishing thread, a cancel
-is answered with the outcome and does not wait for the thread it is on
-(`cancel::a_cancel_asked_the_moment_a_runs_end_becomes_visible_is_told_how_it_ended`).
-And a cancel whose run ends between its look at the store and its look at the table is
-told how the run ended, not that it was accepted and not that nobody will end it
-(`cancel::a_cancel_that_races_the_end_of_its_run_is_told_how_it_ended`).
+
+**A run that is deleted while it executes** leaves the table with the deletion, so a
+cancel of it afterwards is answered `NoSuchRun`, as a status is. Its action is told to
+stop all the same, by the deletion: the executor asks the store, when it makes the run,
+to call it back if the run is deleted while it is open
+(`Publication::tell_when_deleted`), and what it does then is set the run's signal if
+its end has not begun. The store calls what it was given and looks at nothing. The
+run's end then finds no run, and nothing of it is written, as before; what changed is
+that its action, its thread and its place among the started runs are not held until
+the action returns by itself
+(`cancel::an_executing_run_that_is_deleted_is_told_to_stop`).
 
 **A cancelled run's end** is the end publication of any run that did not complete: the
 journal, the diagnostics and the record are added to the run, the record says
@@ -649,6 +675,12 @@ resolved: choosing among several backends by the call's choice, and recording ea
 request, come with the first action that asks a capability (task A11,
 `docs/carry-over.md`).
 
+A handle can be cloned, and nothing closes it when its run ends as it should: an
+action that keeps a handle, or a clone, past its run can still send through it, with
+the run's signal, which nobody sets any more, and its deadline. Only a cancelled run's
+handles are shut, by the signal. What accounts for every request before a run is
+terminal is the next part's.
+
 **Cancelling an admission, and its deadline.** An admission has no run to name. It is
 cancelled by the signal its request came with: the caller makes the signal, keeps it,
 and sets it. A request may also come with a deadline (`Request::until`). Admission
@@ -659,7 +691,9 @@ nothing of it is published: no run, no reservation, and its id is not taken. A r
 is answered before either is looked at. The time is the executor's clock's
 (`Clock::now`), so a test moves it
 (`cancel::a_cancellation_that_arrives_while_a_ledger_is_asked_again_ends_the_admission`,
-`cancel::a_deadline_that_passes_while_a_ledger_is_asked_again_ends_the_admission`).
+`cancel::a_deadline_that_passes_while_a_ledger_is_asked_again_ends_the_admission`;
+before the call is prepared:
+`cancel::a_request_that_is_cancelled_is_refused_as_cancelled_before_its_call_is_looked_at`).
 A signal set after the last look and before the publication is not lost: the run is
 admitted with its signal set, its action is not run, and it ends as cancelled.
 
@@ -670,7 +704,11 @@ still starve (`docs/carry-over.md`).
 
 **A deadline in a run** is carried, and ends nothing by itself: the action reads it
 from its context, and its capability handles send nothing once it has passed (ADR
-0006). The executor does not end a run whose deadline has passed.
+0006). The executor does not end a run whose deadline has passed. There is one clock
+for it: the handles the executor makes hold the deadline to the executor's clock, the
+one admission goes by (`Capabilities::timed_by`;
+`cancel::a_handle_holds_its_runs_deadline_to_the_executors_clock`). A handle made by
+other code goes by the machine's.
 
 **The generation a run reads.** A run is admitted against one generation of the store,
 and reads that generation until it ends. Before it prepares the call, admission takes
@@ -683,6 +721,7 @@ before whoever waits for the run is told. So an input a run was admitted against
 anything else the run reads, cannot be pruned out from under it by a deletion, by a
 name being given other content, or by a prune, in this process
 (`cancel::a_run_reads_the_generation_it_was_admitted_against_through_a_deletion_and_a_prune`,
+`cancel::a_call_is_prepared_from_the_generation_that_was_held_and_not_from_a_later_one`,
 `store::prune::what_a_writer_holds_is_left_by_its_own_prune_until_it_lets_go`).
 
 What follows from it, and is known: a run does not see what was published after it was
