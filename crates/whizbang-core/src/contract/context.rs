@@ -3,8 +3,11 @@
 //! capability handles and the executor.
 //!
 //! The executor makes one of these for each run (ADR 0005). The cancellation signal and
-//! the deadline are carried and nothing sets them yet; the allowance and the capability
-//! handles are empty until there is a ledger and there are capability interfaces.
+//! the deadline are carried and nothing sets them yet, and the allowance is empty until
+//! there is a ledger. The three handles here are still empty and cannot be made. The
+//! handles that send a request exist, in [`crate::capability`] (ADR 0006), for segment
+//! and fill; they take these ones' place with the next part of that record, when the
+//! judge's is there too.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -74,22 +77,24 @@ impl Allowance {
     }
 }
 
-/// The handle through which an action asks a segmenter. Its contents, the request and
-/// the response, are the capability interfaces' to define.
+/// The handle through which an action will ask a segmenter. It is empty:
+/// [`crate::capability::SegmentHandle`] is the one that sends a request, and takes this
+/// one's place with the next part of ADR 0006.
 #[derive(Debug, Clone)]
 pub struct SegmentHandle {
     _contents: (),
 }
 
-/// The handle through which an action asks a filler. Its contents are the capability
-/// interfaces' to define.
+/// The handle through which an action will ask a filler. It is empty:
+/// [`crate::capability::FillHandle`] is the one that sends a request, and takes this
+/// one's place with the next part of ADR 0006.
 #[derive(Debug, Clone)]
 pub struct FillHandle {
     _contents: (),
 }
 
-/// The handle through which an action asks a judge. Its contents are the capability
-/// interfaces' to define.
+/// The handle through which an action will ask a judge. It is empty: the judge's
+/// interface comes with the next part of ADR 0006.
 #[derive(Debug, Clone)]
 pub struct JudgeHandle {
     _contents: (),

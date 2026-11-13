@@ -68,14 +68,17 @@ impl Unavailable {
     }
 }
 
-/// What prepare may ask about capabilities: which model would answer one, with these
-/// features. It is answered from what is configured, with no network; nothing is sent to
-/// a model and nothing is reserved. How a choice and a default are resolved is the
-/// capability interfaces' to define.
+/// What prepare may ask about capabilities: which model would answer one for a call
+/// that chose this backend, or chose none, with these features. It is answered from what
+/// is configured, with no network; nothing is sent to a model and nothing is reserved.
+/// Resolution is ADR 0006's: the call's choice, then the default, and never another
+/// backend in place of one that lacks a feature
+/// ([`Roster`](crate::capability::Roster) is the implementation).
 pub trait Backends: Send + Sync {
     fn resolve(
         &self,
         capability: Capability,
+        choice: Option<&str>,
         features: &[String],
     ) -> Result<ModelIdentity, Unavailable>;
 }
@@ -85,7 +88,12 @@ pub trait Backends: Send + Sync {
 pub struct NoBackends;
 
 impl Backends for NoBackends {
-    fn resolve(&self, capability: Capability, _: &[String]) -> Result<ModelIdentity, Unavailable> {
+    fn resolve(
+        &self,
+        capability: Capability,
+        _: Option<&str>,
+        _: &[String],
+    ) -> Result<ModelIdentity, Unavailable> {
         Err(Unavailable::new(&format!(
             "no backend is configured for {}",
             capability.name()
@@ -641,7 +649,7 @@ pub(super) fn prepare(
     let mut missing = Vec::new();
     for requirement in descriptor.needs_for(&given) {
         let (capability, features) = (requirement.capability(), requirement.features());
-        let model = match backends.resolve(capability, features) {
+        let model = match backends.resolve(capability, None, features) {
             Ok(model) => Some(model),
             Err(unavailable) => {
                 missing.push(Missing {

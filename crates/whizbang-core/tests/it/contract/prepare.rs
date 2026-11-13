@@ -121,6 +121,7 @@ impl Backends for Offered {
     fn resolve(
         &self,
         capability: Capability,
+        _: Option<&str>,
         features: &[String],
     ) -> Result<ModelIdentity, Unavailable> {
         self.asked.fetch_add(1, Ordering::SeqCst);
@@ -1200,8 +1201,13 @@ fn prepare_asks_the_backends_what_is_there_and_once_for_each_need() {
     let reader = Reader::open(&world.root, world.fs.clone()).unwrap();
     struct Shared(Arc<Offered>);
     impl Backends for Shared {
-        fn resolve(&self, c: Capability, f: &[String]) -> Result<ModelIdentity, Unavailable> {
-            self.0.resolve(c, f)
+        fn resolve(
+            &self,
+            c: Capability,
+            choice: Option<&str>,
+            f: &[String],
+        ) -> Result<ModelIdentity, Unavailable> {
+            self.0.resolve(c, choice, f)
         }
     }
     let engine = Engine::new(
