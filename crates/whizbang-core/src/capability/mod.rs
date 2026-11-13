@@ -19,10 +19,15 @@ use crate::identity::{CanonicalPixels, PixelDigest};
 mod declare;
 mod fault;
 mod fill;
+mod segment;
 
 pub use declare::{Declaration, Resolved, Roster, RosterError, Unresolved, feature};
 pub use fault::{FAULT_LIMIT, Fault, FaultKind};
 pub use fill::{FillHandle, FillRequest, Filler, PROMPT_LIMIT, Painted, Support};
+pub use segment::{
+    Asked, INSTANCE_LIMIT, Instance, PHRASE_LIMIT, QUERY_LIMIT, Query, SegmentHandle,
+    SegmentRequest, SegmentResponse, Segmenter,
+};
 
 /// The most pixels an image, a plane or a fill may have: ADR 0001's default limit on a
 /// decoded image, held here for everything a capability is sent or sends back.

@@ -5,3 +5,4 @@
 mod fault;
 pub mod fill;
 mod resolve;
+mod segment;
