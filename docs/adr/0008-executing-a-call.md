@@ -41,7 +41,8 @@ threads cannot be counted, that no group of lints is allowed, and what `just tes
 takes.
 Amended: 2026-11-13, with `grow` through the executor (task A9), the first command that
 runs an action. Added: "The first door". Changed, in "A panic in an action": a door now
-installs the hook.
+installs the hook; in "Cancellation", under a deadline in a run: a context says whether
+its deadline has passed, by the executor's clock.
 Spec: section 3, "The execution contract", "What a run publishes", "Nested calls",
 "Storage" and "What every run records"; section 6, "Spend"
 
@@ -755,7 +756,11 @@ from its context, and its capability handles send nothing once it has passed (AD
 for it: the handles the executor makes hold the deadline to the executor's clock, the
 one admission goes by (`Capabilities::timed_by`;
 `cancel::a_handle_holds_its_runs_deadline_to_the_executors_clock`). A handle made by
-other code goes by the machine's.
+other code goes by the machine's. An action that works for long without a handle asks
+its context whether the deadline has passed (`Context::deadline_passed`), which goes by
+the same clock, and does not compare the deadline with the machine's: `grow` does, every
+64 rows
+(`grow_action::grow_stops_when_its_deadline_passes_by_the_executors_clock_and_commits_nothing`).
 
 **The generation a run reads.** A run is admitted against one generation of the store,
 and reads that generation until it ends. Before it prepares the call, admission takes

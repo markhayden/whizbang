@@ -617,3 +617,23 @@ fn a_grow_that_is_told_to_stop_gives_nothing() {
     assert_eq!(looks, 12);
     assert!(grow(band_mask(), 2.0, None, &|| true).unwrap().is_none());
 }
+
+#[test]
+fn zero_of_either_sign_is_written_as_one_zero() {
+    // A recipe may call the function with a zero that carries a sign. It is the same
+    // radius, and is written the one way: an origin has no second spelling of it.
+    let before = mask_of(5, 4, plane(5, 4, |x, _| x == 2), &[0; 20]);
+    let plain = grow(before.clone(), 0.0, Some(0.0), &never)
+        .unwrap()
+        .unwrap();
+    let signed = grow(before, -0.0, Some(-0.0), &never).unwrap().unwrap();
+    let last = |mask: &Mask| mask.origin().steps().last().unwrap().arguments.clone();
+    let zero = [
+        ("px".to_owned(), "0".to_owned()),
+        ("down_px".to_owned(), "0".to_owned()),
+    ];
+    assert_eq!(last(&signed.mask), zero);
+    assert_eq!(last(&plain.mask), zero);
+    assert_eq!(signed.mask.to_bytes(), plain.mask.to_bytes());
+    assert_eq!(whizbang_rascal::grow::text_of(-0.0), "0");
+}

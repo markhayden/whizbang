@@ -14,6 +14,10 @@ downward, as for the shadow under an object.
   instance, a rasterized shape), and on an object that casts a shadow below it.
 - **Do not use it** to soften an edge: it makes the edge hard (the second example). And not
   on a band along a line whose width was measured: it throws the measurement away.
+- **In rascal's words** (its manifest, `crates/rascal-ops/src/grow.rs`). When to use: "On a
+  blob that must cover a little more than it was found to (a segmenter's instance, a
+  rasterized shape), and on an object that casts a shadow below it." When not: "On a band
+  along a line (its width is the fan's), or to soften an edge (use feather)."
 - **Kind.** A pure pixel operation (`SPEC.md` section 8): rungs 1 and 2 apply. It calls no
   model and spends nothing.
 
@@ -339,13 +343,17 @@ once.
 |---|---|
 | The blend, the profile and the prescriptions are lost, whatever the radius, even 0. A mask that was feathered has a hard edge after `grow`, and nothing in whizbang feathers a mask again yet | The second example above |
 | The radius counts by its exact square, so a radius meant as a square root can fall a hair under it: the double nearest the square root of 13 is under it, and a pixel 2 columns and 3 rows from the core, at a squared distance of exactly 13, is then not grown. Rascal's `grow` let such a pixel in. Give the next double up, or any radius a little larger | `px` 3.605551275463989 has K 12, and 3.6055512754639896 has K 13: rows 5 and 6 of the second table under "Rung 2 results", which differ by 425 core pixels (`the_radius_is_squared_exactly_and_not_as_doubles_multiply`) |
+| Rascal took each distance through a 32-bit float, which does not hold every square root apart. By arithmetic on its formula, which was not run: the first squared distance it lost is 4,197,201, and for every whole radius `r` from 4096 up it also grew the pixel `r` columns and 1 row from the core, at a squared distance of `r * r + 1`. Whizbang leaves that pixel out, as the rule says | `px` 4096 has K 16,777,216, and 16,777,217 is over it (`the_radius_is_squared_exactly_and_not_as_doubles_multiply` holds K for 10000) |
+| A `grow` that changes nothing commits the identity of the mask it was given: `px` 0 on a mask with no blend, profile or prescription, or any radius on a mask that is already full. The store then keeps the file it already holds under that identity (ADR 0008, "An output the store already holds"), whose origin has no `grow` step; the run's record still lists the mask as its output | `a_call_grow_cannot_take_is_refused_before_any_run_exists`, its last part |
+| Zero of either sign is written `0` in the origin, so `-0` is no second spelling | `zero_of_either_sign_is_written_as_one_zero` |
 | A fraction of a pixel in the radius adds pixels only where it carries K past a sum of two squares: 6 and 6.5 differ (K 36 and 42), and 6.5 grows no further straight out than 6 does | The first example above |
 | `down_px` counts whole rows, and its fraction is dropped. Rascal rounded it, a half going up | `down_px` 0.99 extends nothing and 1.99 extends one row (`a_part_of_a_row_extends_nothing`) |
 | The extension is straight down by rows of the image. It is not a shadow in any direction but down, and it does not know where the ground is: it fills whatever is under the grown core, a gap between two objects included | The first example above: the extension is a block under the blob |
 | Growth stops at the edges of the image, and does not wrap: on a panorama, a core at the left edge does not grow across the seam to the right edge | A core pixel in the corner of a 5 by 4 image grown by 2 is 6 pixels (`growth_stops_at_the_edges_of_the_image`) |
 | `px` and `down_px` are at most 10000, and a larger one is refused. An image the core decodes may be longer than that on a side, so on a very long, thin image the largest radius does not cover it | `px` 10000.5 is refused with "the argument px: 10000.5 is outside 0 to 10000" (`what_grow_cannot_take_is_refused_in_a_sentence_with_exit_1_and_no_run`) |
-| A mask costs its three planes in memory, one byte a pixel, and `grow` holds one more plane while it works: about 200 MB for the largest mask, whatever the size of its file (`docs/carry-over.md`, on what a mask costs in memory) | The last row of the first table under "Speed and cost" |
+| A mask costs its three planes in memory, one byte a pixel. `grow` holds one more plane while it works, and for a moment, while the blend is replaced, a fifth: about 250 MB at 50,000,000 pixels, whatever the size of the file (`docs/carry-over.md`, on what a mask costs in memory). Each sweep also holds 4 bytes for each column and a list of as many, which matters only for a mask that is very wide and very flat | The last row of the first table under "Speed and cost" |
 | A whole run reads the mask's file three times | "Speed and cost" |
+| `grow` looks at its run's cancellation and deadline every 64 rows, the deadline by the executor's clock (`Context::deadline_passed`). A run that is stopped so ends as an error of the type `cancelled` or `deadline` when the executor had not itself accepted a cancellation, and commits nothing | `grow_stops_when_its_deadline_passes_by_the_executors_clock_and_commits_nothing` |
 | The command waits for its run in its own process. Another process cannot cancel the run, and sees it as admitted and not ended until it is over; a process killed while `grow` works leaves the run so for good | ADR 0008, "The first door"; `docs/carry-over.md` |
 | What `grow` measured is evidence and not a result: the counts of core pixels are in a progress event of the run's journal, where a caller reads them as text | `grow: the core went from 16 to 84 pixels; the blend is cleared` (`grow_commits_a_mask_whose_origin_names_the_action_its_arguments_and_its_input`) |
 | A run whose commit the store refuses has no terminal status: it stays admitted and not ended, with nothing committed, as ADR 0008 says of any run whose end could not be written | `a_commit_of_grow_that_the_store_refuses_publishes_no_mask_and_no_status_or_both` |
@@ -374,6 +382,8 @@ record does.
     where rascal compared doubles with a slack of 0.000000001 ("Limits", the second row);
   - the growth is two sweeps in whole numbers, where rascal used a distance transform in
     doubles ("Alternatives");
+  - no distance goes through a 32-bit float, so the pixel one row off a whole radius of
+    4096 or more is no longer grown ("Limits");
   - `down_px` counts its whole part, where rascal rounded it;
   - protect is taken out of the new core by `Mask::replace_core` alone, where rascal's
     `replaced_core` cleared it first as well;

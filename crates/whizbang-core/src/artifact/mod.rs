@@ -121,7 +121,10 @@ impl std::fmt::Display for ArtifactId {
 }
 
 /// Why an artifact could not be made, read, used or found.
-#[derive(Debug)]
+///
+/// What `{:?}` prints holds no path: a failure of the store is shown by its words
+/// without paths, as the other errors that can hold one are. The store's own error,
+/// paths included, is the `Store` variant's field and the error's source.
 pub enum ArtifactError {
     /// The bytes are not a canonical artifact file.
     Format(String),
@@ -187,10 +190,72 @@ impl ArtifactError {
     /// failure of the store is said as the store says it without paths
     /// ([`store::Error::without_paths`]); every other error is its own sentence, which
     /// names no file.
+    ///
+    /// A reason can quote what a file held: a kind, of 64 bytes at most, is the one text
+    /// a reader of a canonical file puts in a refusal, and every other reason is made of
+    /// numbers and fixed words, and the reader quotes a kind escaped. Whatever the
+    /// reason, the sentence comes back with any control character escaped and is cut at
+    /// [`WITHOUT_PATHS_LIMIT`] characters, three dots following.
     pub fn without_paths(&self) -> String {
-        match self {
+        let whole = match self {
             ArtifactError::Store(error) => error.without_paths(),
             other => other.to_string(),
+        };
+        // Escaped first, then cut: the limit is on what comes back.
+        let mut said = String::new();
+        for (count, c) in whole.chars().flat_map(escaped).enumerate() {
+            if count == WITHOUT_PATHS_LIMIT {
+                said.push_str("...");
+                break;
+            }
+            said.push(c);
+        }
+        said
+    }
+}
+
+/// The most characters [`ArtifactError::without_paths`] gives back, before the three
+/// dots that mark a cut.
+pub const WITHOUT_PATHS_LIMIT: usize = 300;
+
+/// A character as it is, or a control character in its escaped form.
+fn escaped(c: char) -> Vec<char> {
+    if c.is_control() {
+        c.escape_default().collect()
+    } else {
+        vec![c]
+    }
+}
+
+impl std::fmt::Debug for ArtifactError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ArtifactError::Format(why) => f.debug_tuple("Format").field(why).finish(),
+            ArtifactError::WrongType { expected, found } => f
+                .debug_struct("WrongType")
+                .field("expected", expected)
+                .field("found", found)
+                .finish(),
+            ArtifactError::Origin(why) => f.debug_tuple("Origin").field(why).finish(),
+            ArtifactError::Invalid { artifact, why } => f
+                .debug_struct("Invalid")
+                .field("artifact", artifact)
+                .field("why", why)
+                .finish(),
+            ArtifactError::WrongImage(why) => f.debug_tuple("WrongImage").field(why).finish(),
+            ArtifactError::Rebind(why) => f.debug_tuple("Rebind").field(why).finish(),
+            ArtifactError::NotDerived(why) => f.debug_tuple("NotDerived").field(why).finish(),
+            ArtifactError::Identity(error) => f.debug_tuple("Identity").field(error).finish(),
+            ArtifactError::Missing { artifact, id } => f
+                .debug_struct("Missing")
+                .field("artifact", artifact)
+                .field("id", id)
+                .finish(),
+            // The store's own `{:?}` names its files by their paths.
+            ArtifactError::Store(error) => f
+                .debug_tuple("Store")
+                .field(&error.without_paths())
+                .finish(),
         }
     }
 }

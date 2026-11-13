@@ -37,10 +37,23 @@
 //! of a column, above or below, reaches at least as far along the row as any other in
 //! that column and that direction.
 //!
+//! # Three deliberate differences from rascal
+//!
 //! Ported from rascal `crates/rascal-ops/src/grow.rs` and `refine.rs`, and the disc
 //! dilation of `primitives.rs`, which went through a distance transform in doubles.
-
-use std::time::Instant;
+//! The port differs from it in three ways, each on purpose:
+//!
+//! 1. **No slack.** Rascal grew a pixel when its squared distance was at most the
+//!    radius squared as doubles multiply it, plus 0.000000001. Here it is the whole
+//!    part of the exact square: a radius a hair under a square root leaves that
+//!    distance out.
+//! 2. **No 32-bit float.** Rascal took each distance through a single-precision float
+//!    and got the square back by rounding. A float of 24 bits cannot hold every square
+//!    root apart: by arithmetic on rascal's formula, which was not run, the first
+//!    squared distance that does not come back is 4,197,201, and for every whole radius
+//!    `r` from 4096 up the pixel at `r` columns and 1 row from the core, at a squared
+//!    distance of `r * r + 1`, came back as `r * r` and was grown. Here it is left out.
+//! 3. **`down_px` is floored.** Rascal rounded it, a half going up.
 
 use whizbang_core::artifact::{self, ArtifactError, ArtifactType, Mask, Refinement, Step};
 use whizbang_core::contract::{
@@ -200,7 +213,7 @@ pub fn grown(
     let rows = rows_down(down_px);
     if rows > 0 {
         // For each column: how many rows up the nearest grown pixel is.
-        let mut up = vec![u64::MAX; width];
+        let mut up = vec![NONE; width];
         for (y, row) in out.chunks_mut(width.max(1)).enumerate() {
             if y % ROWS_BETWEEN_LOOKS == 0 && stopped() {
                 return None;
@@ -208,9 +221,10 @@ pub fn grown(
             for (sample, up) in row.iter_mut().zip(&mut up) {
                 if *sample != 0 {
                     *up = 0;
-                } else if *up != u64::MAX {
+                } else if *up != NONE {
+                    // At most the mask's height, which is under `NONE`.
                     *up += 1;
-                    if *up <= rows {
+                    if u64::from(*up) <= rows {
                         *sample = 255;
                     }
                 }
@@ -239,7 +253,12 @@ fn set(plane: &[u8]) -> u64 {
 
 /// A number as an origin and a diagnostic write it: the shortest decimal that reads
 /// back as the same double, which is the same text on every machine.
+/// Zero of either sign is `0`: a zero that carries a sign is the same radius, and an
+/// origin has one spelling of it.
 pub fn text_of(number: f64) -> String {
+    if number == 0.0 {
+        return "0".to_owned();
+    }
     format!("{number}")
 }
 
@@ -382,8 +401,8 @@ impl Action for Grow {
         .map_err(|error| Failure::error("input", &error.without_paths()))?;
         context.events().progress("grow: read the mask");
 
-        let late = || context.deadline().is_some_and(|by| Instant::now() >= by);
-        let stopped = || context.cancellation().is_cancelled() || late();
+        // The deadline by the executor's clock, as the context tells it.
+        let stopped = || context.cancellation().is_cancelled() || context.deadline_passed();
         let grown = grow(read, px, down_px, &stopped)
             .map_err(|error| Failure::error("mask", &error.without_paths()))?;
         let Some(grown) = grown else {
