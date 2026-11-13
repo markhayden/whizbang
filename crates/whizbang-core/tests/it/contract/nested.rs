@@ -693,6 +693,10 @@ fn the_runs_under_one_run_that_nothing_called_are_bounded_at_every_level_togethe
     let outer = {
         let said = said.clone();
         act("outer", move |_, context| {
+            // A call that is refused makes no run, and is not counted in the tree.
+            for _ in 0..3 {
+                refused(context.executor().submit(&Call::new("nobody")));
+            }
             for _ in 0..4 {
                 let called = context.executor().submit(&Call::new("middle"));
                 if let Err(CallError::Refused(refusal)) = called {
@@ -725,9 +729,10 @@ fn the_runs_under_one_run_that_nothing_called_are_bounded_at_every_level_togethe
     let kinds = |stored: &RunRecord| -> Vec<RefusalKind> {
         stored.outcome().refusals.iter().map(|r| r.kind()).collect()
     };
+    let unknown = RefusalKind::UnknownAction;
     assert_eq!(
         kinds(&record(&world, finished.run())),
-        [RefusalKind::TreeFull]
+        [unknown, unknown, unknown, RefusalKind::TreeFull]
     );
     let refusing = all.values().flatten().filter(|r| !kinds(r).is_empty());
     assert_eq!(refusing.count(), 2);
