@@ -5,19 +5,21 @@
 //! inside the support, by the composite, which keeps every other pixel itself.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::artifact::Mask;
 use crate::contract::Cancellation;
 
-use super::{Declaration, Fault, FaultKind, Picture, Unfit, feature, pixel_count};
+use super::{Bounds, Declaration, Fault, Picture, Unfit, feature, pixel_count};
 
 /// The most bytes a prompt holds.
 pub const PROMPT_LIMIT: usize = 4096;
 
 /// The support plane: the area a filler is to paint. One byte a pixel, row by row from
 /// the top left, the size of the image. A byte is [`Support::PAINT`] or
-/// [`Support::KEEP`], and nothing else.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// [`Support::KEEP`], and nothing else. What `{:?}` prints of one is its size and how
+/// many pixels it paints, never the plane.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Support {
     width: u32,
     height: u32,
@@ -108,8 +110,21 @@ impl Support {
     }
 }
 
-/// What a filler is sent.
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl std::fmt::Debug for Support {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Support({} by {}, {} to paint)",
+            self.width,
+            self.height,
+            self.painted()
+        )
+    }
+}
+
+/// What a filler is sent. What `{:?}` prints of one is its picture's size and digest,
+/// its support's size, and how long its prompt is: no pixel, and not the prompt.
+#[derive(Clone, PartialEq, Eq)]
 pub struct FillRequest {
     image: Picture,
     support: Support,
@@ -173,10 +188,21 @@ impl FillRequest {
     }
 }
 
+impl std::fmt::Debug for FillRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FillRequest({:?}, {:?}, ", self.image, self.support)?;
+        match &self.prompt {
+            Some(prompt) => write!(f, "a prompt of {} bytes)", prompt.len()),
+            None => f.write_str("no prompt)"),
+        }
+    }
+}
+
 /// The pixels a filler returned: three bytes a pixel, red, green and blue, sRGB, eight
 /// bits a channel, row by row from the top left. There is no alpha: a filler paints
-/// colour, and the composite keeps the alpha of the image it paints onto.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// colour, and the composite keeps the alpha of the image it paints onto. What `{:?}`
+/// prints of one is its size.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Painted {
     width: u32,
     height: u32,
@@ -215,26 +241,47 @@ impl Painted {
     }
 }
 
+impl std::fmt::Debug for Painted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Painted({} by {})", self.width, self.height)
+    }
+}
+
 /// A backend that fills. It answers one request at a time and returns when it has its
-/// answer; it is expected to stop early when the cancellation is set.
+/// answer; it never retries. It is expected to stop early when the run is cancelled, and
+/// to give up at the run's deadline ([`Bounds`]).
 pub trait Filler: Send + Sync {
     /// The model that answers, and the features it supports.
     fn declaration(&self) -> &Declaration;
 
     /// Paints the request's support. The pixels it returns outside the support are
     /// never used.
-    fn fill(&self, request: &FillRequest, cancellation: &Cancellation) -> Result<Painted, Fault>;
+    fn fill(&self, request: &FillRequest, bounds: &Bounds) -> Result<Painted, Fault>;
 }
 
-/// The handle through which an action asks a filler.
+/// The handle through which an action asks a filler. It is bound to one run: it holds
+/// that run's cancellation signal and deadline, so an action hands it neither, and
+/// cannot ask on behalf of a run that was cancelled.
 #[derive(Clone)]
 pub struct FillHandle {
     backend: Arc<dyn Filler>,
+    bounds: Bounds,
 }
 
 impl FillHandle {
-    pub fn new(backend: Arc<dyn Filler>) -> FillHandle {
-        FillHandle { backend }
+    /// A handle on this filler for the run with this cancellation signal. Whoever makes
+    /// an action's context makes the handle, with the context's own signal.
+    pub fn new(backend: Arc<dyn Filler>, cancellation: Cancellation) -> FillHandle {
+        FillHandle {
+            backend,
+            bounds: Bounds::new(cancellation),
+        }
+    }
+
+    /// The same handle, for a run that must be over by this time.
+    pub fn until(mut self, deadline: Instant) -> FillHandle {
+        self.bounds.until(deadline);
+        self
     }
 
     /// What the filler behind the handle declares.
@@ -243,19 +290,15 @@ impl FillHandle {
     }
 
     /// Sends the request and hands back the fill. Nothing is sent once the run is
-    /// cancelled, and a prompt is not sent to a filler that declares none. A fill of
-    /// other dimensions than the request's image is a malformed answer.
-    pub fn fill(
-        &self,
-        request: &FillRequest,
-        cancellation: &Cancellation,
-    ) -> Result<Painted, Fault> {
-        before_sending(
+    /// cancelled or its deadline has passed, and a prompt is not sent to a filler that
+    /// declares none. A fill of other dimensions than the request's image is a
+    /// malformed answer.
+    pub fn fill(&self, request: &FillRequest) -> Result<Painted, Fault> {
+        self.bounds.before_sending(
             self.declaration(),
-            cancellation,
             request.prompt.as_ref().map(|_| feature::PROMPT),
         )?;
-        let painted = self.backend.fill(request, cancellation)?;
+        let painted = self.backend.fill(request, &self.bounds)?;
         let (expected, found) = (
             (request.image.width(), request.image.height()),
             (painted.width, painted.height),
@@ -276,31 +319,4 @@ impl std::fmt::Debug for FillHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "FillHandle({:?})", self.declaration())
     }
-}
-
-/// What every handle checks before it sends: the run is not cancelled, and the backend
-/// declares each feature the request needs.
-pub(super) fn before_sending<'a>(
-    declaration: &Declaration,
-    cancellation: &Cancellation,
-    needed: impl IntoIterator<Item = &'a str>,
-) -> Result<(), Fault> {
-    if cancellation.is_cancelled() {
-        return Err(Fault::new(
-            FaultKind::Cancelled,
-            "the run was cancelled before the request was sent",
-        ));
-    }
-    for feature in needed {
-        if !declaration.has(feature) {
-            return Err(Fault::new(
-                FaultKind::Unsupported,
-                &format!(
-                    "the backend {} does not declare the feature {feature}",
-                    declaration.model().model()
-                ),
-            ));
-        }
-    }
-    Ok(())
 }
