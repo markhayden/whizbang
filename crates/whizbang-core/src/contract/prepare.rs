@@ -82,14 +82,13 @@ pub trait Backends: Send + Sync {
         features: &[String],
     ) -> Result<ModelIdentity, Unavailable>;
 
-    /// The most one call's use of this capability can cost when this model answers it,
-    /// in millionths of a US dollar: a bound the backend states, not a guess. It is
-    /// answered from what is configured, as [`Backends::resolve`] is. No backend has a
-    /// price before the ledger of checkpoint 1B, so the answer is nothing unless a
-    /// backend says otherwise.
-    fn bound(&self, capability: Capability, model: &ModelIdentity) -> u64 {
+    /// The most one call's use of this capability can cost when this model answers it:
+    /// a bound the backend states, not a guess. It is answered from what is configured,
+    /// as [`Backends::resolve`] is. No backend has a price before the ledger of
+    /// checkpoint 1B, so the answer is nothing unless a backend says otherwise.
+    fn bound(&self, capability: Capability, model: &ModelIdentity) -> Estimate {
         let _ = (capability, model);
-        0
+        Estimate::default()
     }
 }
 
@@ -106,9 +105,23 @@ pub struct Estimate {
 }
 
 impl Estimate {
+    /// A bound of this many millionths of a US dollar.
+    pub fn of_micros(micros: u64) -> Estimate {
+        Estimate { micros }
+    }
+
     /// The bound, in millionths of a US dollar.
     pub fn micros(&self) -> u64 {
         self.micros
+    }
+
+    /// Whether this is the largest amount there is. A sum of bounds that passed it
+    /// stops there, so it is not an amount: it says that the cost has no bound that
+    /// can be counted. Nothing is reserved for it and nothing is added to it; a call
+    /// with such an estimate is not admitted by an executor that reserves
+    /// ([`Refusal::NoBound`]).
+    pub fn is_unbounded(&self) -> bool {
+        self.micros == u64::MAX
     }
 }
 
@@ -470,6 +483,12 @@ pub enum CallError {
         what: &'static str,
         why: String,
     },
+    /// The ledger that takes part in admission failed, or did what a ledger may not:
+    /// the sentence says which. This is not a judgement of the call, and nothing was
+    /// published.
+    Ledger {
+        why: String,
+    },
 }
 
 impl CallError {
@@ -477,7 +496,7 @@ impl CallError {
     pub fn refusal(&self) -> Option<&Refusal> {
         match self {
             CallError::Refused(refusal) => Some(refusal),
-            CallError::Store(_) | CallError::Record { .. } => None,
+            CallError::Store(_) | CallError::Record { .. } | CallError::Ledger { .. } => None,
         }
     }
 }
@@ -499,6 +518,7 @@ impl std::fmt::Display for CallError {
                     "the store holds {what}, and this build does not read it: {why}"
                 )
             }
+            CallError::Ledger { why } => write!(f, "the ledger failed: {why}"),
         }
     }
 }
@@ -542,6 +562,19 @@ pub enum Refusal {
     /// gave another: what differs. No run was made and nothing was reserved; the caller
     /// prepares again and decides again.
     Stale { action: String, why: Stale },
+    /// The call is ready, and the ledger declined its reservation: it may cost up to
+    /// `asked_micros`, and `left_micros` is what is left of the allowance, both in
+    /// millionths of a US dollar. No run was made, nothing was reserved, and the
+    /// request's id is free.
+    OverAllowance {
+        action: String,
+        asked_micros: u64,
+        left_micros: u64,
+    },
+    /// The call is ready, and what it may cost has no bound that can be counted: its
+    /// estimate is the largest amount there is ([`Estimate::is_unbounded`]). An
+    /// executor that reserves does not admit it, and its ledger is not asked.
+    NoBound { action: String },
     /// The request's id holds something the executor was told never to write. An id is
     /// stored as it is, in a name and in two records, so it is refused, and the refusal
     /// does not show it.
@@ -602,6 +635,20 @@ impl std::fmt::Display for Refusal {
             Refusal::Stale { action, why } => write!(
                 f,
                 "{action} was not admitted: the preparation it came with is stale: {why}"
+            ),
+            Refusal::OverAllowance {
+                action,
+                asked_micros,
+                left_micros,
+            } => write!(
+                f,
+                "{action} was not admitted: it may cost up to {asked_micros} millionths of \
+                 a US dollar, and {left_micros} are left of the ledger's allowance"
+            ),
+            Refusal::NoBound { action } => write!(
+                f,
+                "{action} was not admitted: what it may cost has no bound that can be \
+                 reserved"
             ),
             Refusal::NotARequestId { why } => f.write_str(why),
             Refusal::SecretInRequestId => f.write_str(
@@ -823,7 +870,7 @@ pub(super) fn prepare(
             Ok(model) => {
                 // A sum past the largest amount is the largest amount, never a small one.
                 let bound = backends.bound(capability, &model);
-                estimate.micros = estimate.micros.saturating_add(bound);
+                estimate.micros = estimate.micros.saturating_add(bound.micros);
                 Some(model)
             }
             Err(unavailable) => {

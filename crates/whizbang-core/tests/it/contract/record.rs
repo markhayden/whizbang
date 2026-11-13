@@ -28,7 +28,7 @@ use crate::artifact::support::{image_of, photo};
 /// A record as the executor writes one for a completed `echo`, by hand.
 pub fn completed() -> String {
     concat!(
-        r#"{"record":"run/1","#,
+        r#"{"record":"run/2","#,
         r#""identity":{"run":"1000-1","request":null,"parent":null,"whizbang":"0.0.1"},"#,
         r#""asked":{"action":"echo","version":"1.0.0","#,
         r#""arguments":[{"name":"text","value":{"text":"hello"}}],"settings":[],"#,
@@ -36,7 +36,8 @@ pub fn completed() -> String {
         r#""inputs":[],"outputs":[],"#,
         r#""outcome":{"status":"completed","error":null,"invalid":null,"refusals":[]},"#,
         r#""time":{"start_ms":1000,"end_ms":1003,"durations":[]},"#,
-        r#""models":[],"spend":[],"egress":[],"steps":[],"judge":[],"#,
+        r#""models":[],"spend":{"reserved_micros":null,"requests":[]},"egress":[],"steps":[],"#,
+        r#""judge":[],"#,
         r#""diagnostics":[{"name":"diagnostics/echo.txt","#,
         r#""digest":"sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","#,
         r#""bytes":5},{"name":"journal","#,
@@ -69,7 +70,14 @@ fn a_record_is_read_and_written_back_as_the_same_bytes() {
     let bytes = completed();
     let record = RunRecord::from_bytes(bytes.as_bytes()).unwrap();
     assert_eq!(record.to_bytes(), bytes.as_bytes());
-    assert_eq!(RUN_RECORD, "run/1");
+    assert_eq!(RUN_RECORD, "run/2");
+    assert_eq!(record.spend().reserved_micros, None);
+    // The same run with half a dollar reserved for it when it was admitted.
+    let reserved = completed().replace(r#""reserved_micros":null"#, r#""reserved_micros":500000"#);
+    let record = RunRecord::from_bytes(reserved.as_bytes()).unwrap();
+    assert_eq!(record.spend().reserved_micros, Some(500_000));
+    assert_eq!(record.to_bytes(), reserved.as_bytes());
+    validate(&schema(), &as_json(&reserved)).unwrap();
     assert_eq!(record.identity().run, "1000-1");
     assert_eq!(record.asked().action, "echo");
     assert_eq!(record.outcome().status, Status::Completed);
@@ -132,7 +140,7 @@ fn a_group_that_nothing_fills_yet_cannot_hold_anything() {
     // it is not a record of this version.
     for path in [
         "/models",
-        "/spend",
+        "/spend/requests",
         "/egress",
         "/steps",
         "/judge",
@@ -155,13 +163,17 @@ fn a_group_that_nothing_fills_yet_cannot_hold_anything() {
 
 #[test]
 fn a_record_of_another_version_is_another_version_not_damage() {
-    let bytes = changed(|document| document["record"] = json!("run/2"));
+    // A `run/1` record, which the code of this checkpoint wrote until the reservation,
+    // is another version: a store is not kept before the checkpoint's tag (ADR 0005).
+    let bytes = changed(|document| document["record"] = json!("run/1"));
     assert_eq!(
         RunRecord::from_bytes(&bytes).unwrap_err(),
         RecordError::OtherVersion {
-            found: "run/2".to_owned()
+            found: "run/1".to_owned()
         }
     );
+    let document: Json = serde_json::from_slice(&bytes).unwrap();
+    assert!(validate(&schema(), &document).is_err());
     // Whatever else it holds: another version need not have this one's shape.
     let other = b"{\"record\":\"run/9\",\"something\":\"new\"}\n";
     assert!(matches!(
@@ -170,7 +182,7 @@ fn a_record_of_another_version_is_another_version_not_damage() {
     ));
     let said = RunRecord::from_bytes(other).unwrap_err().to_string();
     assert!(
-        said.contains("run/9") && said.contains("this build reads run/1"),
+        said.contains("run/9") && said.contains("this build reads run/2"),
         "{said}"
     );
 }
@@ -214,6 +226,21 @@ fn what_is_not_a_record_is_refused_by_the_types_and_by_the_schema() {
     both("an unknown field in time", &|d| {
         d["time"]["extra"] = json!(1)
     });
+    both("an unknown field in spend", &|d| {
+        d["spend"]["settled_micros"] = json!(1)
+    });
+    both("spend as the list it was in run/1", &|d| {
+        d["spend"] = json!([])
+    });
+    both("an amount reserved under zero", &|d| {
+        d["spend"]["reserved_micros"] = json!(-1)
+    });
+    both("an amount reserved that is not whole", &|d| {
+        d["spend"]["reserved_micros"] = json!(0.5)
+    });
+    both("an amount reserved as a text", &|d| {
+        d["spend"]["reserved_micros"] = json!("500000")
+    });
     both("an unknown field in an argument", &|d| {
         d["asked"]["arguments"][0]["extra"] = json!(1)
     });
@@ -235,6 +262,8 @@ fn what_is_not_a_record_is_refused_by_the_types_and_by_the_schema() {
     // A field left out, at the top and in each group.
     for (group, field) in [
         ("", "spend"),
+        ("spend", "reserved_micros"),
+        ("spend", "requests"),
         ("", "record"),
         ("identity", "run"),
         ("identity", "request"),
@@ -348,7 +377,7 @@ fn what_is_not_a_record_is_refused_by_the_types_and_by_the_schema() {
         d["time"].as_object_mut().unwrap().remove("start_ms");
     });
     // Another version is refused by both too, the types as another version.
-    let other = changed(|d| d["record"] = json!("run/2"));
+    let other = changed(|d| d["record"] = json!("run/3"));
     assert!(validate(&schema(), &serde_json::from_slice(&other).unwrap()).is_err());
 }
 
@@ -471,6 +500,10 @@ fn what_the_schema_cannot_say_the_types_still_refuse() {
     only_the_types("an end before the start", &|d| {
         d["time"]["end_ms"] = json!(999)
     });
+    // The largest amount there is, which is no amount: the validator has no maximum.
+    only_the_types("a reservation of the largest amount", &|d| {
+        d["spend"]["reserved_micros"] = json!(u64::MAX)
+    });
     // The diagnostics: their order, a name twice, and what a name may be.
     only_the_types("diagnostics out of order", &|d| {
         let (first, second) = (d["diagnostics"][0].clone(), d["diagnostics"][1].clone());
@@ -569,7 +602,7 @@ fn the_limit_on_a_record_is_exact() {
 fn what_a_refusal_quotes_of_stored_bytes_is_escaped_and_cut() {
     // A field's name with an escape sequence in it, which the reader's own sentence
     // quotes; and a version five thousand characters long.
-    let bytes = b"{\"record\":\"run/1\",\"\\u001b[2J\\u0007\":1}\n";
+    let bytes = b"{\"record\":\"run/2\",\"\\u001b[2J\\u0007\":1}\n";
     let error = RunRecord::from_bytes(bytes).unwrap_err();
     assert!(matches!(error, RecordError::Malformed(_)), "{error:?}");
     let said = error.to_string();
@@ -586,7 +619,7 @@ fn what_a_refusal_quotes_of_stored_bytes_is_escaped_and_cut() {
     assert!(said.len() < 200, "{said}");
     assert!(!said.chars().any(char::is_control), "{said:?}");
     // A reason that quotes the bytes is cut at 200 characters.
-    let long = format!("{{\"record\":\"run/1\",\"{}\":1}}\n", "f".repeat(5000));
+    let long = format!("{{\"record\":\"run/2\",\"{}\":1}}\n", "f".repeat(5000));
     let said = RunRecord::from_bytes(long.as_bytes())
         .unwrap_err()
         .to_string();
@@ -828,6 +861,7 @@ fn a_record_made_from_a_prepared_call_and_an_outcome_is_these_bytes() {
             run: "1000-1",
             whizbang: "0.0.1",
             prepared: &prepared,
+            reserved_micros: None,
             outcome: &completed_outcome,
             start_ms: 1000,
             end_ms: 1003,
@@ -855,6 +889,7 @@ fn ran<'a>(prepared: &'a PreparedCall, outcome: &'a Outcome) -> Ran<'a> {
         run: "run-7",
         whizbang: "0.0.1",
         prepared,
+        reserved_micros: None,
         outcome,
         start_ms: 50,
         end_ms: 75,

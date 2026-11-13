@@ -129,6 +129,7 @@ fn list(root: &Path) -> Result<String, String> {
             // end: one with an admission and no record was admitted and has not ended.
             Some(Err(StoredRecordError::NoRecord)) | None => {
                 match admission_of(&reader, &generation, id) {
+                    // The core's sentence shows what it quotes escaped and cut already.
                     Some(Err(why)) => {
                         format!("{}\tno record; admission not read: {why}", shown(id))
                     }
@@ -230,6 +231,14 @@ fn admission_of(
     }
 }
 
+/// What was reserved for a run, for a person.
+fn reserved(micros: Option<u64>) -> String {
+    match micros {
+        Some(micros) => format!("{micros} millionths of a US dollar reserved"),
+        None => "nothing reserved".to_owned(),
+    }
+}
+
 /// A run that was admitted and has not ended, for a person: what its admission holds.
 /// A run's id and a request's id are held to their rules when an admission is read, and
 /// an action's name and version to theirs; they are printed escaped all the same.
@@ -240,12 +249,13 @@ fn admitted_text(admission: &Admission) -> String {
     };
     format!(
         "run: {}\nrequest: {request}\naction: {} {}\nstatus: admitted, not ended\n\
-         started: {}\nrecord: none: the run was admitted and has not ended; it is executing, \
+         started: {}\nspend: {}\nrecord: none: the run was admitted and has not ended; it is executing, \
          or the process that ran it ended first\n",
         shown(admission.run().as_str()),
         shown(admission.action()),
         shown(admission.version()),
-        utc(admission.start_ms())
+        utc(admission.start_ms()),
+        reserved(admission.reserved_micros())
     )
 }
 
@@ -321,7 +331,12 @@ fn text_of(record: &RunRecord) -> String {
             output.artifact
         ));
     }
-    for group in ["models", "spend", "egress", "steps", "judge"] {
+    line("models: none".to_owned());
+    line(format!(
+        "spend: {}; paid requests: none",
+        reserved(record.spend().reserved_micros)
+    ));
+    for group in ["egress", "steps", "judge"] {
         line(format!("{group}: none"));
     }
     line(format!(

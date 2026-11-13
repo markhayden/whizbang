@@ -260,9 +260,9 @@ true.
 **Depends on:** A5, A8 (its tests count capability requests with A8's fakes).
 
 - [x] A request id is looked up at the executor's entry, before prepare is called.
-- [ ] Prepare returns readiness for the exact arguments and an estimate, bound to the digests
+- [x] Prepare returns readiness for the exact arguments and an estimate, bound to the digests
       of the inputs, the config and the model identities it saw. It writes nothing.
-- [ ] Admit revalidates, then records the id, the request fingerprint, the run and a
+- [x] Admit revalidates, then records the id, the request fingerprint, the run and a
       reservation in one durable step. The reservation goes to a fake ledger that takes part
       in that step; the real ledger is checkpoint 1B.
 - [x] A stale preparation is refused and creates no run.

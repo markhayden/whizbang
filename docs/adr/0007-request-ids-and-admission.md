@@ -13,6 +13,15 @@ executor, which looks for a secret before it shows anything; the store forgets a
 made once the run is closed or deleted. Corrected: a panicked run stays admitted after
 the process ends too. Added to the consequences: what every publication costs as ids
 accumulate; a repeat answered from a generation not yet confirmed; `.` and `..` as ids.
+Amended: 2026-11-12, with the third and last pull request of task A6. Added: "The
+reservation", which is built, and which decides what the paragraph on what was still to
+come left open: what a reservation is, what it means for a ledger to take part in the
+step, the refusals `OverAllowance` and `NoBound`, and that what was reserved is read
+through names and never from content. Changed: an admission says what was reserved
+(`reserved_micros`), so an admission written by the first two parts is not read; a
+bound is an `Estimate`, not a bare number; the crash test tries every choice of what a
+disk loses; the run record is `run/2` (ADR 0005). Corrected: a refusal of a stored
+admission showed an action's name or version escaped twice.
 Spec: section 3, "The execution contract", "Storage" and "What every run records";
 section 6, "Spend"
 
@@ -47,11 +56,12 @@ record came with, builds:** the id, the fingerprint of a request, the two record
 look before prepare, the admission that makes the run and the id's record in one step,
 the end of a run as a second step, and what a repeat is answered with. **The second part
 builds:** the estimate, and a prepared call handed to admission and checked again.
-**The third part builds:** the ledger and the reservation. Until it merges, "Admission"
-below is true without its paragraph on what is still to come, and the lines that
-paragraph names are on `docs/carry-over.md`.
+**The third part builds:** the ledger's interface, a fake ledger and the reservation.
+All three are merged with this amendment; what is left to checkpoint 1B is said in "The
+reservation" and is on `docs/carry-over.md`.
 
-The code is in `crates/whizbang-core/src/contract/` (`request.rs`, `engine.rs`) and
+The code is in `crates/whizbang-core/src/contract/` (`request.rs`, `ledger.rs`,
+`engine.rs`), `crates/whizbang-testkit/src/ledger.rs` and
 `crates/whizbang-core/src/store/mod.rs`; the tests that hold it to this record are in
 `crates/whizbang-core/tests/it/contract/admit.rs`, `store/runs.rs`, and
 `crates/whizbang/tests/it/runs.rs` and `store.rs`.
@@ -129,7 +139,9 @@ be read from JSON by other code, and neither can be made except by the executor.
 
 **The admission, `admission/1`:** `record`; `run`, a run id; `request`, a request id or
 null; `fingerprint`, of the request; `prepared`, the fingerprint of the call as it was
-prepared when it was admitted; `action` and `version`, held to the rules of ADR 0003;
+prepared when it was admitted; `reserved_micros`, what was reserved for the run in
+millionths of a US dollar, or null when the executor had no ledger and nothing was
+reserved; `action` and `version`, held to the rules of ADR 0003;
 `start_ms`. Every run has one, among its own names, as `admitted`
 (`ADMITTED_NAME`). A run that was given an id has the same bytes a second time, under
 the name `requests/<id>/admitted`, which belongs to no run.
@@ -209,7 +221,9 @@ the request's run is gone, and the answer is `Removed`, from the ending
 A call that was prepared and is ready is admitted by **one publication**, which:
 
 - makes the run (`create_run`), with its admission under `admitted`;
-- for a request with an id, makes the name `requests/<id>/admitted` with the same bytes.
+- for a request with an id, makes the name `requests/<id>/admitted` with the same bytes;
+- for an executor with a ledger, makes the reservation's name, and the names the ledger
+  added ("The reservation", below).
 
 The store decides both in its publishing step. A run id that was taken meanwhile is
 refused with `RunExists`, and the run is named again, eight namings at most (ADR 0005).
@@ -221,24 +235,143 @@ each has looked and prepared, and gets one run
 (`admit::two_simultaneous_requests_with_one_id_produce_one_run`).
 
 A crash anywhere in that publication leaves the run and the id's record together or
-neither: a publication is one replaced pointer (the store's own guarantee), and a test
-loses power before each of its steps, under four of the ways a disk can lose what was
-not yet durable (two fixed choices of which names survive among them, not every choice)
+neither, and the reservation with them: a publication is one replaced pointer (the
+store's own guarantee), and a test loses power before each of its steps, under every
+way the test kit's disk can lose what was not yet durable: every name undone, every
+name kept, and every choice of which directories, and of which names, lose theirs. How
+many directories and names a crash leaves undecided is read from the first crash at
+each step, and every mask over them is then a crash of its own
 (`admit::a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it`).
 
 The action runs only after the publication is durable. A refusal, and a call that is
 not ready, happen before it and record no id: the id stays free for the request once it
 can run.
 
-**The third part of the task adds to this step,** and until it merges none of this
-paragraph is built. The reservation, of the estimate below, is a record the ledger
-writes into the same publication, under a name
-outside runs that is made once; the ledger of this checkpoint is a fake that takes part
-in the step and counts, and the real one is checkpoint 1B's. The admission and the run
-record then name what was reserved, which is the shared step to `run/2` (ADR 0005).
-What happens to a reservation when its run fails, or when the process dies between
-admission and the end, is settlement, and is checkpoint 1B's (`SPEC.md` section 6:
-after a crash, what was dispatched and not settled is charged at its bound).
+### The reservation
+
+**What it is.** A record, kind `reservation/1`, written and read as the two records
+above are: `record`; `run`, the run it was reserved for; `request`, the request's id or
+null; `admission`, the digest of the run's admission; `reserved_micros`, the amount, in
+millionths of a US dollar; `start_ms`. The amount is the estimate of the preparation
+made at admission ("A preparation handed to admission", below), as the backends stated
+it then. It is never taken from the preparation a request came with, which is only
+compared, and what a backend states later is not looked at again: the record holds the
+number it was made with.
+
+Its name is `spend/reservations/<run>`, outside runs, made once (`Publication::create`).
+So it is found from the run by the run's id, and from a request id through the id's
+record, which names the run; and `store delete` and `store prune` leave it, as the spec
+says of spend records
+(`store::the_records_of_request_ids_are_left_by_delete_and_prune_and_still_answer`).
+A run's id is free again once the run is deleted, and the reservation is not: so the run
+that the store holds under the id is the reservation's only when its own `admitted` has
+the digest the reservation holds, the rule "Which run is the id's" gives for an id. And
+an admission that would make a reservation's name the store already holds is refused
+whole by the store; the executor names the run again, as it does for a run's id that
+was taken, within the same eight namings
+(`admit::a_reservation_left_by_a_deleted_run_keeps_its_name_and_the_new_run_is_named_again`).
+
+The admission says the same amount (`reserved_micros`), in both its copies, which stay
+one content; and the run's record says it when the run ends (`spend.reserved_micros`,
+`run/2`, ADR 0005). Everything that names the run is made again each time the run is
+named again: the admission, and the reservation, which holds the admission's digest.
+
+**Who reserves.** An executor that was given a ledger (`Engine::with_ledger`). Every
+call it admits has a reservation, of zero when the estimate is zero. An executor
+without one reserves nothing, writes `reserved_micros` as null and makes no name under
+`spend/`: that is the binary today, which has no ledger until checkpoint 1B.
+
+**What "takes part in the step" means.** The interface is `Ledger::reserve`, called
+inside admission once for every attempt at the admission's publication, after the
+publication is begun and before it is published. It is handed the reservation and a
+`Step`: the store's generation as the attempt found it, the reservations that
+generation names, and a way to add records of the ledger's own to the same publication
+(`Step::make`), under names that are made once. Then one of three things:
+
+- It returns. The executor adds the reservation and publishes: the run, the id's
+  record, the reservation and what the ledger added become visible together or not at
+  all.
+- It declines because the allowance does not cover the amount. The call is refused with
+  `Refusal::OverAllowance`, which gives the amount asked and what is left. The
+  publication is dropped with everything it staged: no generation, no run, no name, no
+  file, and the request's id as free as it was
+  (`admit::a_call_the_ledger_declines_is_refused_with_no_run_and_its_id_stays_free`).
+- It fails, or does what a ledger may not. That is `CallError::Ledger`, not a refusal
+  of the call, and nothing is published.
+
+This is the interface the ledger of checkpoint 1B has to satisfy, so one thing about it
+is decided here and not left to the fake. A ledger judges on a generation that can be
+old by the time the publication is published: another admission over the same store may
+have reserved meanwhile. The store decides only what a publication asks it to, that a
+name it makes is not there. So a ledger whose answer depends on what was reserved makes
+a name that any admission it must not overlook would make too; the store refuses the
+later of the two whole, and the executor asks the ledger again, on the generation as it
+is then. The fake makes `spend/fake/<n>`, where n is one more than the reservations it
+saw. A test holds two admissions, under two ids, at a barrier inside the ledger, after
+each was told yes for the last of the allowance: one is published, and the other is
+asked again and declined
+(`admit::two_simultaneous_admissions_cannot_both_take_the_last_of_the_allowance`).
+Being asked again is not bounded by a count: it happens only when the store changed
+since the ledger judged, because a name the step's generation already holds is refused
+when the ledger makes it.
+
+A ledger's names start with `spend/` and not with `spend/reservations/`, in a plain
+alphabet, 200 characters at most; a name or a content that holds a secret the executor
+was told of is refused and not shown.
+
+**A cost without a bound.** An estimate is a sum that stops at the largest amount there
+is. That value is not an amount: nothing is reserved for it and nothing is added to it.
+An executor with a ledger refuses such a call with `Refusal::NoBound`, and the ledger is
+not asked; a stored admission, reservation or run record that holds it is refused on
+reading
+(`admit::a_call_whose_cost_has_no_bound_is_not_admitted_and_the_ledger_is_not_asked`).
+An executor without a ledger still admits it: it reserves nothing. The refusal of a paid
+request whose backend states no enforceable bound is checkpoint 1B's.
+
+**What was reserved is what the current generation names.** A call to `reserve` is not
+a reservation. An attempt that the store refuses, because the run's id was taken
+(`RunExists`) or the request's id was (`NameExists`), has already moved its content into
+`objects/`: the bytes of a reservation for a run that was never made are in the store,
+named by nothing, until a prune removes them. So whatever reads reservations reads them
+through names in the current generation and never by going through content. The one
+reader, `reservations`, takes a generation and has no other way in, and the fake ledger
+keeps no count of its own: it reads the store each time. Three tests hold it. Two
+executors racing one id are asked twice and leave two reservations in `objects/` and
+one name. A run named four times is asked four times and leaves four and one, the one
+naming the final run, with the id's record and the run's own admission the same bytes
+naming that run. A run named eight times and given up leaves eight and none
+(`admit::two_simultaneous_requests_with_one_id_make_one_reservation`,
+`admit::a_run_that_is_named_again_has_one_reservation_which_names_its_final_run`,
+`admit::a_run_that_is_named_eight_times_and_given_up_reserves_nothing`).
+
+**What makes none.** Prepare
+(`prepare::prepare_makes_no_reservation`, against an executor that holds the ledger); a
+stale preparation, each of the three cases, on the ledger's count and on the store; a
+repeat; a conflict; a call that is refused or not ready; an executor that only reads its
+store (`admit::a_repeat_a_conflict_and_a_request_that_does_not_run_reserve_nothing`).
+
+**What is read is not trusted.** A stored reservation is bounded before it is read,
+read strictly, and held to be of the run its name says. One that fails stops the
+admission that needed it (`CallError::Record`), with what it quotes escaped and cut and
+no path, and nothing is published.
+
+**What is left to settlement, which is checkpoint 1B's.** Nothing here releases,
+charges or removes a reservation. When its run completes, fails or is invalid, when its
+action panics, and when the process dies between admission and the end, the reservation
+stays as it was made, and counts against the fake's allowance for good. An admission
+that became visible and was not confirmed durable has its reservation with it, as it
+has its id. What 1B needs to settle one is there: the reservation names its run and its
+request, holds the admission's digest so that a later run under the same id is not
+taken for it, and holds the amount; a run that ended has a record and, with an id, an
+ending; a run that did not has neither. Dispatch records, the allowance and its reset,
+a nested call drawing on its parent's reservation, and what a failed request cost are
+all 1B's (`SPEC.md` section 6).
+
+**What is not covered.** `Publication::put` still replaces any name, a reservation's
+too: the store does not refuse a `put` under `requests/` or `spend/`, and no code of
+whizbang makes one (`store::runs::known_a_name_that_was_made_can_still_be_replaced_by_put`).
+The limit stays until the real ledger, which is the first code with a reason to decide
+what else may be written under `spend/`.
 
 ### The estimate
 
@@ -249,8 +382,8 @@ capability and the model that would answer); a need that nothing answers adds no
 and a sum past the largest amount is the largest amount. It is answered from what is
 configured, like resolution: nothing is sent and nothing is written.
 
-No backend has a price before the ledger of checkpoint 1B, so `Backends::bound` answers
-nothing unless an implementation says otherwise, and every estimate the binary can make
+No backend has a price before the ledger of checkpoint 1B, so `Backends::bound`, whose
+answer is an `Estimate` and so carries its unit, answers nothing unless an implementation says otherwise, and every estimate the binary can make
 today is zero. A test's backends state a bound. Which of a backend's numbers is an
 enforceable bound, and the refusal of a paid request that has none (`SPEC.md` section
 6), are checkpoint 1B's.
@@ -304,8 +437,8 @@ gap:
   has a config that never changes, which is what the binary has until there is a config.
 - **The window that is left.** Between the second preparation and the admission's
   publication nothing holds the config or the backends still. What is recorded with the
-  run is the second preparation: the admission's `prepared` and the run record are of
-  what was seen at admission.
+  run is the second preparation: the admission's `prepared`, the reservation's amount
+  and the run record are of what was seen at admission.
 
 **What it costs.** Admission prepares again, and prepare decodes every image input (ADR
 0004). One input of 50,000,000 pixels, the default limit, measured on the machine this
@@ -411,12 +544,21 @@ before.
   still never an input (ADR 0004).
 - `Executor` has a third method, `request`. `submit` is unchanged for its callers.
 - `Backends` has a second question, the bound, with an answer of nothing by default, so
-  no implementation had to change.
+  no implementation had to change. Its answer is an `Estimate`, which carries the unit.
+- Every admission through a ledger adds two names outside runs, the reservation's and
+  the ledger's, which are never removed: with the two of an id, four for a request. They
+  add to the cost of every publication named above.
+- An admission written by the first two parts of this task has no `reserved_micros` and
+  is not read; a `run/1` record is another version. A store is not kept before the tag
+  of checkpoint 1A (ADR 0005).
+- `CallError` has a fourth kind, the ledger's failure, and `Refusal` two more.
+- `runs show` says what was reserved for a run, from its record or, for a run that has
+  not ended, from its admission.
 - Reversing this costs every stored admission and ending, and every answer a caller
   was promised.
 
-What this record does not decide: settlement, and what is done with the reservation of a
-run that did not end (checkpoint 1B); status and cancel while a run executes, nested
+What this record does not decide: settlement, what is done with the reservation of a
+run that ended or did not, and the ledger itself (checkpoint 1B); status and cancel while a run executes, nested
 calls and an action's outputs (the next task); a command that lists or forgets request
 ids.
 
@@ -446,3 +588,15 @@ ids.
   now: it is a write on open, by whatever command opened it, and settlement
   (checkpoint 1B) is what needs to act on such a run.
 - **A schema for the two records.** Turned down: nothing outside this code reads them.
+  The same holds for the reservation until a ledger outside this code reads one.
+- **The reservation as a field of the admission and nothing else.** Turned down: an
+  admission of a run without an id lives only among the run's names and goes with the
+  run, and a spend record must outlive it.
+- **A ledger that publishes its own records, before or after the admission.** Turned
+  down: a crash between the two leaves a reservation without a run or a run without a
+  reservation.
+- **A lock around admission in place of a made name.** Turned down: it would hold for
+  one executor and not for two over one store, which is the case the store's publishing
+  step already decides.
+- **Count what the ledger was asked.** Turned down: an attempt the store refuses was
+  asked for and reserved nothing.
