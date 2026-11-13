@@ -244,16 +244,18 @@ contain `echo`, and the crate-graph check shows the binary does not depend on th
 
 ### A6. Request ids and admission
 
-**Delivered in two parts** (ADR 0007 decides both). Each part ticks the boxes it makes
+**Delivered in three parts** (ADR 0007 decides all of them). Each part ticks the boxes it makes
 true.
 
 - **Part 1:** the ADR; the request id, the fingerprint of a request, the admission and
   ending records and where they are in the store; the look before prepare; the run made
   durably, with the id's record, in one publication, and ended in a second; boxes 1 and
   5, and of "Done when" lines 1 to 5, and line 6 for the id's record and the run.
-- **Part 2:** the estimate, a prepared call handed to admission and checked again, the
-  fake ledger and the reservation: boxes 2, 3 and 4, and of "Done when" lines 7 and 8,
-  and line 6 again with the reservation in the step.
+- **Part 2:** the estimate, and a prepared call handed to admission and checked again:
+  box 4, and of "Done when" line 7 as far as "no run". Box 2 is built except for what it
+  shares with part 3: that prepare makes no reservation is shown there.
+- **Part 3:** the fake ledger and the reservation: boxes 2 and 3, and of "Done when"
+  line 8, line 7's "no reservation", and line 6 again with the reservation in the step.
 
 **Depends on:** A5, A8 (its tests count capability requests with A8's fakes).
 
@@ -263,7 +265,7 @@ true.
 - [ ] Admit revalidates, then records the id, the request fingerprint, the run and a
       reservation in one durable step. The reservation goes to a fake ledger that takes part
       in that step; the real ledger is checkpoint 1B.
-- [ ] A stale preparation is refused and creates no run.
+- [x] A stale preparation is refused and creates no run.
 - [x] When a run has been pruned, its request-id record remains and answers a repeat with what
       happened to the run.
 

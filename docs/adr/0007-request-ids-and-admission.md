@@ -2,6 +2,10 @@
 
 Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-12, with the second pull request of task A6. Added: "The estimate" and
+"A preparation handed to admission", which are built; the paragraph of "Admission" that
+listed the second part now lists only what is still to come, the ledger and the
+reservation. The task is delivered in three pull requests, not two.
 Spec: section 3, "The execution contract", "Storage" and "What every run records";
 section 6, "Spend"
 
@@ -30,15 +34,15 @@ What there was to build it on:
   wants the same request answered with its run after the config changed, without
   preparing anything.
 
-Task A6 of the plan for checkpoint 1A is delivered in two parts. This record decides
-both, and says of each sentence below which part builds it. **The first part, which this
+Task A6 of the plan for checkpoint 1A is delivered in parts. This record decides
+all of them, and says of each sentence below which part builds it. **The first part, which this
 record came with, builds:** the id, the fingerprint of a request, the two records, the
 look before prepare, the admission that makes the run and the id's record in one step,
 the end of a run as a second step, and what a repeat is answered with. **The second part
-builds:** the estimate, a prepared call handed to admission and checked again, the
-ledger and the reservation. Until it merges, "Admission" below is true without its
-paragraph on the second part, and the lines that paragraph names are on
-`docs/carry-over.md`.
+builds:** the estimate, and a prepared call handed to admission and checked again.
+**The third part builds:** the ledger and the reservation. Until it merges, "Admission"
+below is true without its paragraph on what is still to come, and the lines that
+paragraph names are on `docs/carry-over.md`.
 
 The code is in `crates/whizbang-core/src/contract/` (`request.rs`, `engine.rs`) and
 `crates/whizbang-core/src/store/mod.rs`; the tests that hold it to this record are in
@@ -200,17 +204,92 @@ The action runs only after the publication is durable. A refusal, and a call tha
 not ready, happen before it and record no id: the id stays free for the request once it
 can run.
 
-**The second part of the task adds to this step,** and until it merges none of this
-paragraph is built. Prepare returns an estimate with its readiness. Admission is handed
-what was prepared, prepares the call again, and refuses the request as stale, with no
-run and nothing reserved, when the two differ in an input, the config or a model. The
-reservation is a record the ledger writes into the same publication, under a name
+**The third part of the task adds to this step,** and until it merges none of this
+paragraph is built. The reservation, of the estimate below, is a record the ledger
+writes into the same publication, under a name
 outside runs that is made once; the ledger of this checkpoint is a fake that takes part
 in the step and counts, and the real one is checkpoint 1B's. The admission and the run
 record then name what was reserved, which is the shared step to `run/2` (ADR 0005).
 What happens to a reservation when its run fails, or when the process dies between
 admission and the end, is settlement, and is checkpoint 1B's (`SPEC.md` section 6:
 after a crash, what was dispatched and not settled is charged at its bound).
+
+### The estimate
+
+Prepare returns, with readiness, an `Estimate`: the most the call may cost, in
+millionths of a US dollar. It is the sum of what the backends state as the bound of each
+capability the call needs and something answers (`Backends::bound`, asked with the
+capability and the model that would answer); a need that nothing answers adds nothing,
+and a sum past the largest amount is the largest amount. It is answered from what is
+configured, like resolution: nothing is sent and nothing is written.
+
+No backend has a price before the ledger of checkpoint 1B, so `Backends::bound` answers
+nothing unless an implementation says otherwise, and every estimate the binary can make
+today is zero. A test's backends state a bound. Which of a backend's numbers is an
+enforceable bound, and the refusal of a paid request that has none (`SPEC.md` section
+6), are checkpoint 1B's.
+
+The estimate is not in the fingerprint `prepared/1`, which stays as ADR 0004 gives it:
+its two fixed vectors are as they were. Admission compares the estimate beside it.
+
+### A preparation handed to admission
+
+A `Request` may come with the preparation its caller was shown
+(`Request::expecting`). It is the `PreparedCall` itself, not its fingerprint alone, so
+that a refusal can say what differs. After the look for the id, the call is prepared
+again, under the config and the backends as they are then, and the request is refused
+with `Refusal::Stale`, before any run exists and with nothing published, when the two
+differ. `Stale` says how, as the first of:
+
+- `Call`: the preparation is of another action, version or arguments;
+- `Inputs`: of other inputs, or the same in another order;
+- `Config`: the config's digest changed;
+- `Model`, with the capability: another model would answer it, or none would;
+- `Estimate`: the same models under the same config state another bound;
+- `Refused`, with the refusal: the call no longer prepares at all, as when an input is
+  not in the store it is admitted against.
+
+Each of the input, the config and the model has a test of its own, which also finds the
+store as it was, no action run, and the request's id still free
+(`admit::a_preparation_is_refused_at_admission_when_the_input_changed` and the three
+beside it).
+
+What follows from the rest of the design, and is stated so that it is not taken for a
+gap:
+
+- **An input cannot change under a preparation.** It is named by the digest of its
+  content (ADR 0004). What can happen is that the caller's preparation is of other
+  inputs, or that the input is no longer readable. Missing from the store, it is
+  `Stale::Refused`. With its content damaged or gone from the disk under a name the
+  store still holds, preparing again fails as the store's failure (`CallError::Store`),
+  which is not a judgement of the preparation; no run is made then either.
+- **Staleness is said before readiness.** A call whose model was taken away since is
+  refused as stale, not as not ready. A preparation that was not ready and still is not
+  is refused as not ready.
+- **The look comes first.** The same request again under its id is answered with its
+  run even when the preparation it comes with has gone stale
+  (`admit::a_repeat_is_answered_before_its_preparation_is_looked_at`).
+- **A request without a preparation is still taken.** `Executor::submit`, and a
+  `Request` that expects nothing, are prepared once, at admission, and run if ready.
+  Nothing can be stale where nothing was shown. Whether a door must always hand over a
+  preparation is the door's decision.
+- **The config is read when a call is prepared,** each time, through `ConfigSource`,
+  and so at admission (`Engine::with_config`). An executor built with a digest alone
+  has a config that never changes, which is what the binary has until there is a config.
+- **The window that is left.** Between the second preparation and the admission's
+  publication nothing holds the config or the backends still. What is recorded with the
+  run is the second preparation: the admission's `prepared` and the run record are of
+  what was seen at admission.
+
+**What it costs.** Admission prepares again, and prepare decodes every image input (ADR
+0004). One input of 50,000,000 pixels, the default limit, measured on the machine this
+was written on, in the release profile: 0.64 seconds to prepare, and 0.70 seconds for a
+request that came with that preparation, which prepares again and publishes twice; in
+the unoptimised profile, 9.8 seconds each
+(`admit::measure_what_preparing_and_admitting_one_large_input_costs`, ignored). The
+cost stays: the check of an input at admission is what makes an input that is gone a
+refusal before a run exists, and keeping decoded pixels from a preparation to its
+admission would hold some 200 MB for every preparation a caller has not yet acted on.
 
 ### The end of a run is a second publication
 
@@ -292,6 +371,8 @@ before.
   executor's own records. Nothing that reads an artifact uses it, so a diagnostic is
   still never an input (ADR 0004).
 - `Executor` has a third method, `request`. `submit` is unchanged for its callers.
+- `Backends` has a second question, the bound, with an answer of nothing by default, so
+  no implementation had to change.
 - Reversing this costs every stored admission and ending, and every answer a caller
   was promised.
 

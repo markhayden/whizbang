@@ -23,7 +23,7 @@ use crate::identity::{Digest, Encoder, Fields};
 use crate::store::{Entry, Generation};
 
 use super::record::{self, QUOTED_LIMIT, RECORD_NAME, RunRecord, Status, StoredRecordError};
-use super::{Call, CallError, Committed, Outcome, RunId, StoreFailure, Value, text};
+use super::{Call, CallError, Committed, Outcome, PreparedCall, RunId, StoreFailure, Value, text};
 
 /// The longest request id, in characters.
 pub const REQUEST_ID_LIMIT: usize = 128;
@@ -90,18 +90,37 @@ impl std::fmt::Display for RequestId {
     }
 }
 
-/// What is submitted to an executor to run: a call, and the id the caller gives the
-/// request, if it gives one.
+/// What is submitted to an executor to run: a call, the id the caller gives the
+/// request, if it gives one, and the preparation the caller was shown, if it hands one
+/// over.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Request {
     call: Call,
     id: Option<RequestId>,
+    expecting: Option<PreparedCall>,
 }
 
 impl Request {
     /// A request to run this call, with no id.
     pub fn new(call: Call) -> Request {
-        Request { call, id: None }
+        Request {
+            call,
+            id: None,
+            expecting: None,
+        }
+    }
+
+    /// The same request, to be admitted only if its call still prepares as `prepared`:
+    /// what the caller was shown and decided on. Admission prepares the call again and
+    /// refuses the request as stale when the two differ ([`super::Stale`]).
+    pub fn expecting(mut self, prepared: &PreparedCall) -> Request {
+        self.expecting = Some(prepared.clone());
+        self
+    }
+
+    /// The preparation the request must still match, when it came with one.
+    pub fn expected(&self) -> Option<&PreparedCall> {
+        self.expecting.as_ref()
     }
 
     /// The same request under this id.
