@@ -41,6 +41,11 @@ pub const JOURNAL_NAME: &str = "journal";
 /// What the name of every diagnostic an action wrote starts with, among a run's names.
 pub const DIAGNOSTICS_PREFIX: &str = "diagnostics/";
 
+/// What the name of every reference a run holds to an output it committed starts with,
+/// among the run's names: the port follows, a `/`, and the output's place among those
+/// returned at that port, from 0 (ADR 0008).
+pub const OUTPUTS_PREFIX: &str = "outputs/";
+
 /// A field that may be null and may not be left out: every field of a record is always
 /// there.
 fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>

@@ -395,13 +395,27 @@ impl Files {
     fn read(&self, entry: &Entry) -> Result<Vec<u8>> {
         let digest = entry.digest;
         let path = self.layout.object(&digest);
-        let bytes = self.fs.read(&path).map_err(|source| {
+        // No more is read than the entry says, and one byte: a file that damage or
+        // other hands made far larger is known to be wrong without being held whole.
+        // That is so of the files under `objects/` only, which have an entry: the
+        // pointer, a generation and the lock file are still read whole.
+        let limit = entry.bytes.saturating_add(1);
+        let bytes = self.fs.read_at_most(&path, limit).map_err(|source| {
             if source.kind() == io::ErrorKind::NotFound {
                 Error::corrupt(&path, format!("the content {digest} is missing"))
             } else {
                 Error::io("read", &path)(source)
             }
         })?;
+        if bytes.len() as u64 > entry.bytes {
+            return Err(Error::corrupt(
+                &path,
+                format!(
+                    "the content {digest} is more than the {} bytes its entry says",
+                    entry.bytes
+                ),
+            ));
+        }
         if bytes.len() as u64 != entry.bytes {
             return Err(Error::corrupt(
                 &path,
@@ -881,6 +895,7 @@ impl Store {
             made: BTreeSet::new(),
             extended: BTreeSet::new(),
             closed: BTreeSet::new(),
+            kept: BTreeMap::new(),
         })
     }
 
@@ -1046,6 +1061,9 @@ pub struct Publication<'s> {
     extended: BTreeSet<String>,
     /// The runs it closes: no longer counted as made and open once it is visible.
     closed: BTreeSet<String>,
+    /// The names outside runs it keeps: each is left as it is where that generation
+    /// holds it as an output, and given this content where it does not.
+    kept: BTreeMap<String, Entry>,
 }
 
 impl Publication<'_> {
@@ -1053,8 +1071,9 @@ impl Publication<'_> {
     /// replacing what it had, as an output. The bytes are staged now, and synced, unless
     /// the store already holds them. After an error the same call can be made again.
     pub fn put(&mut self, name: &str, bytes: &[u8]) -> Result<Digest> {
-        // A name this publication makes keeps the content it was made with.
-        if self.made.contains(name) {
+        // A name this publication makes keeps the content it was made with, and one
+        // it keeps is the store's to decide.
+        if self.made.contains(name) || self.kept.contains_key(name) {
             return Err(Error::NameExists {
                 name: name.to_string(),
             });
@@ -1108,7 +1127,7 @@ impl Publication<'_> {
     /// that makes its names. [`Publication::put`] does not ask whether a name exists.
     /// Staging is as for [`Publication::put`].
     pub fn create(&mut self, name: &str, kind: Kind, bytes: &[u8]) -> Result<Digest> {
-        if self.names.contains_key(name) {
+        if self.names.contains_key(name) || self.kept.contains_key(name) {
             return Err(Error::NameExists {
                 name: name.to_string(),
             });
@@ -1117,6 +1136,37 @@ impl Publication<'_> {
         let digest = entry.digest;
         self.names.insert(name.to_string(), entry);
         self.made.insert(name.to_string());
+        Ok(digest)
+    }
+
+    /// Gives `name`, which belongs to no run, this content as an output, unless the
+    /// generation this is published onto already holds the name as an output: then the
+    /// name keeps what it holds, and the rest of the publication is published all the
+    /// same. That is looked at inside the publishing step, on the generation that is
+    /// current then, so of two publications that each keep one name the first decides
+    /// its content, whatever each saw before. A diagnostic reference under the name is
+    /// not an output and is replaced, as [`Publication::put`] replaces it: that is a
+    /// diagnostic name that [`Publication::create`] made in an earlier publication.
+    /// Nothing in the executor reaches that case: it keeps the names of artifacts only,
+    /// and creates no name among them.
+    ///
+    /// This is how an artifact is committed: its name is made of its identity, which
+    /// does not cover its origin, so two runs can hold two files for one name, and the
+    /// store keeps the first. What is returned is the digest of `bytes`, which is the
+    /// name's content only where the name was not held. Kept twice by one publication,
+    /// a name has the content of the first call. It is refused here when this
+    /// publication already gives the name content by `put` or `create`. Staging is as
+    /// for [`Publication::put`]: the bytes are staged either way, and where the name
+    /// was held they are content that nothing names, which the next prune removes.
+    pub fn keep(&mut self, name: &str, bytes: &[u8]) -> Result<Digest> {
+        if self.names.contains_key(name) {
+            return Err(Error::NameExists {
+                name: name.to_string(),
+            });
+        }
+        let entry = self.stage(bytes, Kind::Output)?;
+        let digest = entry.digest;
+        self.kept.entry(name.to_string()).or_insert(entry);
         Ok(digest)
     }
 
@@ -1193,7 +1243,7 @@ impl Publication<'_> {
         for digest in &self.staged {
             files.move_into_place(&self.staged_path(digest), &layout.object(digest))?;
         }
-        if !self.names.is_empty() || !self.run_names.is_empty() {
+        if !self.names.is_empty() || !self.run_names.is_empty() || !self.kept.is_empty() {
             let objects = layout.objects();
             fs.sync_dir(&objects).map_err(Error::io("sync", &objects))?;
         }
@@ -1250,6 +1300,12 @@ impl Publication<'_> {
             return Err(Error::NameExists { name: name.clone() });
         }
         generation.entries.extend(self.names.clone());
+        for (name, entry) in &self.kept {
+            let held = generation.entries.get(name);
+            if held.is_none_or(|held| held.kind != Kind::Output) {
+                generation.entries.insert(name.clone(), entry.clone());
+            }
+        }
         for (run, names) in &self.run_names {
             let run = generation.runs.entry(run.clone()).or_default();
             run.entries.extend(names.clone());

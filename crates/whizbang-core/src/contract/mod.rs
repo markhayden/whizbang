@@ -14,8 +14,11 @@
 //! returns an [`Estimate`], and a request that comes with the preparation its caller
 //! was shown is refused as [stale](Stale) when its call no longer prepares the same.
 //! A run is admitted with a [`Reservation`] of that estimate, which a [`Ledger`] is
-//! asked for in the admission's own step. The ledger itself and settlement are not
-//! here, and neither are nested calls, cancellation and an action's outputs.
+//! asked for in the admission's own step. And the commit step (ADR 0008): an action
+//! hands back artifacts ([`Produced`]), and the executor publishes them with the run's
+//! completed status in the one publication that ends the run; a panic in an action ends
+//! its run as an error. The ledger itself and settlement are not here, and neither are
+//! nested calls and cancellation.
 
 mod call;
 mod context;
@@ -61,4 +64,4 @@ pub use request::{
     REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, REQUESTS_PREFIX, Request, RequestId,
     RequestRecordError, RunState, request_fingerprint,
 };
-pub use run::{Committed, Finished, Outcome, RUN_ID_LIMIT, RunId};
+pub use run::{Committed, Finished, MESSAGE_LIMIT, Outcome, RUN_ID_LIMIT, RunId};

@@ -30,7 +30,7 @@ pub use mask::{Mask, Prescription, Profile, Refinement, Source, UseCase, effecti
 pub use picture::{Image, ImageRole};
 pub use plan::Plan;
 pub use series::Series;
-pub use stored::{Contents, get, holds, name, put};
+pub use stored::{Contents, commit, get, holds, name, put};
 
 use wire::{Reader, Writer};
 

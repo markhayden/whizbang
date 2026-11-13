@@ -245,6 +245,11 @@ fn any_subset_of_the_unsynced_names_of_one_directory_can_be_lost() {
         fs.rename(&d.join("new"), &d.join("pointer")).unwrap();
         fs.crash(Lost::Names(mask));
         assert_eq!(fs.crash_names(), 3);
+        assert_eq!(
+            fs.crash_named(),
+            [d.join("gone"), d.join("later"), d.join("pointer")],
+            "the names, in the order a mask numbers them"
+        );
         assert_eq!(fs.crash_choices(), 1, "all in one directory");
 
         let gone = on_disk(&d.join("gone")).unwrap();

@@ -377,6 +377,141 @@ fn known_a_name_that_was_made_can_still_be_replaced_by_put() {
 }
 
 #[test]
+fn a_name_that_is_kept_holds_the_first_output_it_was_given() {
+    // An artifact is stored under a name made of its identity, and its identity does
+    // not cover its origin: two runs can make one artifact with two origins, which are
+    // two files for one name. The name keeps the first. `keep` gives a name content
+    // unless the store holds the name as an output already, and the store looks inside
+    // its publishing step.
+    let dir = Scratch::new("store-names");
+    let root = root(&dir);
+    let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+    let read = |name: &str| {
+        let generation = store.snapshot().unwrap();
+        let entry = generation.get(name).unwrap().clone();
+        (entry.kind, store.read(&entry).unwrap())
+    };
+
+    // A name the store does not hold is given the content, as an output.
+    let mut publication = store.begin().unwrap();
+    publication.keep("artifacts/mask/a", b"first").unwrap();
+    publication.publish().unwrap();
+    assert_eq!(read("artifacts/mask/a"), (Kind::Output, b"first".to_vec()));
+
+    // Kept again with other content, with a run beside it: the name holds what it
+    // held, and the rest of the publication is published.
+    let mut publication = store.begin().unwrap();
+    publication.keep("artifacts/mask/a", b"second").unwrap();
+    publication.create_run("beside").unwrap();
+    publication.publish().unwrap();
+    assert_eq!(read("artifacts/mask/a"), (Kind::Output, b"first".to_vec()));
+    assert!(store.snapshot().unwrap().run("beside").is_some());
+
+    // Two publications that each keep one name, both begun before either is
+    // published: the first is taken, and the second leaves it, whatever it saw when
+    // it began. Both are published.
+    let mut first = store.begin().unwrap();
+    let mut second = store.begin().unwrap();
+    first.keep("artifacts/mask/b", b"1").unwrap();
+    second.keep("artifacts/mask/b", b"2").unwrap();
+    second.put("beside-b", b"3").unwrap();
+    first.publish().unwrap();
+    second.publish().unwrap();
+    assert_eq!(read("artifacts/mask/b"), (Kind::Output, b"1".to_vec()));
+    assert_eq!(read("beside-b"), (Kind::Output, b"3".to_vec()));
+
+    // A diagnostic reference under the name is not the output: it is replaced, as
+    // `put` replaces it.
+    let mut publication = store.begin().unwrap();
+    publication
+        .create("artifacts/mask/c", Kind::Diagnostic, b"evidence")
+        .unwrap();
+    publication.publish().unwrap();
+    let mut publication = store.begin().unwrap();
+    publication.keep("artifacts/mask/c", b"the mask").unwrap();
+    publication.publish().unwrap();
+    assert_eq!(
+        read("artifacts/mask/c"),
+        (Kind::Output, b"the mask".to_vec())
+    );
+
+    // One publication cannot keep a name and also make it or put it, in any order:
+    // the name would hold whichever the store came to last.
+    let mut publication = store.begin().unwrap();
+    publication.keep("artifacts/mask/d", b"1").unwrap();
+    assert!(matches!(
+        publication.put("artifacts/mask/d", b"2"),
+        Err(Error::NameExists { .. })
+    ));
+    assert!(matches!(
+        publication.create("artifacts/mask/d", Kind::Diagnostic, b"3"),
+        Err(Error::NameExists { .. })
+    ));
+    publication.put("free", b"4").unwrap();
+    assert!(matches!(
+        publication.keep("free", b"5"),
+        Err(Error::NameExists { .. })
+    ));
+    publication.create("made", Kind::Diagnostic, b"6").unwrap();
+    assert!(matches!(
+        publication.keep("made", b"7"),
+        Err(Error::NameExists { .. })
+    ));
+    // Kept twice in one publication, the first content is the one.
+    publication.keep("artifacts/mask/d", b"8").unwrap();
+    publication.publish().unwrap();
+    assert_eq!(read("artifacts/mask/d"), (Kind::Output, b"1".to_vec()));
+}
+
+#[test]
+fn a_crash_at_any_event_of_a_publication_that_only_keeps_a_name_leaves_it_whole_or_absent() {
+    // A publication that keeps a name and does nothing else names content like any
+    // other: the content is durable before the generation that names it is visible.
+    const KEPT: &[u8] = b"an artifact that is kept";
+    let keep = |root: &Path, fs: Arc<ShimFs>| {
+        Store::open(root, fs).and_then(|store| {
+            let mut publication = store.begin()?;
+            publication.keep("artifacts/mask/k", KEPT)?;
+            publication.publish()
+        })
+    };
+    let count = {
+        let dir = Scratch::new("store-names");
+        let root = root(&dir);
+        with_runs(&root);
+        let fs = Arc::new(ShimFs::new());
+        keep(&root, fs.clone()).unwrap();
+        fs.events().len()
+    };
+    for crash_at in 0..=count {
+        for_every_loss(|lost| {
+            let case = format!("{lost:?}, crash before event {crash_at}");
+            let dir = Scratch::new("store-names");
+            let root = root(&dir);
+            with_runs(&root);
+            let fs = Arc::new(ShimFs::new().crash_before(crash_at, lost));
+            let result = keep(&root, fs.clone());
+            fs.crash(lost);
+
+            // Reading after the restart reads every name whole.
+            let (number, held) = after_restart(&root);
+            match number {
+                1 => {
+                    assert!(result.is_err(), "{case}: success was reported");
+                    assert!(!held.contains_key("artifacts/mask/k"), "{case}");
+                }
+                2 => assert_eq!(held["artifacts/mask/k"], KEPT, "{case}"),
+                other => panic!("{case}: generation {other}"),
+            }
+            if matches!(lost, Lost::Unsynced) && crash_at == count {
+                assert_eq!(number, 2, "{case}");
+            }
+            fs.crash_choices()
+        });
+    }
+}
+
+#[test]
 fn a_publication_that_adds_to_a_run_that_must_exist_is_refused_when_it_is_gone() {
     // A run is made in one publication and added to in another. The second says that
     // the run must be there: when it was deleted in between, nothing is published, and

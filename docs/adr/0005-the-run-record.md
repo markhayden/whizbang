@@ -37,6 +37,12 @@ record is another version, and is refused. The admission (ADR 0007) is still
 code, and one written before is refused for the field it lacks.
 Amended: 2026-11-12, a fifth note, with the second part of ADR 0007. Changed: the end of
 a run is published with `Publication::close_run`.
+Amended: 2026-11-12, a sixth note, with ADR 0008, which commits a run's outputs.
+Changed, in "Running an action, and writing its run": an action hands back artifacts
+(`Produced` held nothing); a completed run has outputs, published with its record; a
+panic in an action is caught and ends its run as an error (it unwound through `submit`
+and the run stayed admitted). The list of what is not built and of what this record does
+not decide lose both.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
 
@@ -398,9 +404,9 @@ The code is in `crates/whizbang-core/src/contract/` (`engine.rs`, `registry.rs`,
 
 **An action runs.** `Action::run` is handed the prepared call and a `Context`, and returns
 when the action is over: `Produced`, or a `Failure`. A `Failure` is an error, with a type
-and a message, or an invalid input, with the reason. `Produced` holds nothing and can only
-be made as nothing: an action cannot hand back an artifact until there is a commit step to
-publish it in, which is the plan's task for nested calls, cancellation and publication.
+and a message, or an invalid input, with the reason. `Produced` holds the artifacts the
+action made, each at an output port: handing one back commits nothing, and the executor
+commits them all in the step that ends the run (ADR 0008).
 An action that does not define `run`, as a fixture that only describes itself, fails with
 the type `not_runnable`.
 
@@ -421,13 +427,17 @@ a request id, first looks the id up (ADR 0007), and then does the same.
    names the run again and publishes again, up to eight namings, after which the refusal
    is handed back as the store's failure. From here there is a run, durably.
 3. Runs the action, with a context of its own.
-4. Makes the outcome: completed with no outputs, error, or invalid. The secrets are taken
+4. Makes the outcome: completed, with the outputs the action handed back once they were
+   held to the ports the call returns (ADR 0008); error, which is also how a panic in
+   the action and a refusal of what it handed back end; or invalid. The secrets are taken
    out of an error's type and message and of an invalid run's reason here, so what is
    handed back holds none, as what is written holds none.
 5. Publishes the end, in one publication that adds to the run and says the run must be
    there (`Publication::close_run`): the journal under `journal`, each diagnostic the
    action wrote under `diagnostics/<name>`, and the record under `record`, each as a
-   diagnostic reference of the run.
+   diagnostic reference of the run; and, for a run that completed, each output twice,
+   as a committed output: among the run's names, under `outputs/<port>/<n>`, and under
+   its artifact's name outside runs (ADR 0008, "The commit step").
 6. Answers with the run's id and its outcome, after that publication is durable.
 
 So a run is in the store in one of two states, each whole: admitted, with its admission
@@ -494,8 +504,6 @@ binary builds (`wiring::runner`).
   a process that dies while an action runs leaves the run, admitted. It leaves no
   journal and no diagnostic: those are durable only when the run ends, and cannot be
   read while it executes.
-- A panic inside an action is not caught: it unwinds through `submit`, and the run stays
-  admitted, with no record.
 - Nothing can cancel a run, and `submit` returns only when the run is over.
 - A refusal inside a run is not recorded. There is one today: a call from inside an
   action is refused (`NoNestedCalls`). The record's `refusals` list has no elements in
@@ -539,8 +547,8 @@ inputs. "Every artifact records what produced it" (the spec's invariant) holds b
 - Reversing this costs every stored record. A change to the fields is a new version.
 
 What this record does not decide, and the code does not do: admission, which is ADR
-0007's; nested calls,
-cancellation, and an action's outputs with their commit step; how a run that takes long
+0007's; an action's outputs with their commit step, which are ADR 0008's; nested calls
+and cancellation; how a run that takes long
 is scheduled and watched; the elements of the empty lists; how a parent is assigned; `runs stats` and `runs export`,
 which are milestone 2's (`SPEC.md` section 16); labels for evaluation runs; whether a diagnostic body is cut short (squint cut a
 long body and recorded its full digest; that is on `docs/carry-over.md` with the judge
