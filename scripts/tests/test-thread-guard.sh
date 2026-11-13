@@ -135,11 +135,12 @@ grep -q -x -F 'limit=${WHIZBANG_THREAD_LIMIT:-300}' "$guard" || fail "the limit 
 grep -q -x -F 'poll=${WHIZBANG_THREAD_POLL:-0.2}' "$guard" || fail "the pause is 0.2 seconds unless set"
 
 # --- A guard inside a guard with the same limit and pause watches nothing: the counts of
-# the two are those of one process. With another limit it watches as well.
+# the two are those of one process. With a lower limit it watches as well; with a higher
+# one it leaves the watching to the stricter guard outside.
 printf 'echo $PPID >>"%s"\n' "$tmp/watchers" >"$tmp/who.sh"
-nested() { # <limit of the inner guard>: how many guards counted the process with four threads
+nested() { # <limit of the inner guard> [the guard outside]: how many guards counted the process with four threads
   rm -f "$tmp/watchers" "$tmp/nested-up" "$tmp/nested-go"
-  WHIZBANG_THREAD_LIMIT=40 WHIZBANG_THREAD_TEST_HOOK="bash $tmp/who.sh" "$guard" \
+  WHIZBANG_THREAD_LIMIT=40 WHIZBANG_THREAD_TEST_HOOK="bash $tmp/who.sh" "${2:-$guard}" \
     env WHIZBANG_THREAD_LIMIT="$1" "$guard" python3 "$tmp/few.py" "$tmp/nested-up" "$tmp/nested-go" >"$tmp/nested.out" 2>&1 &
   local both=$!
   wait_for "the process under two guards to start" test -e "$tmp/nested-up"
@@ -150,7 +151,21 @@ nested() { # <limit of the inner guard>: how many guards counted the process wit
   sort -u "$tmp/watchers" | grep -c .
 }
 [ "$(nested 40)" = 1 ] || { cat "$tmp/nested.out" >&2; fail "a guard inside a guard with its limit and pause does not watch"; }
-[ "$(nested 30)" = 2 ] || { cat "$tmp/nested.out" >&2; fail "a guard inside a guard with another limit watches as well"; }
+[ "$(nested 30)" = 2 ] || { cat "$tmp/nested.out" >&2; fail "a guard stricter than the one outside watches as well"; }
+[ "$(nested 50)" = 1 ] || { cat "$tmp/nested.out" >&2; fail "a guard less strict than the one outside leaves the watching to it"; }
+# The guard outside must be this file. A copy of it elsewhere, under the same name, tells
+# the command the same thing, and is not believed.
+mkdir "$tmp/elsewhere"
+cp "$guard" "$tmp/elsewhere/thread-guard.sh"
+[ "$(nested 40 "$tmp/elsewhere/thread-guard.sh")" = 2 ] ||
+  { cat "$tmp/nested.out" >&2; fail "a guard under a script of its name elsewhere watches as well"; }
+# And a real guard outside with a higher limit does not switch off a stricter one inside:
+# 20 threads, 300 allowed outside and 8 inside, are killed by the one inside.
+rm -f "$tmp/strict-up"
+status=0
+"$guard" env WHIZBANG_THREAD_LIMIT=8 "$guard" python3 "$tmp/parked.py" 20 "$tmp/strict-up" >"$tmp/out" 2>&1 || status=$?
+[ "$status" = 1 ] || { cat "$tmp/out" >&2; fail "a stricter guard inside a guard still kills (got $status)"; }
+grep -q -F "over the limit of 8 in one process" "$tmp/out" || { cat "$tmp/out" >&2; fail "the stricter guard inside says what it killed"; }
 
 # --- A guard takes itself for watched only by a guard above it. The variable alone does
 # not switch it off: set by hand to a live process that is beside the guard, or to one
@@ -289,8 +304,10 @@ wait "$once" || status=$?
 # --- The recipes that run tests run them through the guard.
 grep -q -x -F '    scripts/thread-guard.sh cargo nextest run --workspace' justfile ||
   fail "justfile: the recipe test must run the tests through scripts/thread-guard.sh"
-grep -q -x -F '    scripts/thread-guard.sh cargo nextest run "$@"' justfile ||
-  fail "justfile: the recipe test-only must run the tests through scripts/thread-guard.sh"
+grep -q -x -F '    scripts/test-only.sh "$@"' justfile ||
+  fail "justfile: the recipe test-only must hand its arguments to scripts/test-only.sh, which holds them to a list"
+grep -q -E '^exec scripts/thread-guard\.sh cargo nextest run ' scripts/test-only.sh ||
+  fail "scripts/test-only.sh must run the tests through scripts/thread-guard.sh"
 # No recipe and no script, and no test of a script, runs the tests any other way: every
 # line that has `cargo`, white space, and `nextest run` or `test` has the guard before it.
 # Two files only talk of such a command: this one, and the test of the skills, which holds

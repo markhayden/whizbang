@@ -14,7 +14,8 @@ texts are.
 Amended: 2026-11-13, with the pull request that followed. Changed, under "What keeps a
 test from making threads without end": how often the guard counts, when a guard under a
 guard leaves the watching to the one above, what the Linux limit does when the user's
-threads cannot be counted, and that no group of lints is allowed.
+threads cannot be counted, that no group of lints is allowed, and what `just test-only`
+takes.
 Spec: section 3, "The execution contract", "What a run publishes", "Storage" and "What
 every run records"
 
@@ -418,16 +419,21 @@ part parked threads until the system refused one, and the machine went down.
   no longer count. It catches a process that grows slowly, within about a third of a
   second (0.2 seconds between two counts, and the count's own time). It cannot stop a
   tight loop in time, and it does not see a process whose parent has ended. A guard
-  under a guard with the same settings leaves the watching to the one above; the
-  variable that tells it so is believed only when it names a process the guard descends
-  from that is running the guard.
+  under a guard that is at least as strict leaves the watching to the one above; the
+  variable that tells it so is believed only when the limit it states is not above the
+  guard's own and it names a process the guard descends from that is running the same
+  file.
 - *By the system, on Linux.* The guard lowers the number of processes and threads the
   command's user may hold to what the user held and 4,096 more, and lowers nothing when
   it cannot count what the user holds. macOS has no limit of that kind that counts
   threads.
 - *A group of lints is allowed nowhere.* An `allow` of `warnings`, `clippy::all` or
   `clippy::style` would silence the thread lint without naming it, so the lint test
-  refuses one anywhere in the crates.
+  refuses one anywhere in the crates, on one line or several, and refuses the same in a
+  manifest's lints, a second `clippy.toml`, and a cargo config that caps or allows lints.
+- *Some of the tests.* `just test-only` runs without a prompt, so it takes a closed set of
+  arguments (`scripts/test-only.sh`) and refuses any other before anything runs: nextest's
+  own arguments can name a program to run.
 
 A thread made by the product's own spawner in a test is a started run, and is held by
 the bound, which the tests set to 1 or 2. A thread made by something a test depends on,

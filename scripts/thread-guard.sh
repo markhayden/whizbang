@@ -50,10 +50,12 @@
 #   the `nlwp` column on Linux.
 # - A guard inside a guard does nothing: the command it is given is told, in
 #   WHIZBANG_THREAD_GUARD, which process watches it and with what limit and pause, and a
-#   guard that finds itself under that process, which must be running this script, with its
-#   own limit and pause, runs its command in its own place. One with another limit or pause
-#   watches as well, and so does one whose variable names any other process: setting the
-#   variable by hand switches nothing off.
+#   guard that finds itself under that process, which must be running this very file, with
+#   a limit no higher and a pause no longer than its own, runs its command in its own
+#   place. One that is stricter than the guard above watches as well, and so does one whose
+#   variable names any other process or a script of this name elsewhere: setting the
+#   variable by hand switches nothing off. The folder of the process above is read from
+#   `/proc` on Linux and with `lsof` on macOS; where it cannot be read, this guard watches.
 #
 # When the tree is killed, the processes of the last good count are killed with those found
 # then: a process id from a third of a second ago can, in principle, be another process by
@@ -140,12 +142,25 @@ if ! look "$$" || [ -z "$ids" ]; then
   exit 2
 fi
 
-# Watched already, by a guard above this one with this limit and this pause: nothing to
-# add. The variable alone does not say so, since anything can set it: the process it names
-# must be one this guard descends from, by a count of its own, and must be running this
-# script. Anything else, and this guard watches.
-watched_by() { # <process id>: is that process above this one, and a guard?
-  local above command
+# Watched already, by a guard above this one that is at least as strict: nothing to add.
+# The variable alone does not say so, since anything can set it. It is believed when all of
+# this holds, and otherwise this guard watches too:
+# - the limit it states is not above this guard's, and the pause is not longer;
+# - the process it names is one this guard descends from, by a count of its own;
+# - that process is running this very file: the script in its command, taken from the
+#   folder that process is in, is the file this is.
+# What cannot be checked is that the guard above really has the limit the variable states;
+# the variable is that guard's own word, handed down through the command.
+me=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")
+folder_of() { # <process id>: the folder that process is in, or nothing
+  if [ -e "/proc/$1/cwd" ]; then
+    (cd "/proc/$1/cwd" 2>/dev/null && pwd -P) || true
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | sed -n 1p || true
+  fi
+}
+watched_by() { # <process id>: is that process above this one, and running this file?
+  local above command script folder file
   above=$(processes | awk -v self="$$" -v named="$1" '
     NF == 4 { parent[$1] = $2 }
     END {
@@ -155,13 +170,34 @@ watched_by() { # <process id>: is that process above this one, and a guard?
     }') || return 1
   [ "$above" = "yes" ] || return 1
   command=$(ps -o command= -p "$1" 2>/dev/null) || return 1
-  printf '%s\n' "$command" |
-    grep -E '^([^ ]*/)?(bash|sh)( -[^ ]+)* ([^ ]*/)?thread-guard\.sh( |$)|^([^ ]*/)?thread-guard\.sh( |$)' >/dev/null
+  # The script is the first word, or the first after a shell and its options.
+  script=$(printf '%s\n' "$command" | awk '{
+    i = 1
+    if ($1 ~ /(^|\/)(bash|sh)$/) { i = 2; while (i <= NF && $i ~ /^-/) i++ }
+    print $i
+  }')
+  [ "$(basename "${script:-none}")" = "thread-guard.sh" ] || return 1
+  case "$script" in
+    /*) file=$script ;;
+    *)
+      folder=$(folder_of "$1")
+      [ -n "$folder" ] || return 1
+      file=$folder/$script
+      ;;
+  esac
+  [ -f "$file" ] || return 1
+  file=$(cd "$(dirname "$file")" 2>/dev/null && pwd -P)/thread-guard.sh
+  [ "$file" = "$me" ]
 }
 watcher=${WHIZBANG_THREAD_GUARD:-}
-if [ -n "$watcher" ] && [ "${watcher#* }" = "$limit $poll" ] &&
-  echo "${watcher%% *}" | grep -E '^[1-9][0-9]*$' >/dev/null && watched_by "${watcher%% *}"; then
-  exec "$@"
+if echo "$watcher" | grep -E '^[1-9][0-9]* [1-9][0-9]* [0-9]+(\.[0-9]+)?$' >/dev/null; then
+  named=${watcher%% *}
+  stated=${watcher#* }
+  if [ "${stated%% *}" -le "$limit" ] &&
+    awk -v theirs="${stated##* }" -v mine="$poll" 'BEGIN { exit !(theirs + 0 <= mine + 0) }' &&
+    watched_by "$named"; then
+    exec "$@"
+  fi
 fi
 
 # On Linux the system is asked to refuse, too: see the top of this file.
