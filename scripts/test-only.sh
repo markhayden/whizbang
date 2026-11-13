@@ -51,7 +51,7 @@ refuse() {
 
 crate='^[a-z0-9][a-z0-9_-]*$'
 binary='^[A-Za-z0-9_-]+$'
-filter='^[A-Za-z0-9_:=()&|!~/. -]+$'
+filter='^[A-Za-z0-9_:=()&|!/~. -]+$'
 word='^[A-Za-z0-9_:]+$'
 line_break='
 '
