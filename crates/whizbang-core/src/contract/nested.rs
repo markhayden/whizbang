@@ -4,22 +4,24 @@
 //!
 //! What is here: the executor a context holds ([`Nested`]), which refuses a call
 //! deeper than four levels and a call back into an action that is already running
-//! among the calls that led to it; and what a run keeps of the calls it made
-//! ([`Nest`]), from which its record lists them.
-//!
-//! What is not here yet, and is the next part's: a cancellation does not reach the
-//! runs a run called, a run does not wait for them or for its capability requests
-//! before it ends, and it does not read what they committed.
+//! among the calls that led to it; what a run keeps of the calls it made ([`Nest`]),
+//! from which its end waits for them and its record lists them; and the names a run's
+//! view of the store gains when a run it called commits outputs ([`Added`]).
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::collections::BTreeSet;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
+
+use crate::artifact;
+use crate::capability::Tally;
+use crate::store::{self, Generation, Store};
 
 use super::engine::{Admitted, Bounded, Stopped};
 use super::live::LiveRun;
 use super::record::{Inside, REFUSALS_LIMIT, Refused, STEPS_LIMIT, Status, Step};
 use super::{
-    Allowance, Answer, Call, CallError, Cancel, Engine, Executor, Finished, PreparedCall, Refusal,
-    Request, RequestId, RunId, Secrets, StoreFailure, Watched,
+    Allowance, Answer, Call, CallError, Cancel, Cancellation, Committed, Engine, Executor,
+    Finished, PreparedCall, Refusal, Request, RequestId, RunId, Secrets, StoreFailure, Watched,
 };
 
 /// How many runs that one run started, each on a thread of its own, may be executing
@@ -31,16 +33,55 @@ pub const STARTED_LIMIT: usize = 4;
 /// made by a run at the fourth is refused.
 pub const LEVELS_LIMIT: usize = 4;
 
+/// The names, in the store, of the artifacts that the runs one run called have
+/// committed. The run's view of the store is the generation it was admitted against
+/// with these names added, each as the generation current at the look holds it: so a
+/// run reads what a run it called committed, and nothing else that was published
+/// since it was admitted.
+#[derive(Default)]
+pub(super) struct Added(Mutex<BTreeSet<String>>);
+
+impl Added {
+    fn names(&self) -> MutexGuard<'_, BTreeSet<String>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// This generation, and each added name it does not hold, as the store's current
+    /// generation holds it.
+    pub(super) fn onto(
+        &self,
+        mut generation: Generation,
+        store: &Store,
+    ) -> store::Result<Generation> {
+        let names: Vec<String> = self.names().iter().cloned().collect();
+        if names.is_empty() {
+            return Ok(generation);
+        }
+        let current = store.snapshot()?;
+        for name in names {
+            if generation.get(&name).is_none()
+                && let Some(entry) = current.get(&name)
+            {
+                generation.entries.insert(name, entry.clone());
+            }
+        }
+        Ok(generation)
+    }
+}
+
 /// One run that a run called.
 struct Child {
     run: RunId,
     action: String,
+    live: Arc<LiveRun>,
     /// How it ended, once its end was published.
     status: Option<Status>,
 }
 
 #[derive(Default)]
 struct Calls {
+    /// The run's action has come back: no call is taken from here on.
+    closed: bool,
     /// Calls that were taken and are being admitted: neither refused nor a run yet.
     opening: usize,
     /// Runs the run started that are not over, and calls to start one that are being
@@ -50,6 +91,8 @@ struct Calls {
     children: Vec<Child>,
     refusals: Vec<Refused>,
     refusals_omitted: u64,
+    /// The requests the run's own capability handles were sent.
+    requests: Option<Arc<Tally>>,
 }
 
 /// What a run keeps of the calls its action makes. It has a lock of its own, which is
@@ -58,27 +101,60 @@ struct Calls {
 #[derive(Default)]
 pub(super) struct Nest {
     calls: Mutex<Calls>,
+    changed: Condvar,
+    added: Arc<Added>,
+}
+
+/// What holds a run open, now: for tests.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeldOpen {
+    /// Whether the run's action has come back.
+    pub came_back: bool,
+    /// How many runs it called are not over.
+    pub children: usize,
+    /// How many requests its capability handles sent are not accounted for.
+    pub requests: u64,
+    /// Whether the run's end is waiting, now, for those requests.
+    pub waits_for_requests: bool,
 }
 
 impl Nest {
+    pub(super) fn new(added: Arc<Added>) -> Nest {
+        Nest {
+            added,
+            ..Nest::default()
+        }
+    }
+
     fn calls(&self) -> MutexGuard<'_, Calls> {
         self.calls.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Takes a call, to be admitted. Refused when the run has called as many as one
-    /// may: a call that is being admitted counts as one. And a call to start a run,
-    /// when as many as may be are executing: the look and the count are one step.
+    /// The run's context was made: these are the requests its handles send.
+    pub(super) fn watch(&self, requests: Arc<Tally>) {
+        self.calls().requests = Some(requests);
+    }
+
+    /// Takes a call, to be admitted: from here until it is refused or has its run,
+    /// the run's end waits for it. Refused once the run's action has come back, and
+    /// when the run has called as many as one may.
     fn begin(&self, action: &str, start: bool) -> Result<(), Refusal> {
         let mut calls = self.calls();
+        let action = action.to_owned();
+        if calls.closed {
+            return Err(Refusal::CallerOver { action });
+        }
+        // A call to start a run, when as many as may be are executing.
         if start && calls.started >= STARTED_LIMIT {
             return Err(Refusal::TooManyStarted {
-                action: action.to_owned(),
+                action,
                 limit: STARTED_LIMIT,
             });
         }
         if calls.children.len() + calls.opening >= STEPS_LIMIT {
             return Err(Refusal::TooManyCalls {
-                action: action.to_owned(),
+                action,
                 limit: STEPS_LIMIT,
             });
         }
@@ -92,6 +168,7 @@ impl Nest {
         let mut calls = self.calls();
         calls.opening -= 1;
         calls.children.extend(made);
+        self.changed.notify_all();
     }
 
     /// A run the run started is over, or a call to start one made none.
@@ -112,11 +189,46 @@ impl Nest {
         }
     }
 
-    /// A run this run called has ended, and its end is published: how.
-    pub(super) fn ended(&self, run: &RunId, status: Status) {
+    /// A run this run called has ended, and its end is published: how, and with which
+    /// outputs. From here on this run's view of the store has them.
+    pub(super) fn ended(&self, run: &RunId, status: Status, outputs: &[Committed]) {
+        let mut names = self.added.names();
+        for output in outputs {
+            names.insert(artifact::name(output.artifact(), output.id()));
+        }
+        drop(names);
         let mut calls = self.calls();
         if let Some(child) = calls.children.iter_mut().find(|child| child.run == *run) {
             child.status = Some(status);
+        }
+    }
+
+    /// The run's action has come back. From here on no call is taken and no request
+    /// is sent, and this returns once every call that was taken is refused or has a
+    /// run that is over, and every request that was sent is accounted for. It has no
+    /// bound: a run that never comes back, and a backend that never answers, are
+    /// waited for (ADR 0008, "Nested calls").
+    pub(super) fn settle(&self) {
+        let (children, requests) = {
+            let mut calls = self.calls();
+            calls.closed = true;
+            if let Some(requests) = &calls.requests {
+                requests.close();
+            }
+            while calls.opening > 0 {
+                calls = self
+                    .changed
+                    .wait(calls)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+            let children: Vec<_> = calls.children.iter().map(|c| c.live.clone()).collect();
+            (children, calls.requests.clone())
+        };
+        for child in children {
+            child.wait_until_over();
+        }
+        if let Some(requests) = requests {
+            requests.wait();
         }
     }
 
@@ -132,6 +244,21 @@ impl Nest {
                 .collect(),
             refusals: calls.refusals.clone(),
             refusals_omitted: calls.refusals_omitted,
+        }
+    }
+
+    pub(super) fn held_open(&self) -> HeldOpen {
+        let calls = self.calls();
+        HeldOpen {
+            came_back: calls.closed,
+            children: calls.opening
+                + calls
+                    .children
+                    .iter()
+                    .filter(|child| !child.live.is_over())
+                    .count(),
+            requests: calls.requests.as_ref().map_or(0, |r| r.outstanding()),
+            waits_for_requests: calls.requests.as_ref().is_some_and(|r| r.waited_for()),
         }
     }
 }
@@ -201,8 +328,9 @@ impl Family {
 /// The executor in the context of a running action: the one way the action reaches
 /// another action. A call through it is admitted under the action's run, and is
 /// refused, with no run, when it would be at a fifth level, when it names an action
-/// that is already running among the calls that led to it, when it may cost more than
-/// is left of the run's allowance, and when it carries a request id. Every such refusal is kept for
+/// that is already running among the calls that led to it, when the run was
+/// cancelled or its action has come back, when it may cost more than is left of the
+/// run's allowance, and when it carries a request id. Every such refusal is kept for
 /// the run's record. Asking after a run, and cancelling one, are the engine's.
 pub(super) struct Nested {
     engine: Engine,
@@ -246,6 +374,8 @@ impl Nested {
         if under.stack.iter().any(|running| running == call.action()) {
             return Err(Refusal::CallBack { action: action() }.into());
         }
+        // A call made once the run's signal is set is refused by admission's own look
+        // at the call's signal, which is under the run's.
         let nest = under.live.nest();
         nest.begin(call.action(), start)?;
         let opening = Opening {
@@ -253,10 +383,14 @@ impl Nested {
             made: false,
             start,
         };
-        // The call's run has the signal its request came with, or one of its own. A
-        // cancellation of this run does not reach it yet.
+        // The call's run has a signal of its own, under this run's and under the one
+        // the request came with: cancelling this run, or any above it, cancels it.
+        let above = [
+            Some(under.live.signal().clone()),
+            request.cancellation().cloned(),
+        ];
         let bounded = Bounded {
-            signal: request.cancellation().cloned().unwrap_or_default(),
+            signal: Cancellation::under(above.into_iter().flatten()),
             deadline: match (under.deadline, request.deadline()) {
                 (Some(one), Some(other)) => Some(one.min(other)),
                 (one, other) => one.or(other),
@@ -273,6 +407,7 @@ impl Nested {
         opening.made(Child {
             run: admitted.run.clone(),
             action: action(),
+            live: admitted.live.clone(),
             status: None,
         });
         Ok(admitted)

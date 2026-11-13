@@ -12,7 +12,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use crate::store::Attached;
 
 use super::journal::Kept;
-use super::nested::Nest;
+use super::nested::{Added, Nest};
 use super::{Cancellation, JournalLine, StoreFailure};
 
 /// Where the executor is with an open run.
@@ -66,20 +66,25 @@ pub(super) struct LiveRun {
 }
 
 impl LiveRun {
-    pub(super) fn new(kept: Arc<Kept>, signal: Cancellation) -> LiveRun {
+    pub(super) fn new(kept: Arc<Kept>, signal: Cancellation, added: Arc<Added>) -> LiveRun {
         LiveRun {
             kept,
             signal,
             phase: Mutex::new(Phase::Executing),
             changed: Condvar::new(),
             waiting: AtomicUsize::new(0),
-            nest: Nest::default(),
+            nest: Nest::new(added),
         }
     }
 
     /// The calls the run's action makes of other actions.
     pub(super) fn nest(&self) -> &Nest {
         &self.nest
+    }
+
+    /// Whether nothing in this process works on the run any more.
+    pub(super) fn is_over(&self) -> bool {
+        self.phase().is_over()
     }
 
     fn phase(&self) -> MutexGuard<'_, Phase> {

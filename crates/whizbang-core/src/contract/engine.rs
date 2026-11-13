@@ -15,7 +15,7 @@ use crate::store::{self, Store};
 use super::journal::Kept;
 use super::ledger::{Declined, Reservation, Step};
 use super::live::{self, LiveRun, Told};
-use super::nested::{Family, Nested, Under};
+use super::nested::{Added, Family, HeldOpen, Nested, Under};
 use super::prepare::prepare;
 use super::record::{
     Diagnostic, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran, RunRecord,
@@ -212,6 +212,15 @@ impl Engine {
     pub fn waiting_for(&self, run: &RunId) -> usize {
         let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
         attached.and_then(live::of).map_or(0, |live| live.waiting())
+    }
+
+    /// For tests: what holds the run open, now, when this process has it open.
+    #[doc(hidden)]
+    pub fn held_open(&self, run: &RunId) -> Option<HeldOpen> {
+        let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
+        attached
+            .and_then(live::of)
+            .map(|live| live.nest().held_open())
     }
 
     /// The actions this executor runs.
@@ -444,14 +453,18 @@ impl Bounded {
 /// The generation a run was admitted against, as the store its call is prepared from
 /// and its action reads (ADR 0008, "The generation a run reads"): every snapshot is
 /// that generation, and for as long as this lives a prune leaves it and what it names.
+/// One thing is added to it: the name of each artifact that a run this run called has
+/// committed, as the current generation holds it (ADR 0008, "Nested calls").
 struct Pinned {
     store: Arc<Store>,
     holding: store::Holding,
+    added: Arc<Added>,
 }
 
 impl Contents for Pinned {
     fn snapshot(&self) -> store::Result<store::Generation> {
-        Ok(self.holding.generation().clone())
+        self.added
+            .onto(self.holding.generation().clone(), &self.store)
     }
 
     fn read(&self, entry: &store::Entry) -> store::Result<Vec<u8>> {
@@ -566,6 +579,7 @@ impl Engine {
         under: Option<&Under>,
     ) -> Result<Admitted, Stopped> {
         self.still_wanted(call.action(), bounded)?;
+        let added = Arc::new(Added::default());
         // The generation the run is admitted against is held from here, before the
         // call is prepared, until the executor is done with the run: the inputs are
         // read from it, and so is everything the action reads.
@@ -577,6 +591,7 @@ impl Engine {
                 Some(Arc::new(Pinned {
                     store: store.clone(),
                     holding,
+                    added: added.clone(),
                 }))
             }
             None => None,
@@ -671,7 +686,7 @@ impl Engine {
         // to it in the store's table of open runs by the publication that makes it: so
         // whoever sees the run in a snapshot finds it there (ADR 0008, "Status").
         let kept = Arc::new(Kept::new(self.clock.clone(), self.secrets.clone()));
-        let live = Arc::new(LiveRun::new(kept.clone(), bounded.signal.clone()));
+        let live = Arc::new(LiveRun::new(kept.clone(), bounded.signal.clone(), added));
         let mut over = Over {
             live: live.clone(),
             ended: false,
@@ -903,6 +918,7 @@ impl Engine {
             Arc::new(Nested::new(self.clone(), under, self.secrets.clone())),
         )
         .with_diagnostics(kept.clone());
+        live.nest().watch(context.requests().clone());
         // A panic in the action is caught: its run ends as any other does, with its
         // record and what it wrote, and the executor goes on (ADR 0008). The context
         // and what it shares are not left broken by one: what a run keeps is behind
@@ -910,10 +926,17 @@ impl Engine {
         // A run that was cancelled before its action started does not run it.
         let handed = (!live.signal().is_cancelled())
             .then(|| catch_unwind(AssertUnwindSafe(|| action.run(&prepared, &context))));
+        // The action has come back. No call and no capability request is taken from
+        // here on, and the run waits for those there are: every run it called is over,
+        // and every request its handles sent is accounted for, before it ends (ADR
+        // 0008, "Nested calls"). A cancellation is still accepted while it waits, and
+        // reaches them.
+        live.nest().settle();
         // The entry to the commit step (ADR 0008, "Cancellation"): the action has come
-        // back, with whatever it came back with. From here on a cancellation is too
-        // late. One that was accepted before this was set under the lock this reads
-        // under: the run ends as cancelled, and nothing it handed back is committed.
+        // back, with whatever it came back with, and nothing it started is left. From
+        // here on a cancellation is too late. One that was accepted before this was
+        // set under the lock this reads under: the run ends as cancelled, and nothing
+        // it handed back is committed.
         let cancelled = live.begin_end();
         // The outcome is made here, from what the action handed back, with the secrets
         // taken out: what is reported holds none, as what is written holds none. And
@@ -959,7 +982,7 @@ impl Engine {
         let kept: Vec<(Diagnostic, Vec<u8>)> = std::iter::once(Diagnostic::journal(&lines))
             .chain(written)
             .collect();
-        // What the run's record says of the calls its action made.
+        // What the run's record says of the calls its action made: they are all over.
         let parent = family.parent.as_ref().map(|(run, _)| run.clone());
         let inside = live.nest().inside(parent);
         let record_of = |outcome: &Outcome| {
@@ -1022,9 +1045,13 @@ impl Engine {
                 .map_err(failed)?;
         }
         publication.publish().map_err(failed)?;
-        // The run that called this one is told how it ended, for its record.
+        // The run that called this one is told how it ended, and from here on reads
+        // what it committed: before this run is over, which is what its caller waits
+        // for.
         if let Some((_, parent)) = &family.parent {
-            parent.nest().ended(&run, record.outcome().status);
+            parent
+                .nest()
+                .ended(&run, record.outcome().status, outcome.outputs());
         }
         Ok(Finished::new(run, outcome))
     }

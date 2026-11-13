@@ -609,6 +609,9 @@ pub enum Refusal {
         asked_micros: u64,
         left_micros: u64,
     },
+    /// A call from inside an action whose own run was over, or ending: the action had
+    /// come back, and something it left behind made the call. No run was made.
+    CallerOver { action: String },
     /// A call from inside an action whose run has already called `limit` others,
     /// which is as many as one run may. No run was made.
     TooManyCalls { action: String, limit: usize },
@@ -643,6 +646,7 @@ impl Refusal {
             Refusal::TooDeep { .. } => RefusalKind::TooDeep,
             Refusal::CallBack { .. } => RefusalKind::CallBack,
             Refusal::OverCaller { .. } => RefusalKind::OverCaller,
+            Refusal::CallerOver { .. } => RefusalKind::CallerOver,
             Refusal::TooManyCalls { .. } => RefusalKind::TooManyCalls,
             Refusal::TooManyStarted { .. } => RefusalKind::TooManyStarted,
             Refusal::IdInside { .. } => RefusalKind::IdInside,
@@ -709,6 +713,10 @@ impl std::fmt::Display for Refusal {
                 f,
                 "{action} was not called: it may cost up to {asked_micros} millionths of a \
                  US dollar, and {left_micros} are left of its caller's allowance"
+            ),
+            Refusal::CallerOver { action } => write!(
+                f,
+                "{action} was not called: the action that called it had come back"
             ),
             Refusal::TooManyCalls { action, limit } => write!(
                 f,

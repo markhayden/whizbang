@@ -128,6 +128,7 @@ pub enum RefusalKind {
     TooDeep,
     CallBack,
     OverCaller,
+    CallerOver,
     TooManyCalls,
     TooManyStarted,
     IdInside,
@@ -135,7 +136,7 @@ pub enum RefusalKind {
 
 impl RefusalKind {
     /// Every kind, in the order above.
-    pub const ALL: [RefusalKind; 20] = [
+    pub const ALL: [RefusalKind; 21] = [
         RefusalKind::UnknownAction,
         RefusalKind::Invalid,
         RefusalKind::Input,
@@ -153,6 +154,7 @@ impl RefusalKind {
         RefusalKind::TooDeep,
         RefusalKind::CallBack,
         RefusalKind::OverCaller,
+        RefusalKind::CallerOver,
         RefusalKind::TooManyCalls,
         RefusalKind::TooManyStarted,
         RefusalKind::IdInside,
@@ -251,7 +253,7 @@ pub enum StepKind {
 /// were admitted. The call's arguments, inputs and outputs are in the record of its
 /// run, which this names: that is the reference to its result. `status` is how that
 /// run had ended when this record was written, and null when it had not: the store
-/// refused its end, and it was abandoned, or it was started and not waited for.
+/// refused its end, and it was abandoned.
 ///
 /// It is written as JSON, and read from JSON only as part of a stored record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
