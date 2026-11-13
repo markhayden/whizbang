@@ -159,7 +159,10 @@ impl std::error::Error for BoundRefused {}
 #[doc(hidden)]
 pub type Spawn = fn(String, Box<dyn FnOnce() + Send + 'static>) -> std::io::Result<()>;
 
-/// A thread of the system, with this name.
+/// A thread of the system, with this name. This is the one place the product makes a
+/// thread, and how many are live is bounded where it is called
+/// ([`Engine::with_started_bound`]): hence the lint that is allowed here (`clippy.toml`).
+#[allow(clippy::disallowed_methods)]
 fn spawn_thread(name: String, work: Box<dyn FnOnce() + Send + 'static>) -> std::io::Result<()> {
     std::thread::Builder::new().name(name).spawn(work).map(drop)
 }
@@ -260,10 +263,20 @@ impl Engine {
     }
 
     /// For tests: the same executor, making the thread of a started run with this.
+    /// It is a hook for a test and nothing else: a function that answers `Ok` and never
+    /// runs the work it was given leaves a run that nothing ends, and a `wait` for it
+    /// blocked.
     #[doc(hidden)]
     pub fn with_spawn(mut self, spawn: Spawn) -> Engine {
         self.spawn = spawn;
         self
+    }
+
+    /// For tests: how many callers are waiting, now, for the run to be over.
+    #[doc(hidden)]
+    pub fn waiting_for(&self, run: &RunId) -> usize {
+        let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
+        attached.and_then(live::of).map_or(0, |live| live.waiting())
     }
 
     /// The actions this executor runs.
@@ -539,12 +552,25 @@ struct Admitted {
     place: Option<store::Place>,
 }
 
-/// Says, when it is dropped, that nothing in this process works on the run any more.
-struct Over(Arc<LiveRun>);
+/// What the executor is done with when it is done with a run, in the order it lets go:
+/// the run's place among the started runs, when it has one; then the run's entry in the
+/// store's table of open runs, when its end became visible and it was kept there for
+/// this; and only then are those who wait for the run told that nothing in this process
+/// works on it any more. So a caller that waited for a run finds its place free (ADR
+/// 0008, "How many runs are started at once"). It is dropped by a return and by a panic
+/// that unwinds alike.
+struct Over {
+    place: Option<store::Place>,
+    store: Arc<Store>,
+    run: RunId,
+    live: Arc<LiveRun>,
+}
 
 impl Drop for Over {
     fn drop(&mut self) {
-        self.0.over();
+        drop(self.place.take());
+        self.store.let_go(self.run.as_str());
+        self.live.over();
     }
 }
 
@@ -796,10 +822,12 @@ impl Engine {
             store,
             place,
         } = admitted;
-        // Dropped in the other order: the place is free before anyone who waited for
-        // the run is told that it is over, so whoever waited can start the next.
-        let _over = Over(live);
-        let _place = place;
+        let _over = Over {
+            place,
+            store: store.clone(),
+            run: run.clone(),
+            live,
+        };
         let request = request.as_ref();
         let failed = |error| CallError::Store(StoreFailure::new(error));
         let context = Context::new(
@@ -897,6 +925,10 @@ impl Engine {
         }
         let mut publication = store.begin().map_err(failed)?;
         publication.close_run(run.as_str()).map_err(failed)?;
+        // The run stays in the store's table of open runs after its end is visible,
+        // until this function has let go of everything: a `wait` that finds the end in
+        // the store finds the run there too, and waits for that.
+        publication.keep_until_let_go(run.as_str());
         let mut place = 0;
         for (at, (output, artifact)) in outputs.iter().enumerate() {
             // The outputs of one port are together, in the order they were handed back.
@@ -1061,12 +1093,25 @@ impl Engine {
         let watched = |state, events| Ok(Watched::new(run.clone(), state, events));
         match self.seen(run)? {
             Seen::Nothing => return Err(unknown()),
-            Seen::Ended(outcome) => return watched(RunState::Ended(outcome), Vec::new()),
+            Seen::Ended(outcome) => {
+                // The end is visible. The executor that ran it here may not be done:
+                // the publication's last sync, and the run's place among the started
+                // runs. A status says what the store says. A wait is for the
+                // executor: the run stays in the table until that is done with it, so
+                // found there it is waited for, and not found there it is done.
+                if wait {
+                    let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
+                    if let Some(live) = attached.and_then(live::of) {
+                        live.wait_until_over();
+                    }
+                }
+                return watched(RunState::Ended(outcome), Vec::new());
+            }
             Seen::Open => {}
         }
         // The run was admitted and had not ended when the store was looked at. A run
         // this process made is in the table from before it was visible until its end
-        // is: found there, it is open here.
+        // is, and the executor is done with it: found there, it is open here.
         let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
         if let Some(attached) = attached {
             let Some(live) = live::of(attached) else {
@@ -1092,5 +1137,58 @@ impl Engine {
             Seen::Ended(outcome) => watched(RunState::Ended(outcome), Vec::new()),
             Seen::Open => watched(RunState::NotEnded { here: false }, Vec::new()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use whizbang_testkit::scratch::Scratch;
+
+    use super::*;
+    use crate::store::fs::RealFs;
+
+    #[test]
+    fn a_runs_place_is_free_before_whoever_waits_for_the_run_is_told() {
+        // The order is what lets a caller that waited start the next run, and nothing
+        // outside can see it: the two happen within a few instructions of each other.
+        // So the lock under which a waiter is told is held here, and the executor's
+        // hold on the run is dropped on another thread. That thread gives the place
+        // back and then stops at the lock; were the order the other way round, it
+        // would stop at the lock with the place still taken, and the loop below would
+        // run out.
+        let dir = Scratch::new("over");
+        let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap());
+        let kept = Arc::new(Kept::new(Arc::new(SystemClock), Secrets::none()));
+        let live = Arc::new(LiveRun::new(kept));
+        let over = Over {
+            place: Some(store.start_place(1).unwrap()),
+            store: store.clone(),
+            run: RunId::minted(1, 1),
+            live: live.clone(),
+        };
+        assert!(store.start_place(1).is_none());
+
+        let not_told = live.not_told_yet();
+        let letting_go = whizbang_testkit::threads::spawn(move || drop(over));
+        let limit = Instant::now() + Duration::from_secs(10);
+        let free = loop {
+            if let Some(place) = store.start_place(1) {
+                break Some(place);
+            }
+            if Instant::now() > limit {
+                break None;
+            }
+            std::thread::yield_now();
+        };
+        assert!(!*not_told, "whoever waits was told while the lock was held");
+        assert!(
+            free.is_some(),
+            "the place was not given back before whoever waits was to be told"
+        );
+        drop(not_told);
+        letting_go.join().unwrap();
+        live.wait_until_over();
     }
 }

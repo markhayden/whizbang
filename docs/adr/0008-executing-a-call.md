@@ -7,8 +7,10 @@ and a run that was started", which is built. Changed: the paragraph that says wh
 builds what; what this record does not decide yet.
 Amended: 2026-11-13, in the same pull request, after its review. Added: "How many runs
 are started at once" and a run whose thread could not be made, under "Status, waiting,
-and a run that was started"; what a wait is told of a run that is deleted. Changed: a
-progress message is cut as the other texts are.
+and a run that was started"; what a wait is told of a run that is deleted; when a wait
+answers at the end of a run, and how long a run stays in the table for that; what keeps
+a test from making threads without end. Changed: a progress message is cut as the other
+texts are.
 Spec: section 3, "The execution contract", "What a run publishes", "Storage" and "What
 every run records"
 
@@ -271,6 +273,12 @@ it. There is no second table. The store's rule is the one rule: a run is in the 
 from just before the rename that makes it visible, is taken out again if that rename
 fails, and leaves only once the generation that closes or deletes it is visible
 (`store::runs::what_is_attached_to_a_run_is_had_while_the_writer_has_the_run_open_and_no_longer`).
+The publication that closes a run can ask that the run stay in the table past that,
+until its closer lets it go (`Publication::keep_until_let_go`, `Store::let_go`): the
+executor asks, for every run it ends, and lets the run go when it is done with it ("A
+status and a wait at the end of a run", below). A deletion takes a run out whatever
+was asked
+(`store::runs::a_closed_run_that_was_kept_for_its_closer_stays_in_the_table_until_it_is_let_go`).
 
 **How a status is answered: the store, the table, the store.**
 
@@ -307,6 +315,31 @@ test stops a publication after its pointer is replaced and before its last sync,
 second thread reads the status of that run and of another that is executing
 (`watch::a_second_caller_reads_the_status_of_a_run_while_its_end_is_being_published`).
 
+**A status and a wait at the end of a run.** A run's end is visible in the store before
+the executor is done with the run: the end publication's last sync comes after the
+rename that shows it, and a started run's thread holds its place among the started runs
+until that publication has returned. The two questions are answered differently there.
+
+- `status` says what the store says: `Ended`, with the outcome, from the moment the end
+  is visible.
+- `wait` answers when the executor is done. Having found the end in the store, it looks
+  for the run in the table; found there, it waits for the executor, and not found
+  there, the executor is done. That is why the run is kept in the table past the
+  visibility of its end. The executor lets go in a fixed order: the run's place, then
+  the run's entry in the table, and only then are those who wait told. So whoever waited
+  for a started run finds its place free, and a `start` straight after the `wait` is not
+  refused for that run.
+
+One test stops a run at its end publication's last sync, with a bound of one: a status
+says `Ended`, a `start` is refused, a caller that waits is still waiting, and once the
+run goes on the wait answers and the `start` after it is admitted
+(`started::a_wait_for_a_started_run_answers_only_when_its_place_is_free`). The order of
+letting go is held by a test of its own, which holds the lock a waiter is told under
+while the executor lets go
+(`contract::engine::tests::a_runs_place_is_free_before_whoever_waits_for_the_run_is_told`).
+For a run that `submit` or `request` ran there is no place, and a `wait` by another
+caller answers when that call has all but returned.
+
 **A run that is deleted while someone waits.** A `wait` that began before the run was
 deleted is waiting for the run's action, and answers when the action has come back and
 the executor is done: with `NoSuchRun`, since the end of a deleted run is refused and
@@ -328,10 +361,14 @@ the machine, down. So `start` is bounded.
   are live: 64 unless it was built otherwise (`Engine::with_started_bound`,
   `STARTED_RUNS_DEFAULT`). A bound is at least 1 and at most 256
   (`STARTED_RUNS_CEILING`); any other is refused when it is set (`BoundRefused`), so no
-  configuration can ask for thousands.
+  one executor can be told to start thousands.
 - *Where it is counted.* In the store value, beside its table of open runs
   (`Store::start_place`): the count is the store writer's, not an executor's. Two
   executors over one store value count the same runs, each against its own bound.
+- *What that leaves.* The bound is of one store value. A process that opens several
+  stores to write has a count for each, so it can hold as many started runs as it has
+  stores, times the bound: with the ceiling, 256 for each. Nothing bounds how many
+  stores a process opens. The binary opens one.
 - *When a place is taken, and what a refusal leaves.* Before anything else: before the
   request's id is looked up, before the call is prepared, before admission. A request
   over the bound is refused with `Refusal::TooManyStarted`, which carries the bound and
@@ -342,8 +379,9 @@ the machine, down. So `start` is bounded.
 - *When a place is given back.* When the executor is done with the run, by a guard that
   is dropped however that comes about: the action came back, the action panicked, the
   end publication was refused, the admission failed after the place was taken, the
-  thread could not be made. It is given back just before whoever waits for the run is
-  told that it is over, so a caller that waited for a run can start the next.
+  thread could not be made. It is given back before whoever waits for the run is told
+  that it is over, and a `wait` does not answer before that ("A status and a wait at the
+  end of a run", above), so a caller that waited for a run can start the next.
 - *What it does not cover.* `submit` and `request` run the action on the caller's own
   thread, take no place and are never refused for this: how many of those run at once
   is the caller's doing. A call from inside an action has no rule yet; nested calls get
@@ -354,7 +392,35 @@ The tests hold two or three runs at barriers, never more
 `started::two_executors_over_one_store_count_the_same_started_runs`,
 `started::a_bound_of_none_or_over_the_ceiling_is_refused_when_it_is_set`,
 `started::a_started_run_whose_action_panics_gives_its_place_back`,
-`started::a_started_run_whose_end_the_store_refuses_gives_its_place_back`).
+`started::a_started_run_whose_end_the_store_refuses_gives_its_place_back`,
+`started::a_request_that_is_not_admitted_after_its_place_was_taken_gives_the_place_back`).
+
+**What keeps a test from making threads without end.** The bound is the product's. The
+tests of this repo are held three ways, because a probe written for the review of this
+part parked threads until the system refused one, and the machine went down.
+
+- *Before a thread is made.* A test makes a thread through `whizbang_testkit::threads`
+  (`spawn`, `scope`), which counts the live threads it made in the process and panics,
+  in the caller, at the 65th: nothing is asked of the system. `clippy.toml` refuses
+  `std::thread::spawn`, `std::thread::scope` and a builder's `spawn` everywhere in the
+  workspace, tests included, and is allowed in two places: that helper, and the
+  executor's own spawner (`spawn_thread`), which the bound above holds. `just check`
+  lints every target, so a test that makes a thread another way fails it
+  (`scripts/tests/test-thread-lint.sh`, on a fixture). This is the stop that works
+  against a loop: a loop of raw spawns makes tens of thousands of threads a second.
+- *From outside, five times a second.* Every recipe and script that runs tests runs them
+  through `scripts/thread-guard.sh`, which counts the threads of every process under the
+  command and kills the whole tree when one process holds more than 300, or when it can
+  no longer count. It catches a process that grows slowly, within about a fifth of a
+  second. It cannot stop a tight loop in time, and it does not see a process whose
+  parent has ended.
+- *By the system, on Linux.* The guard lowers the number of processes and threads the
+  command's user may hold to what the user held and 4,096 more. macOS has no limit of
+  that kind that counts threads.
+
+A thread made by the product's own spawner in a test is a started run, and is held by
+the bound, which the tests set to 1 or 2. A thread made by something a test depends on,
+outside the workspace, is seen by the guard alone.
 
 **A thread that cannot be made.** The thread is made with a name (`run <id>`) through
 `std::thread::Builder`, which hands back the system's refusal where `std::thread::spawn`
@@ -414,6 +480,10 @@ Nothing holds the generation a run reads from.
 - `Executor` has three more methods, and `Answer` a third case, `Started`. `Engine` is
   cloned cheaply: a started run's thread holds one, with the store.
 - `Refusal` has `NoSuchRun` and `TooManyStarted`; `CallError` has `NotStarted`.
+- A `wait` for a run this process ended answers a little later than a `status` says
+  `Ended`: when the executor is done with the run, not when its end is visible.
+- A test makes its threads through the test kit, and `just check` refuses one that does
+  not.
 - A caller that starts runs handles `TooManyStarted`: it waits for one of its runs and
   asks again, under the same request id.
 - A progress message over 4,096 characters is cut where it was kept whole.

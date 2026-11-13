@@ -9,12 +9,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Answer, BoundRefused, Call, CallError, Context, Executor, Failure,
-    Kind, MESSAGE_LIMIT, Outcome, PreparedCall, Produced, Refusal, Request, RequestId, RunId,
-    RunState, STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT, Secrets, Watched, read_journal,
+    Action, ActionDescriptor, Answer, BoundRefused, Call, CallError, Capability, Context, Executor,
+    Failure, Kind, MESSAGE_LIMIT, Outcome, PreparedCall, Produced, Refusal, Request, RequestId,
+    Requirement, RunId, RunState, STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT, Secrets, Watched,
+    read_journal,
 };
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Reader, Store};
@@ -32,7 +33,7 @@ const LIMIT: Duration = Duration::from_secs(10);
 /// come back within the limit: a call that would block for ever fails here, at once.
 fn within<T: Send + 'static>(what: &str, work: impl FnOnce() -> T + Send + 'static) -> T {
     let (done, answer) = mpsc::channel();
-    std::thread::spawn(move || drop(done.send(work())));
+    whizbang_testkit::threads::spawn(move || drop(done.send(work())));
     answer
         .recv_timeout(LIMIT)
         .unwrap_or_else(|_| panic!("{what} did not come back"))
@@ -294,6 +295,122 @@ fn a_started_run_whose_end_the_store_refuses_gives_its_place_back() {
     assert_eq!(executor.wait(&next).unwrap().state(), &completed());
 }
 
+#[test]
+fn a_request_that_is_not_admitted_after_its_place_was_taken_gives_the_place_back() {
+    // The place is taken before the call is prepared, so every way an admission stops
+    // after that must give it back: a refusal, and a failure of the store. Under a
+    // bound of one, the next request is started each time.
+    let dir = Scratch::new("started");
+    let root = dir.path().join("store");
+    let fs = Arc::new(ShimFs::new());
+    let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+    let needy = {
+        let draft = ActionDescriptor::draft("needy", "1.0.0", Kind::Primitive, "Needs a filler.")
+            .needs(Requirement::new(Capability::Fill));
+        let body: Body = Box::new(|_, _| Ok(Produced::nothing()));
+        Arc::new(Named(draft.build().unwrap(), body)) as Arc<dyn Action>
+    };
+    let executor = engine(store.clone(), vec![needy, quick("quick")])
+        .with_started_bound(1)
+        .unwrap();
+    let generation = store.snapshot().unwrap().number();
+
+    // Not ready: no backend fills.
+    let refused = executor.start(&asked("needy", "order-1"));
+    let not_ready = matches!(refused, Err(CallError::Refused(Refusal::NotReady { .. })));
+    assert!(not_ready, "{refused:?}");
+    // No such action.
+    let refused = executor.start(&asked("absent", "order-2"));
+    let unknown = matches!(
+        refused,
+        Err(CallError::Refused(Refusal::UnknownAction { .. }))
+    );
+    assert!(unknown, "{refused:?}");
+    // The store refuses the first call of the admission's publication.
+    fs.refuse_before(fs.events().len());
+    let failed = executor.start(&asked("quick", "order-3"));
+    assert!(matches!(failed, Err(CallError::Store(_))), "{failed:?}");
+    assert_eq!(store.snapshot().unwrap().number(), generation);
+
+    // Each gave its place back: the one there is is free.
+    let run = started(executor.start(&asked("quick", "order-3")));
+    assert_eq!(executor.wait(&run).unwrap().state(), &completed());
+    let next = started(executor.start(&asked("quick", "order-4")));
+    assert_eq!(executor.wait(&next).unwrap().state(), &completed());
+}
+
+#[test]
+fn a_wait_for_a_started_run_answers_only_when_its_place_is_free() {
+    // The end of a run is visible in the store before the executor is done with the
+    // run: the publication's last sync is still to come, and the run's thread holds
+    // its place until then. The run is stopped exactly there. A status says it ended,
+    // which is what the store says. A wait does not answer yet: it answers when the
+    // place is free, so that whoever waited can start the next run.
+    let dir = Scratch::new("started");
+    let root = dir.path().join("store");
+    let fs = Arc::new(ShimFs::new());
+    let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+    let barriers = Barriers::new();
+    let stops_in_its_end = {
+        let (fs, barriers) = (fs.clone(), barriers.clone());
+        // The action arms the hook: the next pointer to be replaced is its run's end,
+        // and the call after that one is the publication's last sync, where the run
+        // stops. By then the store has done all it does when an end becomes visible.
+        work(move |_, _| {
+            let (fs, barriers) = (fs.clone(), barriers.clone());
+            fs.clone().pause_after_rename_onto("CURRENT", move || {
+                fs.pause_before(fs.events().len(), move || barriers.stop_at("visible"));
+            });
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(store, vec![stops_in_its_end, quick("quick")])
+        .with_started_bound(1)
+        .unwrap();
+    let run = started(executor.start(&asked("work", "order-1")));
+    barriers.arrived("visible", 1);
+
+    assert_eq!(executor.status(&run).unwrap().state(), &completed());
+    assert_eq!(executor.start(&asked("quick", "order-2")), too_many(1));
+
+    // Someone waits for the run, and starts the next as soon as the wait answers.
+    let (answering, answered) = mpsc::channel();
+    let waiting = {
+        let (executor, run) = (executor.clone(), run.clone());
+        whizbang_testkit::threads::spawn(move || {
+            let waited = executor.wait(&run);
+            let next = executor.start(&asked("quick", "order-2"));
+            drop(answering.send((waited, next)));
+        })
+    };
+    // Until that caller is waiting; or has its answers already, which is the fault.
+    let limit = Instant::now() + LIMIT;
+    let early = loop {
+        if let Ok(answers) = answered.try_recv() {
+            break Some(answers);
+        }
+        if executor.waiting_for(&run) == 1 {
+            break None;
+        }
+        assert!(Instant::now() < limit, "nobody came to wait for the run");
+        std::thread::yield_now();
+    };
+    assert!(
+        early.is_none(),
+        "a wait answered while the run's thread still held its place: {early:?}"
+    );
+
+    barriers.release("visible");
+    let (waited, next) = answered
+        .recv_timeout(LIMIT)
+        .expect("the wait was never told that the run is over");
+    assert_eq!(waited.unwrap().state(), &completed());
+    let next = started(next);
+    waiting.join().unwrap();
+    assert_eq!(executor.wait(&next).unwrap().state(), &completed());
+    assert_eq!(executor.waiting_for(&run), 0);
+}
+
 // --- a thread that cannot be made -------------------------------------------------------------
 
 /// How many times the spawner below was asked for a thread.
@@ -411,7 +528,7 @@ fn a_started_run_runs_on_another_thread_and_a_wait_for_it_is_told_when_it_is_ove
     let (asking, waited) = mpsc::channel();
     let waiting = {
         let (executor, run) = (executor.clone(), run.clone());
-        std::thread::spawn(move || drop(asking.send(executor.wait(&run))))
+        whizbang_testkit::threads::spawn(move || drop(asking.send(executor.wait(&run))))
     };
     barriers.release("busy");
     let waited = waited
