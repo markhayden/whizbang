@@ -400,7 +400,7 @@ fn no_publication_completes_inside_a_prune() {
         move || {
             let thread = {
                 let store = store.clone();
-                std::thread::spawn(move || {
+                whizbang_testkit::threads::spawn(move || {
                     let mut publication = store.begin().unwrap();
                     publication.put("new", b"published beside a prune").unwrap();
                     publication.publish().unwrap()

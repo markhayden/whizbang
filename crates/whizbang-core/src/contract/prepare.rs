@@ -491,8 +491,9 @@ pub enum CallError {
     },
     /// The run was admitted to be started, and no thread could be made for its action:
     /// `why` is the system's sentence. This is not a judgement of the call. The run is
-    /// in the store as it was admitted, and abandoned ([`super::RunState::Abandoned`]):
-    /// nothing works on it, and nobody waits for it.
+    /// in the store, ended as an error that says the same; or, when that end could
+    /// not be written, as it was admitted, and abandoned
+    /// ([`super::RunState::Abandoned`]). Nothing works on it, and nobody waits for it.
     NotStarted {
         run: super::RunId,
         why: String,

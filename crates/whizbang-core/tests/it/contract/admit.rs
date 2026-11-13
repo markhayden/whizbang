@@ -1029,7 +1029,7 @@ fn two_simultaneous_requests_with_one_id_produce_one_run() {
             engine(store.clone(), vec![held]).with_clock(clock.clone())
         })
         .collect();
-    let answers: Vec<Answer> = std::thread::scope(|scope| {
+    let answers: Vec<Answer> = whizbang_testkit::threads::scope(|scope| {
         let threads: Vec<_> = engines
             .iter()
             .map(|engine| {
@@ -1076,7 +1076,7 @@ fn two_simultaneous_requests_that_differ_under_one_id_are_one_run_and_one_confli
     let engines: Vec<Engine> = (0..2)
         .map(|_| world.engine(store.clone()).with_clock(clock.clone()))
         .collect();
-    let answers: Vec<Result<Answer, CallError>> = std::thread::scope(|scope| {
+    let answers: Vec<Result<Answer, CallError>> = whizbang_testkit::threads::scope(|scope| {
         let threads: Vec<_> = engines
             .iter()
             .zip(["hello", "goodbye"])
@@ -1105,7 +1105,7 @@ fn many_requests_at_once_under_a_few_ids_make_one_run_for_each_id() {
     let world = World::new();
     let store = world.store();
     let engines = [world.engine(store.clone()), world.engine(store.clone())];
-    let answers: Vec<(usize, Answer)> = std::thread::scope(|scope| {
+    let answers: Vec<(usize, Answer)> = whizbang_testkit::threads::scope(|scope| {
         let threads: Vec<_> = (0..8)
             .map(|thread| {
                 let engine = &engines[thread % 2];
@@ -2124,7 +2124,7 @@ fn a_repeat_that_races_the_end_of_its_run_is_not_told_the_run_will_never_end() {
     let first = engine(store.clone(), vec![held]);
     let second = engine(store.clone(), vec![paint(&runs)]);
     let (ended, has_ended) = mpsc::channel::<()>();
-    std::thread::scope(|scope| {
+    whizbang_testkit::threads::scope(|scope| {
         let running = scope.spawn(|| {
             let finished = ran(first.request(&asked("hello", "order-17")));
             ended.send(()).unwrap();
@@ -2467,7 +2467,7 @@ fn two_simultaneous_requests_with_one_id_make_one_reservation() {
                 .with_ledger(both.clone())
         })
         .collect();
-    let answers: Vec<Answer> = std::thread::scope(|scope| {
+    let answers: Vec<Answer> = whizbang_testkit::threads::scope(|scope| {
         let threads: Vec<_> = engines
             .iter()
             .map(|engine| scope.spawn(move || engine.request(&asked("hello", "order-17")).unwrap()))
@@ -2557,7 +2557,7 @@ fn two_simultaneous_admissions_cannot_both_take_the_last_of_the_allowance() {
             engine_with(store.clone(), &world.runs, Priced::new(250_000)).with_ledger(both.clone())
         })
         .collect();
-    let answers: Vec<Result<Answer, CallError>> = std::thread::scope(|scope| {
+    let answers: Vec<Result<Answer, CallError>> = whizbang_testkit::threads::scope(|scope| {
         let threads: Vec<_> = engines
             .iter()
             .zip(["order-17", "order-18"])

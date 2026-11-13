@@ -915,7 +915,7 @@ fn two_executors_over_one_store_never_give_two_runs_one_id() {
     };
     let first = engine_over(store.clone(), vec![waiting("wait")], 7000);
     let second = engine_over(store.clone(), vec![waiting("wait")], 7000);
-    let (a, b) = std::thread::scope(|scope| {
+    let (a, b) = whizbang_testkit::threads::scope(|scope| {
         let a = scope.spawn(|| first.submit(&Call::new("wait")).unwrap());
         let b = scope.spawn(|| second.submit(&Call::new("wait")).unwrap());
         (a.join().unwrap(), b.join().unwrap())
@@ -943,7 +943,7 @@ fn many_runs_from_two_executors_at_one_instant_are_all_kept() {
         engine_over(store.clone(), Vec::new(), 9000),
         engine_over(store.clone(), Vec::new(), 9000),
     ];
-    let reported: Vec<String> = std::thread::scope(|scope| {
+    let reported: Vec<String> = whizbang_testkit::threads::scope(|scope| {
         let threads: Vec<_> = (0..8)
             .map(|thread| {
                 let engine = &engines[thread % 2];
