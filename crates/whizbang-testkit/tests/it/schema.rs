@@ -123,6 +123,17 @@ fn a_value_fits_exactly_one_of_the_schemas_of_a_one_of() {
 }
 
 #[test]
+fn a_number_is_held_to_its_maximum_as_to_its_minimum() {
+    let schema = json!({ "type": "integer", "minimum": 0, "maximum": 4294967295_u64 });
+    validate(&schema, &json!(4294967295_u64)).unwrap();
+    validate(&schema, &json!(0)).unwrap();
+    let error = validate(&schema, &json!(4294967296_u64)).unwrap_err();
+    assert!(error.contains("is over 4294967295"), "{error}");
+    let error = validate(&json!({ "maximum": "nine" }), &json!(1)).unwrap_err();
+    assert!(error.contains("maximum takes a number"), "{error}");
+}
+
+#[test]
 fn a_length_is_counted_in_characters() {
     // Four letters of two bytes each are four characters, and eight bytes.
     let schema = json!({ "type": "string", "minLength": 4, "maxLength": 4 });

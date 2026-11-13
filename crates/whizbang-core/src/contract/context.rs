@@ -519,9 +519,14 @@ impl Context {
 
     /// The same context, whose handles keep what they send with this recorder: each
     /// request timed by its clock, and each exchange with a judge kept by it.
-    /// They send `limit` requests at most.
-    pub(super) fn recording(self, recorder: Arc<dyn Recorder>, limit: usize) -> Context {
-        self.requests.record_with(recorder, limit);
+    /// They send `limit` requests at most, and store `budget` bytes of exchanges.
+    pub(super) fn recording(
+        self,
+        recorder: Arc<dyn Recorder>,
+        limit: usize,
+        budget: u64,
+    ) -> Context {
+        self.requests.record_with(recorder, limit, budget);
         self
     }
 

@@ -2,6 +2,13 @@
 
 Status: accepted
 Date: 2026-11-13
+Amended: 2026-11-13, after the review of its first pull request, before it merged.
+Added: "A provider's words are redacted whole"; the bound on a model's names and the
+sum that keeps a record under its limit; what the executor does with a record over it;
+the bytes of exchanges a run stores, and a turn that is not written; that what a run
+froze binds every run under it, and binds a preparation. Corrected: the bound on what a
+run stores, which left out the answer; what a stored digest gives away; that a redacted
+exchange is not promised to be JSON; `RefusalKind` has 27 kinds.
 Spec: section 3, "The execution contract", "What a run publishes", "What a judge model may
 call" and "What every run records"; section 4, "Backends"
 
@@ -95,8 +102,79 @@ In `run/2`, which these fills share until the tag (ADR 0005):
   or `call`), `index` (its place in `models` or in `steps`), `start_ms` and `ms`. A call
   whose run was abandoned has none.
 
-A model's names come from a backend: each has the secrets taken out and is then cut,
-as every text an outcome keeps is (ADR 0008), when the record is made.
+**A model's names are bounded where they are declared.** The backend, the model and
+the version of a declaration are each 1 to 128 printable ASCII characters with no
+space, no `"` and no `\` (`MODEL_NAME_LIMIT`; `Declaration::new` refuses any other, and
+does not show it): each is written once for every request. In the record each has the
+secrets taken out while it is whole and is then cut to 128 characters, so a name that
+redaction lengthened is still one the reader takes
+(`asked::the_names_of_a_backend_a_model_and_a_version_are_bounded_where_they_are_declared`,
+`asked::a_secret_and_a_long_text_in_a_models_names_are_redacted_and_then_cut_in_the_record`).
+
+**The sum.** One request adds at most 1,200 bytes to a record: its model with three
+names of 128 bytes, its duration, its turn with an id of 128 bytes and four counts of
+twenty digits, and its exchange among the diagnostics; a test measures 1,157 with every
+field at its longest and holds it under 1,200. So 1,024 requests are 1,228,800 bytes.
+The other lists the executor fills are bounded too: 256 steps of at most 256 bytes,
+65,536; 256 refusals of 512 characters, at six bytes for a character that JSON escapes,
+819,200; and an error's type, its message and a verdict's reason, each 4,099 characters
+at six bytes, 73,782. Together 2,187,318 bytes, which leaves two megabytes of the 4 MiB
+(`asked::a_record_of_as_many_requests_as_a_run_sends_is_under_the_limit_by_arithmetic`).
+
+**A record over the limit is not published as it is.** What the executor does not
+bound can still take a record over: an argument's text, and the number of diagnostics
+an action wrote. When the record would be over `RECORD_MAX_BYTES`, the run ends as an
+error, of the type `output` when it handed back artifacts (ADR 0008) and `record` when
+it did not; its record leaves out `models`, `time.durations` and `judge`, and the
+message says how many requests there were. The exchanges are kept, and listed
+(`asked::a_record_that_would_be_over_the_limit_is_not_published_as_it_is`). What
+remains: when the record is still over the limit without them, because the argument or
+the diagnostics alone are, it is published as before and is not read back
+(`docs/carry-over.md`).
+
+### A provider's words are redacted whole
+
+Three texts of a provider are cleaned and cut when a backend makes them (ADR 0006): a
+fault's sentence at 240 characters, another stop reason's word at 64, and the provider's
+id at 128. Redaction finds a secret by its whole value. So a secret that a cut went
+through, or that cleaning changed a character of, was no longer found by the time
+anything was written, and part of it was stored.
+
+A fault and a turn therefore keep the words they were made of, as they were given,
+until a handle has looked. A handle that an executor's context made knows its run's
+secrets, and makes each again before it hands it on or keeps it: the secrets are taken
+out of the whole words, and only then are they cleaned and cut. When what was shaped
+still holds something redaction finds, as cleaning can make it, none of the words is
+kept: the sentence is `the reason is not kept`, the word and the id `not kept`. Words
+over a mebibyte are not kept to be searched, and are shown the same way. This is done
+to every fault of every capability, the handle's own included, and to every turn
+(`asked::a_secret_that_a_cut_of_a_providers_words_goes_through_is_stored_nowhere_and_told_to_no_action`,
+`asked::a_fault_of_any_capability_is_told_to_an_action_with_the_secrets_taken_out_whole`,
+`asked::words_that_cleaning_turns_into_a_secret_or_that_are_too_long_to_search_are_not_kept`).
+
+- **The action is handed the redacted words too.** It could copy a fault's sentence
+  into its own failure, and a cut fragment of a secret would then be in the record.
+  A turn's parts are not cut, and are handed to the action as they came: what is
+  stored of them is redacted where it is stored.
+- **The marker is cleaned with the rest:** where a secret stood, a fault's sentence
+  and a provider's id say `?redacted?`.
+- **A handle made by other code** knows no secrets and changes nothing.
+- **Cut after the last redaction.** Wherever a bounded text is redacted when a record
+  is made, it is cut afterwards: a model's names and the provider's id at 128
+  characters. A text an outcome keeps (ADR 0008) is redacted, cut at 4,096 characters
+  and marked with three dots; when the dots complete a secret they are left off, so
+  what is kept holds none and is never over 4,099 characters
+  (`asked::an_id_that_redaction_lengthens_is_cut_again_and_its_record_is_read_back`,
+  `asked::a_text_whose_cut_and_three_dots_complete_a_secret_is_kept_without_the_dots`).
+
+What was looked at for the same order, and how each stands: a tool call's id and name
+and its arguments are never cut, and are redacted as bytes in the exchange; a refusal's
+sentence is redacted and then cut, and a call any of whose own texts holds a secret is
+recorded with fixed words (ADR 0008); a name given to `Context::offered` goes the same
+way; a diagnostic's name that holds a secret is refused; a verdict's reason and an
+error's message go through the rule above. The errors of the reader of scripts and
+exchanges quote what was read and are not redacted: nothing stores them, and a reader
+has no secrets to look for.
 
 ### What is kept of an exchange with a judge
 
@@ -117,7 +195,40 @@ What "whole" does not cover:
 - **Pixels.** An image is written as its size and its canonical pixel digest. The images
   of a run are its inputs, which the store holds, and what its tools returned.
 - **An opaque part's body** (below).
-- **A secret:** where one stood, the stored text says `[redacted]`.
+- **A secret:** where one stood, the stored text says `[redacted]`. Redaction is of
+  the document's bytes (ADR 0005), so a stored exchange is not promised to be valid
+  JSON or to read back: a secret that begins or ends inside a JSON escape can break
+  the string it stood in (ADR 0005, "Redaction").
+- **A turn the run has no room for, or would not take** (below).
+
+**How much a run stores.** A request may hold 64 MiB of text and the turn that answers
+it 64 MiB more, and writing either as JSON can multiply it: an exchange can be several
+hundred mebibytes as written. Two bounds hold what is stored, as it is stored, with the
+secrets taken out:
+
+- one exchange is at most 160 MiB (`EXCHANGE_MAX_BYTES`), which is what its reader
+  reads: none is written that its own reader would refuse;
+- a run stores at most 256 MiB of exchanges in all (`EXCHANGES_MAX_BYTES`).
+
+What was sent is written before it is sent. When that, with room for an answer that is
+not written, would pass either bound, the request is not sent: the fault is
+`too_large`, and the request is in the record as one that ended so, with a turn that
+names no exchange. When the answer comes and the whole would pass a bound, the turn is
+handed to the action all the same, and the exchange is stored with the turn not
+written (`turn_withheld`): how many parts it had, how many bytes of text, the SHA-256
+digest of that text, and why it stopped. When even that does not fit, as when redaction
+lengthened what was sent, nothing is stored and the record's turn names no exchange
+(`asked::a_request_whose_exchange_the_run_has_no_room_for_is_not_sent_and_the_record_says_so`,
+`asked::an_answer_the_run_has_no_room_for_is_kept_as_its_sizes_and_the_action_still_has_it`).
+
+**A turn the action will not take.** `JudgeHandle::turns_within(bytes)` narrows what a
+handle takes: a turn with more text is the fault `too_large`, the request is recorded
+as ended so, and the exchange is stored with the turn not written. A loop sets it to
+what it will read, so that a turn it would refuse is not kept either
+(`asked::a_turn_over_the_limit_its_handle_was_given_is_a_fault_and_is_stored_as_its_sizes`).
+
+So the most a run stores of its exchanges is 256 MiB. All of it is held in memory until
+the run ends, with, while a request is open, what was sent written once more.
 
 **The record's `judge` group is a bounded summary.** It is a list, as `steps` is, each
 entry under the word that says what it is:
@@ -143,7 +254,9 @@ harness's decision, and the handle cannot know it. The loop says so:
 `JudgeHandle::exclude_last` marks the answer to the last request the run sent a judge, with
 the reason, in the baseline format's words (`docs/baseline/transcript.md`): `truncated`,
 `refusal`, `no_call`. The turn is whole in its exchange either way. It is for a loop that
-sends one request at a time; two loops in one run would mark each other's.
+sends one request at a time; two loops in one run would mark each other's. It marks
+the entry of the last request whatever that came to: one that ended in a fault is
+marked too, though no turn came back to leave out.
 
 The schema and the types refuse the same records, with what the schema cannot say (that
 there is one duration for each request, in order; that a turn is of a request to a judge;
@@ -161,6 +274,12 @@ the part nor safe to send. So the body is not written at all: what a run stores 
 opaque part is its adapter, the SHA-256 digest of its body and its length in bytes
 (`opaque_withheld`). In memory the part stays whole, and the judge is sent it back as it
 came (`asked::an_opaque_parts_body_is_sent_back_whole_and_is_never_stored`).
+
+**What the digest gives away.** It is a plain SHA-256 of the body, with no key. A body
+may hold a secret, and whoever can read the store and guess the whole body can confirm
+the guess by the digest. A body is long and a provider's own, so a guess of all of it
+is not expected; the digest of a turn that was not written is of the same kind. A keyed
+digest is not used because nothing would hold the key that the store's reader does not.
 
 What follows: a stored exchange that holds an opaque part cannot be read back into a
 conversation and sent again, and reading says so (`Unread::Withheld`). A run that is
@@ -248,8 +367,26 @@ called, added when each child's end is published. An action has no way to add to
 (`scope::a_run_that_froze_its_calls_calls_no_other_action_and_each_refusal_is_in_its_record`,
 `scope::a_run_that_froze_its_calls_gives_a_call_only_what_it_was_given_or_its_own_calls_committed`).
 
-A run that freezes nothing calls as before. Only the outputs of a run's own children are
-readable, not those of runs further down. Freezing binds the calls an action makes
+**A preparation is held to it as well.** `prepare` through the run's executor is
+refused as the call would be, with the same refusal and the same sentence, and
+otherwise is the executor's own: so it says nothing of whether an action is one of the
+build, or whether the store holds an artifact, that the call would not. It is no call,
+and is not recorded. And a call to start a run is held to the list before it takes a
+place among the started runs, so a full count does not answer in the list's place
+(`scope::a_preparation_from_inside_a_run_that_froze_its_calls_says_no_more_than_a_call_would`,
+`scope::a_call_to_start_what_a_run_did_not_freeze_is_told_so_though_no_place_is_free`).
+
+**What a run froze binds every run under it.** A run that a frozen run called, and
+every run under that one, calls only actions that are on the list of each run above it
+that froze one, and its own when it froze one; and from the first frozen run down,
+each gives a call only what it was given itself or what its own calls committed. So a
+listed action cannot be used to call, or to read, what the run that listed it could
+not. A list of its own narrows what a run may call and widens nothing. What this
+costs: an action that is put on a list must have every action it calls on that list
+too (`scope::what_a_run_froze_binds_every_run_under_it`).
+
+A run that freezes nothing, under no run that did, calls as before. Only the outputs of
+a run's own children are readable, not those of runs further down. Freezing binds the calls an action makes
 through the executor; what the action itself reads through `Context::store` is not held
 to it: the action is this build's code, and the judge is not.
 
@@ -263,13 +400,15 @@ to it: the action is this build's code, and the judge is not.
 - A run's record says what it asked of which model and how long each request took, with
   no code in the action. A handle made by other code records nothing, as it counts
   nothing.
-- `Refusal` has `NotOffered` and `NotReadable`; `RefusalKind` has 23 kinds.
+- `Refusal` has `NotOffered` and `NotReadable`; `RefusalKind` has 27 kinds.
+- A backend's declaration is refused when one of its three names is over 128
+  characters or is not plain ASCII. A fault and a turn hold the words they were made
+  of until a handle has looked, and two are equal whatever of those they still hold.
 - `Produced` holds a verdict beside its artifacts.
 - A diagnostic name that starts with `exchange-` is the executor's.
 - Each exchange holds the whole request, so what a run keeps grows with the square of
-  its turns, and nothing bounds that but the 1,024 requests a run sends and the 64 MiB
-  a request may hold: a loop bounds its own turns. Diagnostics are held in memory until
-  the run ends, as before (`docs/carry-over.md`).
+  its turns, up to the 256 MiB a run stores; a loop bounds its own turns. Diagnostics
+  are held in memory until the run ends, as before (`docs/carry-over.md`).
 - A run that sends all 1,024 requests to a judge ends with 1,024 exchanges to publish:
   that took six seconds on the test kit's disk when it was measured, and no test runs it
   at that size any more.

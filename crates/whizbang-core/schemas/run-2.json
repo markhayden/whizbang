@@ -144,9 +144,9 @@
         "required": ["capability", "backend", "model", "version", "device", "cached", "ended"],
         "properties": {
           "capability": { "enum": ["segment", "fill", "judge"] },
-          "backend": { "type": "string" },
-          "model": { "type": "string" },
-          "version": { "type": "string" },
+          "backend": { "type": "string", "maxLength": 128 },
+          "model": { "type": "string", "maxLength": 128 },
+          "version": { "type": "string", "maxLength": 128 },
           "device": { "type": "null" },
           "cached": { "type": "null" },
           "ended": { "enum": ["answered", "cancelled", "unsupported", "credential", "rejected", "unavailable", "timed_out", "malformed", "too_large", "unwound"] }
@@ -191,7 +191,7 @@
               "judge": { "const": "turn" },
               "request": { "type": "integer", "minimum": 0 },
               "exchange": { "type": ["string", "null"], "minLength": 1, "maxLength": 76 },
-              "max_output_tokens": { "type": "integer", "minimum": 0 },
+              "max_output_tokens": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
               "messages": { "type": "integer", "minimum": 0 },
               "stop": { "enum": ["end_turn", "tool_use", "max_tokens", "refusal", "other", null] },
               "tool_calls": { "type": "integer", "minimum": 0 },

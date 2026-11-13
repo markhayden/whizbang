@@ -310,6 +310,10 @@ impl FillHandle {
     /// declares none. A fill of other dimensions than the request's image is a
     /// malformed answer.
     pub fn fill(&self, request: &FillRequest) -> Result<Painted, Fault> {
+        self.bounds.told(self.asked(request))
+    }
+
+    fn asked(&self, request: &FillRequest) -> Result<Painted, Fault> {
         self.bounds.before_sending(
             self.declaration(),
             request.prompt.as_ref().map(|_| feature::PROMPT),

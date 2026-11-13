@@ -75,7 +75,8 @@ pub enum Unread {
     Unfit { at: usize, why: Unfit },
     /// A word that names nothing: a fault's kind.
     Unknown { what: &'static str },
-    /// An opaque part that was written without its body: it cannot be made again.
+    /// An opaque part that was written without its body, or a turn that was not
+    /// written: it cannot be made again.
     Withheld,
     /// An image whose pixels the caller does not have.
     NoPicture { pixels: PixelDigest },
@@ -99,9 +100,10 @@ impl std::fmt::Display for Unread {
             }
             Unread::Unfit { at, why } => write!(f, "at {at}: {why}"),
             Unread::Unknown { what } => write!(f, "{what} is not one there is"),
-            Unread::Withheld => {
-                f.write_str("an opaque part was written without its body, and cannot be read")
-            }
+            Unread::Withheld => f.write_str(
+                "an opaque part was written without its body, or a turn was not written, \
+                 and cannot be read",
+            ),
             Unread::NoPicture { pixels } => write!(f, "no picture was given for {pixels}"),
         }
     }
@@ -212,6 +214,14 @@ struct FaultWire {
 enum AnswerWire {
     Turn(TurnWire),
     Fault(FaultWire),
+    /// A turn that is not written: how many parts it had, how many bytes of text, the
+    /// digest of that text, and why it stopped.
+    TurnWithheld {
+        parts: u64,
+        bytes: u64,
+        digest: Digest,
+        stop: StopWire,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -279,17 +289,43 @@ fn parts_out(parts: &[Part], opaque: Keep) -> Vec<PartWire> {
     parts.iter().map(part).collect()
 }
 
+fn stop_out(turn: &Turn) -> StopWire {
+    match turn.stop() {
+        StopReason::EndTurn => StopWire::EndTurn,
+        StopReason::ToolUse => StopWire::ToolUse,
+        StopReason::MaxTokens => StopWire::MaxTokens,
+        StopReason::Refusal => StopWire::Refusal,
+        StopReason::Other(word) => StopWire::Other(word.clone()),
+    }
+}
+
+/// A turn as an exchange holds it when the turn itself is not written: its sizes, the
+/// SHA-256 digest of its text (each text, each opaque body and each call's arguments
+/// as written, in order, with nothing between them), and why it stopped.
+fn withheld_out(turn: &Turn) -> AnswerWire {
+    use sha2::{Digest as _, Sha256};
+    let mut hash = Sha256::new();
+    for part in turn.parts() {
+        match part {
+            Part::Text(text) => hash.update(text.as_bytes()),
+            Part::Opaque(part) => hash.update(part.body().as_bytes()),
+            Part::ToolCall(call) => hash.update(call.arguments().to_string().as_bytes()),
+            _ => {}
+        }
+    }
+    AnswerWire::TurnWithheld {
+        parts: turn.parts().len() as u64,
+        bytes: turn.text_bytes(),
+        digest: Digest::from_bytes(hash.finalize().into()),
+        stop: stop_out(turn),
+    }
+}
+
 fn answer_out(answer: &Result<Turn, Fault>, opaque: Keep) -> AnswerWire {
     match answer {
         Ok(turn) => AnswerWire::Turn(TurnWire {
             parts: parts_out(turn.parts(), opaque),
-            stop: match turn.stop() {
-                StopReason::EndTurn => StopWire::EndTurn,
-                StopReason::ToolUse => StopWire::ToolUse,
-                StopReason::MaxTokens => StopWire::MaxTokens,
-                StopReason::Refusal => StopWire::Refusal,
-                StopReason::Other(word) => StopWire::Other(word.clone()),
-            },
+            stop: stop_out(turn),
             usage: turn.usage().map(|usage| UsageWire {
                 input_tokens: usage.input_tokens(),
                 output_tokens: usage.output_tokens(),
@@ -333,6 +369,48 @@ pub fn write_exchange(
     answer: &Result<Turn, Fault>,
     opaque: Keep,
 ) -> Vec<u8> {
+    head(place, request, opaque).with(&answer_out(answer, opaque))
+}
+
+/// An exchange written as far as its answer: everything that was sent. A handle writes
+/// it before it sends, so that it knows what the exchange will take, and adds the
+/// answer when it has one.
+pub(crate) struct Head(String);
+
+impl Head {
+    /// How many bytes the exchange takes before its answer.
+    pub(crate) fn len(&self) -> u64 {
+        self.0.len() as u64
+    }
+
+    fn with(&self, answer: &AnswerWire) -> Vec<u8> {
+        let answer = serde_json::to_string(answer).unwrap_or_default();
+        format!("{},\"answer\":{answer}}}\n", self.0).into_bytes()
+    }
+
+    /// The exchange, with this answer, as a run stores it.
+    pub(crate) fn answered(&self, answer: &Result<Turn, Fault>) -> Vec<u8> {
+        self.with(&answer_out(answer, Keep::Digests))
+    }
+
+    /// The exchange, with this turn as its answer and the turn itself not written.
+    pub(crate) fn unwritten(&self, turn: &Turn) -> Vec<u8> {
+        self.with(&withheld_out(turn))
+    }
+}
+
+#[derive(Serialize)]
+struct HeadWire {
+    exchange: String,
+    place: u64,
+    system: String,
+    messages: Vec<MessageWire>,
+    tools: Vec<ToolWire>,
+    max_output_tokens: u32,
+}
+
+/// What was sent, written: the exchange up to its answer.
+pub(crate) fn head(place: usize, request: &JudgeRequest, opaque: Keep) -> Head {
     let messages = request.messages().iter().map(|message| MessageWire {
         role: match message.role() {
             Role::User => RoleWire::User,
@@ -346,15 +424,18 @@ pub fn write_exchange(
         description: tool.description().to_owned(),
         schema: tool.schema().clone(),
     });
-    bytes_of(&ExchangeWire {
+    let mut written = serde_json::to_string(&HeadWire {
         exchange: EXCHANGE.to_owned(),
         place: place as u64,
         system: request.system().to_owned(),
         messages: messages.collect(),
         tools: tools.collect(),
         max_output_tokens: request.controls().max_output_tokens(),
-        answer: answer_out(answer, opaque),
     })
+    .unwrap_or_default();
+    // The object is left open: the answer is its last field.
+    written.pop();
+    Head(written)
 }
 
 /// The document, when the bytes are within `limit` and are of this kind and version.
@@ -372,20 +453,63 @@ fn document<'de, T: Deserialize<'de>>(
     }
     let malformed = |error: serde_json::Error| Unread::Malformed(error.to_string());
     // The kind is looked at first, by itself: another version has another shape.
-    let first: serde_json::Map<String, Value> = serde_json::from_slice(bytes).map_err(malformed)?;
-    match first.get(field) {
-        Some(Value::String(found)) if found == kind => {}
-        found => {
-            let found = found.and_then(Value::as_str).unwrap_or("none");
-            return Err(Unread::OtherVersion {
-                found: found.chars().take(64).collect(),
-            });
-        }
+    // Nothing else of the document is kept by this look: every other field is passed
+    // over as it is parsed.
+    let found = peek(bytes, field).map_err(malformed)?;
+    if found.as_deref() != Some(kind) {
+        let found = found.as_deref().unwrap_or("none");
+        return Err(Unread::OtherVersion {
+            found: found.chars().take(64).collect(),
+        });
     }
     let mut reader = serde_json::Deserializer::from_slice(bytes);
     let document = T::deserialize(&mut reader).map_err(malformed)?;
     reader.end().map_err(malformed)?;
     Ok(document)
+}
+
+/// The text under `field` at the top of the document, when there is one: none when
+/// the field is not there or holds something that is no text.
+fn peek(bytes: &[u8], field: &str) -> Result<Option<String>, serde_json::Error> {
+    use serde::de::{IgnoredAny, MapAccess, Visitor};
+
+    /// A text, kept, or anything else, passed over.
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Found {
+        Text(String),
+        Other(IgnoredAny),
+    }
+
+    struct Top<'a>(&'a str);
+
+    impl<'de> Visitor<'de> for Top<'_> {
+        type Value = Option<String>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("a JSON object")
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Option<String>, A::Error> {
+            let mut found = None;
+            while let Some(name) = map.next_key::<String>()? {
+                if name == self.0 {
+                    found = match map.next_value::<Found>()? {
+                        Found::Text(text) => Some(text),
+                        Found::Other(_) => None,
+                    };
+                } else {
+                    map.next_value::<IgnoredAny>()?;
+                }
+            }
+            Ok(found)
+        }
+    }
+
+    let mut reader = serde_json::Deserializer::from_slice(bytes);
+    let found = serde::Deserializer::deserialize_map(&mut reader, Top(field))?;
+    reader.end()?;
+    Ok(found)
 }
 
 /// Where a picture comes from when a document names one.
@@ -466,6 +590,7 @@ fn answer_in(answer: AnswerWire, at: usize) -> Result<Result<Turn, Fault>, Unrea
             let turn = Turn::new(parts, stop, usage, turn.request_id.as_deref());
             Ok(turn.map_err(|why| Unread::Unfit { at, why })?)
         }
+        AnswerWire::TurnWithheld { .. } => return Err(Unread::Withheld),
         AnswerWire::Fault(fault) => {
             let kind = FaultKind::ALL
                 .into_iter()

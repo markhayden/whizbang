@@ -229,7 +229,8 @@ an executor that wrote a larger one would report a run whose repeat is then answ
 type, its message, a panic's message and the reason a run was invalid are each kept to
 their first 4,096 characters (`MESSAGE_LIMIT`), with three dots after them when there
 were more. The secrets are taken out first, from the whole text, and looked for once
-more after the cut. The outcome that is returned and the record hold the same cut text
+more after the cut. When the three dots themselves complete a secret they are left
+off, so that what is kept is never longer than the limit and three dots (ADR 0009). The outcome that is returned and the record hold the same cut text
 (`commit::what_an_action_or_a_panic_says_is_cut_and_its_record_is_read_back`,
 `commit::a_secret_across_the_place_a_message_is_cut_is_taken_out_before_the_cut`).
 
