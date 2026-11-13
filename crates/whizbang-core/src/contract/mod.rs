@@ -17,8 +17,9 @@
 //! asked for in the admission's own step. And the commit step (ADR 0008): an action
 //! hands back artifacts ([`Produced`]), and the executor publishes them with the run's
 //! completed status in the one publication that ends the run; a panic in an action ends
-//! its run as an error. The ledger itself and settlement are not here, and neither are
-//! nested calls and cancellation.
+//! its run as an error. And asking after a run by its id: [`Executor::start`],
+//! [`Executor::status`] and [`Executor::wait`]. The ledger itself and settlement are not
+//! here, and neither are nested calls and cancellation.
 
 mod call;
 mod context;
@@ -26,6 +27,7 @@ mod descriptor;
 mod engine;
 mod journal;
 pub mod ledger;
+mod live;
 mod prepare;
 pub mod record;
 mod redact;
@@ -43,7 +45,10 @@ pub use descriptor::{
     ActionDescriptor, Argument, Capability, Count, DescriptorError, Draft, InputPort, Kind,
     OutputPort, PortRef, Requirement, Value, ValueType, When,
 };
-pub use engine::{ConfigSource, Engine, Executor, WHIZBANG_VERSION};
+pub use engine::{
+    BoundRefused, ConfigSource, Engine, Executor, STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT,
+    Spawn, WHIZBANG_VERSION,
+};
 pub use journal::{Clock, JournalLine, SystemClock, journal_bytes, read_journal};
 pub use ledger::{
     Declined, LEDGER_NAME_LIMIT, Ledger, RESERVATION_RECORD, RESERVATIONS_PREFIX, Reservation,
@@ -62,6 +67,6 @@ pub use registry::{Action, Failure, Produced, RegistrationError, Registry};
 pub use request::{
     ADMISSION_RECORD, ADMITTED_NAME, Admission, Answer, ENDING_RECORD, Earlier, Ending,
     REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, REQUESTS_PREFIX, Request, RequestId,
-    RequestRecordError, RunState, request_fingerprint,
+    RequestRecordError, RunState, Watched, request_fingerprint,
 };
 pub use run::{Committed, Finished, MESSAGE_LIMIT, Outcome, RUN_ID_LIMIT, RunId};

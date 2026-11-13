@@ -1114,7 +1114,7 @@ fn publications_from_several_threads_each_get_a_generation_and_none_is_lost() {
     let root = root(&dir);
     let fs = Arc::new(ShimFs::new());
     let store = Store::open(&root, fs.clone()).unwrap();
-    std::thread::scope(|scope| {
+    whizbang_testkit::threads::scope(|scope| {
         for thread in 0..THREADS {
             let store = &store;
             scope.spawn(move || {

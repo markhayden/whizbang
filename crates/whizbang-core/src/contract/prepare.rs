@@ -489,6 +489,14 @@ pub enum CallError {
     Ledger {
         why: String,
     },
+    /// The run was admitted to be started, and no thread could be made for its action:
+    /// `why` is the system's sentence. This is not a judgement of the call. The run is
+    /// in the store, ended as an error that says the same, unless that end could not
+    /// be written; nothing works on it, and nobody waits for it.
+    NotStarted {
+        run: super::RunId,
+        why: String,
+    },
 }
 
 impl CallError {
@@ -496,7 +504,10 @@ impl CallError {
     pub fn refusal(&self) -> Option<&Refusal> {
         match self {
             CallError::Refused(refusal) => Some(refusal),
-            CallError::Store(_) | CallError::Record { .. } | CallError::Ledger { .. } => None,
+            CallError::Store(_)
+            | CallError::Record { .. }
+            | CallError::Ledger { .. }
+            | CallError::NotStarted { .. } => None,
         }
     }
 }
@@ -519,6 +530,11 @@ impl std::fmt::Display for CallError {
                 )
             }
             CallError::Ledger { why } => write!(f, "the ledger failed: {why}"),
+            CallError::NotStarted { run, why } => write!(
+                f,
+                "the run {run} was admitted and could not be started: no thread could be \
+                 made for its action: {why}"
+            ),
         }
     }
 }
@@ -553,8 +569,17 @@ pub enum Refusal {
     /// The call is ready, and this executor was built to read its store: it prepares
     /// calls and runs none.
     ReadOnly,
+    /// A run was asked after by its id, and the store holds no run of that id: none
+    /// was made, or it was deleted.
+    NoSuchRun { run: super::RunId },
     /// A call from inside a running action. This build does not nest calls yet.
     NoNestedCalls,
+    /// The request was to be started ([`super::Executor::start`]), and the store's
+    /// writer already has `bound` started runs that are not over: as many as this
+    /// executor runs at once, each on a thread of its own. No run was made, nothing was
+    /// reserved, nothing was written, and the request's id is not taken by this
+    /// request. A run that is over makes room.
+    TooManyStarted { bound: usize },
     /// The request's id was admitted before for another request, which made `run`. An
     /// id is one request's: nothing was prepared and nothing ran.
     Conflict { request: RequestId, run: RunId },
@@ -624,8 +649,14 @@ impl std::fmt::Display for Refusal {
             Refusal::ReadOnly => f.write_str(
                 "the call is ready, and this executor only reads its store: it runs nothing",
             ),
+            Refusal::NoSuchRun { run } => write!(f, "the store holds no run {run}"),
             Refusal::NoNestedCalls => f.write_str(
                 "an action cannot call another action yet: this build does not nest calls",
+            ),
+            Refusal::TooManyStarted { bound } => write!(
+                f,
+                "the request was not started: {bound} started runs are not over yet, and \
+                 this executor runs no more than that at once"
             ),
             Refusal::Conflict { request, run } => write!(
                 f,

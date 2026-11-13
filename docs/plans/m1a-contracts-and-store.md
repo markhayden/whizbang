@@ -298,7 +298,11 @@ is ticked by the pull request that makes it true.
   than its entry says. That covers the files under `objects/` only: `CURRENT`, the
   generation files and the lock file are still read whole (`docs/carry-over.md`, task
   A12).
-- **Part 2, cancellation, status and progress:** boxes 1 and 4, and of box 3 that a
+- **Part 2, in two pull requests,** because the first half alone came to about a
+  thousand lines. First, status and progress: `start`, `status` and `wait` on the
+  executor, one table of open runs, and of "Done when" the caller that disconnects and
+  returns, and the second caller reading a status. Then cancellation, with everything
+  else listed here. Together: boxes 1 and 4, and of box 3 that a
   cancellation is accepted or comes too late. Status and cancel answered while an action
   is busy, by a second caller; progress events; a run found by its id after its caller
   left; a fake capability that blocks at a named barrier and sees the cancellation; a

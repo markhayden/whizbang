@@ -119,6 +119,18 @@ impl Executor for Nothing {
     fn request_id(&self, _: &str) -> Result<whizbang_core::contract::RequestId, CallError> {
         Err(Refusal::NoNestedCalls.into())
     }
+
+    fn start(&self, _: &Request) -> Result<Answer, CallError> {
+        Err(Refusal::NoNestedCalls.into())
+    }
+
+    fn status(&self, _: &RunId) -> Result<whizbang_core::contract::Watched, CallError> {
+        Err(Refusal::NoNestedCalls.into())
+    }
+
+    fn wait(&self, _: &RunId) -> Result<whizbang_core::contract::Watched, CallError> {
+        Err(Refusal::NoNestedCalls.into())
+    }
 }
 
 #[test]

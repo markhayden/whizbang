@@ -326,7 +326,7 @@ fn the_fakes_are_shared_across_threads_and_count_every_request() {
     let segmenter = Arc::new(FakeSegmenter::new().finding("a dog", [1, 1, 3, 3]));
     let fill = FillHandle::new(filler.clone(), now());
     let segment = SegmentHandle::new(segmenter.clone(), now());
-    std::thread::scope(|scope| {
+    whizbang_testkit::threads::scope(|scope| {
         for _ in 0..8 {
             let (fill, segment) = (fill.clone(), segment.clone());
             scope.spawn(move || {
@@ -356,7 +356,7 @@ fn the_fake_judge_gives_each_of_many_simultaneous_requests_one_turn_of_its_scrip
     let judge = Arc::new(FakeJudge::scripted(script));
     let handle = JudgeHandle::new(judge.clone(), now());
     let answers = std::sync::Mutex::new(Vec::new());
-    std::thread::scope(|scope| {
+    whizbang_testkit::threads::scope(|scope| {
         for thread in 0..8 {
             let (handle, answers) = (handle.clone(), &answers);
             scope.spawn(move || {

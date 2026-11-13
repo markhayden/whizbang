@@ -2,6 +2,15 @@
 
 Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-12, with the second pull request of task A7. Added: "Status, waiting,
+and a run that was started", which is built. Changed: the paragraph that says which part
+builds what; what this record does not decide yet.
+Amended: 2026-11-13, in the same pull request, after its review. Added: "How many runs
+are started at once" and a run whose thread could not be made, under "Status, waiting,
+and a run that was started"; what a wait is told of a run that is deleted; when a wait
+answers at the end of a run, and how long a run stays in the table for that; what keeps
+a test from making threads without end. Changed: a progress message is cut as the other
+texts are.
 Spec: section 3, "The execution contract", "What a run publishes", "Storage" and "What
 every run records"
 
@@ -33,8 +42,9 @@ What there was to build it on:
 
 Task A7 of the plan for checkpoint 1A is delivered in parts, and this record is written
 with them. **The first part, which this record came with, builds** the commit step and
-what a panic does. The rule for a cancellation and the commit step, status and cancel
-while a run executes, nested calls with their allowances, and what makes a parent
+what a panic does. **The second builds** a run's status and progress while it executes,
+waiting for a run, and starting one without waiting. The rule for a cancellation and the
+commit step, cancel itself, nested calls with their allowances, and what makes a parent
 terminal are the later parts': each amends this record with the code that builds it, and
 until then nothing here says how they work. Rascal's rule is restated with the
 cancellation, in that amendment; nothing cancels a run yet.
@@ -224,6 +234,226 @@ cut. None of that is written to the store, and the executor does not change the 
 which belongs to the process. A door that runs actions must install its own hook, one
 that prints nothing an action said (`docs/carry-over.md`).
 
+### Status, waiting, and a run that was started
+
+The code is in `crates/whizbang-core/src/contract/` (`engine.rs`, `live.rs`) and
+`crates/whizbang-core/src/store/mod.rs`; the tests are in
+`crates/whizbang-core/tests/it/contract/watch.rs` and `store/runs.rs`.
+
+**Three more methods of the executor.** `start` takes a request as `request` does, and
+answers once the run is admitted, durably, with `Answer::Started` and the run's id; the
+action runs on a thread of its own, one for each started run. `status` takes a run's id
+and says where the run is now, as a `RunState` (ADR 0007), with the progress events the
+run has reported so far when it executes in this process. `wait` is `status` once
+nothing in this process works on the run any more. `submit` and `request` still run the
+action on the caller's thread and return when the run is over; a run they made is asked
+after in the same way, by another caller.
+
+| The run | `status` and `wait` answer |
+|---|---|
+| Ended, in the store | `Ended`, with the outcome, from its record; no events: they are in its journal |
+| Executing in this process | `status`: `NotEnded { here: true }`, with its events so far. `wait`: waits, then answers as for a run that ended |
+| Its end could not be written | `NotEnded { here: true }`, with its events; `wait` does not wait |
+| Was to be started, and no thread could be made for it | `Ended`, as an error of the type `start`; the caller that started it was handed `CallError::NotStarted` |
+| Admitted by a process that is gone | `NotEnded { here: false }`; `wait` does not wait: nothing will end it |
+| Not in the store | The refusal `NoSuchRun`: it was never made, or it was deleted |
+
+An executor that only reads a store says `here: false` of every run that has not ended,
+as it does for a repeat. A run is asked after by any executor over the same store value:
+the second caller in the first of these tests has an executor of its own
+(`watch::a_second_caller_reads_the_status_and_the_progress_of_a_run_whose_action_is_busy`,
+`watch::a_caller_that_starts_a_run_and_leaves_finds_it_again_by_its_id`,
+`watch::waiting_for_a_run_that_no_process_will_end_returns_and_says_so`).
+
+**One table of open runs, which is the store's.** The store already kept the runs its
+writer made and has open (`Store::made_here`, ADR 0007). That table now holds, for each
+run, what its maker attached to it (`Publication::attach`, `Store::attached`), and the
+executor attaches the run's live state: its events, and whether anything still works on
+it. There is no second table. The store's rule is the one rule: a run is in the table
+from just before the rename that makes it visible, is taken out again if that rename
+fails, and leaves only once the generation that closes or deletes it is visible
+(`store::runs::what_is_attached_to_a_run_is_had_while_the_writer_has_the_run_open_and_no_longer`).
+The publication that closes a run can ask that the run stay in the table past that,
+until its closer lets it go (`Publication::keep_until_let_go`, `Store::let_go`): the
+executor asks, for every run it ends, and lets the run go when it is done with it ("A
+status and a wait at the end of a run", below). A deletion takes a run out whatever
+was asked
+(`store::runs::a_closed_run_that_was_kept_for_its_closer_stays_in_the_table_until_it_is_let_go`).
+
+**How a status is answered: the store, the table, the store.**
+
+1. The current generation is read. No such run: `NoSuchRun`. A run with its record:
+   `Ended`.
+2. Otherwise the run was admitted and had no record. The table is asked. Found: the run
+   is open in this process.
+3. Not found: the current generation is read again, and what it says is the answer; a
+   run that still has no record is `NotEnded { here: false }`.
+
+**Why the last look is conclusive.** A run this process made was in the table before it
+was visible, so the first look could not have seen it before the table held it. It
+leaves the table only after its closing or its deletion is visible. So when step 2 does
+not find it, either this process never made it, and since one process writes a store
+nobody is working on it; or it has left the table, and then its end or its deletion was
+visible before step 2, and is in the generation step 3 reads. Step 3 cannot see a run
+of this process that is still open.
+
+Three tests stop at the moments this could go wrong. Straight after the rename that
+makes an admission visible, a status says `here: true`
+(`watch::a_status_asked_the_moment_a_run_becomes_visible_says_it_is_executing_here`).
+Straight after the rename that makes an end visible, while the store still has the run
+in its table, a status says `Ended`
+(`watch::a_status_asked_the_moment_a_runs_end_becomes_visible_says_it_ended`). And a
+status whose run ends between its first look and its look at the table is told `Ended`,
+not that no process will end the run
+(`watch::a_status_that_races_the_end_of_its_run_is_not_told_the_run_will_never_end`).
+
+**What is held, and for how long.** A status takes the table's lock to read one entry,
+and the run's own lock to copy its events or read one flag; neither is held across a
+file-system call, and the store's publishing step holds neither while it writes. So a
+status is answered while another run's end, or the same run's, is being published: a
+test stops a publication after its pointer is replaced and before its last sync, and a
+second thread reads the status of that run and of another that is executing
+(`watch::a_second_caller_reads_the_status_of_a_run_while_its_end_is_being_published`).
+
+**A status and a wait at the end of a run.** A run's end is visible in the store before
+the executor is done with the run: the end publication's last sync comes after the
+rename that shows it, and a started run's thread holds its place among the started runs
+until that publication has returned. The two questions are answered differently there.
+
+- `status` says what the store says: `Ended`, with the outcome, from the moment the end
+  is visible.
+- `wait` answers when the executor is done. Having found the end in the store, it looks
+  for the run in the table; found there, it waits for the executor, and not found
+  there, the executor is done. That is why the run is kept in the table past the
+  visibility of its end. The executor lets go in a fixed order: the run's place, then
+  the run's entry in the table, and only then are those who wait told. So whoever waited
+  for a started run finds its place free, and a `start` straight after the `wait` is not
+  refused for that run.
+
+One test stops a run at its end publication's last sync, with a bound of one: a status
+says `Ended`, a `start` is refused, a caller that waits is still waiting, and once the
+run goes on the wait answers and the `start` after it is admitted
+(`started::a_wait_for_a_started_run_answers_only_when_its_place_is_free`). The order of
+letting go is held by a test of its own, which holds the lock a waiter is told under
+while the executor lets go
+(`contract::engine::tests::a_runs_place_is_free_before_whoever_waits_for_the_run_is_told`).
+For a run that `submit` or `request` ran there is no place, and a `wait` by another
+caller answers when that call has all but returned.
+
+**A run that is deleted while someone waits.** A `wait` that began before the run was
+deleted is waiting for the run's action, and answers when the action has come back and
+the executor is done: with `NoSuchRun`, since the end of a deleted run is refused and
+the run is not made again. A `wait` that begins after the deletion is visible answers at
+once, with `NoSuchRun`. Deleting a run does not stop its action.
+
+**A run whose end was refused stays in the table.** The store takes a run out of its
+table of open runs when the generation that closes or deletes it is visible. A run
+whose end publication was refused was never closed, so it stays there, with its live
+state and its events, until it is deleted or the store value is dropped. That is what
+lets `status` say `here: true` of it and show its events; what it costs is the memory
+of those events for the life of the store value.
+
+**How many runs are started at once.** Each started run has a thread, and a thread is
+not free: a caller that started runs without end would take the process, and with it
+the machine, down. So `start` is bounded.
+
+- *The bound.* An executor starts a run only while fewer than its bound of started runs
+  are live: 64 unless it was built otherwise (`Engine::with_started_bound`,
+  `STARTED_RUNS_DEFAULT`). A bound is at least 1 and at most 256
+  (`STARTED_RUNS_CEILING`); any other is refused when it is set (`BoundRefused`), so no
+  one executor can be told to start thousands.
+- *Where it is counted.* In the store value, beside its table of open runs
+  (`Store::start_place`): the count is the store writer's, not an executor's. Two
+  executors over one store value count the same runs, each against its own bound.
+- *What that leaves.* The bound is of one store value. A process that opens several
+  stores to write has a count for each, so it can hold as many started runs as it has
+  stores, times the bound: with the ceiling, 256 for each. Nothing bounds how many
+  stores a process opens. The binary opens one.
+- *When a place is taken, and what a refusal leaves.* Before anything else: before the
+  request's id is looked up, before the call is prepared, before admission. A request
+  over the bound is refused with `Refusal::TooManyStarted`, which carries the bound and
+  nothing the caller wrote, on the caller's thread and at once. No run was made,
+  nothing was reserved, nothing was written to the store, and the request's id is not
+  taken. One case is not refused: a request whose id was admitted before starts
+  nothing, and is answered with the run it made, as always.
+- *When a place is given back.* When the executor is done with the run, by a guard that
+  is dropped however that comes about: the action came back, the action panicked, the
+  end publication was refused, the admission failed after the place was taken, the
+  thread could not be made. It is given back before whoever waits for the run is told
+  that it is over, and a `wait` does not answer before that ("A status and a wait at the
+  end of a run", above), so a caller that waited for a run can start the next.
+- *What it does not cover.* `submit` and `request` run the action on the caller's own
+  thread, take no place and are never refused for this: how many of those run at once
+  is the caller's doing. A call from inside an action has no rule yet; nested calls get
+  their own in the next part.
+
+The tests hold two or three runs at barriers, never more
+(`started::a_start_over_the_bound_is_refused_and_writes_nothing_and_a_run_that_ends_makes_room`,
+`started::two_executors_over_one_store_count_the_same_started_runs`,
+`started::a_bound_of_none_or_over_the_ceiling_is_refused_when_it_is_set`,
+`started::a_started_run_whose_action_panics_gives_its_place_back`,
+`started::a_started_run_whose_end_the_store_refuses_gives_its_place_back`,
+`started::a_request_that_is_not_admitted_after_its_place_was_taken_gives_the_place_back`).
+
+**What keeps a test from making threads without end.** The bound is the product's. The
+tests of this repo are held three ways, because a probe written for the review of this
+part parked threads until the system refused one, and the machine went down.
+
+- *Before a thread is made.* A test makes a thread through `whizbang_testkit::threads`
+  (`spawn`, `scope`), which counts the live threads it made in the process and panics,
+  in the caller, at the 65th: nothing is asked of the system. `clippy.toml` refuses
+  `std::thread::spawn`, `std::thread::scope` and a builder's `spawn` everywhere in the
+  workspace, tests included, and is allowed in two places: that helper, and the
+  executor's own spawner (`spawn_thread`), which the bound above holds. `just check`
+  lints every target, so a test that makes a thread another way fails it
+  (`scripts/tests/test-thread-lint.sh`, on a fixture). This is the stop that works
+  against a loop: a loop of raw spawns makes tens of thousands of threads a second.
+- *From outside, five times a second.* Every recipe and script that runs tests runs them
+  through `scripts/thread-guard.sh`, which counts the threads of every process under the
+  command and kills the whole tree when one process holds more than 300, or when it can
+  no longer count. It catches a process that grows slowly, within about a fifth of a
+  second. It cannot stop a tight loop in time, and it does not see a process whose
+  parent has ended.
+- *By the system, on Linux.* The guard lowers the number of processes and threads the
+  command's user may hold to what the user held and 4,096 more. macOS has no limit of
+  that kind that counts threads.
+
+A thread made by the product's own spawner in a test is a started run, and is held by
+the bound, which the tests set to 1 or 2. A thread made by something a test depends on,
+outside the workspace, is seen by the guard alone.
+
+**A thread that cannot be made.** The thread is made with a name (`run <id>`) through
+`std::thread::Builder`, which hands back the system's refusal where `std::thread::spawn`
+panics. By then the run is admitted, durably. So the executor ends it there, on the
+caller's thread, through the publication that ends any run: as an error of the type
+`start` whose message says that the run was admitted and could not be started. The
+caller is handed `CallError::NotStarted`, with the run and the system's sentence: not a
+refusal, since it is no judgement of the call. Nothing waits for that run: a `wait`
+answers `Ended`, and a repeat of the request is answered with the error. If that end
+cannot be written either, the run stays admitted with nothing working on it, and a
+`wait` says so and does not block. A test has the executor make its threads through a
+function that fails; nothing is exhausted to show it
+(`started::a_run_whose_thread_cannot_be_made_is_ended_as_an_error_and_nobody_waits_for_it`).
+
+**Progress.** An action's progress events are kept in memory, and are read through
+`status` while the run executes here. Each message is kept as the other texts of a run
+are ("What an action or a panic says is cut"): the secrets taken out, then its first
+4,096 characters, with three dots when there were more
+(`started::a_progress_message_is_cut_as_every_text_a_run_keeps_is`). How many events a
+run reports is not bounded. They are not published while the run executes: the journal
+is durable with the run's end, as before, and a process that dies leaves none of it.
+Both stay on `docs/carry-over.md`. The events of a run whose end the store refused stay
+readable in the process that ran it. A message is shown as the action gave it apart
+from that: a control character in it is passed through, and a door that prints events
+escapes them (`docs/carry-over.md`).
+
+**What is not built.** Nothing cancels a run, in its action or in its admission: that is
+the next pull request, with the rule this record owes for a cancellation and the commit
+step. A run whose admission became visible and was not confirmed has nothing behind it
+and is still waited for: a `wait` for it does not return until the next pull request
+marks it. A process that ends while a started run executes leaves the run admitted.
+Nothing holds the generation a run reads from.
+
 ## Consequences
 
 - An action returns artifacts. `Produced` is no longer made only as nothing, and is no
@@ -247,9 +477,21 @@ that prints nothing an action said (`docs/carry-over.md`).
 - Reversing this costs every action written against `Produced`, and the guarantee every
   caller reads a completed outcome by.
 
+- `Executor` has three more methods, and `Answer` a third case, `Started`. `Engine` is
+  cloned cheaply: a started run's thread holds one, with the store.
+- `Refusal` has `NoSuchRun` and `TooManyStarted`; `CallError` has `NotStarted`.
+- A `wait` for a run this process ended answers a little later than a `status` says
+  `Ended`: when the executor is done with the run, not when its end is visible.
+- A test makes its threads through the test kit, and `just check` refuses one that does
+  not.
+- A caller that starts runs handles `TooManyStarted`: it waits for one of its runs and
+  asks again, under the same request id.
+- A progress message over 4,096 characters is cut where it was kept whole.
+- A run's events are kept after its end was published or refused, until the last holder
+  of its live state lets go.
+
 What this record does not decide yet: cancellation and its rule at the commit step;
-status, progress and cancel while a run executes; nested calls, allowances, and when a
-parent is terminal. They are the later parts of the same task, and amend this record.
+cancel while a run executes; nested calls, allowances, and when a parent is terminal. They are the later parts of the same task, and amend this record.
 
 ## Alternatives
 

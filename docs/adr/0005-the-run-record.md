@@ -504,7 +504,8 @@ binary builds (`wiring::runner`).
   a process that dies while an action runs leaves the run, admitted. It leaves no
   journal and no diagnostic: those are durable only when the run ends, and cannot be
   read while it executes.
-- Nothing can cancel a run, and `submit` returns only when the run is over.
+- Nothing can cancel a run. `submit` returns only when the run is over; `start` does
+  not wait, and a run's status is read while it executes (ADR 0008).
 - A refusal inside a run is not recorded. There is one today: a call from inside an
   action is refused (`NoNestedCalls`). The record's `refusals` list has no elements in
   `run/1`, so the action's own error is the only trace of it, if the action reports it.
