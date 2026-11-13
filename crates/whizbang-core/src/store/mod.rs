@@ -657,6 +657,10 @@ pub struct Store {
     /// process is working on in this store: a run is in it from just before it is
     /// visible until its closing or its deletion is visible.
     made_runs: Mutex<BTreeMap<String, Attached>>,
+    /// How many places are taken now among the runs of this value that were started on
+    /// threads of their own ([`Store::start_place`]). It is kept here, beside the table
+    /// of open runs, because it is this writer's count, whoever starts the runs.
+    started: Arc<AtomicUsize>,
     /// Whether the open that gave this value made the store.
     created: bool,
     /// The writer lock, held for as long as this value lives.
@@ -668,6 +672,17 @@ impl Drop for Store {
     /// that it does not outlive its holder; a writer that dies leaves its name behind.
     fn drop(&mut self) {
         let _ = self.lock.record(b"");
+    }
+}
+
+/// A place among the runs a writer has started on threads of their own
+/// ([`Store::start_place`]). It is given back when this is dropped, however that comes
+/// about: a return, a panic that unwinds, a closure that was never run.
+pub struct Place(Arc<AtomicUsize>);
+
+impl Drop for Place {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -762,6 +777,20 @@ impl Store {
     /// did not make and that is not finished is no longer being worked on by anyone.
     pub fn made_here(&self, run: &str) -> bool {
         self.attached(run).is_some()
+    }
+
+    /// Takes a place among the runs this writer has started on threads of their own,
+    /// when fewer than `bound` are taken: the place is held until what comes back is
+    /// dropped. `None` when `bound` or more are taken, and then nothing changed. The
+    /// count is one for this value, so everything that starts runs over it is held to
+    /// the same count, each against the bound it asks with. The store counts and does
+    /// nothing else: what a place stands for is its taker's.
+    pub fn start_place(&self, bound: usize) -> Option<Place> {
+        let taken = |now: usize| (now < bound).then_some(now + 1);
+        self.started
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, taken)
+            .ok()
+            .map(|_| Place(self.started.clone()))
     }
 
     /// What the maker of the run `run` attached to it ([`Publication::attach`]), when
@@ -868,6 +897,7 @@ impl Store {
             in_progress: Mutex::new(BTreeMap::new()),
             waiting: AtomicUsize::new(0),
             made_runs: Mutex::new(BTreeMap::new()),
+            started: Arc::new(AtomicUsize::new(0)),
             created,
             lock,
         })

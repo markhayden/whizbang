@@ -114,14 +114,16 @@ pub struct JournalLine {
 }
 
 impl JournalLine {
-    /// The event at this place and time, saying this, with the secrets taken out. It is
-    /// the one way to make a line, beside reading a stored journal: a line in a journal
-    /// was redacted when it was made.
+    /// The event at this place and time, saying this, with the secrets taken out and
+    /// then cut at [`super::MESSAGE_LIMIT`] characters, as every text a run keeps is
+    /// (ADR 0008, "What an action or a panic says is cut"). It is the one way to make a
+    /// line, beside reading a stored journal: a line in a journal was redacted and cut
+    /// when it was made.
     pub fn new(seq: u64, at_ms: u64, message: &str, secrets: &Secrets) -> JournalLine {
         JournalLine {
             seq,
             at_ms,
-            message: secrets.redact(message),
+            message: super::engine::said(secrets, message),
         }
     }
 
