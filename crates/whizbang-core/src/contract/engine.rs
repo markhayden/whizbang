@@ -350,7 +350,7 @@ impl Executor for Engine {
         // under its own lock (ADR 0008, "Cancellation"): that is the decision, and no
         // look at the store is. The table's lock is let go before the run's is taken.
         let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
-        let here = attached.is_some();
+        let mut unended = RunState::NotEnded { here: false };
         if let Some(attached) = attached {
             let Some(live) = live::of(attached) else {
                 return not(RunState::NotEnded { here: true });
@@ -358,15 +358,18 @@ impl Executor for Engine {
             if live.cancel() == Told::Accepted {
                 return Ok(Cancel::Accepted);
             }
-            // Too late: the run's end had begun, and it is over now.
+            // Too late: the run's end had begun, and it is over now. If the store
+            // still holds it open, it was abandoned.
+            let failure = live.abandoned().flatten();
+            unended = RunState::Abandoned { failure };
         }
         // Over, or not in the table: as for a status, a second look at the store is
-        // the answer. A run that is still open there was not ended by this process,
+        // the answer. A run that is still open there was abandoned by this process,
         // or will not be ended by any.
         match self.seen(run)? {
             Seen::Nothing => Err(unknown()),
             Seen::Ended(outcome) => not(RunState::Ended(outcome)),
-            Seen::Open => not(RunState::NotEnded { here }),
+            Seen::Open => not(unended),
         }
     }
 }
@@ -498,11 +501,19 @@ impl Contents for Pinned {
 /// It is made with the run's live state, before the admission is published: an
 /// admission that is given up, or that became visible and was not confirmed, drops it,
 /// so nobody waits for, or is told they cancelled, a run whose action will never start.
-struct Over(Arc<LiveRun>);
+///
+/// However it is dropped, by a return or by a panic that unwinds, the run is over for
+/// this process: ended, when the executor said so first, and otherwise abandoned, with
+/// the store's failure it was told of (ADR 0008, "A run with nothing behind it").
+struct Over {
+    live: Arc<LiveRun>,
+    ended: bool,
+    failure: Option<StoreFailure>,
+}
 
 impl Drop for Over {
     fn drop(&mut self) {
-        self.0.over();
+        self.live.over(self.ended, self.failure.take());
     }
 }
 
@@ -536,6 +547,25 @@ impl Engine {
         );
         if unsure && self.store.is_some() {
             return look_up(self.contents.as_ref(), id, fingerprint, made_here);
+        }
+        // A run that is open here and that the executor abandoned is said to be: after
+        // one more look, since an end that became visible and was not confirmed
+        // abandons the run too, and is the answer.
+        let open_here = |found: &Found| match found {
+            Found::Same(earlier) if earlier.state() == &RunState::NotEnded { here: true } => {
+                let attached = self.store.as_ref()?.attached(earlier.run().as_str());
+                live::of(attached?)?.abandoned()
+            }
+            _ => None,
+        };
+        if open_here(&found).is_some() {
+            let found = look_up(self.contents.as_ref(), id, fingerprint, made_here)?;
+            return Ok(match (open_here(&found), found) {
+                (Some(failure), Found::Same(earlier)) => {
+                    Found::Same(earlier.in_state(RunState::Abandoned { failure }))
+                }
+                (_, found) => found,
+            });
         }
         Ok(found)
     }
@@ -641,7 +671,11 @@ impl Engine {
         // whoever sees the run in a snapshot finds it there (ADR 0008, "Status").
         let kept = Arc::new(Kept::new(self.clock.clone(), self.secrets.clone()));
         let live = Arc::new(LiveRun::new(kept.clone(), bounded.signal.clone()));
-        let over = Over(live.clone());
+        let mut over = Over {
+            live: live.clone(),
+            ended: false,
+            failure: None,
+        };
         let mut run = self.name_run(store, start_ms)?;
         let mut namings = 1;
         loop {
@@ -739,7 +773,13 @@ impl Engine {
                 {
                     return Err(Stopped::Taken(error));
                 }
-                Err(error) => return Err(failed(error).into()),
+                // Among these is an admission that became visible and was not
+                // confirmed: its run is in the store and open here, and is abandoned.
+                Err(error) => {
+                    let failure = StoreFailure::new(error);
+                    over.failure = Some(failure.clone());
+                    return Err(CallError::Store(failure).into());
+                }
             }
         }
 
@@ -797,10 +837,18 @@ impl Engine {
     /// the admission on. Whatever comes back, nothing in this process is working on
     /// the run any more, and whoever waits for it is told so.
     fn execute(&self, mut admitted: Admitted) -> Result<Finished, CallError> {
-        let over = admitted.over.take();
+        let mut over = admitted.over.take();
         // Everything the run held is let go in here, its hold on the generation it
         // read among it, before whoever waits for the run is told that it is over.
+        // A panic in there unwinds through here, and the run is abandoned.
         let ended = self.run_and_end(admitted);
+        if let Some(over) = &mut over {
+            match &ended {
+                Ok(_) => over.ended = true,
+                Err(CallError::Store(failure)) => over.failure = Some(failure.clone()),
+                Err(_) => {}
+            }
+        }
         drop(over);
         ended
     }
@@ -842,6 +890,11 @@ impl Engine {
         // A run that was cancelled before its action started does not run it.
         let handed = (!live.signal().is_cancelled())
             .then(|| catch_unwind(AssertUnwindSafe(|| action.run(&prepared, &context))));
+        // The entry to the commit step (ADR 0008, "Cancellation"): the action has come
+        // back, with whatever it came back with. From here on a cancellation is too
+        // late. One that was accepted before this was set under the lock this reads
+        // under: the run ends as cancelled, and nothing it handed back is committed.
+        let cancelled = live.begin_end();
         // The outcome is made here, from what the action handed back, with the secrets
         // taken out: what is reported holds none, as what is written holds none.
         let error = |kind: &str, message: &str| Outcome::Error {
@@ -867,11 +920,7 @@ impl Engine {
             },
             Some(Err(panic)) => error("panic", &panic_text(panic.as_ref())),
         };
-        // The entry to the commit step (ADR 0008, "Cancellation"). From here on a
-        // cancellation is too late. One that was accepted before this was set under
-        // the lock this reads under: the run ends as cancelled, whatever its action
-        // handed back, and nothing of that is committed.
-        if live.begin_end() {
+        if cancelled {
             outputs.clear();
             outcome = Outcome::Cancelled;
         }
@@ -1057,16 +1106,27 @@ impl Engine {
             let Some(live) = live::of(attached) else {
                 return watched(RunState::NotEnded { here: true }, Vec::new());
             };
-            if !wait {
-                return watched(RunState::NotEnded { here: true }, live.events());
+            if wait {
+                live.wait_until_over();
             }
-            live.wait_until_over();
-            // Nothing here works on it any more: it ended, and the store says how, or
-            // its end could not be written, and it is still as it was admitted.
+            let Some(failure) = live.abandoned() else {
+                if !wait {
+                    return watched(RunState::NotEnded { here: true }, live.events());
+                }
+                // It ended, and its end was confirmed: the store says how.
+                return match self.seen(run)? {
+                    Seen::Nothing => Err(unknown()),
+                    Seen::Ended(outcome) => watched(RunState::Ended(outcome), Vec::new()),
+                    Seen::Open => watched(RunState::NotEnded { here: true }, live.events()),
+                };
+            };
+            // Nothing here works on it any more, and its end was not confirmed. An end
+            // that became visible all the same is in the store, and is the answer;
+            // otherwise the run was abandoned, as it was admitted.
             return match self.seen(run)? {
                 Seen::Nothing => Err(unknown()),
                 Seen::Ended(outcome) => watched(RunState::Ended(outcome), Vec::new()),
-                Seen::Open => watched(RunState::NotEnded { here: true }, live.events()),
+                Seen::Open => watched(RunState::Abandoned { failure }, live.events()),
             };
         }
         // Not in the table. Either this process never made it, or it left the table

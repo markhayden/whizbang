@@ -12,10 +12,10 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use crate::store::Attached;
 
 use super::journal::Kept;
-use super::{Cancellation, JournalLine};
+use super::{Cancellation, JournalLine, StoreFailure};
 
 /// Where the executor is with an open run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Phase {
     /// The run was admitted and its end has not begun: its action has not started, or
     /// has not come back.
@@ -23,8 +23,18 @@ enum Phase {
     /// The action has come back, and the executor is ending the run: for a run that
     /// completed, this is its commit step.
     Ending,
-    /// The executor is done with the run: it ended, or its end could not be written.
-    Over,
+    /// The run's end was published, and confirmed.
+    Ended,
+    /// The executor is done with the run and did not end it, or was not told that it
+    /// had: with the store's failure, when one was why. Whether the run ended all the
+    /// same, visibly and unconfirmed, is the store's to say.
+    Abandoned(Option<StoreFailure>),
+}
+
+impl Phase {
+    fn is_over(&self) -> bool {
+        matches!(self, Phase::Ended | Phase::Abandoned(_))
+    }
 }
 
 /// What a cancellation of an open run came to.
@@ -99,10 +109,23 @@ impl LiveRun {
         self.signal.is_cancelled()
     }
 
-    /// Nothing in this process works on the run any more.
-    pub(super) fn over(&self) {
-        *self.phase() = Phase::Over;
+    /// Nothing in this process works on the run any more. `ended` says that its end
+    /// was published and confirmed; otherwise the run was abandoned, with this
+    /// failure of the store when there was one.
+    pub(super) fn over(&self, ended: bool, failure: Option<StoreFailure>) {
+        *self.phase() = match ended {
+            true => Phase::Ended,
+            false => Phase::Abandoned(failure),
+        };
         self.changed.notify_all();
+    }
+
+    /// Whether the executor abandoned the run, and with what failure of the store.
+    pub(super) fn abandoned(&self) -> Option<Option<StoreFailure>> {
+        match &*self.phase() {
+            Phase::Abandoned(failure) => Some(failure.clone()),
+            _ => None,
+        }
     }
 
     /// Returns once nothing in this process works on the run any more.
@@ -114,7 +137,7 @@ impl LiveRun {
         // Counted under the lock, before the first wait: whoever reads the count as
         // one or more has a caller that is waiting, or about to with the lock let go.
         self.waiting.fetch_add(1, Ordering::SeqCst);
-        while *phase != Phase::Over {
+        while !phase.is_over() {
             phase = self
                 .changed
                 .wait(phase)

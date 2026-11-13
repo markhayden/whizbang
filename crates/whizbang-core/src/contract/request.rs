@@ -556,6 +556,13 @@ pub enum RunState {
     /// executor that writes the store, the process that made the run is gone and the
     /// run will never end; an executor that only reads the store cannot tell.
     NotEnded { here: bool },
+    /// The run was admitted, has not ended, and was abandoned by the process that
+    /// answers, which made it: nothing in this process will end it. Its admission
+    /// became visible and was not confirmed, so its action never started; or its end
+    /// was refused by the store; or the executor's own code panicked. `failure` is the
+    /// store's failure, when one was the cause. Only the process that abandoned the
+    /// run says so: to any other it is `NotEnded { here: false }`.
+    Abandoned { failure: Option<StoreFailure> },
     /// The run ended, and its record is in the store: how it ended, as the first
     /// answer said it.
     Ended(Outcome),
@@ -588,6 +595,12 @@ impl Earlier {
 
     pub fn state(&self) -> &RunState {
         &self.state
+    }
+
+    /// The same answer, with the run in this state.
+    pub(super) fn in_state(mut self, state: RunState) -> Earlier {
+        self.state = state;
+        self
     }
 }
 

@@ -7,8 +7,8 @@ and a run that was started", which is built. Changed: the paragraph that says wh
 builds what; what this record does not decide yet.
 Amended: 2026-11-12, with the third pull request of task A7. Added: "Cancellation",
 which is built: the rule for a cancellation and the commit step, `cancel`, cancelling an
-admission, the handles a context binds to its own signal, and the generation a run
-reads. Changed: the paragraph that says which part builds what; "What is not built";
+admission, the handles a context binds to its own signal, the generation a run
+reads, and one state for a run this process abandoned. Changed: the paragraph that says which part builds what; "What is not built";
 what this record does not decide yet.
 Spec: section 3, "The execution contract", "What a run publishes", "Storage" and "What
 every run records"
@@ -215,7 +215,7 @@ after in the same way, by another caller.
 |---|---|
 | Ended, in the store | `Ended`, with the outcome, from its record; no events: they are in its journal |
 | Executing in this process | `status`: `NotEnded { here: true }`, with its events so far. `wait`: waits, then answers as for a run that ended |
-| Its end could not be written | `NotEnded { here: true }`, with its events; `wait` does not wait |
+| Abandoned by this process ("A run with nothing behind it", below) | `Abandoned`, with the store's failure when there was one, and its events; `wait` does not wait |
 | Admitted by a process that is gone | `NotEnded { here: false }`; `wait` does not wait: nothing will end it |
 | Not in the store | The refusal `NoSuchRun`: it was never made, or it was deleted |
 
@@ -297,11 +297,14 @@ ran to its end), with one change: rascal looked at a flag, and between its look 
 lock a cancellation could be set and lost without anyone being told. Here the look and
 the entry are one step, and whoever cancels is told which side of it they were on.
 
-**The commit step begins when the action has come back** and the executor starts the
-end of its run: before the first call of the end publication. Every run enters it,
-whatever its action handed back: an artifact, a failure, an invalid input or a panic.
-So "too late" means the same for all of them: the run's end is on its way, and the
-cancellation is answered with how the run ended.
+**The commit step begins when the action has come back,** with anything: artifacts, a
+failure, an invalid input, a panic, or a hand-back the executor then refuses. The
+executor enters it straight away, before it looks at what came back and before the
+first call of the end publication. So the rule is a cancellation against the end of
+the run, for every outcome and not only a completed one, and whichever is decided
+first under the run's lock wins: a cancellation accepted while the action runs beats
+whatever the action then comes back with, and a cancellation after the action came
+back waits and is answered with how the run ended.
 
 **One signal for each run, and one lock.** A run has one cancellation signal
 (`Cancellation`), from its admission on: the one its request came with
@@ -341,28 +344,59 @@ the store.
 
 | The run | `cancel` answers |
 |---|---|
-| Executing in this process, by any executor over the same store value | `Accepted`, at once. It does not wait for the action to come back: `wait` does |
+| Executing in this process, by any executor over the same store value | `Accepted`, at once. It does not wait for the action to come back: `wait` does, and has no bound on an action that never looks at its signal and never returns |
 | In its commit step | It waits for the end of the run, then answers as for a run that ended |
 | Ended, in the store | `NotAccepted(Ended)`, with the outcome. Nothing is written |
-| Its end could not be written | `NotAccepted(NotEnded { here: true })`, without waiting |
-| Its admission became visible and was not confirmed, so its action never started | The same |
+| In its commit step, and the store then refuses the commit | It waits, then `NotAccepted(Abandoned)`, with the store's failure: the run is neither cancelled nor completed |
+| Abandoned by this process | `NotAccepted(Abandoned)`, without waiting |
 | Made by other code of this process, with no executor's state attached | `NotAccepted(NotEnded { here: true })` |
 | Admitted by a process that is gone | `NotAccepted(NotEnded { here: false })`: nothing can be told to stop |
 | Not in the store: never made, or deleted | The refusal `NoSuchRun` |
-
-The fifth row corrects the part before this one: a run whose admission's last sync
-failed is visible and open here, its caller was told of the store's failure, and
-nothing executes it. The executor now says it is done with such a run when it gives
-the admission up, so a `wait` for it returns, where it waited for ever, and a cancel of
-it is not told it was accepted
-(`cancel::a_run_whose_admission_was_not_confirmed_is_not_cancelled_and_is_not_waited_for`).
 
 An executor that only reads a store cancels nothing: it answers an ended run with its
 outcome, a run that has not ended with `NotEnded { here: false }`, and no run with
 `NoSuchRun`. Two cancels of an executing run are both answered `Accepted`: the second
 finds the signal set and the run still executing, and the run ends once
 (`cancel::a_cancel_is_answered_for_a_run_in_every_state_and_changes_none_that_is_over`,
-`cancel::two_cancels_at_once_are_both_accepted_and_the_run_ends_once`).
+`cancel::two_cancels_at_once_are_both_accepted_and_the_run_ends_once`,
+`cancel::a_cancel_that_waits_for_a_commit_the_store_then_refuses_is_told_the_run_was_abandoned`).
+
+**A run with nothing behind it.** Three things leave a run in the store, admitted and
+without a record, and in the table of open runs, with nothing in this process that will
+end it: its admission became visible and its last sync failed, so its caller was told
+of the store's failure and its action never started; the publication of its end was
+refused by the store; or the executor's own code panicked after the admission. The
+part before this one answered the second as `NotEnded { here: true }`, which is also
+what an executing run is, and a `wait` for the first or the third never returned. All
+three are now one state, `RunState::Abandoned`, with the store's failure when one was
+the cause. What sets it is a guard that is made with the run's live state before the
+admission is published and is dropped when the executor is done with the run, by any
+return and by any unwinding: unless the executor said first that the run's end was
+published and confirmed, the run's phase becomes abandoned. A status, a wait, a cancel
+and a repeat of the run's request all say `Abandoned`, and none waits
+(`cancel::a_run_with_nothing_behind_it_is_abandoned_for_whoever_waits_asks_or_cancels`).
+Each looks at the store once more before it says so: an end that became visible and
+was not confirmed also leaves the phase abandoned, and that run ended, which the store
+says. Only the process that abandoned a run says so. After it is gone the run is
+`NotEnded { here: false }` to everyone, as before.
+
+**Visible before durable.** A run leaves the table when its end is visible, and its
+caller is answered only after the last sync. Between the two, a status says
+`Ended`, with the outcome, while the caller that ran it has no answer yet; and if that
+sync fails, the caller is told of the store's failure though every status, then and
+later, says `Ended`. The record is in the store in that case; what is not known is
+that it would survive a loss of power.
+
+**The table and a run that is named again.** A run can be named up to eight times
+before its admission is published, and an admission can be given up at several
+places: refused by the ledger, its id taken, cancelled, the store failing. The table is
+the store's, and an entry is made in exactly one place: inside the publishing step,
+just before the rename that makes the run visible, under the id that publication
+makes, and it is taken out again if the rename fails. An admission that is refused
+earlier, by the store's own checks or before it reaches the store, has made no entry,
+so there is none to remove or to key again
+(`cancel::a_run_that_was_named_again_is_in_the_table_of_open_runs_under_its_last_id_alone`).
+What the executor attaches is opaque to the store.
 
 **Why the answer is never from a stale look.** The first look at the store answers a
 run that ended or is not there. For a run that was open, the table is asked, and what
@@ -490,8 +524,8 @@ memory, and nothing marks a run that a dead process left.
 - `whizbang store import` still looks at a snapshot and then puts (ADR 0002). It is the
   only writer of its store while it runs.
 - A run whose action panicked has a record, and a repeat of its request is answered with
-  the error. `RunState::NotEnded { here: true }` no longer covers a panic (ADR 0007);
-  it still covers a run whose end could not be written.
+  the error. `RunState::NotEnded { here: true }` no longer covers a panic (ADR 0007),
+  nor, since the third part, a run whose end could not be written: that is `Abandoned`.
 - A run holds names that are committed outputs, where every name of a run was a
   diagnostic reference before. `runs show --diagnostic` refuses one, as it refused any
   output.
@@ -514,6 +548,8 @@ memory, and nothing marks a run that a dead process left.
 - A run's call is prepared from, and its action reads, the generation that was current
   when its admission began, and never a later one. `Store::hold` is how: a share of a
   generation's file, held by the writer itself.
+- `RunState` has `Abandoned`. A caller that matched `NotEnded { here: true }` to mean
+  "do not send it again" matches `Abandoned` too.
 - A run whose cancellation was accepted says `cancelled` in its record and in its
   request's ending, and what its action answered after the cancellation is recorded
   nowhere but in its diagnostics.

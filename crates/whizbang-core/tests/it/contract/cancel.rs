@@ -16,7 +16,7 @@ use whizbang_core::contract::record::{DIAGNOSTICS_PREFIX, JOURNAL_NAME, Status};
 use whizbang_core::contract::{
     Action, Answer, Call, CallError, Cancel, Cancellation, Capabilities, Clock, Context, Declined,
     Ending, Engine, Executor, Failure, Ledger, NoBackends, Outcome, Produced, Refusal, Registry,
-    Request, RequestId, Reservation, RunId, RunState, Step, Value, read_journal,
+    Request, RequestId, Reservation, RunId, RunState, Step, StoreFailure, Value, read_journal,
 };
 use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::store::fs::{Fs, RealFs};
@@ -30,6 +30,7 @@ use whizbang_testkit::schema::validate;
 use whizbang_testkit::scratch::Scratch;
 
 use super::commit::{World, both, committed, engine_over, held, pair};
+use super::execute::Taker;
 use super::record::schema;
 use super::watch::{AfterTheLook, asked, busy, engine, the_run, work};
 
@@ -415,17 +416,18 @@ fn a_cancel_is_answered_for_a_run_in_every_state_and_changes_none_that_is_over()
         publication.publish().unwrap();
         let by_hand = RunId::parse("by-hand").unwrap();
         let here = Cancel::NotAccepted(RunState::NotEnded { here: true });
-        assert_eq!(executor.cancel(&by_hand), Ok(here.clone()));
+        assert_eq!(executor.cancel(&by_hand), Ok(here));
         store.delete(&["by-hand"]).unwrap();
 
-        // A run whose end could not be written: nothing here works on it, and a cancel
-        // is answered without waiting.
-        assert!(matches!(
-            executor.request(&asked("order-1")),
-            Err(CallError::Store(_))
-        ));
+        // A run whose end could not be written: it was abandoned, and a cancel is
+        // answered without waiting.
+        let Err(CallError::Store(failure)) = executor.request(&asked("order-1")) else {
+            panic!("the end was published");
+        };
         let unended = the_run(&root);
-        assert_eq!(executor.cancel(&unended), Ok(here));
+        let failure = Some(failure);
+        let abandoned = Cancel::NotAccepted(RunState::Abandoned { failure });
+        assert_eq!(executor.cancel(&unended), Ok(abandoned));
         unended
     };
 
@@ -471,12 +473,36 @@ fn a_cancel_is_answered_for_a_run_in_every_state_and_changes_none_that_is_over()
     }
 }
 
+// --- a run with nothing behind it -------------------------------------------------------------
+
+/// A clock that panics, once it is told to, the next time it is asked the time of day.
+struct Breaks(AtomicU64);
+
+impl Clock for Breaks {
+    fn now_ms(&self) -> u64 {
+        assert_eq!(self.0.load(Ordering::SeqCst), 0, "the clock broke");
+        9000
+    }
+}
+
 #[test]
-fn a_run_whose_admission_was_not_confirmed_is_not_cancelled_and_is_not_waited_for() {
-    // The last sync of the admission's publication is refused: the run is visible and
-    // open here, its caller was told of the store's failure, and its action never
-    // starts. Nothing will end it, so a cancel of it is not accepted, and neither a
-    // cancel nor a wait waits for it.
+fn a_run_with_nothing_behind_it_is_abandoned_for_whoever_waits_asks_or_cancels() {
+    // Three ways a run is left open in this process with nothing that will end it.
+    // Each is answered as abandoned, with the store's failure when there was one, by
+    // a status, a wait, a cancel and a repeat alike; and a wait does not wait.
+    let abandoned = |executor: &Engine, run: &RunId, failure: Option<StoreFailure>| {
+        let state = RunState::Abandoned { failure };
+        assert_eq!(executor.status(run).unwrap().state(), &state);
+        assert_eq!(executor.wait(run).unwrap().state(), &state);
+        assert_eq!(executor.cancel(run), Ok(Cancel::NotAccepted(state.clone())));
+        let Ok(Answer::Repeat(earlier)) = executor.request(&asked("order-1")) else {
+            panic!("not answered as a repeat");
+        };
+        assert_eq!(earlier.state(), &state);
+    };
+
+    // The last sync of the admission's publication is refused: the run is visible,
+    // its caller was told of the store's failure, and its action never starts.
     let dir = Scratch::new("cancel");
     let root = dir.path().join("store");
     let fs = Arc::new(ShimFs::new());
@@ -486,12 +512,137 @@ fn a_run_whose_admission_was_not_confirmed_is_not_cancelled_and_is_not_waited_fo
         let root = root.clone();
         move |event| matches!(event, Event::SyncDir(dir) if *dir == root)
     });
-    let refused = executor.request(&asked("order-1")).unwrap_err();
-    assert!(refused.to_string().contains("not confirmed durable"));
-    let run = the_run(&root);
-    let here = RunState::NotEnded { here: true };
-    assert_eq!(executor.cancel(&run), Ok(Cancel::NotAccepted(here.clone())));
-    assert_eq!(executor.wait(&run).unwrap().state(), &here);
+    let Err(CallError::Store(failure)) = executor.request(&asked("order-1")) else {
+        panic!("the admission was confirmed");
+    };
+    let said = CallError::Store(failure.clone()).to_string();
+    assert!(said.contains("not confirmed durable"), "{said}");
+    abandoned(&executor, &the_run(&root), Some(failure));
+
+    // The end of the run is refused by the store.
+    let dir = Scratch::new("cancel");
+    let root = dir.path().join("store");
+    let fs = Arc::new(ShimFs::new());
+    let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+    let stuck = {
+        let fs = fs.clone();
+        work(move |_, _| {
+            fs.refuse_before(fs.events().len());
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(store, vec![stuck]);
+    let Err(CallError::Store(failure)) = executor.request(&asked("order-1")) else {
+        panic!("the end was published");
+    };
+    abandoned(&executor, &the_run(&root), Some(failure));
+
+    // The executor's own code panics after the action came back: its clock breaks.
+    // The thread of the started run is gone, and no store failed.
+    let dir = Scratch::new("cancel");
+    let root = dir.path().join("store");
+    let store = Arc::new(Store::open(&root, Arc::new(ShimFs::new())).unwrap());
+    let clock = Arc::new(Breaks(AtomicU64::new(0)));
+    let breaking = {
+        let clock = clock.clone();
+        work(move |_, _| {
+            clock.0.store(1, Ordering::SeqCst);
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(store, vec![breaking]).with_clock(clock.clone());
+    let Ok(Answer::Started(run)) = executor.start(&asked("order-1")) else {
+        panic!("the request was not started");
+    };
+    assert_eq!(
+        executor.wait(&run).unwrap().state(),
+        &RunState::Abandoned { failure: None }
+    );
+    clock.0.store(0, Ordering::SeqCst);
+    abandoned(&executor, &run, None);
+}
+
+#[test]
+fn a_cancel_that_waits_for_a_commit_the_store_then_refuses_is_told_the_run_was_abandoned() {
+    // The cancel arrives in the commit step and waits. The store then refuses the
+    // commit: the run is neither cancelled nor completed, and the cancel says so.
+    let world = World::new();
+    let store = world.store();
+    let asking = engine_over(store.clone(), Vec::new());
+    let seen = Arc::new(Mutex::new(None));
+    let committing = {
+        let (fs, root, seen, asking) =
+            (world.fs.clone(), world.root(), seen.clone(), asking.clone());
+        pair(move |_, _| {
+            let (hooked, root, seen, asking) =
+                (fs.clone(), root.clone(), seen.clone(), asking.clone());
+            fs.pause_before(fs.events().len(), move || {
+                let run = the_run(&root);
+                let cancelling = {
+                    let (asking, run) = (asking.clone(), run.clone());
+                    std::thread::spawn(move || asking.cancel(&run))
+                };
+                let limit = Instant::now() + LIMIT;
+                while asking.waiting_for(&run) == 0 {
+                    assert!(Instant::now() < limit, "the cancel does not wait");
+                    std::thread::yield_now();
+                }
+                *seen.lock().unwrap() = Some(cancelling);
+                // The next call of the commit that changes the disk fails.
+                hooked.refuse_before(hooked.events().len() + 1);
+            });
+            Ok(both())
+        })
+    };
+    let executor = engine_over(store.clone(), vec![committing]);
+    let Err(CallError::Store(failure)) = executor.submit(&Call::new("pair")) else {
+        panic!("the commit was published");
+    };
+    let cancelling = seen.lock().unwrap().take().expect("the hook ran");
+    let state = RunState::Abandoned {
+        failure: Some(failure),
+    };
+    assert_eq!(
+        cancelling.join().unwrap(),
+        Ok(Cancel::NotAccepted(state.clone()))
+    );
+    let after = held(&world.root(), world.fs.clone());
+    assert!(!after.mask && !after.place && after.runs[0].1.is_none());
+    let run = the_run(&world.root());
+    assert_eq!(executor.wait(&run).unwrap().state(), &state);
+}
+
+#[test]
+fn a_run_that_was_named_again_is_in_the_table_of_open_runs_under_its_last_id_alone() {
+    // The name of the run's reservation is taken three times as its admission is
+    // about to be written, so the run is named four times. The ids that were given up
+    // are no runs, here or in the store, and the run is cancelled by the id it has.
+    let dir = Scratch::new("cancel");
+    let root = dir.path().join("store");
+    let (fs, store) = Taker::store_taking_reservations(&root, 3);
+    let barriers = Barriers::new();
+    let executor = engine(store.clone(), vec![busy(&barriers, "nothing")])
+        .with_ledger(Arc::new(FakeLedger::new()));
+    let Ok(Answer::Started(run)) = executor.start(&asked("order-1")) else {
+        panic!("the request was not started");
+    };
+    barriers.arrived("busy", 1);
+    let given_up = fs.taken();
+    assert_eq!(given_up.len(), 3);
+    for id in &given_up {
+        assert_ne!(id, run.as_str());
+        assert!(!store.made_here(id));
+        let id = RunId::parse(id).unwrap();
+        assert_eq!(
+            executor.cancel(&id),
+            Err(CallError::Refused(Refusal::NoSuchRun { run: id.clone() }))
+        );
+    }
+    assert!(store.made_here(run.as_str()));
+    assert_eq!(executor.cancel(&run), Ok(Cancel::Accepted));
+    barriers.release("busy");
+    assert_eq!(executor.wait(&run).unwrap().state(), &cancelled());
+    assert!(!store.made_here(run.as_str()));
 }
 
 // --- the edges --------------------------------------------------------------------------------

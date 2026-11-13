@@ -32,7 +32,8 @@ run's status and a wait are ADR 0008's.
 Amended: 2026-11-12, with the third pull request of task A7 (ADR 0008). Changed: a run
 can be cancelled, so `Ended` with `Cancelled` is written; an admission is given up when
 its request's signal is set or its deadline passes, with the refusals `Cancelled` and
-`DeadlinePassed`; the window before the admission's publication is accepted there.
+`DeadlinePassed`; the window before the admission's publication is accepted there; a
+run this process abandoned is answered `Abandoned`, not `NotEnded { here: true }`.
 Spec: section 3, "The execution contract", "Storage" and "What every run records";
 section 6, "Spend"
 
@@ -523,7 +524,10 @@ is never one the store has not yet counted
 forgotten only once its closing is visible, not when `close_run` is called
 (`admit::a_run_whose_closing_was_refused_before_it_was_visible_is_still_this_writers`).
 
-What `NotEnded` does not tell apart, each pinned by a test or a row:
+What `NotEnded` does not tell apart, each pinned by a test or a row. Since the third
+pull request of task A7 the first two below are answered `Abandoned`, with the store's
+failure, in the process that made the run (ADR 0008, "A run with nothing behind it"),
+and are `NotEnded { here: false }` once that process is gone:
 
 - `here: true` is also what a run is whose end could not be written (the store failed):
   the run stays admitted, in that process and after it has ended, when only `here`

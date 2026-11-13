@@ -607,7 +607,8 @@ fn a_run_that_was_admitted_and_did_not_end_is_listed_and_shown_as_such() {
         let Ok(Answer::Repeat(earlier)) = executor.request(&request("boom")) else {
             panic!("the request ran again");
         };
-        assert_eq!(earlier.state(), &RunState::NotEnded { here: true });
+        let abandoned = matches!(earlier.state(), RunState::Abandoned { failure: Some(_) });
+        assert!(abandoned, "{:?}", earlier.state());
     }
     let listed = whizbang(&["list"], &root);
     assert_eq!(listed.code, Some(0), "{}", listed.err);
