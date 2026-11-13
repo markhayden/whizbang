@@ -19,7 +19,7 @@ use crate::capability::{
 };
 
 use super::nested::Offer;
-use super::{Capability, Executor, PreparedCall};
+use super::{Capability, Executor, PreparedCall, Refusal};
 
 /// A cancellation signal. Every clone is the same signal: once one is cancelled, all are,
 /// and none is ever uncancelled.
@@ -403,6 +403,18 @@ impl Context {
     pub fn freeze_calls<'a>(&self, actions: impl IntoIterator<Item = &'a str>) -> bool {
         let actions = actions.into_iter().map(str::to_owned).collect();
         self.offer.freeze(actions)
+    }
+
+    /// Holds the name of an action to what this run froze, before any call is made
+    /// of it (ADR 0009): refused when the run froze its calls and this is none of
+    /// them, with the refusal the executor would give such a call
+    /// ([`Refusal::NotOffered`]), which is kept in the run's record as that one is.
+    /// Nothing is prepared, admitted or run. A loop that dispatches what a model
+    /// names asks this first, and makes no call of a name that is refused; the
+    /// executor's own refusal of such a call stands behind it. A run that froze
+    /// nothing is refused nothing.
+    pub fn offered(&self, action: &str) -> Result<(), Refusal> {
+        self.offer.held(action)
     }
 
     /// The same context, whose handles keep what they send with this recorder: each

@@ -384,6 +384,31 @@ fn a_call_to_grow() {
     assert_eq!(world.grown.load(Ordering::SeqCst), 0);
 }
 
+#[test]
+fn an_action_that_runs_with_no_arguments_and_is_not_on_the_list_is_refused_before_any_call() {
+    // The stand-in for `grow` is registered and is a valid call with nothing in it.
+    // The judge names it with no arguments. The loop refuses the name against the
+    // list it froze, before it hands the executor anything: the action never runs,
+    // no run is made for it, nothing is dispatched, and the refusal is in the record.
+    let world = World::new();
+    let (left, why) = refused_at_dispatch(&world, "grow", json!({}));
+    assert_eq!(world.grown.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        refusals(left.record()),
+        [(Some("grow"), RefusalKind::NotOffered)]
+    );
+    assert!(why.contains("froze the actions it calls"), "{why}");
+    // The store holds the run of `check` and no other.
+    assert_eq!(runs(&world.root(), world.fs.clone()), 1);
+    // The loop reports each call it hands the executor. It handed over none.
+    let journal = String::from_utf8(left.names["journal"].1.clone()).unwrap();
+    assert!(!journal.contains("dispatched"), "{journal}");
+    // A call of a listed tool is reported, so the line above can fail.
+    let (_, looked, _) = run(&world, LOOK_CLOSER, &[("photo", world.photo.id())]);
+    let journal = String::from_utf8(looked.names["journal"].1.clone()).unwrap();
+    assert!(journal.contains("a tool call was dispatched"), "{journal}");
+}
+
 fn looking_at(image: ArtifactId, also: Option<ArtifactId>) -> Json {
     let mut arguments = json!({"image": image.to_string(), "bbox": [0.25, 0.25, 0.75, 0.75]});
     if let Some(also) = also {

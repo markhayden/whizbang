@@ -224,9 +224,16 @@ executor in the run's context, where every call is dispatched, refuses:
   store holds such an artifact is not looked at, so an identity that was guessed and one
   that names another run's artifact are refused alike.
 
-Both are refusals of a nested call like any other: no run is made, and each is in the
-record of the run that made the call (`outcome.refusals`, ADR 0008), with kinds
-`not_offered` and `not_readable`.
+Both are refusals of a nested call like any other: the call is refused before it is
+prepared or admitted, so no run is made, and each is in the record of the run that made
+the call (`outcome.refusals`, ADR 0008), with kinds `not_offered` and `not_readable`.
+
+**A name can be held to the list without a call.** `Context::offered(name)` answers as
+the executor would answer a call of that action: nothing when the run froze nothing or
+the name is one it froze, and otherwise `Refusal::NotOffered`, which it records in the
+run's record in the same list, in order, with the same sentence. A loop that dispatches
+what a model names asks it first and makes no call of a refused name
+(`scope::a_name_is_held_to_what_a_run_froze_without_a_call_and_the_refusal_is_in_its_record`).
 
 **By construction.** What a run may read is not a list an action keeps and compares
 against. The executor builds it from two things only it holds: the inputs of the run's
@@ -266,11 +273,17 @@ the judge ends its turn with `pass`, `fail` or `unsure` on the first line of its
   (`check::changing_the_tool_list_after_admission_has_no_effect_on_the_run`). Between a
   run's admission and its action's first step, a tool that is withdrawn makes the run
   invalid: it is never run with a tool that was not on offer when it started.
-- **Every call goes to the executor.** A call of a listed tool is made from the judge's
-  arguments; a call of anything else is handed to the executor as it was named, with
-  nothing in it, and the executor refuses it. So a refusal is recorded by the one that
-  dispatches, whatever the loop got wrong. An image is named by its identity, as the
-  judge was told it; the executor decides whether the run may read it.
+- **A name that is not on the list is refused twice over.** First by the loop, before
+  any call is made of it: it asks `Context::offered`, which holds the name to what the
+  run froze and records the refusal, and nothing is prepared, admitted or run. So a
+  model that names an action of the build that runs with nothing in its call gets no
+  call made of it
+  (`check::an_action_that_runs_with_no_arguments_and_is_not_on_the_list_is_refused_before_any_call`).
+  Then by the executor, which stands behind the loop: were the loop to hand such a
+  call over, the executor refuses it before it is admitted, as it refuses any call the
+  run did not freeze. A call of a listed tool is made from the judge's arguments. An
+  image is named by its identity, as the judge was told it; the executor decides
+  whether the run may read it.
 - **A cut-off turn** is left out of the conversation, whatever it holds, marked
   `truncated`, and asked for once more with four times the output limit
   (`RETRY_FACTOR`). A second one fails the run. No call inside one is dispatched.

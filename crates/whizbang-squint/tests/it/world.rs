@@ -196,6 +196,12 @@ pub fn left(root: &Path, fs: Arc<dyn Fs>, run: &RunId) -> Left {
     Left { record, names }
 }
 
+/// How many runs the store at `root` holds.
+pub fn runs(root: &Path, fs: Arc<dyn Fs>) -> usize {
+    let reader = Reader::open(root, fs).unwrap();
+    reader.snapshot().unwrap().runs().len()
+}
+
 /// Whether the store at `root` holds an image artifact of this identity.
 pub fn holds(root: &Path, fs: Arc<dyn Fs>, id: ArtifactId) -> bool {
     let reader = Reader::open(root, fs).unwrap();

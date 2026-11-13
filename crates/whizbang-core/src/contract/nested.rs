@@ -77,16 +77,46 @@ impl Added {
 /// may read: each input it gives is an input of the run's own call, or an output that
 /// a run it called committed.
 #[derive(Default)]
-pub(super) struct Offer(OnceLock<BTreeSet<String>>);
+pub(super) struct Offer {
+    actions: OnceLock<BTreeSet<String>>,
+    /// The run whose calls these are, and the secrets its record is written without:
+    /// where a name the action itself held to the list, and refused, is recorded.
+    run: Option<(Arc<LiveRun>, Secrets)>,
+}
 
 impl Offer {
+    /// The offer of this run: nothing is frozen yet.
+    pub(super) fn of(run: Arc<LiveRun>, secrets: Secrets) -> Offer {
+        Offer {
+            actions: OnceLock::new(),
+            run: Some((run, secrets)),
+        }
+    }
+
     /// Freezes the actions. False when they were frozen before: nothing changes.
     pub(super) fn freeze(&self, actions: BTreeSet<String>) -> bool {
-        self.0.set(actions).is_ok()
+        self.actions.set(actions).is_ok()
     }
 
     fn frozen(&self) -> Option<&BTreeSet<String>> {
-        self.0.get()
+        self.actions.get()
+    }
+
+    /// Holds a name to the frozen actions without making a call: refused when the
+    /// actions are frozen and this is none of them, and the refusal is kept for the
+    /// run's record as the executor keeps one of a call it refused.
+    pub(super) fn held(&self, action: &str) -> Result<(), Refusal> {
+        if self.frozen().is_none_or(|offered| offered.contains(action)) {
+            return Ok(());
+        }
+        let refusal = Refusal::NotOffered {
+            action: action.to_owned(),
+        };
+        if let Some((run, secrets)) = &self.run {
+            let refused = Refused::of(&Call::new(action), &refusal, secrets);
+            run.nest().refused(refused);
+        }
+        Err(refusal)
     }
 }
 

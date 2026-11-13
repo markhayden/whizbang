@@ -13,9 +13,10 @@
 //! **A judge is not trusted.** What it may call and what it may read are frozen when
 //! the run starts, and held by the executor where each call is dispatched
 //! ([`Context::freeze_calls`]): the tools are the run's list, and an image a call names
-//! is one the run was given or one a tool call of this run returned. Every call the
-//! judge makes goes to the executor, a call of a tool that is not on the list
-//! included, so each refusal is in the run's record. Nothing a judge writes is an
+//! is one the run was given or one a tool call of this run returned. A name that is
+//! not on the list is refused by the loop before any call is made of it
+//! ([`Context::offered`]), and the executor refuses such a call again were one made;
+//! either way the refusal is in the run's record. Nothing a judge writes is an
 //! instruction: it names a tool and gives arguments, and both are data.
 
 use std::collections::BTreeSet;
@@ -277,9 +278,10 @@ struct Run<'a> {
 }
 
 impl Run<'_> {
-    /// Answers one call of the judge. Every call goes to the executor, which holds it
-    /// to the run's list and to what the run may read; what comes back, a crop, a
-    /// refusal or the tool's own rejection, is the call's result.
+    /// Answers one call of the judge. A name that is not on the run's list is
+    /// refused here, with no call made; a call of a listed tool goes to the executor,
+    /// which holds it to the list again and to what the run may read. What comes
+    /// back, a crop, a refusal or the tool's own rejection, is the call's result.
     fn dispatch(&mut self, call: &ToolCall) -> Result<ToolResult, Failure> {
         let answer = |text: &str, error: bool, images: Vec<Picture>| {
             let result = ToolResult::new(call.id(), text, error, images);
@@ -290,11 +292,19 @@ impl Run<'_> {
             return answer(&said, true, Vec::new());
         }
         self.dispatched += 1;
+        // The first line: a name that is not on the run's frozen list is refused here,
+        // before anything is handed to the executor. Nothing is prepared, admitted or
+        // run for it, and the refusal is in the run's record.
+        if let Err(refusal) = self.context.offered(call.name()) {
+            return answer(&format!("refused: {refusal}"), true, Vec::new());
+        }
         let listed = self.tools.iter().any(|tool| tool.name() == call.name());
         let asked = match (listed, call.name()) {
             (true, view::NAME) => view_call(call.arguments()),
-            // No tool of the run: the call goes to the executor as it was named, with
-            // nothing in it, and the executor refuses it and records the refusal.
+            // The second line, which the check above leaves nothing for: a name that
+            // is no tool of the run would go to the executor as it was named, with
+            // nothing in it, and the executor refuses a call the run did not freeze
+            // before it admits it.
             _ => Ok(Call::new(call.name())),
         };
         let asked = match asked {

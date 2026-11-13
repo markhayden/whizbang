@@ -901,7 +901,7 @@ impl Engine {
         // admitted against, and handles that the context binds to that signal and
         // that deadline itself.
         // The executor in it admits a call under this run (ADR 0008, "Nested calls").
-        let offer = Arc::new(Offer::default());
+        let offer = Arc::new(Offer::of(live.clone(), self.secrets.clone()));
         let under = Under {
             run: run.clone(),
             live: live.clone(),
