@@ -85,6 +85,14 @@ refused "a filter with a quote" -E "test('x')"
 refused "a filter with a redirect" -E 'test(x) > y'
 refused "a filter with a line break" -E "$(printf 'test(x)\n--config')"
 refused "a filter with nothing" -E
+# A value is never an option: what follows -E or --test is held to its own form, and that
+# form does not start with a dash.
+refused "an option where a filter goes" -E "--config=target.'cfg(all())'.runner='$tmp/runner.sh'"
+refused "an option where a filter goes, in two words" -E --config "build.rustc-wrapper='$tmp/runner.sh'"
+refused "the end of options where a filter goes" -E -- -E "$tmp/runner.sh"
+refused "an option where a test binary goes" --test --config "build.rustc-wrapper='$tmp/runner.sh'"
+refused "a test binary that starts with a dash" --test -it
+refused "a filter that starts with a dash" -E '-x'
 refused "no arguments"
 # What is refused is named, with nothing in it that is not a plain character.
 "$script" "$(printf 'bad\033[31mword')" >"$tmp/out" 2>&1 || true
@@ -93,19 +101,24 @@ grep -q -F 'bad' "$tmp/out" || { cat "$tmp/out" >&2; fail "the refusal names the
 "$script" "$(printf 'x%.0s' $(seq 1 300))/" >"$tmp/out" 2>&1 || true
 [ "$(wc -c <"$tmp/out")" -lt 200 ] || fail "the refusal cuts a long argument"
 
-# The environment cannot say what the command line may not: the variables that name a
-# program to run in a build's place, or a config, are not handed on.
+# What is not handed on: the variables that name a compiler, a wrapper, a runner, a linker,
+# flags for the compiler, an alias of a cargo command, or a nextest setting. The names of
+# what the command would be handed are printed, never a value. Outside the script's reach,
+# and the caller's to keep right: `CARGO` and `CARGO_HOME`, `PATH`, `RUSTUP_TOOLCHAIN`, and a
+# cargo config in a folder above this repo.
 handed=$(RUSTC_WRAPPER="$tmp/runner.sh" CARGO_BUILD_RUSTC_WRAPPER="$tmp/runner.sh" RUSTC_WORKSPACE_WRAPPER="$tmp/runner.sh" \
   CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER="$tmp/runner.sh" CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$tmp/runner.sh" \
   NEXTEST_PROFILE=ci NEXTEST_TARGET_RUNNER="$tmp/runner.sh" RUSTFLAGS="-C linker=$tmp/runner.sh" CARGO_ENCODED_RUSTFLAGS=x \
   CARGO_BUILD_RUSTFLAGS=x RUSTC="$tmp/runner.sh" CARGO_BUILD_RUSTC="$tmp/runner.sh" RUSTDOC="$tmp/runner.sh" \
-  CARGO_HOME_KEPT=yes WHIZBANG_TEST_ONLY_DRY=env "$script" -p whizbang-core)
+  CARGO_ALIAS_NEXTEST="run --bin other" WHIZBANG_KEPT_NAME=a-value-that-is-not-printed WHIZBANG_TEST_ONLY_DRY=env "$script" -p whizbang-core)
 for name in RUSTC_WRAPPER CARGO_BUILD_RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER \
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER NEXTEST_PROFILE NEXTEST_TARGET_RUNNER RUSTFLAGS CARGO_ENCODED_RUSTFLAGS \
-  CARGO_BUILD_RUSTFLAGS RUSTC CARGO_BUILD_RUSTC RUSTDOC; do
-  printf '%s\n' "$handed" | grep -q "^$name=" && fail "the command is not handed $name"
+  CARGO_BUILD_RUSTFLAGS RUSTC CARGO_BUILD_RUSTC RUSTDOC CARGO_ALIAS_NEXTEST; do
+  printf '%s\n' "$handed" | grep -q -x -F "$name" && fail "the command is not handed $name"
 done
-printf '%s\n' "$handed" | grep -q -x -F 'CARGO_HOME_KEPT=yes' || fail "the rest of the environment is handed on"
+printf '%s\n' "$handed" | grep -q -x -F 'WHIZBANG_KEPT_NAME' || fail "the rest of the environment is handed on"
+printf '%s\n' "$handed" | grep -q -F 'a-value-that-is-not-printed' && fail "what the command would be handed is printed by name, never by value"
+printf '%s\n' "$handed" | grep -q '=' && fail "no value of the environment is printed"
 
 # It runs from this repo, whatever folder it was started in, so a config beside the caller
 # is not read.

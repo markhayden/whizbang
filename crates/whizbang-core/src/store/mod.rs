@@ -1240,7 +1240,8 @@ impl Publication<'_> {
     /// is visible, on the thread that deleted it. For a maker that has something
     /// working on the run, to tell it that the run is gone. What it does is the
     /// maker's, and the store never looks inside; it must not publish, and must not
-    /// wait for anything that does.
+    /// wait for anything that does. It must not panic and must not block: it runs
+    /// inside the deletion, on the deleting thread.
     pub fn tell_when_deleted(&mut self, run: &str, this: WhenDeleted) {
         self.when_deleted.insert(run.to_string(), this);
     }

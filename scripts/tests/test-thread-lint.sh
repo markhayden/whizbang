@@ -75,17 +75,34 @@ expect_pass "an allow of one lint by its name" check_groups "$tmp/group"
 # or a group that holds it, or every warning, to allow.
 check_manifests() { # <folder>
   local found
-  found=$(find "$1" -type f -name Cargo.toml ! -path '*/target/*' \
-    -exec grep -n -H -E '^[[:space:]]*"?(disallowed_methods|style|all|warnings)"?[[:space:]]*=.*"allow"' {} + || true)
+  # A lint is set on a line of its own (`style = "allow"`, `style.level = 'allow'`, or a
+  # table in braces), or in a table named for it whose `level` is on a later line.
+  found=$(find "$1" -type f -name Cargo.toml ! -path '*/target/*' -exec awk -v q="'" '
+    function allows(text) { return text ~ ("[\"" q "]allow[\"" q "]") }
+    /^[[:space:]]*\[/ {
+      named = ($0 ~ /[.[:space:]]"?(disallowed_methods|style|all|warnings)"?[[:space:]]*\][[:space:]]*$/)
+      next
+    }
+    /^[[:space:]]*"?(disallowed_methods|style|all|warnings)"?[[:space:]]*(\.[[:space:]]*level[[:space:]]*)?=/ && allows($0) { print FILENAME ":" FNR ": " $0 }
+    named && /^[[:space:]]*level[[:space:]]*=/ && allows($0) { print FILENAME ":" FNR ": " $0 }
+  ' {} + || true)
   [ -z "$found" ] || { echo "a manifest allows the thread lint or a group that holds it: $found"; return 1; }
 }
 expect_pass "no manifest allows the thread lint" check_manifests .
 mkdir -p "$tmp/manifest"
 for setting in 'disallowed_methods = "allow"' 'style = "allow"' 'all = { level = "allow", priority = -1 }' \
-  '  warnings = "allow"' '"style" = "allow"'; do
+  '  warnings = "allow"' '"style" = "allow"' 'style.level = "allow"' "style = 'allow'" \
+  "all = { priority = -1, level = 'allow' }" 'disallowed_methods.level="allow"'; do
   printf '[workspace.lints.clippy]\n%s\n' "$setting" >"$tmp/manifest/Cargo.toml"
   expect_fail "a manifest with $setting" "a manifest allows the thread lint" check_manifests "$tmp/manifest"
 done
+for table in '[lints.clippy.style]' '[workspace.lints.clippy.style]' '[workspace.lints.clippy.all]' \
+  '[lints.clippy.disallowed_methods]' '[ workspace.lints.rust.warnings ]'; do
+  printf '%s\npriority = -1\nlevel = "allow"\n' "$table" >"$tmp/manifest/Cargo.toml"
+  expect_fail "a manifest with the table $table" "a manifest allows the thread lint" check_manifests "$tmp/manifest"
+done
+printf '[workspace.lints.clippy.unwrap_used]\nlevel = "allow"\n[workspace.lints.clippy.all]\nlevel = "warn"\n' >"$tmp/manifest/Cargo.toml"
+expect_pass "a manifest whose table allows another lint" check_manifests "$tmp/manifest"
 printf '[workspace.lints.clippy]\nall = { level = "warn", priority = -1 }\nunwrap_used = "allow"\n' >"$tmp/manifest/Cargo.toml"
 expect_pass "a manifest that allows another lint" check_manifests "$tmp/manifest"
 

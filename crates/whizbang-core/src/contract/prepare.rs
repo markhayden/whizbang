@@ -17,6 +17,7 @@ use crate::identity::{Binding, BindingId, DecodeLimits, Digest, Encoder, Fields}
 
 use crate::store;
 
+use super::record::RefusalKind;
 use super::{ActionDescriptor, Call, Capability, Count, InputPort, RequestId, RunId, Value};
 
 /// Which model answers a capability: the backend, the model, and the model's version or
@@ -573,8 +574,6 @@ pub enum Refusal {
     /// A run was asked after by its id, and the store holds no run of that id: none
     /// was made, or it was deleted.
     NoSuchRun { run: super::RunId },
-    /// A call from inside a running action. This build does not nest calls yet.
-    NoNestedCalls,
     /// The request was to be started ([`super::Executor::start`]), and the store's
     /// writer already has `bound` started runs that are not over: as many as this
     /// executor runs at once, each on a thread of its own. No run was made, nothing was
@@ -616,6 +615,68 @@ pub enum Refusal {
     /// ([`super::Request::until`]). No run was made, nothing was reserved, and the
     /// request's id is not taken by this request.
     DeadlinePassed { action: String },
+    /// A call from inside an action that would run deeper than calls nest: the run
+    /// that made it is at the level `levels`, the last there is (`SPEC.md` section 3,
+    /// "Nested calls"; ADR 0008). No run was made.
+    TooDeep { action: String, levels: usize },
+    /// A call from inside an action, back into an action that is already running
+    /// among the calls that led to this one: the caller's own, or one further up.
+    /// Actions are compared by name. No run was made.
+    CallBack { action: String },
+    /// A call from inside an action that may cost up to `asked_micros`, when
+    /// `left_micros` are left of what its caller may spend, both in millionths of a
+    /// US dollar. A nested call draws on its caller's allowance, and the ledger is
+    /// not asked. No run was made, and nothing was taken.
+    OverCaller {
+        action: String,
+        asked_micros: u64,
+        left_micros: u64,
+    },
+    /// A call from inside an action whose run has already called `limit` others,
+    /// which is as many as one run may. No run was made.
+    TooManyCalls { action: String, limit: usize },
+    /// A call from inside an action, when `limit` runs have been admitted under the
+    /// run that nothing called, at any level, which is as many as one such run may
+    /// have under it. No run was made.
+    TreeFull { action: String, limit: usize },
+    /// A call from inside an action to start a run, when `limit` runs that the same
+    /// run started are executing, which is as many as may at once: each is a thread.
+    /// No run was made; the caller waits for one of them, or runs the call itself.
+    TooManyStartedUnder { action: String, limit: usize },
+    /// A call from inside an action that came with a request id. A nested call is
+    /// known by the run that made it and its place among that run's calls, and
+    /// carries no id of its own. No run was made, and the id was not looked up.
+    IdInside { action: String },
+}
+
+impl Refusal {
+    /// What kind of refusal this is, as a run's record spells it.
+    pub fn kind(&self) -> RefusalKind {
+        match self {
+            Refusal::UnknownAction { .. } => RefusalKind::UnknownAction,
+            Refusal::Invalid { .. } => RefusalKind::Invalid,
+            Refusal::Input { .. } => RefusalKind::Input,
+            Refusal::NotReady { .. } => RefusalKind::NotReady,
+            Refusal::ReadOnly => RefusalKind::ReadOnly,
+            Refusal::NoSuchRun { .. } => RefusalKind::NoSuchRun,
+            Refusal::Conflict { .. } => RefusalKind::Conflict,
+            Refusal::Stale { .. } => RefusalKind::Stale,
+            Refusal::OverAllowance { .. } => RefusalKind::OverAllowance,
+            Refusal::NoBound { .. } => RefusalKind::NoBound,
+            Refusal::SecretInRequestId => RefusalKind::SecretInRequestId,
+            Refusal::NotARequestId { .. } => RefusalKind::NotARequestId,
+            Refusal::Cancelled { .. } => RefusalKind::Cancelled,
+            Refusal::DeadlinePassed { .. } => RefusalKind::DeadlinePassed,
+            Refusal::TooDeep { .. } => RefusalKind::TooDeep,
+            Refusal::CallBack { .. } => RefusalKind::CallBack,
+            Refusal::OverCaller { .. } => RefusalKind::OverCaller,
+            Refusal::TooManyCalls { .. } => RefusalKind::TooManyCalls,
+            Refusal::TreeFull { .. } => RefusalKind::TreeFull,
+            Refusal::TooManyStarted { .. } => RefusalKind::TooManyStarted,
+            Refusal::TooManyStartedUnder { .. } => RefusalKind::TooManyStartedUnder,
+            Refusal::IdInside { .. } => RefusalKind::IdInside,
+        }
+    }
 }
 
 impl std::fmt::Display for Refusal {
@@ -659,8 +720,44 @@ impl std::fmt::Display for Refusal {
                 "the call is ready, and this executor only reads its store: it runs nothing",
             ),
             Refusal::NoSuchRun { run } => write!(f, "the store holds no run {run}"),
-            Refusal::NoNestedCalls => f.write_str(
-                "an action cannot call another action yet: this build does not nest calls",
+            Refusal::TooDeep { action, levels } => write!(
+                f,
+                "{action} was not called: its caller runs at level {levels}, and calls \
+                 nest {levels} levels deep at most"
+            ),
+            Refusal::CallBack { action } => write!(
+                f,
+                "{action} was not called: it is already running among the calls that led \
+                 to this one, and an action is not called back into"
+            ),
+            Refusal::OverCaller {
+                action,
+                asked_micros,
+                left_micros,
+            } => write!(
+                f,
+                "{action} was not called: it may cost up to {asked_micros} millionths of a \
+                 US dollar, and {left_micros} are left of its caller's allowance"
+            ),
+            Refusal::TooManyCalls { action, limit } => write!(
+                f,
+                "{action} was not called: its caller has called {limit} actions, which \
+                 is as many as one run may"
+            ),
+            Refusal::TreeFull { action, limit } => write!(
+                f,
+                "{action} was not called: {limit} runs were made under the run that \
+                 began these calls, which is as many as one may have under it"
+            ),
+            Refusal::TooManyStartedUnder { action, limit } => write!(
+                f,
+                "{action} was not started: {limit} runs that its caller started are \
+                 executing, which is as many as may at once"
+            ),
+            Refusal::IdInside { action } => write!(
+                f,
+                "{action} was not called: a call from inside an action carries no \
+                 request id"
             ),
             Refusal::TooManyStarted { bound } => write!(
                 f,

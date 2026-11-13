@@ -314,6 +314,8 @@ struct AdmissionWire {
     run: String,
     #[serde(deserialize_with = "present")]
     request: Option<String>,
+    #[serde(deserialize_with = "present")]
+    parent: Option<String>,
     fingerprint: Digest,
     prepared: Digest,
     #[serde(deserialize_with = "present")]
@@ -340,6 +342,7 @@ where
 pub struct Admission {
     run: RunId,
     request: Option<RequestId>,
+    parent: Option<RunId>,
     fingerprint: Digest,
     prepared: Digest,
     reserved_micros: Option<u64>,
@@ -363,6 +366,7 @@ impl Admission {
         Admission {
             run,
             request,
+            parent: None,
             fingerprint,
             prepared,
             reserved_micros,
@@ -370,6 +374,20 @@ impl Admission {
             version: version.to_owned(),
             start_ms,
         }
+    }
+
+    /// The same admission, of a run that this run called from inside its action.
+    pub(super) fn under(mut self, parent: Option<RunId>) -> Admission {
+        self.parent = parent;
+        self
+    }
+
+    /// The run that called this one from inside its action, when one did (ADR 0008,
+    /// "Nested calls"). Such a run has no request id and no reservation: what
+    /// [`Admission::reserved_micros`] says of it was taken from its parent's
+    /// allowance, and the ledger was not asked.
+    pub fn parent(&self) -> Option<&RunId> {
+        self.parent.as_ref()
     }
 
     /// The run that was made.
@@ -394,8 +412,9 @@ impl Admission {
 
     /// What was reserved for the run when it was admitted, in millionths of a US
     /// dollar: the amount of its reservation ([`super::Reservation`]), which the same
-    /// publication made. None when the executor that admitted the run had no ledger:
-    /// nothing was reserved, and the run has no reservation.
+    /// publication made; or, for a run with a parent, what was taken for it from its
+    /// parent's allowance, with no reservation. None when the executor that admitted
+    /// the run had no ledger: nothing was reserved, and the run has no reservation.
     pub fn reserved_micros(&self) -> Option<u64> {
         self.reserved_micros
     }
@@ -421,6 +440,7 @@ impl Admission {
             record: ADMISSION_RECORD.to_owned(),
             run: self.run.as_str().to_owned(),
             request: self.request.as_ref().map(|id| id.as_str().to_owned()),
+            parent: self.parent.as_ref().map(|run| run.as_str().to_owned()),
             fingerprint: self.fingerprint,
             prepared: self.prepared,
             reserved_micros: self.reserved_micros,
@@ -451,9 +471,20 @@ impl Admission {
             // The rule's sentence shows what it refuses escaped already: it is cut, and
             // not escaped a second time.
             .map_err(|why| inconsistent(why.chars().take(record::REASON_LIMIT).collect()))?;
+        let parent = match &wire.parent {
+            Some(parent) => Some(RunId::parse(parent).map_err(inconsistent)?),
+            None => None,
+        };
+        // A run another run called is not its own parent, and carries no request id.
+        if parent.as_ref() == Some(&run) || (parent.is_some() && request.is_some()) {
+            return Err(inconsistent(
+                "the parent is the run itself, or a run with a parent has a request id".to_owned(),
+            ));
+        }
         let admission = Admission {
             run,
             request,
+            parent,
             fingerprint: wire.fingerprint,
             prepared: wire.prepared,
             reserved_micros: wire.reserved_micros,

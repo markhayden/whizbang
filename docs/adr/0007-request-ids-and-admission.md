@@ -34,6 +34,9 @@ can be cancelled, so `Ended` with `Cancelled` is written; an admission is given 
 its request's signal is set or its deadline passes, with the refusals `Cancelled` and
 `DeadlinePassed`; the window before the admission's publication is accepted there; a
 run this process abandoned is answered `Abandoned`, not `NotEnded { here: true }`.
+Amended: 2026-11-13, with the last pull request of task A7 (ADR 0008, "Nested calls").
+Changed: an admission has the field `parent`; a call from inside an action draws on its
+parent's allowance, asks no ledger and has no reservation.
 Spec: section 3, "The execution contract", "Storage" and "What every run records";
 section 6, "Spend"
 
@@ -150,7 +153,10 @@ hold; then the bytes compared with what this code writes for what they hold. Nei
 be read from JSON by other code, and neither can be made except by the executor.
 
 **The admission, `admission/1`:** `record`; `run`, a run id; `request`, a request id or
-null; `fingerprint`, of the request; `prepared`, the fingerprint of the call as it was
+null; `parent`, the run that called this one from inside its action, or null (ADR 0008,
+"Nested calls": a run with a parent has no request id, and what its `reserved_micros`
+says was taken from its parent's allowance, with no reservation); `fingerprint`, of the
+request; `prepared`, the fingerprint of the call as it was
 prepared when it was admitted; `reserved_micros`, what was reserved for the run in
 millionths of a US dollar, or null when the executor had no ledger and nothing was
 reserved; `action` and `version`, held to the rules of ADR 0003;
@@ -253,7 +259,8 @@ way the test kit's disk can lose what was not yet durable: every name undone, ev
 name kept, and every choice of which directories, and of which names, lose theirs. How
 many directories and names a crash leaves undecided is read from the first crash at
 each step, and every mask over them is then a crash of its own
-(`admit::a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it`).
+(`admit::a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_first_steps_of_four`
+and the three tests beside it, each a quarter of the steps).
 
 The action runs only after the publication is durable. A refusal, and a call that is
 not ready, happen before it and record no id: the id stays free for the request once it
@@ -292,7 +299,9 @@ one content; and the run's record says it when the run ends (`spend.reserved_mic
 named again: the admission, and the reservation, which holds the admission's digest.
 
 **Who reserves.** An executor that was given a ledger (`Engine::with_ledger`). Every
-call it admits has a reservation, of zero when the estimate is zero. An executor
+call it admits that no action made has a reservation, of zero when the estimate is
+zero; a call from inside an action has none, and draws on its parent's (ADR 0008,
+"Nested calls"). An executor
 without one reserves nothing, writes `reserved_micros` as null and makes no name under
 `spend/`: that is the binary today, which has no ledger until checkpoint 1B.
 
@@ -391,9 +400,10 @@ that became visible and was not confirmed durable has its reservation with it, a
 has its id. What 1B needs to settle one is there: the reservation names its run and its
 request, holds the admission's digest so that a later run under the same id is not
 taken for it, and holds the amount; a run that ended has a record and, with an id, an
-ending; a run that did not has neither. Dispatch records, the allowance and its reset,
-a nested call drawing on its parent's reservation, and what a failed request cost are
-all 1B's (`SPEC.md` section 6).
+ending; a run that did not has neither. A nested call draws on its parent's allowance
+and reserves nothing, and its admission names its parent and the amount (ADR 0008,
+"Nested calls"). Dispatch records, the allowance and its reset, and what a failed
+request cost are all 1B's (`SPEC.md` section 6).
 
 **What is not covered.** `Publication::put` still replaces any name, a reservation's
 too: the store does not refuse a `put` under `requests/` or `spend/`, and no code of

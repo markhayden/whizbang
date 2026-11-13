@@ -47,7 +47,7 @@ manifest. This file holds what you cannot work out from the code.
 | `just test-scripts-slow` | After changing `.config/nextest.toml` or `scripts/timing.sh`: about 40 seconds; a 31-second test really fails by timeout (CI runs that part as `just test-timeout`) |
 | `just search-canary` | When a scan test fails once and passes on a rerun: 30 seconds of the scan's search against its known output (CI runs it on macOS) |
 | `scripts/heavy.sh <label> <command...>` | Around any heavy command: one runs at a time on a machine, the next waits. The command runs under `scripts/thread-guard.sh` |
-| `just test-only <which tests>` | One crate's tests or one test, as in `just test-only -p whizbang-core watch::`: the only way to run some of the tests. It runs them under `scripts/thread-guard.sh`, and takes `-p <crate>`, `--lib`, `--test <name>`, `-E <filter>`, `--no-capture`, `--no-fail-fast` and filter words; anything else is refused before anything runs (`scripts/test-only.sh`). Heavy |
+| `just test-only <which tests>` | One crate's tests or one test, as in `just test-only -p whizbang-core watch::`: the only way to run some of the tests. It runs them under `scripts/thread-guard.sh`, and takes `-p <crate>` or `--package <crate>`, `--lib`, `--test <name>`, `-E <filter>`, `--no-capture`, `--no-fail-fast` and filter words; anything else is refused before anything runs (`scripts/test-only.sh`). Heavy |
 | `scripts/thread-guard.sh <command...>` | Around anything else that runs tests: it kills the command when one process holds more than 300 threads, or when it can no longer count them |
 
 An action's name and purpose are printed in the reference as they are, so `just docs` refuses
@@ -149,7 +149,7 @@ asks first. So does one script test (`bash scripts/tests/<name>.sh`), and any al
 command with something in front of it, such as an `export` and `&&`: a rule matches the
 exact text. One crate's tests, or one test, run without a prompt as
 `just test-only -p <crate>`. That rule ends in a `*`, so what the recipe takes is a closed
-set, held in `scripts/test-only.sh`: `-p <crate>`, `--lib`, `--test <name>`, `-E <filter>`, `--no-capture`, `--no-fail-fast`,
+set, held in `scripts/test-only.sh`: `-p <crate>` or `--package <crate>`, `--lib`, `--test <name>`, `-E <filter>`, `--no-capture`, `--no-fail-fast`,
 and filter words. Any other argument is refused before anything runs,
 because nextest's own arguments can name a program to run (a config with a runner in it, a
 manifest elsewhere). That is why

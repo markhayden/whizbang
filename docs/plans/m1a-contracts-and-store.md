@@ -316,6 +316,9 @@ is ticked by the pull request that makes it true.
   the refusals in the run record. Of "Done when": the grandchild refused after a
   cancellation; the parent that stays non-terminal while a capability request is
   outstanding; the completed child whose outputs remain when its parent fails.
+  It came to over three thousand lines, and is **two pull requests** in turn. First:
+  box 2, with the allowance, the two refusals, and the parent, the calls and the
+  refusals in the run record. Then: the rest of box 3, with those three of "Done when".
 
 **Depends on:** A6, A8. Rascal's old rule, that a commit which has taken its lock always
 completes, is not carried over without being restated here.
@@ -323,7 +326,7 @@ completes, is not carried over without being restated here.
 - [x] The rule, written in the ADR for the contract: a cancellation is accepted if it arrives
       before the action enters its commit step, and then nothing is committed; one that
       arrives after returns the completed outcome.
-- [ ] Nested calls through the context's executor, each with an allowance taken from its
+- [x] Nested calls through the context's executor, each with an allowance taken from its
       parent's; a fifth level and a call back into an action on the stack are refused.
 - [ ] Cancellation reaches descendants and refuses new ones. A parent is terminal only when
       its descendants are terminal and every request a capability was sent is accounted for.

@@ -53,9 +53,11 @@
 #   guard that finds itself under that process, which must be running this very file, with
 #   a limit no higher and a pause no longer than its own, runs its command in its own
 #   place. One that is stricter than the guard above watches as well, and so does one whose
-#   variable names any other process or a script of this name elsewhere: setting the
-#   variable by hand switches nothing off. The folder of the process above is read from
-#   `/proc` on Linux and with `lsof` on macOS; where it cannot be read, this guard watches.
+#   variable names any other process, or a script of this name elsewhere or started by a
+#   bare name. So setting the variable by hand, to a process there already is, switches
+#   nothing off. What it does not hold against: a program written to show this file's whole
+#   path as its own command and to start a guard under itself. That is no accident, and
+#   whoever can do it can edit this file.
 #
 # When the tree is killed, the processes of the last good count are killed with those found
 # then: a process id from a third of a second ago can, in principle, be another process by
@@ -63,6 +65,11 @@
 # Parse the whole file first: see the top of scripts/scan.sh.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "thread-guard: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
 set -euo pipefail
+
+# A guard runs under its whole path, whatever name it was started by: a guard under it
+# knows it by that path in its command, and by nothing else.
+me=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")
+[ "${BASH_SOURCE[0]}" = "$me" ] || exec "$BASH" "$me" "$@"
 
 if [ $# -lt 1 ]; then
   echo "usage: scripts/thread-guard.sh <command...>" >&2
@@ -147,20 +154,12 @@ fi
 # this holds, and otherwise this guard watches too:
 # - the limit it states is not above this guard's, and the pause is not longer;
 # - the process it names is one this guard descends from, by a count of its own;
-# - that process is running this very file: the script in its command, taken from the
-#   folder that process is in, is the file this is.
+# - that process's command names this very file by its whole path, which is how a guard
+#   runs (it starts itself again under that path when it was started by another).
 # What cannot be checked is that the guard above really has the limit the variable states;
 # the variable is that guard's own word, handed down through the command.
-me=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")
-folder_of() { # <process id>: the folder that process is in, or nothing
-  if [ -e "/proc/$1/cwd" ]; then
-    (cd "/proc/$1/cwd" 2>/dev/null && pwd -P) || true
-  elif command -v lsof >/dev/null 2>&1; then
-    lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | sed -n 1p || true
-  fi
-}
 watched_by() { # <process id>: is that process above this one, and running this file?
-  local above command script folder file
+  local above command script
   above=$(processes | awk -v self="$$" -v named="$1" '
     NF == 4 { parent[$1] = $2 }
     END {
@@ -170,24 +169,15 @@ watched_by() { # <process id>: is that process above this one, and running this 
     }') || return 1
   [ "$above" = "yes" ] || return 1
   command=$(ps -o command= -p "$1" 2>/dev/null) || return 1
-  # The script is the first word, or the first after a shell and its options.
+  # The script is the first word, or the first after a shell and its options. A guard runs
+  # under its whole path (the top of this file), so the word is that path or it is no guard
+  # of this repo: nothing is made of a bare name and the folder a process happens to be in.
   script=$(printf '%s\n' "$command" | awk '{
     i = 1
     if ($1 ~ /(^|\/)(bash|sh)$/) { i = 2; while (i <= NF && $i ~ /^-/) i++ }
     print $i
   }')
-  [ "$(basename "${script:-none}")" = "thread-guard.sh" ] || return 1
-  case "$script" in
-    /*) file=$script ;;
-    *)
-      folder=$(folder_of "$1")
-      [ -n "$folder" ] || return 1
-      file=$folder/$script
-      ;;
-  esac
-  [ -f "$file" ] || return 1
-  file=$(cd "$(dirname "$file")" 2>/dev/null && pwd -P)/thread-guard.sh
-  [ "$file" = "$me" ]
+  [ "$script" = "$me" ]
 }
 watcher=${WHIZBANG_THREAD_GUARD:-}
 if echo "$watcher" | grep -E '^[1-9][0-9]* [1-9][0-9]* [0-9]+(\.[0-9]+)?$' >/dev/null; then

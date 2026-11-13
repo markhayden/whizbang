@@ -34,7 +34,7 @@ pub fn completed() -> String {
         r#""arguments":[{"name":"text","value":{"text":"hello"}}],"settings":[],"#,
         r#""config":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"#,
         r#""inputs":[],"outputs":[],"#,
-        r#""outcome":{"status":"completed","error":null,"invalid":null,"refusals":[]},"#,
+        r#""outcome":{"status":"completed","error":null,"invalid":null,"refusals":[],"refusals_omitted":0},"#,
         r#""time":{"start_ms":1000,"end_ms":1003,"durations":[]},"#,
         r#""models":[],"spend":{"reserved_micros":null,"requests":[]},"egress":[],"steps":[],"#,
         r#""judge":[],"#,
@@ -136,17 +136,15 @@ fn every_group_of_the_spec_is_in_the_schema_and_required() {
 #[test]
 fn a_group_that_nothing_fills_yet_cannot_hold_anything() {
     // By the type, on reading, and by the schema: a record of this version with a model,
-    // a spend, an egress, a step, a judge turn, a setting, a duration or a refusal in
-    // it is not a record of this version.
+    // a spend, an egress, a judge turn, a setting or a duration in it is not a record
+    // of this version. Steps and refusals are filled (`nested.rs`).
     for path in [
         "/models",
         "/spend/requests",
         "/egress",
-        "/steps",
         "/judge",
         "/asked/settings",
         "/time/durations",
-        "/outcome/refusals",
     ] {
         let bytes = changed(|document| {
             *document.pointer_mut(path).unwrap() = json!([{ "anything": 1 }]);
@@ -274,6 +272,7 @@ fn what_is_not_a_record_is_refused_by_the_types_and_by_the_schema() {
         ("outcome", "error"),
         ("outcome", "invalid"),
         ("outcome", "refusals"),
+        ("outcome", "refusals_omitted"),
         ("time", "end_ms"),
         ("time", "durations"),
     ] {
@@ -870,6 +869,7 @@ fn a_record_made_from_a_prepared_call_and_an_outcome_is_these_bytes() {
             start_ms: 1000,
             end_ms: 1003,
             // Given out of order: a record lists them by name.
+            inside: record::Inside::default(),
             diagnostics: vec![
                 Diagnostic::journal(&read_journal(JOURNAL.as_bytes()).unwrap()).0,
                 Diagnostic::written("echo.txt", b"hello", &Secrets::none())
@@ -898,6 +898,7 @@ fn ran<'a>(prepared: &'a PreparedCall, outcome: &'a Outcome) -> Ran<'a> {
         start_ms: 50,
         end_ms: 75,
         diagnostics: Vec::new(),
+        inside: record::Inside::default(),
     }
 }
 
@@ -913,7 +914,7 @@ fn a_failed_run_has_the_same_record_with_its_error_and_no_output() {
     let written = String::from_utf8(record.to_bytes()).unwrap();
     assert!(written.contains(concat!(
         r#""outputs":[],"outcome":{"status":"error","#,
-        r#""error":{"kind":"echo","message":"it broke"},"invalid":null,"refusals":[]}"#
+        r#""error":{"kind":"echo","message":"it broke"},"invalid":null,"refusals":[],"refusals_omitted":0}"#
     )));
     assert!(!written.contains("completed"));
     // The same thirteen fields as a completed run's.

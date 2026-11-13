@@ -159,6 +159,20 @@ mkdir "$tmp/elsewhere"
 cp "$guard" "$tmp/elsewhere/thread-guard.sh"
 [ "$(nested 40 "$tmp/elsewhere/thread-guard.sh")" = 2 ] ||
   { cat "$tmp/nested.out" >&2; fail "a guard under a script of its name elsewhere watches as well"; }
+# Nor is a script of its name that was started by that bare name and then moved into this
+# repo's scripts folder: the guard outside is known by the whole path in its command.
+mkdir "$tmp/moved"
+cat >"$tmp/moved/thread-guard.sh" <<'MOVED'
+cd "$1"
+shift
+WHIZBANG_THREAD_GUARD="$$ 8 0.2" "$@"
+MOVED
+rm -f "$tmp/moved-up"
+status=0
+(cd "$tmp/moved" && bash thread-guard.sh "$root/scripts" env WHIZBANG_THREAD_LIMIT=8 "$root/$guard" \
+  python3 "$tmp/parked.py" 20 "$tmp/moved-up") >"$tmp/out" 2>&1 || status=$?
+[ "$status" = 1 ] || { cat "$tmp/out" >&2; fail "a guard under a script of its name that moved into this folder still watches (got $status)"; }
+grep -q -F "over the limit of 8 in one process" "$tmp/out" || { cat "$tmp/out" >&2; fail "the guard under the moved script says what it killed"; }
 # And a real guard outside with a higher limit does not switch off a stricter one inside:
 # 20 threads, 300 allowed outside and 8 inside, are killed by the one inside.
 rm -f "$tmp/strict-up"

@@ -14,9 +14,10 @@
 #
 # - `-p <crate>` or `--package <crate>`: a crate of this workspace, by its name.
 # - `--lib`: the tests in a crate's library.
-# - `--test <name>`: one test binary; letters, digits, `_` and `-`.
+# - `--test <name>`: one test binary; letters, digits, `_` and `-`, not starting with `-`.
 # - `-E <filter>`: a nextest filter expression of letters, digits, spaces and
-#   `_ : = ( ) & | ! ~ / . -`. No quote, `$`, backtick, `;`, `<`, `>` or line break.
+#   `_ : = ( ) & | ! ~ / . -`, not starting with `-`. No quote, `$`, backtick, `;`, `<`, `>`
+#   or line break.
 # - `--no-capture`, `--no-fail-fast`.
 # - A filter word: letters, digits, `_` and `:`, as in `watch::` or a test's whole name.
 #
@@ -28,10 +29,13 @@
 # These variables are not handed on, since each can name a program to run in a build's
 # place, or a config: RUSTC, RUSTDOC, RUSTC_WRAPPER, RUSTC_WORKSPACE_WRAPPER, RUSTFLAGS,
 # RUSTDOCFLAGS, CARGO_ENCODED_RUSTFLAGS, CARGO_ENCODED_RUSTDOCFLAGS, every CARGO_BUILD_*,
-# every CARGO_TARGET_* but CARGO_TARGET_DIR, and every NEXTEST_*.
+# every CARGO_TARGET_* but CARGO_TARGET_DIR, every CARGO_ALIAS_*, and every NEXTEST_*.
+# Outside this script's reach, and the caller's to keep right: `CARGO` and `CARGO_HOME`,
+# `PATH`, `RUSTUP_TOOLCHAIN`, and a cargo config in a folder above this repo.
 #
 # WHIZBANG_TEST_ONLY_DRY is for this script's test: set to 1 the command is printed, a word
-# a line, and not run; set to `env` or `pwd`, what the command would be handed is printed.
+# a line, and not run; set to `env`, the names of the variables the command would be handed
+# are printed, never a value; set to `pwd`, the folder it would run in.
 # Parse the whole file first: see the top of scripts/scan.sh.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "test-only: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
 set -euo pipefail
@@ -50,7 +54,7 @@ refuse() {
 [ $# -ge 1 ] || refuse "no argument; say which tests, as in -p whizbang-core" ""
 
 crate='^[a-z0-9][a-z0-9_-]*$'
-binary='^[A-Za-z0-9_-]+$'
+binary='^[A-Za-z0-9_][A-Za-z0-9_-]*$'
 filter='^[A-Za-z0-9_:=()&|!/~. -]+$'
 word='^[A-Za-z0-9_:]+$'
 line_break='
@@ -93,6 +97,7 @@ while [ "$i" -lt "$count" ]; do
       [ "$i" -lt "$count" ] || refuse "no filter after" "$arg"
       value=${args[$i]}
       case "$value" in *"$line_break"*) refuse "a filter with a line break in it" "$value" ;; esac
+      case "$value" in -*) refuse "a filter does not start with a dash" "$value" ;; esac
       [[ "$value" =~ $filter ]] || refuse "a filter holds letters, digits, spaces and _ : = ( ) & | ! ~ / . - only" "$value"
       ;;
     -*) refuse "not an option this takes (-p, --lib, --test, -E, --no-capture, --no-fail-fast)" "$arg" ;;
@@ -106,7 +111,7 @@ for name in $(compgen -e); do
   case "$name" in
     CARGO_TARGET_DIR) ;;
     RUSTC | RUSTDOC | RUSTC_WRAPPER | RUSTC_WORKSPACE_WRAPPER | RUSTFLAGS | RUSTDOCFLAGS | \
-      CARGO_ENCODED_RUSTFLAGS | CARGO_ENCODED_RUSTDOCFLAGS | CARGO_BUILD_* | CARGO_TARGET_* | NEXTEST_*)
+      CARGO_ENCODED_RUSTFLAGS | CARGO_ENCODED_RUSTDOCFLAGS | CARGO_BUILD_* | CARGO_TARGET_* | CARGO_ALIAS_* | NEXTEST_*)
       unset "$name"
       ;;
   esac
@@ -115,7 +120,7 @@ done
 cd "$root"
 case "${WHIZBANG_TEST_ONLY_DRY:-}" in
   1) printf '%s\n' scripts/thread-guard.sh cargo nextest run --manifest-path "$root/Cargo.toml" "$@"; exit 0 ;;
-  env) env; exit 0 ;;
+  env) compgen -e; exit 0 ;;
   pwd) pwd -P; exit 0 ;;
 esac
 exec scripts/thread-guard.sh cargo nextest run --manifest-path "$root/Cargo.toml" "$@"

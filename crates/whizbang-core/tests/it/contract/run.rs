@@ -105,35 +105,35 @@ struct Nothing;
 
 impl Executor for Nothing {
     fn prepare(&self, _: &Call) -> Result<PreparedCall, CallError> {
-        Err(Refusal::NoNestedCalls.into())
+        Err(Refusal::ReadOnly.into())
     }
 
     fn submit(&self, _: &Call) -> Result<Finished, CallError> {
-        Err(Refusal::NoNestedCalls.into())
+        Err(Refusal::ReadOnly.into())
     }
 
     fn request(&self, _: &Request) -> Result<Answer, CallError> {
-        Err(Refusal::NoNestedCalls.into())
+        Err(Refusal::ReadOnly.into())
     }
 
     fn request_id(&self, _: &str) -> Result<whizbang_core::contract::RequestId, CallError> {
-        Err(Refusal::NoNestedCalls.into())
+        Err(Refusal::ReadOnly.into())
     }
 
     fn start(&self, _: &Request) -> Result<Answer, CallError> {
-        Err(Refusal::NoNestedCalls.into())
+        Err(Refusal::ReadOnly.into())
     }
 
     fn status(&self, _: &RunId) -> Result<whizbang_core::contract::Watched, CallError> {
-        Err(Refusal::NoNestedCalls.into())
+        Err(Refusal::ReadOnly.into())
     }
 
     fn wait(&self, _: &RunId) -> Result<whizbang_core::contract::Watched, CallError> {
-        Err(Refusal::NoNestedCalls.into())
+        Err(Refusal::ReadOnly.into())
     }
 
     fn cancel(&self, _: &RunId) -> Result<whizbang_core::contract::Cancel, CallError> {
-        Err(Refusal::NoNestedCalls.into())
+        Err(Refusal::ReadOnly.into())
     }
 }
 
@@ -178,7 +178,7 @@ fn a_context_carries_what_section_3_lists() {
     // And the executor, for a call to another action.
     assert_eq!(
         context.executor().submit(&Call::new("echo")),
-        Err(Refusal::NoNestedCalls.into())
+        Err(Refusal::ReadOnly.into())
     );
 }
 

@@ -107,7 +107,8 @@ the orchestrator records it, by `review-merge`, so that none is left only in you
 
 Four things about how you work. Try a mutation only in a scratch clone, never in the
 builder's worktree. A mutant or a probe is run only through `just test-only` (which takes
-`-p <crate>`, `--lib`, `--test <name>`, `-E <filter>`, `--no-capture`, `--no-fail-fast` and
+`-p <crate>` or `--package <crate>`, `--lib`, `--test <name>`, `-E <filter>`, `--no-capture`,
+`--no-fail-fast` and
 filter words, and refuses anything else), `scripts/heavy.sh` or `scripts/thread-guard.sh`,
 or as one script test alone, never a bare `cargo` command; no probe makes threads or
 processes until something fails, and a probe of the thread guard uses a limit under 10 and
