@@ -297,7 +297,9 @@ only supported browser.
 ## 4. Backends
 
 A **capability** is one kind of model work. Each has its own request and response interface,
-defined in the core; no shared execution shape is forced on them.
+defined in the core; no shared execution shape is forced on them. The interfaces, what a
+backend declares and how a backend is resolved are decided in ADR 0006
+(`docs/adr/0006-capabilities.md`).
 
 | Capability | Request and response |
 |---|---|
@@ -309,7 +311,7 @@ defined in the core; no shared execution shape is forced on them.
   composites the returned pixels itself and guarantees that pixels outside the support, and
   protected pixels, are unchanged. The support plane's polarity and range, how a mask's core,
   blend and protect planes become it, and the colour and alpha rules of the returned pixels
-  are fixed in the capability ADR at checkpoint 1A, with conformance cases.
+  are fixed in the capability ADR (ADR 0006) at checkpoint 1A, with conformance cases.
 - **Labelling every pixel** (semantic segmentation) is not part of the segment capability at
   first; it is on the carry-over list.
 

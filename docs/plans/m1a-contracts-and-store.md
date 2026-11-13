@@ -323,6 +323,12 @@ range is refused. And: resolution takes an explicit choice, then the default, an
 a needed feature is missing.
 **Size:** medium.
 
+**Built in three pull requests,** because the task came to about three times the size of
+one: first what every capability shares, faults, declarations, resolution, and the fill
+and segment interfaces, with those sections of the ADR; then the judge interface, the
+fakes, the handles in a context and a call's choice of backend; then `whizbang-rascal`
+with the composite. A box is ticked by the pull request that makes it true.
+
 ### A9. Proof one: `grow` through the executor
 
 **Depends on:** A7, A8. **Reads:** rascal `crates/rascal-ops/src/grow.rs` and `refine.rs`.
