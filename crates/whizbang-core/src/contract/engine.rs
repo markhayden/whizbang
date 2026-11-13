@@ -3,8 +3,8 @@
 
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use crate::artifact::{self, Artifact, Contents};
@@ -34,8 +34,9 @@ use super::{
 ///
 /// `submit` and `request` return when the run is over and its record is durable, or,
 /// for a request that was sent before, as soon as its id was looked up. `start` returns
-/// once the run is admitted; a run is then asked after by its id (`status`, `wait`),
-/// and cancelled by it (`cancel`), by any caller (ADR 0008).
+/// once the run is admitted, and is refused when too many started runs are live; a run
+/// is then asked after by its id (`status`, `wait`), and cancelled by it (`cancel`), by
+/// any caller (ADR 0008).
 pub trait Executor: Send + Sync {
     /// Can this exact call run now? Nothing is written, nothing is spent, and nothing is
     /// sent to a model. A call that is refused and a store that failed are told apart
@@ -66,6 +67,12 @@ pub trait Executor: Send + Sync {
     /// action runs on a thread of its own. The run is then found by its id, by this
     /// caller or any other ([`Executor::status`], [`Executor::wait`]). A request that
     /// was sent before is answered as a repeat, and a refusal is a refusal, as there.
+    ///
+    /// Started runs are bounded (ADR 0008, "How many runs are started at once"): a
+    /// request that would be one more than the executor's bound is refused, before
+    /// anything is prepared or written ([`Refusal::TooManyStarted`]). And a run that
+    /// was admitted and whose thread the system then refused to make is abandoned,
+    /// and the caller is handed [`CallError::NotStarted`].
     fn start(&self, request: &Request) -> Result<Answer, CallError>;
 
     /// Where the run is now, and, while it executes in this process, the progress
@@ -116,6 +123,50 @@ pub struct Engine {
     ledger: Option<Arc<dyn Ledger>>,
     /// The backends each run's capability handles are made over.
     capabilities: Capabilities,
+    /// How many started runs the store's writer may have, not over, when this executor
+    /// starts one more ([`Engine::with_started_bound`]).
+    started_bound: usize,
+    /// What makes the thread of a started run.
+    spawn: Spawn,
+}
+
+/// How many runs an executor starts and has live at once, each on a thread of its own,
+/// unless it is told otherwise ([`Engine::with_started_bound`]).
+pub const STARTED_RUNS_DEFAULT: usize = 64;
+
+/// The most an executor can be told to start and have live at once. A thread is not
+/// free, and a process that makes them without end takes the machine with it.
+pub const STARTED_RUNS_CEILING: usize = 256;
+
+/// A bound on started runs that an executor does not take: it is 1 to
+/// [`STARTED_RUNS_CEILING`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundRefused {
+    pub asked: usize,
+}
+
+impl std::fmt::Display for BoundRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "an executor starts at least 1 run and at most {STARTED_RUNS_CEILING} at once: \
+             {} is not a bound it takes",
+            self.asked
+        )
+    }
+}
+
+impl std::error::Error for BoundRefused {}
+
+/// What makes the thread a started run's action runs on: it is given the thread's name
+/// and what the thread does, and says whether the thread was made. For tests, which
+/// have it fail ([`Engine::with_spawn`]); an executor makes real threads.
+#[doc(hidden)]
+pub type Spawn = fn(String, Box<dyn FnOnce() + Send + 'static>) -> std::io::Result<()>;
+
+/// A thread of the system, with this name.
+fn spawn_thread(name: String, work: Box<dyn FnOnce() + Send + 'static>) -> std::io::Result<()> {
+    std::thread::Builder::new().name(name).spawn(work).map(drop)
 }
 
 /// Where the executor reads the digest of the config. It is asked every time a call is
@@ -156,6 +207,8 @@ impl Engine {
             secrets: Secrets::none(),
             ledger: None,
             capabilities: Capabilities::none(),
+            started_bound: STARTED_RUNS_DEFAULT,
+            spawn: spawn_thread,
         }
     }
 
@@ -211,6 +264,26 @@ impl Engine {
     pub fn waiting_for(&self, run: &RunId) -> usize {
         let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
         attached.and_then(live::of).map_or(0, |live| live.waiting())
+    }
+
+    /// The same executor, starting a run ([`Executor::start`]) only while the store's
+    /// writer has fewer than `bound` started runs that are not over
+    /// ([`Refusal::TooManyStarted`]). The count is the store's, so every executor over
+    /// one store value counts the same runs. A bound is 1 to [`STARTED_RUNS_CEILING`];
+    /// without this it is [`STARTED_RUNS_DEFAULT`].
+    pub fn with_started_bound(mut self, bound: usize) -> Result<Engine, BoundRefused> {
+        if !(1..=STARTED_RUNS_CEILING).contains(&bound) {
+            return Err(BoundRefused { asked: bound });
+        }
+        self.started_bound = bound;
+        Ok(self)
+    }
+
+    /// For tests: the same executor, making the thread of a started run with this.
+    #[doc(hidden)]
+    pub fn with_spawn(mut self, spawn: Spawn) -> Engine {
+        self.spawn = spawn;
+        self
     }
 
     /// The actions this executor runs.
@@ -317,17 +390,54 @@ impl Executor for Engine {
     }
 
     fn start(&self, request: &Request) -> Result<Answer, CallError> {
-        let admitted = match self.begin(request)? {
+        // A place among the started runs is taken first, before anything is prepared
+        // or admitted (ADR 0008, "How many runs are started at once"): so a request
+        // over the bound is refused here, with no run, nothing reserved and nothing
+        // written. An executor that only reads its store starts nothing, and takes
+        // no place to say so.
+        let place = match &self.store {
+            Some(store) => match store.start_place(self.started_bound) {
+                Some(place) => Some(place),
+                None => return self.over_the_bound(request),
+            },
+            None => None,
+        };
+        let mut admitted = match self.begin(request)? {
             Ok(admitted) => admitted,
             Err(answer) => return Ok(answer),
         };
+        // The run holds the place from here, and gives it back when the executor is
+        // done with it, whatever happened to it.
+        admitted.place = place;
         let run = admitted.run.clone();
         // The action runs on a thread of its own, which holds what it needs of this
         // executor, the store among it. How the run ended is in the store, and is
         // what whoever asks after the run is told; nobody is handed this result.
-        let engine = self.clone();
-        std::thread::spawn(move || drop(engine.execute(admitted)));
-        Ok(Answer::Started(run))
+        // The thread takes the run out of a cell that this caller holds too: a thread
+        // that could not be made never ran what it was given, and the run is still
+        // there to be let go of, here.
+        let cell = Arc::new(Mutex::new(Some(admitted)));
+        let work = {
+            let (engine, cell) = (self.clone(), cell.clone());
+            move || {
+                let admitted = cell.lock().unwrap_or_else(PoisonError::into_inner).take();
+                if let Some(admitted) = admitted {
+                    drop(engine.execute(admitted));
+                }
+            }
+        };
+        let name = format!("run {run}");
+        let Err(error) = (self.spawn)(name, Box::new(work)) else {
+            return Ok(Answer::Started(run));
+        };
+        // No thread: the system has none to give. The run was admitted, durably, and
+        // its action will never start. It is let go here: its place is given back,
+        // and its guard says that it was abandoned, so that nothing waits for it
+        // (ADR 0008, "A run with nothing behind it"). The caller is told what
+        // happened, which is not a judgement of the call.
+        let why = said(&self.secrets, &error.to_string());
+        drop(cell.lock().unwrap_or_else(PoisonError::into_inner).take());
+        Err(CallError::NotStarted { run, why })
     }
 
     fn status(&self, run: &RunId) -> Result<Watched, CallError> {
@@ -376,6 +486,29 @@ impl Executor for Engine {
 }
 
 impl Engine {
+    /// The answer to a request to start a run when the started runs are at the bound.
+    /// A request that was sent before starts nothing, and is answered as it always
+    /// is, with the run it made; any other is refused.
+    fn over_the_bound(&self, request: &Request) -> Result<Answer, CallError> {
+        let refused = Refusal::TooManyStarted {
+            bound: self.started_bound,
+        };
+        let Some(id) = request.id() else {
+            return Err(refused.into());
+        };
+        if self.secrets.redact(id.as_str()) != id.as_str() {
+            return Err(Refusal::SecretInRequestId.into());
+        }
+        match self.look_up(id, request.fingerprint())? {
+            Found::Nothing => Err(refused.into()),
+            Found::Same(earlier) => Ok(Answer::Repeat(earlier)),
+            Found::Other { run } => Err(CallError::Refused(Refusal::Conflict {
+                request: id.clone(),
+                run,
+            })),
+        }
+    }
+
     /// Everything before a run's action: the look for a request's id, the preparation
     /// and the admission. What comes back is the run that was admitted, to be executed,
     /// or the answer to a request that makes no run: a repeat.
@@ -446,6 +579,11 @@ struct Admitted {
     /// The generation the run was admitted against, held until this is dropped.
     view: Arc<Pinned>,
     deadline: Option<Instant>,
+    /// The run's place among the started runs, when it was started: given back when
+    /// the executor is done with the run, just before whoever waits for it is told.
+    /// It is declared before `over`, so a run that is dropped whole gives its place
+    /// back first.
+    place: Option<store::Place>,
     /// Says that the executor is done with the run, when this is dropped. Executing
     /// the run takes it out, to drop it after everything else the run held.
     over: Option<Over>,
@@ -796,6 +934,7 @@ impl Engine {
             store: store.clone(),
             view,
             deadline: bounded.deadline,
+            place: None,
             over: Some(over),
         })
     }
@@ -867,6 +1006,8 @@ impl Engine {
             store,
             view,
             deadline,
+            // Held to the end of this, and so given back before whoever waits is told.
+            place: _place,
             over: _,
         } = admitted;
         let request = request.as_ref();
@@ -1071,7 +1212,7 @@ fn held_to_ports(
 /// when there were more. The secrets are taken out first, while the text is whole: a
 /// secret that the cut went through would no longer be found. They are looked for once
 /// more after the cut, in case the three dots completed one.
-fn said(secrets: &Secrets, text: &str) -> String {
+pub(super) fn said(secrets: &Secrets, text: &str) -> String {
     let whole = secrets.redact(text);
     match whole.char_indices().nth(MESSAGE_LIMIT) {
         Some((cut, _)) => secrets.redact(&format!("{}...", &whole[..cut])),

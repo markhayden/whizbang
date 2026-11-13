@@ -81,13 +81,13 @@ pub(super) fn the_run(root: &Path) -> RunId {
     RunId::parse(generation.runs().keys().next().unwrap()).unwrap()
 }
 
-fn completed() -> RunState {
+pub(super) fn completed() -> RunState {
     RunState::Ended(Outcome::Completed {
         outputs: Vec::new(),
     })
 }
 
-fn messages(watched: &Watched) -> Vec<&str> {
+pub(super) fn messages(watched: &Watched) -> Vec<&str> {
     watched.events().iter().map(|line| line.message()).collect()
 }
 
@@ -133,6 +133,8 @@ fn a_second_caller_reads_the_status_and_the_progress_of_a_run_whose_action_is_bu
         assert_eq!(finished.run(), &run);
         let waited = waiting.join().unwrap().unwrap();
         assert_eq!(waited.state(), &completed());
+        // What it reported is in its journal now, and not in the answer.
+        assert!(waited.events().is_empty());
 
         // Ended, the run is answered from its record, by anyone; its events are in
         // its journal, in the store.

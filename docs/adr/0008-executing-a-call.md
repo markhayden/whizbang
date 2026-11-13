@@ -5,6 +5,10 @@ Date: 2026-11-12
 Amended: 2026-11-12, with the second pull request of task A7. Added: "Status, waiting,
 and a run that was started", which is built. Changed: the paragraph that says which part
 builds what; what this record does not decide yet.
+Amended: 2026-11-13, in the same pull request, after its review. Added: "How many runs
+are started at once" and a run whose thread could not be made, under "Status, waiting,
+and a run that was started"; what a wait is told of a run that is deleted. Changed: a
+progress message is cut as the other texts are.
 Amended: 2026-11-13, with the third pull request of task A7. Added: "Cancellation",
 which is built: the rule for a cancellation and the commit step, `cancel`, cancelling an
 admission, the handles a context binds to its own signal, the generation a run
@@ -253,6 +257,7 @@ after in the same way, by another caller.
 | Ended, in the store | `Ended`, with the outcome, from its record; no events: they are in its journal |
 | Executing in this process | `status`: `NotEnded { here: true }`, with its events so far. `wait`: waits, then answers as for a run that ended |
 | Abandoned by this process ("A run with nothing behind it", below) | `Abandoned`, with the store's failure when there was one, and its events; `wait` does not wait |
+| Was to be started, and no thread could be made for it | `Abandoned`, with no failure of the store; the caller that started it was handed `CallError::NotStarted` |
 | Admitted by a process that is gone | `NotEnded { here: false }`; `wait` does not wait: nothing will end it |
 | Not in the store | The refusal `NoSuchRun`: it was never made, or it was deleted |
 
@@ -307,15 +312,82 @@ test stops a publication after its pointer is replaced and before its last sync,
 second thread reads the status of that run and of another that is executing
 (`watch::a_second_caller_reads_the_status_of_a_run_while_its_end_is_being_published`).
 
-**Progress.** An action's progress events are kept in memory, the secrets taken out when
-each is reported, and are read through `status` while the run executes here. They are
-not published while the run executes: the journal is durable with the run's end, as
-before, and a process that dies leaves none of it. They are not bounded. Both stay on
-`docs/carry-over.md`. The events of a run whose end the store refused stay readable in
-the process that ran it.
+**A run that is deleted while someone waits.** A `wait` that began before the run was
+deleted is waiting for the run's action, and answers when the action has come back and
+the executor is done: with `NoSuchRun`, since the end of a deleted run is refused and
+the run is not made again. A `wait` that begins after the deletion is visible answers at
+once, with `NoSuchRun`. Deleting a run does not stop its action.
 
-**What is not built.** A started run's thread is not counted or bounded, and a process
-that ends while one runs leaves the run admitted.
+**A run whose end was refused stays in the table.** The store takes a run out of its
+table of open runs when the generation that closes or deletes it is visible. A run
+whose end publication was refused was never closed, so it stays there, with its live
+state and its events, until it is deleted or the store value is dropped. That is what
+lets `status` say that it was abandoned ("A run with nothing behind it", below) and show
+its events; what it costs is the memory of those events for the life of the store value.
+
+**How many runs are started at once.** Each started run has a thread, and a thread is
+not free: a caller that started runs without end would take the process, and with it
+the machine, down. So `start` is bounded.
+
+- *The bound.* An executor starts a run only while fewer than its bound of started runs
+  are live: 64 unless it was built otherwise (`Engine::with_started_bound`,
+  `STARTED_RUNS_DEFAULT`). A bound is at least 1 and at most 256
+  (`STARTED_RUNS_CEILING`); any other is refused when it is set (`BoundRefused`), so no
+  configuration can ask for thousands.
+- *Where it is counted.* In the store value, beside its table of open runs
+  (`Store::start_place`): the count is the store writer's, not an executor's. Two
+  executors over one store value count the same runs, each against its own bound.
+- *When a place is taken, and what a refusal leaves.* Before anything else: before the
+  request's id is looked up, before the call is prepared, before admission. A request
+  over the bound is refused with `Refusal::TooManyStarted`, which carries the bound and
+  nothing the caller wrote, on the caller's thread and at once. No run was made,
+  nothing was reserved, nothing was written to the store, and the request's id is not
+  taken. One case is not refused: a request whose id was admitted before starts
+  nothing, and is answered with the run it made, as always.
+- *When a place is given back.* When the executor is done with the run, by a guard that
+  is dropped however that comes about: the action came back, the action panicked, the
+  end publication was refused, the admission failed after the place was taken, the
+  thread could not be made. It is given back just before whoever waits for the run is
+  told that it is over, so a caller that waited for a run can start the next.
+- *What it does not cover.* `submit` and `request` run the action on the caller's own
+  thread, take no place and are never refused for this: how many of those run at once
+  is the caller's doing. A call from inside an action has no rule yet; nested calls get
+  their own in the next part.
+
+The tests hold two or three runs at barriers, never more
+(`started::a_start_over_the_bound_is_refused_and_writes_nothing_and_a_run_that_ends_makes_room`,
+`started::two_executors_over_one_store_count_the_same_started_runs`,
+`started::a_bound_of_none_or_over_the_ceiling_is_refused_when_it_is_set`,
+`started::a_started_run_whose_action_panics_gives_its_place_back`,
+`started::a_started_run_whose_end_the_store_refuses_gives_its_place_back`).
+
+**A thread that cannot be made.** The thread is made with a name (`run <id>`) through
+`std::thread::Builder`, which hands back the system's refusal where `std::thread::spawn`
+panics. By then the run is admitted, durably, and its action will never start. The
+executor lets go of the run there, and the guard that every admitted run carries marks
+it as abandoned ("A run with nothing behind it", below), with no failure of the store,
+since there was none. The caller is handed `CallError::NotStarted`, with the run and
+the system's sentence: not a refusal, since it is no judgement of the call. Nothing
+waits for that run: a `wait`, a `status` and a repeat of the request all answer
+`Abandoned`. The part before this one, which had no such state, ended the run as an
+error of the type `start`. A test has the executor make its threads through a function
+that fails; nothing is exhausted to show it
+(`started::a_run_whose_thread_cannot_be_made_is_abandoned_and_nobody_waits_for_it`).
+
+**Progress.** An action's progress events are kept in memory, and are read through
+`status` while the run executes here. Each message is kept as the other texts of a run
+are ("What an action or a panic says is cut"): the secrets taken out, then its first
+4,096 characters, with three dots when there were more
+(`started::a_progress_message_is_cut_as_every_text_a_run_keeps_is`). How many events a
+run reports is not bounded. They are not published while the run executes: the journal
+is durable with the run's end, as before, and a process that dies leaves none of it.
+Both stay on `docs/carry-over.md`. The events of a run whose end the store refused stay
+readable in the process that ran it. A message is shown as the action gave it apart
+from that: a control character in it is passed through, and a door that prints events
+escapes them (`docs/carry-over.md`).
+
+**What is not built.** A process that ends while a started run executes leaves the run
+admitted.
 
 ### Cancellation
 
@@ -577,7 +649,10 @@ memory, and nothing marks a run that a dead process left.
 
 - `Executor` has three more methods, and `Answer` a third case, `Started`. `Engine` is
   cloned cheaply: a started run's thread holds one, with the store.
-- `Refusal` has `NoSuchRun`.
+- `Refusal` has `NoSuchRun` and `TooManyStarted`; `CallError` has `NotStarted`.
+- A caller that starts runs handles `TooManyStarted`: it waits for one of its runs and
+  asks again, under the same request id.
+- A progress message over 4,096 characters is cut where it was kept whole.
 - A run's events are kept after its end was published or refused, until the last holder
   of its live state lets go.
 
