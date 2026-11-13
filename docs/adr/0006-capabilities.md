@@ -7,7 +7,8 @@ a fault's cleaning guarantees and what it does not find, with a rule for adapter
 handle is bound to its run's cancellation and deadline, and a backend is handed them as
 `Bounds`; a point is in a pixel; an instance's box holds its plane; what rascal's `alpha`,
 `tinted` and `binary` renderings marked, and that a backend cannot rebuild them. Added:
-who retries; how requests will be accounted for.
+who retries; how requests will be accounted for. And after its second review: a
+deadline is only ever narrowed; white space is trimmed before a fault's text is cleaned.
 Spec: section 3, "Crates and their edges"; section 4, "Backends"
 
 ## Context
@@ -73,7 +74,10 @@ record are in `crates/whizbang-core/tests/it/capability/`.
   the worker boundary's, at checkpoint 1C (`docs/carry-over.md`).
 - **A handle for each,** which is what an action asks through: `SegmentHandle`,
   `FillHandle`. A handle wraps a backend and **is bound to one run**: it is made with
-  that run's cancellation signal, and with its deadline when it has one. The method an
+  that run's cancellation signal, and with its deadline when it has one. **A deadline is
+  only ever narrowed:** the executor sets it, and an action, which holds the handle and
+  can clone it, may only shorten it; setting a later time than the one already set
+  changes nothing. The method an
   action calls takes the request and nothing else, so an action cannot ask on behalf
   of a run that was cancelled by handing over some other signal. Whoever makes an
   action's context makes its handles, with the context's own signal; until the
@@ -147,7 +151,8 @@ A fault is written into a run record.
 - each is kept when it is an ASCII letter, a digit, a space, or one of
   `. , ; : ' ( ) % + - _`;
 - every other character becomes `?`;
-- a sentence of no characters, or of spaces alone, becomes `no reason was given`.
+- white space at the ends of the text is dropped before any of that, so a sentence of no
+  characters, or of white space alone of any kind, becomes `no reason was given`.
 
 **What that guarantees.** A sentence has no `/` and no `\`; no `@`, `=` or `&`; no line
 break, double quote or angle bracket. So it holds no path with its separators, no

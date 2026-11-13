@@ -421,6 +421,41 @@ fn a_handle_hands_the_backend_its_deadline_and_sends_nothing_once_it_has_passed(
 }
 
 #[test]
+fn a_deadline_is_only_ever_narrowed() {
+    // The executor sets a run's deadline; an action that holds the handle, or a clone
+    // of it, may shorten it and can never move it later.
+    let request = FillRequest::new(picture(), support(), None).unwrap();
+    let stub = Stub::new(&[], Ok(grey(WIDTH, HEIGHT)));
+    let passed = Instant::now()
+        .checked_sub(Duration::from_millis(1))
+        .unwrap();
+    let day = Duration::from_secs(24 * 3600);
+    let handle = FillHandle::new(stub.clone(), Cancellation::new()).until(passed);
+    assert_eq!(
+        handle.fill(&request).unwrap_err().kind(),
+        FaultKind::TimedOut
+    );
+    // A later deadline, on the handle or on a clone of it, does not move the earlier.
+    let widened = handle.clone().until(Instant::now() + day);
+    assert_eq!(
+        widened.fill(&request).unwrap_err().kind(),
+        FaultKind::TimedOut
+    );
+    assert_eq!(stub.sent.load(Ordering::SeqCst), 0);
+
+    // An earlier one does: the backend is handed the earliest it was given.
+    let (soon, later) = (Instant::now() + day, Instant::now() + 2 * day);
+    for (first, second) in [(later, soon), (soon, later)] {
+        FillHandle::new(stub.clone(), Cancellation::new())
+            .until(first)
+            .until(second)
+            .fill(&request)
+            .unwrap();
+        assert_eq!(*stub.seen.lock().unwrap(), Some((false, Some(soon))));
+    }
+}
+
+#[test]
 fn a_fillers_fault_is_handed_back_as_it_is() {
     let fault = Fault::new(FaultKind::Unavailable, "overloaded").retry_after_ms(250);
     let stub = Stub::new(&[], Err(fault.clone()));

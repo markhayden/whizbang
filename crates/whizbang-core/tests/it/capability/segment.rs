@@ -1,8 +1,9 @@
 //! Segment (`SPEC.md` section 4; ADR 0006, "Segment"): one image and a batch of requests,
 //! each a phrase, a point or a box; instances with planes, boxes and scores for each.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use whizbang_core::capability::{
     Asked, Bounds, Declaration, Fault, FaultKind, INSTANCE_LIMIT, Instance, PHRASE_LIMIT,
@@ -254,6 +255,8 @@ struct Stub {
     declaration: Declaration,
     answer: Result<SegmentResponse, Fault>,
     sent: AtomicU64,
+    /// What the last request's bounds said: cancelled or not, and the deadline.
+    seen: Mutex<Option<(bool, Option<Instant>)>>,
 }
 
 impl Stub {
@@ -263,6 +266,7 @@ impl Stub {
                 .unwrap(),
             answer: Ok(SegmentResponse::new(answers)),
             sent: AtomicU64::new(0),
+            seen: Mutex::new(None),
         })
     }
 }
@@ -272,8 +276,9 @@ impl Segmenter for Stub {
         &self.declaration
     }
 
-    fn segment(&self, _: &SegmentRequest, _: &Bounds) -> Result<SegmentResponse, Fault> {
+    fn segment(&self, _: &SegmentRequest, bounds: &Bounds) -> Result<SegmentResponse, Fault> {
         self.sent.fetch_add(1, Ordering::SeqCst);
+        *self.seen.lock().unwrap() = Some((bounds.is_cancelled(), bounds.deadline()));
         self.answer.clone()
     }
 }
@@ -381,4 +386,37 @@ fn nothing_is_sent_once_the_run_is_cancelled() {
         .unwrap_err();
     assert_eq!(fault.kind(), FaultKind::Cancelled);
     assert_eq!(stub.sent.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn the_segmenter_is_handed_the_handles_own_bounds_and_a_deadline_is_only_narrowed() {
+    let request = SegmentRequest::new(picture(), dog(), 8).unwrap();
+    let stub = Stub::new(&ALL, vec![Vec::new()]);
+    let day = Duration::from_secs(24 * 3600);
+    // No deadline: the backend sees the run's signal, not cancelled, and none.
+    SegmentHandle::new(stub.clone(), Cancellation::new())
+        .segment(&request)
+        .unwrap();
+    assert_eq!(*stub.seen.lock().unwrap(), Some((false, None)));
+    // The earliest deadline it was given is the one the backend is handed.
+    let (soon, later) = (Instant::now() + day, Instant::now() + 2 * day);
+    for (first, second) in [(later, soon), (soon, later)] {
+        SegmentHandle::new(stub.clone(), Cancellation::new())
+            .until(first)
+            .until(second)
+            .segment(&request)
+            .unwrap();
+        assert_eq!(*stub.seen.lock().unwrap(), Some((false, Some(soon))));
+    }
+    assert_eq!(stub.sent.load(Ordering::SeqCst), 3);
+    // Once it has passed nothing is sent, and a clone cannot move it later.
+    let passed = Instant::now()
+        .checked_sub(Duration::from_millis(1))
+        .unwrap();
+    let handle = SegmentHandle::new(stub.clone(), Cancellation::new()).until(passed);
+    for handle in [handle.clone(), handle.until(Instant::now() + day)] {
+        let fault = handle.segment(&request).unwrap_err();
+        assert_eq!(fault.kind(), FaultKind::TimedOut);
+    }
+    assert_eq!(stub.sent.load(Ordering::SeqCst), 3);
 }
