@@ -1,6 +1,8 @@
 # Plan: checkpoint 1B, policy and controls
 
-Draft 6, 2026-11-13. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the task
+Draft 7, 2026-11-13. **Not ready to build from:** the fourth review round found the
+recovery of a crashed run still incomplete, and its findings there are recorded under
+"Review rounds" with a proposed resolution, for the owner to decide, and are not applied. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the task
 list.
 
 Checkpoint 1A is nearly built: everything but its two proofs (A9, `grow`; A11, the
@@ -47,7 +49,7 @@ task A7; ADR 0005 for `run/2`).
 | A run is cancelled by `Executor::cancel` or by its signal; a child's signal reads its parent's; deleting an executing run sets its signal | S5c drives its cancellation case through `Executor::cancel` |
 | `RunState::Abandoned`: a run whose admission or end the store did not confirm, in the process that made it. To any other process it is admitted and not ended | S6 and S6b settle and end such a run at the next open to write. Ending one at once, in the process that made it, is moved to milestone 2 |
 | A run reads the generation it was admitted against (`Store::hold`) | Recovery and the ledger read the current generation, never a held one |
-| `start` runs an action on a thread of its own; 64 started runs at most for one store value, four started by one run, 1,024 runs in one tree | "Rules every task's tests follow", 7 to 10 |
+| `start` runs an action on a thread of its own; an executor starts 64 runs at once by default and never more than 256 for one store value, a run starts four at once, and at most 1,024 runs are under one run that nothing called | "Rules every task's tests follow", 7 to 10 |
 | `run/2` at the end of A7: `identity.parent`, `steps` (calls) and `outcome.refusals` (the action or null, a kind, a sentence; calls to run an action only) are filled. Empty: `asked.settings`, `time.durations`, `models`, `egress`, `judge`, `spend.requests` | `run/3` (B4) defines the elements of `asked.settings`, `spend.requests` and `egress`, and adds kinds of refusal for a request that was not sent |
 | An admitted run keeps `admission/1` and nothing else of its call until it ends | B6 keeps the prepared call with the admission |
 
@@ -106,7 +108,7 @@ the owner's own, given on 2026-11-13.
   judged ready with no Python present (`SPEC.md` section 1, the first user story), and 1B
   comes before the pack. Weights are shared by every store on a machine, so they are not
   in a store; the directory has its own lock and its own atomic publication. `SPEC.md`
-  section 3 says the store is the one owner of everything durable; M1's pull request
+  section 3 says the store is the one owner of everything durable; B0b's pull request
   brings that sentence in line (the store owns everything durable about runs; the models
   directory owns installed models), and adds "model installations" to what
   `whizbang-backends` holds. These two edits are reviewed here, with this plan.
@@ -262,8 +264,9 @@ and `inventory.rs` is M6's and M6b's.
 test roots of each crate, `crates/whizbang/src/main.rs`, `justfile`,
 `.config/nextest.toml`) are changed by B0b, which makes every module root, the empty crate
 `whizbang-backends`, the TOML reader as a dependency and the `spend` subcommand as a stub;
-and after it by a base task only. `SPEC.md` is changed by C1 (the config example), M1 (the
-two sentences under "Decisions") and Z1. An ADR is changed by the task that brings it and
+and after it by a base task only. `SPEC.md` is changed by B0b (the
+two sentences under "Decisions" on the models directory, and the config example if C1's
+reading of it needs one, which C1 then asks a base task for) and Z1, and by no side task. An ADR is changed by the task that brings it and
 by no other, but for the interfaces' ADR, which each of I1 to I7 adds its section to, one
 at a time. `docs/carry-over.md` is changed by every task in its own rows.
 
@@ -289,12 +292,12 @@ planned as two pull requests, the proofs second.
 | I5 A policy before a send, and a checked send | Base | I4 | small | 1 |
 | I6 One snapshot of the config | Base | I5 | small | 1 |
 | I7 An inventory, and a lease on an installation | Base | I6 | small | 1 |
-| W1 The binary wired | Base | S2, S5b, S11, S6b, E2, C5, M6b | small | 1 |
-| B6 An admitted run keeps what it was asked | Spend | I1 | small | 1 |
+| W1 The binary wired | Base | B6, S3, S8, S10, S7b, S12, E4, E6, C5, M6b | small | 1 |
+| B6 An admitted run keeps what it was asked | Spend | I6, S1 | small | 1 |
 | S1 The ledger's records | Spend | B1b | small | 1 |
 | S1b The fold | Spend | S1 | small | 1 |
 | S2 Reserving at admission | Spend | S1b, I2 | medium | 2 |
-| S3 The per-call cap, and a call's own | Spend | I1 | small | 1 |
+| S3 The per-call cap, and a call's own | Spend | I6 | small | 1 |
 | S4 Quotes: a bound, or no dispatch | Spend | S1b, B3 | small | 1 |
 | S5 Dispatch first | Spend | S4, S2, I3 | medium | 2 |
 | S5b Settlement of each attempt | Spend | S5 | small | 1 |
@@ -337,7 +340,7 @@ builder walks it. Beside it:
 
 - From B0b: C1, then C2; C3; X1; X2. From B1b: S1, S1b. From B2: M1 to M5c, the whole
   models strand but its last two tasks. From B3: S4.
-- From I1: B6, S3 and S8. From I2: S2, then S9. From I3: S5 and all that follows it in
+- From I1: S8. From I2: S2, then S9. From I6: B6 and S3. From I3: S5 and all that follows it in
   spend. From I4: S6. From I5: the egress strand. From I6: C4. From I7: M6.
 
 So while the interface tasks are being walked, config, models, scripts and the first of
@@ -406,6 +409,7 @@ table at the head, and `just check` passes.
 
 **Depends on:** B0.
 
+- [ ] The two sentences of `SPEC.md` that "Decisions" names, on the models directory.
 - [ ] The root files of "Strands": the module roots `spend/`, `config/` and `egress/` in
       the core with their test roots, the empty crate `whizbang-backends` in the workspace
       and in `scripts/crate-graph.txt`, the TOML reader as a dependency of the workspace,
@@ -501,8 +505,8 @@ is cut, and not shown (rule 4).
 - [ ] In `crates/whizbang-testkit/src/capabilities.rs`: each fake can be built with a price
       (free, a bound, an estimate only, a price by time), to report a charge with its
       answer (under the bound, none, over the bound), with a recipient, and to fail at
-      a named stage. The fake filler of 1A already stops at a named barrier and sees the
-      cancellation; the other two gain the same.
+      a named stage. The fakes of 1A already stop at a named barrier and see the
+      cancellation; nothing of that changes.
 - [ ] A fake that sends: it passes scripted hops (a redirect, an upload address, a returned
       download address) through the sending interface of B2, and keeps what it was asked
       to send to each.
@@ -681,6 +685,8 @@ sending fake does; the policy's `{:?}` shows recipients cut and no credential (r
       executes under that one, whatever the file becomes.
 - [ ] Secrets are kept for redaction for as long as the executor lives: a value a later
       snapshot no longer holds is still taken out of what is written.
+- [ ] An admission's part (I1) is shown the snapshot its call was prepared under at
+      admission.
 - [ ] A digest alone is still a source, of a snapshot that holds nothing else, so the
       binary and 1A's tests are unchanged. A fake source in the test kit that a test
       swaps.
@@ -715,7 +721,8 @@ recorded, not the one current at the request.
 
 ### W1. The binary wired
 
-**Depends on:** S2, S5b, S11, S6b, E2, C5, M6b.
+**Depends on:** B6, S3, S8, S10, S7b, S12, E4, E6, C5, M6b: every implementation it
+wires, and through them every other side task of spend, egress, config and models.
 
 - [ ] `wiring::runner` builds the executor with the real ledger, the config's source, the
       admission's parts (B6, S3, S8), the wrappers (the gate, the lease, the meter), the
@@ -731,8 +738,9 @@ write, and not by one that reads; the shipped description does not change.
 
 ### B6. An admitted run keeps what it was asked
 
-**Depends on:** I1. **Reads:** ADR 0007, "Two records" and "Admission". An admission's
-part, in `spend/`, with its section in S1's ADR.
+**Depends on:** I6, S1. **Reads:** ADR 0007, "Two records" and "Admission". An
+admission's part, in `spend/`, with a short ADR of its own that names S1's. It needs I6
+because the settings it keeps are the snapshot's, which a part is shown from I6 on.
 
 - [ ] In the admission's publication, among the run's names: a record of the call as it
       was prepared at admission. The action, its version, the arguments, the inputs, the
@@ -811,7 +819,7 @@ record; a nested call asks the ledger nothing.
 
 ### S3. The per-call cap, and a call's own
 
-**Depends on:** I1. **Reads:** rascal `crates/rascal-core/src/config.rs` (`LimitsConfig`)
+**Depends on:** I6, for the snapshot a part is shown. **Reads:** rascal `crates/rascal-core/src/config.rs` (`LimitsConfig`)
 and `crates/rascal-mask/src/describe.rs` (`common_properties`, `max_spend_usd`);
 table-manners `CONTRACT.md` section 4.5. An admission's part, in `spend/`.
 
@@ -1568,6 +1576,7 @@ missing acceptance cases, carry-over rows and tasks too large.
 | 1 | 2026-11-13 | 2 | 2 | 9 | 0 |
 | 2 | 2026-11-13 | 3 | 1 | 7 | 1 |
 | 3 | 2026-11-13 | 4 | 1 | 6 | 2 |
+| 4 | 2026-11-13 | 6 | 2 | 4 | 1 |
 
 **Round 1, and what changed in draft 3.**
 
@@ -1657,13 +1666,70 @@ third round listed, and its outline of interfaces first, which this draft's I1 t
 The task ids of rounds 1 to 3 above are draft 5's: B5 became I3, S1c became I2, and E5,
 M4, M7, S13 and S6c are gone from 1B.
 
+**Round 4, on draft 6, and what changed in draft 7.** The round was asked first whether
+the recovery of a crashed run is now coherent. Its answer is no. It found that every
+carry-over row is placed, that the cuts keep the exit line of `SPEC.md` section 16, and
+that no task is clearly over size.
+
+Applied in draft 7, because they do not touch recovery:
+
+- Major: W1 could be wired before what it wires. It now needs every implementation.
+- Major: B6 and S3 need the config's snapshot, which I1 did not show them. They follow I6,
+  which shows a part the snapshot. B6 has an ADR of its own. `SPEC.md` is edited by base
+  tasks only.
+- Minor: the bounds on started runs are stated as ADR 0008 has them, and B3 no longer
+  claims the fakes lack barriers.
+
+**Not applied: the findings on recovery, with what is proposed for each.** The owner
+asked that a blocker here be handed back and not looped on. Until they are decided, the
+section "What a crashed run is recovered to" and the tasks I3, I4, B4, B6, S6, S6b and S12
+are not to be built from.
+
+1. *Blocker: some facts are still neither durable nor declared lost.* The whizbang
+   version that ran a run; what a response reports of a model (device, cache, reported
+   identity); a free request to a remote recipient, which has a send note and no
+   dispatch; the order of a run's calls, and a child that was deleted before its parent
+   crashed. Proposed: B6's record holds the whizbang version; a child's admission gains
+   its place among its parent's calls, by a base task, since `admission/1` closes with
+   1A (a new version of the admission); `outcome.lost` names `models` for every request
+   with no settlement and `steps` when a place in the sequence has no admission; and
+   every request to a recipient, free or not, has a dispatch record, of nothing when it
+   is free, so that one kind of record stands for "a request left".
+2. *Blocker: a damaged record other than a spend record has no outcome, and a damaged
+   spend record can let the rest of its reservation be released.* Proposed: damage to a
+   dispatch, a settlement or a reservation quarantines that one reservation, which is
+   neither settled nor released until S12's command, while other trees are recovered;
+   damage to B6's record, an admission or a send note never stops recovery: the run is
+   ended with the small `interrupted` record of a run that kept no call, and
+   `outcome.lost` or that record says which was unreadable.
+3. *Major: a wrapper returning is not proof that a settlement is durable,* and an end
+   that was visible and not confirmed has its settlement visible too. Proposed: I3 says
+   that a meter whose settlement fails, or whose backend panics, leaves the dispatch
+   unsettled and the run abandoned, never accounted for as free; recovery takes whichever
+   whole generation survived, and a settlement's made-once name is what keeps it from
+   being settled twice; S5b gains the case of a first hop that was billed and a second
+   that was refused, which is unresolved and not "not sent".
+4. *Major: recovery runs when an executor is built, and `store delete`, `store prune`,
+   `store import` and `spend reset` open a store to write without one.* Proposed: I4
+   moves the boundary into the store: a writer is not handed out until recovery has run,
+   by one entry point every command that writes goes through, with the states
+   initializing, ready and failed shared by all who ask, and a test of each writing
+   command after a crash and of two executors built at once.
+5. *Major, the recovery half: the `interrupted` marker needs readers.* `status`, `wait`,
+   `cancel`, a repeat and `runs list` do not know a run that has an ending and no
+   record. Proposed: B4 and I4 own that reading, in the executor's files and in
+   `crates/whizbang/src/runs.rs`, with a test of each question.
+
+Each of these is a change to an interface task or to B4, so they are best decided
+together and applied in one revision, which then gets a round of its own.
+
 ## Risks
 
 | Risk | Effect | What we do |
 |---|---|---|
 | A9, A11 or ADR 0009 changes where handles are made or what a run records of a request | I3 and B4 are wrong as written | B0 is first, checks D9, and stops on an answer that is neither outcome |
 | An interface fixed early does not fit the strand that implements it | A base task is reopened and a strand waits | Each interface is the outline a review gave after three rounds of the tasks it serves; its task ships a fake that the strand's tests are first written against; a misfit is changed by a base task, never worked around in a strand |
-| Recovery is still incoherent | A crashed run is misreported or its money miscounted | "What a crashed run is recovered to" is the one statement of it; every fact in its table has the task that makes it durable; S6b, S7b and E4 crash each |
+| Recovery is still incoherent | A crashed run is misreported or its money miscounted | It is: round 4 says so, and its five findings with a proposed resolution are under "Review rounds". They are decided and applied, and reviewed again, before I3, I4, B4, B6, S6, S6b or S12 is built |
 | The record's shapes are fixed in B4 before the strands that fill them | A second version, `run/4`, inside one checkpoint | B4 follows B1 to B3, which decide the quote, the stage and the recipient; a wrong shape is a new version, never an edit |
 | Crash sweeps multiply | The fast tier passes its three minutes | Rule 11; each task states its sweeps' times alone in its hand-back |
 | Folding the balances from every record costs more with every run | Admission slows as a store ages | Known, and measured at 100,000 ids in milestone 2 before ids are used in volume; a checkpoint record under a new name is the stated way out |
