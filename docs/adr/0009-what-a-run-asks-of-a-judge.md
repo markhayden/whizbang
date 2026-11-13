@@ -224,9 +224,16 @@ executor in the run's context, where every call is dispatched, refuses:
   store holds such an artifact is not looked at, so an identity that was guessed and one
   that names another run's artifact are refused alike.
 
-Both are refusals of a nested call like any other: no run is made, and each is in the
-record of the run that made the call (`outcome.refusals`, ADR 0008), with kinds
-`not_offered` and `not_readable`.
+Both are refusals of a nested call like any other: the call is refused before it is
+prepared or admitted, so no run is made, and each is in the record of the run that made
+the call (`outcome.refusals`, ADR 0008), with kinds `not_offered` and `not_readable`.
+
+**A name can be held to the list without a call.** `Context::offered(name)` answers as
+the executor would answer a call of that action: nothing when the run froze nothing or
+the name is one it froze, and otherwise `Refusal::NotOffered`, which it records in the
+run's record in the same list, in order, with the same sentence. A loop that dispatches
+what a model names asks it first and makes no call of a refused name
+(`scope::a_name_is_held_to_what_a_run_froze_without_a_call_and_the_refusal_is_in_its_record`).
 
 **By construction.** What a run may read is not a list an action keeps and compares
 against. The executor builds it from two things only it holds: the inputs of the run's

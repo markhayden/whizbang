@@ -142,6 +142,9 @@ fn a_run_that_froze_its_calls_calls_no_other_action_and_each_refusal_is_in_its_r
     );
     let record = record(&world, finished.run().as_str());
     assert_eq!(record.steps().len(), 3);
+    // A refused call was refused before it was admitted: the store holds the run and
+    // the three it called, and no run for any of the four that were refused.
+    assert_eq!(held(&world.root(), world.fs.clone()).runs.len(), 4);
     let kinds: Vec<_> = record.outcome().refusals.iter().map(|r| r.kind()).collect();
     assert_eq!(kinds, [RefusalKind::NotOffered; 4]);
     assert_eq!(record.outcome().refusals[1].action(), Some("nowhere"));
@@ -224,4 +227,61 @@ fn a_run_that_froze_its_calls_gives_a_call_only_what_it_was_given_or_its_own_cal
     let executor = engine(store, vec![free, takes]);
     let finished = executor.submit(&Call::new("free")).unwrap();
     assert_eq!(finished.outcome().name(), "completed");
+}
+
+#[test]
+fn a_name_is_held_to_what_a_run_froze_without_a_call_and_the_refusal_is_in_its_record() {
+    // `other` is registered and runs with nothing in its call. The action asks whether
+    // it may call it, and makes no call: nothing is prepared, admitted or run, and the
+    // refusal is recorded as the executor's own would be, in its place among them.
+    let world = World::new();
+    let noted = Noted::default();
+    let outer = {
+        let noted = noted.clone();
+        action("outer", move |_, context| {
+            // A run that froze nothing is refused nothing, and nothing is recorded.
+            assert_eq!(context.offered("other"), Ok(()));
+            assert!(context.freeze_calls(["inner"]));
+            assert_eq!(context.offered("inner"), Ok(()));
+            let mut noted = noted.lock().unwrap();
+            noted.push(context.offered("other").unwrap_err());
+            noted.push(refusal(context.executor().submit(&Call::new("other"))));
+            noted.push(context.offered("no action's name").unwrap_err());
+            Ok(Produced::nothing())
+        })
+    };
+    let ran = Arc::new(Mutex::new(0));
+    let other = {
+        let ran = ran.clone();
+        action("other", move |_, _| {
+            *ran.lock().unwrap() += 1;
+            Ok(Produced::nothing())
+        })
+    };
+    let inner = action("inner", |_, _| Ok(Produced::nothing()));
+    let executor = engine(world.store(), vec![outer, inner, other]);
+    let finished = executor.submit(&Call::new("outer")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(*ran.lock().unwrap(), 0);
+    // The store holds the one run: no run was made for anything that was refused.
+    assert_eq!(held(&world.root(), world.fs.clone()).runs.len(), 1);
+    let record = record(&world, finished.run().as_str());
+    assert!(record.steps().is_empty());
+    // What was asked and what was called are refused with one refusal, and recorded
+    // alike, in the order they were refused.
+    let noted = noted.lock().unwrap();
+    assert_eq!(noted[0], noted[1]);
+    let recorded: Vec<_> = record.outcome().refusals.iter().collect();
+    let said: Vec<_> = recorded
+        .iter()
+        .map(|r| (r.action(), r.kind(), r.why()))
+        .collect();
+    let why = noted[0].to_string();
+    assert_eq!(
+        said[..2],
+        [(Some("other"), RefusalKind::NotOffered, why.as_str()); 2]
+    );
+    // A name that is no action's name by the rule is recorded with no action.
+    assert_eq!((said[2].0, said[2].1), (None, RefusalKind::NotOffered));
+    assert_eq!(said.len(), 3);
 }
