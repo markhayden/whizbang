@@ -483,6 +483,11 @@ admission, and "whole" is one of the two states.
 
 No run is cancelled yet, so `Ended` with `Cancelled` is read and never written.
 
+An executor that writes the store looks a second time before it says `here: false`: its
+snapshot is older than its question to the store, and a run that ended in between would
+otherwise be said to have no process
+(`admit::a_repeat_that_races_the_end_of_its_run_is_not_told_the_run_will_never_end`).
+
 What `NotEnded` does not tell apart, each pinned by a test or a row:
 
 - `here: true` is also what a run is whose end could not be written (the store failed),
