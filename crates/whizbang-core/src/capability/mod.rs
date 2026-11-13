@@ -18,9 +18,11 @@ use crate::identity::{CanonicalPixels, PixelDigest};
 
 mod declare;
 mod fault;
+mod fill;
 
 pub use declare::{Declaration, Resolved, Roster, RosterError, Unresolved, feature};
 pub use fault::{FAULT_LIMIT, Fault, FaultKind};
+pub use fill::{FillHandle, FillRequest, Filler, PROMPT_LIMIT, Painted, Support};
 
 /// The most pixels an image, a plane or a fill may have: ADR 0001's default limit on a
 /// decoded image, held here for everything a capability is sent or sends back.
@@ -176,4 +178,21 @@ impl std::fmt::Debug for Picture {
             self.digest
         )
     }
+}
+
+/// The count of pixels of an image this wide and this high, when it is one a
+/// capability may hold: neither side zero, and within [`PIXEL_LIMIT`].
+pub(crate) fn pixel_count(what: &'static str, width: u32, height: u32) -> Result<u64, Unfit> {
+    let size = u64::from(width) * u64::from(height);
+    if size == 0 {
+        return Err(Unfit::Empty { what });
+    }
+    if size > PIXEL_LIMIT {
+        return Err(Unfit::TooLarge {
+            what,
+            size,
+            limit: PIXEL_LIMIT,
+        });
+    }
+    Ok(size)
 }
