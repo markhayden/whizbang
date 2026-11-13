@@ -1596,6 +1596,8 @@ fn a_preparation_that_still_holds_is_admitted_and_runs() {
         admission.unwrap().unwrap().prepared(),
         prepared.fingerprint()
     );
+    // The run ended: the store no longer counts it among those it has open.
+    assert!(!shop.store.made_here(finished.run().as_str()));
     // Without an id, the same.
     ran(shop.engine.request(&request));
     assert_eq!(shop.world.ran(), 2);
@@ -1723,6 +1725,9 @@ fn a_preparation_is_refused_at_admission_when_it_is_of_another_call_or_its_bound
     // reserved is not what the caller was shown.
     shop.backends.bound.store(300_000, Ordering::SeqCst);
     let request = Request::new(shop.call(shop.photo)).expecting(&prepared);
+    shop.refused_as_stale(request.clone(), Stale::Estimate);
+    // A lower bound is another bound too.
+    shop.backends.bound.store(200_000, Ordering::SeqCst);
     shop.refused_as_stale(request, Stale::Estimate);
 }
 
@@ -1847,6 +1852,19 @@ fn a_repeat_is_not_answered_from_another_run_that_took_the_deleted_runs_id() {
             ended: Some(Status::Error)
         }
     );
+    // The same when the run that took the id holds no admission at all.
+    store.delete(&[new]).unwrap();
+    let mut publication = store.begin().unwrap();
+    publication
+        .put_in(new, "notes", store::Kind::Diagnostic, b"x")
+        .unwrap();
+    publication.publish().unwrap();
+    assert_eq!(
+        repeat(engine.request(&failing)).state(),
+        &RunState::Removed {
+            ended: Some(Status::Error)
+        }
+    );
     assert_eq!(world.ran(), 2);
 }
 
@@ -1901,4 +1919,101 @@ fn a_request_id_is_made_from_text_through_the_executor_which_shows_no_secret() {
     assert!(why.contains("\"not an id\" is no request id"), "{why}");
     assert_eq!(&refused.to_string(), why);
     assert_eq!(engine.request_id("order-17").unwrap(), id("order-17"));
+}
+
+/// The real file system, which runs a hook once, before the first read of stored
+/// content after it was armed: between a look-up's snapshot and its first record.
+struct Between {
+    inner: RealFs,
+    hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Fs for Between {
+    fn create_dir(&self, path: &Path) -> std::io::Result<()> {
+        self.inner.create_dir(path)
+    }
+    fn write_new(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        self.inner.write_new(path, bytes)
+    }
+    fn sync_dir(&self, path: &Path) -> std::io::Result<()> {
+        self.inner.sync_dir(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        self.inner.rename(from, to)
+    }
+    fn remove_all(&self, path: &Path) -> std::io::Result<()> {
+        self.inner.remove_all(path)
+    }
+    fn read(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+        if path.parent().is_some_and(|dir| dir.ends_with("objects")) {
+            let hook = self.hook.lock().unwrap().take();
+            if let Some(hook) = hook {
+                hook();
+            }
+        }
+        self.inner.read(path)
+    }
+    fn list(&self, path: &Path) -> std::io::Result<Vec<PathBuf>> {
+        self.inner.list(path)
+    }
+    fn exists(&self, path: &Path) -> std::io::Result<bool> {
+        self.inner.exists(path)
+    }
+    fn hold_lock_file(
+        &self,
+        path: &Path,
+        create: bool,
+    ) -> std::io::Result<Option<Box<dyn store::fs::LockFile>>> {
+        self.inner.hold_lock_file(path, create)
+    }
+    fn share(&self, path: &Path) -> std::io::Result<Box<dyn store::fs::Held>> {
+        self.inner.share(path)
+    }
+    fn try_alone(&self, path: &Path) -> std::io::Result<Option<Box<dyn store::fs::Held>>> {
+        self.inner.try_alone(path)
+    }
+}
+
+#[test]
+fn a_repeat_that_races_the_end_of_its_run_is_not_told_the_run_will_never_end() {
+    // The repeat takes its snapshot while the run executes. Before it reads the id's
+    // record, the run ends: its end is published and the store forgets the run. The
+    // snapshot shows a run with no record, and the store no longer says it made it;
+    // the answer must not be that the run's process is gone.
+    let dir = Scratch::new("admit-race");
+    let fs = Arc::new(Between {
+        inner: RealFs,
+        hook: Mutex::new(None),
+    });
+    let store = Arc::new(Store::open(&dir.path().join("store"), fs.clone()).unwrap());
+    let runs = Arc::new(AtomicU64::new(0));
+    let (started, has_started) = mpsc::channel::<()>();
+    let (release, released) = mpsc::channel::<()>();
+    let (started, released) = (Mutex::new(started), Mutex::new(released));
+    let held = paint_with(&runs, move |_, _| {
+        started.lock().unwrap().send(()).unwrap();
+        released.lock().unwrap().recv().unwrap();
+        Ok(Produced::nothing())
+    });
+    let first = engine(store.clone(), vec![held]);
+    let second = engine(store.clone(), vec![paint(&runs)]);
+    let (ended, has_ended) = mpsc::channel::<()>();
+    std::thread::scope(|scope| {
+        let running = scope.spawn(|| {
+            let finished = ran(first.request(&asked("hello", "order-17")));
+            ended.send(()).unwrap();
+            finished
+        });
+        has_started.recv().unwrap();
+        *fs.hook.lock().unwrap() = Some(Box::new(move || {
+            release.send(()).unwrap();
+            has_ended.recv().unwrap();
+        }));
+        let earlier = repeat(second.request(&asked("hello", "order-17")));
+        let finished = running.join().unwrap();
+        assert!(fs.hook.lock().unwrap().is_none(), "the hook never ran");
+        assert_eq!(earlier.run(), finished.run());
+        assert_eq!(earlier.state(), &RunState::Ended(completed()));
+    });
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
 }

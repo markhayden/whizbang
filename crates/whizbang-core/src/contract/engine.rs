@@ -15,8 +15,8 @@ use super::request::{Found, look_up};
 use super::{
     ADMITTED_NAME, Admission, Allowance, Answer, Backends, Call, CallError, Cancellation,
     Capabilities, Clock, Context, Ending, Failure, Finished, Outcome, PreparedCall, Readiness,
-    Refusal, Registry, Request, RequestId, RunId, Secrets, Stale, StoreFailure, SystemClock,
-    request_fingerprint,
+    Refusal, Registry, Request, RequestId, RunId, RunState, Secrets, Stale, StoreFailure,
+    SystemClock, request_fingerprint,
 };
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
@@ -297,7 +297,20 @@ impl From<CallError> for Stopped {
 impl Engine {
     fn look_up(&self, id: &RequestId, fingerprint: Digest) -> Result<Found, CallError> {
         let made_here = |run: &str| self.store.as_ref().is_some_and(|s| s.made_here(run));
-        look_up(self.contents.as_ref(), id, fingerprint, made_here)
+        let found = look_up(self.contents.as_ref(), id, fingerprint, made_here)?;
+        // The snapshot is taken before the store is asked whether it made the run. A
+        // run that ended or was deleted in between has no record in that snapshot and
+        // is already forgotten by the store, which would read as a run that no process
+        // will end. The store forgets a run only once the generation that closes or
+        // deletes it is visible, so a second look sees it, and is the answer.
+        let unsure = matches!(
+            &found,
+            Found::Same(earlier) if earlier.state() == &RunState::NotEnded { here: false }
+        );
+        if unsure && self.store.is_some() {
+            return look_up(self.contents.as_ref(), id, fingerprint, made_here);
+        }
+        Ok(found)
     }
 
     /// Prepares, admits and runs a call: everything after the look for a request id.
@@ -321,8 +334,8 @@ impl Engine {
             (Ok(prepared), _) => prepared,
             // The call prepared once and is refused now: the preparation is stale. A
             // failure of the store is not a judgement of the preparation.
-            (Err(CallError::Refused(refusal)), Some(expected)) => {
-                return Err(stale(expected.action(), Stale::Refused(Box::new(refusal))));
+            (Err(CallError::Refused(refusal)), Some(_)) => {
+                return Err(stale(call.action(), Stale::Refused(Box::new(refusal))));
             }
             (Err(error), _) => return Err(error.into()),
         };
