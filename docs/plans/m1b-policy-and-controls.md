@@ -1,7 +1,13 @@
 # Plan: checkpoint 1B, policy and controls
 
-Draft 8, 2026-11-13. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the task
+Draft 9, 2026-11-13. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the task
 list.
+
+**Not yet ready to build from.** The fifth review round found two ways the ledger can
+count too little or cannot count at all (a damaged reservation whose amount is only in
+its content; a charge over its bound lost by the full-amount rule). They are recorded
+under "Review rounds" with a proposed resolution, for the owner to decide, and are not
+applied. S1, S1b, S5b, S6, S7, S7b and S12 wait for that decision.
 
 Checkpoint 1A is nearly built: everything but its two proofs (A9, `grow`; A11, the
 scripted squint run) and its exit check (A12) is merged, and this draft is written from
@@ -210,13 +216,19 @@ The other rules:
 - **Recovery is one publication of names made once.** A crash inside it leaves it not
   done, and the next open does it; done twice it changes nothing, because every name it
   would make is there. It runs before a writer is handed out, once for a store value.
-- **If recovery fails,** nothing is published, the store is opened to read only, and the
-  caller is told why, without a path.
+- **If recovery fails before its publication is visible,** nothing is published. **If
+  its publication became visible and was not confirmed** (the store's `Unacknowledged`),
+  the whole generation is there and stays. In both, no writer is handed out, the store is
+  opened to read only, and the caller is told which, without a path. The next open
+  confirms the generation it finds, by a sync, before it is ready, and then finds every
+  name of the recovery made and adds nothing.
 
 What readers say of an interrupted run (I4b): `runs list` and `runs show` show it as
 ended in error, interrupted, with what is lost; a repeat of its request, `status` and
 `wait` answer `Ended`, with the error `interrupted`; `cancel` answers
-`NotAccepted(Ended)`.
+`NotAccepted(Ended)`. Where the admission itself could not be read, the questions by
+the run's id are answered so, and a request under its request id is answered with the
+error of an unreadable record.
 
 ## Rules every task's tests follow
 
@@ -441,7 +453,12 @@ table at the head, and `just check` passes.
 
 **Depends on:** B0.
 
-- [ ] The two sentences of `SPEC.md` that "Decisions" names, on the models directory.
+- [ ] The edits to `SPEC.md` that this plan's reviewed decisions make, and no others: the
+      two sentences on the models directory; in section 3, that a run a dead process
+      left is ended as interrupted with a record that declares what it does not know;
+      in section 6, that such a run's reservation is charged in full unless every
+      request under it is shown settled, that a damaged spend record freezes its
+      reservation, and that a person may adjust such a charge by a new record.
 - [ ] The root files of "Strands": the module roots `spend/`, `config/` and `egress/` in
       the core with their test roots, the empty crate `whizbang-backends` in the workspace
       and in `scripts/crate-graph.txt`, the TOML reader as a dependency of the workspace,
@@ -571,7 +588,12 @@ record".
 and the schema and the types refuse the same faults, one document for each (ADR 0005's
 three ways); a `run/2` record written by the tag `m1a` is read and shown; `outcome.lost`
 with anything in it is refused unless the status is `error` and the kind `interrupted`,
-and a null where a group is not named as lost is refused, by the types and by the schema; a
+and a field that is null or empty only because its group was lost is refused where
+`outcome.lost` does not name that group, by the types and by the schema, with the
+mapping of fields to groups written in the ADR; a null that says something is known to be
+absent (a root's parent, a run with no request id) is as before; three fixed vectors: an
+ordinary root, an interrupted root with its admission, and an interrupted run whose
+admission could not be read; a
 recipient's account and a setting's value pass through redaction before they are written
 (rule 4); what A11 filled of `models` and `time.durations` is as A11 left it.
 **Size:** medium.
@@ -602,6 +624,10 @@ dropped and changes no record.
       admission's publication; it may refuse, with a refusal of its own kind, and it may
       add records among the run's names to that publication. A refusal by a part is a
       refusal after the look, so the id is looked up once more (ADR 0007).
+- [ ] Two things a part reads, added here because they are the executor's: a request may
+      carry a cap of its own, which is no part of its fingerprint; and a preparation
+      carries the time it was made, from the executor's clock, beside `prepared/1` and
+      not in it.
 - [ ] The executor calls its parts; with none it behaves as before. A fake part in the
       test kit that refuses, or adds a record, on demand.
 
@@ -609,7 +635,9 @@ dropped and changes no record.
 shown by refusing each call of the admission's publication in turn; a part that refuses
 leaves no run, no reservation and the request's id free; parts are asked in the order they
 were given and the first refusal is the answer; a part's record that holds a secret is
-refused and not shown (rule 4); every test of `admit.rs` passes unchanged.
+refused and not shown (rule 4); a request's cap and a preparation's time reach a part as they were given, and the fixed
+vectors of `request/1` and `prepared/1` are as they were; every test of `admit.rs` passes
+unchanged.
 **Size:** small.
 
 ### I2. The ledger's token, and its part in the end of a run
@@ -684,9 +712,11 @@ recovery is lossy and pessimistic by intent.
       contract's, over `Store::open`.
 - [ ] Three states, shared by everyone who asks for the same store value: initializing,
       ready, failed. Whoever asks while it is initializing waits for the answer; nobody
-      is handed a writer before it is ready. If recovery fails, nothing is published, the
-      lock is let go, the store is handed out to read only, and the failure is said
-      without a path.
+      is handed a writer before it is ready. If recovery fails, the lock is let go, the
+      store is handed out to read only, and the failure is said without a path: as
+      nothing published when it failed before its publication was visible, and as
+      published and not confirmed when the last sync failed. An open confirms the
+      generation it finds before it is ready.
 - [ ] The executor, `store delete`, `store prune`, `store import` and the `spend`
       commands that write all open through it. A test holds the binary to no other way.
 - [ ] With no part, recovery publishes nothing and the store opens as before.
@@ -697,7 +727,9 @@ publication; each writing command, run on a store a killed process left, recover
 it changes anything, one test for each command; two executors built at once over one
 store value are both answered after one recovery, and a third built while it runs waits;
 after a failed recovery every writing command is refused with the reason and a reading
-one works; recovery run twice changes nothing the second time. Then:
+one works; recovery run twice changes nothing the second time; a recovery whose last sync fails
+leaves no writer, and the next open confirms what is there, publishes nothing more, and
+settles and ends nothing twice. Then:
 `recover::a_crash_at_any_event…`, with a fake part, followed by another open, leaves the
 part's records once and whole (rule 2); a part that panics is a failed recovery.
 **Size:** medium.
@@ -710,7 +742,11 @@ then the readers. In the executor's files and `crates/whizbang/src/runs.rs`.
 - [ ] A recovery's part: every run that is admitted, has no record and is not open in
       this process is ended with the record "What a crashed run is recovered to"
       describes, made from its admission alone, and for a request with an id its ending.
-      A run whose admission cannot be read is ended with what its name gives.
+      A run whose admission cannot be read is ended with what its name gives. Its
+      request id, if it had one, stays taken, and a request under that id is answered
+      with the error of an unreadable record (ADR 0007's `CallError::Record`), never as
+      a repeat and never as free: the fingerprint that tells a repeat from a conflict
+      was in the admission.
 - [ ] What each reader answers of such a run, as that section lists: `runs list`, `runs
       show`, a repeat, `status`, `wait`, `cancel`.
 
@@ -719,7 +755,8 @@ write, with a record that validates, holds exactly the admission's facts, and na
 other group in `outcome.lost`; a child and its parent, both left, are both ended, each
 from its own admission; a run that is executing in this process, and one this process
 abandoned, are left alone; a run with a damaged admission is ended and names the
-admission as lost; a marker secret planted in a damaged admission is in no byte the
+admission as lost, and the same request and a different request under its id are both
+answered with the error of an unreadable record; a marker secret planted in a damaged admission is in no byte the
 recovery wrote or said (rule 4). Then: a repeat of the request is `Ended` with the error
 `interrupted`; `status` and `wait` say the same and `wait` does not wait; `cancel` is
 `NotAccepted(Ended)`; `runs list` and `runs show` show it, with what is lost, escaped;
@@ -1120,6 +1157,8 @@ readable settlements say, or with a reservation both frozen and released.
       its full amount, and releases the rest. It names the reservation by its run, says
       who would be asked nothing (there is no user), and records the time. The records
       it corrects stay. A reservation that is neither interrupted nor frozen is refused.
+      A reset closes the books before it: an adjustment of a reservation made before the
+      last reset is recorded and changes nothing the new allowance can spend.
 - [ ] `spend status` lists the interrupted and the frozen reservations with their runs.
 
 **Done when** these pass: an interrupted reservation adjusted to a lower charge releases
@@ -1127,7 +1166,9 @@ the difference and the next paid call can use it; a frozen one is unfrozen by it
 adjustment, and the damaged content is still in the store and still named; an adjustment
 over the reserved amount, of a settled reservation and of a run the store does not know
 are each refused; a second adjustment of the same reservation makes a second record and
-the fold takes the last; the command opens through I4's entry point, so it recovers
+the fold takes the last; freeze, reset, then adjust to nothing leaves the new allowance
+as the reset set it; adjust, then reset starts from the reset's amount; an adjustment
+upward after the difference was spent is refused when the allowance cannot hold it; the command opens through I4's entry point, so it recovers
 first; its output and its refusals show names escaped and cut, and no path (rule 3);
 `adjust::a_crash_at_any_event…` leaves it done or not done (rule 2); no call the
 executor accepts can write an adjustment, shown as S9 shows it for a reset.
@@ -1608,6 +1649,7 @@ missing acceptance cases, carry-over rows and tasks too large.
 | 2 | 2026-11-13 | 3 | 1 | 7 | 1 |
 | 3 | 2026-11-13 | 4 | 1 | 6 | 2 |
 | 4 | 2026-11-13 | 6 | 2 | 4 | 1 |
+| 5 | 2026-11-13 | 8 | 3 | 5 | 0 |
 
 **Round 1, and what changed in draft 3.**
 
@@ -1728,6 +1770,49 @@ where a writer is handed out; and readers have a stated answer. Draft 8 applies 
 - S6 is the conservative settlement. S12 is the person's correction, `spend adjust`.
 - I3 says what a failed wrapper and a backend's panic mean; S5b has the case of a first
   hop that was handed data and a second that was refused.
+
+**Round 5, on draft 8, and what changed in draft 9.** The round was asked whether
+recovery is now coherent and whether any path releases or under-counts money. It found
+the admission-only recovery workable, and nested runs, deleted runs, abandoned runs, an
+unconfirmed admission, a crash inside recovery, recovery twice and two openers at once
+all coherent. Its answers were still "no" and "yes", for the findings below.
+
+Applied in draft 9, each small:
+
+- Blocker: "if recovery fails, nothing is published" was untrue where the publication
+  was visible and not confirmed. I4 and the recovery section tell the two apart, and an
+  open confirms what it finds.
+- Major: a damaged admission cannot answer a repeat, since the fingerprint was in it.
+  The id stays taken and is answered with the error of an unreadable record.
+- Major: a reset and an adjustment had no stated relation. A reset closes the books.
+- Major: B4's rule on nulls refused ordinary records. It is limited to fields lost.
+- Major: S3 and S8 needed fields of the executor's that no base task added. I1 adds them.
+- Major: the spec was not assigned the recovery decision. B0b makes those edits.
+
+**Not applied: two blockers on money, each called structural, with what is proposed.**
+The owner asked that another structural blocker be handed back.
+
+1. *A damaged reservation may have no readable amount.* The amount of `reservation/1`
+   is in its content (ADR 0007), and for a run that was deleted and pruned, with no
+   request id, no admission is left to say it; and reading reservations fails as a whole
+   when one cannot be read. So "frozen at its full amount" cannot always be done.
+   Proposed: the name the ledger makes in every admission (I2, S2) carries the run and
+   the amount in the name itself, which lives in the generation file and not in content;
+   a dispatch's and a settlement's names carry their run and reservation the same way;
+   and the fold takes a damaged entry as one frozen reservation, not as a failure of the
+   whole reading. No fact about a run is reconstructed by this.
+2. *The full-amount rule can charge less than what is known.* A request may settle over
+   its bound (S5b). Reserve 10, dispatch two requests of 5, one settles at 12, crash:
+   the full amount is 10, less than the one readable settlement. Proposed: what an
+   interrupted reservation is charged is the larger of its full amount and the sum of
+   its readable settlements with the bounds of its unsettled dispatches; a charge over
+   its bound is debited from the allowance of its run and of each run above it, never
+   below nothing, and a child whose charges passed its share gives nothing back; S1b
+   and S7b gain that sequence and its nested form.
+
+Both are in the ledger's records and arithmetic (S1, S1b, S5b, S6, S7, S7b, S12) and
+change no interface task but I2's naming. They are best applied together, with one more
+round asked only the money question.
 
 ## Risks
 
