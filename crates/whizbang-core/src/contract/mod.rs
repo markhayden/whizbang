@@ -64,4 +64,4 @@ pub use request::{
     REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, REQUESTS_PREFIX, Request, RequestId,
     RequestRecordError, RunState, request_fingerprint,
 };
-pub use run::{Committed, Finished, Outcome, RUN_ID_LIMIT, RunId};
+pub use run::{Committed, Finished, MESSAGE_LIMIT, Outcome, RUN_ID_LIMIT, RunId};

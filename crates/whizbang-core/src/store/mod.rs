@@ -397,6 +397,8 @@ impl Files {
         let path = self.layout.object(&digest);
         // No more is read than the entry says, and one byte: a file that damage or
         // other hands made far larger is known to be wrong without being held whole.
+        // That is so of the files under `objects/` only, which have an entry: the
+        // pointer, a generation and the lock file are still read whole.
         let limit = entry.bytes.saturating_add(1);
         let bytes = self.fs.read_at_most(&path, limit).map_err(|source| {
             if source.kind() == io::ErrorKind::NotFound {
@@ -1143,7 +1145,10 @@ impl Publication<'_> {
     /// same. That is looked at inside the publishing step, on the generation that is
     /// current then, so of two publications that each keep one name the first decides
     /// its content, whatever each saw before. A diagnostic reference under the name is
-    /// not an output and is replaced, as [`Publication::put`] replaces it.
+    /// not an output and is replaced, as [`Publication::put`] replaces it: that is a
+    /// diagnostic name that [`Publication::create`] made in an earlier publication.
+    /// Nothing in the executor reaches that case: it keeps the names of artifacts only,
+    /// and creates no name among them.
     ///
     /// This is how an artifact is committed: its name is made of its identity, which
     /// does not cover its origin, so two runs can hold two files for one name, and the

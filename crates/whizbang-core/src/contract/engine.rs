@@ -14,13 +14,15 @@ use crate::store::{self, Store};
 use super::journal::Kept;
 use super::ledger::{Declined, Reservation, Step};
 use super::prepare::prepare;
-use super::record::{Diagnostic, OUTPUTS_PREFIX, RECORD_KIND, RECORD_NAME, Ran, RunRecord};
+use super::record::{
+    Diagnostic, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran, RunRecord,
+};
 use super::request::{Found, look_up};
 use super::{
     ADMITTED_NAME, ActionDescriptor, Admission, Allowance, Answer, Backends, Call, CallError,
     Cancellation, Capabilities, Clock, Committed, Context, Ending, Failure, Finished, Ledger,
-    Outcome, PreparedCall, Produced, Readiness, Refusal, Registry, Request, RequestId, RunId,
-    RunState, Secrets, Stale, StoreFailure, SystemClock, request_fingerprint,
+    MESSAGE_LIMIT, Outcome, PreparedCall, Produced, Readiness, Refusal, Registry, Request,
+    RequestId, RunId, RunState, Secrets, Stale, StoreFailure, SystemClock, request_fingerprint,
 };
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
@@ -527,27 +529,29 @@ impl Engine {
         // locks that are taken whatever a panic did to them.
         let handed = catch_unwind(AssertUnwindSafe(|| action.run(&prepared, &context)));
         // The outcome is made here, from what the action handed back, with the secrets
-        // taken out: what is reported holds none, as what is written holds none.
+        // taken out: what is reported holds none, as what is written holds none. And
+        // each of its texts is cut to a length a record can hold ([`MESSAGE_LIMIT`]).
+        let said = |text: &str| said(&self.secrets, text);
         let error = |kind: &str, message: &str| Outcome::Error {
-            kind: self.secrets.redact(kind),
-            message: self.secrets.redact(message),
+            kind: said(kind),
+            message: said(message),
         };
         let mut outputs = Vec::new();
-        let outcome = match handed {
-            Ok(Ok(produced)) => match held_to_ports(&prepared, action.descriptor(), produced) {
-                Ok(held) => {
-                    outputs = held;
-                    Outcome::Completed {
-                        outputs: outputs.iter().map(|(output, _)| output.clone()).collect(),
+        let mut outcome = match handed {
+            Ok(Ok(produced)) => {
+                match held_to_ports(&prepared, action.descriptor(), produced, &self.secrets) {
+                    Ok(held) => {
+                        outputs = held;
+                        Outcome::Completed {
+                            outputs: outputs.iter().map(|(output, _)| output.clone()).collect(),
+                        }
                     }
+                    Err(why) => error("output", &why),
                 }
-                Err(why) => error("output", &why),
-            },
+            }
             Ok(Err(Failure::Error { kind, message })) => error(&kind, &message),
-            Ok(Err(Failure::Invalid { why })) => Outcome::Invalid {
-                why: self.secrets.redact(&why),
-            },
-            Err(panic) => error("panic", &panic_text(panic.as_ref())),
+            Ok(Err(Failure::Invalid { why })) => Outcome::Invalid { why: said(&why) },
+            Err(panic) => error("panic", &panic_text(panic)),
         };
         let end_ms = self.clock.now_ms().max(start_ms);
 
@@ -563,20 +567,39 @@ impl Engine {
         let kept: Vec<(Diagnostic, Vec<u8>)> = std::iter::once(Diagnostic::journal(&lines))
             .chain(written)
             .collect();
-        let record = RunRecord::of(
-            Ran {
-                run: run.as_str(),
-                request,
-                whizbang: WHIZBANG_VERSION,
-                prepared: &prepared,
-                reserved_micros: reserved,
-                outcome: &outcome,
-                start_ms,
-                end_ms,
-                diagnostics: kept.iter().map(|(d, _)| d.clone()).collect(),
-            },
-            &self.secrets,
-        );
+        let record_of = |outcome: &Outcome| {
+            RunRecord::of(
+                Ran {
+                    run: run.as_str(),
+                    request,
+                    whizbang: WHIZBANG_VERSION,
+                    prepared: &prepared,
+                    reserved_micros: reserved,
+                    outcome,
+                    start_ms,
+                    end_ms,
+                    diagnostics: kept.iter().map(|(d, _)| d.clone()).collect(),
+                },
+                &self.secrets,
+            )
+        };
+        let mut record = record_of(&outcome);
+        // A record lists every output, and one over the limit is refused on reading
+        // (ADR 0005). A run whose outputs make such a record commits none of them: it
+        // ends as an error, with a record that lists none.
+        let bytes = record.to_bytes().len() as u64;
+        if bytes > RECORD_MAX_BYTES && !outputs.is_empty() {
+            outcome = Outcome::Error {
+                kind: "output".to_owned(),
+                message: format!(
+                    "the action handed back {} artifacts, and the record that lists them \
+                     would be {bytes} bytes: a record is at most {RECORD_MAX_BYTES} bytes",
+                    outputs.len()
+                ),
+            };
+            outputs.clear();
+            record = record_of(&outcome);
+        }
         let mut publication = store.begin().map_err(failed)?;
         publication.close_run(run.as_str()).map_err(failed)?;
         let mut place = 0;
@@ -612,11 +635,14 @@ impl Engine {
 /// many as its count says. What comes back is each output with the artifact to commit,
 /// in the order of the descriptor's ports, and within a port in the order handed back;
 /// or why nothing of it is committed, in fixed words, with a port's name as the action
-/// wrote it shown escaped and cut.
+/// wrote it shown escaped and cut. The secrets are taken out of such a name first,
+/// while it is whole: one that the cut or the escaping had changed would no longer be
+/// found, and what was left of it would be written.
 fn held_to_ports(
     prepared: &PreparedCall,
     descriptor: &ActionDescriptor,
     produced: Produced,
+    secrets: &Secrets,
 ) -> Result<Vec<(Committed, Artifact)>, String> {
     let returned: Vec<_> = descriptor
         .outputs()
@@ -629,7 +655,7 @@ fn held_to_ports(
             return Err(format!(
                 "the action handed back an artifact at {}, which is no output port this \
                  call returns",
-                Shown(&name)
+                Shown(&secrets.redact(&name))
             ));
         };
         let port = returned[place];
@@ -667,13 +693,33 @@ fn held_to_ports(
     Ok(outputs)
 }
 
+/// A text an action or a panic gave, as an outcome and a record keep it: with the
+/// secrets taken out, and then its first [`MESSAGE_LIMIT`] characters, and three dots
+/// when there were more. The secrets are taken out first, while the text is whole: a
+/// secret that the cut went through would no longer be found. They are looked for once
+/// more after the cut, in case the three dots completed one.
+fn said(secrets: &Secrets, text: &str) -> String {
+    let whole = secrets.redact(text);
+    match whole.char_indices().nth(MESSAGE_LIMIT) {
+        Some((cut, _)) => secrets.redact(&format!("{}...", &whole[..cut])),
+        None => whole,
+    }
+}
+
 /// What a caught panic says, as the message of the error its run ends with: the text
 /// the panic carried, when it carried one.
-fn panic_text(panic: &(dyn Any + Send)) -> String {
+///
+/// What the panic carried is dropped here, and a value can panic when it is dropped:
+/// that panic is caught too, so it does not leave the executor in place of the run's
+/// end. What that second panic carried is not dropped at all.
+fn panic_text(panic: Box<dyn Any + Send>) -> String {
     let text = panic
         .downcast_ref::<&str>()
         .map(|text| (*text).to_owned())
         .or_else(|| panic.downcast_ref::<String>().cloned());
+    if let Err(second) = catch_unwind(AssertUnwindSafe(move || drop(panic))) {
+        std::mem::forget(second);
+    }
     match text {
         Some(text) => format!("the action panicked: {text}"),
         None => "the action panicked, and its panic carried no text".to_owned(),

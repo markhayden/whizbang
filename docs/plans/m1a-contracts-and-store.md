@@ -295,7 +295,9 @@ is ticked by the pull request that makes it true.
   the publication that ends the run; a panic in an action ends its run through the same
   publication. Of "Done when": the fake action with two outputs, crashed inside its
   commit. With it, from `docs/carry-over.md`: the store reads no more of a stored file
-  than its entry says.
+  than its entry says. That covers the files under `objects/` only: `CURRENT`, the
+  generation files and the lock file are still read whole (`docs/carry-over.md`, task
+  A12).
 - **Part 2, cancellation, status and progress:** boxes 1 and 4, and of box 3 that a
   cancellation is accepted or comes too late. Status and cancel answered while an action
   is busy, by a second caller; progress events; a run found by its id after its caller
