@@ -9,8 +9,9 @@
 # `scripts/tool-record.sh`, the fixture run of `scripts/tests/test-timeout.sh`, and every
 # command run through `scripts/heavy.sh`).
 #
-# While the command runs, five times a second, every process of its tree (the command and
-# everything it started, by parent) is counted. When any one process holds more threads
+# While the command runs, about three times a second (0.2 seconds between two counts, and a
+# count takes some hundredths of a second more on a busy machine), every process of its tree
+# (the command and everything it started, by parent) is counted. When any one process holds more threads
 # than the limit, the whole tree is stopped and then killed with SIGKILL, a line says which
 # process and how many, and the exit status is 1. Otherwise the exit status is the
 # command's.
@@ -18,7 +19,7 @@
 # What this stops, and what it does not. Read this before relying on it.
 #
 # - It stops a process that grows slowly: one that passes the limit is seen within about a
-#   fifth of a second.
+#   third of a second.
 # - It does NOT stop a tight loop that makes threads. Such a loop makes tens of thousands
 #   of threads a second, so it is far past the limit, and past what a machine survives,
 #   between two counts. What stops that is in the code, before the thread is made: the
@@ -29,7 +30,8 @@
 # - On Linux it also lowers, for the command, the number of processes and threads its user
 #   may hold (`ulimit -u`) to what the user holds when the guard starts and 4,096 more
 #   (WHIZBANG_THREAD_HEADROOM): threads count toward that limit there, and the system then
-#   refuses the next one itself, at once. The limit is the user's, not the tree's, and it
+#   refuses the next one itself, at once. When what the user holds cannot be counted, the
+#   limit is left as it was. The limit is the user's, not the tree's, and it
 #   does not hold root. macOS has no limit of that kind that counts threads, so there
 #   the count is all this script has.
 #
@@ -48,11 +50,13 @@
 #   the `nlwp` column on Linux.
 # - A guard inside a guard does nothing: the command it is given is told, in
 #   WHIZBANG_THREAD_GUARD, which process watches it and with what limit and pause, and a
-#   guard that finds itself watched by a live process with its own limit and pause runs its
-#   command in its own place. One with another limit or pause watches as well.
+#   guard that finds itself under that process, which must be running this script, with its
+#   own limit and pause, runs its command in its own place. One with another limit or pause
+#   watches as well, and so does one whose variable names any other process: setting the
+#   variable by hand switches nothing off.
 #
 # When the tree is killed, the processes of the last good count are killed with those found
-# then: a process id from a fifth of a second ago can, in principle, be another process by
+# then: a process id from a third of a second ago can, in principle, be another process by
 # now. The command is waited for after the kill for five seconds at most.
 # Parse the whole file first: see the top of scripts/scan.sh.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "thread-guard: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
@@ -72,12 +76,6 @@ echo "$poll" | grep -E '^[0-9]+(\.[0-9]+)?$' >/dev/null ||
   { echo "thread-guard: the seconds between two counts must be a number: $poll" >&2; exit 2; }
 echo "$headroom" | grep -E '^[1-9][0-9]*$' >/dev/null ||
   { echo "thread-guard: the headroom must be a whole number of threads, 1 or more: $headroom" >&2; exit 2; }
-
-# Watched already, by a live guard with this limit and this pause: nothing to add.
-watcher=${WHIZBANG_THREAD_GUARD:-}
-if [ -n "$watcher" ] && [ "${watcher#* }" = "$limit $poll" ] && kill -0 "${watcher%% *}" 2>/dev/null; then
-  exec "$@"
-fi
 
 # The command is looked at every tenth of a second, so that its end is seen at once, and
 # counted every so many looks.
@@ -142,11 +140,39 @@ if ! look "$$" || [ -z "$ids" ]; then
   exit 2
 fi
 
+# Watched already, by a guard above this one with this limit and this pause: nothing to
+# add. The variable alone does not say so, since anything can set it: the process it names
+# must be one this guard descends from, by a count of its own, and must be running this
+# script. Anything else, and this guard watches.
+watched_by() { # <process id>: is that process above this one, and a guard?
+  local above command
+  above=$(processes | awk -v self="$$" -v named="$1" '
+    NF == 4 { parent[$1] = $2 }
+    END {
+      p = self
+      for (i = 0; i < 64 && (p in parent) && p != named; i++) p = parent[p]
+      print ((p == named && named != self) ? "yes" : "no")
+    }') || return 1
+  [ "$above" = "yes" ] || return 1
+  command=$(ps -o command= -p "$1" 2>/dev/null) || return 1
+  printf '%s\n' "$command" |
+    grep -E '^([^ ]*/)?(bash|sh)( -[^ ]+)* ([^ ]*/)?thread-guard\.sh( |$)|^([^ ]*/)?thread-guard\.sh( |$)' >/dev/null
+}
+watcher=${WHIZBANG_THREAD_GUARD:-}
+if [ -n "$watcher" ] && [ "${watcher#* }" = "$limit $poll" ] &&
+  echo "${watcher%% *}" | grep -E '^[1-9][0-9]*$' >/dev/null && watched_by "${watcher%% *}"; then
+  exec "$@"
+fi
+
 # On Linux the system is asked to refuse, too: see the top of this file.
 allowed=""
 if [ "$(uname -s)" = "Linux" ]; then
+  # A count that fails, or comes to nothing, lowers nothing: the headroom alone would be
+  # under what the user already holds, and every thread of the command would be refused.
   held=$(ps -L -u "$(id -u)" -o lwp= 2>/dev/null | grep -c . || true)
-  allowed=$((${held:-0} + headroom))
+  if echo "${held:-0}" | grep -E '^[1-9][0-9]*$' >/dev/null; then
+    allowed=$((held + headroom))
+  fi
 fi
 
 export WHIZBANG_THREAD_GUARD="$$ $limit $poll"

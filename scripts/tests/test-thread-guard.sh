@@ -127,7 +127,7 @@ expect_fail "a limit that is no number" "the limit must be a whole number" env W
 expect_fail "a limit of none" "the limit must be a whole number" env WHIZBANG_THREAD_LIMIT=0 "$guard" true
 expect_fail "a pause that is no number" "must be a number" env WHIZBANG_THREAD_POLL=soon "$guard" true
 
-# --- What it is set to when nothing sets it: 300 threads, counted five times a second. The
+# --- What it is set to when nothing sets it: 300 threads, with 0.2 seconds between two counts. The
 # command is told (that is how a guard inside a guard knows it is watched).
 told=$("$guard" bash -c 'echo "$WHIZBANG_THREAD_GUARD"')
 [ "${told#* }" = "300 0.2" ] || fail "the limit is 300 and the pause 0.2 seconds unless set (the command was told: $told)"
@@ -152,6 +152,25 @@ nested() { # <limit of the inner guard>: how many guards counted the process wit
 [ "$(nested 40)" = 1 ] || { cat "$tmp/nested.out" >&2; fail "a guard inside a guard with its limit and pause does not watch"; }
 [ "$(nested 30)" = 2 ] || { cat "$tmp/nested.out" >&2; fail "a guard inside a guard with another limit watches as well"; }
 
+# --- A guard takes itself for watched only by a guard above it. The variable alone does
+# not switch it off: set by hand to a live process that is beside the guard, or to one
+# above it that is no guard (this test), with this guard's own limit and pause, the guard
+# still watches, and kills the 20 threads over its limit of 8.
+rm -f "$tmp/beside-up" "$tmp/beside-go"
+python3 "$tmp/few.py" "$tmp/beside-up" "$tmp/beside-go" >/dev/null 2>&1 &
+beside=$!
+wait_for "the process beside the guard to start" test -e "$tmp/beside-up"
+for named in "$beside" "$$"; do
+  rm -f "$tmp/forged-up"
+  status=0
+  WHIZBANG_THREAD_GUARD="$named 8 0.2" WHIZBANG_THREAD_LIMIT=8 \
+    "$guard" python3 "$tmp/parked.py" 20 "$tmp/forged-up" >"$tmp/out" 2>&1 || status=$?
+  [ "$status" = 1 ] || { touch "$tmp/beside-go"; cat "$tmp/out" >&2; fail "a guard told by hand that process $named watches it still watches (got $status)"; }
+  grep -q -F "over the limit of 8 in one process" "$tmp/out" || { touch "$tmp/beside-go"; cat "$tmp/out" >&2; fail "a guard told by hand that it is watched says what it killed"; }
+done
+touch "$tmp/beside-go"
+wait "$beside" || true
+
 # --- On Linux the command's user may hold only so many processes and threads more. macOS
 # has no such limit, and the command's is what the guard's was.
 outside=$(ulimit -S -u)
@@ -167,6 +186,18 @@ if [ "$(uname -s)" = "Linux" ]; then
 else
   [ "$inside" = "$outside" ] || fail "outside Linux the limit is left as it was ($outside, and inside $inside)"
 fi
+# A count of what the user holds that fails, or comes to nothing, lowers nothing: a limit of
+# the headroom alone would be under what the user already holds. Shown with a `ps` of this
+# test's that fails when asked for the user's threads and is the real one otherwise.
+mkdir "$tmp/nolwp"
+cat >"$tmp/nolwp/ps" <<FAKE
+#!/bin/sh
+for word in "\$@"; do [ "\$word" != "-L" ] || exit 1; done
+exec "$(command -v ps)" "\$@"
+FAKE
+chmod +x "$tmp/nolwp/ps"
+blind=$(PATH="$tmp/nolwp:$PATH" WHIZBANG_THREAD_HEADROOM=2000 "$guard" bash -c 'ulimit -S -u')
+[ "$blind" = "$outside" ] || fail "a user whose threads cannot be counted keeps the limit it had ($outside, and inside $blind)"
 expect_fail "headroom that is no number" "the headroom must be a whole number" env WHIZBANG_THREAD_HEADROOM=lots "$guard" true
 
 # --- A count that fails. A `ps` of this test's, first on the path: the real one, until the

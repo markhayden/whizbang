@@ -39,4 +39,30 @@ allowed=$(grep -r -l -F 'disallowed_methods' crates --include='*.rs' | sort | tr
 grep -B1 -F 'fn spawn_thread(' crates/whizbang-core/src/contract/engine.rs | grep -F 'allow(clippy::disallowed_methods)' >/dev/null ||
   fail "the executor's allow is on spawn_thread"
 
+# Every way a thread is made is named in clippy.toml. The fixture shows four of the six
+# being refused; the other two are a builder's scoped and unchecked spawns, of which the
+# second needs `unsafe`, which this workspace forbids, so both are held by their lines.
+for path in 'std::thread::spawn' 'std::thread::scope' 'std::thread::Scope::spawn' 'std::thread::Builder::spawn' \
+  'std::thread::Builder::spawn_scoped' 'std::thread::Builder::spawn_unchecked'; do
+  grep -q -F "{ path = \"$path\", reason = " clippy.toml || fail "clippy.toml refuses $path"
+done
+
+# An allow of a whole group silences the lint with it, and names no lint: none is allowed or
+# expected anywhere in the crates, in any form of attribute.
+check_groups() { # <folder>
+  local found
+  found=$(grep -r -n -E '(allow|expect)[[:space:]]*\([^)]*(warnings|clippy::all|clippy::style)' "$1" --include='*.rs' || true)
+  [ -z "$found" ] || { echo "a group of lints is allowed, and the thread lint with it: $found"; return 1; }
+}
+expect_pass "no group of lints is allowed in the crates" check_groups crates
+mkdir -p "$tmp/group/src"
+for attribute in '#![allow(clippy::style)]' '#[allow(clippy::all)]' '#[expect(warnings)]' \
+  '#![cfg_attr(test, allow(unused, clippy::style))]' '#[allow( warnings )]'; do
+  printf '%s\nfn f() {}\n' "$attribute" >"$tmp/group/src/lib.rs"
+  expect_fail "a file with $attribute" "a group of lints is allowed" check_groups "$tmp/group"
+done
+printf '#[allow(clippy::too_many_arguments)]\nfn f() {}\n' >"$tmp/group/src/lib.rs"
+expect_pass "an allow of one lint by its name" check_groups "$tmp/group"
+
+
 finished
