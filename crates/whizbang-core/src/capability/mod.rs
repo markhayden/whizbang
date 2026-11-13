@@ -4,16 +4,20 @@
 //!
 //! Nothing here implements a capability. A backend does, in another crate, and a fake
 //! does for the tests. An action asks one through a handle in its
-//! [`Context`](crate::contract::Context), which holds the request to what the backend
-//! declared and the answer to the request.
+//! [`Context`](crate::contract::Context), which is bound to its run's cancellation and
+//! deadline, and holds the request to what the backend declared and the answer to the
+//! request.
 //!
 //! What a backend sends back is not trusted. Every type a response is made of is built
 //! through a constructor that checks it, has private fields, and is never deserialised,
 //! so a value of the type is a value that passed: a support plane in range, a fill of
-//! three bytes a pixel, a turn with something in it. What does not pass is [`Unfit`].
+//! three bytes a pixel, an instance whose box holds its plane, a turn with something in
+//! it. What does not pass is [`Unfit`].
 
 use std::sync::Arc;
+use std::time::Instant;
 
+use crate::contract::Cancellation;
 use crate::identity::{CanonicalPixels, PixelDigest};
 
 mod declare;
@@ -22,7 +26,9 @@ mod fill;
 mod judge;
 mod segment;
 
-pub use declare::{Declaration, Resolved, Roster, RosterError, Unresolved, feature};
+pub use declare::{
+    Declaration, DeclarationError, Resolved, Roster, RosterError, Unresolved, feature,
+};
 pub use fault::{FAULT_LIMIT, Fault, FaultKind};
 pub use fill::{FillHandle, FillRequest, Filler, PROMPT_LIMIT, Painted, Support};
 pub use judge::{
@@ -133,15 +139,12 @@ pub struct Picture {
 impl Picture {
     /// The picture of these pixels, within [`PIXEL_LIMIT`]. Its digest is worked out
     /// here, once.
+    ///
+    /// No test refuses a picture over the limit: to make one, a test would have to hold
+    /// over 200 MB of pixels. The check is the one every plane and fill goes through
+    /// (`pixel_count`), which is tested at the limit and one over it without a byte.
     pub fn new(pixels: CanonicalPixels) -> Result<Picture, Unfit> {
-        let size = u64::from(pixels.width()) * u64::from(pixels.height());
-        if size > PIXEL_LIMIT {
-            return Err(Unfit::TooLarge {
-                what: "the image, in pixels,",
-                size,
-                limit: PIXEL_LIMIT,
-            });
-        }
+        pixel_count("the image", pixels.width(), pixels.height())?;
         Ok(Picture {
             digest: pixels.digest(),
             pixels: Arc::new(pixels),
@@ -206,4 +209,110 @@ pub(crate) fn pixel_count(what: &'static str, width: u32, height: u32) -> Result
         });
     }
     Ok(size)
+}
+
+/// What bounds one request: the run's cancellation signal, and its deadline when it has
+/// one. A handle makes it, from the run it is bound to, and hands it to the backend with
+/// every request; nothing else can make one. What a later task needs a backend to know
+/// of its run is added here, and no trait changes for it.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct Bounds {
+    cancellation: Cancellation,
+    deadline: Option<Instant>,
+}
+
+impl Bounds {
+    pub(crate) fn new(cancellation: Cancellation) -> Bounds {
+        Bounds {
+            cancellation,
+            deadline: None,
+        }
+    }
+
+    pub(crate) fn until(&mut self, deadline: Instant) {
+        self.deadline = Some(deadline);
+    }
+
+    /// The run's cancellation signal. A backend is expected to stop early when it is
+    /// set.
+    pub fn cancellation(&self) -> &Cancellation {
+        &self.cancellation
+    }
+
+    /// Whether the run was cancelled.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
+
+    /// When the run must be over, if it has a limit. A backend is expected to give up
+    /// by then, with the fault `timed_out`; nothing cuts off one that does not
+    /// (`docs/carry-over.md`).
+    pub fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+
+    /// What every handle checks before it sends: the run is not cancelled, its
+    /// deadline has not passed, and the backend declares each feature the request
+    /// needs.
+    pub(crate) fn before_sending<'a>(
+        &self,
+        declaration: &Declaration,
+        needed: impl IntoIterator<Item = &'a str>,
+    ) -> Result<(), Fault> {
+        if self.is_cancelled() {
+            return Err(Fault::new(
+                FaultKind::Cancelled,
+                "the run was cancelled before the request was sent",
+            ));
+        }
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(Fault::new(
+                FaultKind::TimedOut,
+                "the deadline of the run passed before the request was sent",
+            ));
+        }
+        let model = declaration.model();
+        for feature in needed {
+            if !declaration.has(feature) {
+                return Err(Fault::new(
+                    FaultKind::Unsupported,
+                    &format!(
+                        "the model {} of the backend {} does not declare the feature {feature}",
+                        model.model(),
+                        model.backend()
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// How many characters of a text a caller typed are shown.
+const SHOWN: usize = 64;
+
+/// A text that a caller typed, as an error shows it: escaped, its first 64 characters
+/// at most, and its length when it was longer. A sentence and a `{:?}` print it alike.
+pub(crate) struct Shown<'a>(pub &'a str);
+
+impl std::fmt::Display for Shown<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let count = self.0.chars().count();
+        let start: String = self.0.chars().take(SHOWN).collect();
+        write!(f, "{start:?}")?;
+        if count > SHOWN {
+            write!(f, "... ({count} characters)")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for Shown<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
 }

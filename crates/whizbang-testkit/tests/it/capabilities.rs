@@ -46,9 +46,9 @@ fn now() -> Cancellation {
 
 #[test]
 fn the_fake_filler_can_repaint_every_pixel_of_the_image() {
-    let filler = FakeFiller::new(Paint::Inverse);
+    let filler = Arc::new(FakeFiller::new(Paint::Inverse));
     let request = fill_request(None);
-    let painted = filler.fill(&request, &now()).unwrap();
+    let painted = FillHandle::new(filler, now()).fill(&request).unwrap();
     assert_eq!((painted.width(), painted.height()), (WIDTH, HEIGHT));
     // Every channel of every pixel is 255 less what it was, inside the support and
     // outside it alike: no pixel is left as it was.
@@ -62,13 +62,13 @@ fn the_fake_filler_can_repaint_every_pixel_of_the_image() {
 #[test]
 fn the_fake_filler_paints_one_colour_everywhere_or_in_the_support_alone() {
     let request = fill_request(None);
-    let flat = FakeFiller::new(Paint::Flat([1, 2, 3]))
-        .fill(&request, &now())
+    let flat = FillHandle::new(Arc::new(FakeFiller::new(Paint::Flat([1, 2, 3]))), now())
+        .fill(&request)
         .unwrap();
     assert!(flat.rgb().chunks(3).all(|pixel| pixel == [1, 2, 3]));
 
-    let inside = FakeFiller::new(Paint::Support([1, 2, 3]))
-        .fill(&request, &now())
+    let inside = FillHandle::new(Arc::new(FakeFiller::new(Paint::Support([1, 2, 3]))), now())
+        .fill(&request)
         .unwrap();
     let support = request.support().plane();
     for (at, pixel) in request.image().rgba().chunks(4).enumerate() {
@@ -85,22 +85,25 @@ fn the_fake_filler_paints_one_colour_everywhere_or_in_the_support_alone() {
 fn the_fake_filler_counts_the_requests_it_was_sent() {
     let filler = Arc::new(FakeFiller::new(Paint::Inverse));
     assert_eq!(filler.requests(), 0);
-    let handle = FillHandle::new(filler.clone());
-    handle.fill(&fill_request(None), &now()).unwrap();
-    handle.fill(&fill_request(Some("grass")), &now()).unwrap();
+    let handle = FillHandle::new(filler.clone(), now());
+    handle.fill(&fill_request(None)).unwrap();
+    handle.fill(&fill_request(Some("grass"))).unwrap();
     assert_eq!(filler.requests(), 2);
-    // A request the handle did not send is not counted.
+    // A request the handle did not send is not counted: a handle bound to a run that
+    // was cancelled sends nothing.
     let cancelled = Cancellation::new();
     cancelled.cancel();
-    handle.fill(&fill_request(None), &cancelled).unwrap_err();
+    FillHandle::new(filler.clone(), cancelled)
+        .fill(&fill_request(None))
+        .unwrap_err();
     assert_eq!(filler.requests(), 2);
     // One that was sent and failed is.
     let failing = Arc::new(FakeFiller::new(Paint::Fails(Fault::new(
         FaultKind::Unavailable,
         "overloaded",
     ))));
-    let fault = FillHandle::new(failing.clone())
-        .fill(&fill_request(None), &now())
+    let fault = FillHandle::new(failing.clone(), now())
+        .fill(&fill_request(None))
         .unwrap_err();
     assert_eq!(fault.kind(), FaultKind::Unavailable);
     assert_eq!(failing.requests(), 1);
@@ -109,8 +112,8 @@ fn the_fake_filler_counts_the_requests_it_was_sent() {
 #[test]
 fn the_fake_filler_can_answer_in_another_size_and_declare_no_prompt() {
     let wrong = Arc::new(FakeFiller::new(Paint::Size(WIDTH + 1, HEIGHT)));
-    let fault = FillHandle::new(wrong.clone())
-        .fill(&fill_request(None), &now())
+    let fault = FillHandle::new(wrong.clone(), now())
+        .fill(&fill_request(None))
         .unwrap_err();
     assert_eq!(fault.kind(), FaultKind::Malformed);
     assert_eq!(wrong.requests(), 1);
@@ -120,8 +123,8 @@ fn the_fake_filler_can_answer_in_another_size_and_declare_no_prompt() {
     assert_eq!(filler.declaration().model().model(), "fake-filler");
     assert!(filler.declaration().has(feature::PROMPT));
     let plain = Arc::new(FakeFiller::new(Paint::Inverse).declaring(&[]));
-    let fault = FillHandle::new(plain.clone())
-        .fill(&fill_request(Some("grass")), &now())
+    let fault = FillHandle::new(plain.clone(), now())
+        .fill(&fill_request(Some("grass")))
         .unwrap_err();
     assert_eq!(fault.kind(), FaultKind::Unsupported);
     assert_eq!(plain.requests(), 0);
@@ -137,7 +140,7 @@ fn the_fake_segmenter_finds_what_it_was_told_to_find() {
             .finding("a dog", [4, 0, 6, 2]),
     );
     assert_eq!(segmenter.declaration().model().model(), "fake-segmenter");
-    let handle = SegmentHandle::new(segmenter.clone());
+    let handle = SegmentHandle::new(segmenter.clone(), now());
     let queries = vec![
         Query::phrase("a dog").unwrap(),
         Query::phrase("a cat").unwrap(),
@@ -145,7 +148,7 @@ fn the_fake_segmenter_finds_what_it_was_told_to_find() {
         Query::boxed(0.5, 1.0, 2.0, 2.5).unwrap(),
     ];
     let request = SegmentRequest::new(picture(), queries, 8).unwrap();
-    let response = handle.segment(&request, &now()).unwrap();
+    let response = handle.segment(&request).unwrap();
     let answers = response.answers();
     assert_eq!(answers.len(), 4);
 
@@ -175,27 +178,29 @@ fn the_fake_segmenter_counts_requests_and_keeps_to_the_most_asked_for() {
             .finding("a dog", [1, 1, 3, 3])
             .finding("a dog", [4, 0, 6, 2]),
     );
-    let handle = SegmentHandle::new(segmenter.clone());
+    let handle = SegmentHandle::new(segmenter.clone(), now());
     assert_eq!(segmenter.requests(), 0);
     let one = SegmentRequest::new(picture(), vec![Query::phrase("a dog").unwrap()], 1).unwrap();
-    let response = handle.segment(&one, &now()).unwrap();
+    let response = handle.segment(&one).unwrap();
     assert_eq!(response.answers()[0].len(), 1);
-    handle.segment(&one, &now()).unwrap();
+    handle.segment(&one).unwrap();
     // A batch is one request, however many it asks.
     assert_eq!(segmenter.requests(), 2);
 
     // Declaring phrases alone, it is not sent a point.
     let phrases = Arc::new(FakeSegmenter::new().declaring(&[feature::PHRASE]));
     let point = SegmentRequest::new(picture(), vec![Query::point(1.0, 1.0).unwrap()], 1).unwrap();
-    let fault = SegmentHandle::new(phrases.clone())
-        .segment(&point, &now())
+    let fault = SegmentHandle::new(phrases.clone(), now())
+        .segment(&point)
         .unwrap_err();
     assert_eq!(fault.kind(), FaultKind::Unsupported);
     assert_eq!(phrases.requests(), 0);
     // A box it was told of that is not in the image is the script's mistake, and is
     // said as a fault, not a panic.
-    let outside = FakeSegmenter::new().finding("a dog", [0, 0, WIDTH + 1, 1]);
-    let fault = outside.segment(&one, &now()).unwrap_err();
+    let outside = Arc::new(FakeSegmenter::new().finding("a dog", [0, 0, WIDTH + 1, 1]));
+    let fault = SegmentHandle::new(outside, now())
+        .segment(&one)
+        .unwrap_err();
     assert_eq!(fault.kind(), FaultKind::Malformed);
 }
 
@@ -235,12 +240,12 @@ fn the_fake_judge_plays_its_transcript_in_order_and_keeps_what_it_was_sent() {
     ]));
     assert_eq!(judge.declaration().model().backend(), FakeJudge::ADAPTER);
     assert_eq!(judge.remaining(), 4);
-    let handle = JudgeHandle::new(judge.clone());
+    let handle = JudgeHandle::new(judge.clone(), now());
 
-    assert_eq!(handle.send(&asking("one"), &now()).unwrap(), calls);
-    assert_eq!(handle.send(&asking("two"), &now()).unwrap_err(), overloaded);
-    assert_eq!(handle.send(&asking("three"), &now()).unwrap(), cut);
-    assert_eq!(handle.send(&asking("four"), &now()).unwrap(), verdict);
+    assert_eq!(handle.send(&asking("one")).unwrap(), calls);
+    assert_eq!(handle.send(&asking("two")).unwrap_err(), overloaded);
+    assert_eq!(handle.send(&asking("three")).unwrap(), cut);
+    assert_eq!(handle.send(&asking("four")).unwrap(), verdict);
     assert_eq!(judge.requests(), 4);
     assert_eq!(judge.remaining(), 0);
     assert_eq!(
@@ -254,7 +259,7 @@ fn the_fake_judge_plays_its_transcript_in_order_and_keeps_what_it_was_sent() {
     );
 
     // Asked past the end of its transcript, it fails, and still counts the request.
-    let fault = judge.send(&asking("five"), &now()).unwrap_err();
+    let fault = handle.send(&asking("five")).unwrap_err();
     assert_eq!(fault.kind(), FaultKind::Malformed);
     assert_eq!(fault.sentence(), "the scripted transcript has no turn left");
     assert_eq!(judge.requests(), 5);
@@ -268,8 +273,8 @@ fn the_fake_judge_is_not_sent_what_it_does_not_declare() {
     let image = Message::new(Role::User, vec![Part::Image(picture())]).unwrap();
     let request =
         JudgeRequest::new("", vec![image], Vec::new(), Controls::new(256).unwrap()).unwrap();
-    let fault = JudgeHandle::new(judge.clone())
-        .send(&request, &now())
+    let fault = JudgeHandle::new(judge.clone(), now())
+        .send(&request)
         .unwrap_err();
     assert_eq!(fault.kind(), FaultKind::Unsupported);
     assert_eq!(judge.requests(), 0);

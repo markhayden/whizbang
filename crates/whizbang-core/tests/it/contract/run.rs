@@ -202,7 +202,7 @@ fn capabilities_offer_the_handles_they_were_given_and_no_others() {
     assert!(none.segment().is_none() && none.fill().is_none() && none.judge().is_none());
 
     let filler = Arc::new(FakeFiller::new(Paint::Inverse));
-    let fill_only = Capabilities::none().with_fill(FillHandle::new(filler));
+    let fill_only = Capabilities::none().with_fill(FillHandle::new(filler, Cancellation::new()));
     assert!(fill_only.segment().is_none());
     assert!(fill_only.judge().is_none());
     let model = |capabilities: &Capabilities| {
@@ -212,8 +212,14 @@ fn capabilities_offer_the_handles_they_were_given_and_no_others() {
     assert_eq!(model(&fill_only), "fake-filler");
 
     let all = fill_only
-        .with_segment(SegmentHandle::new(Arc::new(FakeSegmenter::new())))
-        .with_judge(JudgeHandle::new(Arc::new(FakeJudge::scripted(Vec::new()))));
+        .with_segment(SegmentHandle::new(
+            Arc::new(FakeSegmenter::new()),
+            Cancellation::new(),
+        ))
+        .with_judge(JudgeHandle::new(
+            Arc::new(FakeJudge::scripted(Vec::new())),
+            Cancellation::new(),
+        ));
     assert_eq!(
         all.segment().unwrap().declaration().model().model(),
         "fake-segmenter"

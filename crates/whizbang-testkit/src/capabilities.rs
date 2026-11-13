@@ -8,10 +8,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use whizbang_core::capability::{
-    Asked, Declaration, Fault, FaultKind, FillRequest, Filler, Instance, Judge, JudgeRequest,
-    Painted, SegmentRequest, SegmentResponse, Segmenter, Support, Turn, feature,
+    Asked, Bounds, Declaration, Fault, FaultKind, FillRequest, Filler, Instance, Judge,
+    JudgeRequest, Painted, SegmentRequest, SegmentResponse, Segmenter, Support, Turn, feature,
 };
-use whizbang_core::contract::{Cancellation, ModelIdentity};
+use whizbang_core::contract::ModelIdentity;
 
 /// The backend every fake declares.
 const BACKEND: &str = "fake";
@@ -80,7 +80,7 @@ impl Filler for FakeFiller {
         &self.declaration
     }
 
-    fn fill(&self, request: &FillRequest, _: &Cancellation) -> Result<Painted, Fault> {
+    fn fill(&self, request: &FillRequest, _: &Bounds) -> Result<Painted, Fault> {
         self.requests.fetch_add(1, Ordering::SeqCst);
         let image = request.image();
         let pixels = image.rgba().as_chunks::<4>().0.iter();
@@ -187,11 +187,7 @@ impl Segmenter for FakeSegmenter {
         &self.declaration
     }
 
-    fn segment(
-        &self,
-        request: &SegmentRequest,
-        _: &Cancellation,
-    ) -> Result<SegmentResponse, Fault> {
+    fn segment(&self, request: &SegmentRequest, _: &Bounds) -> Result<SegmentResponse, Fault> {
         self.requests.fetch_add(1, Ordering::SeqCst);
         let (width, height) = (request.image().width(), request.image().height());
         let most = request.max_instances() as usize;
@@ -286,7 +282,7 @@ impl Judge for FakeJudge {
         &self.declaration
     }
 
-    fn send(&self, request: &JudgeRequest, _: &Cancellation) -> Result<Turn, Fault> {
+    fn send(&self, request: &JudgeRequest, _: &Bounds) -> Result<Turn, Fault> {
         lock(&self.received).push(request.clone());
         lock(&self.script).pop_front().unwrap_or_else(|| {
             Err(Fault::new(

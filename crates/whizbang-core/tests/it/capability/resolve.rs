@@ -2,7 +2,9 @@
 //! explicit choice, then the default; a backend that lacks a needed feature is an error;
 //! a model is never substituted.
 
-use whizbang_core::capability::{Declaration, Roster, RosterError, Unresolved, feature};
+use whizbang_core::capability::{
+    Declaration, DeclarationError, Roster, RosterError, Unresolved, feature,
+};
 use whizbang_core::contract::{Backends, Capability, ModelIdentity};
 
 fn declared(model: &str, features: &[&str]) -> Declaration {
@@ -49,11 +51,27 @@ fn a_declaration_holds_a_model_and_its_features() {
         declaration.features().collect::<Vec<_>>(),
         ["box", "phrase"]
     );
-    // A feature is a name, and is declared once.
+    // A feature is a name, and is declared once: each refusal is a type.
     let model = ModelIdentity::new("fake", "m", "1");
-    assert!(Declaration::new(model.clone(), &["Phrase"]).is_err());
-    assert!(Declaration::new(model.clone(), &[""]).is_err());
-    assert!(Declaration::new(model, &["phrase", "phrase"]).is_err());
+    for bad in ["Phrase", "", "a phrase"] {
+        assert_eq!(
+            Declaration::new(model.clone(), &[bad]).unwrap_err(),
+            DeclarationError::Name {
+                feature: bad.to_owned()
+            }
+        );
+    }
+    let twice = Declaration::new(model, &["phrase", "phrase"]).unwrap_err();
+    assert_eq!(
+        twice,
+        DeclarationError::Twice {
+            feature: "phrase".to_owned()
+        }
+    );
+    assert_eq!(
+        twice.to_string(),
+        "the feature \"phrase\" is declared twice"
+    );
 }
 
 #[test]
@@ -122,7 +140,7 @@ fn a_needed_feature_that_is_missing_is_an_error_and_nothing_is_substituted() {
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "the fill backend bria does not declare the feature prompt"
+        "the fill backend bria does not declare the feature \"prompt\""
     );
     // The default lacking a feature is the same error: no other backend is looked for.
     let roster = roster.default_for(Capability::Segment, "tiny").unwrap();
@@ -228,10 +246,15 @@ fn a_roster_is_built_only_of_names_that_can_be_chosen() {
     offered()
         .offer(Capability::Segment, "bria", declared("other", &[]))
         .unwrap();
-    assert!(matches!(
-        offered().offer(Capability::Fill, "Not A Name", declared("other", &[])),
-        Err(RosterError::Name { .. })
-    ));
+    assert_eq!(
+        offered()
+            .offer(Capability::Fill, "Not A Name", declared("other", &[]))
+            .unwrap_err(),
+        RosterError::Name {
+            capability: Capability::Fill,
+            name: "Not A Name".to_owned()
+        }
+    );
     assert_eq!(
         offered().default_for(Capability::Fill, "lama").unwrap_err(),
         RosterError::NotOffered {
@@ -243,6 +266,58 @@ fn a_roster_is_built_only_of_names_that_can_be_chosen() {
         offered().default_for(Capability::Segment, "bria"),
         Err(RosterError::NotOffered { .. })
     ));
+}
+
+#[test]
+fn what_a_caller_typed_is_shown_escaped_and_cut_wherever_it_is_shown() {
+    // A name 100 characters long that holds a line break and an escape character, in
+    // each sentence that shows a caller's text: 64 characters of it at most, escaped,
+    // with its length.
+    let long = format!("a\n\u{1b}[31m{}", "x".repeat(93));
+    assert_eq!(long.chars().count(), 100);
+    let shown = format!(
+        "\"a\\n\\u{{1b}}[31m{}\"... (100 characters)",
+        "x".repeat(57)
+    );
+    let roster = roster();
+    let model = ModelIdentity::new("fake", "m", "1");
+    let sentences = [
+        roster
+            .resolve(Capability::Fill, Some(&long), &[])
+            .unwrap_err()
+            .to_string(),
+        roster
+            .resolve(Capability::Fill, None, std::slice::from_ref(&long))
+            .unwrap_err()
+            .to_string(),
+        roster
+            .clone()
+            .default_for(Capability::Fill, &long)
+            .unwrap_err()
+            .to_string(),
+        roster
+            .clone()
+            .offer(Capability::Fill, &long, declared("m", &[]))
+            .unwrap_err()
+            .to_string(),
+        Declaration::new(model, &[&long]).unwrap_err().to_string(),
+    ];
+    for sentence in &sentences {
+        assert!(sentence.contains(&shown), "{sentence}");
+        assert!(!sentence.contains('\n') && !sentence.contains('\u{1b}'));
+        assert!(!sentence.contains(&"x".repeat(58)), "{sentence}");
+    }
+    assert_eq!(
+        sentences[2],
+        format!("the default for fill is {shown}, which is not offered")
+    );
+    // And what `{:?}` prints of an unknown choice is cut the same way.
+    let error = roster
+        .resolve(Capability::Fill, Some(&long), &[])
+        .unwrap_err();
+    let debug = format!("{error:?}");
+    assert!(debug.contains("(100 characters)"), "{debug}");
+    assert!(!debug.contains(&"x".repeat(58)), "{debug}");
 }
 
 #[test]
@@ -264,6 +339,6 @@ fn a_roster_answers_prepare_with_the_model_or_the_reason() {
         .unwrap_err();
     assert_eq!(
         unavailable.why(),
-        "the fill backend bria does not declare the feature prompt"
+        "the fill backend bria does not declare the feature \"prompt\""
     );
 }
