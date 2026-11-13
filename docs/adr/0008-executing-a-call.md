@@ -5,7 +5,7 @@ Date: 2026-11-12
 Amended: 2026-11-12, with the second pull request of task A7. Added: "Status, waiting,
 and a run that was started", which is built. Changed: the paragraph that says which part
 builds what; what this record does not decide yet.
-Amended: 2026-11-12, with the third pull request of task A7. Added: "Cancellation",
+Amended: 2026-11-13, with the third pull request of task A7. Added: "Cancellation",
 which is built: the rule for a cancellation and the commit step, `cancel`, cancelling an
 admission, the handles a context binds to its own signal, the generation a run
 reads, and one state for a run this process abandoned. Changed: the paragraph that says which part builds what; "What is not built";
@@ -311,8 +311,8 @@ back waits and is answered with how the run ended.
 (`Request::cancelled_by`), or one the executor makes. It is the signal in the action's
 context, and the one every capability handle of the run is bound to. Each open run has
 a lock of its own, in what the executor attaches to the run in the store's table of
-open runs ("Status", above), and under it a phase: executing, ending, over. Two things
-happen under that lock and nowhere else:
+open runs ("Status", above), and under it a phase: executing, ending, and then ended
+or abandoned. Two things happen under that lock and nowhere else:
 
 - `Executor::cancel` looks at the phase. Executing: it sets the signal, and the answer
   is `Cancel::Accepted`. Ending: too late.
@@ -324,6 +324,11 @@ happen under that lock and nowhere else:
 So a cancellation that was answered `Accepted` was set before the entry, and the entry
 saw it; and one that found the run ending changed nothing. There is no moment between a
 look and a lock.
+
+`Accepted` promises that nothing of the run is committed. That the run then ends as
+cancelled needs the store: when the end of a cancelled run is refused by the store, or
+the run's admission was itself not confirmed, the run is abandoned ("A run with nothing
+behind it", below), with no output.
 
 **What is held, and for how long.** The run's lock is held to read or change the phase
 and to set or read the signal: a few instructions. It is never held across a call to

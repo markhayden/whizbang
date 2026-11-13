@@ -43,7 +43,7 @@ Changed, in "Running an action, and writing its run": an action hands back artif
 panic in an action is caught and ends its run as an error (it unwound through `submit`
 and the run stayed admitted). The list of what is not built and of what this record does
 not decide lose both.
-Amended: 2026-11-12, with the third pull request of task A7 (ADR 0008). Changed: what an
+Amended: 2026-11-13, with the third pull request of task A7 (ADR 0008). Changed: what an
 action is handed, and the sentence that said nothing can cancel a run.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"

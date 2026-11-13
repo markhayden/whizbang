@@ -29,7 +29,7 @@ answered as `Ended`; `NotEnded { here: true }` no longer covers it.
 Amended: 2026-11-12, with the second pull request of task A7 (ADR 0008). Changed: the
 store's table of the runs its writer has open also holds what was attached to each; a
 run's status and a wait are ADR 0008's.
-Amended: 2026-11-12, with the third pull request of task A7 (ADR 0008). Changed: a run
+Amended: 2026-11-13, with the third pull request of task A7 (ADR 0008). Changed: a run
 can be cancelled, so `Ended` with `Cancelled` is written; an admission is given up when
 its request's signal is set or its deadline passes, with the refusals `Cancelled` and
 `DeadlinePassed`; the window before the admission's publication is accepted there; a

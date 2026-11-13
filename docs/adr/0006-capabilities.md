@@ -27,7 +27,7 @@ derivation cannot be stated of two unrelated pictures of one size" holds only wh
 mask weighs some pixel nothing; a mask whose support is the whole image vouches for any
 picture of its size, and a test pins it. Added: the check takes the digest a picture
 already holds (`Derivation::checked_of`).
-Amended: 2026-11-12, with the third pull request of task A7 (ADR 0008). Changed: a
+Amended: 2026-11-13, with the third pull request of task A7 (ADR 0008). Changed: a
 context makes its own handles from backends, and the executor hands each run its
 handles; the fakes can hold a request open and see their bounds, and the fake
 segmenter can fail.
