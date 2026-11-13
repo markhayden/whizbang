@@ -1,8 +1,6 @@
 # Plan: checkpoint 1B, policy and controls
 
-Draft 7, 2026-11-13. **Not ready to build from:** the fourth review round found the
-recovery of a crashed run still incomplete, and its findings there are recorded under
-"Review rounds" with a proposed resolution, for the owner to decide, and are not applied. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the task
+Draft 8, 2026-11-13. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the task
 list.
 
 Checkpoint 1A is nearly built: everything but its two proofs (A9, `grow`; A11, the
@@ -47,11 +45,11 @@ task A7; ADR 0005 for `run/2`).
 | The config is read each time a call is prepared, through `ConfigSource`, which answers a digest. The window between that preparation and the admission's publication is accepted | I6 makes it answer one snapshot; C4 and C5 implement it |
 | A run ends in one publication, which for a completed run is its commit step. Before it, the run waits for the runs it called and for every request its handles sent (`Tally`, inside the handle). A panic, a cancellation and a thread that could not be made all end the run through that publication | I2 gives the ledger its part in that publication. I3 puts the wrapper around a request inside the tally, so a request is outstanding until its settlement is durable |
 | A run is cancelled by `Executor::cancel` or by its signal; a child's signal reads its parent's; deleting an executing run sets its signal | S5c drives its cancellation case through `Executor::cancel` |
-| `RunState::Abandoned`: a run whose admission or end the store did not confirm, in the process that made it. To any other process it is admitted and not ended | S6 and S6b settle and end such a run at the next open to write. Ending one at once, in the process that made it, is moved to milestone 2 |
+| `RunState::Abandoned`: a run whose admission or end the store did not confirm, in the process that made it. To any other process it is admitted and not ended | I4b and S6 end and settle such a run at the next open to write. Ending one at once, in the process that made it, is moved to milestone 2 |
 | A run reads the generation it was admitted against (`Store::hold`) | Recovery and the ledger read the current generation, never a held one |
 | `start` runs an action on a thread of its own; an executor starts 64 runs at once by default and never more than 256 for one store value, a run starts four at once, and at most 1,024 runs are under one run that nothing called | "Rules every task's tests follow", 7 to 10 |
 | `run/2` at the end of A7: `identity.parent`, `steps` (calls) and `outcome.refusals` (the action or null, a kind, a sentence; calls to run an action only) are filled. Empty: `asked.settings`, `time.durations`, `models`, `egress`, `judge`, `spend.requests` | `run/3` (B4) defines the elements of `asked.settings`, `spend.requests` and `egress`, and adds kinds of refusal for a request that was not sent |
-| An admitted run keeps `admission/1` and nothing else of its call until it ends | B6 keeps the prepared call with the admission |
+| An admitted run keeps `admission/1` and nothing else of its call until it ends: the run, its parent, its request id, the action and its version, what was reserved or taken, and its start | Recovery builds an interrupted run's record from that alone, and keeps nothing more for its sake |
 
 **The open points of the earlier drafts, settled.**
 
@@ -61,7 +59,7 @@ task A7; ADR 0005 for `run/2`).
 | D6 | The elements of `outcome.refusals` | Defined by ADR 0008 for calls. A capability request that is refused is a fault to the action and is not recorded; B4 adds it, with no action and a kind of its own |
 | D7 | The final `run/2` | As the last row above, but for what A11 fills (`models`, `time.durations`, `judge`); see D9 |
 | D10 | Whether an admission can be cancelled, and a bound on a ledger being asked again | Cancelled by its request's signal or deadline, looked at before each asking. No bound on the count and no turn given: that stays on the carry-over list with milestone 2, and S2 adds none |
-| D11 | Whether an admitted run keeps its call | It does not. B6 is built |
+| D11 | Whether an admitted run keeps its call | It does not, and 1B does not add it: recovery is lossy by decision |
 | D12 | Scheduling, and a child's admission | A thread for each started run, bounded; a child has an admission that names its parent and its share, and no reservation |
 
 **Still open, for B0.** Only what A9, A11 and A12 can change. B0 writes the answer here
@@ -95,14 +93,28 @@ the owner's own, given on 2026-11-13.
 - **Balances are a fold, not a file that is rewritten.** Every spend record has a name
   that is made once (ADR 0007). What is reserved, spent and unresolved is worked out from
   the records the current generation names.
-- **A damaged spend record stops paid calls until a person acts.** The ledger does not
-  guess past a record it cannot read. `whizbang spend set-aside` (S12) is the command.
-- **An admitted run keeps what it was asked** (B6), and **a send note is made durable
-  before data leaves for any origin** (E2, E3). "What a crashed run is recovered to",
-  below, is the whole of that decision.
-- **Interrupted runs are ended, and their spend settled, by the next process that opens
-  the store to write.** ADR 0007 turned that down "for now" and named settlement as the
-  reason to come back.
+- **Recovery is lossy about what a crashed run did and pessimistic about what it cost
+  (the owner's, 2026-11-13).** Four review rounds each found a deeper hole in a design
+  that tried to reconstruct an interrupted run. 1B does not reconstruct. A run a dead
+  process left is ended as an error of the kind `interrupted`, with a small record made
+  only from its admission, and everything else about it is declared lost. Its
+  reservation counts as spent in full unless whole, readable records show that every
+  request it dispatched was settled. No task keeps a fact durably for recovery's sake. A
+  fuller record of interrupted runs is planned for no milestone; one carry-over line,
+  owner "none; reopen on need", says so. "What a crashed run is recovered to", below, is
+  the whole of it.
+- **A damaged record never stops recovery and never releases money.** A damaged spend
+  record freezes the one reservation it belongs to, at its full amount, until a person's
+  command (S12); every other reservation and every unrelated paid call goes on. Damage
+  to an admission or to any other record makes that run `interrupted`, with the
+  unreadable part named.
+- **A person corrects, by a new record.** `whizbang spend adjust` (S12) releases or
+  changes the charge of a named interrupted or frozen reservation. It writes a spend
+  record under a new name and never edits one. It is a command and nothing else, as
+  `spend reset` is, and an agent runs it only against a temporary store in a test.
+- **Recovery runs where a writer is handed out.** One entry point opens a store to
+  write, for the executor and for every command that writes, and runs recovery first.
+  If recovery fails, the store is opened to read only and the reason is said.
 - **Models are installed by the binary's own code, in Rust, into a models directory
   outside any store.** Rascal installed from Python. Here a model must be installed and
   judged ready with no Python present (`SPEC.md` section 1, the first user story), and 1B
@@ -143,47 +155,68 @@ the owner's own, given on 2026-11-13.
 
 ## What a crashed run is recovered to
 
-Three review rounds each found a hole here, so it is stated once, whole. A process can die
-at any moment. The next process that opens the store to write recovers it, in one
-publication, before it admits anything (S6, S6b). What it can say of a run is exactly what
-was durable, and the table is the list of everything that is.
+A process can die at any moment. The next process that opens the store to write recovers
+it before it is handed a writer (I4), in one publication. Recovery does two things and
+reconstructs nothing.
 
-| Fact | Made durable | By | Read by recovery for |
-|---|---|---|---|
-| The run, its parent, its request id, what was reserved or taken for it, its start | In the admission's publication | 1A (`admission/1`) | `identity`, `spend.reserved_micros`, `time.start_ms`; the tree, by `parent` |
-| The call as prepared: action, version, arguments, inputs, the config's digest, each need with the model that would answer; the resolved settings | In the same publication, among the run's names | B6, through I1 | `asked`, `inputs` |
-| The reservation, for a run nothing called | In the same publication, outside runs | 1A (`reservation/1`), S2 | What the tree may still be charged |
-| Each paid attempt: the run that sent it, the root's reservation, its bound, the backend and model | Before the request leaves, outside runs | S5 (a dispatch record) | `spend.requests`, charged at the bound where no settlement names it; `models`, for those requests |
-| Each attempt's settlement | When the request ends, outside runs | S5b | `spend.requests`, as settled |
-| Each origin data was about to be handed to, with the classes of data | Before each handoff, the first and every later hop, among the run's names | E2, E3, through B4's durable note | `egress`, as "dispatched, with no word of whether it arrived" unless a later note says it arrived |
-| The runs it called | Each child's own admission | 1A | `steps`, each with how the child ended; a child that had not ended is recovered in the same publication, as an error |
+**It ends the run.** Every run that is admitted, has no record, and was not made by this
+process is ended as an error of the kind `interrupted` (I4b). Its record is small and is
+made only from its `admission/1`:
 
-What was only in memory is lost, and the recovered record says so instead of showing an
-empty list as if nothing had happened: its status is `error`, its error's kind is
-`interrupted`, and `outcome.lost` (new in `run/3`, empty for every run that ended by
-itself) names what cannot be known: the refusals inside the run, the durations, the
-requests that cost nothing and went to no recipient, a judge's turns, the journal and the
-diagnostics. Its end is the time of the recovery.
+| In the record | From |
+|---|---|
+| `identity`: the run, its parent, its request id | The admission |
+| `asked.action` and its version | The admission |
+| `spend.reserved_micros` | The admission |
+| `time.start_ms`; the end is the time of the recovery | The admission; the clock |
+| `outcome`: `error`, kind `interrupted`, and `outcome.lost` | Fixed |
+
+`outcome.lost` (new in `run/3`, empty for every run that ended by itself) names every
+group the record does not know: the arguments, the settings and the config's digest, the
+inputs, the refusals, the durations, the models, the requests, the egress, the steps and
+a judge's turns. A field such a group would fill is null or empty, which `run/3` allows
+exactly when `outcome.lost` names it. The version that ended the run is in the record;
+the version that ran it is not known and is named as lost. What the run had already
+published (its admission; nothing else is published before a run ends) stays as it is.
+For a request with an id, the id's ending is made, so a repeat is answered.
+
+**It settles the money, never under.** For every reservation that has no settlement and
+whose run is not open in this process (S6), run or no run:
+
+- if every spend record under it can be read, and every request dispatched under it has
+  a settlement, the tree is charged what those settlements say and the rest is released;
+  a tree that dispatched nothing is charged nothing, because a dispatch record is
+  durable before a request leaves;
+- otherwise, whatever the reason (a dispatch with no settlement, a record that cannot be
+  read, anything that does not add up), the tree is charged its full reserved amount, as
+  interrupted;
+- a record under it that cannot be read also freezes that reservation: it stays at its
+  full amount until a person's command, and nothing of it is released by anything else.
+
+A child follows its root: the tree has one reservation, at the root, and nothing is
+given back to anyone by recovery. A person can correct a charge afterwards with
+`whizbang spend adjust` (S12), which writes a new record.
 
 The other rules:
 
-- **A run that was deleted** is not made again. Its tree's reservation is settled from
-  the spend records, which outlive it, and nothing else is written. Its send notes went
-  with it, as its record would have.
-- **A child** is recovered as any run. The spend of a tree is settled once, at its root's
-  reservation: every dispatch names that reservation.
-- **A run abandoned in a live process** (ADR 0008) keeps its reservation unsettled, which
-  errs on the side of spending less, until that process ends and the next open recovers
-  it. Ending it at once is milestone 2's.
-- **A run admitted by the tag `m1a`,** which kept no call, is settled and given a small
-  record under the name `interrupted` among its names; `runs list` shows it as
-  interrupted, with no record, and a repeat of its request is answered as ended in error.
-- **A record recovery cannot read** does not stop the open: the rest is recovered, the
-  ledger is marked damaged, paid calls are refused and free ones run, until S12's command.
-- **Recovery is one publication** of names made once, so a crash inside it leaves it not
-  done, and the next open does it. It runs once for a store value, after the writer lock
-  is taken and before any work is accepted, and never when a second executor is built
-  over a store that is already open.
+- **A run that was deleted** is not made again; its reservation is settled as above.
+- **A damaged admission** cannot give a record its fields: the run is ended with the
+  fields its name gives, and `outcome.lost` names the admission too.
+- **A run abandoned in a live process** (ADR 0008) is made by this process and is left
+  alone. Its reservation stays reserved, which counts against the allowance, until the
+  process ends and the next open recovers it.
+- **A failed settlement or a backend's panic** inside a run leaves the dispatch
+  unsettled and the run abandoned (I3); the next open then charges the full amount.
+- **Recovery is one publication of names made once.** A crash inside it leaves it not
+  done, and the next open does it; done twice it changes nothing, because every name it
+  would make is there. It runs before a writer is handed out, once for a store value.
+- **If recovery fails,** nothing is published, the store is opened to read only, and the
+  caller is told why, without a path.
+
+What readers say of an interrupted run (I4b): `runs list` and `runs show` show it as
+ended in error, interrupted, with what is lost; a repeat of its request, `status` and
+`wait` answer `Ended`, with the error `interrupted`; `cancel` answers
+`NotAccepted(Ended)`.
 
 ## Rules every task's tests follow
 
@@ -233,8 +266,8 @@ task is not done while one that applies to it has no test.
 
 | Strand | Tasks | Owns | Starts after |
 |---|---|---|---|
-| Base (a line) | B0, B0b, B1, B1b, B2, B3, B4, B4b, I1 to I7, and W1 at the end | The executor's files (`crates/whizbang-core/src/contract/`: `engine.rs`, `request.rs`, `prepare.rs`, `context.rs`, `ledger.rs`, `record.rs`, `live.rs`, `nested.rs`), `crates/whizbang-core/src/capability/`, the record's schema, `crates/whizbang-testkit/src/` but for the files named below, `crates/whizbang/src/wiring.rs`, every root file | A12 |
-| Spend | S1 to S12, and B6 | `crates/whizbang-core/src/spend/` and `tests/it/spend/`; `crates/whizbang/src/spend.rs`; `crates/whizbang-testkit/src/spend.rs` | S1 and S1b after B1b; the rest after the interface each names |
+| Base (a line) | B0, B0b, B1, B1b, B2, B3, B4, B4b, I1 to I7 with I4b, and W1 at the end | The executor's files (`crates/whizbang-core/src/contract/`: `engine.rs`, `request.rs`, `prepare.rs`, `context.rs`, `ledger.rs`, `record.rs`, `live.rs`, `nested.rs`), `crates/whizbang-core/src/capability/`, the record's schema, `crates/whizbang-testkit/src/` but for the files named below, `crates/whizbang/src/wiring.rs`, `runs.rs` and `store.rs`, every root file | A12 |
+| Spend | S1 to S12 | `crates/whizbang-core/src/spend/` and `tests/it/spend/`; `crates/whizbang/src/spend.rs`; `crates/whizbang-testkit/src/spend.rs` | S1 and S1b after B1b; the rest after the interface each names |
 | Config and secrets | C1 to C5 | `crates/whizbang-core/src/config/` and `tests/it/config/`; `crates/whizbang-core/src/contract/redact.rs` and its test; `docs/guides/config.md` | B0b; C4 after I6 |
 | Egress | E2, E3, E4, E6 | `crates/whizbang-core/src/egress/` beyond B2's types, and `tests/it/egress/` | I5 |
 | Models | M1 to M6b | `crates/whizbang-backends/`; `crates/whizbang-testkit/src/downloads.rs` | B2; M6 after I7 |
@@ -246,7 +279,7 @@ strand, because each of its tasks changes the executor's files:
 - B4b, because the executor has to hand each run its place for facts and write them.
 - I1 to I7, because each adds one call from the executor to an interface: at admission
   (I1), in the ledger's step and at the end of a run (I2), around a request (I3), when a
-  writer opens (I4), before a send (I5), when a call is prepared (I6), and before a
+  writer is handed out (I4, with the interrupted record and its readers, I4b), before a send (I5), when a call is prepared (I6), and before a
   request to a local model (I7). Each is small: the call, a default that does nothing, and
   a fake. None holds policy.
 - W1, because the binary is wired once, when the strands' implementations exist.
@@ -284,16 +317,16 @@ planned as two pull requests, the proofs second.
 | B2 The ways out: recipients, classes of data, three interfaces | Base | B1b | small | 1 |
 | B3 Fakes that quote, charge, fail at a stage and name a recipient | Base | B2 | small | 1 |
 | B4 `run/3` | Base | B3 | medium | 1 |
-| B4b A place for a run's facts | Base | B4 | medium | 2 |
+| B4b A place for a run's facts | Base | B4 | small | 1 |
 | I1 A part in the admission | Base | B4b | small | 1 |
 | I2 The ledger's token, and its part in the end of a run | Base | I1 | small | 1 |
 | I3 A wrapper around each request | Base | I2 | small | 1 |
-| I4 A part in the writer's recovery | Base | I3 | small | 1 |
-| I5 A policy before a send, and a checked send | Base | I4 | small | 1 |
+| I4 One way to a writer, with recovery before it | Base | I3 | medium | 2 |
+| I4b The interrupted record, and what readers say of it | Base | I4 | medium | 2 |
+| I5 A policy before a send, and a checked send | Base | I4b | small | 1 |
 | I6 One snapshot of the config | Base | I5 | small | 1 |
 | I7 An inventory, and a lease on an installation | Base | I6 | small | 1 |
-| W1 The binary wired | Base | B6, S3, S8, S10, S7b, S12, E4, E6, C5, M6b | small | 1 |
-| B6 An admitted run keeps what it was asked | Spend | I6, S1 | small | 1 |
+| W1 The binary wired | Base | S3, S8, S10, S7b, S12, E4, E6, C5, M6b | small | 1 |
 | S1 The ledger's records | Spend | B1b | small | 1 |
 | S1b The fold | Spend | S1 | small | 1 |
 | S2 Reserving at admission | Spend | S1b, I2 | medium | 2 |
@@ -303,15 +336,14 @@ planned as two pull requests, the proofs second.
 | S5b Settlement of each attempt | Spend | S5 | small | 1 |
 | S5c Settlement under cancellation and a crash | Spend | S5b | small | 1 |
 | S7 Nested calls and retries | Spend | S5b | medium | 2 |
-| S7b Nested calls under a crash | Spend | S7, S6b | small | 1 |
+| S7b Nested calls under a crash | Spend | S7, S6 | small | 1 |
 | S8 Estimates expire | Spend | I1 | small | 1 |
 | S9 `whizbang spend status` and `reset` | Spend | S2 | small | 1 |
 | S10 The run's spend lines | Spend | S5b, S7 | small | 1 |
 | S11 The reservation settled when its run ends | Spend | S5b | small | 1 |
 | S11b Settlement at the end, under a crash and a race | Spend | S11 | small | 1 |
-| S6 After a crash: the ledger | Spend | S11b, I4 | medium | 2 |
-| S6b After a crash: the run and its request | Spend | S6, B6 | medium | 2 |
-| S12 A damaged spend record set aside | Spend | S9, S6 | small | 1 |
+| S6 After a crash: the money, never under | Spend | S11b, I4b | medium | 2 |
+| S12 A person's correction | Spend | S9, S6 | small | 1 |
 | C1 The config: its file, its shape, its digest | Config | B0b | medium | 1 |
 | C2 Keys from an env file | Config | C1 | small | 1 |
 | C3 What redaction did not find | Config | B0b | medium | 2 |
@@ -319,7 +351,7 @@ planned as two pull requests, the proofs second.
 | C5 The cap, the policy, the secrets and the settings from the snapshot | Config | C4, C3, S3, E2 | medium | 1 |
 | E2 The gate: denied by default | Egress | I5 | medium | 1 |
 | E3 Every hop, and a probe | Egress | E2 | medium | 2 |
-| E4 The run's recipients | Egress | E3, S6b | small | 1 |
+| E4 The run's recipients | Egress | E3 | small | 1 |
 | E6 Nothing but pixels | Egress | E2 | small | 1 |
 | M1 A models directory: catalogue, installation, identity | Models | B2 | medium | 1 |
 | M2 Downloading into staging | Models | M1 | small | 1 |
@@ -335,13 +367,13 @@ planned as two pull requests, the proofs second.
 | X2 A planted registry fails `just deny` | Scripts | A12 | small | 1 |
 | Z1 Exit check | | all | small | 1 |
 
-**What runs at the same time.** The base line is sixteen tasks, nearly all small, and one
+**What runs at the same time.** The base line is seventeen tasks, nearly all small, and one
 builder walks it. Beside it:
 
 - From B0b: C1, then C2; C3; X1; X2. From B1b: S1, S1b. From B2: M1 to M5c, the whole
   models strand but its last two tasks. From B3: S4.
-- From I1: S8. From I2: S2, then S9. From I6: B6 and S3. From I3: S5 and all that follows it in
-  spend. From I4: S6. From I5: the egress strand. From I6: C4. From I7: M6.
+- From I1: S8. From I2: S2, then S9. From I6: S3. From I3: S5 and all that follows it in
+  spend. From I4b: S6. From I5: the egress strand. From I6: C4. From I7: M6.
 
 So while the interface tasks are being walked, config, models, scripts and the first of
 spend are already being built, and from I3 on four or five builders work at once with no
@@ -479,8 +511,7 @@ half). **Size:** small.
       backend, which carries no user data either and is approved apart from sending; which
       declarations go together (no recipient and no price is local and free; a recipient
       and no price has no bound and is refused as any paid request without one is; free
-      for a backend with a recipient is said, never assumed); that a send note is made
-      durable before data leaves for any origin; where a backend says who
+      for a backend with a recipient is said, never assumed); where a backend says who
       receives its requests.
 - [ ] The types and the three interfaces in `crates/whizbang-core/src/egress/`, and the
       recipient in a backend's declaration. A backend that names no recipient is local.
@@ -526,11 +557,12 @@ record".
 - [ ] An ADR, which changes ADR 0005: `run/3`. The element of `asked.settings` (a name and
       a value, as an argument is written, in a stated order); of `spend.requests`, one
       paid request (reserved, settled, unresolved, the stage it reached, and whether its
-      charge was over its bound); of `egress` (the recipient, the classes of data, and one
-      of three states: sent, refused, or dispatched with no word of whether it arrived);
+      charge was over its bound); of `egress` (the recipient, the classes of data, and whether
+      it was sent or refused);
       the kinds a refusal gains for a capability request that was not sent, with no
-      action; `outcome.lost`, as "What a crashed run is recovered to" says; and the error
-      kind `interrupted`. What reading does with a `run/2` record: it is read, as frozen
+      action; `outcome.lost`, the error kind `interrupted`, and which fields may be null or
+      empty when `outcome.lost` names their group, as "What a crashed run is recovered
+      to" says. What reading does with a `run/2` record: it is read, as frozen
       at `m1a`.
 - [ ] The types, the schema `run-3.json` and fixed vectors. The executor writes `run/3`
       with the new lists empty.
@@ -538,31 +570,28 @@ record".
 **Done when** these pass: a `run/3` record with each new element round-trips and validates,
 and the schema and the types refuse the same faults, one document for each (ADR 0005's
 three ways); a `run/2` record written by the tag `m1a` is read and shown; `outcome.lost`
-with anything in it is refused unless the status is `error` and the kind `interrupted`; a
+with anything in it is refused unless the status is `error` and the kind `interrupted`,
+and a null where a group is not named as lost is refused, by the types and by the schema; a
 recipient's account and a setting's value pass through redaction before they are written
 (rule 4); what A11 filled of `models` and `time.durations` is as A11 left it.
 **Size:** medium.
 
 ### B4b. A place for a run's facts
 
-**Depends on:** B4. Two pull requests: the place and the notes at the end of a run; then
-the durable note with its crash proofs.
+**Depends on:** B4.
 
 - [ ] The executor gives each run a place (`RunFacts`) in which a setting, a spend line, a
       refusal of a request and a recipient can be noted from another module, and writes
-      what was noted when the run ends.
-- [ ] A note can also be made durable at once, among the run's names, before the act it is
-      about, in a publication of its own that says the run must be there. That is what a
-      send note is.
+      what was noted when the run ends. Nothing in it is durable before the run's end:
+      what a crash loses of it is what `outcome.lost` names.
 
 **Done when** these pass: a fact of each kind noted from a test's module is in the run's
-record; a refusal of a request noted inside a run whose action then completes is in that
-run's `outcome.refusals`, within ADR 0008's bound of 256; a durable note is in the store
-before the call that made it returns; `durable_note::a_crash_at_any_event…` leaves the
-note whole or absent and the run as it was (rule 2); a durable note is read strictly and
-is bounded, and a run holds at most a stated number of them, one more refused (rule 3); a
-note for a run that was deleted meanwhile is refused and makes no run.
-**Size:** medium.
+record, for a run that completed, failed, was cancelled and panicked; a refusal of a
+request noted inside a run whose action then completes is in that run's
+`outcome.refusals`, within ADR 0008's bound of 256; a recipient's account and a setting's
+value are redacted when they are noted (rule 4); a note made after the run's end began is
+dropped and changes no record.
+**Size:** small.
 
 ### I1. A part in the admission
 
@@ -624,6 +653,10 @@ names). **Size:** small.
       tally, then the wrappers in three named places (the gate, the lease, the meter),
       then the backend. The tally is outside them, so a request is outstanding, and its
       run and every run above it not terminal, until the last wrapper has returned.
+- [ ] What a wrapper's failure means: a wrapper that fails after the backend was
+      called, and a backend that panics, do not account for the request as free. The
+      run is abandoned (ADR 0008), with the failure, and nothing of it is released; the
+      tally lets go only so that the run can reach that state.
 - [ ] Each place is empty by default. A fake wrapper in the test kit records what it saw
       and can refuse or stop at a barrier.
 
@@ -631,29 +664,70 @@ names). **Size:** small.
 sees one the handle's own checks refused; a wrapper that refuses stops the request before
 the next sees it and before the backend, and the fault reaches the action; with a wrapper
 stopped at a barrier after the backend answered, the run and its parent are not terminal,
-and are once it is released; a wrapper's refusal is in the run's `outcome.refusals`; with
+and are once it is released; a wrapper's refusal is in the run's `outcome.refusals`; a wrapper that fails after the
+backend answered, and a backend that panics under a wrapper, each leave the run abandoned
+and not ended; with
 no wrapper, every test of `cancel.rs` and `nested.rs` passes unchanged.
 **Size:** small.
 
-### I4. A part in the writer's recovery
+### I4. One way to a writer, with recovery before it
 
-**Depends on:** I3. A section of the interfaces' ADR, which changes ADR 0007 (the
-alternative it turned down for now).
+**Depends on:** I3. Two pull requests: the entry point and its states; then every writing
+command on it, with the crash proofs. A section of the interfaces' ADR, which changes ADR
+0007 (the alternative it turned down for now) and says, as "Decisions" does, that
+recovery is lossy and pessimistic by intent.
 
-- [ ] `RecoveryPart`, in the core: when an executor is first built over a store value
-      that was opened to write, and before it accepts a call, each part is shown the
-      current generation and adds to one publication. Parts may mark the store as
-      holding damage, which the executor then answers to those who ask.
-- [ ] It runs once for a store value. An executor built over a read of a store, and a
-      second executor over the same store value, recover nothing.
+- [ ] One entry point opens a store to write. It takes the writer lock, runs recovery,
+      and only then hands the writer out. Recovery is a list of parts (`RecoveryPart`),
+      each shown the current generation and adding to one publication of names made
+      once. The store module itself names nothing above it: the entry point is the
+      contract's, over `Store::open`.
+- [ ] Three states, shared by everyone who asks for the same store value: initializing,
+      ready, failed. Whoever asks while it is initializing waits for the answer; nobody
+      is handed a writer before it is ready. If recovery fails, nothing is published, the
+      lock is let go, the store is handed out to read only, and the failure is said
+      without a path.
+- [ ] The executor, `store delete`, `store prune`, `store import` and the `spend`
+      commands that write all open through it. A test holds the binary to no other way.
+- [ ] With no part, recovery publishes nothing and the store opens as before.
 
-**Done when** these pass: a fake part's records are published before the first call is
-admitted, and all of the parts' records together or none, shown by refusing each call of
-the publication; a second executor over the same store value does not ask the parts
-again, shown with a run of the first still executing, which is left alone; a reader asks
-no part; a part that fails leaves the store as it was and the executor refusing calls,
-with the failure said without a path (rule 3).
-**Size:** small.
+**Done when** these pass: a fake part's records are published before the writer is
+handed out, all of the parts' records or none, shown by refusing each call of the
+publication; each writing command, run on a store a killed process left, recovers before
+it changes anything, one test for each command; two executors built at once over one
+store value are both answered after one recovery, and a third built while it runs waits;
+after a failed recovery every writing command is refused with the reason and a reading
+one works; recovery run twice changes nothing the second time. Then:
+`recover::a_crash_at_any_event…`, with a fake part, followed by another open, leaves the
+part's records once and whole (rule 2); a part that panics is a failed recovery.
+**Size:** medium.
+
+### I4b. The interrupted record, and what readers say of it
+
+**Depends on:** I4. Two pull requests: the record and the recovery's part that writes it;
+then the readers. In the executor's files and `crates/whizbang/src/runs.rs`.
+
+- [ ] A recovery's part: every run that is admitted, has no record and is not open in
+      this process is ended with the record "What a crashed run is recovered to"
+      describes, made from its admission alone, and for a request with an id its ending.
+      A run whose admission cannot be read is ended with what its name gives.
+- [ ] What each reader answers of such a run, as that section lists: `runs list`, `runs
+      show`, a repeat, `status`, `wait`, `cancel`.
+
+**Done when** these pass: a run a killed process left is ended, after the next open to
+write, with a record that validates, holds exactly the admission's facts, and names every
+other group in `outcome.lost`; a child and its parent, both left, are both ended, each
+from its own admission; a run that is executing in this process, and one this process
+abandoned, are left alone; a run with a damaged admission is ended and names the
+admission as lost; a marker secret planted in a damaged admission is in no byte the
+recovery wrote or said (rule 4). Then: a repeat of the request is `Ended` with the error
+`interrupted`; `status` and `wait` say the same and `wait` does not wait; `cancel` is
+`NotAccepted(Ended)`; `runs list` and `runs show` show it, with what is lost, escaped;
+`interrupted::a_crash_at_any_event…` followed by another open ends each run once
+(rule 2).
+**Carry-over:** the row on an admission that was visible and not confirmed, as far as the
+next open; the new row on a fuller record of interrupted runs (owner: none; reopen on
+need). **Size:** medium.
 
 ### I5. A policy before a send, and a checked send
 
@@ -663,9 +737,9 @@ with the failure said without a path (rule 3).
       may receive given classes of data, and whether it may be probed. The default
       approves nothing. The gate's place in I3's order is given this policy.
 - [ ] `Sender`, the sending interface of B2, as the executor hands it to a backend: every
-      origin it is asked to reach goes through one check and one durable note (B4b)
-      before data is handed over. The check and the note are E2's and E3's; here they are
-      a default that refuses everything, and a fake.
+      origin it is asked to reach goes through one check before data is handed over, and
+      what was handed over is noted in the run's place for facts. The check is E2's and
+      E3's; here it is a default that refuses everything, and a fake.
 
 **Done when** these pass: with the default policy a fake backend that names a recipient is
 refused at the gate's place and one that names none is sent; a `Sender` with the default
@@ -721,11 +795,11 @@ recorded, not the one current at the request.
 
 ### W1. The binary wired
 
-**Depends on:** B6, S3, S8, S10, S7b, S12, E4, E6, C5, M6b: every implementation it
+**Depends on:** S3, S8, S10, S7b, S12, E4, E6, C5, M6b: every implementation it
 wires, and through them every other side task of spend, egress, config and models.
 
 - [ ] `wiring::runner` builds the executor with the real ledger, the config's source, the
-      admission's parts (B6, S3, S8), the wrappers (the gate, the lease, the meter), the
+      admission's parts (S3, S8), the wrappers (the gate, the lease, the meter), the
       recovery's parts and the inventory. With no config file it has no backend, as
       before.
 
@@ -736,27 +810,6 @@ one; a store left by a killed process is recovered by the next command that open
 write, and not by one that reads; the shipped description does not change.
 **Size:** small.
 
-### B6. An admitted run keeps what it was asked
-
-**Depends on:** I6, S1. **Reads:** ADR 0007, "Two records" and "Admission". An
-admission's part, in `spend/`, with a short ADR of its own that names S1's. It needs I6
-because the settings it keeps are the snapshot's, which a part is shown from I6 on.
-
-- [ ] In the admission's publication, among the run's names: a record of the call as it
-      was prepared at admission. The action, its version, the arguments, the inputs, the
-      config's digest, each need with the model that would answer, and the resolved
-      settings of the snapshot. It is versioned, written one way and read strictly, and
-      the secrets are taken out of it as they are out of a run record.
-
-**Done when** these pass: a run that was admitted and did not end can be given, from the
-store alone, the `identity`, `asked` and `inputs` of a `run/3` record that validates;
-the settings are those of the snapshot at admission though the source was swapped since;
-a marker secret in an argument is not in the record (rule 4); the record is refused over
-its bound before it is read, and with an unknown or a missing field, escaped and cut and
-without a path (rule 3); a nested call keeps its own; a run admitted without one, as by
-the tag `m1a`, is read and listed as before.
-**Size:** small.
-
 ### S1. The ledger's records
 
 **Depends on:** B1b. **Reads:** ADR 0007, "The reservation"; ADR 0008, "Allowances";
@@ -765,10 +818,9 @@ squint `crates/squint-core/src/ledger.rs` (`Ledger`, `CapLedger`, `Account`, `Ho
 `schemas/rascal/ledger-v1.json`.
 
 - [ ] An ADR, the ledger: its own records (an allowance set or reset, a dispatch, a
-      settlement, a release, an interruption, a setting aside) and their names under
+      settlement, a release, an interruption, an adjustment) and their names under
       `spend/`, each made once; that a dispatch names the run that sent it, the
-      reservation of the run at the root of its tree, its bound, and the backend and
-      model; how the balances are folded from them and from the reservations; the name
+      reservation of the run at the root of its tree, and its bound; how the balances are folded from them and from the reservations; the name
       every admission makes so that two cannot both take the last of the allowance; the
       name every dispatch makes so that two requests under one reservation cannot both
       take the last of it; what is done with a charge over its bound.
@@ -791,7 +843,8 @@ every claim of the ADR about code that exists names its test (rule 5).
       under it.
 
 **Done when** these pass: the fold gives the stated balances for a table of histories that
-includes a reset, a release, an unresolved charge, an interruption, a setting aside, a
+includes a reset, a release, an unresolved charge, an interruption at the full amount, a
+frozen reservation, an adjustment after each of those two, a
 charge over its bound and dispatches by a child under its root's reservation; a history
 with a record the fold cannot place (a settlement with no dispatch, two settlements of one
 dispatch) is refused, not summed; the fold reads records through names only, shown with
@@ -890,7 +943,9 @@ leaves the record whole or absent, and nothing was sent without it (rule 2).
 that, and the run can spend the difference on its next request; one that succeeds with
 none is charged its bound; one whose charge is over its bound is settled as S1's ADR says
 and marked as over; a fault at each of the three stages settles as stated, one test each;
-a request that times out is charged its bound.
+a request that times out is charged its bound; a request whose first hop was handed data
+and whose second was refused is unresolved, not "not sent"; a settlement whose
+publication fails leaves the dispatch unsettled and the run abandoned (I3).
 **Carry-over:** the row on whether a failed call may have been charged (its ledger half).
 **Size:** small.
 
@@ -936,15 +991,15 @@ requests not debited). **Size:** medium.
 
 ### S7b. Nested calls under a crash
 
-**Depends on:** S7, S6b. In `spend/` and its tests only.
+**Depends on:** S7, S6. In `spend/` and its tests only.
 
 **Done when** these pass, each with a crash and the next open to write: a crash while a
 child is admitted, while a child's request is dispatched, while it is settled, and after a
-child ended and before its parent did; in each the store is charged once for each
-dispatched request, at its bound where it was not settled, the root's reservation is
-settled once, and the parent and the child are both ended as errors unless they had ended;
-a child that completed before the crash keeps its outputs and its record, and its parent's
-recovered record lists it as completed; the same with the parent deleted before the
+child ended and before its parent did; in each the root's reservation is settled once,
+at the settled total where every dispatch under it has its settlement and at the full
+amount otherwise, and never at less than the settlements that exist; the parent and the
+child are both ended as interrupted unless they had ended; a child that completed before
+the crash keeps its outputs and its record; the same with the parent deleted before the
 restart, where the ledger is settled, the child is ended, and no parent is made.
 **Size:** small.
 
@@ -1028,72 +1083,54 @@ a run whose settlement is already named; a run whose end the store refused, whic
 abandoned, keeps its reservation unsettled and is not counted as released.
 **Size:** small.
 
-### S6. After a crash: the ledger
+### S6. After a crash: the money, never under
 
-**Depends on:** S11b, I4. Two pull requests: the recovery; then its crash proofs and the
-damaged ledger. A recovery's part, in `spend/`.
+**Depends on:** S11b, I4b. Two pull requests: the recovery's part; then its crash and
+damage proofs. A recovery's part (I4), in `spend/`.
 
-- [ ] For every reservation with no settlement whose run is not open in this process:
-      each request under it that was dispatched and not settled is charged at its bound
-      as unresolved, and the rest is released. Nothing is sent again.
-- [ ] A record the recovery cannot read does not stop the open. What can be read is
-      recovered, the ledger is marked damaged, and while it is, every call with an
-      estimate over zero is refused, naming the record and the command (S12); calls that
-      cost nothing run.
+- [ ] For every reservation with no settlement whose run is not open in this process, the
+      rule of "What a crashed run is recovered to": the settled total when every record
+      under it reads and every dispatch has its settlement; the full reserved amount, as
+      an interruption, in every other case; and a freeze, at the full amount, when a
+      record under it cannot be read.
+- [ ] A frozen or interrupted reservation is counted in the fold at its full amount. No
+      other reservation and no unrelated call is refused because of it.
 
 **Done when** these pass: a process that died between dispatch and settlement leaves,
-after the next open to write, that request charged at its bound and the rest released;
-the fake counts no second request; the same after the run was deleted and the store pruned
-before the restart: the ledger is settled and no run is made; a run that was abandoned,
-its end refused by the store, is settled by the next open. Then:
-`recover::a_crash_at_any_event…`, followed by another open, settles once and no more
-(rule 2); a reader that opens first writes nothing; with a damaged reservation planted,
-the open succeeds, the others are recovered, a paid call is refused and a free one runs.
+after the next open to write, the reservation charged in full and nothing released; one
+that died after every request was settled and before the run ended is charged the
+settled total and the rest is released; one that dispatched nothing is charged nothing;
+the fake counts no second request in any of them; the same three after the run was
+deleted and the store pruned before the restart; a run abandoned by a process that then
+ended is settled by the same rule. Then: `settle_interrupted::a_crash_at_any_event…`,
+followed by another open, settles each reservation once (rule 2); with a damaged
+dispatch, a damaged settlement and a damaged reservation planted, one at a time, that
+reservation is frozen at its full amount, every other is recovered, and a paid call that
+the rest of the allowance covers is admitted; no history in a table of twenty, each a
+sequence of dispatches, settlements, damage and crashes, ends with less charged than its
+readable settlements say, or with a reservation both frozen and released.
 **Carry-over:** the row on settlement (a run that did not end). **Size:** medium.
 
-### S6b. After a crash: the run and its request
-
-**Depends on:** S6, B6. Two pull requests: the recovered record; then the cases through
-a deletion, an old store and an unconfirmed admission. A recovery's part, in `spend/`.
-
-- [ ] In the recovery's publication, every run that was admitted, did not end and is
-      still in the store is ended as "What a crashed run is recovered to" says: a `run/3`
-      record made from B6's record, its admission, the dispatch and settlement records
-      that name it, the durable notes among its names, and the admissions that name it as
-      their parent; with `outcome.lost`; and for a request with an id, the id's ending.
-- [ ] A run admitted without B6's record is given the small record `interrupted` and, with
-      an id, an ending.
-
-**Done when** these pass: a recovered run's record validates and holds its arguments, its
-settings as they were at admission though the config was replaced before the restart, its
-request charged at the bound, a recipient a durable note was planted for in the third
-state, and `outcome.lost` naming what was in memory; a repeat of its request is answered
-`Ended`, with the error `interrupted`; a marker secret is in no byte the recovery wrote
-(rule 4). Then: for a run deleted and pruned before the restart, with a request id, the
-repeat is answered `Removed` and no run exists, and without an id nothing but the ledger
-changed; a run admitted by a store of the tag `m1a` is settled, marked and listed as
-interrupted with no record; an admission that was visible and not confirmed, in a process
-that then died, is recovered as any admitted run and its repeat answered `Ended`.
-**Carry-over:** the row on an admission that was visible and not confirmed, as far as the
-next open; ending it at once goes to milestone 2. **Size:** medium.
-
-### S12. A damaged spend record set aside
+### S12. A person's correction
 
 **Depends on:** S9, S6.
 
-- [ ] `whizbang spend set-aside <name>` writes a record, under a new name, that takes a
-      damaged record's place in the fold: for a reservation, the amount its run's
-      admission holds, charged as unresolved; where no amount can be read, the command
-      asks for one and records that a person gave it.
+- [ ] `whizbang spend adjust <run> --charge <usd>`: for a reservation that recovery
+      interrupted or froze, a new record that sets what it is charged, from nothing to
+      its full amount, and releases the rest. It names the reservation by its run, says
+      who would be asked nothing (there is no user), and records the time. The records
+      it corrects stay. A reservation that is neither interrupted nor frozen is refused.
+- [ ] `spend status` lists the interrupted and the frozen reservations with their runs.
 
-**Done when** these pass: with a planted damaged reservation, and again with a planted
-damaged settlement, the command opens the store to write though recovery found the
-damage; after `set-aside` the recovery completes, paid calls are admitted and the
-balances count the amount once; the store closed and opened again is not marked damaged;
-the damaged content is still in the store and still named; `set-aside` of a record that
-reads well is refused; the refusal and the command's output show the name escaped and
-cut, and no path (rule 3); `set_aside::a_crash_at_any_event…` leaves it done or not done
-(rule 2).
+**Done when** these pass: an interrupted reservation adjusted to a lower charge releases
+the difference and the next paid call can use it; a frozen one is unfrozen by its
+adjustment, and the damaged content is still in the store and still named; an adjustment
+over the reserved amount, of a settled reservation and of a run the store does not know
+are each refused; a second adjustment of the same reservation makes a second record and
+the fold takes the last; the command opens through I4's entry point, so it recovers
+first; its output and its refusals show names escaped and cut, and no path (rule 3);
+`adjust::a_crash_at_any_event…` leaves it done or not done (rule 2); no call the
+executor accepts can write an adjustment, shown as S9 shows it for a reset.
 **Carry-over:** the row on the ledger (a damaged reservation). **Size:** small.
 
 ### C1. The config: its file, its shape, its digest
@@ -1213,8 +1250,7 @@ these runs.
 
 - [ ] The policy a config's `egress` table makes (I5's `DispatchPolicy`): which recipients
       may receive which classes of data.
-- [ ] The check and the note behind a `Sender` (I5) for the first address: before data is
-      handed to a recipient the policy approves, a send note is made durable (B4b).
+- [ ] The check behind a `Sender` (I5) for the first address.
 
 **Done when** these pass, each with an executor a test builds with the policy: with the
 empty policy every request to a backend with a recipient is refused and the fake counts
@@ -1222,10 +1258,9 @@ none; a recipient approved for prompts and not for source images is refused a re
 that holds a source image, and sent one that holds a prompt alone; a part with no stated
 class is refused unless every class is approved; a refusal answers the action with a
 fault, and no other backend, remote or local, is asked in its place; a refused request
-has no dispatch record, no send note and no charge, a fake meter in the place after the
+has no dispatch record and no charge, a fake meter in the place after the
 gate having seen nothing; a run whose action catches the refusal and completes has it in
-its record, with the recipient and the reason; the sending fake finds the note in the
-store before it is handed anything, for a free request as for a paid one.
+its record, with the recipient and the reason.
 **Carry-over:** the row on squint's `recipient`. **Size:** medium.
 
 ### E3. Every hop, and a probe
@@ -1236,9 +1271,7 @@ download.
 
 - [ ] Everything a `Sender` is asked to reach is checked against the recipient: a
       redirect, an upload address and a returned download address, as the first address
-      is. A credential is attached only for the origin it was configured for. A send note
-      is made durable before each hop is handed data, and a second note says a hop
-      answered.
+      is. A credential is attached only for the origin it was configured for.
 - [ ] The download interface is checked the same way against the origins a catalogue entry
       names. A probe is refused unless the config approves probing that recipient, apart
       from any class of data.
@@ -1247,28 +1280,25 @@ download.
 not the recipient or one of its upstreams is refused and nothing is sent to it; a redirect
 to an approved upstream is followed without the credential; an upload address and a
 download address outside the recipient's are each refused; a chain longer than the limit
-is refused; the sending fake finds each hop's note in the store before it is handed that
-hop. Then: a model's download that is redirected off its catalogue's origins is refused,
+is refused. Then: a model's download that is redirected off its catalogue's origins is refused,
 and its request carried nothing but the address; a probe is refused by default, sent when
 approved, carries no user data, and its redirect off the recipient is refused.
 **Size:** medium.
 
 ### E4. The run's recipients
 
-**Depends on:** E3, S6b.
+**Depends on:** E3.
 
-- [ ] A run's `egress` list is made from its send notes: the origin that was reached and
-      the classes of data, as sent where a note says it answered. A send the gate or a
-      hop's check refused is in the record as refused.
+- [ ] Each send is noted where it is made, at the `Sender`, in the run's place for facts:
+      the origin that was reached and the classes of data. A run's `egress` list is those
+      notes. A send the gate or a hop's check refused is in the record as refused.
 
 **Done when** these pass: a run that sent a prompt and a derived image to one recipient
 lists it once with both classes; a run whose request went on to an approved upstream lists
 the upstream as reached, and an approved upstream that was not reached is not listed; a
 request that failed at its second hop lists the first, which had the data; a run that
-crashed before and after a redirect, an upload and a returned download address, a free
-request among them, is recovered (S6b) with every origin a note was made for, each as
-dispatched with no word of whether it arrived unless its second note was durable, and
-none it had no note for; a run whose only request was refused lists the refusal and
+a process left after it had sent data is recovered as interrupted, with `egress` named in
+`outcome.lost` and an empty list; a run whose only request was refused lists the refusal and
 nothing as sent; a local run's list is empty; an account in the list is shown cut, and a
 marker credential is nowhere in the record (rule 4).
 **Carry-over:** the row on the record's empty lists (`egress`). **Size:** small.
@@ -1535,9 +1565,9 @@ Every row of `docs/carry-over.md` whose owner names 1B, read again from `main` a
 | "Never removed" has one limit left: `put` replaces a made name | I2 |
 | The executor is built with no backends and the digest of no bytes | C4 (the shape and digest: C1; the binary: W1) |
 | The run record's empty lists: `asked.settings`; `spend.requests` and settled spend; `egress` | B4 defines the elements; C5, S10 and E4 fill them. `egress` was owned by "the first backend that sends data": the gate is where a send is known, so 1B takes it, filled by fakes. `models`, `time.durations` and `judge` stay with A11 |
-| The ledger: the real one, the binary built with it, the token, a damaged reservation, the names' segments, a paid request with no bound | I2 (the token, the names), S2 (the real ledger), S4 (no bound), S12 (a damaged reservation), W1 (the binary) |
-| Settlement: a run that ends; one that did not; a child's share not given back; a run's own requests not debited | S11; S6 and S6b; S7; S5 and S7 |
-| An admission that was visible and not confirmed takes its id | S6b ends it at the next open to write. Ending it at once in the process that made it: **milestone 2**, with the first door that keeps a process alive across runs; until then the limit stays, and the row says so |
+| The ledger: the real one, the binary built with it, the token, a damaged reservation, the names' segments, a paid request with no bound | I2 (the token, the names), S2 (the real ledger), S4 (no bound), S6 and S12 (a damaged reservation: frozen, then corrected), W1 (the binary) |
+| Settlement: a run that ends; one that did not; a child's share not given back; a run's own requests not debited | S11; S6, at the full amount unless every dispatch was settled, with I4b ending the run; S7; S5 and S7 |
+| An admission that was visible and not confirmed takes its id | I4b ends it at the next open to write. Ending it at once in the process that made it: **milestone 2**, with the first door that keeps a process alive across runs; until then the limit stays, and the row says so |
 | What every publication costs as ids and reservations accumulate | **Milestone 2, before request ids are used in volume** (the measurement at 100,000 ids, S13 of draft 5). 1B adds a ledger record to each admission and two to each paid request; the row gains that |
 | Whether a failed call may have been charged | B1b (the stage on a fault), S5b (the settlement) |
 | What a provider adapter said of itself: `pricing`, `recipient` | B1 and S4 (`pricing`); B2 and E2 (`recipient`). Image preparation stays with milestone 2 |
@@ -1551,7 +1581,8 @@ Every row of `docs/carry-over.md` whose owner names 1B, read again from `main` a
 | A hold is judged live by its process id alone (R5) | M5 |
 | Untested cases around installs (R6) | M2b (a signal during a download), M5d (a removal racing an install), M6 (a reinstall between a call and its retry; a corrupt installation record) |
 
-New rows this plan asks for, added by the task named: `whizbang models list|get|remove`
+New rows this plan asks for, added by the task named: a fuller record of what an
+interrupted run did, owner "none; reopen on need" (I4b); `whizbang models list|get|remove`
 and their guide, 1C (M6b); `whizbang backends status`, 1C (Z1); the real network client
 and the shipped catalogue, 1C (Z1). The row on what running an action does not do yet
 (milestone 2) keeps the bound on a ledger being asked again; 1B adds none.
@@ -1680,48 +1711,23 @@ Applied in draft 7, because they do not touch recovery:
 - Minor: the bounds on started runs are stated as ADR 0008 has them, and B3 no longer
   claims the fakes lack barriers.
 
-**Not applied: the findings on recovery, with what is proposed for each.** The owner
-asked that a blocker here be handed back and not looped on. Until they are decided, the
-section "What a crashed run is recovered to" and the tasks I3, I4, B4, B6, S6, S6b and S12
-are not to be built from.
+**The findings on recovery, and the owner's decision of 2026-11-13.** The two blockers
+and three of the majors were about recovery, as a blocker had been in every round. The
+owner decided that 1B stops reconstructing what a crashed run did: the record of an
+interrupted run is made from its admission alone and names the rest as lost; its money
+is charged in full unless every dispatch is shown settled; a damaged record freezes one
+reservation and stops nothing else; a person corrects by a new record; recovery runs
+where a writer is handed out; and readers have a stated answer. Draft 8 applies that:
 
-1. *Blocker: some facts are still neither durable nor declared lost.* The whizbang
-   version that ran a run; what a response reports of a model (device, cache, reported
-   identity); a free request to a remote recipient, which has a send note and no
-   dispatch; the order of a run's calls, and a child that was deleted before its parent
-   crashed. Proposed: B6's record holds the whizbang version; a child's admission gains
-   its place among its parent's calls, by a base task, since `admission/1` closes with
-   1A (a new version of the admission); `outcome.lost` names `models` for every request
-   with no settlement and `steps` when a place in the sequence has no admission; and
-   every request to a recipient, free or not, has a dispatch record, of nothing when it
-   is free, so that one kind of record stands for "a request left".
-2. *Blocker: a damaged record other than a spend record has no outcome, and a damaged
-   spend record can let the rest of its reservation be released.* Proposed: damage to a
-   dispatch, a settlement or a reservation quarantines that one reservation, which is
-   neither settled nor released until S12's command, while other trees are recovered;
-   damage to B6's record, an admission or a send note never stops recovery: the run is
-   ended with the small `interrupted` record of a run that kept no call, and
-   `outcome.lost` or that record says which was unreadable.
-3. *Major: a wrapper returning is not proof that a settlement is durable,* and an end
-   that was visible and not confirmed has its settlement visible too. Proposed: I3 says
-   that a meter whose settlement fails, or whose backend panics, leaves the dispatch
-   unsettled and the run abandoned, never accounted for as free; recovery takes whichever
-   whole generation survived, and a settlement's made-once name is what keeps it from
-   being settled twice; S5b gains the case of a first hop that was billed and a second
-   that was refused, which is unresolved and not "not sent".
-4. *Major: recovery runs when an executor is built, and `store delete`, `store prune`,
-   `store import` and `spend reset` open a store to write without one.* Proposed: I4
-   moves the boundary into the store: a writer is not handed out until recovery has run,
-   by one entry point every command that writes goes through, with the states
-   initializing, ready and failed shared by all who ask, and a test of each writing
-   command after a crash and of two executors built at once.
-5. *Major, the recovery half: the `interrupted` marker needs readers.* `status`, `wait`,
-   `cancel`, a repeat and `runs list` do not know a run that has an ending and no
-   record. Proposed: B4 and I4 own that reading, in the executor's files and in
-   `crates/whizbang/src/runs.rs`, with a test of each question.
-
-Each of these is a change to an interface task or to B4, so they are best decided
-together and applied in one revision, which then gets a round of its own.
+- B6 (the prepared call kept at admission), the durable send notes and the third state
+  of `egress` are gone, with everything of S6b that rebuilt a record. Nothing is kept
+  durably for recovery's sake.
+- I4 is the one way to a writer, used by every writing command, with recovery before it
+  and the states initializing, ready and failed. I4b is the interrupted record and its
+  readers.
+- S6 is the conservative settlement. S12 is the person's correction, `spend adjust`.
+- I3 says what a failed wrapper and a backend's panic mean; S5b has the case of a first
+  hop that was handed data and a second that was refused.
 
 ## Risks
 
@@ -1729,7 +1735,8 @@ together and applied in one revision, which then gets a round of its own.
 |---|---|---|
 | A9, A11 or ADR 0009 changes where handles are made or what a run records of a request | I3 and B4 are wrong as written | B0 is first, checks D9, and stops on an answer that is neither outcome |
 | An interface fixed early does not fit the strand that implements it | A base task is reopened and a strand waits | Each interface is the outline a review gave after three rounds of the tasks it serves; its task ships a fake that the strand's tests are first written against; a misfit is changed by a base task, never worked around in a strand |
-| Recovery is still incoherent | A crashed run is misreported or its money miscounted | It is: round 4 says so, and its five findings with a proposed resolution are under "Review rounds". They are decided and applied, and reviewed again, before I3, I4, B4, B6, S6, S6b or S12 is built |
+| Recovery under-counts money on some path | The allowance is overspent without an error | The rule has one direction: anything not proven settled is charged in full, and S6's table of histories asserts it; a person's adjustment is the only thing that lowers a charge |
+| Recovery's losses are felt | Someone needs to know what an interrupted run did | It is in no record, by decision; the carry-over line says who reopens it |
 | The record's shapes are fixed in B4 before the strands that fill them | A second version, `run/4`, inside one checkpoint | B4 follows B1 to B3, which decide the quote, the stage and the recipient; a wrong shape is a new version, never an edit |
 | Crash sweeps multiply | The fast tier passes its three minutes | Rule 11; each task states its sweeps' times alone in its hand-back |
 | Folding the balances from every record costs more with every run | Admission slows as a store ages | Known, and measured at 100,000 ids in milestone 2 before ids are used in volume; a checkpoint record under a new name is the stated way out |
