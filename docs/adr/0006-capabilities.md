@@ -435,6 +435,18 @@ its keys, prints its numbers again or trims it: the body that comes out is the b
 went in, byte for byte. Squint kept such a block as a JSON value, which is not that: a
 JSON library is free to order keys and print numbers its own way.
 
+What "whole" covers, and what it does not:
+
+- **A part over 1,048,576 bytes is refused, never cut.** An adapter that is sent one
+  cannot keep it, and fails the turn with the fault `too_large`. A part cut short
+  would be sent back to the provider as if it were whole.
+- **A body is UTF-8 text.** Every provider's part known to this record arrives inside a
+  JSON document, which is UTF-8. A part of other bytes cannot be held as it is; an
+  adapter that meets one encodes it, and decodes it before it sends it back.
+- **It is whole from the adapter on.** Whether the adapter kept the provider's bytes
+  when it cut the part out of a response is the adapter's, and is in its own tests: one
+  that parses a response and writes the part again has already lost it.
+
 - The adapter's name is the backend's name: the first part of the model identity a
   backend declares. It keeps the rule of an action's name, so a backend that makes
   opaque parts has such a name.
@@ -446,7 +458,8 @@ JSON library is free to order keys and print numbers its own way.
 **The response** is a `Turn`, or a fault. A turn is:
 
 - **content,** the parts the model wrote, in the order it wrote them: text, tool calls
-  and opaque parts, at most 256. Several calls in one turn are several parts.
+  and opaque parts, at most 256, holding at most 67,108,864 bytes of text in all, as a
+  conversation may: a turn is said back as a message of it. Several calls in one turn are several parts.
   `Turn::message` gives the same parts, whole and in order, as the assistant's message
   for the conversation that goes on. Squint's response held the texts and the calls as
   two lists beside the content; here they are read from the one list;
@@ -463,6 +476,14 @@ one id, since they could not be answered apart; when it stopped for a tool and c
 none; and when it holds nothing at all, unless it was cut off, declined, or stopped for
 another reason. A turn that ended with nothing in it gives the harness nothing to
 continue from. A turn that was cut off keeps what came before the cut.
+
+**A turn is a backend's answer, and is not trusted.** Every bound above is checked when
+the turn is made, each refusal is an `Unfit` with its type, and the handle makes a
+refusal of what a backend handed it the fault `malformed`; nothing panics on a turn of
+any shape. What is not covered: the bounds are checked on values that already exist, so
+an adapter that reads a body of any size and parses it has spent that memory before a
+turn is refused. Bounding what is read is the adapter's, at checkpoint 1C, on the row
+that holds the same for segment and fill (`docs/carry-over.md`).
 
 A stop reason in the provider's word and the provider's id are a provider's text, and
 end up in a record. Each is cleaned as a fault's sentence is, and cut at 64 and at 128
@@ -498,7 +519,15 @@ sends anything, and each counts the requests it was sent, answered or not.
 - `FakeSegmenter` answers a phrase with the boxes it was told to find for it, a point
   with the pixel under it, and a box with the whole pixels it touches.
 - `FakeJudge` plays a scripted transcript, a turn or a fault for each request in order,
-  and keeps every request it was sent.
+  and keeps every request it was sent. It does not look at what it is asked: a request
+  its script's writer did not expect is answered with the next entry like any other,
+  and a test that cares what was asked reads what the fake kept. Past the end of its
+  script it answers with the fault `malformed`; it never panics.
+
+Each fake may be shared across threads, and counts every request then too. The judge
+takes a request and plays its next entry in one step, so of many simultaneous requests
+each gets one entry, and the request kept in place `n` is the one answered with entry
+`n` (task A6 sends two requests at once through them).
 
 A request the handle refused, because the run was cancelled or the fake does not
 declare a feature, never reaches the fake and is not counted. Prepare is shown to send

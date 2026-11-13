@@ -280,3 +280,87 @@ fn the_fake_judge_is_not_sent_what_it_does_not_declare() {
     assert_eq!(judge.requests(), 0);
     assert_eq!(judge.remaining(), 1);
 }
+
+// --- shared across threads ----------------------------------------------------------------
+
+#[test]
+fn the_fakes_are_shared_across_threads_and_count_every_request() {
+    fn shared<T: Send + Sync>() {}
+    shared::<FakeFiller>();
+    shared::<FakeSegmenter>();
+    shared::<FakeJudge>();
+
+    // Eight threads, 25 requests each, through clones of one handle.
+    let filler = Arc::new(FakeFiller::new(Paint::Inverse));
+    let segmenter = Arc::new(FakeSegmenter::new().finding("a dog", [1, 1, 3, 3]));
+    let fill = FillHandle::new(filler.clone(), now());
+    let segment = SegmentHandle::new(segmenter.clone(), now());
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            let (fill, segment) = (fill.clone(), segment.clone());
+            scope.spawn(move || {
+                let batch =
+                    SegmentRequest::new(picture(), vec![Query::phrase("a dog").unwrap()], 1)
+                        .unwrap();
+                for _ in 0..25 {
+                    fill.fill(&fill_request(None)).unwrap();
+                    assert_eq!(segment.segment(&batch).unwrap().answers()[0].len(), 1);
+                }
+            });
+        }
+    });
+    assert_eq!(filler.requests(), 200);
+    assert_eq!(segmenter.requests(), 200);
+}
+
+#[test]
+fn the_fake_judge_gives_each_of_many_simultaneous_requests_one_turn_of_its_script() {
+    // 200 turns, each saying its own number, and 8 threads asking 30 times each: 240
+    // requests. Every turn is played once, to one request; the 40 requests past the
+    // end get the fault; and the request kept in each place is the one that was
+    // answered with the script's entry of that place.
+    let script: Vec<Result<Turn, Fault>> = (0..200)
+        .map(|n| Ok(said(vec![text(&format!("turn {n}"))], StopReason::EndTurn)))
+        .collect();
+    let judge = Arc::new(FakeJudge::scripted(script));
+    let handle = JudgeHandle::new(judge.clone(), now());
+    let answers = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for thread in 0..8 {
+            let (handle, answers) = (handle.clone(), &answers);
+            scope.spawn(move || {
+                for n in 0..30 {
+                    let asked = format!("thread {thread} request {n}");
+                    let answer = handle.send(&asking(&asked));
+                    answers.lock().unwrap().push((asked, answer));
+                }
+            });
+        }
+    });
+    assert_eq!(judge.requests(), 240);
+    assert_eq!(judge.remaining(), 0);
+    let answers = answers.into_inner().unwrap();
+    let received = judge.received();
+    let mut played = std::collections::BTreeSet::new();
+    let mut past_the_end = 0;
+    for (asked, answer) in &answers {
+        let place = received
+            .iter()
+            .position(|request| *request == asking(asked))
+            .unwrap();
+        match answer {
+            Ok(turn) => {
+                let said = turn.texts().next().unwrap().to_owned();
+                // The request kept in place n was answered with the script's entry n.
+                assert_eq!(said, format!("turn {place}"));
+                assert!(played.insert(said), "a turn was played twice");
+            }
+            Err(fault) => {
+                assert_eq!(fault.kind(), FaultKind::Malformed);
+                assert!(place >= 200, "request {place} was failed inside the script");
+                past_the_end += 1;
+            }
+        }
+    }
+    assert_eq!((played.len(), past_the_end), (200, 40));
+}

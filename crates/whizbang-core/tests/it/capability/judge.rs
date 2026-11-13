@@ -437,6 +437,33 @@ fn a_turn_holds_only_what_an_assistant_says() {
 }
 
 #[test]
+fn a_turn_is_bounded_in_all_it_holds() {
+    // A turn becomes a message of the conversation that goes on, so it holds no more
+    // text than a conversation may: 64 parts of a megabyte are a turn, and 65 are not,
+    // whichever kind of part holds the text.
+    let long = "x".repeat(TEXT_LIMIT);
+    let turn = |parts: Vec<Part>| Turn::new(parts, StopReason::EndTurn, None, None);
+    turn(vec![text(&long); 64]).unwrap();
+    assert_eq!(
+        turn(vec![text(&long); 65]).unwrap_err(),
+        Unfit::TooLarge {
+            what: "a turn, in bytes of text,",
+            size: 65 * 1_048_576,
+            limit: 64 * 1_048_576,
+        }
+    );
+    let opaque = Part::Opaque(Opaque::new("stub", &long).unwrap());
+    turn(vec![opaque.clone(); 64]).unwrap();
+    assert!(matches!(
+        turn(vec![opaque; 65]),
+        Err(Unfit::TooLarge { .. })
+    ));
+    // And every turn that is made can be said back: it is a message.
+    let whole = turn(vec![text(&long); 64]).unwrap();
+    assert_eq!(whole.message().unwrap().parts().len(), 64);
+}
+
+#[test]
 fn a_turn_with_nothing_in_it_is_refused_unless_it_was_cut_off_or_declined() {
     for stop in [StopReason::EndTurn, StopReason::ToolUse] {
         assert_eq!(
