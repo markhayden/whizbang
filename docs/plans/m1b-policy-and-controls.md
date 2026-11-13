@@ -1,13 +1,11 @@
 # Plan: checkpoint 1B, policy and controls
 
-Draft 11, 2026-11-13. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the
+Draft 12, 2026-11-13. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the
 task list.
 
-**Not yet ready to build from, in one place.** The sixth review round, on money alone,
-found two more structural holes in the ledger's names and arithmetic and two small ones
-that depend on them. They are under "Review rounds" with a proposed resolution and a
-recommendation, for the owner to decide. I2, S1, S1b, S5b, S6, S7 and S12 wait for it.
-Everything else has no open finding.
+Reviewed in six rounds. Scope, order and every area but one are settled; the ledger's
+arithmetic is deliberately settled in task I2, with code in hand ("Decisions", the last
+item). The plan waits only for 1A's exit check and task B0.
 
 Checkpoint 1A is nearly built: everything but its two proofs (A9, `grow`; A11, the
 scripted squint run) and its exit check (A12) is merged, and this draft is written from
@@ -155,6 +153,12 @@ the owner's own, given on 2026-11-13.
   the measurement at 100,000 request ids (S13) and the ending at once of an admission
   that was not confirmed (S6c). "Carry-over rows and their tasks" says what each row's
   new owner is; B0 edits the rows.
+- **The ledger's arithmetic is settled with code in hand, not in this plan (the owner's,
+  2026-11-13).** Six review rounds each went one level deeper into names and sums written
+  as prose. The plan keeps the invariants; task I2 writes the ADR and has it reviewed
+  together with a small executable model of the fold and a table of histories run as
+  tests, every sequence the six rounds produced among them. Each later ledger task adds
+  its histories to that table and is held to it.
 - **Two pull requests where a task has three kinds of work (the owner's).** A task that
   carries an ADR section, an implementation, and crash or race proofs is planned as two
   pull requests, the proofs second. The order table says which.
@@ -186,8 +190,8 @@ the version that ran it is not known and is named as lost. What the run had alre
 published (its admission; nothing else is published before a run ends) stays as it is.
 For a request with an id, the id's ending is made, so a repeat is answered.
 
-**It settles the money, never under.** "The ledger's names and arithmetic", below, is
-the rule. In short, for every reservation that has no settlement and whose run is not
+**It settles the money, never under.** "The ledger's invariants", below, is what it is
+held to, and I2's ADR the rule. In short, for every reservation that has no settlement and whose run is not
 open in this process (S6), run or no run:
 
 - if every spend record under it can be read, and every request dispatched under it has
@@ -231,80 +235,36 @@ ended in error, interrupted, with what is lost; a repeat of its request, `status
 the run's id are answered so, and a request under its request id is answered with the
 error of an unreadable record.
 
-## The ledger's names and arithmetic
+## The ledger's invariants
 
-Decided by the owner on 2026-11-13, after the fifth review round. I2 owns the names; S1's
-ADR writes the arithmetic; this section is what both are held to.
+This is what every ledger task is held to, and all of the ledger that this plan decides.
+The names and the arithmetic that keep these are decided in task I2, by an ADR reviewed
+with an executable model and a table of histories; the appendix holds where the reviews
+left them, as a starting point and not as a decision. Where a task below states a number
+or the form of a name that I2's ADR then decides otherwise, the ADR governs and the
+task's case is restated with it.
 
-**What a name says.** A name lives in the generation file, not in content, so it is
-there when content is damaged or pruned. The ledger's own names say what the money
-needs:
-
-| Name | Made | Says |
-|---|---|---|
-| `spend/held/<run>/<micros>` | By the ledger, in the admission's publication, for a run nothing called | That run's reservation and its amount |
-| `spend/dispatched/<run>/<n>/<by>/<micros>` | By the meter, before a request leaves | The reservation it draws on (the root's run), its place `n` under it from 1, the run that sent it, and its bound |
-| `spend/place/<run>/<n>` | By the meter, in the publication of dispatch `n` | Nothing but that place `n` under this reservation is taken: two dispatches that chose one place cannot both be published, whatever their bounds |
-| `spend/settled/<run>/<n>` | By the meter, when the request ends | Which dispatch it settles; the charge is in its content |
-| `spend/closed/<run>` | By the ledger, in the publication that ends the root's run, or by recovery | That the reservation is settled; the totals are in its content |
-| `spend/frozen/<run>`, `spend/adjusted/<run>/<k>` | By recovery; by a person's command, `k` from 1 | That the reservation is frozen; its `k`th correction |
-
-- **A strict grammar, parsed as untrusted.** A run is a `RunId` (ADR 0004); an amount
-  and a count are decimal digits with no leading zero, at most 20 and 10 of them; a name
-  is at most 200 characters (ADR 0007). A name under `spend/` that is not of one of
-  these forms, to the character, is damage, and is shown escaped and cut.
-- **Nothing secret is in a name:** a run's id is made by the executor, and the rest are
-  numbers.
-- **How it sits with ADR 0007.** The executor still makes `spend/reservations/<run>`,
-  whose content is `reservation/1`: the request, the admission's digest, the amount, the
-  start. That record remains the detail. The ledger's `held` name is the name ADR 0007
-  says a ledger makes in the step, now with a fixed form, and it is what the fold counts
-  from. Both are made in the one publication, so a generation has both or neither. The
-  name that keeps two admissions from both taking the last of the allowance is the
-  ledger's as before (`spend/turn/<n>`), and a dispatch's `place` name does the same
-  under one reservation.
-- **A damaged entry is one frozen reservation,** never a failure of the whole reading: a
-  `held` name whose reservation record is missing, unreadable or says another amount (the
-  larger of the two is taken); a dispatch or a settlement whose content cannot be read or
-  does not agree with its name; a name of no known form that names a run. Reading
-  reservations no longer fails as a whole when one cannot be read.
-
-**What a reservation counts for,** in the fold, at any moment:
-
-- *known against it* = the charges of its readable settlements, plus the bounds of its
-  dispatches that have no readable settlement;
-- *open* (no `closed` name): the larger of its amount and what is known against it;
-- *closed by its run's end*: what is known against it, which then is its settlements
-  alone, and unresolved ones at their bounds; what the amount held beyond that is
-  released;
-- *closed by recovery as interrupted*: the larger of its amount and what is known
-  against it, unless every dispatch has a readable settlement, when it is as a run's end;
-- *frozen*: the larger of its amount and what is known against it, whether or not every
-  dispatch has a settlement: damage rules out the release, and nothing lowers it but an
-  adjustment;
-- *adjusted*: what the last adjustment says, which is never less than its readable
-  settlements.
-
-What the store has left is its allowance less the sum of those, and never reads below
-nothing. So it is never more than the truth: every term is at least what was really
-charged.
-
-**A charge over its bound** is a fact, recorded and debited, not refused: the money is
-spent. This holds for a run that ends by itself as for one that is interrupted.
-
-- The settlement records the charge the answer gave, and that it was over.
-- In memory, the excess is taken from the allowance of the run that sent the request and
-  of each run above it, each down to nothing and no further. A run with nothing left
-  sends no further paid request and makes no further paid call.
-- A child gives back to its parent its share less what was charged or is unresolved
-  under it, when that is over nothing; a child whose charges passed its share gives
-  nothing back.
-- In the ledger, an open reservation counts for the larger of its amount and what is
-  known against it, so once the settlement is durable what is known has grown, and an admission made while the run still executes already sees
-  the allowance reduced; and at its end it is closed at its settlements, which may be
-  more than its amount.
-- A later admission is judged against what is left after all of that. Where the overrun
-  took the allowance to nothing, it is refused with `OverAllowance` until a reset.
+1. **Never under.** What the ledger counts as spent or held is never less than what its
+   readable records show was charged, plus the bounds of what is dispatched and not
+   settled. Counting more is allowed where a rule says so; counting less never is.
+2. **Debt is not forgotten.** A balance may be below nothing inside the ledger and inside
+   an allowance; what can be spent is never reported below nothing; and every return (an
+   unused bound, a child's remainder, a share handed back) pays the debt first.
+3. **One closing.** A reservation is closed once, by its run's end or by recovery, and a
+   closing that releases anything needs a durable settlement for every dispatch under it.
+4. **Damage freezes one reservation.** A damaged entry freezes the reservation it belongs
+   to, at an amount that can be read without the damaged content. It never stops the
+   fold, recovery, or a call that has nothing to do with it.
+5. **Every amount the fold needs is in a name.** Holds, dispatches and settlements carry
+   their amounts and their reservation in names the ledger makes, with a guard name where
+   two must not take one place. The grammar is complete, strict and bounded, and parsed
+   as untrusted: it lists every name accepted under `spend/`, the executor's reservation
+   name, the turns, and the names of an allowance and a reset among them, and a reset has
+   an epoch that ties each reservation to the reset it falls under. Nothing secret is in
+   a name.
+6. **No admission on a stale balance.** An admission cannot be published on a balance
+   that a settlement over its bound has since changed.
+7. **A person corrects by a new record,** never by editing one.
 
 ## Rules every task's tests follow
 
@@ -355,11 +315,16 @@ task is not done while one that applies to it has no test.
 | Strand | Tasks | Owns | Starts after |
 |---|---|---|---|
 | Base (a line) | B0, B0b, B1, B1b, B2, B3, B4, B4b, I1 to I7 with I4b, and W1 at the end | The executor's files (`crates/whizbang-core/src/contract/`: `engine.rs`, `request.rs`, `prepare.rs`, `context.rs`, `ledger.rs`, `record.rs`, `live.rs`, `nested.rs`), `crates/whizbang-core/src/capability/`, the record's schema, `crates/whizbang-testkit/src/` but for the files named below, `crates/whizbang/src/wiring.rs`, `runs.rs` and `store.rs`, every root file | A12 |
-| Spend | S1 to S12 | `crates/whizbang-core/src/spend/` and `tests/it/spend/`; `crates/whizbang/src/spend.rs`; `crates/whizbang-testkit/src/spend.rs` | S1 and S1b after I2; the rest after the interface each names |
+| Spend | S1b to S12 | `crates/whizbang-core/src/spend/` and `tests/it/spend/`; `crates/whizbang/src/spend.rs`; `crates/whizbang-testkit/src/spend.rs` (the model and the table of histories, which I2 makes and each ledger task adds to) | S1b after I2; the rest after the interface each names |
 | Config and secrets | C1 to C5 | `crates/whizbang-core/src/config/` and `tests/it/config/`; `crates/whizbang-core/src/contract/redact.rs` and its test; `docs/guides/config.md` | B0b; C4 after I6 |
 | Egress | E2, E3, E4, E6 | `crates/whizbang-core/src/egress/` beyond B2's types, and `tests/it/egress/` | I5 |
 | Models | M1 to M6b | `crates/whizbang-backends/`; `crates/whizbang-testkit/src/downloads.rs` | B2; M6 after I7 |
 | Scripts | X1, X2 | `scripts/scan.sh`, `scripts/tests/scan/`, `scripts/tests/test-deny.sh`, `deny.toml` | A12 |
+
+**The table of histories** is one file of the test kit that I2 makes. S1b, S5b, S6, S7,
+S7b, S11 and S12 each add the histories their task names to it, one at a time in the
+order they merge, and each is done only when the model, the real fold and, where the
+task has an executor, a run through it all give the same balances.
 
 **The line, and why each task is on it.** One builder at a time works in the base
 strand, because each of its tasks changes the executor's files:
@@ -407,7 +372,7 @@ planned as two pull requests, the proofs second.
 | B4 `run/3` | Base | B3 | medium | 1 |
 | B4b A place for a run's facts | Base | B4 | small | 1 |
 | I1 A part in the admission | Base | B4b | small | 1 |
-| I2 The ledger's token and names, and its part in the end of a run | Base | I1 | medium | 1 |
+| I2 The ledger's design: an ADR with a model, then its interface and records | Base | I1, B1b | medium | 2 |
 | I3 A wrapper around each request | Base | I2 | small | 1 |
 | I4 One way to a writer, with recovery before it | Base | I3 | medium | 2 |
 | I4b The interrupted record, and what readers say of it | Base | I4 | medium | 2 |
@@ -415,8 +380,7 @@ planned as two pull requests, the proofs second.
 | I6 One snapshot of the config | Base | I5 | small | 1 |
 | I7 An inventory, and a lease on an installation | Base | I6 | small | 1 |
 | W1 The binary wired | Base | S3, S8, S10, S7b, S12, E4, E6, C5, M6b | small | 1 |
-| S1 The ledger's records | Spend | B1b, I2 | small | 1 |
-| S1b The fold | Spend | S1 | small | 1 |
+| S1b The fold | Spend | I2 | small | 1 |
 | S2 Reserving at admission | Spend | S1b, I2 | medium | 2 |
 | S3 The per-call cap, and a call's own | Spend | I6 | small | 1 |
 | S4 Quotes: a bound, or no dispatch | Spend | S1b, B3 | small | 1 |
@@ -458,7 +422,7 @@ planned as two pull requests, the proofs second.
 **What runs at the same time.** The base line is seventeen tasks, nearly all small, and one
 builder walks it. Beside it:
 
-- From B0b: C1, then C2; C3; X1; X2. From I2: S1, S1b. From B2: M1 to M5c, the whole
+- From B0b: C1, then C2; C3; X1; X2. From I2: S1b. From B2: M1 to M5c, the whole
   models strand but its last two tasks. From B3: S4.
 - From I1: S8. From I2: S2, then S9. From I6: S3. From I3: S5 and all that follows it in
   spend. From I4b: S6. From I5: the egress strand. From I6: C4. From I7: M6.
@@ -716,44 +680,120 @@ vectors of `request/1` and `prepared/1` are as they were; every test of `admit.r
 unchanged.
 **Size:** small.
 
-### I2. The ledger's token and names, and its part in the end of a run
+### I2. The ledger's design: an ADR with a model, then its interface and records
 
-**Depends on:** I1. A section of the interfaces' ADR, which changes ADR 0007's interface
-and ADR 0008's allowance. **Reads:** `docs/carry-over.md`, the row on the ledger.
+**Depends on:** I1, B1b. **Reads:** "The ledger's invariants" and the appendix; ADR 0007,
+"The reservation" and "The estimate"; ADR 0008, "Allowances"; `docs/carry-over.md`, the
+rows on the ledger and on "never removed"; squint `crates/squint-core/src/ledger.rs`
+(`Ledger`, `CapLedger`, `Account`, `Hold`, `Closing`) and
+`crates/squint-eval/src/eval_ledger.rs`; rascal `schemas/rascal/ledger-v1.json`. This is
+the one task that was I2 and S1 in earlier drafts.
 
-- [ ] `Ledger::reserve` cannot return without having made its name: what it returns can
-      only be had from `Step::make`. A name with an empty, `.` or `..` segment is refused.
-- [ ] The grammar of the ledger's names, as "The ledger's names and arithmetic" gives
-      it, as one parser in the core that every reader of a spend name uses, with the
-      `held` name required of every `reserve`. Reading reservations answers each entry
-      by itself, sound or damaged, and no longer fails as a whole.
-- [ ] `Ledger::settle`: called inside the publication that ends a run, for a run nothing
-      called, with the run, its reservation and a way to add records made once. A failure
-      of it is a failure of that publication: the run is not reported as ended.
-- [ ] `Allowance` gains what S7 needs: an amount can be debited before a request and given
-      back, and what a child did not use is handed to its parent's allowance when the
-      child's end is durable, if the parent is still executing. The amounts are whatever
-      the wrapper of I3 reports; with no wrapper nothing is debited, as today.
-- [ ] The store's rule for a `put` under `requests/` and `spend/`: refused, or kept with
-      the reason, as this section decides.
-- [ ] The test kit's fake ledger brought in line; its `settle` does nothing.
+**First pull request: the design.**
 
-**Done when** these pass: a ledger that returns from `reserve` without making its name
-does not compile, or is refused, as the section says which; a name with an empty, `.` or
-`..` segment is refused; a `settle` that fails leaves the run admitted and its caller told
-of the failure; the pin test `known_a_name_that_was_made_can_still_be_replaced_by_put` is
-turned round, or kept with the reason; an amount given back to an allowance whose run has
-entered its commit step is dropped, not added; an allowance debited past what it holds
-reads nothing left and not a negative amount; each form of name parses to its parts and
-back, and a name with a leading zero, a digit too many, a segment too many, a letter in
-an amount, 201 characters, or a run that is no `RunId` is refused, shown escaped and cut;
-a `reserve` that makes no `held` name, or one whose amount is not the reservation's, is
-refused; with one reservation's content damaged, the reading gives the others and that
-one as damaged with the amount its name states; every test of `admit.rs`, `nested.rs` and
-`commit.rs` passes against the fake as changed.
+- [ ] An ADR, the ledger, which changes ADR 0007's interface and ADR 0008's allowance:
+      every name under `spend/` and its grammar; the content of each record; what a
+      reservation counts for in each state; what an allowance holds and how debt is
+      paid; what an admission and a settlement each make so that neither is published
+      on a stale balance; how a reset bounds what came before it.
+- [ ] A model of the fold in the test kit: pure, with no store. A history is a list of
+      events (an allowance set, a reset, an admission, a child's share, a dispatch, a
+      settlement, an end, a crash with a recovery, damage to one entry, a deletion with
+      a prune, an adjustment), and the model answers what is allowed, held, spent and
+      left, for the store and for each reservation and run.
+- [ ] The table of histories, run as tests against the model: each history of "The
+      histories the reviews produced" below, by name, with the balances it must give;
+      and generated histories, bounded and seeded, 4,096 of at most 24 events each from
+      a seed written in the test, each checked against invariants 1 to 6.
+
+**Done when** the model and the table agree on every named history; every invariant is
+asserted over every history, named and generated, and a generated history that breaks one
+is printed with its seed; the generated run takes under about 5 seconds; and a review of
+the ADR by the Codex CLI, read-only, with the model and the table in hand and asked only
+whether any history can under-count, finds none. That round is recorded in the ADR. A way
+to under-count that it finds is a new named history, and the ADR and the model change
+until it passes.
+
+**Second pull request: the interface and the records.**
+
+- [ ] `Ledger::reserve` cannot return without having made its names: what it returns can
+      only be had from `Step::make`. `Ledger::settle`, called inside the publication
+      that ends a run nothing called; a failure of it is a failure of that publication.
+- [ ] One parser of the ADR's grammar in the core, which every reader of a name under
+      `spend/` uses. Reading reservations answers each entry by itself, sound or damaged.
+- [ ] `Allowance` as the ADR has it: debited before a request, given back to, in debt
+      where an overrun put it, and a child's remainder handed to its parent when the
+      child's end is durable and the parent still executes.
+- [ ] The store's rule for a `put` under `requests/` and `spend/`, as the ADR decides.
+- [ ] The record types, written one way and read strictly, in
+      `crates/whizbang-core/src/spend/`; the test kit's fake ledger brought in line.
+
+**Done when** these pass: a ledger that returns from `reserve` without making its names
+does not compile, or is refused, as the ADR says which; each form of name parses to its
+parts and back, and one that breaks the grammar in each way the ADR lists is refused,
+shown escaped and cut; with one reservation's content damaged, the reading gives the
+others and that one as damaged with the amount its name states; a `settle` that fails
+leaves the run admitted and its caller told; an allowance in debt reports nothing to
+spend, and a return to it pays the debt first; an amount given back to an allowance whose
+run has entered its commit step is dropped; each record round-trips to the same bytes, is
+refused over its bound from its entry's length before it is read, and with an unknown or
+a missing field, escaped, cut and without a path (rule 3); the pin test
+`known_a_name_that_was_made_can_still_be_replaced_by_put` is turned round, or kept with
+the reason; every test of `admit.rs`, `nested.rs` and `commit.rs` passes against the fake
+as changed; every claim of the ADR about code names its test (rule 5).
 **Carry-over:** the rows on "never removed" and `put`, and on the ledger (the token, the
-names). **Size:** medium; if the branch passes 1,500 lines, the names' grammar and the
-reading are a second pull request.
+names). **Size:** medium, in two pull requests.
+
+#### The histories the reviews produced
+
+Each is a named history in the table, from the six rounds' outputs. Amounts are in whole
+units for reading.
+
+1. Two admissions, each told yes for the last of the allowance: one is admitted.
+2. Two requests of one run, each within what is left alone and not together: one leaves.
+3. Two requests that both fit, of different bounds, choosing one place: two places.
+4. A request settled under its bound: the difference can be spent again.
+5. A request that succeeds and reports no charge: its bound.
+6. A fault at each stage: not sent, nothing; answered, its charge; unresolved, its bound.
+7. A first hop handed data and a second refused: unresolved, not "not sent".
+8. Reserve 10, two dispatches of 5, the first settles at 12, the second at 0 and gives
+   back 5: nothing can be spent; the debt is 2.
+9. The same, the run ending by itself: closed at 12, nothing released.
+10. The same, interrupted with the second unsettled: 17.
+11. The same, with an admission made while the second is unsettled: it sees 17 counted.
+12. An admission that judged before a settlement over its bound and publishes after: it
+    is asked again.
+13. A settlement at 12 over a bound of 5, then its content damaged, the run deleted and
+    pruned: no less than 12.
+14. A reservation's content damaged, its run deleted and pruned, no request id: frozen at
+    the amount its name states.
+15. Reserve 10, every dispatch settled for 3 in all, then the reservation damaged: 10.
+16. Reserve 10, dispatch 5, settle at 6, the run still open: 10, not 6.
+17. A settlement that names no dispatch, and two dispatches at one place: that
+    reservation frozen, the others as they were.
+18. A child given 5 whose request settles at 12: nothing back; each run above 7 less.
+19. One child overruns and a second then returns its unused share: the debt is paid first.
+20. A share handed back after a child's admission was refused, to a parent in debt: the
+    debt is paid first.
+21. A parent that calls 20 children in turn, each using nothing: all of it at the end.
+22. A child's settlement fails, or its backend panics, and the root then ends: closed as
+    interrupted, nothing released.
+23. A crash between dispatch and settlement: the full amount.
+24. A crash after every request was settled and before the end: the settled total.
+25. A crash with nothing dispatched: nothing.
+26. Recovery, then recovery again: the second changes nothing.
+27. A recovery whose last sync failed, then an open: confirmed, nothing settled twice.
+28. A reservation ended while its settlement is already named: not settled again.
+29. Two runs that end at once: each counted once.
+30. A reset, then a reservation, then a reset: the reservation is of the closed books.
+31. Freeze 10, reset to 20, adjust the frozen one to nothing: 20 to spend, not 30.
+32. Adjust, then reset: the reset's amount.
+33. An adjustment below a reservation's readable settlements: refused.
+34. An adjustment upward after the difference was spent: refused when it cannot be held.
+35. A cancellation after dispatch, no settling answer: the bound, unresolved.
+36. A cancellation after dispatch, then an answer with a charge: that charge.
+37. A run abandoned in a live process: held in full until the process is gone.
+38. A store with no allowance: a call of nothing is admitted, a call over nothing is not.
 
 ### I3. A wrapper around each request
 
@@ -934,38 +974,20 @@ one; a store left by a killed process is recovered by the next command that open
 write, and not by one that reads; the shipped description does not change.
 **Size:** small.
 
-### S1. The ledger's records
-
-**Depends on:** B1b, I2 (the names). **Reads:** ADR 0007, "The reservation"; ADR 0008, "Allowances";
-squint `crates/squint-core/src/ledger.rs` (`Ledger`, `CapLedger`, `Account`, `Hold`,
-`Closing`) and `crates/squint-eval/src/eval_ledger.rs`; rascal
-`schemas/rascal/ledger-v1.json`.
-
-- [ ] An ADR, the ledger: the content of each record whose name I2 fixed (an allowance
-      set or reset, a dispatch, a settlement, a closing, a freeze, an adjustment), and
-      the arithmetic of "The ledger's names and arithmetic", written out with a worked
-      history for each line of it.
-- [ ] The record types, written one way and read strictly, in
-      `crates/whizbang-core/src/spend/`. Nothing uses them yet.
-
-**Done when** these pass: each record round-trips to the same bytes; a record over its
-bound is refused from its entry's length, before it is read; one with an unknown field, a
-missing field or an amount written a second way is refused; a refusal is escaped, cut and
-without a path (rule 3); a record whose name does not agree with what it holds is damage to its reservation,
-not a refusal of the reading;
-every claim of the ADR about code that exists names its test (rule 5).
-**Size:** small.
-
 ### S1b. The fold
 
-**Depends on:** S1. In `spend/` only.
+**Depends on:** I2. In `spend/` only. The real fold, held to I2's model.
 
 - [ ] The fold: from the records and reservations a generation names, what is allowed,
       reserved, spent and unresolved, for the store, for one reservation, and for one run
       under it.
+- [ ] The table of histories runs against the real fold as well: each history is written
+      into a store through the record types and folded, and must give what the model
+      gives.
 
-**Done when** these pass: the fold gives the stated balances for a table of histories that
-has one history for each line of "What a reservation counts for", and these: a reset;
+**Done when** the real fold and the model agree on every named and every generated
+history, and these pass: the fold gives the stated balances for a table of histories that
+has one history for each state the ADR gives a reservation, and these: a reset;
 an adjustment after an interruption and after a freeze; dispatches by a child under its
 root's reservation; reserve 10, dispatch two of 5, one settles at 12, and then each of
 the run ending, the run interrupted, and an admission made in between, which sees 17
@@ -1234,7 +1256,7 @@ abandoned, keeps its reservation unsettled and is not counted as released.
 damage proofs. A recovery's part (I4), in `spend/`.
 
 - [ ] For every reservation that is not closed and whose run is not open in this process:
-      it is closed as "The ledger's names and arithmetic" says. At its settlements, with
+      it is closed as I2's ADR says. At its settlements, with
       the rest released, when every record under it reads and every dispatch has its
       settlement; otherwise as interrupted, at the larger of its amount and what is known
       against it; and frozen as well when an entry under it is damaged.
@@ -1762,6 +1784,8 @@ missing acceptance cases, carry-over rows and tasks too large.
 | 5 | 2026-11-13 | 8 | 3 | 5 | 0 |
 | 6, money only | 2026-11-13 | 10 | 3 | 4 | 0 |
 
+No round followed the sixth: see "After round 6", below.
+
 **Round 1, and what changed in draft 3.**
 
 - Blocker: recovery could not write a run's record, because an admission holds
@@ -1977,13 +2001,23 @@ I2 and S1 a design task whose ADR is reviewed together with a small executable m
 the fold and a generated table of histories, the six rounds' sequences among them, and
 let that review, with code in hand, be where the arithmetic is settled.
 
+**After round 6: the owner's decision of 2026-11-13, and draft 12.** The recommendation
+above was accepted. The plan has had six rounds. Its scope, its order and every area but
+the ledger's arithmetic are settled: no round's finding outside that area is open. The
+arithmetic is deliberately not settled here. The plan keeps "The ledger's invariants";
+the names and sums the rounds reviewed are in the appendix, marked as a starting point;
+and task I2 decides them in an ADR that is reviewed, by the Codex CLI, together with an
+executable model and a table of histories, the 38 sequences these rounds produced among
+them. The four findings left open by round 6 are in the appendix and are histories 8, 12,
+13, 19, 20, 30 and 31 of that table. No round was run on draft 12, by that decision.
+
 ## Risks
 
 | Risk | Effect | What we do |
 |---|---|---|
 | A9, A11 or ADR 0009 changes where handles are made or what a run records of a request | I3 and B4 are wrong as written | B0 is first, checks D9, and stops on an answer that is neither outcome |
 | An interface fixed early does not fit the strand that implements it | A base task is reopened and a strand waits | Each interface is the outline a review gave after three rounds of the tasks it serves; its task ships a fake that the strand's tests are first written against; a misfit is changed by a base task, never worked around in a strand |
-| Recovery under-counts money on some path | The allowance is overspent without an error | The rule has one direction: anything not proven settled is charged in full, and S6's table of histories asserts it; a person's adjustment is the only thing that lowers a charge |
+| The ledger under-counts money on some path | The allowance is overspent without an error | Six rounds of prose review each found one; so I2 settles the arithmetic against an executable model, 38 named histories and 4,096 generated ones, each asserted against the invariants, and every later ledger task is held to the same table |
 | Recovery's losses are felt | Someone needs to know what an interrupted run did | It is in no record, by decision; the carry-over line says who reopens it |
 | The record's shapes are fixed in B4 before the strands that fill them | A second version, `run/4`, inside one checkpoint | B4 follows B1 to B3, which decide the quote, the stage and the recipient; a wrong shape is a new version, never an edit |
 | Crash sweeps multiply | The fast tier passes its three minutes | Rule 11; each task states its sweeps' times alone in its hand-back |
@@ -2002,3 +2036,106 @@ Two things would need the owner if they arose, and the task stops there:
   the gap, case by case, is the owner's (`docs/carry-over.md`).
 - Anyone wants a real recipient, a real download or a real allowance in a store that is
   kept: `SPEC.md` section 15.
+
+## Appendix: the ledger's names and arithmetic, a starting point for I2, not decided
+
+This is where six review rounds left the detail. Nothing here binds: task I2 decides it,
+held to "The ledger's invariants". It is kept so that the work is not lost.
+
+**Open when the reviews stopped** (round 6), with what was proposed:
+
+1. An overrun clamped at nothing forgets a debt (history 8). Proposed: an allowance holds
+   a signed balance and reports what can be spent as never below nothing; every return
+   pays the debt first.
+2. A damaged settlement loses its amount (history 13). Proposed: a settlement's name
+   carries its charge, `spend/settled/<run>/<n>/<micros>`, with a guard name
+   `spend/settling/<run>/<n>` for uniqueness; an adjustment's floor uses those amounts.
+3. An admission can straddle a settlement over its bound (history 12). Proposed: such a
+   settlement also makes the next `spend/turn/<n>`, so an admission that judged before
+   it is refused by the store and asked again.
+4. The grammar is not whole (histories 30 and 31). Proposed: it lists every name a
+   reader accepts, apart from those `Step::make` may make; a reset is
+   `spend/reset/<k>/<micros>`, and a hold carries its epoch,
+   `spend/held/<k>/<run>/<micros>`.
+
+**Applied before they stopped,** and in the text below: a closing that releases needs a
+durable settlement for every dispatch (history 22); a `place` name keeps two dispatches
+from one place (history 3); frozen is never lowered by the all-settled exception, an open
+reservation counts the larger of its amount and what is known, and a record the fold
+cannot place freezes one reservation (histories 15, 16 and 17).
+
+**The text as it stood in draft 11.**
+
+
+Written after the fifth review round, from the two resolutions the owner accepted then,
+and changed once after the sixth. It is no longer what any task is held to.
+
+**What a name says.** A name lives in the generation file, not in content, so it is
+there when content is damaged or pruned. The ledger's own names say what the money
+needs:
+
+| Name | Made | Says |
+|---|---|---|
+| `spend/held/<run>/<micros>` | By the ledger, in the admission's publication, for a run nothing called | That run's reservation and its amount |
+| `spend/dispatched/<run>/<n>/<by>/<micros>` | By the meter, before a request leaves | The reservation it draws on (the root's run), its place `n` under it from 1, the run that sent it, and its bound |
+| `spend/place/<run>/<n>` | By the meter, in the publication of dispatch `n` | Nothing but that place `n` under this reservation is taken: two dispatches that chose one place cannot both be published, whatever their bounds |
+| `spend/settled/<run>/<n>` | By the meter, when the request ends | Which dispatch it settles; the charge is in its content |
+| `spend/closed/<run>` | By the ledger, in the publication that ends the root's run, or by recovery | That the reservation is settled; the totals are in its content |
+| `spend/frozen/<run>`, `spend/adjusted/<run>/<k>` | By recovery; by a person's command, `k` from 1 | That the reservation is frozen; its `k`th correction |
+
+- **A strict grammar, parsed as untrusted.** A run is a `RunId` (ADR 0004); an amount
+  and a count are decimal digits with no leading zero, at most 20 and 10 of them; a name
+  is at most 200 characters (ADR 0007). A name under `spend/` that is not of one of
+  these forms, to the character, is damage, and is shown escaped and cut.
+- **Nothing secret is in a name:** a run's id is made by the executor, and the rest are
+  numbers.
+- **How it sits with ADR 0007.** The executor still makes `spend/reservations/<run>`,
+  whose content is `reservation/1`: the request, the admission's digest, the amount, the
+  start. That record remains the detail. The ledger's `held` name is the name ADR 0007
+  says a ledger makes in the step, now with a fixed form, and it is what the fold counts
+  from. Both are made in the one publication, so a generation has both or neither. The
+  name that keeps two admissions from both taking the last of the allowance is the
+  ledger's as before (`spend/turn/<n>`), and a dispatch's `place` name does the same
+  under one reservation.
+- **A damaged entry is one frozen reservation,** never a failure of the whole reading: a
+  `held` name whose reservation record is missing, unreadable or says another amount (the
+  larger of the two is taken); a dispatch or a settlement whose content cannot be read or
+  does not agree with its name; a name of no known form that names a run. Reading
+  reservations no longer fails as a whole when one cannot be read.
+
+**What a reservation counts for,** in the fold, at any moment:
+
+- *known against it* = the charges of its readable settlements, plus the bounds of its
+  dispatches that have no readable settlement;
+- *open* (no `closed` name): the larger of its amount and what is known against it;
+- *closed by its run's end*: what is known against it, which then is its settlements
+  alone, and unresolved ones at their bounds; what the amount held beyond that is
+  released;
+- *closed by recovery as interrupted*: the larger of its amount and what is known
+  against it, unless every dispatch has a readable settlement, when it is as a run's end;
+- *frozen*: the larger of its amount and what is known against it, whether or not every
+  dispatch has a settlement: damage rules out the release, and nothing lowers it but an
+  adjustment;
+- *adjusted*: what the last adjustment says, which is never less than its readable
+  settlements.
+
+What the store has left is its allowance less the sum of those, and never reads below
+nothing. So it is never more than the truth: every term is at least what was really
+charged.
+
+**A charge over its bound** is a fact, recorded and debited, not refused: the money is
+spent. This holds for a run that ends by itself as for one that is interrupted.
+
+- The settlement records the charge the answer gave, and that it was over.
+- In memory, the excess is taken from the allowance of the run that sent the request and
+  of each run above it, each down to nothing and no further. A run with nothing left
+  sends no further paid request and makes no further paid call.
+- A child gives back to its parent its share less what was charged or is unresolved
+  under it, when that is over nothing; a child whose charges passed its share gives
+  nothing back.
+- In the ledger, an open reservation counts for the larger of its amount and what is
+  known against it, so once the settlement is durable what is known has grown, and an admission made while the run still executes already sees
+  the allowance reduced; and at its end it is closed at its settlements, which may be
+  more than its amount.
+- A later admission is judged against what is left after all of that. Where the overrun
+  took the allowance to nothing, it is refused with `OverAllowance` until a reset.
