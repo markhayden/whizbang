@@ -5,7 +5,14 @@ Date: 2026-11-12
 Amended: 2026-11-12, with the second pull request of task A6. Added: "The estimate" and
 "A preparation handed to admission", which are built; the paragraph of "Admission" that
 listed the second part now lists only what is still to come, the ledger and the
-reservation. The task is delivered in three pull requests, not two.
+reservation. The task is delivered in three pull requests, not two. And from the review
+of the first: a run is the id's only when it holds the id's own admission, so a run id
+used again after a delete does not answer for another request; an ending without an
+admission is a record this build does not read; text is made an id through the
+executor, which looks for a secret before it shows anything; the store forgets a run it
+made once the run is closed or deleted. Corrected: a panicked run stays admitted after
+the process ends too. Added to the consequences: what every publication costs as ids
+accumulate; a repeat answered from a generation not yet confirmed; `.` and `..` as ids.
 Spec: section 3, "The execution contract", "Storage" and "What every run records";
 section 6, "Spend"
 
@@ -62,9 +69,13 @@ two records below, and the run record's `identity.request`. So:
 - it is held to that alphabet where it is made (`RequestId::parse`), and nothing in it
   needs escaping in a name, on a command line or in JSON. A refusal shows what was
   refused escaped, its first 64 characters at most, and its length when it was longer;
-- an id that holds a secret the executor was told of (one that redaction would change)
-  is refused before anything is looked up (`Refusal::SecretInRequestId`), and the refusal
-  does not show it. Redaction is by value (ADR 0005): an id that holds a key the
+- text becomes an id through the executor (`Executor::request_id`), which looks for the
+  secrets it was told of in the text as it was given, before the text is parsed: text
+  that holds one is refused (`Refusal::SecretInRequestId`) and none of it is shown,
+  whether or not it would have been an id. `RequestId::parse` itself knows no secret,
+  and its refusal shows up to 64 characters of what it refused: it is for text that
+  did not come from a caller. An id that reaches `request` is checked again, before
+  anything is looked up. Redaction is by value (ADR 0005): an id that holds a key the
   executor was not told of is stored;
 - a run record whose `request` is a text that is no request id is refused on reading,
   and the record's schema holds it to the two lengths (the alphabet is one more thing
@@ -157,7 +168,12 @@ Without an id it is `Executor::submit`. With one, in order:
 
 1. An id that holds a secret is refused.
 2. The id is looked up in the current generation, by its name. Nothing else has
-   happened: the action has not been found, no input read, no backend asked.
+   happened: the action has not been found, no input read, no backend asked. The
+   generation is the one that is visible, which a publication whose last sync is still
+   to come may have made: a repeat can be answered from an admission that is not yet
+   confirmed durable, and a loss of power then takes the admission and the answer's
+   run with it. The first request was not answered in that case, so no caller was
+   promised that run twice.
 3. Found, with the same fingerprint: the answer is `Answer::Repeat`, the run the first
    request made and where that run is now (below). Nothing is prepared, nothing runs,
    nothing is written.
@@ -176,7 +192,17 @@ strictly, and held to name that id; an ending, to name that id and that run; a r
 record, as ADR 0005 reads it. One that fails is `CallError::Record`, which says which
 record and why, with what it quotes escaped and cut, and no path. It is not a refusal of
 the call and not a failure of the store's files, and nothing runs: the id is neither
-free nor answered until the record is put right.
+free nor answered until the record is put right. An ending under an id that has no
+admission is such a record too: were the id taken as free, its action would run and its
+end then be refused.
+
+**Which run is the id's.** The id's record names its run by the run's id, and a run's
+id is free again once the run is deleted: a later process, whose count starts again,
+can give it to another run. So the run the store holds under that id is taken for the
+request's only when its own `admitted` entry has the digest of the id's record, which
+were published as the same bytes. Any other run under that id is another request's:
+the request's run is gone, and the answer is `Removed`, from the ending
+(`admit::a_repeat_is_not_answered_from_another_run_that_took_the_deleted_runs_id`).
 
 ### Admission
 
@@ -295,7 +321,8 @@ admission would hold some 200 MB for every preparation a caller has not yet acte
 
 When the action is over, one publication adds the journal, the diagnostics and the
 record to the run, and, for a request with an id, makes `requests/<id>/ended`. It says
-the run must be there (`Publication::extend_run`): a run that was deleted while it
+the run must be there (`Publication::close_run`, which is `extend_run` for a run's last
+names): a run that was deleted while it
 executed is not made again from its last names; the publication is refused with
 `NoSuchRun` and the caller is told of the store's failure. The run is reported after
 this publication is durable, as before.
@@ -328,11 +355,14 @@ What `NotEnded` does not tell apart, each pinned by a test or a row:
 - `here: true` is also what a run is whose end could not be written (the store failed),
   and whose action panicked: a panic is not caught yet (`docs/carry-over.md`, with
   nested calls, cancellation and publication), it unwinds through `request`, and the run
-  stays admitted until the process ends. Both are answered without running anything.
+  stays admitted, in that process and after it has ended, when only `here` changes.
+  Both are answered without running anything.
 - It is also what a run is whose admission became visible and was not confirmed durable
   (the store's `Unacknowledged`): the caller was told of the store's failure, the action
   never started, and the id is taken all the same. The store cannot take a visible
-  generation back, so the request is answered with that run and is not run under its id.
+  generation back, so the request is answered with that run and is not run under its id
+  (`admit::an_admission_that_was_visible_and_not_confirmed_takes_the_id_and_never_runs`;
+  `docs/carry-over.md`).
 - An executor that only reads a store says `here: false` of every run that has not
   ended, because it cannot know: another process may be executing it.
 - A repeat does not wait for a run that is executing. Status and cancel while a run
@@ -362,6 +392,15 @@ before.
   record: the retry is answered, and the paid work is not repeated. What it does not
   leave is the journal and the diagnostics the action had written: those are still held
   in memory until the end (`docs/carry-over.md`, with the next task).
+- Every publication writes the whole generation again, and the names of ids are in it:
+  the cost of each publication, two for a run, grows with every id the store was ever
+  given. The review of the first part measured a generation file of 2.0 MB at 5,000 ids.
+  It is on `docs/carry-over.md` to decide before ids are used in volume.
+- An id may be `.` or `..`: the alphabet allows both. That is safe because a name lives
+  in the generation's JSON and is never a file's name. Anything that writes names out
+  as paths has to keep it so (`docs/carry-over.md`).
+- The store remembers the runs its writer made and has not closed or deleted
+  (`Store::made_here`, `Publication::close_run`), not every run it ever made.
 - The records of ids grow without bound: two small names for every request that gave an
   id, for the life of the store. Nothing removes one. That is what the spec asks; a
   command to forget ids older than some age would be a change to it.

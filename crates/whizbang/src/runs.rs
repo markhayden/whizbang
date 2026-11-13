@@ -15,7 +15,7 @@ use std::sync::Arc;
 use clap::Subcommand;
 use whizbang_core::contract::Admission;
 use whizbang_core::contract::record::{self, ArgumentValue, RunRecord, StoredRecordError};
-use whizbang_core::contract::request::admitted;
+use whizbang_core::contract::request::{StoredAdmissionError, admitted};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Generation, Kind, Reader};
 
@@ -129,7 +129,10 @@ fn list(root: &Path) -> Result<String, String> {
             // end: one with an admission and no record was admitted and has not ended.
             Some(Err(StoredRecordError::NoRecord)) | None => {
                 match admission_of(&reader, &generation, id) {
-                    Some(admission) => format!(
+                    Some(Err(why)) => {
+                        format!("{}\tno record; admission not read: {why}", shown(id))
+                    }
+                    Some(Ok(admission)) => format!(
                         "{}\tadmitted, not ended\t{} {}\t{}",
                         shown(id),
                         shown(admission.action()),
@@ -174,11 +177,21 @@ fn show(root: &Path, id: &str, json: bool, diagnostic: Option<&str>) -> Result<V
     let record = match record_of(&reader, &generation, id) {
         Some(Ok(record)) => record,
         Some(Err(StoredRecordError::NoRecord)) => {
-            let Some(admission) = admission_of(&reader, &generation, id) else {
-                return Err(format!(
-                    "the record of the run {} cannot be shown: the run has no record",
-                    shown(id)
-                ));
+            let admission = match admission_of(&reader, &generation, id) {
+                Some(Ok(admission)) => admission,
+                Some(Err(why)) => {
+                    return Err(format!(
+                        "the record of the run {} cannot be shown: the run has no record, \
+                         and its admission is not read: {why}",
+                        shown(id)
+                    ));
+                }
+                None => {
+                    return Err(format!(
+                        "the record of the run {} cannot be shown: the run has no record",
+                        shown(id)
+                    ));
+                }
             };
             if json {
                 return Err(format!(
@@ -203,9 +216,18 @@ fn show(root: &Path, id: &str, json: bool, diagnostic: Option<&str>) -> Result<V
     Ok(text_of(&record).into_bytes())
 }
 
-/// The admission of a run, when the run has one that this build reads.
-fn admission_of(reader: &Reader, generation: &Generation, id: &str) -> Option<Admission> {
-    admitted(generation, id, |entry| reader.read(entry))?.ok()
+/// The admission of a run that has something under `admitted`, or why it is not read,
+/// as the core says it: escaped and cut where it quotes the store.
+fn admission_of(
+    reader: &Reader,
+    generation: &Generation,
+    id: &str,
+) -> Option<Result<Admission, String>> {
+    match admitted(generation, id, |entry| reader.read(entry))? {
+        Ok(admission) => Some(Ok(admission)),
+        Err(StoredAdmissionError::NoAdmission) => None,
+        Err(error) => Some(Err(error.to_string())),
+    }
 }
 
 /// A run that was admitted and has not ended, for a person: what its admission holds.

@@ -729,10 +729,11 @@ impl Store {
         self.waiting.load(Ordering::SeqCst)
     }
 
-    /// Whether this writer made the run `run` since it opened the store: by a
-    /// publication of this value that made the run ([`Publication::create_run`]) and
-    /// became visible. A run the store held when it was opened, one that was only added
-    /// to, and one whose publication was refused, were not made here. One process at a
+    /// Whether this writer made the run `run` since it opened the store and the run is
+    /// still open: a publication of this value made it ([`Publication::create_run`])
+    /// and became visible, and none has closed it ([`Publication::close_run`]) or
+    /// deleted it since. A run the store held when it was opened, one that was only
+    /// added to, and one whose publication was refused, were not made here. One process at a
     /// time writes a store, so a run that this writer did not make and that is not
     /// finished is no longer being worked on by anyone.
     pub fn made_here(&self, run: &str) -> bool {
@@ -877,6 +878,7 @@ impl Store {
             created: BTreeSet::new(),
             made: BTreeSet::new(),
             extended: BTreeSet::new(),
+            closed: BTreeSet::new(),
         })
     }
 
@@ -1040,6 +1042,8 @@ pub struct Publication<'s> {
     made: BTreeSet<String>,
     /// The runs it adds to that must be in that generation.
     extended: BTreeSet<String>,
+    /// The runs it closes: no longer counted as made and open once it is visible.
+    closed: BTreeSet<String>,
 }
 
 impl Publication<'_> {
@@ -1122,6 +1126,15 @@ impl Publication<'_> {
     pub fn extend_run(&mut self, run: &str) -> Result<()> {
         check_run_id(run)?;
         self.extended.insert(run.to_string());
+        Ok(())
+    }
+
+    /// As [`Publication::extend_run`], for the last names a run is given by whoever
+    /// made it: once this publication is visible the writer no longer counts the run
+    /// among those it made and has open ([`Store::made_here`]).
+    pub fn close_run(&mut self, run: &str) -> Result<()> {
+        self.extend_run(run)?;
+        self.closed.insert(run.to_string());
         Ok(())
     }
 
@@ -1257,11 +1270,19 @@ impl Publication<'_> {
         files.move_into_place(&staged, &layout.pointer())?;
         // Visible: the runs this publication made are runs this writer made, whether or
         // not the last sync confirms them.
-        self.store
-            .made_runs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .extend(self.created.iter().cloned());
+        {
+            // What this value remembers is bounded by the runs that are open now: a
+            // run that was closed or deleted is forgotten.
+            let mut made = self
+                .store
+                .made_runs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            made.extend(self.created.iter().cloned());
+            for run in self.closed.iter().chain(&self.deleted) {
+                made.remove(run);
+            }
+        }
         fs.sync_dir(&layout.root)
             .map_err(Error::io("sync", &layout.root))
             .map_err(|source| Error::Unacknowledged {

@@ -546,6 +546,9 @@ pub enum Refusal {
     /// stored as it is, in a name and in two records, so it is refused, and the refusal
     /// does not show it.
     SecretInRequestId,
+    /// The text given as a request's id is not one. `why` is the whole sentence, which
+    /// shows the text escaped and cut.
+    NotARequestId { why: String },
 }
 
 impl std::fmt::Display for Refusal {
@@ -600,6 +603,7 @@ impl std::fmt::Display for Refusal {
                 f,
                 "{action} was not admitted: the preparation it came with is stale: {why}"
             ),
+            Refusal::NotARequestId { why } => f.write_str(why),
             Refusal::SecretInRequestId => f.write_str(
                 "the request id holds something that must not be written: an id is stored \
                  as it is, so it cannot hold a secret",

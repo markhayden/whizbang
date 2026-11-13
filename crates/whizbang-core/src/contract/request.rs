@@ -598,6 +598,11 @@ pub(super) fn look_up(
         .snapshot()
         .map_err(|error| CallError::Store(StoreFailure::new(error)))?;
     let Some(entry) = generation.get(&id.admission_name()) else {
+        // An ending under an id that has no admission is not what this code writes. The
+        // id is not free: admitted now, its run would execute and its end be refused.
+        if generation.get(&id.ending_name()).is_some() {
+            return Err(unread(THE_REQUEST, "the id has an ending and no admission"));
+        }
         return Ok(Found::Nothing);
     };
     let admission = Admission::from_bytes(&bounded(contents, entry)?)
@@ -609,7 +614,15 @@ pub(super) fn look_up(
     if admission.fingerprint() != fingerprint {
         return Ok(Found::Other { run });
     }
-    let state = match generation.run(run.as_str()) {
+    // A run's id is free again once the run is deleted, and can be given to another
+    // run. The run the store holds under the id is this request's only when it holds,
+    // as its own admission, the very content of the id's record: the two were
+    // published as the same bytes.
+    let own = generation.run(run.as_str()).filter(|held| {
+        held.get(ADMITTED_NAME)
+            .is_some_and(|admitted| admitted.digest == entry.digest)
+    });
+    let state = match own {
         None => RunState::Removed {
             ended: ending_of(contents, &generation, id, &run)?,
         },

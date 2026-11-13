@@ -452,6 +452,32 @@ fn a_writer_knows_the_runs_it_made_since_it_opened_the_store() {
         publication.create_run("never").unwrap();
         publication.publish().unwrap_err();
         assert!(!store.made_here("never"));
+        // A run that is added to is still open; closed, or deleted, it is forgotten,
+        // so what the writer remembers does not grow with every run it ever made.
+        let mut publication = store.begin().unwrap();
+        publication.extend_run("r").unwrap();
+        publication.publish().unwrap();
+        assert!(store.made_here("r"));
+        let mut publication = store.begin().unwrap();
+        publication.close_run("r").unwrap();
+        publication
+            .put_in("r", "record", Kind::Diagnostic, b"x")
+            .unwrap();
+        publication.publish().unwrap();
+        assert!(!store.made_here("r"));
+        let mut publication = store.begin().unwrap();
+        publication.create_run("gone").unwrap();
+        publication.publish().unwrap();
+        assert!(store.made_here("gone"));
+        store.delete(&["gone"]).unwrap();
+        assert!(!store.made_here("gone"));
+        // Closing a run that is not there is refused, as adding to it is.
+        let mut publication = store.begin().unwrap();
+        publication.close_run("gone").unwrap();
+        assert!(matches!(
+            publication.publish(),
+            Err(Error::NoSuchRun { .. })
+        ));
     }
     // The next writer made none of them.
     let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();

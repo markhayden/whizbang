@@ -28,6 +28,8 @@ the store whole or not at all" no longer hold as they were written, and "What `s
 does" and "What is not built" are written again. `identity.request` is filled, and a
 record whose `request` is no request id is refused. `runs list|show` say when a run was
 admitted and has not ended.
+Amended: 2026-11-12, a fifth note, with the second part of ADR 0007. Changed: the end of
+a run is published with `Publication::close_run`.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
 
@@ -399,7 +401,7 @@ a request id, first looks the id up (ADR 0007), and then does the same.
    out of an error's type and message and of an invalid run's reason here, so what is
    handed back holds none, as what is written holds none.
 5. Publishes the end, in one publication that adds to the run and says the run must be
-   there (`Publication::extend_run`): the journal under `journal`, each diagnostic the
+   there (`Publication::close_run`): the journal under `journal`, each diagnostic the
    action wrote under `diagnostics/<name>`, and the record under `record`, each as a
    diagnostic reference of the run.
 6. Answers with the run's id and its outcome, after that publication is durable.

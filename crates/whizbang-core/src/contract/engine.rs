@@ -49,6 +49,12 @@ pub trait Executor: Send + Sync {
     /// ([`Request::expecting`]) is refused as stale, with no run, when its call no
     /// longer prepares the same.
     fn request(&self, request: &Request) -> Result<Answer, CallError>;
+
+    /// The request id this text is. A door hands over the text a caller gave here, and
+    /// not to [`RequestId::parse`], whose refusal shows the text: this looks first for
+    /// the secrets the executor was told of, in the text as it was given, and refuses
+    /// text that holds one without showing any of it.
+    fn request_id(&self, text: &str) -> Result<RequestId, CallError>;
 }
 
 /// The executor of one build: a registry, the backends, a store and the digest of the
@@ -190,6 +196,10 @@ impl Executor for NoNesting {
     fn request(&self, _: &Request) -> Result<Answer, CallError> {
         Err(Refusal::NoNestedCalls.into())
     }
+
+    fn request_id(&self, _: &str) -> Result<RequestId, CallError> {
+        Err(Refusal::NoNestedCalls.into())
+    }
 }
 
 impl Executor for Engine {
@@ -216,6 +226,14 @@ impl Executor for Engine {
             // Only a request with an id makes the name that can be taken.
             Err(Stopped::Taken(error)) => Err(CallError::Store(StoreFailure::new(error))),
         }
+    }
+
+    fn request_id(&self, text: &str) -> Result<RequestId, CallError> {
+        // Before the text is parsed: a refusal of text that is no id shows the text.
+        if self.secrets.redact(text) != text {
+            return Err(Refusal::SecretInRequestId.into());
+        }
+        RequestId::parse(text).map_err(|why| Refusal::NotARequestId { why }.into())
     }
 
     fn request(&self, request: &Request) -> Result<Answer, CallError> {
@@ -429,7 +447,7 @@ impl Engine {
             &self.secrets,
         );
         let mut publication = store.begin().map_err(failed)?;
-        publication.extend_run(run.as_str()).map_err(failed)?;
+        publication.close_run(run.as_str()).map_err(failed)?;
         for (diagnostic, bytes) in &kept {
             publication
                 .put_in(run.as_str(), diagnostic.name(), RECORD_KIND, bytes)

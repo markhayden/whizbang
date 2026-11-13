@@ -21,7 +21,7 @@ use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::{Fs, RealFs};
 use whizbang_core::store::{self, Reader, Store};
 use whizbang_testkit::echo::Echo;
-use whizbang_testkit::fs_shim::{Lost, ShimFs};
+use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
 use whizbang_testkit::scratch::Scratch;
 
 use super::redact::made_up_key;
@@ -1308,7 +1308,24 @@ fn a_stored_record_of_a_request_that_is_not_one_is_refused_and_nothing_runs() {
     store.delete(&[finished.run().as_str()]).unwrap();
     plant("requests/order-21/ended", ENDING.as_bytes());
     record_refused("order-21", "another request or another run");
-    assert_eq!(world.ran(), 2);
+    // The same, with an ending that names the id and another run than the id's.
+    let finished = ran(engine.request(&asked("hello", "order-22")));
+    store.delete(&[finished.run().as_str()]).unwrap();
+    let elsewhere = ENDING
+        .replace("order-17", "order-22")
+        .replace("7000-1", "9999-9");
+    assert_ne!(finished.run().as_str(), "9999-9");
+    plant("requests/order-22/ended", elsewhere.as_bytes());
+    record_refused("order-22", "another request or another run");
+    assert_eq!(world.ran(), 3);
+    // An ending under an id that was never admitted: the id is not free, or its
+    // action would run and its end then be refused.
+    plant(
+        "requests/order-30/ended",
+        ENDING.replace("order-17", "order-30").as_bytes(),
+    );
+    record_refused("order-30", "an ending and no admission");
+    assert_eq!(world.ran(), 3);
 }
 
 // --- a secret as an id ---------------------------------------------------------------------------
@@ -1769,4 +1786,119 @@ fn measure_what_preparing_and_admitting_one_large_input_costs() {
     ran(engine.request(&Request::new(call).expecting(&prepared)));
     let admitting = start.elapsed();
     println!("prepare: {preparing:?}; request, which prepares again: {admitting:?}");
+}
+
+// --- follow-ups of the first review --------------------------------------------------------------
+
+#[test]
+fn a_repeat_is_not_answered_from_another_run_that_took_the_deleted_runs_id() {
+    // A run's id is free again once the run is deleted, and a later process can give it
+    // to another run. The id's record names the run by its id, so the run that holds
+    // that id now is taken for the request's only when it holds the very admission the
+    // id's record is: otherwise the request's run is gone, and the ending answers.
+    let world = World::new();
+    let store = world.store();
+    let engine = world.engine(store.clone());
+    let failing = Request::new(call("hello").argument("fail", Value::text("no paint left")))
+        .with_id(id("order-17"));
+    let failed = ran(engine.request(&failing));
+    let other = engine.submit(&call("something else")).unwrap();
+    assert_eq!(other.outcome(), &completed());
+    // The other run's admission and record, as a later process would have written them
+    // had it named its run as the first was named.
+    let (old, new) = (other.run().as_str(), failed.run().as_str());
+    assert_eq!(old.len(), new.len());
+    let generation = store.snapshot().unwrap();
+    let theirs = generation.run(old).unwrap();
+    let renamed: Vec<(String, Vec<u8>)> = theirs
+        .entries()
+        .iter()
+        .map(|(name, entry)| {
+            let text = String::from_utf8(store.read(entry).unwrap()).unwrap();
+            let named = format!(r#""run":"{old}""#);
+            (
+                name.clone(),
+                text.replace(&named, &format!(r#""run":"{new}""#))
+                    .into_bytes(),
+            )
+        })
+        .collect();
+    store.delete(&[new]).unwrap();
+    let mut publication = store.begin().unwrap();
+    publication.create_run(new).unwrap();
+    for (name, bytes) in &renamed {
+        publication
+            .put_in(new, name, store::Kind::Diagnostic, bytes)
+            .unwrap();
+    }
+    publication.publish().unwrap();
+    // The store holds a completed run under the id of the failed one.
+    let generation = store.snapshot().unwrap();
+    let record = record::stored(&generation, new, |e| store.read(e))
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.outcome().status, Status::Completed);
+
+    let earlier = repeat(engine.request(&failing));
+    assert_eq!(earlier.run(), failed.run());
+    assert_eq!(
+        earlier.state(),
+        &RunState::Removed {
+            ended: Some(Status::Error)
+        }
+    );
+    assert_eq!(world.ran(), 2);
+}
+
+#[test]
+fn an_admission_that_was_visible_and_not_confirmed_takes_the_id_and_never_runs() {
+    // The last sync of the admission's publication is refused: the run is visible, the
+    // caller is told of the store's failure, and the action does not start. The id is
+    // taken all the same: the same request again is answered with that run, not ended,
+    // and another request under the id is a conflict.
+    let world = World::new();
+    let store = world.store();
+    let engine = world.engine(store);
+    let root = world.root();
+    world.fs.refuse_matching(
+        0,
+        move |event| matches!(event, Event::SyncDir(dir) if *dir == root),
+    );
+    let refused = engine.request(&asked("hello", "order-17")).unwrap_err();
+    assert!(
+        refused.to_string().contains("not confirmed durable"),
+        "{refused}"
+    );
+    assert_eq!(world.ran(), 0);
+    let earlier = repeat(engine.request(&asked("hello", "order-17")));
+    assert_eq!(earlier.state(), &RunState::NotEnded { here: true });
+    assert!(matches!(
+        engine.request(&asked("goodbye", "order-17")),
+        Err(CallError::Refused(Refusal::Conflict { .. }))
+    ));
+    assert_eq!(world.ran(), 0);
+}
+
+#[test]
+fn a_request_id_is_made_from_text_through_the_executor_which_shows_no_secret() {
+    // A door hands the executor the text a caller gave. Text that holds a secret is
+    // refused before anything of it is shown, whether or not it would be an id; other
+    // text that is no id is refused with what it was, escaped and cut.
+    let key = made_up_key("");
+    let world = World::new();
+    let engine = world
+        .engine(world.store())
+        .with_secrets(Secrets::new([key.clone()]).unwrap());
+    for held in [key.clone(), format!("not an id {key}"), format!("{key}/..")] {
+        let refused = engine.request_id(&held).unwrap_err();
+        assert_eq!(refused, CallError::Refused(Refusal::SecretInRequestId));
+        assert!(!format!("{refused} {refused:?}").contains(&key));
+    }
+    let refused = engine.request_id("not an id").unwrap_err();
+    let CallError::Refused(Refusal::NotARequestId { why }) = &refused else {
+        panic!("{refused:?}");
+    };
+    assert!(why.contains("\"not an id\" is no request id"), "{why}");
+    assert_eq!(&refused.to_string(), why);
+    assert_eq!(engine.request_id("order-17").unwrap(), id("order-17"));
 }
