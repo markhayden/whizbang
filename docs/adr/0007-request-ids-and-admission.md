@@ -192,7 +192,8 @@ each has looked and prepared, and gets one run
 
 A crash anywhere in that publication leaves the run and the id's record together or
 neither: a publication is one replaced pointer (the store's own guarantee), and a test
-loses power before each of its steps, four ways each
+loses power before each of its steps, under four of the ways a disk can lose what was
+not yet durable (two fixed choices of which names survive among them, not every choice)
 (`admit::a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it`).
 
 The action runs only after the publication is durable. A refusal, and a call that is
@@ -249,6 +250,10 @@ What `NotEnded` does not tell apart, each pinned by a test or a row:
   and whose action panicked: a panic is not caught yet (`docs/carry-over.md`, with
   nested calls, cancellation and publication), it unwinds through `request`, and the run
   stays admitted until the process ends. Both are answered without running anything.
+- It is also what a run is whose admission became visible and was not confirmed durable
+  (the store's `Unacknowledged`): the caller was told of the store's failure, the action
+  never started, and the id is taken all the same. The store cannot take a visible
+  generation back, so the request is answered with that run and is not run under its id.
 - An executor that only reads a store says `here: false` of every run that has not
   ended, because it cannot know: another process may be executing it.
 - A repeat does not wait for a run that is executing. Status and cancel while a run
