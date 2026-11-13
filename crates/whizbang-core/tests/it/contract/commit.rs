@@ -12,9 +12,9 @@ use whizbang_core::artifact::{self, Artifact, ArtifactType, Mask, Source, UseCas
 use whizbang_core::contract::record::{self, RunRecord, Status};
 use whizbang_core::contract::{
     ADMITTED_NAME, Action, ActionDescriptor, Answer, Argument, Call, CallError, Clock, Committed,
-    Context, Count, Engine, Executor, Failure, InputPort, Kind, NoBackends, Outcome, OutputPort,
-    PreparedCall, Produced, Registry, Request, RequestId, RunState, Secrets, Value, ValueType,
-    When,
+    Context, Count, Engine, Executor, Failure, InputPort, Kind, MESSAGE_LIMIT, NoBackends, Outcome,
+    OutputPort, PreparedCall, Produced, Registry, Request, RequestId, RunState, Secrets, Value,
+    ValueType, When,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::Fs;
@@ -833,4 +833,261 @@ fn a_panic_in_an_action_ends_its_run_as_an_error_with_its_record() {
             message: "the action panicked: plain words".to_owned(),
         }
     );
+}
+
+/// A value that panics when it is dropped, unless its thread is already unwinding: a
+/// panic's payload can be one.
+struct Bomb;
+
+impl Drop for Bomb {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            panic!("the payload panicked when it was dropped");
+        }
+    }
+}
+
+#[test]
+fn a_panic_whose_payload_panics_when_it_is_dropped_ends_its_run_as_any_panic_does() {
+    let world = World::new();
+    let engine = world.engine(vec![pair(|_, _| std::panic::panic_any(Bomb))]);
+    let request = Request::new(Call::new("pair")).with_id(RequestId::parse("r-1").unwrap());
+    let answer =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| engine.request(&request)));
+    assert!(
+        answer.is_ok(),
+        "the panic of the payload's drop came out of the executor"
+    );
+    let Ok(Ok(Answer::Ran(finished))) = answer else {
+        panic!("the request did not run");
+    };
+    let outcome = Outcome::Error {
+        kind: "panic".to_owned(),
+        message: "the action panicked, and its panic carried no text".to_owned(),
+    };
+    assert_eq!(finished.outcome(), &outcome);
+    assert_eq!(
+        stored_record(&world).unwrap().outcome().status,
+        Status::Error
+    );
+    let Ok(Answer::Repeat(earlier)) = engine.request(&request) else {
+        panic!("not answered as a repeat");
+    };
+    assert_eq!(earlier.state(), &RunState::Ended(outcome));
+    // The executor goes on.
+    let again = engine.submit(&Call::new("pair")).unwrap();
+    assert_ne!(again.run(), finished.run());
+}
+
+// --- what is written can be read back, and holds no secret ------------------------------------
+
+/// The record of the first run of the store, read by a reader of its own; or why it
+/// cannot be read.
+fn stored_record(world: &World) -> Result<RunRecord, String> {
+    let reader = Reader::open(&world.root(), world.fs.clone()).unwrap();
+    let generation = reader.snapshot().unwrap();
+    let id = generation.runs().keys().next().unwrap().clone();
+    record::stored(&generation, &id, |entry| reader.read(entry))
+        .unwrap()
+        .map_err(|error| error.to_string())
+}
+
+/// Every file under a folder: its path, as text, and its bytes.
+fn files_under(folder: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(folder).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files.extend(files_under(&path));
+        } else {
+            let bytes = std::fs::read(&path).unwrap();
+            files.push((path.to_string_lossy().into_owned(), bytes));
+        }
+    }
+    files
+}
+
+/// Whether the bytes hold any stretch of eight characters of the key.
+fn holds_part_of(bytes: &[u8], key: &str) -> bool {
+    key.as_bytes()
+        .windows(8)
+        .any(|part| bytes.windows(8).any(|window| window == part))
+}
+
+#[test]
+fn a_secret_in_a_port_name_that_is_cut_is_taken_out_before_the_cut() {
+    // A name longer than is shown, with a secret that lies across the place of the cut:
+    // the secret is taken out of the name whole, before the name is cut. Cut first, what
+    // is left of the secret is no longer the secret, and would be written.
+    let key = made_up_key("cut");
+    for pad in [30, 40, 50] {
+        let padding = "p".repeat(pad);
+        let name = format!("{padding}{key}");
+        assert!(name.chars().count() > 64 && pad < 64 - 8);
+        let world = World::new();
+        let engine = world
+            .engine(vec![pair(move |_, _| Ok(both().with(&name, the_place())))])
+            .with_secrets(Secrets::new([key.clone()]).unwrap());
+        let finished = engine.submit(&Call::new("pair")).unwrap();
+        let said = format!("{:?}", finished.outcome());
+        assert!(
+            !holds_part_of(said.as_bytes(), &key),
+            "padding of {pad}: the outcome holds part of the secret"
+        );
+        assert_eq!(
+            finished.outcome(),
+            &Outcome::Error {
+                kind: "output".to_owned(),
+                message: format!(
+                    "the action handed back an artifact at \"{padding}[redacted]\", which \
+                     is no output port this call returns"
+                ),
+            }
+        );
+        let files = files_under(&world.root());
+        assert!(files.len() > 3);
+        for (path, bytes) in files {
+            assert!(
+                !holds_part_of(path.as_bytes(), &key) && !holds_part_of(&bytes, &key),
+                "padding of {pad}: a file of the store holds part of the secret"
+            );
+        }
+    }
+}
+
+#[test]
+fn what_an_action_or_a_panic_says_is_cut_and_its_record_is_read_back() {
+    // Five megabytes of text, as an error's message, as its type, as the reason a run
+    // is invalid and as a panic's text: each is kept to its first 4,096 characters and
+    // three dots, so the record that holds it is one the executor reads back.
+    assert_eq!(MESSAGE_LIMIT, 4096);
+    let kept = format!("{}...", "x".repeat(4096));
+    type Case = (&'static str, fn() -> Result<Produced, Failure>);
+    let cases: [Case; 4] = [
+        ("a message", || {
+            Err(Failure::error("big", &"x".repeat(5 * 1024 * 1024)))
+        }),
+        ("a type", || {
+            Err(Failure::error(&"x".repeat(5 * 1024 * 1024), "said"))
+        }),
+        ("a reason", || {
+            Err(Failure::invalid(&"x".repeat(5 * 1024 * 1024)))
+        }),
+        ("a panic", || panic!("{}", "x".repeat(5 * 1024 * 1024))),
+    ];
+    for (case, body) in cases {
+        let world = World::new();
+        let engine = world.engine(vec![pair(move |_, _| body())]);
+        let request = Request::new(Call::new("pair")).with_id(RequestId::parse("r-1").unwrap());
+        let Ok(Answer::Ran(finished)) = engine.request(&request) else {
+            panic!("{case}: the request did not run");
+        };
+        let expected = match case {
+            "a message" => Outcome::Error {
+                kind: "big".to_owned(),
+                message: kept.clone(),
+            },
+            "a type" => Outcome::Error {
+                kind: kept.clone(),
+                message: "said".to_owned(),
+            },
+            "a reason" => Outcome::Invalid { why: kept.clone() },
+            _ => Outcome::Error {
+                kind: "panic".to_owned(),
+                message: format!("the action panicked: {}...", "x".repeat(4096 - 21)),
+            },
+        };
+        assert!(
+            finished.outcome() == &expected,
+            "{case}: the outcome is not the text cut at 4,096 characters"
+        );
+        let stored = stored_record(&world);
+        assert!(stored.is_ok(), "{case}: {}", stored.unwrap_err());
+        let Ok(Answer::Repeat(earlier)) = engine.request(&request) else {
+            panic!("{case}: not answered as a repeat");
+        };
+        assert!(
+            earlier.state() == &RunState::Ended(expected),
+            "{case}: the repeat is not answered with how the run ended"
+        );
+    }
+}
+
+#[test]
+fn a_secret_across_the_place_a_message_is_cut_is_taken_out_before_the_cut() {
+    let key = made_up_key("long");
+    for pad in [4070, 4080, 4090] {
+        let text = format!("{}{key}{}", "x".repeat(pad), "y".repeat(100));
+        let world = World::new();
+        let engine = world
+            .engine(vec![pair(move |_, _| Err(Failure::error("big", &text)))])
+            .with_secrets(Secrets::new([key.clone()]).unwrap());
+        let finished = engine.submit(&Call::new("pair")).unwrap();
+        let said = format!("{:?}", finished.outcome());
+        assert!(!holds_part_of(said.as_bytes(), &key), "padding of {pad}");
+        for (path, bytes) in files_under(&world.root()) {
+            assert!(!holds_part_of(&bytes, &key), "padding of {pad}: {path}");
+        }
+    }
+}
+
+/// The action `many`, which returns any number of locations at `bulk`.
+fn many(count: usize) -> Arc<dyn Action> {
+    let draft = ActionDescriptor::draft("many", "1.0.0", Kind::Primitive, "Returns many things.")
+        .output(OutputPort::counted(
+            "bulk",
+            ArtifactType::Location,
+            "Any number of locations.",
+            Count::between(0, 100_000),
+        ));
+    let body = move |_: &PreparedCall, _: &Context| {
+        let mut produced = Produced::nothing();
+        for _ in 0..count {
+            produced = produced.with("bulk", the_place());
+        }
+        Ok(produced)
+    };
+    Arc::new(Scripted(draft.build().unwrap(), Box::new(body)))
+}
+
+#[test]
+fn a_run_whose_outputs_make_a_record_too_large_to_read_commits_none_of_them() {
+    // A record lists every output, and one of more than four mebibytes is refused on
+    // reading. So a run that hands back enough outputs to make such a record ends as
+    // an error, with nothing committed and a record that is read back.
+    let world = World::new();
+    let engine = world.engine(vec![many(40_000)]);
+    let request = Request::new(Call::new("many")).with_id(RequestId::parse("r-1").unwrap());
+    let Ok(Answer::Ran(finished)) = engine.request(&request) else {
+        panic!("the request did not run");
+    };
+    let Outcome::Error { kind, message } = finished.outcome().clone() else {
+        panic!("the run did not end as an error: 40,000 outputs were committed");
+    };
+    assert_eq!(kind, "output");
+    assert!(
+        message.starts_with(
+            "the action handed back 40000 artifacts, and the record that lists them would be "
+        ) && message.ends_with(" bytes: a record is at most 4194304 bytes"),
+        "{message}"
+    );
+    let after = held(&world.root(), world.fs.clone());
+    assert!(after.outputs.is_empty() && !after.place);
+    let stored = stored_record(&world).unwrap();
+    assert_eq!(stored.outcome().status, Status::Error);
+    assert!(stored.outputs().is_empty());
+    let Ok(Answer::Repeat(earlier)) = engine.request(&request) else {
+        panic!("not answered as a repeat");
+    };
+    assert_eq!(
+        earlier.state(),
+        &RunState::Ended(finished.outcome().clone())
+    );
+
+    // A number of outputs whose record fits is committed as before.
+    let world = World::new();
+    let engine = world.engine(vec![many(1_000)]);
+    let finished = engine.submit(&Call::new("many")).unwrap();
+    assert_eq!(finished.outcome().outputs().len(), 1_000);
+    assert_eq!(stored_record(&world).unwrap().outputs().len(), 1_000);
 }

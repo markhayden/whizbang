@@ -300,6 +300,10 @@ fn what_is_not_a_record_is_refused_by_the_types_and_by_the_schema() {
         d["inputs"] = json!([{"port": "image", "type": "picture",
             "artifact": d["asked"]["config"], "binding": d["asked"]["config"]}]);
     });
+    both("an output of a type that is none", &|d| {
+        d["outputs"] = json!([{"port": "mask", "type": "picture",
+            "artifact": d["asked"]["config"]}]);
+    });
     both("a fifth status", &|d| {
         d["outcome"]["status"] = json!("refused")
     });

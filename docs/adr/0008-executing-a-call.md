@@ -75,7 +75,11 @@ the arguments the call gave), before anything is published:
 
 A refusal ends the run as an error of the type `output`, with a sentence of fixed words,
 the numbers, and the port's name as the action wrote it, escaped and cut at 64
-characters. Nothing of what was handed back is committed, the artifacts that were right
+characters. The secrets are taken out of that name first, while it is whole: a secret
+that the cut went through, or that the escaping changed, would no longer be found, and
+what was left of it would be reported and written
+(`commit::a_secret_in_a_port_name_that_is_cut_is_taken_out_before_the_cut`). Nothing of
+what was handed back is committed, the artifacts that were right
 included (`commit::what_an_action_hands_back_is_held_to_the_ports_its_call_returns`).
 
 What is not checked: that an output belongs to the image its port says it is on
@@ -129,9 +133,11 @@ record that lists them; and finds a run reported as completed only in the second
 The names inside `staging/` are not each tried apart from the others. The next writer
 removes whatever staging holds before it reads anything else, so which of them a crash
 kept is not expected to decide what it then finds; that is an argument, and the two
-extremes are what is tested. The cost is why: eleven names are undecided at one step,
-which is two thousand crashes there, and trying every name apart took ten seconds for
-the steps before that one alone.
+extremes are what is tested. The cost is why: up to about twenty names are undecided at
+one step (with a request id, up to 16 for two outputs, and 20 where the store already
+held the artifact), and every choice of which of them a crash keeps is two to the power
+of that many crashes there, a million at twenty; trying every name apart took ten
+seconds for the steps before that one alone.
 The other refuses each of those calls in turn without a crash, and finds the same two
 states, the second only where the publication became visible and its last sync failed
 (`commit::a_commit_that_the_store_refuses_at_any_step_publishes_no_output_and_no_status`).
@@ -176,6 +182,28 @@ The run's record lists the output either way: the run produced that artifact. Th
 it handed back, with its own origin, is what the run's own reference is to; it goes with
 the run.
 
+### What an action or a panic says is cut
+
+A record is read back only when it is at most 4 MiB (ADR 0005, `RECORD_MAX_BYTES`), and
+an executor that wrote a larger one would report a run whose repeat is then answered
+"not a run record". So the texts an outcome takes from an action are bounded: an error's
+type, its message, a panic's message and the reason a run was invalid are each kept to
+their first 4,096 characters (`MESSAGE_LIMIT`), with three dots after them when there
+were more. The secrets are taken out first, from the whole text, and looked for once
+more after the cut. The outcome that is returned and the record hold the same cut text
+(`commit::what_an_action_or_a_panic_says_is_cut_and_its_record_is_read_back`,
+`commit::a_secret_across_the_place_a_message_is_cut_is_taken_out_before_the_cut`).
+
+A record also lists every output. When the record of a run that handed back outputs
+would be over the limit, which takes tens of thousands of them, the run ends as an error
+of the type `output` that says how many there were and how large the record would have
+been; none is committed, and the record that is written lists none
+(`commit::a_run_whose_outputs_make_a_record_too_large_to_read_commits_none_of_them`).
+
+What can still make a record too large to read back: an argument's text, which is
+recorded as it was given, and the list of a run's diagnostics, when there are tens of
+thousands of them. Neither is bounded yet (`docs/carry-over.md`).
+
 ### A panic in an action
 
 A panic in `Action::run` is caught by the executor. The run ends as an error of the type
@@ -186,10 +214,19 @@ the panic carried, with the secrets taken out; a panic that carried no text says
 `Executor::submit` returns the finished run, and the executor goes on to the next call
 (`commit::a_panic_in_an_action_ends_its_run_as_an_error_with_its_record`).
 
+What a panic carried is dropped by the executor, and a value can panic when it is
+dropped. That second panic is caught as well, and the run ends as the first panic ends
+it (`commit::a_panic_whose_payload_panics_when_it_is_dropped_ends_its_run_as_any_panic_does`).
+
 What is not caught: a build whose panics abort the process, and a panic outside
-`Action::run`, in the executor's own code. The process's panic hook still runs and
-prints what it prints, the place of the panic among it; none of that is written to the
-store.
+`Action::run`, in the executor's own code.
+
+**The panic hook is not the executor's.** The process's panic hook runs before the
+executor catches anything, and the default hook prints the panic's text and the place in
+the source it came from to stderr: the whole text, with no secret taken out and nothing
+cut. None of that is written to the store, and the executor does not change the hook,
+which belongs to the process. A door that runs actions must install its own hook, one
+that prints nothing an action said (`docs/carry-over.md`).
 
 ### Status, waiting, and a run that was started
 
