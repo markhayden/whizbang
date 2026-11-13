@@ -25,6 +25,10 @@ Amended: 2026-11-12, with ADR 0005, which runs an action. Changed: `submit` no l
 refuses a ready call with `NothingRunsYet`; an executor built over a read of a store
 refuses it with `ReadOnly`, and one built over a store opened to write runs it. The types
 an executing action is handed are now used, and `Context` has a place for diagnostics.
+Amended: 2026-11-12, with ADR 0006, which resolves a backend. Changed: `Backends`'s one
+question also takes the call's choice of backend, and prepare hands it none until a
+descriptor says which argument is the choice; the consequence that said the
+fingerprint's kind would change when `Backends` gained the choice, which it does not.
 Spec: section 3, "The execution contract", "Identities" and "Storage"; section 6,
 "Readiness"
 
@@ -153,8 +157,9 @@ Prepare is given two things. Through neither can it make a durable change.
   until it is dropped, so that a prune leaves the generation it last read and what that
   names. Nothing durable changes by it. The empty generation has no file and is not
   shared.
-- **`Backends`**, one question: which model would answer this capability with these
-  features? It is meant to be answered from what is configured.
+- **`Backends`**, one question: which model would answer this capability, for a call
+  that chose this backend or chose none, with these features? It is meant to be answered
+  from what is configured (ADR 0006, "Resolution").
 
 The tests hold the first on a file system that records every change: preparing calls that
 are ready, not ready and refused creates, writes, syncs, renames and removes nothing,
@@ -162,7 +167,8 @@ takes no lock file, and leaves every file's bytes as they were. Sharing a file i
 of the changes that file system records.
 
 The second is held by the shape of the `Backends` trait and no further: its one method
-is handed a capability and features, and is handed neither a request nor a ledger. An
+is handed a capability, a choice and features, and is handed neither a request nor a
+ledger. An
 implementor could still do anything inside `resolve`; nothing checks that it sends
 nothing. A count of zero requests on the capabilities themselves, and of zero reservations
 on the ledger, needs fakes that tasks A8 and A6 bring; an ignored test in `prepare.rs`
@@ -317,10 +323,12 @@ known case that does not, and it goes with rascal's recipes to milestone 3
 - Prepare reads every input whole and decodes every image input, to check it as the store
   checks it. That costs time and memory in proportion to the inputs, on each preparation
   and again at admission.
-- `Backends` answers for a capability and its features, not for a named choice. A call
-  that names its filler or its segmenter is not yet resolved to that choice: resolution
-  (an explicit choice, then the default) is the capability interfaces', and `Backends`
-  gains the choice then. The fingerprint's kind changes with it.
+- A call that names its filler or its segmenter is not yet resolved to that choice.
+  Resolution (an explicit choice, then the default) is ADR 0006's, and `Backends` now
+  takes the choice; prepare hands it none, because a descriptor does not yet say which
+  argument is the choice. The fingerprint's kind does not change with it, as this record
+  first said it would: a choice is an argument of the call, the model it resolves to is a
+  need's, and both were hashed already, in an encoding that stays as it is.
 - Both methods of `Executor` return when they have their answer. Section 3 wants execution
   asynchronous, with status and cancel answered while a run executes. How that is
   scheduled is not decided, and `submit`'s shape may change when it is; it is cheap to
