@@ -1019,7 +1019,12 @@ included, and a wait that is begun by a cancelled run says it at once. Without t
 rule the answer depended on who looked first, and one of two runs that waited for each
 other was told that the other had ended as cancelled
 (`nested::a_wait_by_a_run_that_is_cancelled_is_given_up_whatever_became_of_the_run_it_waited_for`).
-A signal that is set after a wait was answered changes nothing of that answer. A
+The signal is looked at before the wait, in it, and once more when the run has an
+answer, so a cancellation that lands at any moment before the wait has returned is
+what it says
+(`nested::a_cancellation_that_lands_after_a_wait_looked_at_its_signal_still_gives_the_wait_up`,
+which stops at the moment between the first look and the look at the run). A signal
+that is set after the wait has returned changes nothing of what it returned. A
 deletion of a run tells those who wait as a cancellation does
 (`nested::deleting_an_executing_run_wakes_a_run_under_it_that_waits_for_another`). So
 two runs that wait for each other are freed by cancelling either, or a run above

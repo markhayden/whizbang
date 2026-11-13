@@ -19,8 +19,8 @@ use whizbang_core::contract::record::{RunRecord, Status, StepKind};
 use whizbang_core::contract::request::admitted;
 use whizbang_core::contract::{
     Action, ActionDescriptor, Admission, Answer, Argument, Backends, Call, CallError, Cancel,
-    Capabilities, Capability, Clock, Context, DESCENDANTS_LIMIT, Engine, Estimate, Executor,
-    Failure, HeldOpen, InputPort, Kind, LEVELS_LIMIT, ModelIdentity, Outcome, OutputPort,
+    Cancellation, Capabilities, Capability, Clock, Context, DESCENDANTS_LIMIT, Engine, Estimate,
+    Executor, Failure, HeldOpen, InputPort, Kind, LEVELS_LIMIT, ModelIdentity, Outcome, OutputPort,
     PreparedCall, Produced, RECORD_MAX_BYTES, REFUSAL_WHY_LIMIT, REFUSALS_LIMIT, Refusal,
     RefusalKind, Registry, Request, RequestId, Requirement, RunId, RunState, STARTED_LIMIT,
     STEPS_LIMIT, Secrets, Unavailable, Value, ValueType,
@@ -1192,8 +1192,10 @@ fn two_runs_that_wait_for_each_other_are_freed_when_a_run_above_them_is_cancelle
     barriers.arrived("waiting", 2);
     barriers.open("waiting");
     let ids = ids.lock().unwrap().clone();
+    // The end of the run above them waits for the first as well, so the first is
+    // waited for by two before the second is known to be among them.
     until("the two do not wait for each other", || {
-        ids.iter().all(|run| executor.waiting_for(run) > 0)
+        executor.waiting_for(&ids[0]) > 1 && executor.waiting_for(&ids[1]) > 0
     });
     assert_eq!(executor.cancel(&root), Ok(Cancel::Accepted));
     let waited = within("the wait for the run above the two", {
@@ -1257,6 +1259,48 @@ fn a_wait_by_a_run_that_is_cancelled_is_given_up_whatever_became_of_the_run_it_w
     });
     let given_up = Refusal::WaitCancelled { run: inner };
     assert_eq!(*said.lock().unwrap(), [Ok(completed), Err(given_up)]);
+}
+
+#[test]
+fn a_cancellation_that_lands_after_a_wait_looked_at_its_signal_still_gives_the_wait_up() {
+    // The run that is waited for ended and is no longer open here, so the wait finds
+    // its end in the store and never waits. The waiter is cancelled after the wait's
+    // first look at its signal and before its look at the run: stopped at with a hook.
+    let world = World::new();
+    let said: Noted<Result<RunState, Refusal>> = noted();
+    let waiter: Arc<Mutex<Option<Cancellation>>> = Arc::default();
+    let outer = {
+        let (said, waiter) = (said.clone(), waiter.clone());
+        act("outer", move |_, context| {
+            let inner = context.executor().submit(&Call::new("inner")).unwrap();
+            *waiter.lock().unwrap() = Some(context.cancellation().clone());
+            let waited = match context.executor().wait(inner.run()) {
+                Ok(watched) => Ok(watched.state().clone()),
+                Err(CallError::Refused(refusal)) => Err(refusal),
+                Err(other) => panic!("{other:?}"),
+            };
+            said.lock().unwrap().push(waited);
+            Ok(Produced::nothing())
+        })
+    };
+    let inner = act("inner", |_, _| Ok(Produced::nothing()));
+    let cancels = {
+        let waiter = waiter.clone();
+        Arc::new(move || {
+            if let Some(signal) = waiter.lock().unwrap().take() {
+                signal.cancel();
+            }
+        })
+    };
+    let executor = engine(world.store(), vec![outer, inner]).with_pause_in_a_nested_wait(cancels);
+    let finished = executor.submit(&Call::new("outer")).unwrap();
+    assert_eq!(finished.outcome(), &Outcome::Cancelled);
+    let stored = record(&world, finished.run());
+    let inner = RunId::parse(stored.steps()[0].run()).unwrap();
+    assert_eq!(
+        *said.lock().unwrap(),
+        [Err(Refusal::WaitCancelled { run: inner })]
+    );
 }
 
 #[test]
