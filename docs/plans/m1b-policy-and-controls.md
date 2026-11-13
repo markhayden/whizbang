@@ -1,6 +1,6 @@
 # Plan: checkpoint 1B, policy and controls
 
-Draft 4, 2026-11-13. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the task
+Draft 5, 2026-11-13. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the task
 list.
 
 Checkpoint 1A is still being built while this is written. Merged, and read for this draft:
@@ -119,9 +119,9 @@ Each is settled here, with its reason, and is the owner's to overturn.
 - **An admitted run keeps what it was asked.** ADR 0007's admission holds fingerprints
   only, so a run a dead process left cannot be given the record `SPEC.md` section 3 asks of
   every run. From B6 the admission's publication also keeps the prepared call and its resolved
-  settings, with the secrets taken out, among the run's names; and every request to a
-  backend that names a recipient has a dispatch record, of nothing when it is free, that
-  says who would receive what. So a recovered run's record says what was asked, what was
+  settings, with the secrets taken out, among the run's names; and before data leaves for
+  any origin, the first address or a later hop, a send note that says who would receive
+  what is made durable among the run's names. So a recovered run's record says what was asked, what was
   charged and where data may have gone. A run admitted before B6 that never ended is
   settled in the ledger and marked as interrupted, and is listed as having no record,
   which is what it has today.
@@ -162,12 +162,16 @@ apply; a task is not done while one that applies to it has no test.
    shows the state before or the state after, whole.
 3. **Stored bytes are not trusted.** Whatever is read back from a disk (a ledger record, a
    config, an env file, a catalogue, an installation record, a status) has its length
-   looked at before it is read, is parsed strictly (an unknown field, a missing field and
-   a second form of the same value are refused), and a refusal shows what it quotes escaped
+   looked at before it is read, is parsed strictly (an unknown field and a missing field are refused; and for a
+   record whizbang itself wrote, any bytes but the one form it writes. A file a person
+   writes, a config or an env file, may say one thing in the ways its format documents), and a refusal shows what it quotes escaped
    and cut, with no path as text or as `{:?}`.
 4. **A secret is never written.** Not as a value, not inside another value, not as a name
    or a key, not in `{:?}`, an error, a journal, a record, a status file or a refusal. A
-   test plants a marker secret and searches every byte the task wrote.
+   test plants a marker secret and searches every byte the task wrote. A name that comes
+   from outside the build (a backend's or a model's name, a catalogue's file name, an
+   account, a setting's key, a variable's name) is looked at whole for a secret before it
+   is parsed, escaped or cut, and one that holds a secret is refused and not shown.
 5. **A document says what the head does.** An ADR, a guide or a help text added by a task
    names, for each thing it claims the code does, the test that shows it; the pull request
    is read against that list at the head that is merged.
@@ -177,7 +181,7 @@ apply; a task is not done while one that applies to it has no test.
 
 7. **A stated number of threads.** How the executor schedules a started action is 1A's to
    decide (D12). Whatever it decides, a task whose tests drive many runs, requests or
-   downloads at once (S2, S5, S7, S11b, M2b to M5c above all) states its largest number at
+   downloads at once (S2, S5, S5c, S7, S11b, M2b to M5d above all) states its largest number at
    once in its hand-back, uses two where two show the race, and keeps every test process
    under 200 live threads. A test that needs more than 16 at once says why in a comment
    beside it.
@@ -190,7 +194,7 @@ the base tasks and the join tasks named below.
 
 | Strand | Tasks | Owns | Can start after |
 |---|---|---|---|
-| Base | B0 to B6, and B0b | `crates/whizbang-core/src/capability/declare.rs` and `fault.rs`; `crates/whizbang-core/src/contract/record.rs` and the record's schema; `crates/whizbang-testkit/src/capabilities.rs`; the place handles are composed | A12 |
+| Base | B0 to B6, with B0b and B1b | `crates/whizbang-core/src/capability/declare.rs` and `fault.rs`; `crates/whizbang-core/src/contract/record.rs` and the record's schema; `crates/whizbang-testkit/src/capabilities.rs`; the place handles are composed | A12 |
 | Spend | S1 to S13 | `crates/whizbang-core/src/spend/`, its tests in `tests/it/spend/`, `crates/whizbang/src/spend.rs` | B6 (S1 and S1b after B1) |
 | Config and secrets | C1 to C5 | `crates/whizbang-core/src/config/`, `crates/whizbang-core/src/contract/redact.rs`, their tests, `crates/whizbang/src/config.rs`, `docs/guides/config.md` | B0 (C1, C2, C3); C4 after B6 |
 | Egress | E2 to E6 | `crates/whizbang-core/src/egress/` beyond B2's types, its tests in `tests/it/egress/`, `scripts/check-egress.sh` and its test | S7 (E5 after B2) |
@@ -199,7 +203,8 @@ the base tasks and the join tasks named below.
 
 Inside the models strand the files are divided so that M3, M4 and the M5 tasks do not
 meet: M2 creates the modules, and then `install.rs` and `status.rs` are M2b's and M3's,
-`files.rs` is M4's, `hold.rs` is M5's and `remove.rs` is M5b's and M5c's. M5c follows M4,
+`files.rs` is M4's, `hold.rs` is M5's and `remove.rs` is M5b's, M5d's and M5c's, in
+that order. M5c follows M4,
 because removal removes shared files.
 
 **Root files.** A module's root, a crate's manifest and a command's registration are
@@ -214,11 +219,12 @@ fills its own stub; no task but those named below changes a root file.
 
 | File | Changed by | Rule |
 |---|---|---|
-| The contract's files (`crates/whizbang-core/src/contract/engine.rs`, `request.rs`, `prepare.rs`, `context.rs`) and `crates/whizbang/src/wiring.rs` | The join tasks only, merged in this order: B4, B5, B6, S1c, S2, S3, S5, S5b, S8, S11, S6, S6b, S6c, S7, E2, C4, C5, M6. `contract/ledger.rs` and the test kit's ledger are S1c's and S2's | One join task is open at a time. Every other task builds behind an interface in its strand's own folder and is tested there |
+| The contract's files (`crates/whizbang-core/src/contract/engine.rs`, `request.rs`, `prepare.rs`, `context.rs`) and `crates/whizbang/src/wiring.rs` | The join tasks only, merged in this order: B4, B5, B6, S1c, S2, S3, S5, S5b, S8, S11, S6, S6b, S6c, S7, E2, C4, C5, M6. M6b after M6. `contract/ledger.rs` and the test kit's ledger are S1c's and S2's | One join task is open at a time. Every other task builds behind an interface in its strand's own folder and is tested there |
 | The record's types and schema | B4, then S10 and E4 only to write values into shapes B4 defined | A change of shape after B4 is a new version and a pull request of its own |
 | `Cargo.toml`, `Cargo.lock`, `scripts/crate-graph.txt`, `crates/whizbang-core/src/lib.rs`, `crates/whizbang/src/main.rs`, the test roots | B0b | A later task that finds it needs a root file changed stops and says so; the change is made by the next join task |
 | `justfile` | E5 | X2's test is found by `just test-scripts` without a change |
 | `SPEC.md` | C1 (the config example), M1 (the two sentences under "Decisions"), Z1 | One sentence each, named in the task |
+| An ADR | The task that brings it, and no other. A later task that must change it (S8, S13, a join) writes a short ADR of its own that names it | Two tasks never have one ADR open |
 | `docs/carry-over.md` | Every task, in its own rows | A conflict is resolved row by row |
 
 ## Order
@@ -230,8 +236,9 @@ changes the contract's files and so takes its turn in the order above.
 |---|---|---|---|
 | B0 Entry check | Base | A12 | small |
 | B0b Roots | Base | B0 | small |
-| B1 What a backend says of cost, and how far a request got | Base | B0b | small |
-| B2 The ways out: recipients, classes of data, two interfaces | Base | B1 | small |
+| B1 What a backend says of cost | Base | B0b | small |
+| B1b What a request cost, and how far it got | Base | B1 | small |
+| B2 The ways out: recipients, classes of data, three interfaces | Base | B1b | small |
 | B3 Fakes that quote, fail at a stage and name a recipient | Base | B2 | small |
 | B4 `run/3`, and a place for a run's facts (join) | Base | B3 | medium |
 | B5 One place where handles are composed (join) | Base | B4 | small |
@@ -243,7 +250,8 @@ changes the contract's files and so takes its turn in the order above.
 | S3 The per-call cap, and a call's own (join) | Spend | S2 | small |
 | S4 Quotes: a bound, or no dispatch | Spend | S2 | small |
 | S5 Dispatch first (join) | Spend | S4, S3 | medium |
-| S5b Settlement of each attempt (join) | Spend | S5 | medium |
+| S5b Settlement of each attempt (join) | Spend | S5 | small |
+| S5c Settlement under cancellation and a crash | Spend | S5b | small |
 | S8 Estimates expire (join) | Spend | S5b | small |
 | S11 The reservation settled when its run ends (join) | Spend | S8 | small |
 | S11b Settlement at the end, under a crash and a race | Spend | S11 | small |
@@ -260,7 +268,7 @@ changes the contract's files and so takes its turn in the order above.
 | C2 Keys from an env file | Config | C1 | small |
 | C3 What redaction did not find | Config | B0b | medium |
 | C4 The roster from a snapshot of the config (join) | Config | C1, C2, E2 | medium |
-| C5 The cap, the policy, the secrets and the settings from the snapshot (join) | Config | C4 | medium |
+| C5 The cap, the policy, the secrets and the settings from the snapshot (join) | Config | C4, C3 | medium |
 | E2 The gate: denied by default (join) | Egress | B6, S7 | medium |
 | E3 Every hop | Egress | E2 | small |
 | E4 The run's recipients | Egress | E3 | small |
@@ -272,22 +280,24 @@ changes the contract's files and so takes its turn in the order above.
 | M3 Attach and cancel | Models | M2b | medium |
 | M4 A file two models share | Models | M2b | small |
 | M5 Holds | Models | M2b | small |
-| M5b Removal that drains | Models | M5 | medium |
-| M5c Removal on disk, and shared files | Models | M5b, M4 | small |
-| M6 Readiness from what is installed, and the hold on it (join) | Models | M5c, C5 | medium |
-| M7 `whizbang models list`, `get` and `remove` | Models | M3, M5c, M6 | small |
+| M5b Removal that drains | Models | M5 | small |
+| M5d Draining across processes, and against an install | Models | M5b, M3 | small |
+| M5c Removal on disk, and shared files | Models | M5d, M4 | small |
+| M6 Readiness from what is installed (join) | Models | M5c, C5 | small |
+| M6b The hold on the admitted installation (join) | Models | M6 | small |
+| M7 `whizbang models list`, `get` and `remove` | Models | M3, M5c, M6b | small |
 | X1 A key directly after a word character | Scripts | A12 | small |
 | X2 A planted registry fails `just deny` | Scripts | A12 | small |
 | Z1 Exit check | | all | small |
 
-**What runs at the same time.** The join tasks are a line, eighteen long, because each
+**What runs at the same time.** The join tasks are a line, nineteen long, because each
 changes how the executor admits, sends, ends or recovers a call; that line is the spine of
 the checkpoint and one builder at a time is on it. Everything else is built beside it:
 
 - From B0b: C1, then C2; C3; X1; X2. Four builders, none waiting on the spine.
 - From B1: S1 and S1b. From B2: E5, and the whole models strand as far as M5c (M1, M2,
-  M2b, then M3 beside M4 beside M5 and M5b).
-- From S2: S4, S9 and S13 beside the spine. From S7: S7b. From E2: E3, E4 and E6.
+  M2b, then M3 beside M4 beside M5 and M5b, then M5d).
+- From S2: S4, S9 and S13 beside the spine. From S5b: S5c. From S7: S7b. From E2: E3, E4 and E6.
 - A task on the spine that is ready early waits for the one before it, and its builder
   merges `main` before the review.
 
@@ -321,10 +331,10 @@ part merged first; the builder says so in its hand-back and does not go on.
 
 | Tasks | To undo |
 |---|---|
-| B0b, B1, B2, B3, B4, B5, B6 | Foundations: revert every later task first. A store that holds a `run/3` record is discarded with it; before the tag `m1b` no store written by 1B is worth keeping |
+| B0b, B1, B1b, B2, B3, B4, B5, B6 | Foundations: revert every later task first. A store that holds a `run/3` record is discarded with it; before the tag `m1b` no store written by 1B is worth keeping |
 | S1, C1, M1 and the ADR each brings | Revert the strand's later tasks first; the ADR goes with its task. Nothing outside the strand's folder depends on them until its join task |
-| S1b, S4, S7b, S9, S11b, S12, S13, C2, C3, E3, E5, E6, M2, M2b, M3, M4, M5, M5b, M5c, M7, X1, X2 | Revert the merge. Each is inside its strand's folder, or a script with its test |
-| The join tasks (S1c, S2, S3, S5, S5b, S8, S11, S6, S6b, S6c, S7, E2, C4, C5, M6) | Revert in the reverse of the order they merged, each after the tasks of its own strand that follow it. After S2 is reverted the binary has no ledger again and reserves nothing, as at `m1a`, and the test kit's fake ledger still passes 1A's tests, so the fake is kept in the tree until Z1 |
+| S1b, S4, S5c, S7b, S9, S11b, S12, S13, C2, C3, E3, E5, E6, M2, M2b, M3, M4, M5, M5b, M5c, M5d, M7, X1, X2 | Revert every later task that needs it first (the order table shows which), then the merge. Each is inside its strand's folder, or a script with its test |
+| The join tasks (S1c, S2, S3, S5, S5b, S8, S11, S6, S6b, S6c, S7, E2, C4, C5, M6, M6b) | Revert in the reverse of the order they merged, each after the tasks of its own strand that follow it. After S2 is reverted the binary has no ledger again and reserves nothing, as at `m1a`, and the test kit's fake ledger still passes 1A's tests, so the fake is kept in the tree until Z1 |
 | S10, E4 | Revert the merge; the record then holds empty lists where they wrote |
 | Z1 | The note reverts; the `m1b` tag stays and a corrected checkpoint is `m1b.1` |
 
@@ -368,47 +378,53 @@ generated reference are unchanged; `cargo deny` accepts the new dependency's lic
 source.
 **Size:** small.
 
-### B1. What a backend says of cost, and how far a request got
+### B1. What a backend says of cost
 
 **Depends on:** B0b. **Reads:** squint `crates/squint-core/src/ledger.rs` (`Pricing`,
 `RequestShape`) and `crates/squint-providers/src/catalog.rs` (`Prices`, `bound_tier`);
-rascal `crates/rascal-mask/src/filler/mod.rs` (`FillerCall`, `Charge`, `CallStarted`,
-`Spent`); table-manners `CONTRACT.md` section 4.5.
+table-manners `CONTRACT.md` section 4.5.
 
 - [ ] An ADR, which changes ADR 0006 and names ADR 0007: a quote, in the unit ADR 0007
       fixed (millionths of a US dollar), which is one of free, an enforceable bound, or an
       estimate only; for a price by time, that only a limit the host enforces or a fixed
-      maximum charge makes a bound; how a quote becomes the answer of `Backends::bound`
-      (an estimate only is no bound); and what a failed request says of how far it got:
-      not sent, answered (with what it cost, when the answer says), or sent with no answer
-      that settles it. And what a request that succeeded cost: a response may carry a
-      charge, in the same unit, which the adapter states or works out from the usage the
-      answer reports at the prices it quoted from; a response without one cost its bound.
-      And which declarations are allowed together: a backend with no recipient and no
-      price is local and free; one with a recipient and no price has no bound, and is
-      refused as any paid request without a bound is; free for a backend with a recipient
-      is said, never assumed.
-- [ ] The types in `crates/whizbang-core/src/capability/`: the quote, a
-      backend's statement of its price for a request, and the stage on a `Fault`. The charge is a
-      private field of each response (ADR 0006 lets them gain members). The fakes of 1A
-      name no recipient, so they stay local and free and no test of 1A changes.
-- [ ] No ledger, no reservation and no fake in this task.
+      maximum charge makes a bound; and how a quote becomes the answer of
+      `Backends::bound` (an estimate only is no bound). It leaves to B1b what a request
+      cost and how far it got, and to B2 which prices go with which recipients.
+- [ ] The quote and a backend's statement of its price, in
+      `crates/whizbang-core/src/capability/`. No ledger, no reservation, no fake.
 
 **Done when** these pass: a quote cannot be made from a number that is not finite or is
 negative, and one made from a fraction of the unit is rounded up; a quote of an estimate
-only, asked through `Backends::bound`, is the amount that is no bound; so is the bound of a backend that names a recipient and
-states no price, and a backend that names a recipient and says it is free answers zero;
-a response's charge cannot be made negative or over the largest amount; a price by time with only a timeout
-of whizbang's own gives an estimate, and with a host's limit gives the bound of price times
-limit; each of the three stages can be read from a fault, and every fault made before this
-task reads as not sent or as unresolved by the rule the ADR states, with a test of each
-kind in ADR 0006's table; `{:?}` of every new type shows no more than its numbers.
-**Carry-over:** the rows on whether a failed call may have been charged, and on squint's
-`pricing` (its interface half). **Size:** small.
+only, asked through `Backends::bound`, is the amount that is no bound; a price by time
+with only a timeout of whizbang's own gives an estimate, and with a host's limit gives the
+bound of price times limit; a backend of 1A that states no price answers as it did;
+`{:?}` of each new type shows no more than its numbers.
+**Carry-over:** the row on squint's `pricing` (its interface half). **Size:** small.
 
-### B2. The ways out: recipients, classes of data, two interfaces
+### B1b. What a request cost, and how far it got
 
-**Depends on:** B1. **Reads:** squint `crates/squint-providers/src/privacy.rs` (`Consent`,
+**Depends on:** B1. **Reads:** rascal `crates/rascal-mask/src/filler/mod.rs`
+(`FillerCall`, `Charge`, `CallStarted`, `Spent`); table-manners `CONTRACT.md` section 4.5.
+
+- [ ] In B1's ADR, by the same builder: what a failed request says of how far it got (not
+      sent; answered, with what it cost when the answer says; sent with no answer that
+      settles it), and what a request that succeeded cost: a response may carry a charge,
+      which the adapter states or works out from the usage the answer reports at the
+      prices it quoted from; a response without one cost its bound.
+- [ ] The stage on a `Fault` and the charge on each response, as private fields (ADR 0006
+      lets both gain members).
+
+**Done when** these pass: each of the three stages can be read from a fault, and every
+fault made before this task reads as not sent or as unresolved by the rule the ADR states,
+with a test of each kind in ADR 0006's table; a response's charge cannot be made negative
+or over the largest amount; a response made as 1A makes it carries no charge; `{:?}` of a
+fault and of a response shows the stage and the charge and nothing new besides.
+**Carry-over:** the row on whether a failed call may have been charged (its interface
+half). **Size:** small.
+
+### B2. The ways out: recipients, classes of data, three interfaces
+
+**Depends on:** B1b. **Reads:** squint `crates/squint-providers/src/privacy.rs` (`Consent`,
 `Credential`, `redact_account`) and `http.rs` (`same_origin`); squint
 `crates/squint-core/src/provider.rs` (`recipient`); `SPEC.md` section 10, "Egress".
 
@@ -417,9 +433,14 @@ kind in ADR 0006's table; `{:?}` of every new type shows no more than its number
       evidence) and who states the class of each part of a request; that a part with no
       stated class needs every class approved; the interface through which data is sent,
       and the separate one through which a model's file is downloaded, which has no place
-      for user data or for a credential bound to another origin; where a backend says who
+      for user data or for a credential bound to another origin; a third, a probe of a
+      backend, which carries no user data either and is approved apart from sending; which
+      declarations go together (no recipient and no price is local and free; a recipient
+      and no price has no bound and is refused as any paid request without one is; free
+      for a backend with a recipient is said, never assumed); that a send note is made
+      durable before data leaves for any origin; where a backend says who
       receives its requests.
-- [ ] The types and the two interfaces in `crates/whizbang-core/src/egress/`, and the
+- [ ] The types and the three interfaces in `crates/whizbang-core/src/egress/`, and the
       recipient in a backend's declaration. A backend that names no recipient is local.
 - [ ] No enforcement in this task: the gate is E2.
 
@@ -428,7 +449,11 @@ password, a query or a fragment in it, and its `{:?}` shows the origin and a cut
 and nothing else; two origins that differ in scheme, host or port are two recipients; the
 download interface's request type cannot be built with a body, a picture or a prompt (a
 test that fails to compile is not used: the type has no such field, and a test lists its
-fields); a declaration with no recipient reads as local.
+fields); the probe's request type has none either; a declaration with no recipient reads as
+local; a backend that names a recipient and states no price answers `Backends::bound`
+with the amount that is no bound, and one that says it is free answers zero; an account
+or an origin that holds a secret the constructor was told of is refused whole, before it
+is cut, and not shown (rule 4).
 **Carry-over:** the row on squint's `recipient`. **Size:** small.
 
 ### B3. Fakes that quote, fail at a stage and name a recipient
@@ -453,7 +478,8 @@ records each hop in order with the headers it would have carried.
 
 ### B4. `run/3`, and a place for a run's facts
 
-**Depends on:** B3. A join task. Needs D6 and D7. `run/2` is frozen at the tag `m1a` (ADR 0005).
+**Depends on:** B3. A join task. Needs D6 and D7. If D6 came out the second way, the
+element of `outcome.refusals` (what was refused, and why) is defined here too. `run/2` is frozen at the tag `m1a` (ADR 0005).
 
 - [ ] An ADR, which changes ADR 0005: `run/3`. The element of `asked.settings` (a name and
       a value, as an argument is written, in a stated order); of `spend.requests`, one
@@ -464,14 +490,20 @@ records each hop in order with the headers it would have carried.
 - [ ] The types, the schema `run-3.json` and fixed vectors. The executor writes `run/3`
       with these three lists empty until a strand fills them.
 - [ ] A place for a run's facts: the executor gives each run something a setting, a spend
-      line and a recipient can be noted in, from another module, and writes what was noted.
+      line, a refusal and a recipient can be noted in, from another module, and writes
+      what was noted when the run ends. A note can also be made durable at once, among
+      the run's names, before the act it is about: that is what a send note is.
 
 **Done when** these pass: a `run/3` record with each new element round-trips and validates,
 and the schema and the types refuse the same faults, one document for each (ADR 0005's
 three ways); a `run/2` record written by the tag `m1a` is read and shown; a `run/3` record
 with an element in a list a strand has not filled is still valid; a recipient's account
-and a setting's value pass through redaction before they are written (rule 4).
-**Size:** medium.
+and a setting's value pass through redaction before they are written (rule 4); a note made durable is in the store before the call
+that made it returns, and a crash after it leaves it readable by the next open, read
+strictly and bounded (rules 2 and 3); a refusal noted inside a run whose action then
+completes is in that run's `outcome.refusals`.
+**Size:** medium. If the branch passes 1,500 lines before the durable notes, they are a
+second pull request.
 
 ### B5. One place where handles are composed
 
@@ -527,8 +559,7 @@ and `crates/squint-eval/src/eval_ledger.rs`; rascal `schemas/rascal/ledger-v1.js
       `Ledger::reserve` cannot return without having made its name; that a ledger's name
       has no empty, `.` or `..` segment; the ledger's part in the publication that ends a
       run; that a dispatch record names the run that sent it and the reservation it draws
-      on, which for a nested call is its root's, and names the recipient and the classes
-      of data when its backend has a recipient; what is done with a charge over its
+      on, which for a nested call is its root's; what is done with a charge over its
       bound; and whether the store refuses a `put` under `requests/` and `spend/`.
 - [ ] The record types, written one way and read strictly, in
       `crates/whizbang-core/src/spend/`. Nothing uses them yet.
@@ -620,7 +651,8 @@ two fixed vectors of `prepared/1` are as they were.
 `crates/squint-core/src/ledger.rs` (`plan`, `Envelope`, `PlannedRequest`) and
 `crates/squint-eval/src/estimate.rs`; rascal `crates/rascal-mask/src/estimate.rs`.
 
-- [ ] A roster answers `Backends::bound` from the quotes of its backends (B1). The bound a
+- [ ] A wrapper in `spend/` around any `Backends` answers `Backends::bound` from the
+      quotes of the backends it resolves (B1); the roster's own file is not changed. The bound a
       backend states for a need covers every request the call sends it.
 - [ ] A request is quoted again when it is about to be sent, against what its run has
       left of its reservation. The check is an interface in `spend/` that S5's meter
@@ -641,8 +673,7 @@ is refused.
 - [ ] The meter, a wrapper in `spend/`: before a paid request leaves, it is quoted (S4),
       and its dispatch record is made durable in a publication that also makes the
       dispatch's name for its run, so the store decides which of two requests took what
-      the run had left. A request to a backend that names a recipient has a dispatch
-      record whether or not it costs anything, with the recipient and the classes of data.
+      the run had left.
 
 **Done when** these pass: the fake, stopped at its barrier, reads the store and finds its
 own dispatch record durable before it was called; a request to a backend that offers only
@@ -650,8 +681,8 @@ an estimate, from inside a run, is refused without being sent and without a disp
 record, counted by the fake; a request whose quote is over what the run has left is
 refused the same way; two requests of one run, each within what is left alone and not
 together, stopped after reading what is left and released together, end with one dispatch
-durable and one request at the fake (rule 1); a free request to a backend with a
-recipient has its dispatch record, of nothing, before it leaves; a crash before each event
+durable and one request at the fake (rule 1); a run whose action catches such a refusal and then completes has the refusal in its
+record, with what was refused and why; a crash before each event
 of the dispatch
 leaves the record whole or absent, and nothing was sent without it (rule 2).
 **Size:** medium.
@@ -669,16 +700,22 @@ leaves the record whole or absent, and nothing was sent without it (rule 2).
 **Done when** these pass: a request that succeeds with a charge under its bound is charged
 that; one that succeeds with none is charged its bound; one whose charge is over its bound
 is settled as S1's ADR says and marked as over; a fault at each of the three stages
-settles as stated, one test each; a request that times out is charged its bound; a run cancelled after dispatch, with
-the fake released only afterwards, is charged the bound as unresolved; with a barrier
-after the backend returned and before the settlement is durable, the run and its parent
-are not terminal, and are once it is; a crash before each event of the settlement leaves
-the record whole or absent, and the balances folded after it count the request once
-(rule 2).
+settles as stated, one test each; a request that times out is charged its bound.
 **Carry-over:** the row on whether a failed call may have been charged (its ledger half).
-The cancellation case is driven through the executor's own cancel (A7). **Size:**
-medium. If the branch passes 1,500 lines before the crash cases, they are a second pull
-request.
+**Size:** small.
+
+### S5c. Settlement under cancellation and a crash
+
+**Depends on:** S5b. In `spend/` and its tests only.
+
+**Done when** these pass: a run cancelled after dispatch, through the executor's own
+cancel, whose request then ends with no answer that settles it, is charged the bound as
+unresolved; one whose request then answers with a charge is charged that charge; in both,
+with a barrier after the backend returned and before the settlement is durable, the run
+and its parent are not terminal, and are once it is; a crash before each event of the
+settlement leaves the record whole or absent, and the balances folded after it count the
+request once (rule 2).
+**Size:** small.
 
 ### S11. The reservation settled when its run ends
 
@@ -735,8 +772,8 @@ paid call is refused and a free one runs.
 **Depends on:** S6. A join task. Uses B6.
 
 - [ ] In the recovery's publication, a run that was admitted, did not end and is still in
-      the store is ended as an error, with a record made from what B6 kept and from its
-      dispatch records: what was asked and its settings, each request with what it was
+      the store is ended as an error, with a record made from what B6 kept, from its
+      dispatch records and from the send notes among its names (B4): what was asked and its settings, each request with what it was
       charged, and each recipient a request was dispatched to, as "dispatched, with no
       word of whether it arrived". A run that was deleted is not made again. A run
       admitted without B6's record is marked interrupted, with no record.
@@ -744,8 +781,8 @@ paid call is refused and a free one runs.
 **Done when** these pass: a recovered run's record validates and holds its arguments, its
 settings as they were at admission though the config was replaced before the restart, its
 request charged at the bound, and the recipient it was dispatched to in the third state;
-a run that crashed after its first hop was reached and before its answer lists that
-recipient so; a repeat of a recovered run's request is answered `Ended`, with the error;
+a run with a send note planted and no answer lists that recipient so (the hops
+themselves are E4's cases); a repeat of a recovered run's request is answered `Ended`, with the error;
 for a run deleted and pruned before the restart, with a request id, the repeat is answered
 `Removed` and no run exists, and without an id nothing but the ledger changed; a marker
 secret is in no byte the recovery wrote (rule 4).
@@ -890,7 +927,7 @@ small. A change to where ids are named is not built in 1B.
 
 ### C1. The config: its file, its shape, its digest
 
-**Depends on:** B0. Needs D8. **Reads:** squint `crates/squint-core/src/config.rs`,
+**Depends on:** B0b. Needs D8. **Reads:** squint `crates/squint-core/src/config.rs`,
 `docs/adr/0004-toml-config.md` and `schemas/config-v1.json`; rascal
 `crates/rascal-core/src/config.rs` and `schemas/rascal/config-v1.json`.
 
@@ -910,7 +947,9 @@ key escaped and cut and no path (rule 3); a file over the bound is refused from 
 before it is read; two files that differ in comments, spacing and the order of keys have
 one digest, and a change to any setting changes it, with two fixed vectors; a value written
 where a variable's name belongs, that has the shape of a key, is refused without being
-shown (rule 4); every example in the guide is read by a test (rule 5).
+shown (rule 4); a backend's name or a setting's key that holds a secret of the env file is refused
+whole and not shown, also where the cut of a refusal would fall inside it (rule 4); every
+example in the guide is read by a test (rule 5).
 **Size:** medium.
 
 ### C2. Keys from an env file
@@ -929,6 +968,8 @@ shown (rule 4); every example in the guide is read by a test (rule 5).
 `export` prefix each give the bare key, shown by redacting a body that holds the bare key;
 a short value is refused with the variable's name; a file over its bound, a line that is
 not an assignment and a name given twice are refused, escaped and without a path (rule 3);
+a malformed line whose name part holds a value read from another line is refused without
+showing it;
 a marker key read this way is in no error, no `{:?}`, no record and no journal of a run
 that used it (rule 4); a backend is handed its own credential and cannot ask for
 another's.
@@ -937,7 +978,7 @@ variable named, the least length). **Size:** small.
 
 ### C3. What redaction did not find
 
-**Depends on:** B0. **Reads:** squint `crates/squint-core/src/artifacts.rs` (`redact`).
+**Depends on:** B0b. **Reads:** squint `crates/squint-core/src/artifacts.rs` (`redact`).
 
 - [ ] An ADR, which changes ADR 0005's "What redaction does not find": for each form the
       pin test lists (base64; a `\u00XX` escape; UTF-16 in either byte order; each of the
@@ -982,7 +1023,7 @@ under the snapshot it was admitted with.
 
 ### C5. The cap, the policy, the secrets and the settings from the snapshot
 
-**Depends on:** C4. A join task.
+**Depends on:** C4, C3. A join task.
 
 - [ ] The per-call cap (S3), the egress policy (E2) and the secrets (C2) are read from the
       snapshot a call is prepared under. A run records its resolved settings.
@@ -1014,7 +1055,10 @@ recipient is refused and the fake counts none; a recipient approved for prompts 
 for source images is refused a request that holds a source image, and sent one that holds
 a prompt alone; a part with no stated class is refused unless every class is approved; a
 refusal answers the action with a fault, and no other backend, remote or local, is asked
-in its place; a refused request has no dispatch record and no charge.
+in its place; a refused request has no dispatch record, no send note and no charge; a run whose
+action catches the refusal and completes has it in its record, with the recipient and the
+reason; before a request the gate lets through reaches its backend, its send note is
+durable, for a free request as for a paid one.
 **Size:** medium.
 
 ### E3. Every hop
@@ -1025,16 +1069,20 @@ in its place; a refused request has no dispatch record and no charge.
 - [ ] Everything the sending interface is asked to reach is checked against the recipient:
       the first address, a redirect, an upload address and a returned download address.
       A credential is attached only for the origin it was configured for.
+- [ ] A send note is made durable before each hop is handed data, as before the first.
 - [ ] The download interface is checked the same way against the origins a catalogue entry
-      names, and is refused anything else.
+      names, and is refused anything else. A probe is refused unless the config approves
+      probing that recipient, apart from any class of data.
 
 **Done when** these pass, against the sending fake of B3: a redirect to an origin that is
 not the recipient or one of its upstreams is refused and nothing is sent to it; a redirect
 to an approved upstream is followed without the credential; an upload address and a
 download address outside the recipient's are each refused; a chain longer than the limit
 is refused; a model's download that is redirected off its catalogue's origins is refused,
-and its request carried nothing but the address.
-**Size:** small.
+and its request carried nothing but the address; a probe is refused by default, sent
+when approved, carries no user data, and its redirect off the recipient is refused; the
+sending fake finds each hop's note in the store before it is handed that hop.
+**Size:** small. If the branch passes 1,000 lines, the probe is a second pull request.
 
 ### E4. The run's recipients
 
@@ -1047,7 +1095,10 @@ and its request carried nothing but the address.
 **Done when** these pass: a run that sent a prompt and a derived image to one recipient
 lists it once with both classes; a run whose request went on to an approved upstream lists
 the upstream as reached, and an approved upstream that was not reached is not listed; a
-request that failed at its second hop lists the first, which had the data; a run whose
+request that failed at its second hop lists the first, which had the data; a run
+that crashed before and after a redirect, an upload and a returned download address, a
+free request among them, is recovered (S6b) with every origin a note was made for, each
+as dispatched with no word of whether it arrived, and none it had no note for; a run whose
 only request was refused lists the refusal and nothing as sent; a local run's list is
 empty; an account in the list is shown cut, and a marker credential is nowhere in the
 record (rule 4).
@@ -1103,7 +1154,9 @@ and 5.3 and `schemas/core/installable.json`.
 **Done when** these pass: a catalogue and an installation record each round-trip; each is
 refused over its bound before it is read, and with an unknown field, a hash of the wrong
 length, a file name that is not one plain name, or a size of zero, escaped and without a
-path (rule 3); two records that differ in the adapter's revision alone have two
+path (rule 3); a model's name or a file's name that holds a secret the reader was told of
+is refused whole and not shown, and never becomes a name on disk (rule 4); two records
+that differ in the adapter's revision alone have two
 identities; the crate-graph check passes with the new crate; every claim of the ADR about
 code names its test (rule 5).
 **Carry-over:** the row on a model that never shows as out of date (R2), for what an
@@ -1203,10 +1256,9 @@ a hold let go twice is let go once.
 ### M5b. Removal that drains
 
 **Depends on:** M5. **Reads:** rascal `tools/python/src/rascal_tools/installer.py`
-(`remove`) and `crates/rascal-mask/src/install.rs` (`uninstall`, `live_pid`,
-`terminate`).
+(`remove`) and `crates/rascal-mask/src/install.rs` (`uninstall`).
 
-- [ ] Removal, from any process: under the directory's lock the model is marked as
+- [ ] Removal, inside one process: under the directory's lock the model is marked as
       draining, so new holds are refused and waiting ones cancelled; the holds are waited
       for until a deadline of the injected clock; then the removal goes on (M5c), or it
       answers busy and the mark is taken off. Here "goes on" ends at the decision: the
@@ -1214,19 +1266,29 @@ a hold let go twice is let go once.
 
 **Done when** these pass, with barriers and the clock moved by hand (rule 6): a removal
 during a held installation refuses a new hold, cancels a waiting one, and goes on when the
-hold is let go; with the hold kept past the deadline the removal answers busy, and the
-next hold is given; the same two cases with the hold in a real second process; a removal
-and an install of the same model, stopped after each read the pointer and released
-together, end in one of the two orders (rule 1); a draining mark left by a process that
-died is taken off by the next to take the lock; a removal of a model that is installing
-cancels the install.
+hold is let go; with the hold kept past the deadline the removal answers busy, the mark is
+gone and the next hold is given; a removal of a model that is not installed says so; the
+mark is a record read strictly and bounded (rule 3).
+**Size:** small. The waiting requests of the worker's queue are 1C's; here a waiting hold
+stands for one.
+
+### M5d. Draining across processes, and against an install
+
+**Depends on:** M5b, M3. **Reads:** rascal `crates/rascal-mask/src/install.rs`
+(`live_pid`, `terminate`).
+
+**Done when** these pass: the two cases of M5b with the hold in a real second process; a
+removal and an install of the same model, stopped after each read the pointer and
+released together, end in one of the two orders (rule 1); a draining mark left by a
+process that died is taken off by the next to take the lock; a removal of a model that is
+installing cancels the install (M3) and leaves what was installed before it removed or
+kept, as the order says, never half of either.
 **Carry-over:** rascal's R3 (a process id read from a file is signalled); of R6, a
-removal racing an install. **Size:** medium. The waiting requests of the worker's queue
-are 1C's; here a waiting hold stands for one.
+removal racing an install. **Size:** small.
 
 ### M5c. Removal on disk, and shared files
 
-**Depends on:** M5b, M4.
+**Depends on:** M5d, M4.
 
 - [ ] A removal that went on deletes the installation and each file no other installation
       names, through the file-system interface the shim can crash.
@@ -1238,7 +1300,7 @@ interrupted after the pointer was cleared is finished by the next install or rem
 nothing outside the models directory is touched, shown on the shim's list of events.
 **Size:** small.
 
-### M6. Readiness from what is installed, and the hold on it
+### M6. Readiness from what is installed
 
 **Depends on:** M5c, C5. A join task.
 
@@ -1246,27 +1308,37 @@ nothing outside the models directory is touched, shown on the shim's list of eve
       and verified, not installed, out of date, damaged, or not in the catalogue. Only the
       first is ready. A model's version in what a preparation saw is its installation's
       identity.
-- [ ] A request for a local model takes a hold on the installation its run was admitted
-      with, by identity, before anything is dispatched. If the pointer no longer names
-      that installation, or it is draining, the request is refused before dispatch.
 
 **Done when** these pass: a configured model that the catalogue does not hold is prepared
 as not ready, saying so; an installation whose recorded catalogue or adapter revision is
 not the current one is prepared as out of date; an installation record that is damaged, or
 whose pointer names nothing, is prepared as damaged, never ready, and a new install
-repairs it; after a reinstall, a new request with the old preparation is `Stale::Model`, one
-under a new id with no preparation runs on the new installation, and a repeat of the
-first request's id returns the first run; a retry inside an admitted run whose
-installation was replaced is refused before dispatch and never answered by the new one; with a barrier between admission and the
-hold, a reinstall there and a removal there each end with the request refused before
-dispatch, no dispatch record, and never with another installation answering; each run's
-`models` names the installation that answered it.
+repairs it; after a reinstall, a new request with the old preparation is `Stale::Model`,
+one under a new id with no preparation runs on the new installation, and a repeat of the
+first request's id returns the first run.
 **Carry-over:** rascal's R2 (reported), R4, and of R6 a corrupt installation record and a
-reinstall between a call and its retry. **Size:** medium.
+reinstall between a call and its retry. **Size:** small.
+
+### M6b. The hold on the admitted installation
+
+**Depends on:** M6. A join task.
+
+- [ ] A request for a local model takes a hold (M5) on the installation its run was
+      admitted with, by identity, before anything is dispatched or noted as sent. If the
+      pointer no longer names that installation, or it is draining, the request is refused
+      before dispatch.
+
+**Done when** these pass: with a barrier between admission and the hold, a reinstall there
+and a removal there each end with the request refused before dispatch, no dispatch record,
+and never with another installation answering; a retry inside an admitted run whose
+installation was replaced is refused the same way; a removal that starts while a request
+holds the model waits for it (M5b); each run's `models` names the installation that
+answered it.
+**Size:** small.
 
 ### M7. `whizbang models list`, `get` and `remove`
 
-**Depends on:** M3, M5c, M6. Needs D8.
+**Depends on:** M3, M5c, M6b. Needs D8.
 
 - [ ] The three commands, over the binary's shared wiring, and `docs/guides/models.md`.
       `list` shows each catalogue entry with its licence, its size and its state; `get`
@@ -1342,17 +1414,17 @@ written on.
 | Settlement | S11 (a run that ends), S6 (a run that did not) |
 | An admission that was visible and not confirmed takes its id | S6c |
 | What every publication costs as ids and reservations accumulate | S13 |
-| Whether a failed call may have been charged | B1 (the stage on a fault), S5b (the settlement) |
+| Whether a failed call may have been charged | B1b (the stage on a fault), S5b (the settlement) |
 | What a provider adapter said of itself: `pricing`, `recipient` | B1 and S4 (`pricing`); B2 and E2 (`recipient`). Image preparation stays with milestone 2 |
 | What redaction does not find; quotes around a value; the variable named | C3 (the forms, UTF-16 among them, and JSON as JSON); C2 (quotes, the variable, the least length) |
 | `max_spend_usd`, the cap of one call | S3. `set` stays with milestone 3 |
 | Parallel installs of models sharing a file each download it | M4 |
 | No test plants an unknown registry or git source for `cargo deny` | X2 |
 | A model never shows as out of date (R2) | M1 (recorded), M6 (reported) |
-| Uninstall signals a process id read from a file (R3) | M5b |
+| Uninstall signals a process id read from a file (R3) | M5d |
 | A configured model that is not in the catalogue can read as ready (R4) | M6 |
 | A hold is judged live by its process id alone (R5) | M5 |
-| Untested cases around installs (R6) | M2b (a signal during a download), M5b (a removal racing an install), M6 (a reinstall between a call and its retry; a corrupt installation record) |
+| Untested cases around installs (R6) | M2b (a signal during a download), M5d (a removal racing an install), M6 (a reinstall between a call and its retry; a corrupt installation record) |
 
 The row on what running an action does not do yet (task A7) asks for a bound on a ledger
 being asked again; it stays with A7, and D10 says what S2 does with the answer.
@@ -1376,6 +1448,7 @@ missing acceptance cases, carry-over rows and tasks too large.
 |---|---|---|---|---|---|
 | 1 | 2026-11-13 | 2 | 2 | 9 | 0 |
 | 2 | 2026-11-13 | 3 | 1 | 7 | 1 |
+| 3 | 2026-11-13 | 4 | 1 | 6 | 2 |
 
 **Round 1, and what changed in draft 3.**
 
@@ -1408,8 +1481,7 @@ missing acceptance cases, carry-over rows and tasks too large.
   and C4 in two (C5).
 
 **Round 2, and what changed in draft 4.** The round confirmed eight of round 1's fixes and
-found three incomplete (recovery, the joins, sizes). The fixes below were made after it
-and have not been through a third round.
+found three incomplete (recovery, the joins, sizes).
 
 - Blocker: a recovered run's record still lacked its settings and where data went. B6
   keeps the resolved settings with the admission; every request to a backend with a
@@ -1435,13 +1507,57 @@ and have not been through a third round.
   was missing. Scheduling is the open point D12; the fallbacks are gone and B0 stops if
   cancellation is not there.
 
+**Round 3, and what changed in draft 5.** The round found six of round 2's fixes in the
+task text and three still incomplete (recovery, dependencies and ownership, sizes). The
+fixes below were made after it and have not been through a fourth round.
+
+- Blocker: recovery still lost the origins a request went on to after its first. A send
+  note is now made durable among the run's names before data leaves for any origin (B2
+  decides it, B4 gives the durable note, E2 and E3 make it, S6b reads it), and E4 crashes
+  a run on each side of a redirect, an upload and a returned download address. The
+  dispatch record is the ledger's again and holds no recipient.
+- Major: six dependencies or owners were wrong. The declarations that pair a price with a
+  recipient moved from B1 to B2; S4 wraps `Backends` inside `spend/`; M5d follows M3; C5
+  follows C3; an ADR has one task; C1's and C3's own lines say B0b.
+- Major: a refusal inside a run had no acceptance case. B4 defines the element if 1A did
+  not and has the case; S5 and E2 each have an action that catches a refusal and
+  completes.
+- Major: probes had no proof. B2 gives a probe its own interface with no place for user
+  data, and E3 tests refusal by default, approval and its redirect.
+- Major: a secret inside a name had no enforcement point. Rule 4 says a name from outside
+  is looked at whole before it is parsed or cut; B2, C1, C2 and M1 each have the case.
+- Major: cancellation was taken for an unknown cost. S5c has both cases: no answer that
+  settles it, and an answer with a charge.
+- Major: B1, S5b, M5b and M6 were too large. Each is two tasks (B1b, S5c, M5d, M6b).
+- Minor: side tasks were said to revert alone; they revert after what needs them. Rule 3
+  no longer asks one form of a config or an env file.
+
+**What the third round said of the plan's size and its line.** It was asked both, and the
+answers are recorded here for the orchestrator to decide; none is applied.
+
+- Most of the size is justified by the spec and the carry-over rows. Tasks that could
+  leave 1B without breaking the exit line of `SPEC.md` section 16: E5 (cut: no row asks
+  for it); M7 (to 1C: the shipped catalogue is empty until then); and, each only with its
+  carry-over row given a new owner, M4 with M5c's shared-file cases (to 1C), S12 (to 1C),
+  S13 (to milestone 2, before ids are used in volume), S6c (to milestone 2, the limit kept
+  with a reason), X1 (to 1C, still before milestone 2 stores what a provider returned)
+  and X2 (to 1C).
+- Most of the line could be side work if a base task fixed these interfaces first: a
+  participant in the admission's publication (B6, S3, S8); the ledger's token and its
+  contribution to the end publication (S1c, then S2, S11); one attempt wrapper that owns
+  dispatch and settlement (S5, S5b); a participant in the writer's recovery (S6, S6b); a
+  dispatch policy (E2); one snapshot of the config that carries limits, policy and
+  secrets (C4, C5); and an inventory and a lease for installations (M6, M6b). What would
+  stay on the line: the tasks that fix those interfaces, a child call's integration (S7),
+  and the final wiring.
+
 ## Risks
 
 | Risk | Effect | What we do |
 |---|---|---|
 | 1A's cancellation or nested calls come out unlike either outcome written under "What this plan needs from 1A" | Tasks S5, S7, S11, B4, B5 are wrong as written | B0 is first and stops on such an answer; the correction gets the review rounds before anything is built |
 | The record's shapes are fixed in B4 before the strands that fill them | A second version, `run/4`, inside one checkpoint | B4 follows B1 and B2, which decide the amount, the stage and the recipient; the shapes are the spec's table; a wrong one is a new version, never an edit |
-| The join tasks are a line of eighteen | The checkpoint takes as long as that line | Each is small or medium and one concern; the other twenty-odd tasks are built beside it; a join that can be shown not to touch the contract's files after all leaves the line in B0 |
+| The join tasks are a line of nineteen | The checkpoint takes as long as that line | Each is small or medium and one concern; the other twenty-odd tasks are built beside it; a join that can be shown not to touch the contract's files after all leaves the line in B0 |
 | Crash tests at every event multiply | The fast tier passes its three minutes | Each task states its count of crash points in its hand-back; the exhaustive loss of single names runs as a seeded sample, as 1A's exit check decides for publication |
 | Folding the balances from every record costs more with every run | Admission slows as a store ages | S13 measures it at 100,000 ids before the checkpoint closes, and a checkpoint record is the stated way out |
 | A decorator order that charges for a request the gate refused | Spend with nothing sent | The order is fixed in B5 with a test; E2 asserts no dispatch record for a refused request |
