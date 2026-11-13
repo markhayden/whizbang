@@ -342,3 +342,90 @@ fn a_roster_answers_prepare_with_the_model_or_the_reason() {
         "the fill backend bria does not declare the feature \"prompt\""
     );
 }
+
+#[test]
+fn what_is_printed_of_every_error_holds_nothing_a_caller_typed_as_it_was() {
+    // Every variant that holds a caller's text, through `{:?}`: escaped and cut.
+    let long = format!("a\n\u{1b}[31m{}", "x".repeat(93));
+    let capability = Capability::Fill;
+    let printed = [
+        format!(
+            "{:?}",
+            RosterError::Name {
+                capability,
+                name: long.clone()
+            }
+        ),
+        format!(
+            "{:?}",
+            RosterError::Twice {
+                capability,
+                name: long.clone()
+            }
+        ),
+        format!(
+            "{:?}",
+            RosterError::NotOffered {
+                capability,
+                name: long.clone()
+            }
+        ),
+        format!(
+            "{:?}",
+            Unresolved::UnknownChoice {
+                capability,
+                choice: long.clone()
+            }
+        ),
+        format!(
+            "{:?}",
+            Unresolved::MissingFeature {
+                capability,
+                name: "bria".to_owned(),
+                feature: long.clone()
+            }
+        ),
+        format!(
+            "{:?}",
+            DeclarationError::Name {
+                feature: long.clone()
+            }
+        ),
+        format!(
+            "{:?}",
+            DeclarationError::Twice {
+                feature: long.clone()
+            }
+        ),
+    ];
+    for printed in &printed {
+        assert!(printed.contains("(100 characters)"), "{printed}");
+        assert!(printed.contains("a\\n\\u{1b}[31m"), "{printed}");
+        assert!(!printed.contains('\n') && !printed.contains('\u{1b}'));
+        assert!(!printed.contains(&"x".repeat(58)), "{printed}");
+    }
+    assert!(printed[0].starts_with("Name {") && printed[4].starts_with("MissingFeature {"));
+}
+
+#[test]
+fn a_text_of_64_characters_is_shown_whole_and_one_of_65_is_cut() {
+    let roster = roster();
+    let shown = |choice: &str| {
+        roster
+            .resolve(Capability::Fill, Some(choice), &[])
+            .unwrap_err()
+            .to_string()
+    };
+    let exactly = "y".repeat(64);
+    assert_eq!(
+        shown(&exactly),
+        format!("no fill backend is named \"{exactly}\"")
+    );
+    assert_eq!(
+        shown(&"y".repeat(65)),
+        format!("no fill backend is named \"{exactly}\"... (65 characters)")
+    );
+    // Characters are counted, not bytes: 64 of two bytes each are shown whole.
+    let wide = "\u{e9}".repeat(64);
+    assert_eq!(shown(&wide), format!("no fill backend is named \"{wide}\""));
+}

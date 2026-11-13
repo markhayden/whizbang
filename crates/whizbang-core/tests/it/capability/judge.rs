@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use whizbang_core::capability::{
@@ -530,6 +531,8 @@ struct Stub {
     declaration: Declaration,
     answer: Result<Turn, Fault>,
     sent: Mutex<Vec<JudgeRequest>>,
+    /// The deadline in the bounds of the last request.
+    deadline: Mutex<Option<Instant>>,
 }
 
 impl Stub {
@@ -539,6 +542,7 @@ impl Stub {
                 .unwrap(),
             answer,
             sent: Mutex::new(Vec::new()),
+            deadline: Mutex::new(None),
         })
     }
 
@@ -552,8 +556,9 @@ impl Judge for Stub {
         &self.declaration
     }
 
-    fn send(&self, request: &JudgeRequest, _: &Bounds) -> Result<Turn, Fault> {
+    fn send(&self, request: &JudgeRequest, bounds: &Bounds) -> Result<Turn, Fault> {
         self.sent.lock().unwrap().push(request.clone());
+        *self.deadline.lock().unwrap() = bounds.deadline();
         self.answer.clone()
     }
 }
@@ -682,4 +687,35 @@ fn nothing_is_sent_once_the_run_is_cancelled_and_a_fault_is_handed_back_as_it_is
             .unwrap_err(),
         refused
     );
+}
+
+#[test]
+fn the_judge_is_handed_its_handles_deadline_which_is_only_ever_narrowed() {
+    let stub = Stub::new(&[], Ok(yes()));
+    let day = Duration::from_secs(24 * 3600);
+    JudgeHandle::new(stub.clone(), Cancellation::new())
+        .send(&plain())
+        .unwrap();
+    assert_eq!(*stub.deadline.lock().unwrap(), None);
+    // The earliest deadline it was given is the one the backend is handed.
+    let (soon, later) = (Instant::now() + day, Instant::now() + 2 * day);
+    for (first, second) in [(later, soon), (soon, later)] {
+        JudgeHandle::new(stub.clone(), Cancellation::new())
+            .until(first)
+            .until(second)
+            .send(&plain())
+            .unwrap();
+        assert_eq!(*stub.deadline.lock().unwrap(), Some(soon));
+    }
+    assert_eq!(stub.sent(), 3);
+    // Once it has passed nothing is sent, and a clone cannot move it later.
+    let passed = Instant::now()
+        .checked_sub(Duration::from_millis(1))
+        .unwrap();
+    let handle = JudgeHandle::new(stub.clone(), Cancellation::new()).until(passed);
+    for handle in [handle.clone(), handle.until(Instant::now() + day)] {
+        let fault = handle.send(&plain()).unwrap_err();
+        assert_eq!(fault.kind(), FaultKind::TimedOut);
+    }
+    assert_eq!(stub.sent(), 3);
 }

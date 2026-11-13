@@ -93,10 +93,11 @@ pub struct Fault {
 impl Fault {
     /// A fault of this kind. The text is cleaned ([`FAULT_LIMIT`]): what is kept of it
     /// is ASCII letters, digits, spaces and `. , ; : ' ( ) % + - _`; every other
-    /// character becomes `?`; and it is cut at the limit. A text of nothing, or of
-    /// spaces alone, becomes `no reason was given`.
+    /// character becomes `?`; and it is cut at the limit. White space at the ends of
+    /// the text is dropped first, so a text of nothing, or of white space alone of any
+    /// kind, becomes `no reason was given`.
     pub fn new(kind: FaultKind, text: &str) -> Fault {
-        let sentence = clean(text, FAULT_LIMIT);
+        let sentence = clean(text.trim(), FAULT_LIMIT);
         Fault {
             kind,
             sentence: if sentence.trim().is_empty() {
