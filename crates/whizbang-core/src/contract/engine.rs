@@ -3,19 +3,19 @@
 
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use crate::artifact::{self, Artifact, Contents};
-use crate::capability::Shown;
+use crate::capability::{REQUESTS_LIMIT, Shown};
 use crate::identity::{DecodeLimits, Digest};
 use crate::store::{self, Store};
 
 use super::journal::Kept;
 use super::ledger::{Declined, Reservation, Step};
 use super::live::{self, LiveRun, Told};
-use super::nested::{Added, Family, HeldOpen, Nested, Offer, Under};
+use super::nested::{Added, DESCENDANTS_LIMIT, Family, HeldOpen, Nested, Offer, Under};
 use super::prepare::prepare;
 use super::record::{
     Diagnostic, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran, RunRecord,
@@ -35,8 +35,9 @@ use super::{
 ///
 /// `submit` and `request` return when the run is over and its record is durable, or,
 /// for a request that was sent before, as soon as its id was looked up. `start` returns
-/// once the run is admitted; a run is then asked after by its id (`status`, `wait`),
-/// and cancelled by it (`cancel`), by any caller (ADR 0008).
+/// once the run is admitted, and is refused when too many started runs are live; a run
+/// is then asked after by its id (`status`, `wait`), and cancelled by it (`cancel`), by
+/// any caller (ADR 0008).
 pub trait Executor: Send + Sync {
     /// Can this exact call run now? Nothing is written, nothing is spent, and nothing is
     /// sent to a model. A call that is refused and a store that failed are told apart
@@ -67,6 +68,12 @@ pub trait Executor: Send + Sync {
     /// action runs on a thread of its own. The run is then found by its id, by this
     /// caller or any other ([`Executor::status`], [`Executor::wait`]). A request that
     /// was sent before is answered as a repeat, and a refusal is a refusal, as there.
+    ///
+    /// Started runs are bounded (ADR 0008, "How many runs are started at once"): a
+    /// request that would be one more than the executor's bound is refused, before
+    /// anything is prepared or written ([`Refusal::TooManyStarted`]). And a run that
+    /// was admitted and whose thread the system then refused to make is ended as an
+    /// error, and the caller is handed [`CallError::NotStarted`].
     fn start(&self, request: &Request) -> Result<Answer, CallError>;
 
     /// Where the run is now, and, while it executes in this process, the progress
@@ -82,9 +89,10 @@ pub trait Executor: Send + Sync {
 
     /// Cancels the run (ADR 0008, "Cancellation"). A cancellation that arrives before
     /// the run enters its commit step is accepted: nothing the run made is committed,
-    /// and the run ends as cancelled. One that arrives after is not: it waits for the
-    /// commit, and is answered with how the run ended. A run that had ended is
-    /// answered with how, and nothing changes. A run the store does not hold is
+    /// and the run ends as cancelled. One that arrives after is not: it waits until the
+    /// executor is done with the run, the last sync of its end included, and is
+    /// answered with how the run ended, or that it was abandoned. A run that had ended
+    /// is answered with how, and nothing changes. A run the store does not hold is
     /// refused ([`Refusal::NoSuchRun`]).
     fn cancel(&self, run: &RunId) -> Result<Cancel, CallError>;
 
@@ -117,6 +125,57 @@ pub struct Engine {
     ledger: Option<Arc<dyn Ledger>>,
     /// The backends each run's capability handles are made over.
     capabilities: Capabilities,
+    /// How many runs may be admitted under one run that nothing called.
+    descendants: usize,
+    /// How many capability requests one run may send.
+    requests: usize,
+    /// How many started runs the store's writer may have, not over, when this executor
+    /// starts one more ([`Engine::with_started_bound`]).
+    started_bound: usize,
+    /// What makes the thread of a started run.
+    spawn: Spawn,
+}
+
+/// How many runs an executor starts and has live at once, each on a thread of its own,
+/// unless it is told otherwise ([`Engine::with_started_bound`]).
+pub const STARTED_RUNS_DEFAULT: usize = 64;
+
+/// The most an executor can be told to start and have live at once. A thread is not
+/// free, and a process that makes them without end takes the machine with it.
+pub const STARTED_RUNS_CEILING: usize = 256;
+
+/// A bound on started runs that an executor does not take: it is 1 to
+/// [`STARTED_RUNS_CEILING`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundRefused {
+    pub asked: usize,
+}
+
+impl std::fmt::Display for BoundRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "an executor starts at least 1 run and at most {STARTED_RUNS_CEILING} at once: \
+             {} is not a bound it takes",
+            self.asked
+        )
+    }
+}
+
+impl std::error::Error for BoundRefused {}
+
+/// What makes the thread a started run's action runs on: it is given the thread's name
+/// and what the thread does, and says whether the thread was made. For tests, which
+/// have it fail ([`Engine::with_spawn`]); an executor makes real threads.
+#[doc(hidden)]
+pub type Spawn = fn(String, Box<dyn FnOnce() + Send + 'static>) -> std::io::Result<()>;
+
+/// A thread of the system, with this name. This is the one place the product makes a
+/// thread, and how many are live is bounded where it is called
+/// ([`Engine::with_started_bound`]): hence the lint that is allowed here (`clippy.toml`).
+#[allow(clippy::disallowed_methods)]
+fn spawn_thread(name: String, work: Box<dyn FnOnce() + Send + 'static>) -> std::io::Result<()> {
+    std::thread::Builder::new().name(name).spawn(work).map(drop)
 }
 
 /// Where the executor reads the digest of the config. It is asked every time a call is
@@ -157,6 +216,10 @@ impl Engine {
             secrets: Secrets::none(),
             ledger: None,
             capabilities: Capabilities::none(),
+            descendants: DESCENDANTS_LIMIT,
+            requests: REQUESTS_LIMIT,
+            started_bound: STARTED_RUNS_DEFAULT,
+            spawn: spawn_thread,
         }
     }
 
@@ -207,6 +270,29 @@ impl Engine {
         self
     }
 
+    /// The same executor, starting a run ([`Executor::start`]) only while the store's
+    /// writer has fewer than `bound` started runs that are not over
+    /// ([`Refusal::TooManyStarted`]). The count is the store's, so every executor over
+    /// one store value counts the same runs. A bound is 1 to [`STARTED_RUNS_CEILING`];
+    /// without this it is [`STARTED_RUNS_DEFAULT`].
+    pub fn with_started_bound(mut self, bound: usize) -> Result<Engine, BoundRefused> {
+        if !(1..=STARTED_RUNS_CEILING).contains(&bound) {
+            return Err(BoundRefused { asked: bound });
+        }
+        self.started_bound = bound;
+        Ok(self)
+    }
+
+    /// For tests: the same executor, making the thread of a started run with this.
+    /// It is a hook for a test and nothing else: a function that answers `Ok` and never
+    /// runs the work it was given leaves a run that nothing ends, and a `wait` for it
+    /// blocked.
+    #[doc(hidden)]
+    pub fn with_spawn(mut self, spawn: Spawn) -> Engine {
+        self.spawn = spawn;
+        self
+    }
+
     /// For tests: how many callers are waiting, now, for the run to be over.
     #[doc(hidden)]
     pub fn waiting_for(&self, run: &RunId) -> usize {
@@ -221,6 +307,22 @@ impl Engine {
         attached
             .and_then(live::of)
             .map(|live| live.nest().held_open())
+    }
+
+    /// For tests: the same executor, with this many runs at most under one run that
+    /// nothing called, in place of [`DESCENDANTS_LIMIT`].
+    #[doc(hidden)]
+    pub fn with_descendants_limit(mut self, limit: usize) -> Engine {
+        self.descendants = limit;
+        self
+    }
+
+    /// For tests: the same executor, whose runs each send this many capability
+    /// requests at most, in place of [`REQUESTS_LIMIT`]. It is never more than that.
+    #[doc(hidden)]
+    pub fn with_requests_limit(mut self, limit: usize) -> Engine {
+        self.requests = limit.min(REQUESTS_LIMIT);
+        self
     }
 
     /// The actions this executor runs.
@@ -289,65 +391,98 @@ impl Executor for Engine {
     }
 
     fn start(&self, request: &Request) -> Result<Answer, CallError> {
+        // A place among the started runs is taken first, before anything is prepared
+        // or admitted (ADR 0008, "How many runs are started at once"): so a request
+        // over the bound is refused here, with no run, nothing reserved and nothing
+        // written. An executor that only reads its store starts nothing, and takes
+        // no place to say so.
+        let place = match &self.store {
+            Some(store) => match store.start_place(self.started_bound) {
+                Some(place) => Some(place),
+                None => return self.over_the_bound(request),
+            },
+            None => None,
+        };
         let admitted = match self.begin(request)? {
             Ok(admitted) => admitted,
             Err(answer) => return Ok(answer),
         };
-        let run = admitted.run.clone();
-        // The action runs on a thread of its own, which holds what it needs of this
-        // executor, the store among it. How the run ended is in the store, and is
-        // what whoever asks after the run is told; nobody is handed this result.
-        let engine = self.clone();
-        std::thread::spawn(move || drop(engine.execute(admitted)));
-        Ok(Answer::Started(run))
+        self.launch(admitted, place)
     }
 
     fn status(&self, run: &RunId) -> Result<Watched, CallError> {
-        self.watch(run, false)
+        self.watch(run, false, None)
     }
 
     fn wait(&self, run: &RunId) -> Result<Watched, CallError> {
-        self.watch(run, true)
+        self.watch(run, true, None)
     }
 
     fn cancel(&self, run: &RunId) -> Result<Cancel, CallError> {
         let unknown = || CallError::Refused(Refusal::NoSuchRun { run: run.clone() });
         let not = |state| Ok(Cancel::NotAccepted(state));
-        match self.seen(run)? {
-            Seen::Nothing => return Err(unknown()),
-            Seen::Ended(outcome) => return not(RunState::Ended(outcome)),
-            Seen::Open => {}
-        }
-        // The run was admitted and had not ended when the store was looked at. Found
-        // in the table of open runs, with an executor's state, it is cancelled or not
-        // under its own lock (ADR 0008, "Cancellation"): that is the decision, and no
-        // look at the store is. The table's lock is let go before the run's is taken.
+        // The table of open runs is asked first, and not the store (ADR 0008,
+        // "Cancellation"). A run this process made is there from before it is visible
+        // until the executor is done with it, which is after its end's last sync. So
+        // a run found there, with an executor's state, is cancelled or not under its
+        // own lock, and that is the decision: no look at the store is, and an end
+        // that is visible and not yet confirmed is waited for, not reported. The
+        // table's lock is let go before the run's is taken.
         let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
-        let mut unended = RunState::NotEnded { here: false };
+        let mut open = RunState::NotEnded { here: false };
         if let Some(attached) = attached {
-            let Some(live) = live::of(attached) else {
-                return not(RunState::NotEnded { here: true });
-            };
-            if live.cancel() == Told::Accepted {
-                return Ok(Cancel::Accepted);
+            open = RunState::NotEnded { here: true };
+            if let Some(live) = live::of(attached) {
+                if live.cancel() == Told::Accepted {
+                    return Ok(Cancel::Accepted);
+                }
+                // Too late: the run's end had begun, and the executor is done with it
+                // now. An end it did not confirm is not said to be one, whatever the
+                // store shows: the run was abandoned, with the store's failure.
+                if let Some(failure) = live.abandoned() {
+                    // Unless the run was deleted meanwhile: then there is no run.
+                    return match self.seen(run) {
+                        Ok(Seen::Nothing) => Err(unknown()),
+                        _ => not(RunState::Abandoned { failure }),
+                    };
+                }
             }
-            // Too late: the run's end had begun, and it is over now. If the store
-            // still holds it open, it was abandoned.
-            let failure = live.abandoned().flatten();
-            unended = RunState::Abandoned { failure };
         }
-        // Over, or not in the table: as for a status, a second look at the store is
-        // the answer. A run that is still open there was abandoned by this process,
-        // or will not be ended by any.
+        // Ended and confirmed, made by other code of this process, or not in the
+        // table: the store says. A run it holds open that is not in the table was
+        // made by a process that is gone.
         match self.seen(run)? {
             Seen::Nothing => Err(unknown()),
             Seen::Ended(outcome) => not(RunState::Ended(outcome)),
-            Seen::Open => not(unended),
+            Seen::Open => not(open),
         }
     }
 }
 
 impl Engine {
+    /// The answer to a request to start a run when the started runs are at the bound.
+    /// A request that was sent before starts nothing, and is answered as it always
+    /// is, with the run it made; any other is refused.
+    fn over_the_bound(&self, request: &Request) -> Result<Answer, CallError> {
+        let refused = Refusal::TooManyStarted {
+            bound: self.started_bound,
+        };
+        let Some(id) = request.id() else {
+            return Err(refused.into());
+        };
+        if self.secrets.redact(id.as_str()) != id.as_str() {
+            return Err(Refusal::SecretInRequestId.into());
+        }
+        match self.look_up(id, request.fingerprint())? {
+            Found::Nothing => Err(refused.into()),
+            Found::Same(earlier) => Ok(Answer::Repeat(earlier)),
+            Found::Other { run } => Err(CallError::Refused(Refusal::Conflict {
+                request: id.clone(),
+                run,
+            })),
+        }
+    }
+
     /// Everything before a run's action: the look for a request's id, the preparation
     /// and the admission. What comes back is the run that was admitted, to be executed,
     /// or the answer to a request that makes no run: a repeat.
@@ -401,6 +536,74 @@ impl Engine {
             Err(Stopped::Taken(error)) => answer(self.look_up(id, fingerprint)?)
                 .unwrap_or_else(|| Err(CallError::Store(StoreFailure::new(error)))),
         }
+    }
+}
+
+impl Engine {
+    /// A place among the started runs of the store's writer, for a run that is to be
+    /// started, or the refusal when as many as this executor starts are live. An
+    /// executor that only reads its store takes none.
+    pub(super) fn start_place(&self) -> Result<Option<store::Place>, Refusal> {
+        let Some(store) = &self.store else {
+            return Ok(None);
+        };
+        let place = store.start_place(self.started_bound);
+        place.map(Some).ok_or(Refusal::TooManyStarted {
+            bound: self.started_bound,
+        })
+    }
+
+    /// Starts a run that was admitted, on a thread of its own, holding this place
+    /// among the started runs: for a request from outside and for a call from inside
+    /// an action alike (ADR 0008, "How many runs are started at once").
+    pub(super) fn launch(
+        &self,
+        mut admitted: Admitted,
+        place: Option<store::Place>,
+    ) -> Result<Answer, CallError> {
+        // The run holds the place from here, and gives it back when the executor is
+        // done with it, whatever happened to it: it is let go with the run.
+        if let Some(over) = admitted.over.as_mut() {
+            over.place = place;
+        }
+        let run = admitted.run.clone();
+        // The action runs on a thread of its own, which holds what it needs of this
+        // executor, the store among it. How the run ended is in the store, and is
+        // what whoever asks after the run is told; nobody is handed this result.
+        // The thread takes the run out of a cell that this caller holds too: a thread
+        // that could not be made never ran what it was given, and the run is still
+        // there to be ended, here.
+        let cell = Arc::new(Mutex::new(Some(admitted)));
+        let work = {
+            let (engine, cell) = (self.clone(), cell.clone());
+            move || {
+                let admitted = cell.lock().unwrap_or_else(PoisonError::into_inner).take();
+                if let Some(admitted) = admitted {
+                    drop(engine.execute(admitted));
+                }
+            }
+        };
+        let name = format!("run {run}");
+        let Err(error) = (self.spawn)(name, Box::new(work)) else {
+            return Ok(Answer::Started(run));
+        };
+        // No thread: the system has none to give. The run was admitted, durably, and
+        // its action will never start. It is ended here, as an error that says so, by
+        // the publication that ends any run: a definite end, in the store, for
+        // whoever asks after the run, in this process or the next. Only when that
+        // end cannot be written is the run abandoned, by the guard it carries (ADR
+        // 0008, "A run with nothing behind it"). Either way nothing waits for it, and
+        // the caller is told what happened, which is not a judgement of the call.
+        let why = said(&self.secrets, &error.to_string());
+        let admitted = cell.lock().unwrap_or_else(PoisonError::into_inner).take();
+        if let Some(admitted) = admitted {
+            let message = format!(
+                "the run was admitted and could not be started: no thread could be made \
+                 for its action: {why}"
+            );
+            drop(self.end(admitted, Some(&message)));
+        }
+        Err(CallError::NotStarted { run, why })
     }
 }
 
@@ -476,15 +679,25 @@ impl Contents for Pinned {
     }
 }
 
-/// Says, when it is dropped, that nothing in this process works on the run any more.
+/// What the executor is done with when it is done with a run, in the order it lets go:
+/// the run's place among the started runs, when it has one; then the run's entry in the
+/// store's table of open runs, when its end became visible and it was kept there for
+/// this; and only then are those who wait for the run told that nothing in this process
+/// works on it any more. So a caller that waited for a run finds its place free (ADR
+/// 0008, "How many runs are started at once").
+///
 /// It is made with the run's live state, before the admission is published: an
 /// admission that is given up, or that became visible and was not confirmed, drops it,
 /// so nobody waits for, or is told they cancelled, a run whose action will never start.
-///
 /// However it is dropped, by a return or by a panic that unwinds, the run is over for
 /// this process: ended, when the executor said so first, and otherwise abandoned, with
 /// the store's failure it was told of (ADR 0008, "A run with nothing behind it").
 struct Over {
+    /// The run's place among the started runs, when it was started.
+    place: Option<store::Place>,
+    /// The store and the run's id, once the run is admitted: what to let go of in the
+    /// store's table of open runs.
+    kept: Option<(Arc<Store>, RunId)>,
     live: Arc<LiveRun>,
     ended: bool,
     failure: Option<StoreFailure>,
@@ -504,8 +717,16 @@ impl Admitted {
 
 impl Drop for Over {
     fn drop(&mut self) {
+        drop(self.place.take());
         if let Some(parent) = self.started_under.take() {
             parent.nest().started_over();
+        }
+        // Only a run whose end was confirmed is let go of. One whose end is visible
+        // and was not confirmed stays in the table, abandoned: a cancel or a wait
+        // that begins later finds it there, and does not say it ended (ADR 0008,
+        // "Visible before durable").
+        if let (true, Some((store, run))) = (self.ended, &self.kept) {
+            store.let_go(run.as_str());
         }
         self.live.over(self.ended, self.failure.take());
     }
@@ -670,7 +891,7 @@ impl Engine {
             .into());
         }
         let reserved = counted.then(|| prepared.estimate().micros());
-        let taken = match (under, reserved) {
+        let mut taken = match (under, reserved) {
             (Some(under), Some(micros)) => under.allowance.take(micros).map_err(|left_micros| {
                 CallError::Refused(Refusal::OverCaller {
                     action: prepared.action().to_owned(),
@@ -680,7 +901,7 @@ impl Engine {
             })?,
             _ => None,
         };
-        let family = Family::of(under, prepared.action(), reserved);
+        let family = Family::of(under, prepared.action(), reserved, self.descendants);
         let parent = family.parent.as_ref().map(|(run, _)| run.clone());
         // What the run keeps while it executes is made before the run is, and attached
         // to it in the store's table of open runs by the publication that makes it: so
@@ -688,6 +909,8 @@ impl Engine {
         let kept = Arc::new(Kept::new(self.clock.clone(), self.secrets.clone()));
         let live = Arc::new(LiveRun::new(kept.clone(), bounded.signal.clone(), added));
         let mut over = Over {
+            place: None,
+            kept: None,
             live: live.clone(),
             ended: false,
             failure: None,
@@ -760,6 +983,12 @@ impl Engine {
             }
             publication.create_run(run.as_str()).map_err(failed)?;
             publication.attach(run.as_str(), live.clone());
+            // A run that is deleted while it executes is told to stop: its end will
+            // find no run, so nothing it goes on to do can be kept.
+            publication.tell_when_deleted(run.as_str(), {
+                let live = live.clone();
+                Arc::new(move || live.stop())
+            });
             publication
                 .put_in(run.as_str(), ADMITTED_NAME, RECORD_KIND, &admission)
                 .map_err(failed)?;
@@ -797,6 +1026,14 @@ impl Engine {
                 // Among these is an admission that became visible and was not
                 // confirmed: its run is in the store and open here, and is abandoned.
                 Err(error) => {
+                    // The admission is in the store, naming the run it drew on and
+                    // the amount: what was taken for it stays taken, or the
+                    // admissions that name a run could add up to more than it has.
+                    if let (store::Error::Unacknowledged { .. }, Some(taken)) =
+                        (&error, taken.take())
+                    {
+                        taken.keep();
+                    }
                     let failure = StoreFailure::new(error);
                     over.failure = Some(failure.clone());
                     return Err(CallError::Store(failure).into());
@@ -808,6 +1045,9 @@ impl Engine {
         if let Some(taken) = taken {
             taken.keep();
         }
+        // From here the run is in the store's table under this id: what its guard lets
+        // go of, when its end was visible and it was kept there.
+        over.kept = Some((store.clone(), run.clone()));
         Ok(Admitted {
             action: action.clone(),
             prepared,
@@ -862,12 +1102,19 @@ impl Engine {
     /// Runs the action of a run that was admitted, and ends the run: everything from
     /// the admission on. Whatever comes back, nothing in this process is working on
     /// the run any more, and whoever waits for it is told so.
-    pub(super) fn execute(&self, mut admitted: Admitted) -> Result<Finished, CallError> {
+    pub(super) fn execute(&self, admitted: Admitted) -> Result<Finished, CallError> {
+        self.end(admitted, None)
+    }
+
+    /// Ends a run that was admitted: after running its action, or, for a run that was
+    /// to be started and has no thread, without running it, as an error that says
+    /// `unstarted`.
+    fn end(&self, mut admitted: Admitted, unstarted: Option<&str>) -> Result<Finished, CallError> {
         let mut over = admitted.over.take();
         // Everything the run held is let go in here, its hold on the generation it
         // read among it, before whoever waits for the run is told that it is over.
         // A panic in there unwinds through here, and the run is abandoned.
-        let ended = self.run_and_end(admitted);
+        let ended = self.run_and_end(admitted, unstarted);
         if let Some(over) = &mut over {
             match &ended {
                 Ok(_) => over.ended = true,
@@ -879,7 +1126,11 @@ impl Engine {
         ended
     }
 
-    fn run_and_end(&self, admitted: Admitted) -> Result<Finished, CallError> {
+    fn run_and_end(
+        &self,
+        admitted: Admitted,
+        unstarted: Option<&str>,
+    ) -> Result<Finished, CallError> {
         let Admitted {
             action,
             prepared,
@@ -906,6 +1157,8 @@ impl Engine {
             run: run.clone(),
             live: live.clone(),
             stack: family.stack.clone(),
+            above: family.above_with(&run),
+            tree: family.tree.clone(),
             allowance: family.allowance.clone(),
             deadline,
             inputs: Arc::new(prepared.inputs().iter().map(|input| input.id()).collect()),
@@ -917,21 +1170,30 @@ impl Engine {
             kept.clone(),
             family.allowance.clone(),
             view,
-            // The backends the call resolved, and no other (ADR 0009).
-            self.capabilities.resolved_for(&prepared),
+            // The backends the call resolved, and no other (ADR 0009), with the
+            // executor's clock for their deadline.
+            self.capabilities
+                .resolved_for(&prepared)
+                .timed_by(self.clock.clone()),
             Arc::new(Nested::new(self.clone(), under, self.secrets.clone())),
         )
         .with_diagnostics(kept.clone())
-        .recording(kept.clone())
+        .recording(kept.clone(), self.requests)
         .offering(offer);
         live.nest().watch(context.requests().clone());
         // A panic in the action is caught: its run ends as any other does, with its
         // record and what it wrote, and the executor goes on (ADR 0008). The context
         // and what it shares are not left broken by one: what a run keeps is behind
         // locks that are taken whatever a panic did to them.
-        // A run that was cancelled before its action started does not run it.
-        let handed = (!live.signal().is_cancelled())
-            .then(|| catch_unwind(AssertUnwindSafe(|| action.run(&prepared, &context))));
+        // A run that was cancelled before its action started does not run it. Neither
+        // does a run that has no thread to run it on: it is handed the failure.
+        let handed = (!live.signal().is_cancelled()).then(|| match unstarted {
+            None => catch_unwind(AssertUnwindSafe(|| action.run(&prepared, &context))),
+            Some(why) => Ok(Err(Failure::Error {
+                kind: "start".to_owned(),
+                message: why.to_owned(),
+            })),
+        });
         // The action has come back. No call and no capability request is taken from
         // here on, and the run waits for those there are: every run it called is over,
         // and every request its handles sent is accounted for, before it ends (ADR
@@ -1032,6 +1294,10 @@ impl Engine {
         }
         let mut publication = store.begin().map_err(failed)?;
         publication.close_run(run.as_str()).map_err(failed)?;
+        // The run stays in the store's table of open runs after its end is visible,
+        // until this function has let go of everything: a `wait` that finds the end in
+        // the store finds the run there too, and waits for that.
+        publication.keep_until_let_go(run.as_str());
         let mut place = 0;
         for (at, (output, artifact)) in outputs.iter().enumerate() {
             // The outputs of one port are together, in the order they were handed back.
@@ -1196,28 +1462,77 @@ impl Engine {
         }
     }
 
+    /// A wait from inside an action, which is given up when this signal is set.
+    pub(super) fn wait_unless(
+        &self,
+        run: &RunId,
+        signal: &Cancellation,
+    ) -> Result<Watched, CallError> {
+        self.watch(run, true, Some(signal))
+    }
+
     /// Where the run is now (ADR 0008, "Status"): a look at the store, then at the
     /// store's table of the runs this process has open, then, when the run is in
     /// neither state, at the store again. With `wait`, a run that this process has
     /// open is waited for first.
-    fn watch(&self, run: &RunId, wait: bool) -> Result<Watched, CallError> {
+    /// `unless` is the signal of a run that waits from inside its action: set, the
+    /// wait is given up ([`Refusal::WaitCancelled`]).
+    fn watch(
+        &self,
+        run: &RunId,
+        wait: bool,
+        unless: Option<&Cancellation>,
+    ) -> Result<Watched, CallError> {
         let unknown = || CallError::Refused(Refusal::NoSuchRun { run: run.clone() });
+        let wait_for = |live: &Arc<LiveRun>| match unless {
+            None => {
+                live.wait_until_over();
+                Ok(())
+            }
+            Some(signal) if live.wait_until_over_unless(signal) => Ok(()),
+            Some(_) => Err(CallError::Refused(Refusal::WaitCancelled {
+                run: run.clone(),
+            })),
+        };
         let watched = |state, events| Ok(Watched::new(run.clone(), state, events));
+        // What a wait says of a run the executor abandoned, whatever the store shows
+        // of an end that was not confirmed; unless the run was deleted meanwhile.
+        let abandoned = |failure, events| match self.seen(run) {
+            Ok(Seen::Nothing) => Err(unknown()),
+            _ => watched(RunState::Abandoned { failure }, events),
+        };
         match self.seen(run)? {
             Seen::Nothing => return Err(unknown()),
-            Seen::Ended(outcome) => return watched(RunState::Ended(outcome), Vec::new()),
+            Seen::Ended(outcome) => {
+                // The end is visible. The executor that ran it here may not be done:
+                // the publication's last sync, and the run's place among the started
+                // runs. A status says what the store says. A wait is for the
+                // executor: the run stays in the table until that is done with it, so
+                // found there it is waited for, and not found there it is done.
+                if wait {
+                    let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
+                    if let Some(live) = attached.and_then(live::of) {
+                        wait_for(&live)?;
+                        // An end the executor did not confirm is not said to be one.
+                        if let Some(failure) = live.abandoned() {
+                            return abandoned(failure, live.events());
+                        }
+                    }
+                }
+                return watched(RunState::Ended(outcome), Vec::new());
+            }
             Seen::Open => {}
         }
         // The run was admitted and had not ended when the store was looked at. A run
         // this process made is in the table from before it was visible until its end
-        // is: found there, it is open here.
+        // is, and the executor is done with it: found there, it is open here.
         let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
         if let Some(attached) = attached {
             let Some(live) = live::of(attached) else {
                 return watched(RunState::NotEnded { here: true }, Vec::new());
             };
             if wait {
-                live.wait_until_over();
+                wait_for(&live)?;
             }
             let Some(failure) = live.abandoned() else {
                 if !wait {
@@ -1230,9 +1545,12 @@ impl Engine {
                     Seen::Open => watched(RunState::NotEnded { here: true }, live.events()),
                 };
             };
-            // Nothing here works on it any more, and its end was not confirmed. An end
-            // that became visible all the same is in the store, and is the answer;
-            // otherwise the run was abandoned, as it was admitted.
+            // Nothing here works on it any more, and its end was not confirmed. A wait
+            // says so, whatever became visible. A status says what the store says: an
+            // end that became visible all the same, or the run abandoned as admitted.
+            if wait {
+                return abandoned(failure, live.events());
+            }
             return match self.seen(run)? {
                 Seen::Nothing => Err(unknown()),
                 Seen::Ended(outcome) => watched(RunState::Ended(outcome), Vec::new()),
@@ -1247,5 +1565,63 @@ impl Engine {
             Seen::Ended(outcome) => watched(RunState::Ended(outcome), Vec::new()),
             Seen::Open => watched(RunState::NotEnded { here: false }, Vec::new()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use whizbang_testkit::scratch::Scratch;
+
+    use super::*;
+    use crate::store::fs::RealFs;
+
+    #[test]
+    fn a_runs_place_is_free_before_whoever_waits_for_the_run_is_told() {
+        // The order is what lets a caller that waited start the next run, and nothing
+        // outside can see it: the two happen within a few instructions of each other.
+        // So the lock under which a waiter is told is held here, and the executor's
+        // hold on the run is dropped on another thread. That thread gives the place
+        // back and then stops at the lock; were the order the other way round, it
+        // would stop at the lock with the place still taken, and the loop below would
+        // run out.
+        let dir = Scratch::new("over");
+        let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap());
+        let kept = Arc::new(Kept::new(Arc::new(SystemClock), Secrets::none()));
+        let live = Arc::new(LiveRun::new(kept, Cancellation::new(), Arc::default()));
+        let over = Over {
+            place: Some(store.start_place(1).unwrap()),
+            kept: Some((store.clone(), RunId::minted(1, 1))),
+            live: live.clone(),
+            ended: true,
+            failure: None,
+            started_under: None,
+        };
+        assert!(store.start_place(1).is_none());
+
+        let not_told = live.not_told_yet();
+        let letting_go = whizbang_testkit::threads::spawn(move || drop(over));
+        let limit = Instant::now() + Duration::from_secs(10);
+        let free = loop {
+            if let Some(place) = store.start_place(1) {
+                break Some(place);
+            }
+            if Instant::now() > limit {
+                break None;
+            }
+            std::thread::yield_now();
+        };
+        assert!(
+            !not_told.is_over(),
+            "whoever waits was told while the lock was held"
+        );
+        assert!(
+            free.is_some(),
+            "the place was not given back before whoever waits was to be told"
+        );
+        drop(not_told);
+        letting_go.join().unwrap();
+        live.wait_until_over();
     }
 }

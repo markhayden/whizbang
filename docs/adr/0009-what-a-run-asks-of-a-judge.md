@@ -79,7 +79,9 @@ ended `malformed`.
 
 **A run sends at most 1,024 requests** (`REQUESTS_LIMIT`). One more is not sent: the
 fault is `too_large`. So the lists below are whole and bounded
-(`asked::a_run_sends_only_so_many_requests_and_its_record_lists_each_and_is_read_back`).
+(`asked::a_run_sends_only_so_many_requests_and_its_record_lists_each_and_is_read_back`,
+which lowers the bound through the executor's seam for tests, and
+`asked::the_bound_on_a_runs_requests_is_the_one_its_record_and_the_schema_hold`).
 
 In `run/2`, which these fills share until the tag (ADR 0005):
 
@@ -93,8 +95,8 @@ In `run/2`, which these fills share until the tag (ADR 0005):
   or `call`), `index` (its place in `models` or in `steps`), `start_ms` and `ms`. A call
   whose run was abandoned has none.
 
-A model's names come from a backend, and have the secrets taken out when the record is
-made.
+A model's names come from a backend: each has the secrets taken out and is then cut,
+as every text an outcome keeps is (ADR 0008), when the record is made.
 
 ### What is kept of an exchange with a judge
 
@@ -126,6 +128,9 @@ entry under the word that says what it is:
   turn ended as a word (`end_turn`, `tool_use`, `max_tokens`, `refusal`, `other`), or null
   when no turn came back, in which case the fault is in `models`; `tool_calls`, how many
   the turn made; `usage`, the four token counts, or null; `provider_id`; and `excluded`.
+  A request whose backend's call panicked kept nothing: its turn is there with no
+  exchange, no stop and zeroes, and `models` says `unwound`
+  (`asked::a_request_whose_backend_panicked_is_in_a_record_that_is_read_back`).
 - `verdict`: at most one, the last entry (below).
 
 A turn's entry is a few hundred bytes whatever the conversation held, and there are at
@@ -266,7 +271,8 @@ to it: the action is this build's code, and the judge is not.
   a request may hold: a loop bounds its own turns. Diagnostics are held in memory until
   the run ends, as before (`docs/carry-over.md`).
 - A run that sends all 1,024 requests to a judge ends with 1,024 exchanges to publish:
-  that took six seconds on the test kit's disk, and its record is read back.
+  that took six seconds on the test kit's disk when it was measured, and no test runs it
+  at that size any more.
 - A stored conversation with an opaque part cannot be sent again.
 - Reversing the record's groups costs every stored record after the tag; reversing the
   frozen calls costs every loop written against them.

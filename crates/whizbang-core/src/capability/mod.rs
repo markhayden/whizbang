@@ -17,7 +17,7 @@
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
-use crate::contract::{Cancellation, Capability, ModelIdentity};
+use crate::contract::{Cancellation, Capability, Clock, ModelIdentity};
 use crate::identity::{CanonicalPixels, PixelDigest};
 
 mod declare;
@@ -32,6 +32,7 @@ pub use declare::{
 };
 pub use fault::{FAULT_LIMIT, Fault, FaultKind};
 pub use fill::{FillHandle, FillRequest, Filler, PROMPT_LIMIT, Painted, Support};
+pub(crate) use judge::Judged;
 pub use judge::{
     CONVERSATION_LIMIT, Controls, DESCRIPTION_LIMIT, Excluded, Judge, JudgeHandle, JudgeRequest,
     MESSAGE_LIMIT, Message, Opaque, PART_LIMIT, Part, RESULT_IMAGE_LIMIT, Role, StopReason,
@@ -216,13 +217,25 @@ pub(crate) fn pixel_count(what: &'static str, width: u32, height: u32) -> Result
 /// one. A handle makes it, from the run it is bound to, and hands it to the backend with
 /// every request; nothing else can make one. What a later task needs a backend to know
 /// of its run is added here, and no trait changes for it.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct Bounds {
     cancellation: Cancellation,
     deadline: Option<Instant>,
     /// Where the handle counts each request it sends, when its run counts them.
     tally: Option<Arc<Tally>>,
+    /// What tells the time the deadline is held to, when it is not the machine's: the
+    /// clock of the executor that made the run (ADR 0008, "A deadline in a run").
+    clock: Option<Arc<dyn Clock>>,
+}
+
+impl std::fmt::Debug for Bounds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Bounds")
+            .field("cancelled", &self.is_cancelled())
+            .field("deadline", &self.deadline)
+            .finish()
+    }
 }
 
 /// The most requests the handles of one run send. One more is not sent: the fault is
@@ -301,6 +314,8 @@ struct Counts {
     /// Every request that was sent, in the order they were sent.
     asked: Vec<Logged>,
     recorder: Option<Arc<dyn Recorder>>,
+    /// How many requests may be sent, when it is fewer than [`REQUESTS_LIMIT`].
+    limit: Option<usize>,
 }
 
 impl Tally {
@@ -310,8 +325,11 @@ impl Tally {
 
     /// From here on each request is timed by this recorder's clock, and each exchange
     /// with a judge is kept by it.
-    pub(crate) fn record_with(&self, recorder: Arc<dyn Recorder>) {
-        self.counts().recorder = Some(recorder);
+    /// At most `limit` requests are sent, and never more than [`REQUESTS_LIMIT`].
+    pub(crate) fn record_with(&self, recorder: Arc<dyn Recorder>, limit: usize) {
+        let mut counts = self.counts();
+        counts.recorder = Some(recorder);
+        counts.limit = Some(limit.min(REQUESTS_LIMIT));
     }
 
     /// Counts one request that is about to be sent to this model. Refused once the
@@ -329,12 +347,11 @@ impl Tally {
                 "the action of the run had come back before the request was sent",
             ));
         }
-        if counts.asked.len() >= REQUESTS_LIMIT {
+        let limit = counts.limit.unwrap_or(REQUESTS_LIMIT);
+        if counts.asked.len() >= limit {
             return Err(Fault::new(
                 FaultKind::TooLarge,
-                &format!(
-                    "the run has sent {REQUESTS_LIMIT} requests, which is as many as one run may"
-                ),
+                &format!("the run has sent {limit} requests, which is as many as one run may"),
             ));
         }
         let now = counts
@@ -455,6 +472,7 @@ impl Bounds {
             cancellation,
             deadline: None,
             tally: None,
+            clock: None,
         }
     }
 
@@ -499,6 +517,11 @@ impl Bounds {
         tally.is_some_and(|tally| tally.exclude_last(why))
     }
 
+    /// Holds the deadline to this clock, in place of the machine's.
+    pub(crate) fn timed_by(&mut self, clock: Arc<dyn Clock>) {
+        self.clock = Some(clock);
+    }
+
     /// Narrows the deadline: the earlier of the one already set and this one is kept.
     /// A deadline is never moved later.
     pub(crate) fn until(&mut self, deadline: Instant) {
@@ -540,10 +563,8 @@ impl Bounds {
                 "the run was cancelled before the request was sent",
             ));
         }
-        if self
-            .deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-        {
+        let now = || self.clock.as_ref().map_or_else(Instant::now, |c| c.now());
+        if self.deadline.is_some_and(|deadline| now() >= deadline) {
             return Err(Fault::new(
                 FaultKind::TimedOut,
                 "the deadline of the run passed before the request was sent",

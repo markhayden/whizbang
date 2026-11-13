@@ -834,6 +834,12 @@ impl JudgeHandle {
         self
     }
 
+    /// The same handle, holding its deadline to this clock in place of the machine's.
+    pub(crate) fn timed_by(mut self, clock: Arc<dyn crate::contract::Clock>) -> JudgeHandle {
+        self.bounds.timed_by(clock);
+        self
+    }
+
     /// What the judge behind the handle declares.
     pub fn declaration(&self) -> &Declaration {
         self.backend.declaration()
@@ -936,6 +942,20 @@ pub(crate) struct Judged {
 }
 
 impl Judged {
+    /// What is kept of a request whose backend's call unwound: nothing of it.
+    pub(crate) fn unanswered() -> Judged {
+        Judged {
+            exchange: None,
+            max_output_tokens: 0,
+            messages: 0,
+            stop: None,
+            tool_calls: 0,
+            usage: None,
+            provider_id: None,
+            excluded: None,
+        }
+    }
+
     pub(crate) fn of(
         request: &JudgeRequest,
         answer: &Result<Turn, Fault>,

@@ -120,7 +120,9 @@ record are in `crates/whizbang-core/tests/it/capability/`.
   it is given (`Capabilities`, which holds backends and no handle; `Context::new`): so
   a context never holds a handle that is bound to another run's signal (ADR 0008,
   "Cancellation"). A handle made by other code, as a test makes one, is bound to the
-  signal it was made with. A handle does four things the backend is not
+  signal it was made with, and tells its deadline by the machine's clock; the handles
+  an executor's context makes tell it by the executor's clock (ADR 0008, "A deadline in
+  a run"). A handle does four things the backend is not
   trusted to do. Once the run is cancelled it sends nothing, and answers with the
   fault `cancelled`. Once the deadline has passed it sends nothing, and answers
   `timed_out`. It sends a request only to a backend that declares every feature the

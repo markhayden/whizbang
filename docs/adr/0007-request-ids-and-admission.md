@@ -259,7 +259,8 @@ way the test kit's disk can lose what was not yet durable: every name undone, ev
 name kept, and every choice of which directories, and of which names, lose theirs. How
 many directories and names a crash leaves undecided is read from the first crash at
 each step, and every mask over them is then a crash of its own
-(`admit::a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it`).
+(`admit::a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_first_steps_of_four`
+and the three tests beside it, each a quarter of the steps).
 
 The action runs only after the publication is durable. A refusal, and a call that is
 not ready, happen before it and record no id: the id stays free for the request once it

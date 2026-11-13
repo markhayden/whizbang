@@ -134,15 +134,19 @@ pub enum RefusalKind {
     OverCaller,
     CallerOver,
     TooManyCalls,
+    TreeFull,
     TooManyStarted,
+    TooManyStartedUnder,
     IdInside,
+    WaitAbove,
+    WaitCancelled,
     NotOffered,
     NotReadable,
 }
 
 impl RefusalKind {
     /// Every kind, in the order above.
-    pub const ALL: [RefusalKind; 23] = [
+    pub const ALL: [RefusalKind; 27] = [
         RefusalKind::UnknownAction,
         RefusalKind::Invalid,
         RefusalKind::Input,
@@ -162,8 +166,12 @@ impl RefusalKind {
         RefusalKind::OverCaller,
         RefusalKind::CallerOver,
         RefusalKind::TooManyCalls,
+        RefusalKind::TreeFull,
         RefusalKind::TooManyStarted,
+        RefusalKind::TooManyStartedUnder,
         RefusalKind::IdInside,
+        RefusalKind::WaitAbove,
+        RefusalKind::WaitCancelled,
         RefusalKind::NotOffered,
         RefusalKind::NotReadable,
     ];
@@ -210,6 +218,18 @@ impl Refused {
         let named = clean && text::action_name(call.action()).is_ok();
         Refused {
             action: named.then(|| call.action().to_owned()),
+            kind: refusal.kind(),
+            why: why.chars().take(REFUSAL_WHY_LIMIT).collect(),
+        }
+    }
+
+    /// A refusal of something an action asked of a run, which names no action: a
+    /// wait that was refused or given up. Its sentence holds a run's id and fixed
+    /// words, and goes through the same redaction and cut.
+    pub(super) fn of_a_question(refusal: &super::Refusal, secrets: &Secrets) -> Refused {
+        let why = super::engine::said(secrets, &refusal.to_string());
+        Refused {
+            action: None,
             kind: refusal.kind(),
             why: why.chars().take(REFUSAL_WHY_LIMIT).collect(),
         }
@@ -917,9 +937,9 @@ impl RunRecord {
         let asked = &ran.inside.asked;
         let models = asked.iter().map(|asked| Model {
             capability: asked.capability,
-            backend: secrets.redact(asked.model.backend()),
-            model: secrets.redact(asked.model.model()),
-            version: secrets.redact(asked.model.version()),
+            backend: super::engine::said(secrets, asked.model.backend()),
+            model: super::engine::said(secrets, asked.model.model()),
+            version: super::engine::said(secrets, asked.model.version()),
             device: None,
             cached: None,
             ended: RequestEnded::of(asked.ended),
@@ -935,8 +955,15 @@ impl RunRecord {
         let calls = ran.inside.timed.iter();
         let calls = calls.map(|(at, start, end)| lasted(Timed::Call, *at, *start, *end));
         let durations = requests.chain(calls).collect();
+        // A request to a judge whose backend's call unwound kept nothing of its
+        // exchange. It has its turn all the same, with nothing in it: the record lists
+        // one turn for each request to a judge.
+        let unanswered = crate::capability::Judged::unanswered();
         let turns = asked.iter().enumerate().filter_map(|(at, asked)| {
-            let judged = asked.judged.as_ref()?;
+            if asked.capability != Capability::Judge {
+                return None;
+            }
+            let judged = asked.judged.as_ref().unwrap_or(&unanswered);
             Some(Judged::Turn {
                 request: at as u64,
                 exchange: judged.exchange.clone(),
@@ -956,6 +983,7 @@ impl RunRecord {
                     cache_read_tokens: usage.cache_read_tokens(),
                     cache_write_tokens: usage.cache_write_tokens(),
                 }),
+                // Cleaned and cut at 128 characters when its turn was made.
                 provider_id: judged.provider_id.as_deref().map(|id| secrets.redact(id)),
                 excluded: judged.excluded,
             })
