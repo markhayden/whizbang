@@ -62,7 +62,7 @@ two progress events, of which the second gives the count of core pixels before a
 
 | Exit code | Meaning |
 |---|---|
-| 0 | The run completed, and the mask is in the store |
+| 0 | The run completed, and the mask is in the store. Also when the standard output was closed by its reader before the two lines were written: the run is committed, and nothing is printed |
 | 1 | Nothing ran (the call was refused, or the store failed), or the run did not complete (an error, or a cancellation): the line says which, and names the run when there is one |
 | 2 | The command line was not understood: an argument is missing, or is not a number |
 | 3 | What was to be printed could not be written |

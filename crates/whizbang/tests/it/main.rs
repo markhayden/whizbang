@@ -2,6 +2,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 mod describe;
+mod escape;
 mod executor;
 mod import;
 mod rascal;

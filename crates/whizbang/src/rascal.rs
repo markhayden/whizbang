@@ -15,7 +15,8 @@ const EXIT_CODES: &str = "Exit codes:
   0  the run completed, and its outputs are in the store
   1  nothing ran, or the run did not complete: the complaint says which, and names the run
   2  the command line was not understood
-  3  what was to be printed could not be written";
+  3  what was to be printed could not be written
+  101  the command itself failed (a panic outside an action): one fixed line is printed";
 
 #[derive(Subcommand)]
 pub enum Command {

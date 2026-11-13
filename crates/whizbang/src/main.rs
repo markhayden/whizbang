@@ -89,6 +89,14 @@ fn emit(bytes: &[u8]) -> ExitCode {
     }
 }
 
+/// Prints a command's complaint, and gives the exit code 1. Every complaint goes
+/// through here, and so through one escape: a store's error names files by their
+/// paths, and a path is whatever the caller typed or a folder held.
+fn complain(complaint: &str) -> ExitCode {
+    eprintln!("whizbang: {}", door::printable(complaint));
+    ExitCode::from(1)
+}
+
 fn main() -> ExitCode {
     door::quiet_panics();
     let cli = Cli::parse();
@@ -102,24 +110,15 @@ fn main() -> ExitCode {
         },
         Command::Store { command } => match store::run(&command) {
             Ok(text) => emit(text.as_bytes()),
-            Err(complaint) => {
-                eprintln!("whizbang: {complaint}");
-                ExitCode::from(1)
-            }
+            Err(complaint) => complain(&complaint),
         },
         Command::Runs { command } => match runs::run(&command) {
             Ok(bytes) => emit(&bytes),
-            Err(complaint) => {
-                eprintln!("whizbang: {complaint}");
-                ExitCode::from(1)
-            }
+            Err(complaint) => complain(&complaint),
         },
         Command::Rascal { command } => match rascal::run(&command) {
             Ok(text) => emit(text.as_bytes()),
-            Err(complaint) => {
-                eprintln!("whizbang: {complaint}");
-                ExitCode::from(1)
-            }
+            Err(complaint) => complain(&complaint),
         },
     }
 }

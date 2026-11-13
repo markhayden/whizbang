@@ -39,6 +39,10 @@ test from making threads without end": how often the guard counts, when a guard 
 guard leaves the watching to the one above, what the Linux limit does when the user's
 threads cannot be counted, that no group of lints is allowed, and what `just test-only`
 takes.
+Amended: 2026-11-13, with a fix after the task. Changed, in "A wait from inside an
+action": a wait by a run whose signal is set says `WaitCancelled` whatever became of
+the run it waited for. Added: a deletion tells those who wait; what a store's count of
+1 means for a started run.
 Amended: 2026-11-13, with `grow` through the executor (task A9), the first command that
 runs an action. Added: "The first door". Changed, in "A panic in an action": a door now
 installs the hook; in "Cancellation", under a deadline in a run: a context says whether
@@ -825,7 +829,10 @@ started executing at once (`STARTED_LIMIT`); a fifth is refused
 (`Refusal::TooManyStartedUnder`), so one tree cannot take every place: at most 4 + 16
 + 64 = 84 by its own arithmetic, and never more than the count. Both the place and
 the run's share of its parent's four come back when the run is over, before whoever
-waits for it is told. Threads an action makes itself are not counted
+waits for it is told. A started run holds its place while its end waits for the runs
+it called, so where the store's count is 1 a started run can never start a child: the
+child is refused (`TooManyStarted`), and never waited for; it can still call one on
+its own thread. Threads an action makes itself are not counted
 (`nested::a_run_started_from_inside_an_action_takes_a_place_among_the_stores_started_runs`,
 `nested::a_run_starts_only_so_many_runs_at_once_and_one_more_is_refused`,
 `nested::a_run_started_from_inside_an_action_that_gets_no_thread_ends_as_an_error_and_its_caller_is_told`).
@@ -1014,8 +1021,22 @@ wait is given up when the run that waits is cancelled, itself or through a run a
 it (`Refusal::WaitCancelled`): a signal tells those who wait on it when it is set by
 a cancellation, after the lock it was set under is let go, and the waiter looks at the
 signal under the lock of the run it waits for, so the telling is never between its
-look and its wait. So two runs that wait for each other are freed by cancelling
-either, or a run above them. Both refusals are in the record of the run that asked,
+look and its wait. The signal decides when both are so: a wait by a run whose signal is
+set says `WaitCancelled` whatever became of the run it waited for, one that is over
+included, and a wait that is begun by a cancelled run says it at once. Without that
+rule the answer depended on who looked first, and one of two runs that waited for each
+other was told that the other had ended as cancelled
+(`nested::a_wait_by_a_run_that_is_cancelled_is_given_up_whatever_became_of_the_run_it_waited_for`).
+The signal is looked at before the wait, in it, and once more when the run has an
+answer, so a cancellation that lands at any moment before the wait has returned is
+what it says
+(`nested::a_cancellation_that_lands_after_a_wait_looked_at_its_signal_still_gives_the_wait_up`,
+which stops at the moment between the first look and the look at the run). A signal
+that is set after the wait has returned changes nothing of what it returned. A
+deletion of a run tells those who wait as a cancellation does
+(`nested::deleting_an_executing_run_wakes_a_run_under_it_that_waits_for_another`). So
+two runs that wait for each other are freed by cancelling either, or a run above
+them. Both refusals are in the record of the run that asked,
 with no action. `wait` on an executor from outside is unchanged
 (`nested::a_wait_for_the_run_that_asks_or_for_a_run_above_it_is_refused`,
 `nested::two_runs_that_wait_for_each_other_are_freed_when_a_run_above_them_is_cancelled`).
@@ -1075,9 +1096,14 @@ after it does.
   from the run's outcome, which has the secrets taken out
   (`rascal::a_panic_leaves_nothing_it_said_and_no_place_in_the_source_on_stderr`). A
   panic outside an action ends the process with the exit code 101 and that one line.
-- **What is printed.** What the executor says of a refusal or of a run has had the secrets
-  taken out and been cut already; the door escapes it, so that no control character
-  reaches a terminal, and cuts nothing shorter. Text the executor never saw, such as
+- **What is printed.** What the executor says of a run has had the secrets taken out and
+  been cut already; the door escapes it, so that no control character reaches a
+  terminal, and cuts nothing shorter. A refusal is the executor's sentence as it is,
+  which quotes what it quotes escaped. The binary then passes every complaint, of
+  every command, through the same escape where it prints it: a store's failure names a
+  path, which is whatever a caller typed or a folder held (`escape.rs`, a test for
+  each command). The escape leaves a backslash as it is, so doing it twice is doing it
+  once. Text the executor never saw, such as
   something given as an artifact's identity that is none, is not said back: a door holds
   no list of secrets to take out of it.
 - **One process owns every run it makes.** The command runs the action in its own

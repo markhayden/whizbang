@@ -171,7 +171,8 @@ impl LiveRun {
 
     /// Returns once nothing in this process works on the run any more, or once this
     /// signal is set by a cancellation, whichever is first. What comes back is
-    /// whether the run is over.
+    /// whether the wait was for the run and not given up: false whenever the signal
+    /// is set, the run being over or not.
     pub(super) fn wait_until_over_unless(self: &Arc<LiveRun>, signal: &Cancellation) -> bool {
         // Told of the cancellation under this run's lock, so that it is seen before
         // the wait or wakes it: never between the look and the wait.
@@ -189,7 +190,11 @@ impl LiveRun {
                 .unwrap_or_else(PoisonError::into_inner);
         }
         self.waiting.fetch_sub(1, Ordering::SeqCst);
-        phase.is_over()
+        // The signal decides, when both are so: a run that is over and a waiter that
+        // is cancelled are answered as cancelled, whichever came first. Two runs that
+        // wait for each other are both cancelled before either is over, and one of
+        // them is over by the time the other looks.
+        !signal.is_cancelled()
     }
 
     fn until_over(&self, mut phase: MutexGuard<'_, Phase>) {

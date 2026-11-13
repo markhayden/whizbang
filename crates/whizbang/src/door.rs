@@ -8,9 +8,10 @@
 //!   for a secret in the text before anything shows it, and never through
 //!   [`whizbang_core::contract::RequestId::parse`], whose refusal shows the text.
 //! - **Nothing that was given is printed as it was.** What the executor says of a run
-//!   or of a refusal has had the secrets taken out and been cut to a length already;
-//!   the door then escapes it ([`printable`]), so that no control character reaches a
-//!   terminal. What a caller typed and the executor never saw, such as text that is no
+//!   has had the secrets taken out and been cut to a length already; the door then
+//!   escapes it ([`printable`]), so that no control character reaches a terminal. And
+//!   the binary passes every complaint of every command through the same escape where
+//!   it prints it, a store's failure that names a path among them. What a caller typed and the executor never saw, such as text that is no
 //!   artifact identity, is not said back at all: the door has no list of secrets to
 //!   take out of it.
 //! - **A panic prints one fixed line** ([`quiet_panics`]). The default hook prints the
@@ -50,9 +51,11 @@ pub fn quiet_panics() {
     }));
 }
 
-/// A text as a door prints it: every character that is not printable escaped, and the
-/// backslash with them, so that an escape is told from the text. Quotes are left as
-/// they are. A text over [`PRINT_LIMIT`] characters is cut there, and three dots
+/// A text as a door prints it: every character that is not printable escaped. Quotes
+/// and the backslash are left as they are, so a text that was escaped before, as the
+/// executor's refusals are where they quote something, is not escaped a second time,
+/// and escaping twice is escaping once. The price: a backslash an action wrote cannot
+/// be told from one an escape made. A text over [`PRINT_LIMIT`] characters is cut there, and three dots
 /// follow. The text is redacted before it comes here: what is cut or escaped first can
 /// hide a secret from the pass that takes it out.
 pub fn printable(text: &str) -> String {
@@ -63,7 +66,7 @@ pub fn printable(text: &str) -> String {
             break;
         }
         match c {
-            '\'' | '"' => out.push(c),
+            '\'' | '"' | '\\' => out.push(c),
             other => out.extend(other.escape_debug()),
         }
     }
@@ -81,8 +84,11 @@ pub struct GrowAsked<'a> {
     pub request_id: Option<&'a str>,
 }
 
+/// A refusal, or a failure of the store, in the executor's sentence as it is: what it
+/// quotes it has escaped and cut already, and what it says of the store holds no path.
+/// The binary escapes every complaint once more where it prints it ([`printable`]).
 fn refused(error: &CallError) -> String {
-    printable(&error.to_string())
+    error.to_string()
 }
 
 /// Runs `grow` through the executor, and waits for it. What comes back is what to

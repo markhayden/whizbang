@@ -36,7 +36,7 @@ const HEIGHT: usize = 16;
 
 /// A mask of a 24 by 16 image: a block of core in columns 8 to 11 and rows 5 to 8, and
 /// column 14 protected.
-fn fixture() -> Mask {
+pub(super) fn fixture() -> Mask {
     let core = (0..WIDTH * HEIGHT)
         .map(|at| {
             let (x, y) = (at % WIDTH, at / WIDTH);
@@ -355,6 +355,15 @@ fn nothing_grow_was_given_reaches_the_terminal_as_it_was() {
         );
         assert!(err.len() < 400, "{} bytes", err.len());
     }
+    // What the executor refused it quotes escaped, once: the door adds no second escape.
+    let (_, _, err) = grow(
+        &store,
+        &["--mask", &input, "--px", "8", "--request-id", "one\ntwo"],
+    );
+    assert!(
+        err.contains("one\\ntwo") && !err.contains("one\\\\ntwo"),
+        "{err:?}"
+    );
     // The same for what is given as a mask, which is not said back at all.
     let (code, _, err) = grow(&store, &["--mask", "\u{1b}[2J", "--px", "8"]);
     assert_eq!(code, 1);
@@ -442,6 +451,7 @@ fn the_help_of_grow_states_its_arguments_and_its_exit_codes() {
         "1  nothing ran, or the run did not complete",
         "2  the command line was not understood",
         "3  what was to be printed could not be written",
+        "101  the command itself failed",
     ] {
         assert!(help.contains(said), "{said:?} is not in:\n{help}");
     }
