@@ -119,6 +119,23 @@ impl LiveRun {
         Told::TooLate
     }
 
+    /// Sets the run's signal if its end has not begun, and waits for nothing: for the
+    /// thread that deleted the run from the store, which the run's end would wait for.
+    ///
+    /// The signal of every run under this one reads as set from that moment, since
+    /// each is under this one's (ADR 0008, "Nested calls"): so deleting a run reaches
+    /// the runs it called, as cancelling it does. Those who wait on the signal are
+    /// told after the run's lock is let go; telling them publishes nothing and waits
+    /// for nothing.
+    pub(super) fn stop(&self) {
+        let phase = self.phase();
+        if *phase == Phase::Executing {
+            self.signal.set();
+            drop(phase);
+            self.signal.tell();
+        }
+    }
+
     /// The executor begins the run's end: from here on a cancellation is too late.
     /// What comes back is whether the run was cancelled before this, which is read
     /// under the same lock a cancellation is accepted under.

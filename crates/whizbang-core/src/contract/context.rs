@@ -16,7 +16,7 @@ use std::time::Instant;
 use crate::artifact::Contents;
 use crate::capability::{FillHandle, Filler, Judge, JudgeHandle, SegmentHandle, Segmenter, Tally};
 
-use super::Executor;
+use super::{Clock, Executor};
 
 /// A cancellation signal. Every clone is the same signal: once one is cancelled, all are,
 /// and none is ever uncancelled.
@@ -283,9 +283,18 @@ pub struct Capabilities {
     segment: Option<Arc<dyn Segmenter>>,
     fill: Option<Arc<dyn Filler>>,
     judge: Option<Arc<dyn Judge>>,
+    /// The clock the handles hold a deadline to, when it is not the machine's.
+    clock: Option<Arc<dyn Clock>>,
 }
 
 impl Capabilities {
+    /// The same set, whose handles hold a run's deadline to this clock: the executor's,
+    /// which its admission goes by too.
+    pub fn timed_by(mut self, clock: Arc<dyn Clock>) -> Capabilities {
+        self.clock = Some(clock);
+        self
+    }
+
     /// No backend at all.
     pub fn none() -> Capabilities {
         Capabilities::default()
@@ -318,24 +327,38 @@ impl Capabilities {
         tally: &Arc<Tally>,
     ) -> Handles {
         let run = || cancellation.clone();
-        let segment = self.segment.clone();
-        let segment = segment.map(|b| SegmentHandle::new(b, run()).counted(tally.clone()));
-        let fill = self.fill.clone();
-        let fill = fill.map(|b| FillHandle::new(b, run()).counted(tally.clone()));
-        let judge = self.judge.clone();
-        let judge = judge.map(|b| JudgeHandle::new(b, run()).counted(tally.clone()));
-        match deadline {
-            None => Handles {
-                segment,
-                fill,
-                judge,
-            },
-            Some(by) => Handles {
-                segment: segment.map(|handle| handle.until(by)),
-                fill: fill.map(|handle| handle.until(by)),
-                judge: judge.map(|handle| handle.until(by)),
-            },
+        let segment = self
+            .segment
+            .clone()
+            .map(|b| SegmentHandle::new(b, run()).counted(tally.clone()));
+        let fill = self
+            .fill
+            .clone()
+            .map(|b| FillHandle::new(b, run()).counted(tally.clone()));
+        let judge = self
+            .judge
+            .clone()
+            .map(|b| JudgeHandle::new(b, run()).counted(tally.clone()));
+        let mut handles = Handles {
+            segment,
+            fill,
+            judge,
+        };
+        if let Some(by) = deadline {
+            handles = Handles {
+                segment: handles.segment.map(|handle| handle.until(by)),
+                fill: handles.fill.map(|handle| handle.until(by)),
+                judge: handles.judge.map(|handle| handle.until(by)),
+            };
         }
+        if let Some(clock) = &self.clock {
+            handles = Handles {
+                segment: handles.segment.map(|h| h.timed_by(clock.clone())),
+                fill: handles.fill.map(|h| h.timed_by(clock.clone())),
+                judge: handles.judge.map(|h| h.timed_by(clock.clone())),
+            };
+        }
+        handles
     }
 }
 

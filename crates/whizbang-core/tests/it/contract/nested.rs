@@ -869,6 +869,63 @@ fn cancelling_a_run_that_another_run_called_does_not_cancel_the_run_that_called_
     assert_eq!(record(&world, &child).outcome().status, Status::Cancelled);
 }
 
+#[test]
+fn deleting_an_executing_run_tells_the_runs_it_called_to_stop() {
+    // The run is deleted from the store while a run it called is held inside its
+    // action. Nothing of either can be kept, so both are told: the signal of the run
+    // that was called is set by the deletion, as a cancellation of its caller sets it.
+    let world = World::new();
+    let store = world.store();
+    let barriers = Barriers::new();
+    let saw: Noted<(bool, bool)> = noted();
+    let outer = act("outer", |_, context| {
+        let finished = context.executor().submit(&Call::new("inner")).unwrap();
+        assert_eq!(finished.outcome(), &Outcome::Cancelled);
+        assert!(context.cancellation().is_cancelled());
+        Ok(Produced::nothing())
+    });
+    let inner = {
+        let (barriers, saw) = (barriers.clone(), saw.clone());
+        act("inner", move |_, context| {
+            let before = context.cancellation().is_cancelled();
+            barriers.stop_at("inner");
+            saw.lock()
+                .unwrap()
+                .push((before, context.cancellation().is_cancelled()));
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(store.clone(), vec![outer, inner]);
+    let Ok(Answer::Started(root)) = executor.start(&Request::new(Call::new("outer"))) else {
+        panic!("the request was not started");
+    };
+    barriers.arrived("inner", 1);
+    let all = records(&world);
+    let child = all.keys().find(|id| **id != root.as_str()).unwrap();
+    let child = RunId::parse(child).unwrap();
+    store.delete(&[root.as_str()]).unwrap();
+    barriers.release("inner");
+    let waited = within("the wait for the run that was called", {
+        let (executor, child) = (executor.clone(), child.clone());
+        move || executor.wait(&child)
+    });
+    assert_eq!(
+        waited.unwrap().state(),
+        &RunState::Ended(Outcome::Cancelled)
+    );
+    assert_eq!(*saw.lock().unwrap(), [(false, true)]);
+    // The run that was deleted is gone, for whoever asks; the run it called has its
+    // record, and still names it.
+    let no_run = CallError::Refused(Refusal::NoSuchRun { run: root.clone() });
+    let waited = within("the wait for the run that was deleted", {
+        let (executor, root) = (executor.clone(), root.clone());
+        move || executor.wait(&root)
+    });
+    assert_eq!(waited, Err(no_run));
+    let stored = record(&world, &child);
+    assert_eq!(stored.identity().parent.as_deref(), Some(root.as_str()));
+}
+
 // --- when a run is terminal -------------------------------------------------------------------
 
 /// A request to paint the top row of a small picture.
