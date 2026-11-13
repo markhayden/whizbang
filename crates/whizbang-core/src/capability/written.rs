@@ -468,17 +468,71 @@ fn document<'de, T: Deserialize<'de>>(
     Ok(document)
 }
 
+/// The most bytes of the text that says a document's kind and version.
+pub const KIND_MAX_BYTES: usize = 64;
+
 /// The text under `field` at the top of the document, when there is one: none when
-/// the field is not there or holds something that is no text.
+/// the field is not there, or holds something that is no text, or a text of more than
+/// [`KIND_MAX_BYTES`], which is not kept.
 fn peek(bytes: &[u8], field: &str) -> Result<Option<String>, serde_json::Error> {
     use serde::de::{IgnoredAny, MapAccess, Visitor};
 
-    /// A text, kept, or anything else, passed over.
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Found {
-        Text(String),
-        Other(IgnoredAny),
+    /// The value under the kind's field: a text of at most [`KIND_MAX_BYTES`], kept, or
+    /// anything else, a longer text included, passed over and not kept.
+    struct Short(Option<String>);
+
+    impl<'de> Deserialize<'de> for Short {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Short, D::Error> {
+            struct Value;
+
+            impl<'de> Visitor<'de> for Value {
+                type Value = Short;
+
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str("any JSON value")
+                }
+
+                fn visit_str<E>(self, text: &str) -> Result<Short, E> {
+                    let short = text.len() <= KIND_MAX_BYTES;
+                    Ok(Short(short.then(|| text.to_owned())))
+                }
+
+                fn visit_bool<E>(self, _: bool) -> Result<Short, E> {
+                    Ok(Short(None))
+                }
+
+                fn visit_i64<E>(self, _: i64) -> Result<Short, E> {
+                    Ok(Short(None))
+                }
+
+                fn visit_u64<E>(self, _: u64) -> Result<Short, E> {
+                    Ok(Short(None))
+                }
+
+                fn visit_f64<E>(self, _: f64) -> Result<Short, E> {
+                    Ok(Short(None))
+                }
+
+                fn visit_unit<E>(self) -> Result<Short, E> {
+                    Ok(Short(None))
+                }
+
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                    self,
+                    mut seq: A,
+                ) -> Result<Short, A::Error> {
+                    while seq.next_element::<IgnoredAny>()?.is_some() {}
+                    Ok(Short(None))
+                }
+
+                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Short, A::Error> {
+                    while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+                    Ok(Short(None))
+                }
+            }
+
+            deserializer.deserialize_any(Value)
+        }
     }
 
     struct Top<'a>(&'a str);
@@ -492,12 +546,9 @@ fn peek(bytes: &[u8], field: &str) -> Result<Option<String>, serde_json::Error> 
 
         fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Option<String>, A::Error> {
             let mut found = None;
-            while let Some(name) = map.next_key::<String>()? {
+            while let Some(name) = map.next_key::<std::borrow::Cow<'de, str>>()? {
                 if name == self.0 {
-                    found = match map.next_value::<Found>()? {
-                        Found::Text(text) => Some(text),
-                        Found::Other(_) => None,
-                    };
+                    found = map.next_value::<Short>()?.0;
                 } else {
                     map.next_value::<IgnoredAny>()?;
                 }

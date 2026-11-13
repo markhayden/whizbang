@@ -41,6 +41,25 @@ impl Around {
             after: Box::new(|handed, _| handed),
         }
     }
+
+    pub fn after(
+        after: impl Fn(Result<Produced, Failure>, &Context) -> Result<Produced, Failure>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Around {
+        Around {
+            grow: Grow::new(),
+            before: Box::new(|_| {}),
+            after: Box::new(after),
+        }
+    }
+
+    /// The same, with this done before `grow` runs.
+    pub fn and_before(mut self, before: impl Fn(&Context) + Send + Sync + 'static) -> Around {
+        self.before = Box::new(before);
+        self
+    }
 }
 
 impl Action for Around {
@@ -540,6 +559,10 @@ fn a_call_grow_cannot_take_is_refused_before_any_run_exists() {
         after.runs[0].record.as_ref().unwrap().outputs()[0].artifact,
         input.0
     );
+    // And the store keeps the file it had under that identity, whose origin has no step
+    // of `grow`.
+    let kept = after.masks.iter().find(|mask| mask.id() == input).unwrap();
+    assert_eq!(kept.origin().steps(), [Step::new("fixture", "1")]);
     let full = after
         .masks
         .iter()
@@ -590,7 +613,7 @@ fn grow_stops_when_its_run_is_cancelled_and_commits_nothing() {
 }
 
 /// Every file under a folder.
-fn files_under(folder: &Path) -> Vec<PathBuf> {
+pub fn files_under(folder: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for entry in std::fs::read_dir(folder).unwrap() {
         let path = entry.unwrap().path();
@@ -666,4 +689,52 @@ fn a_failure_of_the_store_inside_a_running_grow_leaves_no_path_in_its_record() {
         Some("{\"px\":\"8\",\"down_px\":null,\"radius_squared\":64,\"rows_down\":0}\n")
     );
     assert!(run.journal().is_empty());
+}
+
+/// A clock whose instant the test moves.
+struct Moved(std::sync::Mutex<std::time::Instant>);
+
+impl whizbang_core::contract::Clock for Moved {
+    fn now_ms(&self) -> u64 {
+        9000
+    }
+
+    fn now(&self) -> std::time::Instant {
+        *self.0.lock().unwrap()
+    }
+}
+
+#[test]
+fn grow_stops_when_its_deadline_passes_by_the_executors_clock_and_commits_nothing() {
+    // The request has an hour, by the executor's clock. Just before `grow` starts on
+    // the mask that clock is moved two hours on; the machine's has hardly moved. `grow`
+    // looks at its deadline through its context, so it stops at its first look.
+    let world = World::new();
+    let input = world.import(&fixture());
+    let start = std::time::Instant::now();
+    let hour = std::time::Duration::from_secs(3600);
+    let clock = Arc::new(Moved(std::sync::Mutex::new(start)));
+    let moving = clock.clone();
+    let around = Around::before(move |_| *moving.0.lock().unwrap() = start + 2 * hour);
+    let engine = engine_over(world.store(), Arc::new(around)).with_clock(clock);
+    let request =
+        whizbang_core::contract::Request::new(call(input, 8.0, Some(4.0))).until(start + hour);
+    let Ok(whizbang_core::contract::Answer::Ran(finished)) = engine.request(&request) else {
+        panic!("the request did not run");
+    };
+    assert_eq!(
+        finished.outcome(),
+        &Outcome::Error {
+            kind: "deadline".to_owned(),
+            message: "grow stopped: its deadline passed".to_owned()
+        }
+    );
+    drop(engine);
+    let after = held(&world.root(), world.fs.clone());
+    assert_eq!(after.masks.len(), 1);
+    let record = after.runs[0].record.as_ref().unwrap();
+    assert_eq!(record.outcome().status, Status::Error);
+    assert!(record.outputs().is_empty() && after.runs[0].outputs.is_empty());
+    assert!(after.runs[0].diagnostic(DIAGNOSTIC).is_some());
+    assert_eq!(after.runs[0].journal(), ["grow: read the mask"]);
 }

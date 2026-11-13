@@ -111,14 +111,17 @@ redaction lengthened is still one the reader takes
 (`asked::the_names_of_a_backend_a_model_and_a_version_are_bounded_where_they_are_declared`,
 `asked::a_secret_and_a_long_text_in_a_models_names_are_redacted_and_then_cut_in_the_record`).
 
-**The sum.** One request adds at most 1,200 bytes to a record: its model with three
+**The sum.** One request adds at most 1,211 bytes to a record: its model with three
 names of 128 bytes, its duration, its turn with an id of 128 bytes and four counts of
-twenty digits, and its exchange among the diagnostics; a test measures 1,157 with every
-field at its longest and holds it under 1,200. So 1,024 requests are 1,228,800 bytes.
-The other lists the executor fills are bounded too: 256 steps of at most 256 bytes,
-65,536; 256 refusals of 512 characters, at six bytes for a character that JSON escapes,
-819,200; and an error's type, its message and a verdict's reason, each 4,099 characters
-at six bytes, 73,782. Together 2,187,318 bytes, which leaves two megabytes of the 4 MiB
+twenty digits, and its exchange among the diagnostics, with times of twenty digits and
+indexes of four. A test measures 1,157 with the names, the id and the counts at their
+longest and the times as a test's clock gives them, and holds it under 1,211. So 1,024
+requests are 1,240,064 bytes. The other lists the executor fills are bounded too: 256
+steps of at most 256 bytes, 65,536; 256 refusals of 512 characters, at six bytes for a
+character that JSON escapes, 819,200; and an error's type, its message and a verdict's
+reason, each 4,099 characters at six bytes, 73,782. Together 2,198,582 bytes. A count
+made apart from this one, with every field at the schema's own maximum, comes to
+2,364,470. Either leaves 1.8 megabytes of the 4 MiB for what the executor does not bound
 (`asked::a_record_of_as_many_requests_as_a_run_sends_is_under_the_limit_by_arithmetic`).
 
 **A record over the limit is not published as it is.** What the executor does not
@@ -213,7 +216,14 @@ secrets taken out:
 What was sent is written before it is sent. When that, with room for an answer that is
 not written, would pass either bound, the request is not sent: the fault is
 `too_large`, and the request is in the record as one that ended so, with a turn that
-names no exchange. When the answer comes and the whole would pass a bound, the turn is
+names no exchange. Such a request was counted before it was refused: it is one of the
+1,024 a run may send, and is listed in `models`, though no backend was asked.
+
+Room is taken before anything is stored, in one step with the look at what is left:
+a request takes room for what it sends before it sends, takes room for the whole
+exchange when its answer has come, and gives back what it did not use. So requests
+that are open at once cannot together store more than the run may
+(`asked::two_requests_at_once_cannot_both_take_the_last_of_what_a_run_may_store`). When the answer comes and the whole would pass a bound, the turn is
 handed to the action all the same, and the exchange is stored with the turn not
 written (`turn_withheld`): how many parts it had, how many bytes of text, the SHA-256
 digest of that text, and why it stopped. When even that does not fit, as when redaction
@@ -300,7 +310,8 @@ bound is refused when it is read, with the type's own refusal
 - **`judge-exchange/1`:** one request and its answer, as above. At most 160 MiB is read.
 
 Reading is strict: the bytes are counted before they are parsed; the kind and version are
-looked at first; a field that is not known, a field left out (one that may be null may
+looked at first, by a pass that keeps nothing else of the document and keeps the kind
+only when it is a text of at most 64 bytes; a field that is not known, a field left out (one that may be null may
 not be absent) and anything after the document are refused. A document is not held to one
 way of being written, as a record is: a script is written by hand.
 

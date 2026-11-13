@@ -22,10 +22,11 @@ fn indented_description() -> &'static str {
 }
 
 /// How the one-line form starts and ends, byte for byte: the same fields in the same
-/// order, with no space between them, and one newline at the end.
+/// order, with no space between them, and one newline at the end. The first action is
+/// `grow`.
 fn compact_start() -> String {
     format!(
-        "{{\"description_version\":4,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[],\"artifact_types\":[{{\"name\":\"mask\",\"purpose\":\"",
+        "{{\"description_version\":4,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"grow\",\"version\":\"1.0.0\",\"kind\":\"primitive\",\"purpose\":\"",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -96,14 +97,20 @@ fn describe_help_lists_pretty() {
 }
 
 #[test]
-fn describe_json_is_valid_and_lists_no_actions_yet() {
+fn describe_json_is_valid_and_lists_the_actions_that_ship() {
     let (ok, text) = whizbang(&["describe", "--json"]);
     assert!(ok);
     let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
     assert_eq!(doc["name"], "whizbang");
     assert_eq!(doc["description_version"], 4);
     assert_eq!(doc["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(doc["actions"], serde_json::json!([]));
+    let names: Vec<&str> = doc["actions"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|action| action["name"].as_str().expect("a name"))
+        .collect();
+    assert_eq!(names, ["grow"]);
 }
 
 #[test]
@@ -119,7 +126,13 @@ fn describe_without_json_names_the_build() {
     let (ok, text) = whizbang(&["describe"]);
     assert!(ok);
     assert!(text.contains("whizbang"));
-    assert!(text.contains("no actions yet"));
+    assert!(!text.contains("no actions yet"));
+    assert!(
+        text.contains(
+            "\n  grow  Grows the core of a mask by a disc, and further downward for a shadow.\n"
+        ),
+        "{text}"
+    );
 }
 
 #[test]
@@ -187,11 +200,13 @@ fn a_test_adds_echo_to_the_registry_the_binary_builds() {
     assert_eq!(description.version(), env!("CARGO_PKG_VERSION"));
     // And the text a person reads lists it.
     let text = whizbang::wiring::describe_text(&description);
+    let shipped = whizbang::wiring::registry().expect("the registry builds");
+    let shipped = whizbang::wiring::describe_text(&whizbang::wiring::description(&shipped));
+    assert!(shipped.starts_with(&format!("whizbang {}\n", env!("CARGO_PKG_VERSION"))));
     assert_eq!(
         text,
         format!(
-            "whizbang {}\n  echo  Returns the text it was given; a fake for tests, which never ships.\n",
-            env!("CARGO_PKG_VERSION")
+            "{shipped}  echo  Returns the text it was given; a fake for tests, which never ships.\n"
         )
     );
 }
@@ -202,7 +217,7 @@ fn a_test_adds_echo_to_the_registry_the_binary_builds() {
 fn describe_json_pretty_starts_and_ends_with_these_bytes() {
     let (_, pretty) = whizbang(&["describe", "--json", "--pretty"]);
     let start = format!(
-        "{{\n  \"description_version\": 4,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [],\n  \"artifact_types\": [\n",
+        "{{\n  \"description_version\": 4,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [\n    {{\n      \"name\": \"grow\",\n",
         env!("CARGO_PKG_VERSION")
     );
     let types = r#"    {
@@ -238,7 +253,11 @@ fn describe_json_pretty_starts_and_ends_with_these_bytes() {
   ]
 }
 "#;
-    assert_eq!(pretty, format!("{start}{types}"));
+    assert!(pretty.starts_with(&start), "{pretty}");
+    assert!(
+        pretty.ends_with(&format!("  ],\n  \"artifact_types\": [\n{types}")),
+        "{pretty}"
+    );
 }
 
 #[test]

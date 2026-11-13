@@ -446,6 +446,8 @@ impl Handles {
 pub struct Context {
     cancellation: Cancellation,
     deadline: Option<Instant>,
+    /// The clock the deadline is held to, when it is not the machine's.
+    clock: Option<Arc<dyn Clock>>,
     events: Arc<dyn Events>,
     allowance: Allowance,
     store: Arc<dyn Contents + Send + Sync>,
@@ -472,10 +474,12 @@ impl Context {
         executor: Arc<dyn Executor>,
     ) -> Context {
         let requests = Arc::new(Tally::default());
+        let clock = capabilities.clock.clone();
         let capabilities = capabilities.bound(&cancellation, deadline, &requests);
         Context {
             cancellation,
             deadline,
+            clock,
             events,
             allowance,
             store,
@@ -549,6 +553,15 @@ impl Context {
     /// When the run must be over, if it has a limit.
     pub fn deadline(&self) -> Option<Instant> {
         self.deadline
+    }
+
+    /// Whether the run's deadline has passed, by the clock its capability handles are
+    /// held to: the executor's (ADR 0008, "A deadline in a run"). An action that works
+    /// for long asks this from time to time, and not the machine's clock, so that it
+    /// and its handles stop at the same moment. Never true of a run with no deadline.
+    pub fn deadline_passed(&self) -> bool {
+        let now = || self.clock.as_ref().map_or_else(Instant::now, |c| c.now());
+        self.deadline.is_some_and(|deadline| now() >= deadline)
     }
 
     /// Where progress is reported.

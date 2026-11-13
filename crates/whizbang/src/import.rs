@@ -181,7 +181,9 @@ pub fn import(file: &Path, root: &Path, create: bool) -> Result<String, String> 
             .map_err(|error| error.to_string())?;
         // The open says whether it made the store: it knows, having held the lock.
         if store.created() {
-            printed.push_str(&format!("created a store at {}\n", root.display()));
+            // On the standard output, which nothing else escapes.
+            let shown = whizbang::door::printable(&root.display().to_string());
+            printed.push_str(&format!("created a store at {shown}\n"));
         }
         store
     } else {
