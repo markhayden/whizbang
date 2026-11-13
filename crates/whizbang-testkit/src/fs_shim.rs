@@ -161,6 +161,8 @@ struct State {
     fail_matching: Option<(usize, Matches)>,
     cross_device: Option<PathBuf>,
     hook: Option<(usize, Hook)>,
+    /// Run once after the first rename onto a path of this file name.
+    after_rename: Option<(String, Hook)>,
     /// The locks this file system holds, each until its holder drops it or the crash.
     locks: Vec<Lock>,
     lock_files: Vec<HeldLockFile>,
@@ -230,6 +232,13 @@ impl ShimFs {
     /// the paused call then goes on, or fails if the hook crashed the shim.
     pub fn pause_before(&self, event: usize, hook: impl FnOnce() + Send + 'static) {
         self.lock().hook = Some((event, Box::new(hook)));
+    }
+
+    /// Runs `hook` once, straight after the first rename onto a file of this name has
+    /// happened and before the call returns to whoever made it: what the hook sees is
+    /// what any other thread could see at that moment. The hook may use this shim.
+    pub fn pause_after_rename_onto(&self, name: &str, hook: impl FnOnce() + Send + 'static) {
+        self.lock().after_rename = Some((name.to_owned(), Box::new(hook)));
     }
 
     /// The events so far, in order.
@@ -506,6 +515,18 @@ impl Fs for ShimFs {
             replaced,
         });
         state.events.push(event);
+        let onto = |name: &String| to.file_name().is_some_and(|last| last == name.as_str());
+        if state
+            .after_rename
+            .as_ref()
+            .is_some_and(|(name, _)| onto(name))
+        {
+            let hook = state.after_rename.take();
+            drop(state);
+            if let Some((_, hook)) = hook {
+                hook();
+            }
+        }
         Ok(())
     }
 

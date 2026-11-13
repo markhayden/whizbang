@@ -486,6 +486,54 @@ fn a_writer_knows_the_runs_it_made_since_it_opened_the_store() {
 }
 
 #[test]
+fn a_run_is_known_as_made_here_from_the_moment_it_is_visible() {
+    // Whoever sees a run in a snapshot and then asks whether this writer made it must
+    // not be told no of a run this writer has just made. The look is made at the one
+    // moment that matters: the pointer was renamed, so the run is visible, and the
+    // publication has not returned.
+    let dir = Scratch::new("store-made");
+    let root = root(&dir);
+    let fs = Arc::new(ShimFs::new());
+    let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    {
+        let (store, seen) = (store.clone(), seen.clone());
+        fs.pause_after_rename_onto("CURRENT", move || {
+            let visible = store.snapshot().unwrap().run("r").is_some();
+            *seen.lock().unwrap() = Some((visible, store.made_here("r")));
+        });
+    }
+    let mut publication = store.begin().unwrap();
+    publication.create_run("r").unwrap();
+    publication.publish().unwrap();
+    assert_eq!(*seen.lock().unwrap(), Some((true, true)));
+
+    // A run whose publication did not become visible was not made here: the pointer's
+    // rename is refused, and the run is forgotten again.
+    fs.refuse_matching(0, |event| {
+        matches!(event, whizbang_testkit::fs_shim::Event::Rename(_, to) if to.ends_with("CURRENT"))
+    });
+    let mut publication = store.begin().unwrap();
+    publication.create_run("never").unwrap();
+    publication.publish().unwrap_err();
+    assert!(store.snapshot().unwrap().run("never").is_none());
+    assert!(!store.made_here("never"));
+    // And a run that is closed is still made here while its closing is not visible:
+    // the generation's file is refused, after `close_run` was called.
+    fs.refuse_matching(0, |event| {
+        matches!(event, whizbang_testkit::fs_shim::Event::Write(path)
+            if path.ends_with("generation.json"))
+    });
+    let mut publication = store.begin().unwrap();
+    publication.close_run("r").unwrap();
+    publication
+        .put_in("r", "record", Kind::Diagnostic, b"x")
+        .unwrap();
+    publication.publish().unwrap_err();
+    assert!(store.made_here("r"));
+}
+
+#[test]
 fn deleting_a_run_removes_its_references_and_no_others() {
     let dir = Scratch::new("store-runs");
     let root = root(&dir);

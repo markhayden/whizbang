@@ -3124,3 +3124,49 @@ fn what_is_reserved_is_the_estimate_of_the_preparation_made_at_admission() {
     shop.backends.bound.store(900_000, Ordering::SeqCst);
     assert_eq!(shop.reserved(), reserved);
 }
+
+#[test]
+fn a_run_whose_closing_was_refused_before_it_was_visible_is_still_this_writers() {
+    // The end's publication calls `close_run` and is then refused at the generation's
+    // file, before the pointer is renamed. The run was not closed: the store still
+    // counts it among those this writer made, and the same request again is told so.
+    let world = World::new();
+    let store = world.store();
+    let failing = {
+        let fs = world.fs.clone();
+        paint_with(&world.runs, move |_, _| {
+            fs.refuse_matching(
+                0,
+                |event| matches!(event, Event::Write(path) if path.ends_with("generation.json")),
+            );
+            Ok(Produced::nothing())
+        })
+    };
+    let engine = engine(store.clone(), vec![failing]);
+    assert!(matches!(
+        engine.request(&asked("hello", "order-17")),
+        Err(CallError::Store(_))
+    ));
+    let earlier = repeat(engine.request(&asked("hello", "order-17")));
+    assert_eq!(earlier.state(), &RunState::NotEnded { here: true });
+    assert!(store.made_here(earlier.run().as_str()));
+    assert_eq!(world.ran(), 1);
+}
+
+#[test]
+fn a_preparation_handed_to_a_call_that_is_refused_now_is_stale_under_the_calls_action() {
+    // The refusal names the action that was called, not the one the preparation is of.
+    let shop = shop();
+    let prepared = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    let request = Request::new(Call::new("vanish")).expecting(&prepared);
+    assert_eq!(
+        shop.engine.request(&request).unwrap_err(),
+        CallError::Refused(Refusal::Stale {
+            action: "vanish".to_owned(),
+            why: Stale::Refused(Box::new(Refusal::UnknownAction {
+                name: "vanish".to_owned()
+            })),
+        })
+    );
+    assert_eq!((shop.ledger.asked(), shop.world.ran()), (0, 0));
+}

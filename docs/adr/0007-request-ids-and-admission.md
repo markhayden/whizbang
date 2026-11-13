@@ -21,7 +21,8 @@ through names and never from content. Changed: an admission says what was reserv
 (`reserved_micros`), so an admission written by the first two parts is not read; a
 bound is an `Estimate`, not a bare number; the crash test tries every choice of what a
 disk loses; the run record is `run/2` (ADR 0005). Corrected: a refusal of a stored
-admission showed an action's name or version escaped twice.
+admission showed an action's name or version escaped twice; a run that had just become
+visible could be answered as made by a process that is gone.
 Spec: section 3, "The execution contract", "Storage" and "What every run records";
 section 6, "Spend"
 
@@ -487,6 +488,12 @@ An executor that writes the store looks a second time before it says `here: fals
 snapshot is older than its question to the store, and a run that ended in between would
 otherwise be said to have no process
 (`admit::a_repeat_that_races_the_end_of_its_run_is_not_told_the_run_will_never_end`).
+The other edge is the store's: it counts a run as made here from just before the rename
+that shows it, and forgets it again if that rename fails, so a run that a snapshot shows
+is never one the store has not yet counted
+(`store::runs::a_run_is_known_as_made_here_from_the_moment_it_is_visible`). And a run is
+forgotten only once its closing is visible, not when `close_run` is called
+(`admit::a_run_whose_closing_was_refused_before_it_was_visible_is_still_this_writers`).
 
 What `NotEnded` does not tell apart, each pinned by a test or a row:
 
