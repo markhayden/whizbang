@@ -23,14 +23,12 @@ fn call(id: &str) -> ToolCall {
     ToolCall::new(id, "view", json!({"left": 1, "top": 2.5})).unwrap()
 }
 
-/// A part of the kind a provider sends for its own later reading: here, bytes that are
-/// not even JSON, with the spacing and the order they came in.
+/// The body of a part of the kind a provider sends for its own later reading: bytes
+/// that are not even JSON, with the spacing, the order and the ends they came with.
+const BODY: &str = " \n{ \"z\": 1,\n\t\"a\": [1.50, 2e0],  \"sig\": \"\u{e9}==\" } trailing\r\n ";
+
 fn opaque(adapter: &str) -> Opaque {
-    Opaque::new(
-        adapter,
-        "{ \"z\": 1,\n\t\"a\": [1.50, 2e0],  \"sig\": \"\u{e9}==\" } trailing",
-    )
-    .unwrap()
+    Opaque::new(adapter, BODY).unwrap()
 }
 
 fn not_allowed(error: Unfit) -> (&'static str, &'static str) {
@@ -44,11 +42,11 @@ fn not_allowed(error: Unfit) -> (&'static str, &'static str) {
 
 #[test]
 fn an_opaque_part_is_kept_whole() {
-    let body = "{ \"z\": 1,\n\t\"a\": [1.50, 2e0],  \"sig\": \"\u{e9}==\" } trailing";
     let part = opaque("stub");
     assert_eq!(part.adapter(), "stub");
     // Byte for byte: nothing is parsed, ordered, trimmed or printed again.
-    assert_eq!(part.body().as_bytes(), body.as_bytes());
+    assert_eq!(part.body().as_bytes(), BODY.as_bytes());
+    assert!(BODY.starts_with(' ') && BODY.ends_with(' '));
     // And it is the same part after it has been through a turn and a message.
     let turn = Turn::new(
         vec![text("thinking"), Part::Opaque(part.clone()), text("done")],
@@ -323,6 +321,47 @@ fn a_conversation_is_bounded_in_all_it_holds() {
             limit: 64 * 1_048_576,
         }
     );
+}
+
+#[test]
+fn every_kind_of_text_counts_toward_the_bound_on_a_conversation() {
+    // A part of each kind that holds text, a little under a megabyte of it: 64 fit and
+    // 65 do not, whichever kind it is.
+    let long = "x".repeat(TEXT_LIMIT - 64);
+    let result = ToolResult::new("c", &long, false, Vec::new()).unwrap();
+    let call = ToolCall::new("c", "view", json!({ "text": long })).unwrap();
+    let kinds = [
+        (Role::User, text(&long)),
+        (Role::User, Part::ToolResult(result)),
+        (
+            Role::Assistant,
+            Part::Opaque(Opaque::new("stub", &long).unwrap()),
+        ),
+        (Role::Assistant, Part::ToolCall(call)),
+    ];
+    for (role, part) in kinds {
+        let message = Message::new(role, vec![part.clone()]).unwrap();
+        JudgeRequest::new("", vec![message.clone(); 64], Vec::new(), controls()).unwrap();
+        assert!(
+            matches!(
+                JudgeRequest::new("", vec![message; 65], Vec::new(), controls()),
+                Err(Unfit::TooLarge {
+                    what: "the conversation, in bytes of text,",
+                    ..
+                })
+            ),
+            "{part:.40?}"
+        );
+    }
+    // The system prompt counts too.
+    let large = Message::new(Role::User, vec![text(&"x".repeat(TEXT_LIMIT))]).unwrap();
+    assert!(matches!(
+        JudgeRequest::new("s", vec![large; 64], Vec::new(), controls()),
+        Err(Unfit::TooLarge {
+            size: 67_108_865,
+            ..
+        })
+    ));
 }
 
 // --- the turn ---------------------------------------------------------------------------------------

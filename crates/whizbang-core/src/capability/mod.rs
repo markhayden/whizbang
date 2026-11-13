@@ -3,10 +3,9 @@
 //! of backend is resolved.
 //!
 //! Nothing here implements a capability. A backend does, in another crate, and a fake
-//! does for the tests. An action asks one through a handle, which holds the request to
-//! what the backend declared and the answer to the request. The handles in an action's
-//! [`Context`](crate::contract::Context) are still the empty ones of ADR 0004; they
-//! become these with the next part of ADR 0006.
+//! does for the tests. An action asks one through a handle in its
+//! [`Context`](crate::contract::Context), which holds the request to what the backend
+//! declared and the answer to the request.
 //!
 //! What a backend sends back is not trusted. Every type a response is made of is built
 //! through a constructor that checks it, has private fields, and is never deserialised,

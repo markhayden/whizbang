@@ -29,6 +29,10 @@ Amended: 2026-11-12, with ADR 0006, which resolves a backend. Changed: `Backends
 question also takes the call's choice of backend, and prepare hands it none until a
 descriptor says which argument is the choice; the consequence that said the
 fingerprint's kind would change when `Backends` gained the choice, which it does not.
+Amended: 2026-11-12, with the second part of ADR 0006. Changed: prepare hands
+`Backends` the choice a call names, where the descriptor says which argument that is;
+the handles are the capability interfaces' and can be made; the count of zero requests
+on the capabilities is shown, and the ledger's half of that test still waits.
 Spec: section 3, "The execution contract", "Identities" and "Storage"; section 6,
 "Readiness"
 
@@ -87,7 +91,9 @@ derivation. An input is something the store already holds.
    size is refused, and so is any artifact whose image has those pixels under another
    space.
 6. Asks, for each capability the call needs (`needs_for`, from the names of the arguments
-   given), which model would answer it with the features needed.
+   given), which model would answer it with the features needed, for the backend the
+   call chose or for the default when it chose none (ADR 0006, "How a call names its
+   choice").
 
 It answers with a `PreparedCall`: the action and its version, every argument that has a
 value, every input, each need with the model that would answer or none, the output ports
@@ -170,9 +176,10 @@ The second is held by the shape of the `Backends` trait and no further: its one 
 is handed a capability, a choice and features, and is handed neither a request nor a
 ledger. An
 implementor could still do anything inside `resolve`; nothing checks that it sends
-nothing. A count of zero requests on the capabilities themselves, and of zero reservations
-on the ledger, needs fakes that tasks A8 and A6 bring; an ignored test in `prepare.rs`
-names what they complete.
+nothing. A count of zero requests on the capabilities themselves is shown against task
+A8's fakes (`prepare::prepare_sends_no_capability_request`). A count of zero reservations
+on the ledger needs the fake that task A6 brings; an ignored test in `prepare.rs` names
+what completes it.
 
 ### Bound to what it saw
 
@@ -302,8 +309,8 @@ The types an executing action is handed and hands back:
   allowance, a read of the store, capability handles, the executor, and a place to write
   diagnostics. ADR 0005 says what each holds when an action runs today.
 - `SegmentHandle`, `FillHandle`, `JudgeHandle`, and `Capabilities`, which offers each or
-  none. The handles are empty and cannot be made: their contents are the capability
-  interfaces' (task A8). `Allowance` is empty too, until there is a ledger.
+  none. The handles are the capability interfaces' (ADR 0006); the executor hands an
+  action none of them yet. `Allowance` is empty, until there is a ledger.
 - `Outcome`: completed with its committed outputs, cancelled, error with a type and a
   message, or invalid with a reason; and `Finished`, an outcome with its run's id. The
   executor makes the outcome; what an action hands back is `Produced` or a `Failure` (ADR
@@ -323,11 +330,10 @@ known case that does not, and it goes with rascal's recipes to milestone 3
 - Prepare reads every input whole and decodes every image input, to check it as the store
   checks it. That costs time and memory in proportion to the inputs, on each preparation
   and again at admission.
-- A call that names its filler or its segmenter is not yet resolved to that choice.
-  Resolution (an explicit choice, then the default) is ADR 0006's, and `Backends` now
-  takes the choice; prepare hands it none, because a descriptor does not yet say which
-  argument is the choice. The fingerprint's kind does not change with it, as this record
-  first said it would: a choice is an argument of the call, the model it resolves to is a
+- A call that names its filler or its segmenter is prepared against that choice.
+  Resolution (an explicit choice, then the default) is ADR 0006's: `Backends` takes the
+  choice, and prepare hands it the text of the argument the descriptor names. The
+  fingerprint's kind does not change with it, as this record first said it would: a choice is an argument of the call, the model it resolves to is a
   need's, and both were hashed already, in an encoding that stays as it is.
 - Both methods of `Executor` return when they have their answer. Section 3 wants execution
   asynchronous, with status and cancel answered while a run executes. How that is
