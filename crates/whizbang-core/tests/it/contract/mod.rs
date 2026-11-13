@@ -18,5 +18,6 @@ mod record;
 mod redact;
 mod registry;
 mod run;
+mod started;
 mod text;
 mod watch;

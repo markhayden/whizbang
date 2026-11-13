@@ -27,11 +27,45 @@ use super::Executor;
 #[derive(Debug, Clone, Default)]
 pub struct Cancellation(Arc<Signal>);
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct Signal {
     set: AtomicBool,
     /// The signals this one is under: set when any of them is.
     above: Vec<Cancellation>,
+    /// What is told when this signal is set, by cancelling it: those who wait for
+    /// something else and give up when this is set.
+    told: Mutex<Vec<(u64, Waker)>>,
+}
+
+/// What a signal tells when it is set.
+type Waker = Arc<dyn Fn() + Send + Sync>;
+
+/// The count that tells one registration from another.
+static TOLD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl std::fmt::Debug for Signal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Signal")
+            .field("set", &self.set)
+            .field("above", &self.above)
+            .finish()
+    }
+}
+
+/// A registration with a signal and every signal above it. Dropped, it is taken out
+/// of all of them.
+pub(super) struct Telling {
+    id: u64,
+    signals: Vec<Cancellation>,
+}
+
+impl Drop for Telling {
+    fn drop(&mut self) {
+        for signal in &self.signals {
+            let mut told = signal.0.told.lock().unwrap_or_else(PoisonError::into_inner);
+            told.retain(|(id, _)| *id != self.id);
+        }
+    }
 }
 
 /// Two signals are equal when they are the same signal.
@@ -52,11 +86,50 @@ impl Cancellation {
         Cancellation(Arc::new(Signal {
             set: AtomicBool::new(false),
             above: above.into_iter().collect(),
+            told: Mutex::new(Vec::new()),
         }))
     }
 
     pub fn cancel(&self) {
+        self.set();
+        self.tell();
+    }
+
+    /// Sets the signal and tells nobody: for a caller that holds a lock, and tells
+    /// once it has let the lock go.
+    pub(super) fn set(&self) {
         self.0.set.store(true, Ordering::SeqCst);
+    }
+
+    /// Tells whoever asked to be told that this signal is set. No lock of the signal
+    /// is held while they are told.
+    pub(super) fn tell(&self) {
+        let told: Vec<Waker> = {
+            let told = self.0.told.lock().unwrap_or_else(PoisonError::into_inner);
+            told.iter().map(|(_, waker)| waker.clone()).collect()
+        };
+        for waker in told {
+            waker();
+        }
+    }
+
+    /// Asks to be told when this signal is set by a cancellation, of it or of any
+    /// signal it is under, for as long as what comes back lives.
+    pub(super) fn telling(&self, waker: Waker) -> Telling {
+        fn all(signal: &Cancellation, into: &mut Vec<Cancellation>) {
+            into.push(signal.clone());
+            for above in &signal.0.above {
+                all(above, into);
+            }
+        }
+        let mut signals = Vec::new();
+        all(self, &mut signals);
+        let id = TOLD.fetch_add(1, Ordering::SeqCst);
+        for signal in &signals {
+            let mut told = signal.0.told.lock().unwrap_or_else(PoisonError::into_inner);
+            told.push((id, waker.clone()));
+        }
+        Telling { id, signals }
     }
 
     pub fn is_cancelled(&self) -> bool {

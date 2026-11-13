@@ -3,8 +3,9 @@
 //!
 //! It is attached to the run in the store's table of open runs
 //! ([`crate::store::Publication::attach`]) by the publication that admits the run, so
-//! it is found from just before the run is visible until the run's end is visible, and
-//! by any executor over the same store in this process.
+//! it is found from just before the run is visible until the run's end is visible and
+//! the executor is done with the run, and by any executor over the same store in this
+//! process.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -107,7 +108,11 @@ impl LiveRun {
     pub(super) fn cancel(&self) -> Told {
         let phase = self.phase();
         if *phase == Phase::Executing {
-            self.signal.cancel();
+            // Set under the lock; those who wait on the signal are told after it is
+            // let go, since being told takes the lock of the run they wait for.
+            self.signal.set();
+            drop(phase);
+            self.signal.tell();
             return Told::Accepted;
         }
         self.until_over(phase);
@@ -147,6 +152,29 @@ impl LiveRun {
         self.until_over(self.phase());
     }
 
+    /// Returns once nothing in this process works on the run any more, or once this
+    /// signal is set by a cancellation, whichever is first. What comes back is
+    /// whether the run is over.
+    pub(super) fn wait_until_over_unless(self: &Arc<LiveRun>, signal: &Cancellation) -> bool {
+        // Told of the cancellation under this run's lock, so that it is seen before
+        // the wait or wakes it: never between the look and the wait.
+        let this = self.clone();
+        let _telling = signal.telling(Arc::new(move || {
+            let _phase = this.phase();
+            this.changed.notify_all();
+        }));
+        let mut phase = self.phase();
+        self.waiting.fetch_add(1, Ordering::SeqCst);
+        while !phase.is_over() && !signal.is_cancelled() {
+            phase = self
+                .changed
+                .wait(phase)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        self.waiting.fetch_sub(1, Ordering::SeqCst);
+        phase.is_over()
+    }
+
     fn until_over(&self, mut phase: MutexGuard<'_, Phase>) {
         // Counted under the lock, before the first wait: whoever reads the count as
         // one or more has a caller that is waiting, or about to with the lock let go.
@@ -163,6 +191,25 @@ impl LiveRun {
     /// How many callers are waiting, now, for the run to be over.
     pub(super) fn waiting(&self) -> usize {
         self.waiting.load(Ordering::SeqCst)
+    }
+
+    /// For a test: the lock whoever waits is told under, held. While it is held nobody
+    /// is told that the run is over.
+    #[cfg(test)]
+    pub(super) fn not_told_yet(&self) -> NotTold<'_> {
+        NotTold(self.phase())
+    }
+}
+
+/// For a test: the lock of a run, held ([`LiveRun::not_told_yet`]).
+#[cfg(test)]
+pub(super) struct NotTold<'a>(MutexGuard<'a, Phase>);
+
+#[cfg(test)]
+impl NotTold<'_> {
+    /// Whether the run is over for this process.
+    pub(super) fn is_over(&self) -> bool {
+        self.0.is_over()
     }
 }
 

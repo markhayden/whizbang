@@ -182,7 +182,7 @@ impl Nest {
         }
         // A call to start a run, when as many as may be are executing.
         if start && calls.started >= STARTED_LIMIT {
-            return Err(Refusal::TooManyStarted {
+            return Err(Refusal::TooManyStartedUnder {
                 action,
                 limit: STARTED_LIMIT,
             });
@@ -346,6 +346,8 @@ pub(super) struct Under {
     /// The names of the actions that are running, from the run nothing called down
     /// to this one. Its length is the level this run is at.
     pub(super) stack: Arc<Vec<String>>,
+    /// The runs from the one nothing called down to this one, this one last.
+    pub(super) above: Arc<Vec<RunId>>,
     /// The count of the runs under the run nothing called, which this run is under
     /// or is.
     pub(super) tree: Arc<Tree>,
@@ -359,11 +361,20 @@ pub(super) struct Family {
     /// The run that called it, and that run's live state.
     pub(super) parent: Option<(RunId, Arc<LiveRun>)>,
     pub(super) stack: Arc<Vec<String>>,
+    /// The runs above this one, from the one nothing called down to its parent.
+    above: Arc<Vec<RunId>>,
     pub(super) tree: Arc<Tree>,
     pub(super) allowance: Allowance,
 }
 
 impl Family {
+    /// The runs above this run and this run, which is named only once it is admitted.
+    pub(super) fn above_with(&self, run: &RunId) -> Arc<Vec<RunId>> {
+        let mut above = self.above.to_vec();
+        above.push(run.clone());
+        Arc::new(above)
+    }
+
     /// The family of a run of this action, called under this run or by nothing, with
     /// this much reserved or taken for it. A run that nothing called begins a tree
     /// that may hold `descendants` runs under it.
@@ -378,6 +389,7 @@ impl Family {
         Family {
             parent: under.map(|under| (under.run.clone(), under.live.clone())),
             stack: Arc::new(stack),
+            above: under.map_or_else(Arc::default, |under| under.above.clone()),
             tree: under.map_or_else(|| Arc::new(Tree::new(descendants)), |u| u.tree.clone()),
             allowance: reserved.map_or_else(Allowance::none, Allowance::of),
         }
@@ -503,14 +515,24 @@ impl Executor for Nested {
     }
 
     fn start(&self, request: &Request) -> Result<Answer, CallError> {
-        // A started run is a thread, and a run may have only so many at once: the
-        // count goes down when the run is over, before whoever waits for it is told.
+        // A started run is a thread. It takes a place among the started runs of the
+        // store's writer, the count a request from outside is held to, before it is
+        // admitted; and a run may have only so many of its own at once. A full count
+        // is a refusal, never a wait. Both come back when the run is over, before
+        // whoever waits for it is told.
+        let place = match self.engine.start_place() {
+            Ok(place) => place,
+            Err(refusal) => {
+                let refused = Refused::of(request.call(), &refusal, &self.secrets);
+                self.under.live.nest().refused(refused);
+                return Err(refusal.into());
+            }
+        };
         let mut admitted = self.admit(request, true)?;
         admitted.started_under(self.under.live.clone());
-        let run = admitted.run.clone();
-        let engine = self.engine.clone();
-        std::thread::spawn(move || drop(engine.execute(admitted)));
-        Ok(Answer::Started(run))
+        // The thread is made where every run's thread is made; a thread that cannot
+        // be made ends the run as an error, and the caller is told.
+        self.engine.launch(admitted, place)
     }
 
     fn status(&self, run: &RunId) -> Result<Watched, CallError> {
@@ -518,7 +540,24 @@ impl Executor for Nested {
     }
 
     fn wait(&self, run: &RunId) -> Result<Watched, CallError> {
-        self.engine.wait(run)
+        // A run is over only after the runs it called: a wait for this run, or for
+        // one above it, would never end, and is refused. Any other wait is given up
+        // when this run is cancelled, so two runs that wait for each other are freed
+        // by cancelling either, or a run above them. Both are kept for the record.
+        let under = &self.under;
+        let waited = if under.above.contains(run) {
+            Err(Refusal::WaitAbove { run: run.clone() }.into())
+        } else {
+            self.engine.wait_unless(run, under.live.signal())
+        };
+        if let Err(CallError::Refused(
+            refusal @ (Refusal::WaitAbove { .. } | Refusal::WaitCancelled { .. }),
+        )) = &waited
+        {
+            let refused = Refused::of_a_question(refusal, &self.secrets);
+            under.live.nest().refused(refused);
+        }
+        waited
     }
 
     fn cancel(&self, run: &RunId) -> Result<Cancel, CallError> {

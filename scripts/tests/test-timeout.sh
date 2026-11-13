@@ -18,8 +18,9 @@ grep -q -E '^ +run: just test-timeout$' .github/workflows/ci.yml ||
 
 fixture=scripts/tests/fixtures/slow-crate
 run_fixture() {
+  # Through the guard, as every test run is (scripts/thread-guard.sh).
   CARGO_TARGET_DIR="$root/target/script-tests" SLOW_CRATE_SLEEP_SECS=$1 \
-    cargo nextest run --manifest-path "$fixture/Cargo.toml" --config-file "$config" \
+    scripts/thread-guard.sh cargo nextest run --manifest-path "$fixture/Cargo.toml" --config-file "$config" \
     --no-fail-fast
 }
 

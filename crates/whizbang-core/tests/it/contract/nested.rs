@@ -449,7 +449,7 @@ fn a_run_starts_only_so_many_runs_at_once_and_one_more_is_refused() {
     let executor = engine(world.store(), vec![outer, held, free]);
     let finished = executor.submit(&Call::new("outer")).unwrap();
     assert_eq!(finished.outcome().name(), "completed");
-    let many = Refusal::TooManyStarted {
+    let many = Refusal::TooManyStartedUnder {
         action: "held".to_owned(),
         limit: 4,
     };
@@ -457,7 +457,96 @@ fn a_run_starts_only_so_many_runs_at_once_and_one_more_is_refused() {
     let stored = record(&world, finished.run());
     assert_eq!(stored.steps().len(), 6);
     let kinds: Vec<_> = stored.outcome().refusals.iter().map(|r| r.kind()).collect();
+    assert_eq!(kinds, [RefusalKind::TooManyStartedUnder]);
+}
+
+#[test]
+fn a_run_started_from_inside_an_action_takes_a_place_among_the_stores_started_runs() {
+    // The count is the one a request from outside is held to. With two places: two
+    // runs started from inside an action hold both, and a third is refused, as is a
+    // run started from outside meanwhile. When they are over, there is room again.
+    let world = World::new();
+    let store = world.store();
+    let barriers = Barriers::new();
+    let said: Noted<Refusal> = noted();
+    let held = {
+        let barriers = barriers.clone();
+        act("held", move |_, _| {
+            barriers.stop_at("held");
+            Ok(Produced::nothing())
+        })
+    };
+    let two = |actions| {
+        engine(store.clone(), actions)
+            .with_started_bound(2)
+            .unwrap()
+    };
+    let outside = two(vec![held.clone()]);
+    let outer = {
+        let (barriers, said) = (barriers.clone(), said.clone());
+        act("outer", move |_, context| {
+            let executor = context.executor();
+            let held = Request::new(Call::new("held"));
+            let first = executor.start(&held).unwrap();
+            let second = executor.start(&held).unwrap();
+            barriers.arrived("held", 2);
+            said.lock().unwrap().push(refused(executor.start(&held)));
+            said.lock().unwrap().push(refused(outside.start(&held)));
+            barriers.open("held");
+            executor.wait(first.run()).unwrap();
+            executor.wait(second.run()).unwrap();
+            let again = executor.start(&held).unwrap();
+            executor.wait(again.run()).unwrap();
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = two(vec![outer, held]);
+    let finished = executor.submit(&Call::new("outer")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let full = Refusal::TooManyStarted { bound: 2 };
+    assert_eq!(*said.lock().unwrap(), [full.clone(), full]);
+    // The refusal of the call from inside is in the record of the run that made it;
+    // neither refusal made a run.
+    let stored = record(&world, finished.run());
+    let kinds: Vec<_> = stored.outcome().refusals.iter().map(|r| r.kind()).collect();
     assert_eq!(kinds, [RefusalKind::TooManyStarted]);
+    assert_eq!(stored.steps().len(), 3);
+    assert_eq!(records(&world).len(), 4);
+}
+
+fn no_thread(_: String, _: Box<dyn FnOnce() + Send + 'static>) -> std::io::Result<()> {
+    Err(std::io::Error::other("no thread is left"))
+}
+
+#[test]
+fn a_run_started_from_inside_an_action_that_gets_no_thread_ends_as_an_error_and_its_caller_is_told()
+{
+    let world = World::new();
+    let said: Noted<String> = noted();
+    let outer = {
+        let said = said.clone();
+        act("outer", move |_, context| {
+            let started = context.executor().start(&Request::new(Call::new("inner")));
+            let Err(CallError::NotStarted { why, .. }) = started else {
+                panic!("{started:?}");
+            };
+            said.lock().unwrap().push(why);
+            // Its place was given back: a call on this thread still runs.
+            context.executor().submit(&Call::new("inner")).unwrap();
+            Ok(Produced::nothing())
+        })
+    };
+    let inner = act("inner", |_, _| Ok(Produced::nothing()));
+    let executor = engine(world.store(), vec![outer, inner]).with_spawn(no_thread);
+    let finished = executor.submit(&Call::new("outer")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(*said.lock().unwrap(), ["no thread is left"]);
+    // The run that had no thread is in the store, ended as an error, and is a step.
+    let stored = record(&world, finished.run());
+    let steps: Vec<_> = stored.steps().iter().map(|s| s.status()).collect();
+    assert_eq!(steps, [Some(Status::Error), Some(Status::Completed)]);
+    let child = record(&world, &RunId::parse(stored.steps()[0].run()).unwrap());
+    assert_eq!(child.outcome().error.as_ref().unwrap().kind, "start");
 }
 
 // --- allowances -------------------------------------------------------------------------------
@@ -607,7 +696,7 @@ fn two_calls_at_once_cannot_both_take_the_last_of_the_allowance() {
         let admitted = admitted.clone();
         action("crowd", &[Capability::Fill], move |_, context| {
             let gate = std::sync::Barrier::new(8);
-            std::thread::scope(|scope| {
+            whizbang_testkit::threads::scope(|scope| {
                 for _ in 0..8 {
                     scope.spawn(|| {
                         gate.wait();
@@ -808,7 +897,7 @@ fn a_run_stays_open_while_a_capability_request_is_outstanding_and_ends_when_it_i
         act("asks", move |_, context| {
             let fill = context.capabilities().fill().unwrap().clone();
             let (barriers_, later) = (barriers.clone(), later.clone());
-            std::thread::spawn(move || {
+            whizbang_testkit::threads::spawn(move || {
                 fill.fill(&fill_request()).unwrap();
                 // The action has come back by now: nothing more is sent for its run.
                 barriers_.stop_at("after");
@@ -836,7 +925,7 @@ fn a_run_stays_open_while_a_capability_request_is_outstanding_and_ends_when_it_i
     });
     let waiting = {
         let (executor, run) = (executor.clone(), run.clone());
-        std::thread::spawn(move || executor.wait(&run))
+        whizbang_testkit::threads::spawn(move || executor.wait(&run))
     };
     until("nobody waits for the run", || {
         executor.waiting_for(&run) > 0
@@ -877,7 +966,7 @@ fn a_run_stays_open_while_a_run_it_started_is_not_over_and_a_cancel_still_reache
             assert!(matches!(started, Ok(Answer::Started(_))));
             // Something the action leaves behind calls again after it came back.
             let (context, barriers, late) = (context.clone(), barriers.clone(), late.clone());
-            std::thread::spawn(move || {
+            whizbang_testkit::threads::spawn(move || {
                 barriers.stop_at("late");
                 let refusal = refused(context.executor().submit(&Call::new("inner")));
                 late.lock().unwrap().push(refusal);
@@ -918,7 +1007,7 @@ fn a_run_stays_open_while_a_run_it_started_is_not_over_and_a_cancel_still_reache
     );
     let waiting = {
         let (executor, root) = (executor.clone(), root.clone());
-        std::thread::spawn(move || executor.wait(&root))
+        whizbang_testkit::threads::spawn(move || executor.wait(&root))
     };
     until("nobody waits for the run", || {
         executor.waiting_for(&root) > 0
@@ -949,6 +1038,129 @@ fn a_run_stays_open_while_a_run_it_started_is_not_over_and_a_cancel_still_reache
     let kinds: Vec<_> = stored.outcome().refusals.iter().map(|r| r.kind()).collect();
     assert_eq!(kinds, [RefusalKind::CallerOver]);
     assert_eq!(records(&world).len(), 2);
+}
+
+/// What this gives, on a thread of its own, within the limit; a test that would
+/// wait for ever fails instead.
+fn within<T: Send + 'static>(what: &str, work: impl FnOnce() -> T + Send + 'static) -> T {
+    let (tell, told) = std::sync::mpsc::channel();
+    whizbang_testkit::threads::spawn(move || drop(tell.send(work())));
+    told.recv_timeout(LIMIT)
+        .unwrap_or_else(|_| panic!("{what} did not come back"))
+}
+
+#[test]
+fn a_wait_for_the_run_that_asks_or_for_a_run_above_it_is_refused() {
+    let world = World::new();
+    let barriers = Barriers::new();
+    let root: Noted<RunId> = noted();
+    let said: Noted<Refusal> = noted();
+    let asks = |name: &str, then: Option<&'static str>| {
+        let (barriers, root, said) = (barriers.clone(), root.clone(), said.clone());
+        act(name, move |_, context| {
+            barriers.stop_at("known");
+            let root = root.lock().unwrap()[0].clone();
+            said.lock()
+                .unwrap()
+                .push(refused(context.executor().wait(&root)));
+            if let Some(next) = then {
+                context.executor().submit(&Call::new(next)).unwrap();
+            }
+            Ok(Produced::nothing())
+        })
+    };
+    let actions = vec![asks("outer", Some("inner")), asks("inner", None)];
+    let executor = engine(world.store(), actions);
+    let Ok(Answer::Started(run)) = executor.start(&Request::new(Call::new("outer"))) else {
+        panic!("the request was not started");
+    };
+    root.lock().unwrap().push(run.clone());
+    barriers.open("known");
+    let waited = within("the wait for the run", {
+        let (executor, run) = (executor.clone(), run.clone());
+        move || executor.wait(&run)
+    });
+    assert_eq!(waited.unwrap().state().clone(), {
+        RunState::Ended(Outcome::Completed {
+            outputs: Vec::new(),
+        })
+    });
+    let above = Refusal::WaitAbove { run: run.clone() };
+    assert_eq!(*said.lock().unwrap(), [above.clone(), above]);
+    for stored in records(&world).values().flatten() {
+        let kinds: Vec<_> = stored.outcome().refusals.iter().map(|r| r.kind()).collect();
+        assert_eq!(kinds, [RefusalKind::WaitAbove]);
+        assert_eq!(stored.outcome().refusals[0].action(), None);
+    }
+}
+
+#[test]
+fn two_runs_that_wait_for_each_other_are_freed_when_a_run_above_them_is_cancelled() {
+    let world = World::new();
+    let barriers = Barriers::new();
+    let ids: Noted<RunId> = noted();
+    let said: Noted<Result<RunState, Refusal>> = noted();
+    let outer = {
+        let (barriers, ids) = (barriers.clone(), ids.clone());
+        act("outer", move |_, context| {
+            for side in ["left", "right"] {
+                let started = context.executor().start(&Request::new(Call::new(side)));
+                ids.lock().unwrap().push(started.unwrap().run().clone());
+            }
+            barriers.open("known");
+            Ok(Produced::nothing())
+        })
+    };
+    let side = |name: &str, other: usize| {
+        let (barriers, ids, said) = (barriers.clone(), ids.clone(), said.clone());
+        act(name, move |_, context| {
+            barriers.stop_at("known");
+            let other = ids.lock().unwrap()[other].clone();
+            barriers.stop_at("waiting");
+            let waited = match context.executor().wait(&other) {
+                Ok(watched) => Ok(watched.state().clone()),
+                Err(CallError::Refused(refusal)) => Err(refusal),
+                Err(other) => panic!("{other:?}"),
+            };
+            said.lock().unwrap().push(waited);
+            Ok(Produced::nothing())
+        })
+    };
+    let actions = vec![outer, side("left", 1), side("right", 0)];
+    let executor = engine(world.store(), actions);
+    let Ok(Answer::Started(root)) = executor.start(&Request::new(Call::new("outer"))) else {
+        panic!("the request was not started");
+    };
+    // Both are about to wait, each for the other; then both do.
+    barriers.arrived("waiting", 2);
+    barriers.open("waiting");
+    let ids = ids.lock().unwrap().clone();
+    until("the two do not wait for each other", || {
+        ids.iter().all(|run| executor.waiting_for(run) > 0)
+    });
+    assert_eq!(executor.cancel(&root), Ok(Cancel::Accepted));
+    let waited = within("the wait for the run above the two", {
+        let (executor, root) = (executor.clone(), root.clone());
+        move || executor.wait(&root)
+    });
+    assert_eq!(
+        waited.unwrap().state(),
+        &RunState::Ended(Outcome::Cancelled)
+    );
+    let mut given_up = said.lock().unwrap().clone();
+    given_up.sort_by_key(|waited| format!("{waited:?}"));
+    let mut expected: Vec<_> = ids
+        .iter()
+        .map(|run| Err(Refusal::WaitCancelled { run: run.clone() }))
+        .collect();
+    expected.sort_by_key(|waited| format!("{waited:?}"));
+    assert_eq!(given_up, expected);
+    for run in &ids {
+        let stored = record(&world, run);
+        assert_eq!(stored.outcome().status, Status::Cancelled);
+        let kinds: Vec<_> = stored.outcome().refusals.iter().map(|r| r.kind()).collect();
+        assert_eq!(kinds, [RefusalKind::WaitCancelled]);
+    }
 }
 
 // --- what a run that completed committed ------------------------------------------------------
@@ -1143,6 +1355,10 @@ fn the_runs_under_one_run_that_nothing_called_are_bounded_at_every_level_togethe
     let outer = {
         let said = said.clone();
         act("outer", move |_, context| {
+            // A call that is refused makes no run, and is not counted in the tree.
+            for _ in 0..3 {
+                refused(context.executor().submit(&Call::new("nobody")));
+            }
             for _ in 0..4 {
                 let called = context.executor().submit(&Call::new("middle"));
                 if let Err(CallError::Refused(refusal)) = called {
@@ -1175,9 +1391,10 @@ fn the_runs_under_one_run_that_nothing_called_are_bounded_at_every_level_togethe
     let kinds = |stored: &RunRecord| -> Vec<RefusalKind> {
         stored.outcome().refusals.iter().map(|r| r.kind()).collect()
     };
+    let unknown = RefusalKind::UnknownAction;
     assert_eq!(
         kinds(&record(&world, finished.run())),
-        [RefusalKind::TreeFull]
+        [unknown, unknown, unknown, RefusalKind::TreeFull]
     );
     let refusing = all.values().flatten().filter(|r| !kinds(r).is_empty());
     assert_eq!(refusing.count(), 2);
