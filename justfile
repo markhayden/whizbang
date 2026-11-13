@@ -22,12 +22,13 @@ clippy:
 test:
     scripts/thread-guard.sh cargo nextest run --workspace
 
-# Some of the tests, through the same guard: the arguments are nextest's, as in
-# `just test-only -p whizbang-core watch::`. This, and not a bare `cargo nextest run`, is
-# how one crate's tests or one test are run.
+# Some of the tests, through the same guard, as in `just test-only -p whizbang-core watch::`.
+# This, and not a bare `cargo nextest run`, is how one crate's tests or one test are run.
+# It takes a closed set of arguments (the top of scripts/test-only.sh) and refuses any
+# other: it is on the allow list, and nextest's own arguments can name a program to run.
 [positional-arguments]
 test-only +args:
-    scripts/thread-guard.sh cargo nextest run "$@"
+    scripts/test-only.sh "$@"
 
 # The fast tests, then seconds per suite; fails when test time exceeds 180 seconds. They
 # run through scripts/thread-guard.sh too.
