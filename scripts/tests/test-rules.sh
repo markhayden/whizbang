@@ -32,6 +32,7 @@ Bash(just scan-secrets)
 Bash(just docs)
 Bash(just docs-check)
 Bash(just test)
+Bash(just test-only *)
 Bash(just test-scripts)
 Bash(just test-scripts-slow)
 Bash(just test-timeout)
@@ -121,7 +122,7 @@ expect_pass "the committed settings" check_settings "$settings"
 
 # Each `just <recipe>` rule names a recipe the justfile has.
 grep -o '^Bash(just [a-z][a-z-]*' "$tmp/allow" | sed 's/^Bash(just //' | sort -u | while read -r name; do
-  grep -q -E "^$name( [a-z]+)*:" justfile || fail "the settings allow just $name, which the justfile does not have"
+  grep -q -E "^$name( [+*]?[a-z]+)*:" justfile || fail "the settings allow just $name, which the justfile does not have"
 done
 # Each `scripts/...` rule names a script that is there.
 grep -o '^Bash(scripts/[^ )]*' "$tmp/allow" | sed 's/^Bash(//' | sort -u | while read -r path; do

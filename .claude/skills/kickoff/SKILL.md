@@ -47,7 +47,9 @@ If one is missing, ask the orchestrator. Do not guess.
       with the least code. Repeat down the list. Tests wait on events, never on sleeps.
       While building, run one crate's tests or one script test alone (the commands below);
       a script test passes only when it exits 0 and its last line is `finished: …`.
-      Neither command is on the allow list, so each asks first.
+      The script test is not on the allow list, so it asks first. A test makes a thread
+      only through `whizbang_testkit::threads`, and no test is run by a bare `cargo`
+      command (`AGENTS.md`, "Gotchas": threads and processes).
 - [ ] 6. Update what the change affects: `SPEC.md`, the reference (`just docs`), and
       `docs/carry-over.md`. A change to the spec that alters scope, architecture or
       what a milestone holds is not made inside a task: it needs the review rounds first
@@ -146,8 +148,8 @@ git rev-parse origin/main                      # the same commit
 scripts/worktree.sh add <slug>                 # then work in ../whizbang-<slug>
 git rev-parse HEAD                             # in the worktree: the base commit
 
-# 5: one crate's tests, one script test (each asks first)
-cargo nextest run -p <crate>
+# 5: one crate's tests, one script test (the script test asks first)
+just test-only -p <crate>
 bash scripts/tests/<name>.sh                   # exit 0, and the last line is: finished: …
 
 # 7 and 8

@@ -46,7 +46,9 @@ manifest. This file holds what you cannot work out from the code.
 | `just ci` | What a pull request runs: `check`, advisories, a smoke of the release binary, the secrets scan |
 | `just test-scripts-slow` | After changing `.config/nextest.toml` or `scripts/timing.sh`: about 40 seconds; a 31-second test really fails by timeout (CI runs that part as `just test-timeout`) |
 | `just search-canary` | When a scan test fails once and passes on a rerun: 30 seconds of the scan's search against its known output (CI runs it on macOS) |
-| `scripts/heavy.sh <label> <command...>` | Around any heavy command: one runs at a time on a machine, the next waits |
+| `scripts/heavy.sh <label> <command...>` | Around any heavy command: one runs at a time on a machine, the next waits. The command runs under `scripts/thread-guard.sh` |
+| `just test-only <nextest arguments>` | One crate's tests or one test, as in `just test-only -p whizbang-core watch::`: the only way to run some of the tests. It runs them under `scripts/thread-guard.sh`. Heavy |
+| `scripts/thread-guard.sh <command...>` | Around anything else that runs tests: it kills the command when one process holds more than 300 threads, or when it can no longer count them |
 
 An action's name and purpose are printed in the reference as they are, so `just docs` refuses
 any that could be read as markup. A name is a lower-case letter, then lower-case letters,
@@ -65,11 +67,17 @@ stopped half-way, so a test passes only when that line ran. A script that sets a
 copies the first lines and the trap of `scripts/scan.sh`; `scripts/tests/test-syntax.sh` holds
 it to that.
 
-These are heavy: `just check`, `just ci`, `just test`, `just timing`, `just clippy`,
-`just docs`, `just docs-check`, `just smoke`, `just test-scripts-slow`, and any `cargo`
-command that builds or tests. When another agent may be building on the machine, each goes
-through the lock, as in `scripts/heavy.sh check just check`. The scans, `just test-scripts`
-and one script test alone are not heavy.
+These are heavy: `just check`, `just ci`, `just test`, `just test-only`, `just timing`,
+`just clippy`, `just docs`, `just docs-check`, `just smoke`, `just test-scripts-slow`, and
+any `cargo` command that builds or tests. When another agent may be building on the machine,
+each goes through the lock, as in `scripts/heavy.sh check just check`. The scans,
+`just test-scripts` and one script test alone are not heavy.
+
+Tests are never run by a bare `cargo test` or `cargo nextest run`: only by `just check`,
+`just test`, `just test-only`, or a command through `scripts/heavy.sh` or
+`scripts/thread-guard.sh`. The guard catches a process whose threads grow over about a third
+of a second; it cannot stop a loop that makes them faster than that, which is what the rule
+under "Gotchas" is for.
 
 ## Where agents may work
 
@@ -137,9 +145,10 @@ each subagent file to the keys `name`, `description` and `tools`, with its exact
 tools, and each skill to one `SKILL.md` whose frontmatter is `name` and `description` only: a
 skill grants nothing. It refuses any other file in a folder named `.claude`, at any depth: no
 commands, no hooks, no settings further down. `scripts/worktree.sh` is not on the list, so it
-asks first. So does one crate's tests (`cargo nextest run -p <crate>`), one script test
-(`bash scripts/tests/<name>.sh`), and any allowed command with something in front of it,
-such as an `export` and `&&`: a rule matches the exact text. That is why
+asks first. So does one script test (`bash scripts/tests/<name>.sh`), and any allowed
+command with something in front of it, such as an `export` and `&&`: a rule matches the
+exact text. One crate's tests, or one test, run without a prompt as
+`just test-only -p <crate>`. That is why
 `WHIZBANG_WORDLIST` is set where it lasts ("On a fresh clone"), not at the front of each
 command. The local settings file that may hold it is never committed.
 
@@ -291,3 +300,10 @@ deferred is on the carry-over list with a milestone. A tool is not done without 
   machine. A green CI says nothing about it; only the local scans do.
 - **A worktree on a branch cut before a change to the hooks** runs that branch's older hook.
 - **Linux CI catches timing races that macOS misses.** Tests wait on events, never on sleeps.
+- **Threads and processes.** A test that made threads until the system refused one took a
+  machine down, twice. A test makes a thread only through `whizbang_testkit::threads`, which
+  holds a process to 64 of them (`just check` refuses any other way), and no test, probe or
+  script holds more than 200 live threads in one process. Every loop that starts a thread, a
+  run or a process has a number written in it and waits for each child. Nothing is ever run
+  to find out how many a system allows. A thread that cannot be made is shown with
+  `Engine::with_spawn`, never by using them up.
