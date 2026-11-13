@@ -353,6 +353,44 @@ fn what_is_not_a_record_is_refused_by_the_types_and_by_the_schema() {
 }
 
 #[test]
+fn a_request_id_in_a_record_is_held_to_the_rule_of_one_by_the_types_and_its_length_by_the_schema() {
+    // ADR 0007: a record's `request` is null or a request id. The types hold it to the
+    // whole rule; the schema, which has no pattern here, to its two lengths.
+    let with = |request: &str| changed(|d| d["identity"]["request"] = json!(request));
+    let as_written = |request: &str| {
+        completed().replace(r#""request":null"#, &format!(r#""request":"{request}""#))
+    };
+    for good in ["a", "order-17", "A.b_c:9", &"x".repeat(128)] {
+        let record = RunRecord::from_bytes(as_written(good).as_bytes()).unwrap();
+        assert_eq!(record.identity().request.as_deref(), Some(good));
+        let document: Json = serde_json::from_slice(&with(good)).unwrap();
+        validate(&schema(), &document).unwrap();
+    }
+    for (bad, schema_refuses) in [
+        (String::new(), true),
+        ("x".repeat(129), true),
+        // What the schema cannot say: the alphabet.
+        ("order 17".to_owned(), false),
+        ("a/b".to_owned(), false),
+    ] {
+        let bytes = with(&bad);
+        let error = RunRecord::from_bytes(&bytes).unwrap_err();
+        assert!(
+            matches!(&error, RecordError::Inconsistent(why) if why.contains("request's id")),
+            "{bad:?}: {error}"
+        );
+        // The refusal does not show what it refused.
+        assert!(error.to_string().len() < 200);
+        let document: Json = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            validate(&schema(), &document).is_err(),
+            schema_refuses,
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
 fn a_name_that_the_schema_holds_to_one_character_cannot_be_empty() {
     // The schema gives these a least length of one; the types hold them to the same.
     for path in [
@@ -786,6 +824,7 @@ fn a_record_made_from_a_prepared_call_and_an_outcome_is_these_bytes() {
     };
     let made = RunRecord::of(
         Ran {
+            request: None,
             run: "1000-1",
             whizbang: "0.0.1",
             prepared: &prepared,
@@ -812,6 +851,7 @@ fn a_record_made_from_a_prepared_call_and_an_outcome_is_these_bytes() {
 
 fn ran<'a>(prepared: &'a PreparedCall, outcome: &'a Outcome) -> Ran<'a> {
     Ran {
+        request: None,
         run: "run-7",
         whizbang: "0.0.1",
         prepared,

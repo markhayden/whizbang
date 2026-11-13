@@ -9,9 +9,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use whizbang_core::artifact::{self, Artifact, ArtifactType, ImageRole};
 use whizbang_core::contract::record::{self, RunRecord, Status};
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Call, CallError, Clock, Context, Engine, Executor, Failure, Finished,
-    InputPort, Kind, NoBackends, Outcome, PreparedCall, Produced, Refusal, Registry, RunId,
-    Secrets, Value, WHIZBANG_VERSION, is_diagnostic_name, read_journal,
+    ADMITTED_NAME, Action, ActionDescriptor, Call, CallError, Clock, Context, Engine, Executor,
+    Failure, Finished, InputPort, Kind, NoBackends, Outcome, PreparedCall, Produced, Refusal,
+    Registry, RunId, Secrets, Value, WHIZBANG_VERSION, is_diagnostic_name, read_journal,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::{Fs, RealFs};
@@ -122,13 +122,21 @@ fn echo(text: &str) -> Call {
     Call::new("echo").argument("text", Value::text(text))
 }
 
-/// What a run holds in the store: each of its names, with the kind of its reference
-/// and its content.
+/// What a run holds in the store beside its admission, which every run has and which
+/// has tests of its own (`admit.rs`): each of its other names, with the kind of its
+/// reference and its content.
 fn names_of(root: &Path, fs: Arc<dyn Fs>, run: &str) -> Vec<(String, store::Kind, Vec<u8>)> {
     let reader = Reader::open(root, fs).unwrap();
     let generation = reader.snapshot().unwrap();
     let run = generation.run(run).unwrap();
-    let held = run.entries().iter();
+    assert_eq!(
+        run.get(ADMITTED_NAME).unwrap().kind,
+        store::Kind::Diagnostic
+    );
+    let held = run
+        .entries()
+        .iter()
+        .filter(|(name, _)| *name != ADMITTED_NAME);
     held.map(|(name, entry)| (name.clone(), entry.kind, reader.read(entry).unwrap()))
         .collect()
 }
@@ -170,8 +178,8 @@ fn echo_runs_through_the_executor_and_its_record_is_in_the_store() {
         }
     );
 
-    // The run holds three names, each a diagnostic reference: what the action wrote, the
-    // journal, and the record.
+    // Beside its admission the run holds three names, each a diagnostic reference: what
+    // the action wrote, the journal, and the record.
     let held = names_of(&world.root(), world.fs.clone(), finished.run().as_str());
     let names: Vec<(&str, store::Kind)> = held.iter().map(|(n, k, _)| (n.as_str(), *k)).collect();
     assert_eq!(
@@ -393,8 +401,8 @@ fn an_action_is_handed_a_context_and_cannot_yet_call_another_action() {
         assert!(!context.cancellation().is_cancelled());
         assert!(context.deadline().is_none());
         assert!(context.capabilities().segment().is_none());
-        // The store can be read from inside a run.
-        assert_eq!(context.store().snapshot().unwrap().number(), 0);
+        // The store can be read from inside a run, and holds the run's admission.
+        assert_eq!(context.store().snapshot().unwrap().number(), 1);
         // A call to another action is refused, by name, and prepared no further.
         let refused = context.executor().submit(&echo("inner")).unwrap_err();
         assert_eq!(refused, CallError::Refused(Refusal::NoNestedCalls));
@@ -550,9 +558,9 @@ fn every_run_gets_an_id_of_its_own_that_is_a_run_id() {
     for id in &ids {
         assert_eq!(RunId::parse(id).unwrap().as_str(), id);
     }
-    // The run that was there is as it was.
-    let held = names_of(&world.root(), world.fs.clone(), "5000-1");
-    assert_eq!(held.len(), 1);
+    // The run that was there is as it was: its one name, and no admission.
+    let runs = runs_of(&world.root(), world.fs.clone());
+    assert_eq!(runs[0], ("5000-1".to_owned(), 1));
     // The largest time there is still makes a run id.
     let last = Engine::over(
         {
@@ -590,9 +598,12 @@ fn a_run_that_was_reported_survives_a_loss_of_power() {
 }
 
 #[test]
-fn a_run_whose_publication_fails_is_reported_as_the_stores_failure_and_leaves_no_run() {
-    // The store fails at each step of the run's publication in turn. The answer is the
-    // store's failure, never a finished run, and the store holds no part of the run.
+fn a_run_whose_publication_fails_is_the_stores_failure_and_is_never_half_ended() {
+    // The store fails at each step of a run's two publications in turn: its admission,
+    // and its end. The answer is the store's failure, never a finished run. What the
+    // store then holds is one of three things, each whole: nothing of the run; the run
+    // as it was admitted, with its admission and no record; or the run ended, with all
+    // four names, when the end became visible and was not confirmed durable.
     let steps = {
         let world = World::new();
         let engine = world.engine();
@@ -600,7 +611,8 @@ fn a_run_whose_publication_fails_is_reported_as_the_stores_failure_and_leaves_no
         engine.submit(&echo("hello")).unwrap();
         world.fs.events()[before..].to_vec()
     };
-    assert!(steps.len() > 5, "{steps:?}");
+    assert!(steps.len() > 10, "{steps:?}");
+    let mut seen = std::collections::BTreeSet::new();
     for (step, event) in steps.iter().enumerate() {
         let world = World::new();
         let engine = world.engine();
@@ -608,35 +620,44 @@ fn a_run_whose_publication_fails_is_reported_as_the_stores_failure_and_leaves_no
         let result = engine.submit(&echo("hello"));
         let reader = Reader::open(&world.root(), world.fs.clone()).unwrap();
         let generation = reader.snapshot().unwrap();
+        let names: Vec<Vec<&str>> = generation
+            .runs()
+            .values()
+            .map(|run| run.entries().keys().map(String::as_str).collect())
+            .collect();
         let said = match result {
             Err(CallError::Store(failure)) => CallError::Store(failure).to_string(),
-            // Clearing away the staging, after the publication is durable, can fail
+            // Clearing away the staging, after a publication is durable, can fail
             // without failing the run: the run is whole and was reported.
-            Ok(finished) if matches!(event, Event::Remove(_)) => {
-                let run = generation.run(finished.run().as_str()).unwrap();
-                assert_eq!(run.entries().len(), 3);
+            Ok(_) if matches!(event, Event::Remove(_)) => {
+                assert_eq!(names.len(), 1, "step {step}");
+                assert_eq!(names[0].len(), 4, "step {step}");
                 continue;
             }
             other => panic!("step {step}, {event:?}: {other:?}"),
         };
         assert!(!said.contains(world.root().to_str().unwrap()), "{said}");
-        if generation.number() == 0 {
-            assert!(generation.runs().is_empty(), "step {step}");
-        } else {
-            // Visible and not confirmed durable: the run is whole, and it was not
-            // reported as finished.
-            assert!(
-                said.contains("not confirmed durable"),
-                "step {step}: {said}"
-            );
-            let runs: Vec<usize> = generation
-                .runs()
-                .values()
-                .map(|r| r.entries().len())
-                .collect();
-            assert_eq!(runs, [3], "step {step}");
+        let unconfirmed = said.contains("not confirmed durable");
+        match generation.number() {
+            0 => assert!(names.is_empty() && !unconfirmed, "step {step}: {said}"),
+            // Admitted, and no more: the admission's last sync failed, or a step of
+            // the end did before the end was visible.
+            1 => assert_eq!(names, [["admitted"]], "step {step}"),
+            2 => {
+                assert!(unconfirmed, "step {step}: {said}");
+                assert_eq!(names.len(), 1, "step {step}");
+                assert_eq!(names[0].len(), 4, "step {step}");
+            }
+            other => panic!("step {step}: generation {other}"),
         }
+        seen.insert((generation.number(), unconfirmed));
     }
+    // Every case was met: nothing; admitted and unconfirmed; admitted, with the end
+    // refused; ended and unconfirmed.
+    assert_eq!(
+        seen.into_iter().collect::<Vec<_>>(),
+        [(0, false), (1, false), (1, true), (2, true)]
+    );
 }
 
 #[test]
@@ -645,17 +666,18 @@ fn the_record_is_published_in_one_generation_with_the_journal_and_the_diagnostic
     let engine = world.engine();
     engine.submit(&echo("hello")).unwrap();
     let reader = Reader::open(&world.root(), world.fs.clone()).unwrap();
-    assert_eq!(reader.snapshot().unwrap().number(), 1);
-    engine.submit(&echo("again")).unwrap();
+    // Two generations for each run: its admission, and its end.
     assert_eq!(reader.snapshot().unwrap().number(), 2);
-    // One pointer replaced for each run.
+    engine.submit(&echo("again")).unwrap();
+    assert_eq!(reader.snapshot().unwrap().number(), 4);
+    // Two pointers replaced for each run.
     let pointers = world
         .fs
         .events()
         .into_iter()
         .filter(|event| matches!(event, Event::Rename(_, to) if to.ends_with("CURRENT")));
     // The store's creation placed the first pointer.
-    assert_eq!(pointers.count(), 3);
+    assert_eq!(pointers.count(), 5);
 }
 
 // --- nothing private --------------------------------------------------------------------------
@@ -939,80 +961,43 @@ fn many_runs_from_two_executors_at_one_instant_are_all_kept() {
     assert_eq!(distinct.len(), 200);
     let runs = runs_of(&world.root(), world.fs.clone());
     assert_eq!(runs.len(), 200);
-    assert!(runs.iter().all(|(_, names)| *names == 3), "{runs:?}");
-}
-
-/// The count in a run's id: the number after the hyphen.
-fn count_of(run: &RunId) -> u64 {
-    run.as_str().split_once('-').unwrap().1.parse().unwrap()
+    assert!(runs.iter().all(|(_, names)| *names == 4), "{runs:?}");
 }
 
 #[test]
-fn a_run_whose_id_was_taken_while_it_executed_is_named_again_and_merges_into_nothing() {
-    // The id is free when the run is named. While the action runs, other hands publish
-    // runs under that id and the ids after it. The store refuses to make a run that it
-    // already holds, the executor names the run again, and nothing is merged: the runs
-    // that were planted hold what they held, and the reported run is whole.
-    //
-    // The count in an id is one for the whole process, and under `cargo test` other
-    // tests of this binary name runs too. So the ids to plant are found, not assumed: a
-    // first run says where the count is, and the 500 ids after it are planted, which is
-    // far more than the other tests name in the moment between.
-    const PLANTED: u64 = 500;
+fn a_run_that_was_deleted_while_it_executed_is_not_made_again_by_its_end() {
+    // A run exists in the store from its admission. While its action runs, the run is
+    // deleted. The end of the run adds to a run that must be there: the store refuses
+    // it, the caller is told of the store's failure, and no run of that id is made
+    // from the journal and the record.
     let world = World::new();
     let store = world.store();
-    let first = Arc::new(AtomicU64::new(0));
-    let planting = {
-        let (store, first) = (store.clone(), first.clone());
-        scripted("plant", move |_, context| {
+    let deleting = {
+        let store = store.clone();
+        scripted("delete", move |_, context| {
             context.diagnostics().write("mine.txt", b"x").unwrap();
-            let from = first.load(Ordering::SeqCst);
-            let mut publication = store.begin().unwrap();
-            for count in from..from + PLANTED {
-                publication
-                    .put_in(
-                        &format!("8000-{count}"),
-                        "theirs",
-                        store::Kind::Diagnostic,
-                        b"y",
-                    )
-                    .unwrap();
-            }
-            publication.publish().unwrap();
+            let generation = store.snapshot().unwrap();
+            let runs: Vec<&str> = generation.runs().keys().map(String::as_str).collect();
+            assert_eq!(runs.len(), 1, "{runs:?}");
+            store.delete(&runs).unwrap();
             Ok(Produced::nothing())
         })
     };
-    let engine = engine_over(store.clone(), vec![planting], 8000);
-    let before = engine
-        .submit(&Call::new("echo").argument("text", Value::text("hello")))
-        .unwrap();
-    let from = count_of(before.run()) + 1;
-    first.store(from, Ordering::SeqCst);
-
-    let finished = engine.submit(&Call::new("plant")).unwrap();
-    // The id it was first given was among those planted, so it was refused and named
-    // again: the id it ended with is past every planted one.
-    assert!(
-        count_of(finished.run()) >= from + PLANTED,
-        "{} was never taken: no collision was made",
-        finished.run()
-    );
-    let runs = runs_of(&world.root(), world.fs.clone());
-    assert_eq!(runs.len() as u64, PLANTED + 2, "{runs:?}");
-    for (id, names) in &runs {
-        if id == finished.run().as_str() || id == before.run().as_str() {
-            assert_eq!(*names, 3, "{id}");
-        } else {
-            assert_eq!(*names, 1, "{id} was merged into");
-        }
+    let engine = engine_over(store.clone(), vec![deleting], 8000);
+    match engine.submit(&Call::new("delete")) {
+        Err(CallError::Store(failure)) => assert!(
+            matches!(failure.cause(), store::Error::NoSuchRun { .. }),
+            "{:?}",
+            failure.cause()
+        ),
+        other => panic!("the run was reported: {other:?}"),
     }
-    let record = record_of(&world.root(), world.fs.clone(), finished.run().as_str());
-    assert_eq!(record.identity().run, finished.run().as_str());
+    assert_eq!(runs_of(&world.root(), world.fs.clone()), []);
 }
 
-/// A file system that takes a run's id from under the executor: each time a run record
-/// is about to be written, it first publishes a run of the id the record names, as
-/// other hands would, for as many times as it was told to.
+/// A file system that takes a run's id from under the executor: each time a run's
+/// admission is about to be written, it first publishes a run of the id the admission
+/// names, as other hands would, for as many times as it was told to.
 struct Taker {
     inner: RealFs,
     store: std::sync::OnceLock<Arc<Store>>,
@@ -1025,7 +1010,11 @@ impl Taker {
         let Ok(record) = serde_json::from_slice::<serde_json::Value>(bytes) else {
             return;
         };
-        let (Some(id), Some(store)) = (record["identity"]["run"].as_str(), self.store.get()) else {
+        // An admission: what the publication that makes a run writes first.
+        if record["record"].as_str() != Some("admission/1") {
+            return;
+        }
+        let (Some(id), Some(store)) = (record["run"].as_str(), self.store.get()) else {
             return;
         };
         let mut taken = self.taken.lock().unwrap();
@@ -1086,7 +1075,7 @@ impl Fs for Taker {
 
 #[test]
 fn a_run_is_named_eight_times_at_most() {
-    // Each time the executor is about to publish its run, the id it chose is taken. It
+    // Each time the executor is about to admit its run, the id it chose is taken. It
     // names the run again, and does so until it has named it eight times: taken seven
     // times, the eighth name is published; taken eight times, a ninth name is not
     // tried, and the store's refusal is what the caller is told.
@@ -1116,7 +1105,7 @@ fn a_run_is_named_eight_times_at_most() {
     assert_eq!(runs.len(), 8, "{runs:?}");
     for (id, names) in &runs {
         let own = id == finished.run().as_str();
-        assert_eq!(*names, if own { 3 } else { 1 }, "{id}");
+        assert_eq!(*names, if own { 4 } else { 1 }, "{id}");
     }
 
     let (result, taken, runs) = submit(8);

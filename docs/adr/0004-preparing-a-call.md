@@ -42,6 +42,10 @@ left to task A8. Changed: "Who may state a derivation". `Derivation::stated` is 
 a derivation is made only by `Derivation::checked`, and the trust boundary for prepare
 is the maker's statement; the prepare test of a moved mask is rewritten with
 `Mask::from_core` under a new name.
+Amended: 2026-11-12, with ADR 0007, which looks a request id up and admits a run.
+Changed: the executor has a third method, `request`, and the look for a request id is
+built; a `CallError` has a third kind, a record of a request that this build does not
+read; a read of the store can also give a record the executor wrote.
 Spec: section 3, "The execution contract", "Identities" and "Storage"; section 6,
 "Readiness"
 
@@ -118,8 +122,10 @@ type the port takes, the artifact's identity, and an `InputFault`, one of `Missi
 `WrongType`, `WrongImage` and `NotTheArtifact`. A door can tell them apart without reading
 the text.
 
-**A failure of the store is not a refusal.** Both methods of the executor answer with a
-`CallError`: `Refused`, with the refusal, or `Store`, with a `StoreFailure`. The store
+**A failure of the store is not a refusal.** Every method of the executor answers with a
+`CallError`: `Refused`, with the refusal, or `Store`, with a `StoreFailure`. (A third
+kind, `Record`, is ADR 0007's: a record of a request that this build does not read. It
+is met only where a request id is looked up.) The store
 failing is not a judgement of the call. There are three kinds:
 
 - content that a generation names and that is missing or damaged;
@@ -164,7 +170,8 @@ when it runs.
 Prepare is given two things. Through neither can it make a durable change.
 
 - **A read of the store** (`artifact::Contents`: the current generation and the content of
-  an entry). It has no way to write, and it takes no part in the writer lock. It is not
+  an entry; and, since ADR 0007, the content of an entry of either kind, which prepare
+  does not use and the look for a request id does). It has no way to write, and it takes no part in the writer lock. It is not
   free of locks: each input read asks for the current generation, and a reader then
   shares that generation's file: a shared advisory lock (`flock`; the store's module
   `fs`), which can wait behind a prune that holds the file alone for the moment it takes
@@ -301,10 +308,11 @@ lists and shows runs must take stored ids as they are (`docs/carry-over.md`).
 
 ### The executor's interface, and the types around execution
 
-`Executor` has two methods, and each answers with what it was asked for or a `CallError`.
-`prepare` is the above. `submit` is the entry point for a call
-that is to run, the one place a call comes in whatever door it came through: it is where a
-caller's request id will be looked up, before anything else (task A6); then it prepares,
+`Executor` has three methods, and each answers with what it was asked for or a
+`CallError`. `prepare` is the above. `submit` is the entry point for a call
+that is to run, the one place a call comes in whatever door it came through; `request` is
+the same entry point for a call that may carry a caller's request id, which is looked
+up there before anything else (ADR 0007); then each prepares,
 and refuses a call that is not ready. What happens to a ready call is ADR 0005's: an
 executor that was given a store to write to runs it and writes its record; one that was
 given only a read of a store refuses it with `ReadOnly`.
@@ -346,7 +354,7 @@ known case that does not, and it goes with rascal's recipes to milestone 3
   choice, and prepare hands it the text of the argument the descriptor names. The
   fingerprint's kind does not change with it, as this record first said it would: a choice is an argument of the call, the model it resolves to is a
   need's, and both were hashed already, in an encoding that stays as it is.
-- Both methods of `Executor` return when they have their answer. Section 3 wants execution
+- Every method of `Executor` returns when it has its answer. Section 3 wants execution
   asynchronous, with status and cancel answered while a run executes. How that is
   scheduled is not decided, and `submit`'s shape may change when it is; it is cheap to
   change while nothing runs.

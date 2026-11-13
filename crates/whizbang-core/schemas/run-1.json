@@ -12,7 +12,7 @@
       "required": ["run", "request", "parent", "whizbang"],
       "properties": {
         "run": { "type": "string", "minLength": 1 },
-        "request": { "type": ["string", "null"] },
+        "request": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
         "parent": { "type": ["string", "null"] },
         "whizbang": { "type": "string", "minLength": 1 }
       }

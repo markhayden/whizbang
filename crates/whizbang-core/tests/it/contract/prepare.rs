@@ -268,8 +268,8 @@ fn refused(result: Result<PreparedCall, CallError>, what: &[&str]) -> Refusal {
             panic!("prepared, where a refusal saying {what:?} was expected: {prepared:?}")
         }
         Err(CallError::Refused(refusal)) => refusal,
-        Err(CallError::Store(failure)) => {
-            panic!("the store failed, where a refusal saying {what:?} was expected: {failure}")
+        Err(other) => {
+            panic!("no refusal, where one saying {what:?} was expected: {other}")
         }
     };
     let message = refusal.to_string();

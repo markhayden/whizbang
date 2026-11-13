@@ -17,7 +17,7 @@ use crate::identity::{Binding, BindingId, DecodeLimits, Digest, Encoder, Fields}
 
 use crate::store;
 
-use super::{ActionDescriptor, Call, Capability, Count, InputPort, Value};
+use super::{ActionDescriptor, Call, Capability, Count, InputPort, RequestId, RunId, Value};
 
 /// Which model answers a capability: the backend, the model, and the model's version or
 /// reported identity.
@@ -351,6 +351,14 @@ impl std::fmt::Display for StoreFailure {
 pub enum CallError {
     Refused(Refusal),
     Store(StoreFailure),
+    /// The store gave a record the executor needed to answer, of a request id or of
+    /// the run a request made, and it is not one this build reads. `what` says which
+    /// record; `why` is the reader's sentence, which shows what it quotes escaped and
+    /// cut. This is not a judgement of the call, and nothing ran.
+    Record {
+        what: &'static str,
+        why: String,
+    },
 }
 
 impl CallError {
@@ -358,7 +366,7 @@ impl CallError {
     pub fn refusal(&self) -> Option<&Refusal> {
         match self {
             CallError::Refused(refusal) => Some(refusal),
-            CallError::Store(_) => None,
+            CallError::Store(_) | CallError::Record { .. } => None,
         }
     }
 }
@@ -374,6 +382,12 @@ impl std::fmt::Display for CallError {
         match self {
             CallError::Refused(refusal) => refusal.fmt(f),
             CallError::Store(failure) => write!(f, "the store failed: {failure}"),
+            CallError::Record { what, why } => {
+                write!(
+                    f,
+                    "the store holds {what}, and this build does not read it: {why}"
+                )
+            }
         }
     }
 }
@@ -410,6 +424,13 @@ pub enum Refusal {
     ReadOnly,
     /// A call from inside a running action. This build does not nest calls yet.
     NoNestedCalls,
+    /// The request's id was admitted before for another request, which made `run`. An
+    /// id is one request's: nothing was prepared and nothing ran.
+    Conflict { request: RequestId, run: RunId },
+    /// The request's id holds something the executor was told never to write. An id is
+    /// stored as it is, in a name and in two records, so it is refused, and the refusal
+    /// does not show it.
+    SecretInRequestId,
 }
 
 impl std::fmt::Display for Refusal {
@@ -454,6 +475,15 @@ impl std::fmt::Display for Refusal {
             ),
             Refusal::NoNestedCalls => f.write_str(
                 "an action cannot call another action yet: this build does not nest calls",
+            ),
+            Refusal::Conflict { request, run } => write!(
+                f,
+                "the request id {request} was used for another request, which made the run \
+                 {run}: an id is one request's, and this one was not run"
+            ),
+            Refusal::SecretInRequestId => f.write_str(
+                "the request id holds something that must not be written: an id is stored \
+                 as it is, so it cannot hold a secret",
             ),
         }
     }
