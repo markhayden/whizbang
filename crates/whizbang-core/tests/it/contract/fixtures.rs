@@ -95,7 +95,11 @@ pub fn seam() -> Draft {
             )
             .when(When::given("filler")),
         )
-        .needs(Requirement::new(Capability::Fill).when(When::given("filler")))
+        .needs(
+            Requirement::new(Capability::Fill)
+                .when(When::given("filler"))
+                .chosen_by("filler"),
+        )
         .concurrent(true)
 }
 
@@ -153,8 +157,16 @@ pub fn remove_prompt() -> Draft {
             )
             .on(PortRef::input("image")),
         )
-        .needs(Requirement::new(Capability::Segment).feature("phrase"))
-        .needs(Requirement::new(Capability::Fill).when(When::given("filler")))
+        .needs(
+            Requirement::new(Capability::Segment)
+                .feature("phrase")
+                .chosen_by("model"),
+        )
+        .needs(
+            Requirement::new(Capability::Fill)
+                .when(When::given("filler"))
+                .chosen_by("filler"),
+        )
         .concurrent(true)
 }
 
@@ -223,9 +235,12 @@ fn remove_prompt_needs_a_filler_only_when_one_is_chosen() {
         capabilities(&["prompt", "filler"]),
         [Capability::Segment, Capability::Fill]
     );
-    // And the features travel with the capability.
-    let needs = remove.needs_for(&given(&["prompt"]));
+    // And the features travel with the capability, and so does the argument that
+    // chooses its backend: `model` the segmenter, `filler` the filler.
+    let needs = remove.needs_for(&given(&["prompt", "filler"]));
     assert_eq!(needs[0].features(), ["phrase".to_owned()]);
+    assert_eq!(needs[0].chooser(), Some("model"));
+    assert_eq!(needs[1].chooser(), Some("filler"));
     // The mask alone: no composite is returned. With a filler it is.
     let outputs = |arguments: &[&str]| -> Vec<&str> {
         remove
@@ -268,6 +283,8 @@ fn a_fixture_reads_the_same_as_data_every_time() {
     assert_eq!(value["needs"][1]["capability"], "fill");
     assert_eq!(value["needs"][1]["when"]["given"], "filler");
     assert_eq!(value["needs"][0]["when"], "always");
+    assert_eq!(value["needs"][0]["chosen_by"], "model");
+    assert_eq!(value["needs"][1]["chosen_by"], "filler");
     assert_eq!(value["outputs"][2]["count"]["max"], 8);
     assert_eq!(value["outputs"][0]["rebound_onto"], "result");
     assert_eq!(value["outputs"][1]["derived_from"]["input"], "image");

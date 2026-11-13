@@ -30,7 +30,7 @@ fn registry() -> Registry {
 fn a_description_lists_what_was_registered_in_order_and_in_full() {
     let description = Description::new("1.2.3", &registry());
     assert_eq!(description.description_version(), DESCRIPTION_VERSION);
-    assert_eq!(DESCRIPTION_VERSION, 3);
+    assert_eq!(DESCRIPTION_VERSION, 4);
     assert_eq!(description.name(), "whizbang");
     assert_eq!(description.version(), "1.2.3");
     let names: Vec<&str> = description.actions().iter().map(|a| a.name()).collect();

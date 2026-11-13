@@ -820,6 +820,60 @@ fn a_capability_is_needed_once_by_any_one_call() {
 }
 
 #[test]
+fn a_need_can_name_the_argument_that_chooses_its_backend() {
+    // The backend of a capability is the call's choice, or else the default (ADR 0006).
+    // A need says which argument is that choice; without one, the default always
+    // answers.
+    let fake = base()
+        .needs(
+            Requirement::new(Capability::Fill)
+                .when(When::given("filler"))
+                .chosen_by("filler"),
+        )
+        .needs(Requirement::new(Capability::Segment))
+        .build()
+        .unwrap();
+    assert_eq!(fake.needs()[0].chooser(), Some("filler"));
+    assert_eq!(fake.needs()[1].chooser(), None);
+    // The need may hold whether or not the choice is given: then the default answers.
+    base()
+        .needs(Requirement::new(Capability::Fill).chosen_by("filler"))
+        .build()
+        .unwrap();
+
+    refused(
+        base().needs(Requirement::new(Capability::Fill).chosen_by("nothing")),
+        &[
+            "the need for fill",
+            "is chosen by nothing, which is no argument",
+        ],
+    );
+    // A choice of backend is a text a call may leave out. What is on offer is the
+    // machine's state, so it is not a choice among names the descriptor lists.
+    let not_a_choice = "which is not a text that a call may leave out";
+    let with = |argument: Argument| {
+        base()
+            .argument(argument)
+            .needs(Requirement::new(Capability::Fill).chosen_by("which"))
+    };
+    for argument in [
+        Argument::optional("which", "Which.", ValueType::number(None, None)),
+        Argument::optional("which", "Which.", ValueType::Boolean),
+        Argument::optional("which", "Which.", ValueType::choice(&["a", "b"])),
+        Argument::required("which", "Which.", ValueType::Text),
+        Argument::with_default("which", "Which.", ValueType::Text, Value::text("a")),
+    ] {
+        refused(
+            with(argument),
+            &["the need for fill", "is chosen by which", not_a_choice],
+        );
+    }
+    with(Argument::optional("which", "Which.", ValueType::Text))
+        .build()
+        .unwrap();
+}
+
+#[test]
 fn a_descriptor_as_data_holds_every_field_in_a_fixed_order() {
     let fake = base()
         .argument(Argument::with_default(
@@ -828,7 +882,12 @@ fn a_descriptor_as_data_holds_every_field_in_a_fixed_order() {
             ValueType::number(Some(0.0), None),
             Value::Number(8.0),
         ))
-        .needs(Requirement::new(Capability::Fill).when(When::given("filler")))
+        .needs(
+            Requirement::new(Capability::Fill)
+                .when(When::given("filler"))
+                .chosen_by("filler"),
+        )
+        .needs(Requirement::new(Capability::Segment).feature("phrase"))
         .concurrent(true)
         .build()
         .unwrap();
@@ -841,7 +900,8 @@ fn a_descriptor_as_data_holds_every_field_in_a_fixed_order() {
             r#""inputs":[{"name":"image","artifact":"image","purpose":"The image.","count":{"min":1,"max":1},"belongs_to":null}],"#,
             r#""outputs":[{"name":"mask","artifact":"mask","purpose":"The mask.","count":{"min":1,"max":1},"when":"always","#,
             r#""belongs_to":{"input":"image"},"derived_from":null,"rebound_onto":null}],"#,
-            r#""needs":[{"capability":"fill","features":[],"when":{"given":"filler"}}],"#,
+            r#""needs":[{"capability":"fill","features":[],"when":{"given":"filler"},"chosen_by":"filler"},"#,
+            r#"{"capability":"segment","features":["phrase"],"when":"always","chosen_by":null}],"#,
             r#""concurrent":true}"#
         )
     );
