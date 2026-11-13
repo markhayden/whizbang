@@ -1,6 +1,6 @@
 # Plan: checkpoint 1B, policy and controls
 
-Draft 2, 2026-11-13. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the task
+Draft 3, 2026-11-13. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the task
 list.
 
 Checkpoint 1A is still being built while this is written. Merged, and read for this draft:
@@ -59,6 +59,7 @@ here.
 | D7 | A7, A11 | What `run/2` holds at the tag `m1a`: the `models` and `time.durations` elements, and the parent | `run/3` adds only what this plan names | Something this plan names was filled already: B4 leaves it as it is |
 | D8 | A9 | The one source of a store's location that every command shares | A setting or a default exists: `spend`, `models` and the config's location follow it | Still `--store <dir>` on every call: the new commands take it the same way, and the row stays with its owner |
 | D9 | A11 | Where the executor makes a run's capability handles | One function: the composition point of B5 | Several places: B5 first brings them to one |
+| D11 | A7, A11 | Whether an admitted run keeps the call it was prepared as, durably, before its action runs | It does: B6 is a check and S6 reads what 1A wrote | It does not (ADR 0007 keeps fingerprints only): B6 adds it |
 | D10 | A7, part 2 | Whether an admission can be cancelled and has a deadline, and whether a ledger asked again and again is given a turn | Decided: S2 keeps to it | Left as it is: S2 states the bound it puts on being asked again, or says why none |
 
 ADR numbers are not fixed here, because 1A may take more. Each ADR of this plan takes
@@ -96,8 +97,9 @@ Each is settled here, with its reason, and is the owner's to overturn.
   M1's pull request brings that sentence in line (the store owns everything durable about
   runs; the models directory owns installed models), and adds "model installations" to what
   `whizbang-backends` holds. These two edits are reviewed here, with this plan.
-- **`whizbang-backends` is created in 1B,** for model installations and for what turns a
-  config into a roster. It holds no adapter and no network client yet.
+- **`whizbang-backends` is created in 1B,** for model installations. What turns a config
+  into a roster is in the core, beside the config and the roster. The crate holds no
+  adapter and no network client yet.
 - **No network client is added in 1B.** The core defines the two ways out as interfaces
   (B2): sending data to a recipient, and downloading a model's file. The test kit fakes
   both. The real HTTPS client arrives with the first thing that needs it: a real catalogue
@@ -106,10 +108,19 @@ Each is settled here, with its reason, and is the owner's to overturn.
 - **The shipped catalogue is empty until 1C.** `whizbang models list|get|remove` exist and
   are tested through the binary's own wiring with a test catalogue and fake downloads; the
   shipped binary lists no model.
-- **An install belongs to the process that runs it.** A second request for the same model
-  inside that process attaches to it. A second process is refused as busy, with the holder
-  named, as a second writer of a store is. Attaching across processes is not built: nothing
-  in `SPEC.md` asks for it, and `whizbang serve` and `play` are one process.
+- **An install is attached to from any process.** `whizbang models get` run twice, in two
+  terminals, is the plain case of "a second request for the same model attaches"
+  (`SPEC.md` section 6). The second request, in the same process or another, waits on the
+  install's lock, reads progress from the status record the installer publishes, and ends
+  with the same result. Removal from another process drains the same way: it marks the
+  model as draining under the directory's lock, waits for the holds until its deadline,
+  and answers busy and takes the mark off when the deadline passes.
+- **An admitted run keeps what it was asked.** ADR 0007's admission holds fingerprints
+  only, so a run a dead process left cannot be given the record `SPEC.md` section 3 asks of
+  every run. From B6 the admission's publication also keeps the prepared call, with the
+  secrets taken out, among the run's names. A run admitted before B6 that never ended is
+  settled in the ledger and marked as interrupted, and is listed as having no record,
+  which is what it has today.
 - **Holds are file locks, not process ids.** A run that uses a model holds a shared lock on
   its installation; removal takes it alone. The operating system lets a lock go when its
   process dies, so nothing reads a process id from a file, nothing is signalled by one, and
@@ -162,7 +173,7 @@ apply; a task is not done while one that applies to it has no test.
 
 7. **A stated number of threads.** The executor runs each started action on a thread of
    its own, and 1A bounds how many started runs are live. A task whose tests drive many
-   runs, requests or downloads at once (S2, S5, S7, S11, M2 to M5 above all) states its
+   runs, requests or downloads at once (S2, S5, S7, S11b, M2b to M5 above all) states its
    largest number at once in its hand-back, uses two where two show the race, and keeps
    every test process under 200 live threads. A test that needs more than 16 at once
    says why in a comment beside it.
@@ -175,26 +186,32 @@ the base tasks and the join tasks named below.
 
 | Strand | Tasks | Owns | Can start after |
 |---|---|---|---|
-| Base | B0 to B5 | `crates/whizbang-core/src/capability/declare.rs` and `fault.rs`; `crates/whizbang-core/src/contract/record.rs` and the record's schema; `crates/whizbang-testkit/src/capabilities.rs`; the place handles are composed | A12 |
-| Spend | S1 to S13 | `crates/whizbang-core/src/spend/`, its tests in `tests/it/spend/`, `crates/whizbang/src/spend.rs`, the test kit's ledger file | B5 (S1 after B1) |
-| Config and secrets | C1 to C4 | `crates/whizbang-core/src/config/`, `crates/whizbang-core/src/contract/redact.rs`, their tests, `crates/whizbang/src/config.rs`, `docs/guides/config.md` | B0 (C1, C2, C3); C4 after B5, S2 and E2 |
-| Egress | E2 to E5 | `crates/whizbang-core/src/egress/` beyond B2's types, its tests in `tests/it/egress/`, `scripts/check-egress.sh` and its test | B5 and S5 (E5 after B2) |
-| Models | M1 to M7 | `crates/whizbang-backends/`, `crates/whizbang-testkit/src/downloads.rs`, `crates/whizbang/src/models.rs`, `docs/guides/models.md` | B2 (M1 to M5); M6 after C4 |
+| Base | B0 to B6 | `crates/whizbang-core/src/capability/declare.rs` and `fault.rs`; `crates/whizbang-core/src/contract/record.rs` and the record's schema; `crates/whizbang-testkit/src/capabilities.rs`; the place handles are composed | A12 |
+| Spend | S1 to S13 | `crates/whizbang-core/src/spend/`, its tests in `tests/it/spend/`, `crates/whizbang-core/src/contract/ledger.rs`, `crates/whizbang/src/spend.rs`, the test kit's ledger file | B6 (S1 after B1) |
+| Config and secrets | C1 to C5 | `crates/whizbang-core/src/config/`, `crates/whizbang-core/src/contract/redact.rs`, their tests, `crates/whizbang/src/config.rs`, `docs/guides/config.md` | B0 (C1, C2, C3); C4 after B6 |
+| Egress | E2 to E6 | `crates/whizbang-core/src/egress/` beyond B2's types, its tests in `tests/it/egress/`, `scripts/check-egress.sh` and its test | S7 (E5 after B2) |
+| Models | M1 to M7 | `crates/whizbang-backends/`, `crates/whizbang-testkit/src/downloads.rs`, `crates/whizbang/src/models.rs`, `docs/guides/models.md` | B2 (M1 to M5); M6 after C5 |
 | Scripts | X1, X2 | `scripts/scan.sh`, `scripts/tests/scan/`, `scripts/tests/test-deny.sh`, `deny.toml` | A12; needs nothing else |
+
+Inside the models strand the files are divided so that M3, M4 and M5 do not meet: M2
+creates the modules, and then `install.rs` and `status.rs` are M2b's and M3's, `files.rs`
+is M4's, and `hold.rs` and `remove.rs` are M5's. M5 follows M4, because removal removes
+shared files.
 
 **Files more than one strand must touch, and who touches them.**
 
 | File | Changed by | Rule |
 |---|---|---|
-| `crates/whizbang-core/src/contract/engine.rs`, `crates/whizbang/src/wiring.rs` | The join tasks only: S2, S5, S11, E2, C4, in that order of merging | One join task is open at a time. A strand's other tasks build behind an interface in the strand's own folder and are tested there |
+| The contract's files (`crates/whizbang-core/src/contract/engine.rs`, `request.rs`, `prepare.rs`, `context.rs`) and `crates/whizbang/src/wiring.rs` | The join tasks only, merged in this order: B6, S2, S3, S5, S5b, S8, S11, S6, S7, E2, C4, C5, M6 | One join task is open at a time. Every other task builds behind an interface in its strand's own folder and is tested there |
 | The record's types and schema | B4, then S10 and E4 only to write values into shapes B4 defined | A change of shape after B4 is a new version and a pull request of its own |
 | `Cargo.toml`, `Cargo.lock` | C1 (a TOML reader), M1 (the new crate) | Whichever merges second merges `main` first |
-| `SPEC.md` | C1 (the config example), M1 (the two sentences above), Z1 | One sentence each, named in the task |
+| `SPEC.md` | C1 (the config example), M1 (the two sentences under "Decisions"), Z1 | One sentence each, named in the task |
 | `docs/carry-over.md` | Every task, in its own rows | A conflict is resolved row by row |
 
 ## Order
 
-Each task needs every task listed for it to be merged first.
+Each task needs every task listed for it to be merged first. "Join" marks a task that
+changes the contract's files and so takes its turn in the order above.
 
 | Task | Strand | Needs | Size |
 |---|---|---|---|
@@ -203,16 +220,20 @@ Each task needs every task listed for it to be merged first.
 | B2 The ways out: recipients, classes of data, two interfaces | Base | B1 | small |
 | B3 Fakes that quote, fail at a stage and name a recipient | Base | B2 | small |
 | B4 `run/3`, and a place for a run's facts | Base | B3 | medium |
-| B5 One place where handles are composed | Base | B4 | small |
-| S1 The ledger's records | Spend | B1 | medium |
-| S2 Reserving at admission | Spend | S1, B5 | medium |
-| S3 The per-call cap, and a call's own | Spend | S2 | small |
+| B5 One place where handles are composed (join) | Base | B4 | small |
+| B6 An admitted run keeps what it was asked (join) | Base | B5 | small |
+| S1 The ledger's records | Spend | B1 | small |
+| S1b The fold, and the ledger's interface | Spend | S1 | medium |
+| S2 Reserving at admission (join) | Spend | S1b, B6 | medium |
+| S3 The per-call cap, and a call's own (join) | Spend | S2 | small |
 | S4 Quotes: a bound, or no dispatch | Spend | S2 | small |
-| S5 Dispatch first, then settlement of each attempt | Spend | S4 | medium |
-| S11 The reservation settled when its run ends | Spend | S5 | medium |
-| S6 After a crash | Spend | S11 | small |
-| S7 Nested calls and retries | Spend | S5 | medium |
-| S8 Estimates expire | Spend | S4 | small |
+| S5 Dispatch first (join) | Spend | S4, S3 | medium |
+| S5b Settlement of each attempt (join) | Spend | S5 | medium |
+| S8 Estimates expire (join) | Spend | S5b | small |
+| S11 The reservation settled when its run ends (join) | Spend | S8 | small |
+| S11b Settlement at the end, under a crash and a race | Spend | S11 | small |
+| S6 After a crash (join) | Spend | S11b | medium |
+| S7 Nested calls and retries (join) | Spend | S6 | medium |
 | S9 `whizbang spend status` and `reset` | Spend | S2 | small |
 | S10 The run's spend lines | Spend | S11, S7 | small |
 | S12 A damaged spend record set aside | Spend | S9 | small |
@@ -220,31 +241,38 @@ Each task needs every task listed for it to be merged first.
 | C1 The config: its file, its shape, its digest | Config | B0 | medium |
 | C2 Keys from an env file | Config | C1 | small |
 | C3 What redaction did not find | Config | B0 | medium |
-| C4 The roster, the settings and the policies from the config | Config | C1, C2, S3, E2 | medium |
-| E2 The gate: denied by default | Egress | B5, S5 | medium |
+| C4 The roster from a snapshot of the config (join) | Config | C1, C2, E2 | medium |
+| C5 The cap, the policy, the secrets and the settings from the snapshot (join) | Config | C4 | medium |
+| E2 The gate: denied by default (join) | Egress | B6, S7 | medium |
 | E3 Every hop | Egress | E2 | small |
-| E4 The run's recipients | Egress | E2 | small |
+| E4 The run's recipients | Egress | E3 | small |
 | E5 One way out | Egress | B2 | small |
+| E6 Nothing but pixels | Egress | E2 | small |
 | M1 A models directory: catalogue, installation, identity | Models | B2 | medium |
-| M2 Installing, with a crash at each step | Models | M1 | medium |
-| M3 Attach and cancel | Models | M2 | small |
-| M4 A file two models share | Models | M2 | small |
-| M5 Holds, and removal that drains | Models | M2 | medium |
-| M6 Readiness from what is installed | Models | M5, C4 | small |
-| M7 `whizbang models list`, `get` and `remove` | Models | M3, M4, M5 | small |
+| M2 Downloading into staging | Models | M1 | small |
+| M2b Publishing an installation, with a crash at each step | Models | M2 | medium |
+| M3 Attach and cancel | Models | M2b | medium |
+| M4 A file two models share | Models | M2b | small |
+| M5 Holds, and removal that drains | Models | M4 | medium |
+| M6 Readiness from what is installed, and the hold on it (join) | Models | M5, C5 | medium |
+| M7 `whizbang models list`, `get` and `remove` | Models | M3, M5, M6 | small |
 | X1 A key directly after a word character | Scripts | A12 | small |
 | X2 A planted registry fails `just deny` | Scripts | A12 | small |
 | Z1 Exit check | | all | small |
 
-**What runs at the same time.** B0 to B5 are one after another and are the only stretch
-that is. From B0: C1, C3, X1 and X2, four builders. From B1: S1 beside them. From B2: M1
-and E5. From B5: the spend strand (S2 onward) runs beside the models strand and the config
-strand, each in its own folder, and the egress strand joins them at E2, which waits for S5
-only because the two wrap the same request. Inside the spend strand, S3,
-S8, S9, S12 and S13 are side branches that can be built beside S4, S5, S11 and S7. Inside models, M3, M4 and M5
-can be built at the same time once M2 is merged. The join tasks merge in the order S2, S5,
-S11, E2, C4; a join task that is ready early waits for the one before it, and its builder merges
-`main` before the review.
+**What runs at the same time.** The join tasks are a line, thirteen long, because each
+changes how the executor admits, sends or ends a call; that line is the spine of the
+checkpoint and one builder at a time is on it. Everything else is built beside it:
+
+- From B0: C1, then C2; C3; X1; X2. Four builders, none waiting on the spine.
+- From B1: S1 and S1b. From B2: E5, and the whole models strand as far as M5 (M1, M2, M2b,
+  then M3 beside M4 and M5).
+- From S2: S4, S9, S12 and S13 beside the spine. From E2: E3, E4 and E6.
+- A task on the spine that is ready early waits for the one before it, and its builder
+  merges `main` before the review.
+
+So at most stages five builders work: one on the spine, and one each in spend's side
+tasks, config, models and scripts or egress.
 
 **Size** is read from the acceptance list: small is up to about 1,000 added lines, tests
 included, and medium up to about 2,500. No task is larger. A task whose branch passes 2,500
@@ -273,11 +301,11 @@ part merged first; the builder says so in its hand-back and does not go on.
 
 | Tasks | To undo |
 |---|---|
-| B1, B2, B3, B4, B5 | Foundations: revert every later task first. A store that holds a `run/3` record is discarded with it; before the tag `m1b` no store written by 1B is worth keeping |
+| B1, B2, B3, B4, B5, B6 | Foundations: revert every later task first. A store that holds a `run/3` record is discarded with it; before the tag `m1b` no store written by 1B is worth keeping |
 | S1, C1, M1 and the ADR each brings | Revert the strand's later tasks first; the ADR goes with its task. Nothing outside the strand's folder depends on them until its join task |
-| S3, S4, S6, S7, S8, S9, S12, S13, C2, C3, E3, E5, M2, M3, M4, M5, M7, X1, X2 | Revert the merge. Each is inside its strand's folder, or a script with its test |
-| S2, S5, S11, E2, C4 (the join tasks) | Revert in the reverse of the order they merged, each after the tasks of its own strand that follow it. After S2 is reverted the binary has no ledger again and reserves nothing, as at `m1a`, and the test kit's fake ledger still passes 1A's tests, so the fake is kept in the tree until Z1 |
-| S10, E4, M6 | Revert the merge; the record then holds empty lists where they wrote |
+| S1b, S4, S9, S11b, S12, S13, C2, C3, E3, E5, E6, M2, M2b, M3, M4, M5, M7, X1, X2 | Revert the merge. Each is inside its strand's folder, or a script with its test |
+| The join tasks (S2, S3, S5, S5b, S8, S11, S6, S7, E2, C4, C5, M6) | Revert in the reverse of the order they merged, each after the tasks of its own strand that follow it. After S2 is reverted the binary has no ledger again and reserves nothing, as at `m1a`, and the test kit's fake ledger still passes 1A's tests, so the fake is kept in the tree until Z1 |
+| S10, E4 | Revert the merge; the record then holds empty lists where they wrote |
 | Z1 | The note reverts; the `m1b` tag stays and a corrected checkpoint is `m1b.1` |
 
 A ledger, a models directory or a config written by a reverted task lives only in a test's
@@ -290,7 +318,7 @@ temporary folder: no task below is run against a store or a models directory tha
 **Depends on:** A12. **Reads:** every ADR merged since 0006, with its amendments; the note
 `docs/plans/m1a-note.md`; every row of `docs/carry-over.md` that names 1B.
 
-- [ ] Each open row D5 to D10 above is answered, and the table of what 1A decided is read
+- [ ] Each open row D5 to D11 above is answered, and the table of what 1A decided is read
       against the ADRs as amended since, from the merged code, in this file.
 - [ ] Each task below whose text no longer fits the answer is corrected here. A correction
       that changes what is built, not how it is worded, gets the review rounds first.
@@ -401,8 +429,10 @@ and a setting's value pass through redaction before they are written (rule 4).
 **Depends on:** B4. Needs D5 and D9.
 
 - [ ] One function makes a run's handles, and wraps a backend in a fixed order: the
-      handle's own checks (ADR 0006), then the gate, then the meter, then 1A's accounting,
-      then the backend. The gate and the meter are two interfaces of the core, each with
+      handle's own checks (ADR 0006), then 1A's accounting, then the gate, then the
+      meter, then the backend. Accounting is outside the meter so that a request stays
+      outstanding, and its run and its parent not terminal, until its settlement is
+      durable. The gate and the meter are two interfaces of the core, each with
       an implementation here that lets everything through; E2 and S5 bring the real ones.
 
 **Done when** these pass: the order of the wrappers is asserted by a test that records
@@ -412,6 +442,26 @@ tasks A7 and A11 passes unchanged.
 **Size:** small. If D5 or D9 came out the second way, the move it needs is the first
 commit of this task, and a pull request of its own if it passes 1,000 lines.
 
+### B6. An admitted run keeps what it was asked
+
+**Depends on:** B5. Needs D11. **Reads:** ADR 0007, "Two records" and "Admission".
+
+- [ ] An ADR, which changes ADR 0007: the admission's publication also makes, among the
+      run's names, a record of the call as it was prepared at admission: the action, its
+      version, the arguments, the inputs, the config's digest and each need with the model
+      that would answer. It is versioned, written one way and read strictly, and the
+      secrets are taken out of it as they are out of a run record.
+- [ ] The executor writes it, and the end of a run is unchanged.
+
+**Done when** these pass: a run that was admitted and did not end can be given, from the
+store alone, a `run/3` record with every group that does not depend on the action having
+run; a crash before each event of the admission leaves the run with this record or without
+the run (rule 2); a marker secret in an argument is not in the record (rule 4); the record
+is refused over its bound before it is read, and with an unknown or a missing field,
+escaped and cut and without a path (rule 3); a run admitted without it, as by the tag
+`m1a`, is read and listed as before.
+**Size:** small. If D11 shows that 1A already keeps this, the task is the check alone.
+
 ### S1. The ledger's records
 
 **Depends on:** B1. **Reads:** ADR 0007, "The reservation"; squint
@@ -419,25 +469,39 @@ commit of this task, and a pull request of its own if it passes 1,000 lines.
 and `crates/squint-eval/src/eval_ledger.rs`; rascal `schemas/rascal/ledger-v1.json`.
 
 - [ ] An ADR, the ledger, which changes ADR 0007's interface: the ledger's own records (an
-      allowance set or reset, a dispatch, a settlement, a release) and their names under
-      `spend/`, each made once; how the balances are folded from them and from the
-      reservations; the name every admission makes so that two cannot both take the last
-      of the allowance; that `Ledger::reserve` cannot return without having made it (a
-      token only `Step::make` gives); that a ledger's name has no empty, `.` or `..`
-      segment; the ledger's part in the publication that ends a run; and whether the
-      store refuses a `put` under `requests/` and `spend/`.
+      allowance set or reset, a dispatch, a settlement, a release, an interruption) and
+      their names under `spend/`, each made once; how the balances are folded from them
+      and from the reservations; the name every admission makes so that two cannot both
+      take the last of the allowance, and the name every dispatch makes so that two
+      requests of one run cannot both take the last of its reservation; that
+      `Ledger::reserve` cannot return without having made its name; that a ledger's name
+      has no empty, `.` or `..` segment; the ledger's part in the publication that ends a
+      run; and whether the store refuses a `put` under `requests/` and `spend/`.
 - [ ] The record types, written one way and read strictly, in
-      `crates/whizbang-core/src/spend/`, and the change to `Ledger` and `Step` with the
-      test kit's fake brought in line. No executor uses the new records yet.
+      `crates/whizbang-core/src/spend/`. Nothing uses them yet.
 
 **Done when** these pass: each record round-trips to the same bytes; a record over its
-bound is refused from its entry's length, before it is read, and one with an unknown
-field, a missing field or an amount written a second way is refused, with the refusal
-escaped, cut and without a path (rule 3); the fold gives the stated balances for a table
-of histories that includes a reset, a release and an unresolved charge; a ledger that
-returns from `reserve` without making its name does not compile or is refused, as the ADR
-says which, and a name with an empty, `.` or `..` segment is refused; a `put` under
-`spend/` and `requests/` is refused by the store, with the pin test
+bound is refused from its entry's length, before it is read; one with an unknown field, a
+missing field or an amount written a second way is refused; a refusal is escaped, cut and
+without a path (rule 3); a record whose name does not agree with what it holds is refused;
+every claim of the ADR about code that exists names its test (rule 5).
+**Size:** small.
+
+### S1b. The fold, and the ledger's interface
+
+**Depends on:** S1.
+
+- [ ] The fold: from the records and reservations a generation names, what is allowed,
+      reserved, spent and unresolved, for the store and for one run.
+- [ ] The change to `Ledger` and `Step` that S1's ADR decides (the token, the names'
+      segments, the part in the end of a run), with the test kit's fake brought in line.
+- [ ] The store's rule for a `put` under `requests/` and `spend/`, as the ADR decides.
+
+**Done when** these pass: the fold gives the stated balances for a table of histories that
+includes a reset, a release, an unresolved charge and an interruption; a ledger that
+returns from `reserve` without making its name does not compile, or is refused, as the ADR
+says which; a name with an empty, `.` or `..` segment is refused; a `put` under `spend/`
+and `requests/` is refused by the store, with the pin test
 `known_a_name_that_was_made_can_still_be_replaced_by_put` turned round, or the limit is
 kept with its reason in the ADR; every test of task A6 passes against the fake as changed.
 **Carry-over:** the rows on "never removed" and `put`, and on the ledger (the token, the
@@ -445,7 +509,7 @@ names). **Size:** medium.
 
 ### S2. Reserving at admission
 
-**Depends on:** S1, B5. A join task. Needs D10.
+**Depends on:** S1b, B6. A join task. Needs D10.
 
 - [ ] The real ledger implements `Ledger`: asked inside admission, it folds the balances
       from the step's generation, declines over the allowance, and makes its name.
@@ -466,11 +530,11 @@ the real ledger in the fake's place; prepare makes no reservation and no record.
 
 ### S3. The per-call cap, and a call's own
 
-**Depends on:** S2. **Reads:** rascal `crates/rascal-core/src/config.rs`
+**Depends on:** S2. A join task. **Reads:** rascal `crates/rascal-core/src/config.rs`
 (`LimitsConfig`) and `crates/rascal-mask/src/describe.rs` (`common_properties`,
 `max_spend_usd`); table-manners `CONTRACT.md` section 4.5.
 
-- [ ] A cap on what one call may reserve, handed to the executor when it is built (C4 reads
+- [ ] A cap on what one call may reserve, handed to the executor when it is built (C5 reads
       it from the config). A call may carry a lower cap of its own, beside its arguments,
       as a `Request` carries the preparation it expects. The cap is compared at admission,
       beside the fingerprint, as the estimate is; `prepared/1` does not change.
@@ -495,81 +559,114 @@ two fixed vectors of `prepared/1` are as they were.
       calls; nothing in the engine changes here.
 
 **Done when** these pass: a call that needs a backend offering only an estimate is refused
-at admission with `NoBound`, with no run; a request to such a backend from inside a run is
-refused without being sent and without a dispatch record, counted by the fake; a request
-whose quote is over what the run has left is refused the same way; a price that changed
+at admission with `NoBound`, with no run; the check, asked directly, refuses a request to such a backend and one
+whose quote is over what a run has left (through a run, these are S5's cases); a price that changed
 since the preparation is `Stale::Estimate` at admission; a backend priced by time with a
 host's limit is admitted at price times limit, and with only a timeout of whizbang's own
 is refused.
 **Carry-over:** the row on squint's `pricing` (where a price is stated). **Size:** small.
 
-### S5. Dispatch first, then settlement of each attempt
+### S5. Dispatch first
 
-**Depends on:** S4. A join task. Needs D5. **Reads:** rascal
+**Depends on:** S4, S3. A join task. Needs D5.
+
+- [ ] The meter, a wrapper in `spend/`: before a paid request leaves, it is quoted (S4),
+      and its dispatch record is made durable in a publication that also makes the
+      dispatch's name for its run, so the store decides which of two requests took what
+      the run had left.
+
+**Done when** these pass: the fake, stopped at its barrier, reads the store and finds its
+own dispatch record durable before it was called; a request to a backend that offers only
+an estimate, from inside a run, is refused without being sent and without a dispatch
+record, counted by the fake; a request whose quote is over what the run has left is
+refused the same way; two requests of one run, each within what is left alone and not
+together, stopped after reading what is left and released together, end with one dispatch
+durable and one request at the fake (rule 1); a crash before each event of the dispatch
+leaves the record whole or absent, and nothing was sent without it (rule 2).
+**Size:** medium.
+
+### S5b. Settlement of each attempt
+
+**Depends on:** S5. A join task. **Reads:** rascal
 `crates/rascal-mask/src/filler/mod.rs` (`Charge`, `spent`); squint
 `crates/squint-core/src/ledger.rs` (`settle_with_unresolved`).
 
-- [ ] The meter, a wrapper in `spend/`: before a paid request leaves, its dispatch record
-      is durable; when it ends, it is settled by the stage it reached.
-- [ ] Not sent: nothing is charged and what was held for it returns to the run. Answered:
-      the cost the answer gives, or the bound when it gives none. Unresolved, a timeout
-      among them: the bound, counted as unresolved.
+- [ ] When a request ends, the meter settles it by the stage it reached. Not sent: nothing
+      is charged. Answered: the cost the answer gives, or the bound when it gives none.
+      Unresolved, a timeout among them: the bound, counted as unresolved.
 
-**Done when** these pass: the fake, stopped at its barrier, reads the store and finds its
-own dispatch record durable before it was called; a fault at each of the three stages
-settles as stated, one test each; a run cancelled after dispatch, with the fake released
-only afterwards, is charged the bound as unresolved and its run is terminal only once that
-is recorded; a request that times out is charged its bound; a crash before each event of
-the dispatch and of the settlement leaves each record whole or absent, and the balances
-folded after it count the request once (rule 2).
+**Done when** these pass: a fault at each of the three stages settles as stated, one test
+each; a request that times out is charged its bound; a run cancelled after dispatch, with
+the fake released only afterwards, is charged the bound as unresolved; with a barrier
+after the backend returned and before the settlement is durable, the run and its parent
+are not terminal, and are once it is; a crash before each event of the settlement leaves
+the record whole or absent, and the balances folded after it count the request once
+(rule 2).
 **Carry-over:** the row on whether a failed call may have been charged (its ledger half).
-**Size:** medium.
+The cancellation case needs A7's second part; if B0 finds no cancellation to drive it,
+the case is driven by the handle's own signal. **Size:** medium.
 
 ### S11. The reservation settled when its run ends
 
-**Depends on:** S5. A join task.
+**Depends on:** S8. A join task.
 
 - [ ] The publication that ends a run settles its reservation through the ledger's part in
-      that step (S1): what its requests were charged is spent, what is unresolved stays
+      that step (S1b): what its requests were charged is spent, what is unresolved stays
       counted, and the rest is released. It is one publication with the run's record.
-- [ ] That holds for every way a run ends: completed, error, invalid, a panic in its
-      action, and cancelled when 1A's cancellation is there.
 
 **Done when** these pass: a run that reserved ten and spent three leaves seven for the next
-call, one test for each way a run ends; a crash before each event of the end publication
-leaves the run admitted with its reservation whole, or ended with its settlement (rule 2);
-a run whose end the store refused keeps its reservation and is settled by S6's rule on the
-next open; two runs that end at once over one store, held at a barrier inside the ledger,
-are both settled and the balances count each once (rule 1); a settled reservation is
-never settled a second time, shown by ending a run whose settlement is already named.
-**Carry-over:** the row on settlement (a run that ends). **Size:** medium.
+call, with one test for each way a run ends: completed, error, invalid, a panic in its
+action, and cancelled where 1A's cancellation is there; a run that spent nothing releases
+all of it; a run with an unresolved request releases only what is not unresolved.
+**Carry-over:** the row on settlement (a run that ends). **Size:** small.
+
+### S11b. Settlement at the end, under a crash and a race
+
+**Depends on:** S11. In `spend/` and its tests only.
+
+**Done when** these pass: a crash before each event of the end publication leaves the run
+admitted with its reservation whole, or ended with its settlement (rule 2); two runs that
+end at once over one store, held at a barrier inside the ledger, are both settled and the
+balances count each once (rule 1); a settled reservation is never settled a second time,
+shown by ending a run whose settlement is already named; a run whose end the store refused
+keeps its reservation unsettled and is not counted as released.
+**Size:** small.
 
 ### S6. After a crash
 
-**Depends on:** S11.
+**Depends on:** S11b. A join task. Uses B6.
 
-- [ ] When a store is opened to write, every run that was admitted and did not end is
-      ended as an error, in one publication: each of its requests that was dispatched and
-      not settled is charged at its bound as unresolved, the rest of its reservation is
-      released, and nothing is sent again. Opening to read changes nothing.
+- [ ] When a store is opened to write, the ledger is recovered from the spend records, run
+      or no run: for every reservation with no settlement, each of its requests that was
+      dispatched and not settled is charged at its bound as unresolved and the rest is
+      released, in one publication. Nothing is sent again. Opening to read changes
+      nothing.
+- [ ] A run that was admitted, did not end and is still in the store is ended as an error
+      in the same publication, with a record made from what B6 kept. A run that was
+      deleted is not made again: its reservation is settled and that is all. A run
+      admitted without B6's record is settled and marked interrupted, with no record.
 - [ ] An admission that became visible and was not confirmed durable is such a run: the
-      executor that made it ends it the same way, so its id answers with an ended run.
+      executor that made it ends it the same way.
 
 **Done when** these pass: a process that died between dispatch and settlement leaves,
 after the next open to write, that request charged at its bound, the rest released, and
-the run ended as an error; the fake counts no second request; a crash before each event
-of the recovery itself, then another open, settles it once and no more; a reader that
-opens the same store first sees the run admitted and writes nothing; a repeat of the
-request under its id is answered `Ended`, with the error; an unconfirmed admission is
-ended by its executor and its repeat answered the same way.
+the run ended as an error with a record that validates; the fake counts no second request;
+the same after the run was deleted and the store pruned before the restart, with a request
+id and without one: the ledger is settled, no run is made, and a repeat of the id is
+answered `Removed`; a crash before each event of the recovery, then another open, settles
+once and no more (rule 2); a reader that opens first sees the run admitted and writes
+nothing; a repeat of a recovered run's request is answered `Ended`, with the error; an
+unconfirmed admission is ended by its executor and its repeat answered the same way; a run
+whose end the store refused (S11b) is settled by the next open.
 **Carry-over:** the rows on settlement (a run that did not end) and on an admission that
-was visible and not confirmed. This turns ADR 0007's alternative "mark an interrupted run
-when the next writer opens the store", turned down "for now" with settlement named as the
-reason to come back; S1's ADR records it. **Size:** small.
+was visible and not confirmed. This takes up ADR 0007's alternative "mark an interrupted
+run when the next writer opens the store", which was turned down "for now" with settlement
+named as the reason to come back; S1's ADR records it. **Size:** medium. If the branch
+passes 1,500 lines with the deleted-run cases unwritten, they are a second pull request.
 
 ### S7. Nested calls and retries
 
-**Depends on:** S5. Needs D5.
+**Depends on:** S6. A join task. Needs D5.
 
 - [ ] A child's allowance is taken from what its parent's reservation has left; nothing is
       reserved a second time in the ledger for a nested call.
@@ -586,7 +683,7 @@ what a finished child did not use is its parent's again.
 
 ### S8. Estimates expire
 
-**Depends on:** S4. **Reads:** rascal `crates/rascal-mask/src/estimate.rs`
+**Depends on:** S5b. A join task. **Reads:** rascal `crates/rascal-mask/src/estimate.rs`
 (`TTL_MS`, and the stale refusals); table-manners `CONTRACT.md` section 4.5, "Binding a
 call to its estimate", and `schemas/core/estimate.json`.
 
@@ -741,38 +838,56 @@ redacted as bytes and not refused; the pass over 1 MiB with ten secrets stays in
 time the task measures and states.
 **Carry-over:** the row on what redaction does not find (the forms). **Size:** medium.
 
-### C4. The roster, the settings and the policies from the config
+### C4. The roster from a snapshot of the config
 
-**Depends on:** C1, C2, S3, E2. A join task, and the last of them.
+**Depends on:** C1, C2, E2. A join task.
 
-- [ ] In `whizbang-backends`, or in the binary if M1 has not merged: a config becomes a
-      roster. A backend kind is registered as an action is, by code the binary and the
-      tests share; the shipped binary registers none yet, and the tests register a fake
-      kind.
-- [ ] The executor is built with a `ConfigSource` over the config file (ADR 0007), so the
-      config is read each time a call is prepared; with its per-call cap (S3), its egress
-      policy (E2) and its secrets. A run records
-      its resolved settings.
+- [ ] C1's ADR decides, and this task builds, the change to `ConfigSource` (ADR 0007): it
+      answers with a snapshot, the digest together with the settings it is the digest of,
+      or with a refusal when the file cannot be read as a config. A call is prepared, and
+      if admitted runs, under one snapshot.
+- [ ] A snapshot becomes a roster, in the core. A backend kind is registered as an action
+      is, by code the binary and the tests share; the shipped binary registers none yet,
+      and the tests register a fake kind.
 
 **Done when** these pass: a config with two fake backends of one capability and a default
 gives a roster that resolves a choice and the default as ADR 0006 says; a backend whose
 kind this build does not have is offered as not ready, with the reason, and never as
-another backend; with no config file the binary runs `grow` as before and refuses a call
-that needs a backend; a config edited between prepare and admission is `Stale::Config`; a recipient taken out of the config's `egress` table is refused on the next call; a run's `asked.settings` hold what C1's ADR says and no credential, value or
-variable name (rule 4).
-**Carry-over:** the row on the executor built with no backends and the digest of no bytes;
-the row on the record's empty lists (`asked.settings`). **Size:** medium.
+another backend; with no config file the binary runs as at `m1a` and refuses a call that
+needs a backend; a config whose backend changed between prepare and admission is
+`Stale::Config`, on the same executor; a config replaced by a file that does not parse
+refuses the next call, with no run, naming the key escaped and cut and no path, and the
+call after the file is put right is admitted (rule 3); a run that was admitted goes on
+under the snapshot it was admitted with.
+**Carry-over:** the row on the executor built with no backends and the digest of no bytes.
+**Size:** medium.
+
+### C5. The cap, the policy, the secrets and the settings from the snapshot
+
+**Depends on:** C4. A join task.
+
+- [ ] The per-call cap (S3), the egress policy (E2) and the secrets (C2) are read from the
+      snapshot a call is prepared under. A run records its resolved settings.
+
+**Done when** these pass, each on one executor across a change of the file: a cap lowered
+in the config refuses the next call that is over it; a recipient taken out of the `egress`
+table is refused on the next call; a credential rotated in the env file is the one the
+next call's backend is handed, and both the old and the new value are redacted from what
+is written after it (rule 4); a run's `asked.settings` hold what C1's ADR says and no
+credential, value or variable name; a marker key is in no byte the store holds after
+these runs.
+**Carry-over:** the row on the record's empty lists (`asked.settings`). **Size:** medium.
 
 ### E2. The gate: denied by default
 
-**Depends on:** B5, S5. A join task. **Reads:** squint
+**Depends on:** B6, S7. A join task. **Reads:** squint
 `crates/squint-providers/src/privacy.rs` (`consent`).
 
 - [ ] The gate, a wrapper in `crates/whizbang-core/src/egress/`: a request reaches a
       backend that names a recipient only when the config approves that recipient for every
       class of data the request holds. It stands before the meter, so a refused request
       reserves and dispatches nothing.
-- [ ] The gate's policy is a value the executor is built with (C4 makes it from the
+- [ ] The gate's policy is a value the executor is built with (C5 reads it from the
       config's `egress` table); an executor built without one has the empty policy, which
       approves nothing. A local backend passes whatever the policy.
 
@@ -805,15 +920,19 @@ and its request carried nothing but the address.
 
 ### E4. The run's recipients
 
-**Depends on:** E2. Needs D6.
+**Depends on:** E3. Needs D6.
 
-- [ ] Every recipient a run sent data to is in its `egress` list with the classes sent. A
-      send the gate refused is in the record as refused.
+- [ ] Each send is noted where it is made, at the sending interface: the origin that was
+      actually reached, and the classes of data it was sent. A run's `egress` list is
+      those notes. A send the gate or a hop's check refused is in the record as refused.
 
 **Done when** these pass: a run that sent a prompt and a derived image to one recipient
-lists it once with both classes; a run whose only request was refused lists the refusal
-and no recipient as sent to; a local run's list is empty; an account in the list is shown
-cut, and a marker credential is nowhere in the record (rule 4).
+lists it once with both classes; a run whose request went on to an approved upstream lists
+the upstream as reached, and an approved upstream that was not reached is not listed; a
+request that failed at its second hop lists the first, which had the data; a run whose
+only request was refused lists the refusal and nothing as sent; a local run's list is
+empty; an account in the list is shown cut, and a marker credential is nowhere in the
+record (rule 4).
 **Carry-over:** the row on the record's empty lists (`egress`). **Size:** small.
 
 ### E5. One way out
@@ -829,6 +948,23 @@ cut, and a marker credential is nowhere in the record (rule 4).
 **Done when** `scripts/tests/test-egress.sh` passes: a planted use of a socket in each
 crate fails the check and names the file and line; a planted dependency on a network
 client fails it; the tree as it is passes; the test file ends with `finished`.
+**Size:** small.
+
+### E6. Nothing but pixels
+
+**Depends on:** E2. **Reads:** squint `crates/squint-providers/src/privacy.rs` (`scan`,
+`FORBIDDEN_MARKERS`).
+
+- [ ] What leaves for a recipient holds no image metadata, no file name and no path. An
+      image is sent as a `Picture` (ADR 0006), which is canonical pixels and has no place
+      for any; the sending interface takes a body made by whizbang's own encoder, which
+      writes no ancillary data.
+
+**Done when** these pass, through the executor and the sending fake: an image imported
+with an EXIF block, a text chunk and a colour profile, each holding a marker, is sent, and
+no marker is in any byte the fake was handed; a body that holds an absolute path or the
+store's root is refused by the sending interface; the encoder's output for a picture holds
+only the chunks the test lists.
 **Size:** small.
 
 ### M1. A models directory: catalogue, installation, identity
@@ -855,122 +991,150 @@ code names its test (rule 5).
 **Carry-over:** the row on a model that never shows as out of date (R2), for what an
 installation records. **Size:** medium.
 
-### M2. Installing, with a crash at each step
+### M2. Downloading into staging
 
 **Depends on:** M1. **Reads:** rascal `tools/python/src/rascal_tools/installer.py` (`get`,
-`_copy_bounded`, `model_lock`) and `installs.py` (`publish`); rascal
-`crates/rascal-testkit/src/fake_install.rs`.
+`_copy_bounded`, `model_lock`); rascal `crates/rascal-testkit/src/fake_install.rs`.
 
 - [ ] `crates/whizbang-testkit/src/downloads.rs`: a fake of the download interface that
       serves bytes from memory, can stop at a barrier after a stated count of bytes, serve
       wrong bytes, serve too many, or fail.
-- [ ] The installer: each file is downloaded into staging under the directory's lock,
-      stopped at its stated size, checked by hash, then the installation is published and
-      the pointer replaced, through the same file-system interface the store uses, so the
-      shim can crash it.
+- [ ] Each file of a catalogue entry is downloaded into staging under the model's lock,
+      stopped at its stated size and checked by hash. The modules of the installer are
+      laid out as "Strands" says. Nothing is published yet.
+
+**Done when** these pass: two files are staged and verified; a wrong hash, a short file
+and a file one byte too long each fail the download and leave no staged file that passed;
+a download reads no more than the stated size, counted by the fake; a refusal names the
+file by its catalogue name, escaped and cut, with no path (rule 3).
+**Size:** small.
+
+### M2b. Publishing an installation, with a crash at each step
+
+**Depends on:** M2. **Reads:** rascal `tools/python/src/rascal_tools/installs.py`
+(`publish`).
+
+- [ ] Staged files become an installation and the pointer is replaced, through the same
+      file-system interface the store uses, so the shim can crash it. The installer
+      publishes a status record as it goes: installing, how far, and how it last ended.
 
 **Done when** these pass: an install of two files ends with the pointer naming a verified
-installation; a wrong hash, a short file and a file one byte too long each fail the
-install and leave the previous installation named and readable; a crash before each event
-the shim records, with unsynced writes and names lost, reopens to the previous
-installation or the new one, whole, and the staging left behind is removed only under the
-lock (rule 2); a process that dies in the middle of a download, shown with the barrier and
-a crash, leaves the same; two installers over one directory, stopped after each read the
-pointer, do not both publish (rule 1).
+installation; a failed install leaves the previous installation named and readable, and
+its status says how it ended; a crash before each event the shim records, with unsynced
+writes and names lost, reopens to the previous installation or the new one, whole, and the
+staging left behind is removed only under the lock (rule 2); a process that dies in the
+middle of a download, shown with the barrier and a crash, leaves the same; two installers
+over one directory, in two processes, stopped after each read the pointer, do not both
+publish (rule 1); a status record is read strictly and refused over its bound (rule 3).
 **Carry-over:** of rascal's untested cases (R6), a signal during a download. **Size:**
 medium.
 
 ### M3. Attach and cancel
 
-**Depends on:** M2. **Reads:** rascal `crates/rascal-mask/src/install.rs` (`install`, the
-attach) and `crates/rascal-mask/tests/it/install_controls.rs`.
+**Depends on:** M2b. **Reads:** rascal `crates/rascal-mask/src/install.rs` (`install`, the
+attach) and `crates/rascal-mask/tests/it/install_controls.rs`; table-manners
+`CONTRACT.md` section 5.3.
 
-- [ ] A second request for a model that is installing, in the same process, attaches: it
-      sees progress from then on and the same result. A second process is refused as busy.
-- [ ] An install can be cancelled between files and inside one. A cancelled install leaves
-      what was installed before.
+- [ ] A second request for a model that is installing attaches, from the same process or
+      another: it waits on the install's lock, reads progress from the status record, and
+      ends with the same result.
+- [ ] An install can be cancelled between files and inside one, by the request that
+      started it. A cancelled install leaves what was installed before. An attached
+      request that goes away cancels nothing.
 
-**Done when** these pass: two requests for one model, the first stopped at a barrier, cause
-one download of each file and end with one result; a real second process asking for the
-same model is refused with the holder named; a cancel while the fake is stopped mid-file
-ends the install as cancelled, removes its staging and leaves the previous installation
-named; a cancel after the pointer was replaced returns the installed result; an attached
-request that goes away does not cancel the install.
-**Size:** small.
+**Done when** these pass: two requests in one process, the first stopped at a barrier,
+cause one download of each file and end with one result; a real second process asking for
+the same model while the first is stopped sees progress and ends with the same
+installation, and the fake served each file once; when the installing process is killed,
+the attached one reports the install as failed and the previous installation stays named;
+a cancel while the fake is stopped mid-file ends the install as cancelled, removes its
+staging and leaves the previous installation named; a cancel after the pointer was
+replaced returns the installed result; an attached request that goes away does not cancel
+the install.
+**Size:** medium.
 
 ### M4. A file two models share
 
-**Depends on:** M2. **Reads:** rascal `tools/python/src/rascal_tools/installs.py` (the
+**Depends on:** M2b. **Reads:** rascal `tools/python/src/rascal_tools/installs.py` (the
 files kept once by digest).
 
 - [ ] A file is kept once by its hash. Two installs that need the same file, running at
       the same time, download it once.
 
 **Done when** these pass: two models that share one file are installed at once, the fake
-stopped while the first downloads it, and the fake served that file once; removing one of
-the two leaves the shared file for the other; removing both removes it; a crash between
-the two installs leaves no file that no installation names once the next install or
-removal has run.
+stopped while the first downloads it, and the fake served that file once; the same with
+the two installs in two processes; a crash between the two installs leaves no file that no
+installation names once the next install has run.
 **Carry-over:** the row on parallel installs of models sharing a file. **Size:** small.
 
 ### M5. Holds, and removal that drains
 
-**Depends on:** M2. Needs D5. **Reads:** rascal `tools/python/src/rascal_tools/installs.py`
+**Depends on:** M4. **Reads:** rascal `tools/python/src/rascal_tools/installs.py`
 (`.held`, `alive`, `Slot`), `installer.py` (`remove`) and
 `crates/rascal-mask/src/install.rs` (`uninstall`, `live_pid`, `terminate`).
 
-- [ ] A request for a model takes a hold on its installation for as long as it runs: a
-      shared file lock, and a count inside the process.
-- [ ] Removal: new requests for the model are refused, requests waiting for it are
-      cancelled, and the one running is waited for until a deadline of the injected clock.
-      If the deadline passes the removal answers busy and the model takes requests again.
-      Removal in another process takes the lock alone or answers busy at once.
+- [ ] A hold on one installation, by its identity: a shared file lock, and a count inside
+      the process. It is an interface M6 gives to a request.
+- [ ] Removal, from any process: under the directory's lock the model is marked as
+      draining, so new holds are refused and waiting ones cancelled; the holds are waited
+      for until a deadline of the injected clock; then the installation is removed, or the
+      removal answers busy and the mark is taken off.
 
 **Done when** these pass, with barriers and the clock moved by hand (rule 6): a removal
-during a running request refuses a new request, cancels a waiting one, and removes the
-model when the running one ends; with the running request held past the deadline the
-removal answers busy, and the next request is accepted; a real child process that holds a
-model and is killed leaves no hold, and the removal then succeeds; a removal and an
-install of the same model, stopped after each read the pointer and released together, end
-in one of the two orders, never with a pointer to files that are gone (rule 1); a crash
-before each event of a removal leaves the installation whole or gone.
+during a held installation refuses a new hold, cancels a waiting one, and removes the
+model when the hold is let go; with the hold kept past the deadline the removal answers
+busy, and the next hold is given; the same two cases with the hold in a real second
+process; a real child process that holds a model and is killed leaves no hold, and the
+removal then succeeds; a removal and an install of the same model, stopped after each read
+the pointer and released together, end in one of the two orders, never with a pointer to
+files that are gone (rule 1); a crash before each event of a removal leaves the
+installation whole or gone, and a draining mark left by a dead process is taken off by the
+next to take the lock; removing one of two models that share a file leaves the file, and
+removing both removes it.
 **Carry-over:** rascal's R3 (a process id read from a file is signalled) and R5 (a hold
 judged live by its process id), both met by holding with locks; of R6, a removal racing
-an install. **Size:** medium.
+an install. **Size:** medium. The waiting requests of the worker's queue are 1C's; here a
+waiting hold stands for one.
 
-### M6. Readiness from what is installed
+### M6. Readiness from what is installed, and the hold on it
 
-**Depends on:** M5, C4.
+**Depends on:** M5, C5. A join task.
 
 - [ ] The roster's answer for a local backend comes from the models directory: installed
       and verified, not installed, out of date, damaged, or not in the catalogue. Only the
       first is ready. A model's version in what a preparation saw is its installation's
       identity.
+- [ ] A request for a local model takes a hold on the installation its run was admitted
+      with, by identity, before anything is dispatched. If the pointer no longer names
+      that installation, or it is draining, the request is refused before dispatch.
 
 **Done when** these pass: a configured model that the catalogue does not hold is prepared
 as not ready, saying so; an installation whose recorded catalogue or adapter revision is
-not the current one is reported out of date by prepare and by the listing; an installation
-record that is damaged, or whose pointer names nothing, is reported damaged, never ready,
-and a new install repairs it; a model reinstalled between a call and its retry gives the
-retry a new preparation, the old one is refused as stale, and each attempt's run names the
-installation that answered it.
+not the current one is prepared as out of date; an installation record that is damaged, or
+whose pointer names nothing, is prepared as damaged, never ready, and a new install
+repairs it; a model reinstalled between a call and its retry gives the retry a new
+preparation, and the old one is `Stale::Model`; with a barrier between admission and the
+hold, a reinstall there and a removal there each end with the request refused before
+dispatch, no dispatch record, and never with another installation answering; each run's
+`models` names the installation that answered it.
 **Carry-over:** rascal's R2 (reported), R4, and of R6 a corrupt installation record and a
-reinstall between a call and its retry. **Size:** small.
+reinstall between a call and its retry. **Size:** medium.
 
 ### M7. `whizbang models list`, `get` and `remove`
 
-**Depends on:** M3, M4, M5. Needs D8.
+**Depends on:** M3, M5, M6. Needs D8.
 
 - [ ] The three commands, over the binary's shared wiring, and `docs/guides/models.md`.
       `list` shows each catalogue entry with its licence, its size and its state; `get`
-      shows progress and can be interrupted; `remove` drains.
+      shows progress, attaches to an install that is running, and can be interrupted;
+      `remove` drains.
 
 **Done when** these pass, through the binary with a test catalogue and the fake downloads:
-`get` then `list` shows the model installed; `get` of a name the catalogue does not hold is
-refused with the name escaped and cut; `list` over a directory with a damaged record
-prints the others and says which is damaged, with no path (rule 3); `remove` of a model
-that is not installed says so and exits 0; the shipped binary's `list` is empty and its
-help says why; every example in the guide runs as a test (rule 5).
+`get` then `list` shows the model installed; `list` shows an out-of-date and a damaged
+installation as M6 names them, and says which is damaged with no path (rule 3); `get` of a
+name the catalogue does not hold is refused with the name escaped and cut; `remove` of a
+model that is not installed says so and exits 0; the shipped binary's `list` is empty and
+its help says why; every example in the guide runs as a test (rule 5).
 **Size:** small.
 
 ### X1. A key directly after a word character
@@ -1028,13 +1192,13 @@ written on.
 |---|---|
 | The secrets pattern misses a key directly after a hyphen, an underscore, a letter or a digit | X1 |
 | The executor is built with no backends and the digest of no bytes | C4 (the config's shape and digest: C1) |
-| The run record's empty lists: `asked.settings`, `spend.requests` and settled spend; `egress` | B4 defines the elements; C4, S10 and E4 fill them. `egress` was owned by "the first backend that sends data": the gate is where a send is known, so 1B takes it, filled by fakes |
-| "Never removed" has one limit left: `put` replaces a made name | S1 |
-| The ledger: the real one, the binary built with it, the token, a damaged reservation, the names' segments | S1 (the token, the names), S2 (the real ledger, the binary), S12 (a damaged reservation) |
+| The run record's empty lists: `asked.settings`, `spend.requests` and settled spend; `egress` | B4 defines the elements; C5, S10 and E4 fill them. `egress` was owned by "the first backend that sends data": the gate is where a send is known, so 1B takes it, filled by fakes |
+| "Never removed" has one limit left: `put` replaces a made name | S1b |
+| The ledger: the real one, the binary built with it, the token, a damaged reservation, the names' segments | S1 and S1b (the token, the names), S2 (the real ledger, the binary), S12 (a damaged reservation) |
 | Settlement | S11 (a run that ends), S6 (a run that did not) |
 | An admission that was visible and not confirmed takes its id | S6 |
 | What every publication costs as ids and reservations accumulate | S13 |
-| Whether a failed call may have been charged | B1 (the stage on a fault), S5 (the settlement) |
+| Whether a failed call may have been charged | B1 (the stage on a fault), S5b (the settlement) |
 | What a provider adapter said of itself: `pricing`, `recipient` | B1 and S4 (`pricing`); B2 and E2 (`recipient`). Image preparation stays with milestone 2 |
 | What redaction does not find; quotes around a value; the variable named | C3 (the forms, UTF-16 among them, and JSON as JSON); C2 (quotes, the variable, the least length) |
 | `max_spend_usd`, the cap of one call | S3. `set` stays with milestone 3 |
@@ -1044,7 +1208,7 @@ written on.
 | Uninstall signals a process id read from a file (R3) | M5 |
 | A configured model that is not in the catalogue can read as ready (R4) | M6 |
 | A hold is judged live by its process id alone (R5) | M5 |
-| Untested cases around installs (R6) | M2 (a signal during a download), M5 (a removal racing an install), M6 (a reinstall between a call and its retry; a corrupt installation record) |
+| Untested cases around installs (R6) | M2b (a signal during a download), M5 (a removal racing an install), M6 (a reinstall between a call and its retry; a corrupt installation record) |
 
 The row on what running an action does not do yet (task A7) asks for a bound on a ledger
 being asked again; it stays with A7, and D10 says what S2 does with the answer.
@@ -1059,7 +1223,44 @@ and either would stop the task and go to the owner as `SPEC.md` section 15 says.
 
 ## Review rounds
 
-Recorded as `AGENTS.md`, "Working with the owner", requires.
+Recorded as `AGENTS.md`, "Working with the owner", requires. Each round was one run of
+the Codex CLI, read-only, over this repository at the branch's head, asked for blocker,
+major and minor findings on scope, order, contradictions with `SPEC.md` and the ADRs,
+missing acceptance cases, carry-over rows and tasks too large.
+
+| Round | Date | Draft | Blockers | Majors | Minors |
+|---|---|---|---|---|---|
+| 1 | 2026-11-13 | 2 | 2 | 9 | 0 |
+
+**Round 1, and what changed in draft 3.**
+
+- Blocker: recovery could not write a run's record, because an admission holds
+  fingerprints only. Added B6, which keeps the prepared call with the admission, and the
+  open point D11; S6 says what a run admitted without it gets.
+- Blocker: installs and removal were narrowed to one process, which `SPEC.md` sections 4
+  and 6 do not say. A second process now attaches (M3) and removal drains across
+  processes (M5); the decision that said otherwise is replaced.
+- Major: tasks that change the contract's files were not all named as joins. The joins
+  are now a stated line of thirteen; the roster from a config moved into the core, out of
+  the models strand's crate; the models strand's files are divided.
+- Major: four dependencies ran backwards. A refusal from inside a run moved from S4 to
+  S5; recovery of a refused end from S11 to S6; removal of a shared file from M4 to M5;
+  the listing from M6 to M7.
+- Major: recovery skipped a reservation whose run was deleted. S6 recovers from the spend
+  records, run or no run, with cases through a delete and a prune.
+- Major: accounting could end before settlement was durable. B5 puts accounting outside
+  the meter, and S5b has a barrier between the answer and the settlement.
+- Major: nothing kept two requests of one run from both taking the last of its
+  reservation. S1's ADR gives a dispatch a made name, and S5 races two requests.
+- Major: reading a digest again was not a reload. C4 makes `ConfigSource` answer with a
+  snapshot or a refusal; C5 tests a changed cap, recipient and credential, and C4 a file
+  that no longer parses.
+- Major: metadata removal and the hops actually reached were missing. Added E6; E4 notes
+  sends where they are made and follows E3.
+- Major: a model could be replaced between admission and its hold. M6 holds the admitted
+  installation by identity, with a barrier racing a reinstall and a removal.
+- Major: S1, S5, S11 and M2 were too large. Each is split in two (S1b, S5b, S11b, M2b),
+  and C4 in two (C5).
 
 ## Risks
 
@@ -1067,7 +1268,7 @@ Recorded as `AGENTS.md`, "Working with the owner", requires.
 |---|---|---|
 | 1A's cancellation or nested calls come out unlike either outcome written under "What this plan needs from 1A" | Tasks S5, S7, S11, B4, B5 are wrong as written | B0 is first and stops on such an answer; the correction gets the review rounds before anything is built |
 | The record's shapes are fixed in B4 before the strands that fill them | A second version, `run/4`, inside one checkpoint | B4 follows B1 and B2, which decide the amount, the stage and the recipient; the shapes are the spec's table; a wrong one is a new version, never an edit |
-| The join tasks queue behind one another | The parallel strands end in a line | Only four tasks touch the engine; each strand's other work is behind an interface in its own folder and merges without waiting |
+| The join tasks are a line of thirteen | The checkpoint takes as long as that line | Each is small or medium and one concern; the other twenty-odd tasks are built beside it; a join that can be shown not to touch the contract's files after all leaves the line in B0 |
 | Crash tests at every event multiply | The fast tier passes its three minutes | Each task states its count of crash points in its hand-back; the exhaustive loss of single names runs as a seeded sample, as 1A's exit check decides for publication |
 | Folding the balances from every record costs more with every run | Admission slows as a store ages | S13 measures it at 100,000 ids before the checkpoint closes, and a checkpoint record is the stated way out |
 | A decorator order that charges for a request the gate refused | Spend with nothing sent | The order is fixed in B5 with a test; E2 asserts no dispatch record for a refused request |
