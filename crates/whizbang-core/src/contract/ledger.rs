@@ -233,7 +233,7 @@ impl From<CallError> for Declined {
 /// publishes; the run, the request id's record, the reservation and whatever the
 /// ledger added become visible together or not at all. When it declines, the
 /// publication is dropped: nothing was published, no run exists, and the request's id
-/// is as free as it was.
+/// is not taken by this request.
 ///
 /// **A judgement that must hold when the step is published.** The generation a ledger
 /// judges on can be an old one by the time the publication is published: another
