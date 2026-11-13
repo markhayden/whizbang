@@ -13,8 +13,9 @@ use crate::contract::{ActionDescriptor, Kind, Registry};
 /// observe (ADR 0003, "What changes the version"). Version 1 listed an action's name and
 /// purpose. Version 2 lists each action as its whole descriptor and adds the artifact
 /// types. Version 3 lists actions by kind, recipes first, where 2 listed them as they were
-/// registered.
-pub const DESCRIPTION_VERSION: u32 = 3;
+/// registered. Version 4 adds `chosen_by` to each need: the argument that chooses the
+/// backend, or null.
+pub const DESCRIPTION_VERSION: u32 = 4;
 
 /// Everything a door can offer, as one document.
 #[derive(Debug, Clone, PartialEq, Serialize)]

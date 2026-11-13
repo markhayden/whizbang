@@ -22,10 +22,10 @@ mod registry;
 mod run;
 pub mod text;
 
+pub use crate::capability::{FillHandle, JudgeHandle, SegmentHandle};
 pub use call::Call;
 pub use context::{
-    Allowance, Cancellation, Capabilities, Context, Diagnostics, Events, FillHandle, JudgeHandle,
-    NoDiagnostics, SegmentHandle,
+    Allowance, Cancellation, Capabilities, Context, Diagnostics, Events, NoDiagnostics,
 };
 pub use descriptor::{
     ActionDescriptor, Argument, Capability, Count, DescriptorError, Draft, InputPort, Kind,

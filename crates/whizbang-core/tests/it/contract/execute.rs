@@ -942,20 +942,33 @@ fn many_runs_from_two_executors_at_one_instant_are_all_kept() {
     assert!(runs.iter().all(|(_, names)| *names == 3), "{runs:?}");
 }
 
+/// The count in a run's id: the number after the hyphen.
+fn count_of(run: &RunId) -> u64 {
+    run.as_str().split_once('-').unwrap().1.parse().unwrap()
+}
+
 #[test]
 fn a_run_whose_id_was_taken_while_it_executed_is_named_again_and_merges_into_nothing() {
     // The id is free when the run is named. While the action runs, other hands publish
     // runs under that id and the ids after it. The store refuses to make a run that it
     // already holds, the executor names the run again, and nothing is merged: the runs
     // that were planted hold what they held, and the reported run is whole.
+    //
+    // The count in an id is one for the whole process, and under `cargo test` other
+    // tests of this binary name runs too. So the ids to plant are found, not assumed: a
+    // first run says where the count is, and the 500 ids after it are planted, which is
+    // far more than the other tests name in the moment between.
+    const PLANTED: u64 = 500;
     let world = World::new();
     let store = world.store();
+    let first = Arc::new(AtomicU64::new(0));
     let planting = {
-        let store = store.clone();
+        let (store, first) = (store.clone(), first.clone());
         scripted("plant", move |_, context| {
             context.diagnostics().write("mine.txt", b"x").unwrap();
+            let from = first.load(Ordering::SeqCst);
             let mut publication = store.begin().unwrap();
-            for count in 1..=40 {
+            for count in from..from + PLANTED {
                 publication
                     .put_in(
                         &format!("8000-{count}"),
@@ -970,11 +983,24 @@ fn a_run_whose_id_was_taken_while_it_executed_is_named_again_and_merges_into_not
         })
     };
     let engine = engine_over(store.clone(), vec![planting], 8000);
+    let before = engine
+        .submit(&Call::new("echo").argument("text", Value::text("hello")))
+        .unwrap();
+    let from = count_of(before.run()) + 1;
+    first.store(from, Ordering::SeqCst);
+
     let finished = engine.submit(&Call::new("plant")).unwrap();
+    // The id it was first given was among those planted, so it was refused and named
+    // again: the id it ended with is past every planted one.
+    assert!(
+        count_of(finished.run()) >= from + PLANTED,
+        "{} was never taken: no collision was made",
+        finished.run()
+    );
     let runs = runs_of(&world.root(), world.fs.clone());
-    assert_eq!(runs.len(), 41, "{runs:?}");
+    assert_eq!(runs.len() as u64, PLANTED + 2, "{runs:?}");
     for (id, names) in &runs {
-        if id == finished.run().as_str() {
+        if id == finished.run().as_str() || id == before.run().as_str() {
             assert_eq!(*names, 3, "{id}");
         } else {
             assert_eq!(*names, 1, "{id} was merged into");
@@ -982,6 +1008,130 @@ fn a_run_whose_id_was_taken_while_it_executed_is_named_again_and_merges_into_not
     }
     let record = record_of(&world.root(), world.fs.clone(), finished.run().as_str());
     assert_eq!(record.identity().run, finished.run().as_str());
+}
+
+/// A file system that takes a run's id from under the executor: each time a run record
+/// is about to be written, it first publishes a run of the id the record names, as
+/// other hands would, for as many times as it was told to.
+struct Taker {
+    inner: RealFs,
+    store: std::sync::OnceLock<Arc<Store>>,
+    left: AtomicU64,
+    taken: std::sync::Mutex<Vec<String>>,
+}
+
+impl Taker {
+    fn take(&self, bytes: &[u8]) {
+        let Ok(record) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+            return;
+        };
+        let (Some(id), Some(store)) = (record["identity"]["run"].as_str(), self.store.get()) else {
+            return;
+        };
+        let mut taken = self.taken.lock().unwrap();
+        if taken.iter().any(|held| held == id) || self.left.load(Ordering::SeqCst) == 0 {
+            return;
+        }
+        self.left.fetch_sub(1, Ordering::SeqCst);
+        taken.push(id.to_owned());
+        drop(taken);
+        let mut publication = store.begin().unwrap();
+        publication
+            .put_in(id, "theirs", store::Kind::Diagnostic, b"y")
+            .unwrap();
+        publication.publish().unwrap();
+    }
+}
+
+impl Fs for Taker {
+    fn create_dir(&self, path: &Path) -> std::io::Result<()> {
+        self.inner.create_dir(path)
+    }
+    fn write_new(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        self.take(bytes);
+        self.inner.write_new(path, bytes)
+    }
+    fn sync_dir(&self, path: &Path) -> std::io::Result<()> {
+        self.inner.sync_dir(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        self.inner.rename(from, to)
+    }
+    fn remove_all(&self, path: &Path) -> std::io::Result<()> {
+        self.inner.remove_all(path)
+    }
+    fn read(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+        self.inner.read(path)
+    }
+    fn list(&self, path: &Path) -> std::io::Result<Vec<std::path::PathBuf>> {
+        self.inner.list(path)
+    }
+    fn exists(&self, path: &Path) -> std::io::Result<bool> {
+        self.inner.exists(path)
+    }
+    fn hold_lock_file(
+        &self,
+        path: &Path,
+        create: bool,
+    ) -> std::io::Result<Option<Box<dyn store::fs::LockFile>>> {
+        self.inner.hold_lock_file(path, create)
+    }
+    fn share(&self, path: &Path) -> std::io::Result<Box<dyn store::fs::Held>> {
+        self.inner.share(path)
+    }
+    fn try_alone(&self, path: &Path) -> std::io::Result<Option<Box<dyn store::fs::Held>>> {
+        self.inner.try_alone(path)
+    }
+}
+
+#[test]
+fn a_run_is_named_eight_times_at_most() {
+    // Each time the executor is about to publish its run, the id it chose is taken. It
+    // names the run again, and does so until it has named it eight times: taken seven
+    // times, the eighth name is published; taken eight times, a ninth name is not
+    // tried, and the store's refusal is what the caller is told.
+    let submit = |takes: u64| {
+        let dir = Scratch::new("execute-namings");
+        let root = dir.path().join("store");
+        let fs = Arc::new(Taker {
+            inner: RealFs,
+            store: std::sync::OnceLock::new(),
+            left: AtomicU64::new(takes),
+            taken: std::sync::Mutex::new(Vec::new()),
+        });
+        let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+        assert!(fs.store.set(store.clone()).is_ok());
+        let engine = engine_over(store, Vec::new(), 9000);
+        let result = engine.submit(&Call::new("echo").argument("text", Value::text("hello")));
+        let taken = fs.taken.lock().unwrap().clone();
+        let runs = runs_of(&root, Arc::new(RealFs));
+        (result, taken, runs)
+    };
+
+    let (result, taken, runs) = submit(7);
+    let finished = result.unwrap();
+    assert_eq!(taken.len(), 7);
+    assert!(!taken.iter().any(|id| id == finished.run().as_str()));
+    // Seven runs of other hands, each with its one name, and the run itself, whole.
+    assert_eq!(runs.len(), 8, "{runs:?}");
+    for (id, names) in &runs {
+        let own = id == finished.run().as_str();
+        assert_eq!(*names, if own { 3 } else { 1 }, "{id}");
+    }
+
+    let (result, taken, runs) = submit(8);
+    assert_eq!(taken.len(), 8);
+    match result {
+        Err(CallError::Store(failure)) => assert!(
+            matches!(failure.cause(), store::Error::RunExists { run } if *run == taken[7]),
+            "{:?}",
+            failure.cause()
+        ),
+        other => panic!("a ninth name was tried: {other:?}"),
+    }
+    // Nothing of the run was published: the eight are the others' alone.
+    assert_eq!(runs.len(), 8, "{runs:?}");
+    assert!(runs.iter().all(|(_, names)| *names == 1), "{runs:?}");
 }
 
 // --- a secret as a name -----------------------------------------------------------------------

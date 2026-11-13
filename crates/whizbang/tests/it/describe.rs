@@ -24,7 +24,7 @@ fn indented_description() -> &'static str {
 /// order, with no space between them, and one newline at the end.
 fn compact_start() -> String {
     format!(
-        "{{\"description_version\":3,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[],\"artifact_types\":[{{\"name\":\"mask\",\"purpose\":\"",
+        "{{\"description_version\":4,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[],\"artifact_types\":[{{\"name\":\"mask\",\"purpose\":\"",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -100,7 +100,7 @@ fn describe_json_is_valid_and_lists_no_actions_yet() {
     assert!(ok);
     let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
     assert_eq!(doc["name"], "whizbang");
-    assert_eq!(doc["description_version"], 3);
+    assert_eq!(doc["description_version"], 4);
     assert_eq!(doc["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(doc["actions"], serde_json::json!([]));
 }
@@ -201,7 +201,7 @@ fn a_test_adds_echo_to_the_registry_the_binary_builds() {
 fn describe_json_pretty_starts_and_ends_with_these_bytes() {
     let (_, pretty) = whizbang(&["describe", "--json", "--pretty"]);
     let start = format!(
-        "{{\n  \"description_version\": 3,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [],\n  \"artifact_types\": [\n",
+        "{{\n  \"description_version\": 4,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [],\n  \"artifact_types\": [\n",
         env!("CARGO_PKG_VERSION")
     );
     let types = r#"    {

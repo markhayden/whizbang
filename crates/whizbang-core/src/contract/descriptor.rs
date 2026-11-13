@@ -568,12 +568,14 @@ impl OutputPort {
     }
 }
 
-/// A capability an action needs, the features it needs of it, and when.
+/// A capability an action needs, the features it needs of it, when, and which argument
+/// of a call, if any, chooses the backend that answers (ADR 0006, "Resolution").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Requirement {
     capability: Capability,
     features: Vec<String>,
     when: When,
+    chosen_by: Option<String>,
 }
 
 impl Requirement {
@@ -583,6 +585,7 @@ impl Requirement {
             capability,
             features: Vec::new(),
             when: When::Always,
+            chosen_by: None,
         }
     }
 
@@ -609,6 +612,19 @@ impl Requirement {
     /// When the capability is needed.
     pub fn applies(&self) -> &When {
         &self.when
+    }
+
+    /// The backend is the one a call names in this argument, a text the call may leave
+    /// out; a call that leaves it out gets the default. Without this, the default
+    /// always answers.
+    pub fn chosen_by(mut self, argument: &str) -> Requirement {
+        self.chosen_by = Some(argument.to_owned());
+        self
+    }
+
+    /// The argument that chooses the backend, when there is one.
+    pub fn chooser(&self) -> Option<&str> {
+        self.chosen_by.as_deref()
     }
 }
 
@@ -917,6 +933,22 @@ impl ActionDescriptor {
             let capability = requirement.capability.name();
             self.check_when(&requirement.when)
                 .map_err(|why| format!("the need for {capability} {why}"))?;
+            if let Some(name) = &requirement.chosen_by {
+                let chooses = |why: &str| {
+                    Err(format!(
+                        "the need for {capability} is chosen by {name}, which {why}"
+                    ))
+                };
+                match self.argument(name) {
+                    None => return chooses("is no argument"),
+                    Some(argument)
+                        if argument.value_type != ValueType::Text || !argument.may_be_absent() =>
+                    {
+                        return chooses("is not a text that a call may leave out");
+                    }
+                    Some(_) => {}
+                }
+            }
             let mut features = BTreeSet::new();
             for feature in &requirement.features {
                 text::action_name(feature)

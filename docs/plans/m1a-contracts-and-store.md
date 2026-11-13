@@ -305,12 +305,12 @@ returns finds the run by its id.
 `tools/python/src/rascal_tools/models/adapters.py`, and the composite and its preservation
 check in `crates/rascal-mask/src/heal.rs`.
 
-- [ ] An ADR, the next free number (0003 is the action descriptor's): the request and response of segment, fill and judge; feature declarations;
+- [x] An ADR, the next free number (0003 is the action descriptor's): the request and response of segment, fill and judge; feature declarations;
       resolution. For judge: ordered mixed content, provider-opaque parts kept whole, usage,
       and typed errors. For fill: the support plane's polarity and range; how core, blend and
       protect become it; the colour and alpha rules of the returned pixels.
-- [ ] The interfaces in `whizbang-core`; no implementation.
-- [ ] `whizbang-testkit`: a fake segmenter, a fake filler that can repaint the whole image,
+- [x] The interfaces in `whizbang-core`; no implementation.
+- [x] `whizbang-testkit`: a fake segmenter, a fake filler that can repaint the whole image,
       and a fake judge that plays a scripted transcript.
 - [ ] `whizbang-rascal` is created with one pure function: composite a fill onto an image
       under a mask.

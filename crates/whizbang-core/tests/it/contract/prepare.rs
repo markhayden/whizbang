@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use whizbang_core::artifact::{
     self, Artifact, ArtifactId, ArtifactType, Derivation, ImageRole, Mask, Source, UseCase,
 };
+use whizbang_core::capability::{Declaration, Filler, Judge, Roster, Segmenter};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Backends, Call, CallError, Capability, Count, Engine,
     Executor, InputFault, InputPort, Kind, ModelIdentity, NoBackends, PreparedCall, Readiness,
@@ -16,6 +17,7 @@ use whizbang_core::contract::{
 };
 use whizbang_core::identity::{Binding, Digest, Direction, Mapping, Projection, Space, Topology};
 use whizbang_core::store::{Reader, Store};
+use whizbang_testkit::capabilities::{FakeFiller, FakeJudge, FakeSegmenter, Paint};
 use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::scratch::Scratch;
 
@@ -313,24 +315,118 @@ fn remove_prompt_with_and_without_a_filler_needs_different_capabilities_and_is_r
     );
 }
 
+/// The backends as ADR 0006 resolves them: two segmenters, `sam` the default, and one
+/// filler or two, `another` the default.
+fn roster(with_bria: bool) -> Roster {
+    let declared = |model: &str, features: &[&str]| {
+        Declaration::new(ModelIdentity::new("fake", model, "1"), features).unwrap()
+    };
+    let roster = Roster::new()
+        .offer(
+            Capability::Segment,
+            "sam",
+            declared("sam3", &["phrase", "box"]),
+        )
+        .unwrap()
+        .offer(Capability::Segment, "tiny", declared("owl-tiny", &["box"]))
+        .unwrap()
+        .offer(Capability::Fill, "another", declared("another-filler", &[]))
+        .unwrap()
+        .default_for(Capability::Segment, "sam")
+        .unwrap()
+        .default_for(Capability::Fill, "another")
+        .unwrap();
+    if with_bria {
+        roster
+            .offer(Capability::Fill, "bria", declared("bria-erase", &[]))
+            .unwrap()
+    } else {
+        roster
+    }
+}
+
 #[test]
-fn a_filler_named_in_a_call_is_not_yet_resolved_to_that_filler() {
-    // A pin of what is deferred, not of what is wanted. `Backends` answers for a
-    // capability and its features, not for a choice a call names, so `filler = "bria"`
-    // where the only filler on offer is another is ready, and the need resolves to the
-    // other. The row of `docs/carry-over.md` on `Backends` and a call's choice (task A8)
-    // owns this: when a call that names its filler is prepared against that filler, this
-    // test is inverted, and the call is not ready, or is refused, for want of "bria".
+fn a_filler_named_in_a_call_is_prepared_against_that_filler() {
+    // The inverse of the pin this replaced. `remove_prompt` says its filler is chosen by
+    // the argument `filler`. Where no backend of that name is offered the call is not
+    // ready, for want of "bria": the default filler is not used in its place.
     let world = world();
-    let engine = world.engine(segmenter().with(Capability::Fill, &[], "another-filler"));
     let filled = world.remove().argument("filler", Value::text("bria"));
-    let prepared = engine.prepare(&filled).unwrap();
-    assert_eq!(prepared.readiness(), &Readiness::Ready);
+    let prepared = world.engine(roster(false)).prepare(&filled).unwrap();
+    let Readiness::NotReady(missing) = prepared.readiness() else {
+        panic!("ready, with a filler that is not the one the call named");
+    };
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0].capability(), Capability::Fill);
+    assert_eq!(missing[0].why(), "no fill backend is named \"bria\"");
     assert_eq!(prepared.needs()[1].capability(), Capability::Fill);
+    assert_eq!(prepared.needs()[1].choice(), Some("bria"));
+    assert!(prepared.needs()[1].model().is_none());
+
+    // Where it is offered, the call is prepared against it, and not against the default.
+    let prepared = world.engine(roster(true)).prepare(&filled).unwrap();
+    assert_eq!(prepared.readiness(), &Readiness::Ready);
+    assert_eq!(prepared.needs()[1].choice(), Some("bria"));
+    assert_eq!(prepared.needs()[1].model().unwrap().model(), "bria-erase");
+    // The default, named, is the default.
+    let named = world.remove().argument("filler", Value::text("another"));
+    let prepared = world.engine(roster(true)).prepare(&named).unwrap();
     assert_eq!(
         prepared.needs()[1].model().unwrap().model(),
         "another-filler"
     );
+}
+
+#[test]
+fn a_call_that_names_no_backend_gets_the_default_and_one_that_names_one_gets_it() {
+    let world = world();
+    let engine = world.engine(roster(true));
+    // `remove_prompt`'s segmenter is chosen by `model`. Left out: the default.
+    let default = engine.prepare(&world.remove()).unwrap();
+    assert_eq!(default.readiness(), &Readiness::Ready);
+    assert_eq!(default.needs()[0].choice(), None);
+    assert_eq!(default.needs()[0].model().unwrap().model(), "sam3");
+
+    // Named: that one, and its features are held to what the call needs. `tiny` takes
+    // no phrase. The default does, and is not used in its place.
+    let tiny = world.remove().argument("model", Value::text("tiny"));
+    let prepared = engine.prepare(&tiny).unwrap();
+    let Readiness::NotReady(missing) = prepared.readiness() else {
+        panic!("ready, with a segmenter that takes no phrase");
+    };
+    assert_eq!(
+        missing[0].why(),
+        "the segment backend tiny does not declare the feature \"phrase\""
+    );
+    assert_eq!(prepared.needs()[0].choice(), Some("tiny"));
+    assert!(prepared.needs()[0].model().is_none());
+
+    // A need with no choosing argument is always answered by the default: `every`
+    // names none, whatever its text arguments hold.
+    let every = Call::new("every")
+        .argument("amount", Value::Number(1.0))
+        .argument("count", Value::Integer(1))
+        .argument("label", Value::text("tiny"))
+        .input("image", world.photo);
+    let prepared = engine.prepare(&every).unwrap();
+    assert_eq!(prepared.needs()[0].choice(), None);
+    assert_eq!(prepared.needs()[0].model().unwrap().model(), "sam3");
+}
+
+#[test]
+fn the_backend_a_choice_resolves_to_is_part_of_what_a_preparation_saw() {
+    let world = world();
+    let filled = world.remove().argument("filler", Value::text("bria"));
+    let without = world.engine(roster(false)).prepare(&filled).unwrap();
+    let with = world.engine(roster(true)).prepare(&filled).unwrap();
+    assert_ne!(without.fingerprint(), with.fingerprint());
+    // The same call against the same backends is the same preparation.
+    let again = world.engine(roster(true)).prepare(&filled).unwrap();
+    assert_eq!(with.fingerprint(), again.fingerprint());
+    // Another choice is another preparation.
+    let other = world.remove().argument("filler", Value::text("another"));
+    let other = world.engine(roster(true)).prepare(&other).unwrap();
+    assert_ne!(with.fingerprint(), other.fingerprint());
 }
 
 #[test]
@@ -1228,15 +1324,63 @@ fn prepare_asks_the_backends_what_is_there_and_once_for_each_need() {
 }
 
 #[test]
-#[ignore = "for tasks A6 and A8: the fakes that count capability requests and reservations do not exist yet"]
-fn prepare_sends_no_capability_request_and_makes_no_reservation() {
-    // What part 2 can show is above: no change in the store, and that `Backends`, the
-    // only thing prepare is given beside a read of the store, has no way to send a
-    // request or to reserve. What it cannot show is a count of zero on the capabilities
-    // themselves and on the ledger, because neither has a fake to count with. Task A8
-    // brings the fake segmenter, filler and judge; task A6 the fake ledger. Whoever
-    // builds them completes this test: prepare `remove_prompt` with a filler against
-    // them and assert that each counted no request and the ledger no reservation.
+fn prepare_sends_no_capability_request() {
+    // The fakes count the requests they are sent. The backends prepare asks are built
+    // from what those same fakes declare, as a build makes its roster from its
+    // adapters; and preparing calls that are ready, not ready and refused sends none
+    // of them a request.
+    let segmenter = Arc::new(FakeSegmenter::new());
+    let filler = Arc::new(FakeFiller::new(Paint::Inverse));
+    let judge = Arc::new(FakeJudge::scripted(Vec::new()));
+    let roster = Roster::new()
+        .offer(
+            Capability::Segment,
+            "fake",
+            Segmenter::declaration(segmenter.as_ref()).clone(),
+        )
+        .unwrap()
+        .offer(
+            Capability::Fill,
+            "fake",
+            Filler::declaration(filler.as_ref()).clone(),
+        )
+        .unwrap()
+        .offer(
+            Capability::Judge,
+            "fake",
+            Judge::declaration(judge.as_ref()).clone(),
+        )
+        .unwrap()
+        .default_for(Capability::Segment, "fake")
+        .unwrap();
+    let world = world();
+    let engine = world.engine(roster);
+
+    let ready = world.remove().argument("filler", Value::text("fake"));
+    let prepared = engine.prepare(&ready).unwrap();
+    assert_eq!(prepared.readiness(), &Readiness::Ready);
+    assert_eq!(
+        prepared.needs()[0].model().unwrap().model(),
+        "fake-segmenter"
+    );
+    assert_eq!(prepared.needs()[1].model().unwrap().model(), "fake-filler");
+    let not_ready = world.remove().argument("filler", Value::text("bria"));
+    let prepared = engine.prepare(&not_ready).unwrap();
+    assert!(matches!(prepared.readiness(), Readiness::NotReady(_)));
+    engine.prepare(&Call::new("remove_prompt")).unwrap_err();
+
+    assert_eq!(segmenter.requests(), 0);
+    assert_eq!(filler.requests(), 0);
+    assert_eq!(judge.requests(), 0);
+}
+
+#[test]
+#[ignore = "for task A6: the fake ledger that counts reservations does not exist yet"]
+fn prepare_makes_no_reservation() {
+    // The other half of what `prepare_sends_no_capability_request` shows for the
+    // capabilities: a count of zero on the ledger. Task A6 brings the fake ledger.
+    // Whoever builds it completes this test: prepare `remove_prompt` with a filler
+    // against it and assert that the ledger counted no reservation.
     panic!("not written yet: see the comment");
 }
 

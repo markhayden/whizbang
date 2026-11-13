@@ -1,19 +1,18 @@
 //! The capability interfaces (`SPEC.md` section 4, ADR 0006): the request and the
-//! response of segment and of fill, what a backend declares, and how a choice of backend
-//! is resolved. The judge's interface and the fakes of all three come with the next
-//! part of ADR 0006.
+//! response of segment, fill and judge, what a backend declares, and how a call's choice
+//! of backend is resolved.
 //!
-//! Nothing here implements a capability. A backend does, in another crate. An action
-//! asks one through a handle, which is bound to its run's cancellation and deadline,
-//! and holds the request to what the backend declared and the answer to the request.
-//! The handles in an action's [`Context`](crate::contract::Context) are still the empty
-//! ones of ADR 0004; they become these with the next part of ADR 0006.
+//! Nothing here implements a capability. A backend does, in another crate, and a fake
+//! does for the tests. An action asks one through a handle in its
+//! [`Context`](crate::contract::Context), which is bound to its run's cancellation and
+//! deadline, and holds the request to what the backend declared and the answer to the
+//! request.
 //!
 //! What a backend sends back is not trusted. Every type a response is made of is built
 //! through a constructor that checks it, has private fields, and is never deserialised,
 //! so a value of the type is a value that passed: a support plane in range, a fill of
-//! three bytes a pixel, an instance whose box holds its plane. What does not pass is
-//! [`Unfit`].
+//! three bytes a pixel, an instance whose box holds its plane, a turn with something in
+//! it. What does not pass is [`Unfit`].
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -24,6 +23,7 @@ use crate::identity::{CanonicalPixels, PixelDigest};
 mod declare;
 mod fault;
 mod fill;
+mod judge;
 mod segment;
 
 pub use declare::{
@@ -31,6 +31,11 @@ pub use declare::{
 };
 pub use fault::{FAULT_LIMIT, Fault, FaultKind};
 pub use fill::{FillHandle, FillRequest, Filler, PROMPT_LIMIT, Painted, Support};
+pub use judge::{
+    CONVERSATION_LIMIT, Controls, DESCRIPTION_LIMIT, Judge, JudgeHandle, JudgeRequest,
+    MESSAGE_LIMIT, Message, Opaque, PART_LIMIT, Part, RESULT_IMAGE_LIMIT, Role, StopReason,
+    TEXT_LIMIT, TOOL_LIMIT, ToolCall, ToolDefinition, ToolResult, Turn, Usage,
+};
 pub use segment::{
     Asked, INSTANCE_LIMIT, Instance, PHRASE_LIMIT, QUERY_LIMIT, Query, SegmentHandle,
     SegmentRequest, SegmentResponse, Segmenter,

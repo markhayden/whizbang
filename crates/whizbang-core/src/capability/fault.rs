@@ -147,7 +147,7 @@ impl From<Unfit> for Fault {
 
 /// The first `limit` characters of a text, each kept when it is an ASCII letter, a
 /// digit, a space or one of [`KEPT_MARKS`], and replaced by `?` otherwise.
-fn clean(text: &str, limit: usize) -> String {
+pub(super) fn clean(text: &str, limit: usize) -> String {
     text.chars()
         .take(limit)
         .map(|c| {

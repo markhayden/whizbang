@@ -4,16 +4,15 @@
 //!
 //! The executor makes one of these for each run (ADR 0005). The cancellation signal and
 //! the deadline are carried and nothing sets them yet, and the allowance is empty until
-//! there is a ledger. The three handles here are still empty and cannot be made. The
-//! handles that send a request exist, in [`crate::capability`] (ADR 0006), for segment
-//! and fill; they take these ones' place with the next part of that record, when the
-//! judge's is there too.
+//! there is a ledger. The capability handles are the capability interfaces' (ADR 0006);
+//! the executor hands an action none of them yet.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crate::artifact::Contents;
+use crate::capability::{FillHandle, JudgeHandle, SegmentHandle};
 
 use super::Executor;
 
@@ -77,29 +76,6 @@ impl Allowance {
     }
 }
 
-/// The handle through which an action will ask a segmenter. It is empty:
-/// [`crate::capability::SegmentHandle`] is the one that sends a request, and takes this
-/// one's place with the next part of ADR 0006.
-#[derive(Debug, Clone)]
-pub struct SegmentHandle {
-    _contents: (),
-}
-
-/// The handle through which an action will ask a filler. It is empty:
-/// [`crate::capability::FillHandle`] is the one that sends a request, and takes this
-/// one's place with the next part of ADR 0006.
-#[derive(Debug, Clone)]
-pub struct FillHandle {
-    _contents: (),
-}
-
-/// The handle through which an action will ask a judge. It is empty: the judge's
-/// interface comes with the next part of ADR 0006.
-#[derive(Debug, Clone)]
-pub struct JudgeHandle {
-    _contents: (),
-}
-
 /// The capabilities a context offers: for each of the three, a handle, or none. An action
 /// reaches a model through one of these and in no other way.
 #[derive(Debug, Clone)]
@@ -110,13 +86,35 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
-    /// No capability at all. It is the only set there is until a handle can be made.
+    /// No capability at all.
     pub fn none() -> Capabilities {
         Capabilities {
             segment: None,
             fill: None,
             judge: None,
         }
+    }
+
+    /// The same set, offering this segmenter. The handle is bound to the run: whoever
+    /// makes the context makes it with the context's cancellation signal, and the
+    /// executor sets its deadline, which an action may only shorten.
+    pub fn with_segment(mut self, handle: SegmentHandle) -> Capabilities {
+        self.segment = Some(handle);
+        self
+    }
+
+    /// The same set, offering this filler. The handle is bound to the run, and the
+    /// executor sets its deadline, as for a segmenter.
+    pub fn with_fill(mut self, handle: FillHandle) -> Capabilities {
+        self.fill = Some(handle);
+        self
+    }
+
+    /// The same set, offering this judge. The handle is bound to the run, and the
+    /// executor sets its deadline, as for a segmenter.
+    pub fn with_judge(mut self, handle: JudgeHandle) -> Capabilities {
+        self.judge = Some(handle);
+        self
     }
 
     pub fn segment(&self) -> Option<&SegmentHandle> {

@@ -101,11 +101,13 @@ impl Backends for NoBackends {
     }
 }
 
-/// One capability a call needs, and the model that would answer it, if one would.
+/// One capability a call needs, the backend the call chose for it, if it chose one, and
+/// the model that would answer, if one would.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Need {
     capability: Capability,
     features: Vec<String>,
+    choice: Option<String>,
     model: Option<ModelIdentity>,
 }
 
@@ -116,6 +118,12 @@ impl Need {
 
     pub fn features(&self) -> &[String] {
         &self.features
+    }
+
+    /// The backend the call named for this capability, when it named one: the value of
+    /// the argument the descriptor says chooses it.
+    pub fn choice(&self) -> Option<&str> {
+        self.choice.as_deref()
     }
 
     /// The model that would answer, or none when nothing does.
@@ -649,7 +657,15 @@ pub(super) fn prepare(
     let mut missing = Vec::new();
     for requirement in descriptor.needs_for(&given) {
         let (capability, features) = (requirement.capability(), requirement.features());
-        let model = match backends.resolve(capability, None, features) {
+        // The call's choice of backend: the text it gave for the argument the need
+        // names. An argument that chooses has no default, so a value is the call's own.
+        let choice = requirement.chooser().and_then(|chooser| {
+            arguments.iter().find_map(|(name, value)| match value {
+                Value::Text(text) if name == chooser => Some(text.clone()),
+                _ => None,
+            })
+        });
+        let model = match backends.resolve(capability, choice.as_deref(), features) {
             Ok(model) => Some(model),
             Err(unavailable) => {
                 missing.push(Missing {
@@ -663,6 +679,7 @@ pub(super) fn prepare(
         needs.push(Need {
             capability,
             features: features.to_vec(),
+            choice,
             model,
         });
     }

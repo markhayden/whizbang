@@ -12,6 +12,8 @@ about marks and about conditions on a value.
 Amended: 2026-11-12, with ADR 0004. The list of what this record does not decide now names
 ADR 0004 for preparing a call, and no longer promises one record for all that remained.
 Nothing this record decides changed.
+Amended: 2026-11-12, with ADR 0006. Added: a need may name the argument that chooses its
+backend (`chosen_by`), with its rule. The description's version went from 3 to 4.
 Spec: section 3, "The execution contract" and "Primitives, recipes and loops"; section 6,
 "Readiness"; section 14, "Documentation that cannot drift"
 
@@ -129,6 +131,10 @@ conditions on two different arguments, it is refused. So two things cannot be sa
 that vary with two arguments, and a capability needed when either of two arguments is given
 ("fill when `f` is given" beside "fill when `g` is given").
 
+A need may also name the argument that chooses its backend (`chosen_by`; ADR 0006, "How a
+call names its choice"). That argument is declared, takes a text, and is one a call may
+leave without a value. A need that names none is answered by the default backend.
+
 **A condition** (`when`) is `always`, `given` an argument, or `not_given` an argument. The
 argument must be one a call may leave without a value. So which capabilities a call needs
 and which outputs it returns are decided from the names of the arguments it gives and from
@@ -149,9 +155,9 @@ nothing. The binary builds its registry in one function (`crates/whizbang/src/wi
 that its tests call too; a test then registers its fakes, which live in
 `whizbang-testkit`, a development dependency only (`scripts/crate-graph.txt`).
 
-### The static description, version 3
+### The static description, version 4
 
-`whizbang describe --json` is one object: `description_version` (now 3), `name`, `version`,
+`whizbang describe --json` is one object: `description_version` (now 4), `name`, `version`,
 `actions` and `artifact_types`. A `Description` is made from a registry and in no other
 way: its fields are private, so one cannot be written by hand with a name listed twice.
 
@@ -159,7 +165,8 @@ way: its fields are private, so one cannot be written by hand with a name listed
   that is not set is `null`. Recipes come first, then loops, then primitives, each kind in
   the order its actions were registered (section 3: recipes are what is advertised, and
   primitives follow). The order does not depend on the order a build registers its tools in.
-  Version 2 listed actions in registration order.
+  Version 2 listed actions in registration order. Version 4 gave each need of an action
+  the field `chosen_by`.
 - `artifact_types` holds the six types in ADR 0002's order, each with its `name`, a
   `purpose` that keeps the purpose rule, and `travels_as`, which is `canonical_file` for
   all six: a copy of the file is the artifact, and `whizbang store import` reads it.
