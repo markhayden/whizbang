@@ -176,6 +176,25 @@ fn growth_stops_at_the_edges_of_the_image() {
     for px in [10_000.0, 1e300, f64::INFINITY] {
         assert_eq!(grown_of(&corner(2, 1), 5, 4, px, 0.0), vec![255; 20]);
     }
+    // Nor does it wrap: on a panorama, whose left and right edges meet, a core at the
+    // left edge does not grow across the seam.
+    let panorama = Binding::root(
+        PixelDigest(Digest::of_bytes(b"panorama")),
+        Space::panorama(8, 4).unwrap(),
+    );
+    let at_the_seam = plane(8, 4, |x, y| (x, y) == (0, 1));
+    let mask = Mask::from_core(
+        panorama,
+        UseCase::Remove,
+        at_the_seam,
+        Source::default(),
+        made_by("fixture"),
+    );
+    let made = grow(mask.unwrap(), 1.0, None, &never).unwrap().unwrap();
+    assert_eq!(
+        places(made.mask.core(), 8),
+        BTreeSet::from([(0, 0), (0, 1), (1, 1), (0, 2)])
+    );
     // Nothing grows from nothing, and what is full stays full.
     assert_eq!(grown_of(&[0; 20], 5, 4, 3.0, 2.0), vec![0; 20]);
     assert_eq!(grown_of(&[255; 20], 5, 4, 3.0, 2.0), vec![255; 20]);

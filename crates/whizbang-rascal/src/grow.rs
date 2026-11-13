@@ -1,5 +1,6 @@
 //! `grow`: the core of a mask made larger by a disc, and then extended downward, as for
-//! the shadow under an object (`SPEC.md` section 7).
+//! the shadow under an object (`SPEC.md` section 7). Its tool record, with worked examples,
+//! what it was measured against and its limits, is `docs/reference/tools/grow.md`.
 //!
 //! It is a refinement: the core is replaced, so the blend is cleared and the profile
 //! and the prescriptions are removed, and protect is kept and still wins

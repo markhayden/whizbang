@@ -41,6 +41,25 @@ impl Around {
             after: Box::new(|handed, _| handed),
         }
     }
+
+    pub fn after(
+        after: impl Fn(Result<Produced, Failure>, &Context) -> Result<Produced, Failure>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Around {
+        Around {
+            grow: Grow::new(),
+            before: Box::new(|_| {}),
+            after: Box::new(after),
+        }
+    }
+
+    /// The same, with this done before `grow` runs.
+    pub fn and_before(mut self, before: impl Fn(&Context) + Send + Sync + 'static) -> Around {
+        self.before = Box::new(before);
+        self
+    }
 }
 
 impl Action for Around {
@@ -590,7 +609,7 @@ fn grow_stops_when_its_run_is_cancelled_and_commits_nothing() {
 }
 
 /// Every file under a folder.
-fn files_under(folder: &Path) -> Vec<PathBuf> {
+pub fn files_under(folder: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for entry in std::fs::read_dir(folder).unwrap() {
         let path = entry.unwrap().path();

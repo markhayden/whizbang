@@ -37,6 +37,9 @@ run this process abandoned is answered `Abandoned`, not `NotEnded { here: true }
 Amended: 2026-11-13, with the last pull request of task A7 (ADR 0008, "Nested calls").
 Changed: an admission has the field `parent`; a call from inside an action draws on its
 parent's allowance, asks no ledger and has no reservation.
+Amended: 2026-11-13, with `grow` through the executor (task A9), the first action that
+reads an input. Added, in "A preparation handed to admission": what the third decoding
+of an input costs, and that it stays.
 Spec: section 3, "The execution contract", "Storage" and "What every run records";
 section 6, "Spend"
 
@@ -487,6 +490,19 @@ the unoptimised profile, 9.8 seconds each
 cost stays: the check of an input at admission is what makes an input that is gone a
 refusal before a run exists, and keeping decoded pixels from a preparation to its
 admission would hold some 200 MB for every preparation a caller has not yet acted on.
+
+**The third decoding.** An action that works on an input reads it once more, from the
+store in its context: nothing hands it what prepare or admission decoded. It stays so.
+Handing the decoded input on would hold it, three planes of a mask or four bytes a pixel
+of an image, from admission until the action starts, for every admitted call, and for a
+started run that waits its turn; and an action would be handed pixels it may not need.
+Measured with `grow`, the first action that reads an input through the executor, on a
+mask of 48,000,000 pixels in the release profile, on the machine its record was written
+on (`docs/reference/tools/grow.md`, "Speed and cost"): about 0.2 seconds to read the
+mask from its file, and about 0.8 seconds for a whole run, which is three such readings
+and the growing, about 0.2 seconds each. A mask's file is its planes as runs, a few megabytes
+at most for a mask drawn from shapes; an image input costs what the paragraph above
+measured, each of the three times.
 
 ### The end of a run is a second publication
 

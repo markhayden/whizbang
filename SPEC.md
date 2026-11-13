@@ -771,6 +771,10 @@ Proposed; exact verbs are settled as each milestone builds them.
 
 ```
 whizbang rascal <task|operation> …
+whizbang rascal grow --mask <identity> --px <n> [--down-px <n>] --store <dir>
+                    [--request-id <id>]
+                                       # the first operation, and the first command that
+                                       # runs an action (docs/reference/tools/grow.md)
 whizbang squint check <use-case> …
 whizbang try <tool> …                  # one tool on one image or pair, no judge
 whizbang eval tool <tool> --set <set>  # rung 2

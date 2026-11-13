@@ -4,6 +4,7 @@
 # methods. Rerun it when the tool changes, and commit what it writes.
 #
 #   scripts/tool-record.sh view      docs/reference/tools/view.md and view/
+#   scripts/tool-record.sh grow      docs/reference/tools/grow.md and grow/
 #
 # It builds in release mode and times real work, so it is heavy: run it through
 # scripts/heavy.sh when another agent may be building. The fast tests then hold the record
@@ -20,8 +21,12 @@ case "${1:-}" in
     cargo test --release -p whizbang-squint --test it -- \
       --ignored --exact record::write_the_record
     ;;
+  grow)
+    cargo test --release -p whizbang-rascal --test it -- \
+      --ignored --exact record::write_the_record
+    ;;
   *)
-    echo "tool-record: usage: scripts/tool-record.sh view" >&2
+    echo "tool-record: usage: scripts/tool-record.sh view|grow" >&2
     exit 2
     ;;
 esac
