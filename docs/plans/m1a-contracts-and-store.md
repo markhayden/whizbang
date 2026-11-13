@@ -21,7 +21,7 @@ No model runs in this checkpoint. Every capability is a fake from the test kit.
   (A8). The execution contract (A5) turned out to need its own: ADR 0003 is the action
   descriptor's and ADR 0004 is preparing a call's, and the run record will have one; so the
   capability interfaces take the next free number, and the cancellation rule of A7 goes in
-  the record for executing a call.
+  the record for executing a call. Request ids and admission (A6) took one too: ADR 0007.
 - **The store is files on disk,** published the way rascal's workspace publishes: immutable
   generations, a single pointer that names the current one, and file and directory syncs in a
   fixed order. No database.
@@ -244,16 +244,29 @@ contain `echo`, and the crate-graph check shows the binary does not depend on th
 
 ### A6. Request ids and admission
 
+**Delivered in three parts** (ADR 0007 decides all of them). Each part ticks the boxes it makes
+true.
+
+- **Part 1:** the ADR; the request id, the fingerprint of a request, the admission and
+  ending records and where they are in the store; the look before prepare; the run made
+  durably, with the id's record, in one publication, and ended in a second; boxes 1 and
+  5, and of "Done when" lines 1 to 5, and line 6 for the id's record and the run.
+- **Part 2:** the estimate, and a prepared call handed to admission and checked again:
+  box 4, and of "Done when" line 7 as far as "no run". Box 2 is built except for what it
+  shares with part 3: that prepare makes no reservation is shown there.
+- **Part 3:** the fake ledger and the reservation: boxes 2 and 3, and of "Done when"
+  line 8, line 7's "no reservation", and line 6 again with the reservation in the step.
+
 **Depends on:** A5, A8 (its tests count capability requests with A8's fakes).
 
-- [ ] A request id is looked up at the executor's entry, before prepare is called.
-- [ ] Prepare returns readiness for the exact arguments and an estimate, bound to the digests
+- [x] A request id is looked up at the executor's entry, before prepare is called.
+- [x] Prepare returns readiness for the exact arguments and an estimate, bound to the digests
       of the inputs, the config and the model identities it saw. It writes nothing.
-- [ ] Admit revalidates, then records the id, the request fingerprint, the run and a
+- [x] Admit revalidates, then records the id, the request fingerprint, the run and a
       reservation in one durable step. The reservation goes to a fake ledger that takes part
       in that step; the real ledger is checkpoint 1B.
-- [ ] A stale preparation is refused and creates no run.
-- [ ] When a run has been pruned, its request-id record remains and answers a repeat with what
+- [x] A stale preparation is refused and creates no run.
+- [x] When a run has been pruned, its request-id record remains and answers a repeat with what
       happened to the run.
 
 **Done when** these pass:
@@ -273,6 +286,33 @@ contain `echo`, and the crate-graph check shows the binary does not depend on th
 
 ### A7. Nested calls, cancellation and publication
 
+**Built in three pull requests** (ADR 0008 is written with them, each part amending it),
+because every task of this size so far came to two or three times the size of one. A box
+is ticked by the pull request that makes it true.
+
+- **Part 1, the commit step:** box 5. An action hands back artifacts; the executor holds
+  them to the ports its call returns and publishes them, with the completed status, in
+  the publication that ends the run; a panic in an action ends its run through the same
+  publication. Of "Done when": the fake action with two outputs, crashed inside its
+  commit. With it, from `docs/carry-over.md`: the store reads no more of a stored file
+  than its entry says. That covers the files under `objects/` only: `CURRENT`, the
+  generation files and the lock file are still read whole (`docs/carry-over.md`, task
+  A12).
+- **Part 2, cancellation, status and progress:** boxes 1 and 4, and of box 3 that a
+  cancellation is accepted or comes too late. Status and cancel answered while an action
+  is busy, by a second caller; progress events; a run found by its id after its caller
+  left; a fake capability that blocks at a named barrier and sees the cancellation; a
+  hold on the generation a run's inputs were read from. Of "Done when": the cancel before
+  the commit step and the one after it; the second caller that reads a status and
+  cancels; the caller that disconnects and returns.
+- **Part 3, nested calls:** box 2 and the rest of box 3. Calls through the context's
+  executor, each with an allowance taken from its parent's; the fifth level and the call
+  back refused; a cancellation that reaches descendants; a parent that is terminal only
+  when its descendants are and every capability request is accounted for; the parent and
+  the refusals in the run record. Of "Done when": the grandchild refused after a
+  cancellation; the parent that stays non-terminal while a capability request is
+  outstanding; the completed child whose outputs remain when its parent fails.
+
 **Depends on:** A6, A8. Rascal's old rule, that a commit which has taken its lock always
 completes, is not carried over without being restated here.
 
@@ -284,7 +324,7 @@ completes, is not carried over without being restated here.
 - [ ] Cancellation reaches descendants and refuses new ones. A parent is terminal only when
       its descendants are terminal and every request a capability was sent is accounted for.
 - [ ] Progress events; status and cancel answered while an action is busy.
-- [ ] One commit step for an action: all of its output references and its completed status
+- [x] One commit step for an action: all of its output references and its completed status
       are published together, through A2's publication, and the completed outcome is returned
       only after that publication is durable.
 

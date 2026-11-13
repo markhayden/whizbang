@@ -33,6 +33,30 @@ pub fn put(publication: &mut Publication<'_>, artifact: &Artifact) -> Result<Art
     Ok(id)
 }
 
+/// Adds the artifact to a publication as an output the run `run` commits: two
+/// references to its canonical file, both committed outputs (ADR 0008, "The commit
+/// step").
+///
+/// One is the run's own, among its names, under `reference`: it is to the file this run
+/// made, and goes when the run is deleted. The other is the artifact's name, outside
+/// runs, which is how a later call takes it; it is given this file unless the store
+/// already holds an artifact under that name when the publication is published. Then
+/// the name keeps the file it has, which is the same artifact with the origin it was
+/// first stored with: an identity does not cover an origin, and a name holds one file.
+/// The store decides that inside its publishing step ([`Publication::keep`]).
+pub fn commit(
+    publication: &mut Publication<'_>,
+    run: &str,
+    reference: &str,
+    artifact: &Artifact,
+) -> store::Result<ArtifactId> {
+    let id = artifact.id();
+    let bytes = artifact.to_bytes();
+    publication.put_in(run, reference, Kind::Output, &bytes)?;
+    publication.keep(&name(artifact.artifact_type(), id), &bytes)?;
+    Ok(id)
+}
+
 /// What artifacts are read from: a store opened to write, or to read.
 pub trait Contents {
     /// The current generation.
@@ -41,6 +65,10 @@ pub trait Contents {
     /// and its digest. A diagnostic reference is refused: an artifact is an output, and
     /// diagnostic evidence under an artifact's name is not one.
     fn read(&self, entry: &Entry) -> store::Result<Vec<u8>>;
+    /// The content of an entry of either kind, checked the same way. It is for reading
+    /// a record the executor wrote, of a request id or of a run, which is stored as a
+    /// diagnostic reference; nothing that reads an artifact uses it.
+    fn read_record(&self, entry: &Entry) -> store::Result<Vec<u8>>;
 }
 
 impl Contents for Store {
@@ -51,6 +79,10 @@ impl Contents for Store {
     fn read(&self, entry: &Entry) -> store::Result<Vec<u8>> {
         Store::read_output(self, entry)
     }
+
+    fn read_record(&self, entry: &Entry) -> store::Result<Vec<u8>> {
+        Store::read(self, entry)
+    }
 }
 
 impl Contents for Reader {
@@ -60,6 +92,10 @@ impl Contents for Reader {
 
     fn read(&self, entry: &Entry) -> store::Result<Vec<u8>> {
         Reader::read_output(self, entry)
+    }
+
+    fn read_record(&self, entry: &Entry) -> store::Result<Vec<u8>> {
+        Reader::read(self, entry)
     }
 }
 

@@ -33,6 +33,9 @@ Amended: 2026-11-12, a fourth note, with ADR 0006, which makes the composite. Ch
 any caller: one is made only by checking the two pictures against a mask, and the
 paragraph that accepted the open boundary says so. And the composite, which "does not
 exist yet", exists.
+Amended: 2026-11-12, a fifth note, with ADR 0007. Corrected: "it is closed" said more
+than the check does; a derivation checked against a mask that weighs every pixel
+compares no pixel.
 Spec: section 3, "Identities" and "Storage"; section 16, checkpoint 1A
 
 ## Context
@@ -328,7 +331,8 @@ for a derivation"), which is given both pictures and a mask on the first, and re
 unless every pixel that mask weighs 0 is the same in both; the fill composite makes the
 one for the picture it made. This record first left stating a derivation open to any
 caller, who could so move a mask onto an unrelated image of the same size, and accepted
-that boundary; it is closed. A derivation's binding still has the same identity as an
+that boundary; it is closed, except through a mask that weighs every pixel, which
+leaves the check no pixel to compare (ADR 0006, "Who vouches for a derivation"). A derivation's binding still has the same identity as an
 identity binding between two images of one size that anyone can build (ADR 0001 keeps
 `binding/1` as it is, and to ADR 0001 such a binding is an ordinary alignment). So
 closing the statement closes one way of making such a mask and not the artifact: a

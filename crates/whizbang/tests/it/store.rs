@@ -509,3 +509,110 @@ fn second_writers_and_readers_beside_a_writer_at_work_are_never_told_of_damage()
     );
     assert!(rounds >= 3, "the writer was at work: {rounds} rounds");
 }
+
+#[test]
+fn the_records_of_request_ids_are_left_by_delete_and_prune_and_still_answer() {
+    // Request-id records are never deleted by these commands (`SPEC.md` section 3,
+    // "Storage"). Two requests with ids run through the binary's own executor; every
+    // run is then deleted and the store pruned, by the real commands; and every record
+    // of the two ids is read back as it was, and still answers its request. The
+    // executor has a ledger, the test kit's: the reservation of each run, and the
+    // ledger's own records, are spend records, and are left as the ids' are.
+    use whizbang_core::contract::record::Status;
+    use whizbang_core::contract::{Answer, Call, Executor, Request, RequestId, RunState, Value};
+    use whizbang_core::contract::{Reservation, reservations};
+    use whizbang_testkit::echo::Echo;
+    use whizbang_testkit::ledger::FakeLedger;
+
+    let dir = Scratch::new("store-requests");
+    let root = dir.path().join("store");
+    let request = |text: &str, fail: bool, id: &str| {
+        let call = Call::new("echo").argument("text", Value::text(text));
+        let call = if fail {
+            call.argument("fail", Value::text("it broke"))
+        } else {
+            call
+        };
+        Request::new(call).with_id(RequestId::parse(id).unwrap())
+    };
+    let executor = |root: &Path| {
+        let store = Arc::new(Store::open(root, Arc::new(RealFs)).unwrap());
+        let mut registry = whizbang::wiring::registry().expect("the registry builds");
+        registry.register(Arc::new(Echo::new())).unwrap();
+        whizbang::wiring::runner(registry, store).with_ledger(Arc::new(FakeLedger::new()))
+    };
+    let records = |root: &Path| -> Vec<(String, Vec<u8>)> {
+        let reader = Reader::open(root, Arc::new(RealFs)).unwrap();
+        let generation = reader.snapshot().unwrap();
+        let names = generation.entries().iter();
+        names
+            .map(|(name, entry)| (name.clone(), reader.read(entry).unwrap()))
+            .collect()
+    };
+    let runs: Vec<String> = {
+        let executor = executor(&root);
+        let first = executor
+            .request(&request("hello", false, "order-17"))
+            .unwrap();
+        let second = executor
+            .request(&request("hello", true, "order-18"))
+            .unwrap();
+        vec![first.run().to_string(), second.run().to_string()]
+    };
+    let before = records(&root);
+    let names: Vec<&str> = before.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "requests/order-17/admitted",
+            "requests/order-17/ended",
+            "requests/order-18/admitted",
+            "requests/order-18/ended",
+            "spend/fake/1",
+            "spend/fake/2",
+            &format!("spend/reservations/{}", runs[0]),
+            &format!("spend/reservations/{}", runs[1]),
+        ]
+    );
+    let reserved = |root: &Path| -> Vec<Reservation> {
+        let reader = Reader::open(root, Arc::new(RealFs)).unwrap();
+        reservations(&reader.snapshot().unwrap(), |entry| reader.read(entry)).unwrap()
+    };
+    let reserved_before = reserved(&root);
+    assert_eq!(reserved_before.len(), 2);
+
+    let deleted = whizbang(&["delete", &runs[0], &runs[1]], &root);
+    assert_eq!(deleted.code, Some(0), "{}", deleted.err);
+    let pruned = whizbang(&["prune"], &root);
+    assert_eq!(pruned.code, Some(0), "{}", pruned.err);
+    let listed = whizbang(&["list"], &root);
+    assert!(
+        listed.out.contains("names outside runs: 8\nruns: 0\n"),
+        "{}",
+        listed.out
+    );
+    assert_eq!(records(&root), before);
+    // Each reservation is read back, and still names the run it was made for.
+    assert_eq!(reserved(&root), reserved_before);
+    for (reservation, run) in reserved_before.iter().zip(&runs) {
+        assert_eq!(reservation.run().as_str(), run);
+    }
+
+    let executor = executor(&root);
+    for (id, fail, status, run) in [
+        ("order-17", false, Status::Completed, &runs[0]),
+        ("order-18", true, Status::Error, &runs[1]),
+    ] {
+        let Answer::Repeat(earlier) = executor.request(&request("hello", fail, id)).unwrap() else {
+            panic!("{id} ran again");
+        };
+        assert_eq!(earlier.run().as_str(), run);
+        assert_eq!(
+            earlier.state(),
+            &RunState::Removed {
+                ended: Some(status)
+            }
+        );
+    }
+    assert_eq!(records(&root), before);
+}

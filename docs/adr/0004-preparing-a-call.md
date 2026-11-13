@@ -42,6 +42,17 @@ left to task A8. Changed: "Who may state a derivation". `Derivation::stated` is 
 a derivation is made only by `Derivation::checked`, and the trust boundary for prepare
 is the maker's statement; the prepare test of a moved mask is rewritten with
 `Mask::from_core` under a new name.
+Amended: 2026-11-12, with ADR 0007, which looks a request id up and admits a run.
+Changed: the executor has a third method, `request`, and the look for a request id is
+built; a `CallError` has a third kind, a record of a request that this build does not
+read; a read of the store can also give a record the executor wrote.
+Amended: 2026-11-12, with the second part of ADR 0007. Changed: prepare returns an
+estimate, which is not in the fingerprint; `Backends` has a second question, the bound;
+the config's digest is read each time a call is prepared; and comparing a preparation
+with the call prepared again is done, at admission.
+Amended: 2026-11-12, with the last part of ADR 0007. Changed: the bound a backend
+states is an `Estimate`, not a bare number; that prepare reserves nothing is shown
+against a ledger that counts.
 Spec: section 3, "The execution contract", "Identities" and "Storage"; section 6,
 "Readiness"
 
@@ -118,8 +129,10 @@ type the port takes, the artifact's identity, and an `InputFault`, one of `Missi
 `WrongType`, `WrongImage` and `NotTheArtifact`. A door can tell them apart without reading
 the text.
 
-**A failure of the store is not a refusal.** Both methods of the executor answer with a
-`CallError`: `Refused`, with the refusal, or `Store`, with a `StoreFailure`. The store
+**A failure of the store is not a refusal.** Every method of the executor answers with a
+`CallError`: `Refused`, with the refusal, or `Store`, with a `StoreFailure`. (A third
+kind, `Record`, is ADR 0007's: a record of a request that this build does not read. It
+is met only where a request id is looked up.) The store
 failing is not a judgement of the call. There are three kinds:
 
 - content that a generation names and that is missing or damaged;
@@ -164,7 +177,8 @@ when it runs.
 Prepare is given two things. Through neither can it make a durable change.
 
 - **A read of the store** (`artifact::Contents`: the current generation and the content of
-  an entry). It has no way to write, and it takes no part in the writer lock. It is not
+  an entry; and, since ADR 0007, the content of an entry of either kind, which prepare
+  does not use and the look for a request id does). It has no way to write, and it takes no part in the writer lock. It is not
   free of locks: each input read asks for the current generation, and a reader then
   shares that generation's file: a shared advisory lock (`flock`; the store's module
   `fs`), which can wait behind a prune that holds the file alone for the moment it takes
@@ -172,7 +186,8 @@ Prepare is given two things. Through neither can it make a durable change.
   until it is dropped, so that a prune leaves the generation it last read and what that
   names. Nothing durable changes by it. The empty generation has no file and is not
   shared.
-- **`Backends`**, one question: which model would answer this capability, for a call
+- **`Backends`**, two questions. What would using this capability cost at most with
+  this model (ADR 0007, "The estimate")? And: which model would answer this capability, for a call
   that chose this backend or chose none, with these features? It is meant to be answered
   from what is configured (ADR 0006, "Resolution").
 
@@ -187,8 +202,8 @@ ledger. An
 implementor could still do anything inside `resolve`; nothing checks that it sends
 nothing. A count of zero requests on the capabilities themselves is shown against task
 A8's fakes (`prepare::prepare_sends_no_capability_request`). A count of zero reservations
-on the ledger needs the fake that task A6 brings; an ignored test in `prepare.rs` names
-what completes it.
+is shown against the fake ledger of ADR 0007, which the executor under test holds
+(`prepare::prepare_makes_no_reservation`).
 
 ### Bound to what it saw
 
@@ -235,11 +250,13 @@ what is bound and what an action is handed do not differ by a sign.
 - A need that nothing answers is hashed as such, so ready and not ready are two
   preparations.
 
-Preparing the same call again and comparing fingerprints is how a stale preparation is
-found. This record does not decide when that is done: admission is task A6.
+Preparing the same call again and comparing is how a stale preparation is found. It is
+done at admission, part by part, so that the refusal says what differs (ADR 0007, "A
+preparation handed to admission").
 
-The config's digest is given to the executor when it is built. There is no config yet, so
-the binary gives the digest of no bytes.
+The config's digest is read each time a call is prepared (`ConfigSource`). An executor
+built with a digest has that one config for as long as it lives. There is no config
+yet, so the binary gives the digest of no bytes.
 
 ### Who may state a derivation
 
@@ -301,10 +318,11 @@ lists and shows runs must take stored ids as they are (`docs/carry-over.md`).
 
 ### The executor's interface, and the types around execution
 
-`Executor` has two methods, and each answers with what it was asked for or a `CallError`.
-`prepare` is the above. `submit` is the entry point for a call
-that is to run, the one place a call comes in whatever door it came through: it is where a
-caller's request id will be looked up, before anything else (task A6); then it prepares,
+`Executor` has three methods, and each answers with what it was asked for or a
+`CallError`. `prepare` is the above. `submit` is the entry point for a call
+that is to run, the one place a call comes in whatever door it came through; `request` is
+the same entry point for a call that may carry a caller's request id, which is looked
+up there before anything else (ADR 0007); then each prepares,
 and refuses a call that is not ready. What happens to a ready call is ADR 0005's: an
 executor that was given a store to write to runs it and writes its record; one that was
 given only a read of a store refuses it with `ReadOnly`.
@@ -346,7 +364,7 @@ known case that does not, and it goes with rascal's recipes to milestone 3
   choice, and prepare hands it the text of the argument the descriptor names. The
   fingerprint's kind does not change with it, as this record first said it would: a choice is an argument of the call, the model it resolves to is a
   need's, and both were hashed already, in an encoding that stays as it is.
-- Both methods of `Executor` return when they have their answer. Section 3 wants execution
+- Every method of `Executor` returns when it has its answer. Section 3 wants execution
   asynchronous, with status and cancel answered while a run executes. How that is
   scheduled is not decided, and `submit`'s shape may change when it is; it is cheap to
   change while nothing runs.
@@ -358,7 +376,8 @@ known case that does not, and it goes with rascal's recipes to milestone 3
   the vector is now made by hand on that binding. For the same reason closing it did not
   change what prepare accepts (above).
 
-What this record does not decide: an estimate; admission, request ids and reservations;
+What this record does not decide: an estimate, admission, request ids and reservations,
+which are ADR 0007's;
 an action's commit step and cancellation. Executing an action, the run record and how a
 run id is minted are ADR 0005's.
 

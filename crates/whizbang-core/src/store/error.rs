@@ -52,6 +52,10 @@ pub enum Error {
     /// A publication was to make this run, and the current generation holds it already.
     /// Nothing was published: two runs are never merged under one id.
     RunExists { run: String },
+    /// A publication was to make this name, which belongs to no run, and the name is
+    /// held already: by the current generation, or by the same publication. Nothing was
+    /// published: a name that is made keeps the content it was made with.
+    NameExists { name: String },
     /// The reference is a diagnostic. It can be read as one, and never used as an output.
     NotAnOutput { digest: Digest },
     /// A file of the store does not hold what it must.
@@ -118,6 +122,9 @@ impl Error {
             ),
             Error::NoSuchRun { .. } => "the store does not hold that run".to_owned(),
             Error::RunExists { .. } => "the store already holds a run of that id".to_owned(),
+            Error::NameExists { .. } => {
+                "the store already holds a name that is made once".to_owned()
+            }
             Error::NotAnOutput { digest } => format!(
                 "the reference to {digest} is a diagnostic: it can be read, and never used \
                  as an output"
@@ -190,6 +197,11 @@ impl fmt::Display for Error {
                 f,
                 "the store already holds a run {run:?}: a new run is not merged into it"
             ),
+            Error::NameExists { name } => write!(
+                f,
+                "the store already holds the name {name:?}: it is made once and keeps its \
+                 content"
+            ),
             Error::NotAnOutput { digest } => write!(
                 f,
                 "the reference to {digest} is a diagnostic: it can be read, and never used \
@@ -222,6 +234,7 @@ impl std::error::Error for Error {
             | Error::Held { .. }
             | Error::NoSuchRun { .. }
             | Error::RunExists { .. }
+            | Error::NameExists { .. }
             | Error::InvalidRun { .. }
             | Error::OtherFormat { .. }
             | Error::NotAnOutput { .. }

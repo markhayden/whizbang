@@ -17,7 +17,7 @@ use crate::identity::{Binding, BindingId, DecodeLimits, Digest, Encoder, Fields}
 
 use crate::store;
 
-use super::{ActionDescriptor, Call, Capability, Count, InputPort, Value};
+use super::{ActionDescriptor, Call, Capability, Count, InputPort, RequestId, RunId, Value};
 
 /// Which model answers a capability: the backend, the model, and the model's version or
 /// reported identity.
@@ -81,6 +81,85 @@ pub trait Backends: Send + Sync {
         choice: Option<&str>,
         features: &[String],
     ) -> Result<ModelIdentity, Unavailable>;
+
+    /// The most one call's use of this capability can cost when this model answers it:
+    /// a bound the backend states, not a guess. It is answered from what is configured,
+    /// as [`Backends::resolve`] is. No backend has a price before the ledger of
+    /// checkpoint 1B, so the answer is nothing unless a backend says otherwise.
+    fn bound(&self, capability: Capability, model: &ModelIdentity) -> Estimate {
+        let _ = (capability, model);
+        Estimate::default()
+    }
+}
+
+/// What a prepared call may cost at most: the sum of what the backends state as the
+/// bound of each capability the call needs and something answers, in millionths of a US
+/// dollar. A need that nothing answers adds nothing: such a call does not run.
+///
+/// It is what admission reserves. It is advice about the cost and a limit on the
+/// reservation (`SPEC.md` section 6): what a request really costs is settled by the
+/// ledger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Estimate {
+    micros: u64,
+}
+
+impl Estimate {
+    /// A bound of this many millionths of a US dollar.
+    pub fn of_micros(micros: u64) -> Estimate {
+        Estimate { micros }
+    }
+
+    /// The bound, in millionths of a US dollar.
+    pub fn micros(&self) -> u64 {
+        self.micros
+    }
+
+    /// Whether this is the largest amount there is. A sum of bounds that passed it
+    /// stops there, so it is not an amount: it says that the cost has no bound that
+    /// can be counted. Nothing is reserved for it and nothing is added to it; a call
+    /// with such an estimate is not admitted by an executor that reserves
+    /// ([`Refusal::NoBound`]).
+    pub fn is_unbounded(&self) -> bool {
+        self.micros == u64::MAX
+    }
+}
+
+/// What differs between a preparation a caller holds and the same call prepared again
+/// at admission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stale {
+    /// The preparation is of another call: another action, another version of it, or
+    /// other arguments.
+    Call,
+    /// The inputs are others, or in another order.
+    Inputs,
+    /// The config is another: its digest changed.
+    Config,
+    /// Another model would answer this capability now, or none would, or none would
+    /// then.
+    Model { capability: Capability },
+    /// The same models under the same config state another bound.
+    Estimate,
+    /// The call is no longer one that prepares: what refuses it now.
+    Refused(Box<Refusal>),
+}
+
+impl std::fmt::Display for Stale {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Stale::Call => f.write_str("it is the preparation of another call"),
+            Stale::Inputs => f.write_str("its inputs are not the inputs of this call"),
+            Stale::Config => f.write_str("the config changed since"),
+            Stale::Model { capability } => write!(
+                f,
+                "another model, or none, answers {} now",
+                capability.name()
+            ),
+            Stale::Estimate => f.write_str("what it may cost at most changed since"),
+            Stale::Refused(refusal) => write!(f, "the call is refused now: {refusal}"),
+        }
+    }
 }
 
 /// No backend at all: what a build has until one is configured.
@@ -206,10 +285,55 @@ pub struct PreparedCall {
     outputs: Vec<String>,
     readiness: Readiness,
     config: Digest,
+    estimate: Estimate,
     fingerprint: Digest,
 }
 
 impl PreparedCall {
+    /// What the call may cost at most, as the backends state it. It is not part of the
+    /// fingerprint; admission compares it beside the fingerprint.
+    pub fn estimate(&self) -> Estimate {
+        self.estimate
+    }
+
+    /// What differs between this preparation and `now`, the same call prepared again:
+    /// the first thing found, or none when they saw the same.
+    pub(super) fn stale_against(&self, now: &PreparedCall) -> Option<Stale> {
+        let same_call = self.action == now.action
+            && self.version == now.version
+            && self.arguments == now.arguments
+            && self.outputs == now.outputs;
+        // The needs follow from the action and the arguments given: the same call has
+        // the same needs, in the same order, and only who answers each can differ.
+        let same_needs = self.needs.len() == now.needs.len()
+            && self.needs.iter().zip(&now.needs).all(|(then, now)| {
+                then.capability == now.capability
+                    && then.features == now.features
+                    && then.choice == now.choice
+            });
+        if !same_call || !same_needs {
+            return Some(Stale::Call);
+        }
+        if self.inputs != now.inputs {
+            return Some(Stale::Inputs);
+        }
+        if self.config != now.config {
+            return Some(Stale::Config);
+        }
+        let other_model = self.needs.iter().zip(&now.needs);
+        if let Some((then, _)) = { other_model }.find(|(then, now)| then.model != now.model) {
+            return Some(Stale::Model {
+                capability: then.capability,
+            });
+        }
+        if self.estimate != now.estimate {
+            return Some(Stale::Estimate);
+        }
+        // Everything the fingerprint holds was compared above. Were it ever to hold
+        // more, a difference in it alone is still a stale preparation.
+        (self.fingerprint != now.fingerprint).then_some(Stale::Call)
+    }
+
     /// The action's name.
     pub fn action(&self) -> &str {
         &self.action
@@ -351,6 +475,20 @@ impl std::fmt::Display for StoreFailure {
 pub enum CallError {
     Refused(Refusal),
     Store(StoreFailure),
+    /// The store gave a record the executor needed to answer, of a request id or of
+    /// the run a request made, and it is not one this build reads. `what` says which
+    /// record; `why` is the reader's sentence, which shows what it quotes escaped and
+    /// cut. This is not a judgement of the call, and nothing ran.
+    Record {
+        what: &'static str,
+        why: String,
+    },
+    /// The ledger that takes part in admission failed, or did what a ledger may not:
+    /// the sentence says which. This is not a judgement of the call, and nothing was
+    /// published.
+    Ledger {
+        why: String,
+    },
 }
 
 impl CallError {
@@ -358,7 +496,7 @@ impl CallError {
     pub fn refusal(&self) -> Option<&Refusal> {
         match self {
             CallError::Refused(refusal) => Some(refusal),
-            CallError::Store(_) => None,
+            CallError::Store(_) | CallError::Record { .. } | CallError::Ledger { .. } => None,
         }
     }
 }
@@ -374,6 +512,13 @@ impl std::fmt::Display for CallError {
         match self {
             CallError::Refused(refusal) => refusal.fmt(f),
             CallError::Store(failure) => write!(f, "the store failed: {failure}"),
+            CallError::Record { what, why } => {
+                write!(
+                    f,
+                    "the store holds {what}, and this build does not read it: {why}"
+                )
+            }
+            CallError::Ledger { why } => write!(f, "the ledger failed: {why}"),
         }
     }
 }
@@ -410,6 +555,33 @@ pub enum Refusal {
     ReadOnly,
     /// A call from inside a running action. This build does not nest calls yet.
     NoNestedCalls,
+    /// The request's id was admitted before for another request, which made `run`. An
+    /// id is one request's: nothing was prepared and nothing ran.
+    Conflict { request: RequestId, run: RunId },
+    /// The request came with a preparation, and preparing its call again at admission
+    /// gave another: what differs. No run was made and nothing was reserved; the caller
+    /// prepares again and decides again.
+    Stale { action: String, why: Stale },
+    /// The call is ready, and the ledger declined its reservation: it may cost up to
+    /// `asked_micros`, and `left_micros` is what is left of the allowance, both in
+    /// millionths of a US dollar. No run was made, nothing was reserved, and the
+    /// request's id is not taken by this request.
+    OverAllowance {
+        action: String,
+        asked_micros: u64,
+        left_micros: u64,
+    },
+    /// The call is ready, and what it may cost has no bound that can be counted: its
+    /// estimate is the largest amount there is ([`Estimate::is_unbounded`]). An
+    /// executor that reserves does not admit it, and its ledger is not asked.
+    NoBound { action: String },
+    /// The request's id holds something the executor was told never to write. An id is
+    /// stored as it is, in a name and in two records, so it is refused, and the refusal
+    /// does not show it.
+    SecretInRequestId,
+    /// The text given as a request's id is not one. `why` is the whole sentence, which
+    /// shows the text escaped and cut.
+    NotARequestId { why: String },
 }
 
 impl std::fmt::Display for Refusal {
@@ -454,6 +626,34 @@ impl std::fmt::Display for Refusal {
             ),
             Refusal::NoNestedCalls => f.write_str(
                 "an action cannot call another action yet: this build does not nest calls",
+            ),
+            Refusal::Conflict { request, run } => write!(
+                f,
+                "the request id {request} was used for another request, which made the run \
+                 {run}: an id is one request's, and this one was not run"
+            ),
+            Refusal::Stale { action, why } => write!(
+                f,
+                "{action} was not admitted: the preparation it came with is stale: {why}"
+            ),
+            Refusal::OverAllowance {
+                action,
+                asked_micros,
+                left_micros,
+            } => write!(
+                f,
+                "{action} was not admitted: it may cost up to {asked_micros} millionths of \
+                 a US dollar, and {left_micros} are left of the ledger's allowance"
+            ),
+            Refusal::NoBound { action } => write!(
+                f,
+                "{action} was not admitted: what it may cost has no bound that can be \
+                 reserved"
+            ),
+            Refusal::NotARequestId { why } => f.write_str(why),
+            Refusal::SecretInRequestId => f.write_str(
+                "the request id holds something that must not be written: an id is stored \
+                 as it is, so it cannot hold a secret",
             ),
         }
     }
@@ -655,6 +855,7 @@ pub(super) fn prepare(
     // What this call needs, and which model would answer each need.
     let mut needs = Vec::new();
     let mut missing = Vec::new();
+    let mut estimate = Estimate::default();
     for requirement in descriptor.needs_for(&given) {
         let (capability, features) = (requirement.capability(), requirement.features());
         // The call's choice of backend: the text it gave for the argument the need
@@ -666,7 +867,12 @@ pub(super) fn prepare(
             })
         });
         let model = match backends.resolve(capability, choice.as_deref(), features) {
-            Ok(model) => Some(model),
+            Ok(model) => {
+                // A sum past the largest amount is the largest amount, never a small one.
+                let bound = backends.bound(capability, &model);
+                estimate.micros = estimate.micros.saturating_add(bound.micros);
+                Some(model)
+            }
             Err(unavailable) => {
                 missing.push(Missing {
                     capability,
@@ -703,6 +909,7 @@ pub(super) fn prepare(
         outputs,
         readiness,
         config,
+        estimate,
         fingerprint: config,
     };
     prepared.fingerprint = fingerprint(&prepared);

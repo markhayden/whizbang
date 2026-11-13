@@ -412,6 +412,31 @@ fn a_mask_of_another_image_is_refused() {
     assert!(error.to_string().contains("the mask belongs to the image"));
 }
 
+#[test]
+fn a_mask_of_another_size_with_as_many_samples_is_refused() {
+    // A mask stated 4 by 12 on the picture's own digest: it has the 48 samples of the 8
+    // by 6 picture, so nothing but the comparison of the two sizes tells them apart.
+    let image = picture();
+    let binding = Binding::root(image.digest(), Space::flat(4, 12).unwrap());
+    let origin = Origin::new(Step::new("test", "1")).unwrap();
+    let mask = Mask::from_core(
+        binding,
+        UseCase::Remove,
+        vec![255; PIXELS],
+        Source::default(),
+        origin,
+    )
+    .unwrap();
+    let error = composite(&image, &flat([1, 2, 3]), &mask).unwrap_err();
+    assert!(matches!(error, CompositeError::WrongImage(_)), "{error:?}");
+    assert!(
+        error
+            .to_string()
+            .contains("the image is 8 by 6, and the mask is 4 by 12"),
+        "{error}"
+    );
+}
+
 // --- the derivation ------------------------------------------------------------------------------
 
 #[test]

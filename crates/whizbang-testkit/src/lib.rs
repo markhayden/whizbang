@@ -4,5 +4,6 @@
 pub mod capabilities;
 pub mod echo;
 pub mod fs_shim;
+pub mod ledger;
 pub mod schema;
 pub mod scratch;

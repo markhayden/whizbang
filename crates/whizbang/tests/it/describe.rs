@@ -2,6 +2,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use whizbang_testkit::echo::Echo;
+use whizbang_testkit::scratch::Scratch;
 
 fn whizbang(args: &[&str]) -> (bool, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
@@ -246,9 +247,9 @@ fn a_write_that_fails_is_exit_3_with_the_reason() {
     // writer is ignored, so the write of the description to a file fails with an error
     // the command sees. No special device is needed. Every output ends in a new line
     // and the standard output is flushed at each one, so the failure is the write's.
-    let dir = std::env::temp_dir().join(format!("whizbang-full-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join("out.txt");
+    // The folder goes when `dir` is dropped, whether or not an assertion below fails.
+    let dir = Scratch::new("full");
+    let file = dir.path().join("out.txt");
     for form in ["describe", "describe --json"] {
         let script = format!("trap '' XFSZ; ulimit -f 0; exec \"$WHIZBANG\" {form} > \"$OUT\"");
         let out = Command::new("bash")
@@ -265,5 +266,4 @@ fn a_write_that_fails_is_exit_3_with_the_reason() {
         );
         assert_eq!(std::fs::read(&file).unwrap(), b"", "{form}");
     }
-    std::fs::remove_dir_all(&dir).unwrap();
 }

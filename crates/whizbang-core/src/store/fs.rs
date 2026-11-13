@@ -104,6 +104,18 @@ pub trait Fs: Send + Sync {
     fn remove_all(&self, path: &Path) -> io::Result<()>;
     /// The whole content of a file.
     fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
+    /// The first `limit` bytes of a file, or all of it when it has no more. It is how
+    /// stored content is read: the caller knows how long the file should be, asks for
+    /// one byte more, and so learns that a file is too long without holding all of it.
+    ///
+    /// The default reads the file whole and cuts it, which is right and saves nothing:
+    /// a file system that stands for the real one in a test may leave it so. The real
+    /// one reads no further than the limit.
+    fn read_at_most(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+        let mut bytes = self.read(path)?;
+        bytes.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        Ok(bytes)
+    }
     /// The entries of a directory, as full paths, in order.
     fn list(&self, path: &Path) -> io::Result<Vec<PathBuf>>;
     /// Whether something has this name.
@@ -297,6 +309,15 @@ impl Fs for RealFs {
 
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
         std::fs::read(path)
+    }
+
+    fn read_at_most(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)?
+            .take(limit)
+            .read_to_end(&mut bytes)?;
+        Ok(bytes)
     }
 
     fn list(&self, path: &Path) -> io::Result<Vec<PathBuf>> {

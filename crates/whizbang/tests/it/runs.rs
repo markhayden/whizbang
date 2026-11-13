@@ -5,10 +5,17 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 
-use whizbang_core::contract::{Call, Executor, Outcome, RUN_RECORD_SCHEMA, RunId, Value};
+use whizbang_core::artifact::{ArtifactType, Location, Origin, Shape, Step};
+use whizbang_core::contract::OutputPort;
+use whizbang_core::contract::{
+    Action, ActionDescriptor, Admission, Answer, Call, CallError, Context, Executor, Failure,
+    Outcome, PreparedCall, Produced, RUN_RECORD_SCHEMA, Request, RequestId, RunId, RunState, Value,
+};
+use whizbang_core::identity::{Binding, Digest, PixelDigest, Space};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Kind, Store};
 use whizbang_testkit::echo::Echo;
+use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::schema::validate;
 use whizbang_testkit::scratch::Scratch;
 
@@ -115,7 +122,7 @@ fn echo_runs_through_the_binarys_executor_and_runs_list_and_show_read_it() {
         "inputs: none".to_owned(),
         "outputs: none".to_owned(),
         "models: none".to_owned(),
-        "spend: none".to_owned(),
+        "spend: nothing reserved; paid requests: none".to_owned(),
         "egress: none".to_owned(),
         "steps: none".to_owned(),
         "judge: none".to_owned(),
@@ -156,7 +163,8 @@ fn a_failed_runs_record_and_diagnostics_are_kept_and_readable() {
     let record = whizbang(&["show", &failed, "--diagnostic", "record"], &root);
     let json = whizbang(&["show", &failed, "--json"], &root);
     assert_eq!(record.out, json.out);
-    // `store list` counts what the run holds: no output, three diagnostics.
+    // `store list` counts what the run holds: no output, and four diagnostic
+    // references: the admission, what the action wrote, the journal and the record.
     let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
         .args(["store", "list", "--store"])
         .arg(&root)
@@ -164,7 +172,72 @@ fn a_failed_runs_record_and_diagnostics_are_kept_and_readable() {
         .unwrap();
     let listed = String::from_utf8(out.stdout).unwrap();
     assert!(
-        listed.contains(&format!("{failed}\toutputs 0\tdiagnostics 3\t")),
+        listed.contains(&format!("{failed}\toutputs 0\tdiagnostics 4\t")),
+        "{listed}"
+    );
+}
+
+/// An action that returns one location.
+struct Find(ActionDescriptor);
+
+fn the_place() -> Location {
+    let photo = Binding::root(
+        PixelDigest(Digest::of_bytes(b"a photo")),
+        Space::flat(8, 6).unwrap(),
+    );
+    let origin = Origin::new(Step::new("find", "1.0.0")).unwrap();
+    Location::new(photo, Shape::WholeImage, origin).unwrap()
+}
+
+impl Action for Find {
+    fn descriptor(&self) -> &ActionDescriptor {
+        &self.0
+    }
+
+    fn run(&self, _: &PreparedCall, _: &Context) -> Result<Produced, Failure> {
+        Ok(Produced::nothing().with("where", the_place()))
+    }
+}
+
+#[test]
+fn a_run_that_committed_an_output_is_shown_and_listed_with_it() {
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let run = {
+        let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+        let mut registry = whizbang::wiring::registry().expect("the registry builds");
+        let find = whizbang_core::contract::Kind::Primitive;
+        let find = ActionDescriptor::draft("find", "1.0.0", find, "A test action.").output(
+            OutputPort::one("where", ArtifactType::Location, "Where it is."),
+        );
+        registry
+            .register(Arc::new(Find(find.build().unwrap())))
+            .unwrap();
+        let executor = whizbang::wiring::runner(registry, store);
+        let finished = executor.submit(&Call::new("find")).unwrap();
+        assert_eq!(finished.outcome().outputs().len(), 1);
+        finished.run().as_str().to_owned()
+    };
+    let shown = whizbang(&["show", &run], &root);
+    assert_eq!(shown.code, Some(0), "{}", shown.err);
+    let id = the_place().id();
+    assert!(
+        shown
+            .text()
+            .contains(&format!("outputs: 1\n  where\tlocation {id}\n")),
+        "{}",
+        shown.text()
+    );
+    // `store list` counts what the run holds: one output, and its admission, its
+    // journal and its record.
+    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+        .args(["store", "list", "--store"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    let listed = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        listed.contains(&format!("{run}\toutputs 1\tdiagnostics 3\t")),
         "{listed}"
     );
 }
@@ -304,7 +377,7 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
                 "broken",
                 "record",
                 Kind::Diagnostic,
-                b"{\"record\":\"run/1\",\"\\u001b[2J\":1}\n",
+                b"{\"record\":\"run/2\",\"\\u001b[2J\":1}\n",
             )
             .unwrap();
         publication.publish().unwrap();
@@ -323,6 +396,40 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
     assert!(shown.err.contains(expected), "{}", shown.err);
     assert!(shown.err.contains(" at line 1 column "), "{}", shown.err);
     assert!(!shown.err.contains('\u{1b}'));
+
+    // A record of the version before this one is another version, and is said to be.
+    {
+        let store = Store::open_existing(&root, Arc::new(RealFs)).unwrap();
+        let mut publication = store.begin().unwrap();
+        publication
+            .put_in(
+                "older",
+                "record",
+                Kind::Diagnostic,
+                b"{\"record\":\"run/1\",\"spend\":[]}\n",
+            )
+            .unwrap();
+        publication.publish().unwrap();
+    }
+    let shown = whizbang(&["show", "older"], &root);
+    assert_eq!(shown.code, Some(1));
+    assert!(
+        shown
+            .err
+            .contains("a record of another version: run/1, and this build reads run/2"),
+        "{}",
+        shown.err
+    );
+    // And `runs list` lists the run with the same reason, in place of its fields.
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(listed.code, Some(0), "{}", listed.err);
+    let expected = "older\trecord not read: a record of another version: run/1, and this build \
+                    reads run/2";
+    assert!(
+        listed.text().lines().any(|line| line == expected),
+        "{}",
+        listed.text()
+    );
 }
 
 #[test]
@@ -398,4 +505,163 @@ fn a_reader_that_stops_reading_is_not_an_error() {
         assert_eq!(out.status.code(), Some(0), "{args:?}: {err}");
         assert!(err.is_empty(), "{args:?}: {err}");
     }
+}
+
+/// An action whose run cannot be ended: it has the store's file system refuse the next
+/// call that changes the disk, which is the first of the publication that ends its run.
+struct Boom(ActionDescriptor, Arc<ShimFs>);
+
+impl Action for Boom {
+    fn descriptor(&self) -> &ActionDescriptor {
+        &self.0
+    }
+
+    fn run(&self, _: &PreparedCall, _: &Context) -> Result<Produced, Failure> {
+        self.1.refuse_before(self.1.events().len());
+        Ok(Produced::nothing())
+    }
+}
+
+#[test]
+fn a_run_that_was_admitted_and_did_not_end_is_listed_and_shown_as_such() {
+    // A run is in the store from its admission. One whose end the store could not
+    // write never ends: it stays as it was admitted, which is also what a process that
+    // died while an action ran leaves. `runs list` and `runs show` say so, with what
+    // the admission holds.
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let id = RequestId::parse("order-17").unwrap();
+    let request = |action: &str| Request::new(Call::new(action)).with_id(id.clone());
+    {
+        let fs = Arc::new(ShimFs::new());
+        let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+        let mut registry = whizbang::wiring::registry().expect("the registry builds");
+        let boom = whizbang_core::contract::Kind::Primitive;
+        let boom = ActionDescriptor::draft("boom", "1.2.3", boom, "A test action.");
+        registry
+            .register(Arc::new(Boom(boom.build().unwrap(), fs)))
+            .unwrap();
+        let executor = whizbang::wiring::runner(registry, store);
+        let unended = executor.request(&request("boom"));
+        assert!(matches!(unended, Err(CallError::Store(_))), "{unended:?}");
+        // The same request again, in the process that admitted it, is not run again.
+        let Ok(Answer::Repeat(earlier)) = executor.request(&request("boom")) else {
+            panic!("the request ran again");
+        };
+        assert_eq!(earlier.state(), &RunState::NotEnded { here: true });
+    }
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(listed.code, Some(0), "{}", listed.err);
+    let lines: Vec<&str> = listed.text().lines().collect();
+    assert_eq!(lines[0], "runs: 1");
+    let fields: Vec<&str> = lines[1].split('\t').collect();
+    let run = fields[0].to_owned();
+    assert_eq!(
+        fields[1..3],
+        ["admitted, not ended", "boom 1.2.3"],
+        "{lines:?}"
+    );
+    assert!(fields[3].ends_with('Z'), "{lines:?}");
+    assert_eq!(fields.len(), 4);
+
+    let shown = whizbang(&["show", &run], &root);
+    assert_eq!(shown.code, Some(0), "{}", shown.err);
+    let text = shown.text();
+    assert!(
+        text.starts_with(&format!(
+            "run: {run}\nrequest: order-17\naction: boom 1.2.3\nstatus: admitted, not ended\n\
+             started: "
+        )),
+        "{text}"
+    );
+    assert!(
+        text.ends_with(
+            "spend: nothing reserved\nrecord: none: the run was admitted and has not ended; it is executing, or the \
+             process that ran it ended first\n"
+        ),
+        "{text}"
+    );
+    assert_eq!(text.lines().count(), 7, "{text}");
+    // Its admission is one of its names, and is printed as it is stored.
+    let admission = whizbang(&["show", &run, "--diagnostic", "admitted"], &root);
+    let admission = Admission::from_bytes(&admission.out).unwrap();
+    assert_eq!(admission.run().as_str(), run);
+    assert_eq!(admission.request(), Some(&id));
+    // There is no record to print as JSON, and the complaint says why.
+    let json = whizbang(&["show", &run, "--json"], &root);
+    assert_eq!(json.code, Some(1), "{}", json.err);
+    assert!(
+        json.err
+            .contains("has no record: it was admitted and has not ended"),
+        "{}",
+        json.err
+    );
+    assert!(json.out.is_empty());
+}
+
+#[test]
+fn a_run_shows_the_request_id_it_was_made_for() {
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let run = {
+        let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+        let mut registry = whizbang::wiring::registry().expect("the registry builds");
+        registry.register(Arc::new(Echo::new())).unwrap();
+        let executor = whizbang::wiring::runner(registry, store);
+        let request = Request::new(echo("hello")).with_id(RequestId::parse("order-17").unwrap());
+        executor
+            .request(&request)
+            .unwrap()
+            .run()
+            .as_str()
+            .to_owned()
+    };
+    let shown = whizbang(&["show", &run], &root);
+    assert!(
+        shown
+            .text()
+            .starts_with(&format!("run: {run}\nrequest: order-17\n")),
+        "{}",
+        shown.text()
+    );
+    let json: serde_json::Value =
+        serde_json::from_slice(&whizbang(&["show", &run, "--json"], &root).out).unwrap();
+    assert_eq!(json["identity"]["request"], "order-17");
+}
+
+#[test]
+fn a_run_whose_admission_is_not_one_is_listed_and_shown_with_the_reason() {
+    // A run that holds something under `admitted` that this build does not read, and no
+    // record: it is not said to have no record and nothing else.
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    {
+        let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+        let mut publication = store.begin().unwrap();
+        publication
+            .put_in(
+                "odd",
+                "admitted",
+                Kind::Diagnostic,
+                b"{\"record\":\"admission/9\"}\n",
+            )
+            .unwrap();
+        publication.publish().unwrap();
+    }
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(
+        listed.text().lines().nth(1).unwrap(),
+        "odd\tno record; admission not read: not an admission: a record of another kind or \
+         version: admission/9"
+    );
+    let shown = whizbang(&["show", "odd"], &root);
+    assert_eq!(shown.code, Some(1));
+    assert!(
+        shown.err.contains(
+            "the run has no record, and its admission is not read: not an admission: a \
+             record of another kind or version: admission/9"
+        ),
+        "{}",
+        shown.err
+    );
 }

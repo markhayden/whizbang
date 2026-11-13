@@ -19,6 +19,7 @@ use whizbang_core::identity::{Binding, Digest, Direction, Mapping, Projection, S
 use whizbang_core::store::{Reader, Store};
 use whizbang_testkit::capabilities::{FakeFiller, FakeJudge, FakeSegmenter, Paint};
 use whizbang_testkit::fs_shim::ShimFs;
+use whizbang_testkit::ledger::FakeLedger;
 use whizbang_testkit::scratch::Scratch;
 
 use super::fixtures;
@@ -268,8 +269,8 @@ fn refused(result: Result<PreparedCall, CallError>, what: &[&str]) -> Refusal {
             panic!("prepared, where a refusal saying {what:?} was expected: {prepared:?}")
         }
         Err(CallError::Refused(refusal)) => refusal,
-        Err(CallError::Store(failure)) => {
-            panic!("the store failed, where a refusal saying {what:?} was expected: {failure}")
+        Err(other) => {
+            panic!("no refusal, where one saying {what:?} was expected: {other}")
         }
     };
     let message = refusal.to_string();
@@ -842,7 +843,9 @@ fn a_mask_made_by_hand_on_an_image_placed_onto_another_is_taken_at_its_makers_wo
     // The trust boundary (ADR 0006, "Who vouches for a derivation"): a mask is the
     // statement of whoever made it, and what holds is that it is used only on the image
     // its binding's source names. No call can carry a derivation, and no code can make
-    // one of two unrelated pictures; but a mask can be made by hand on a binding that
+    // one of two unrelated pictures except against a mask that weighs every pixel
+    // (`rebind::known_a_mask_that_weighs_every_pixel_vouches_for_any_picture_of_its_size`);
+    // but a mask can be made by hand on a binding that
     // places the second photograph onto the first, and prepare accepts it on the second:
     // nothing in a mask says who vouched, and prepare asks for no record that would.
     let world = world();
@@ -1370,13 +1373,50 @@ fn prepare_sends_no_capability_request() {
 }
 
 #[test]
-#[ignore = "for task A6: the fake ledger that counts reservations does not exist yet"]
 fn prepare_makes_no_reservation() {
-    // The other half of what `prepare_sends_no_capability_request` shows for the
-    // capabilities: a count of zero on the ledger. Task A6 brings the fake ledger.
-    // Whoever builds it completes this test: prepare `remove_prompt` with a filler
-    // against it and assert that the ledger counted no reservation.
-    panic!("not written yet: see the comment");
+    // An executor that runs calls, over a store opened to write, with the fake ledger
+    // it would ask at admission. Preparing calls that are ready, not ready and refused
+    // asks the ledger nothing, reserves nothing and writes nothing: no call reaches
+    // the file system that changes it. Unlike the capabilities above, the executor
+    // holds this very ledger, so a preparation that reserved would be counted.
+    let world = world();
+    let store = Arc::new(Store::open(&world.root, world.fs.clone()).unwrap());
+    let ledger = Arc::new(FakeLedger::new());
+    let backends = Offered::default()
+        .with(Capability::Segment, &["phrase", "box"], "sam")
+        .with(Capability::Fill, &[], "bria");
+    let engine = Engine::over(
+        registry(),
+        Arc::new(backends),
+        store.clone(),
+        Digest::of_bytes(b"config"),
+    )
+    .with_ledger(ledger.clone());
+    let events = world.fs.events().len();
+    let before = tree(&world.root);
+
+    let ready = world.remove().argument("filler", Value::text("bria"));
+    let prepared = engine.prepare(&ready).unwrap();
+    assert_eq!(prepared.readiness(), &Readiness::Ready);
+    assert_eq!(prepared.needs().len(), 2);
+    // A call that needs no capability at all.
+    let seam = Call::new("seam").input("image", world.photo);
+    assert_eq!(engine.prepare(&seam).unwrap().needs().len(), 0);
+    let judged = Call::new("every")
+        .argument("amount", Value::Number(1.0))
+        .argument("count", Value::Integer(1))
+        .argument("label", Value::text("x"))
+        .input("image", world.photo);
+    let unready = engine.prepare(&judged).unwrap();
+    assert!(matches!(unready.readiness(), Readiness::NotReady(_)));
+    engine.prepare(&Call::new("remove_prompt")).unwrap_err();
+    engine.prepare(&Call::new("vanish")).unwrap_err();
+
+    assert_eq!(ledger.asked(), 0);
+    assert_eq!(ledger.reservations(store.as_ref()).unwrap(), []);
+    assert_eq!(world.fs.events().len(), events);
+    assert_eq!(tree(&world.root), before);
+    assert_eq!(store.snapshot().unwrap().runs().len(), 0);
 }
 
 // --- the entry point ---------------------------------------------------------------------------

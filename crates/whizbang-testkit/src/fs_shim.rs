@@ -161,12 +161,16 @@ struct State {
     fail_matching: Option<(usize, Matches)>,
     cross_device: Option<PathBuf>,
     hook: Option<(usize, Hook)>,
+    /// Run once after the first rename onto a path of this file name.
+    after_rename: Option<(String, Hook)>,
     /// The locks this file system holds, each until its holder drops it or the crash.
     locks: Vec<Lock>,
     lock_files: Vec<HeldLockFile>,
     crashed: bool,
     crash_choices: usize,
     crash_names: usize,
+    /// The names that had changes not yet durable at the crash, in order of their paths.
+    crash_named: Vec<PathBuf>,
 }
 
 /// The file system that can lose power.
@@ -232,6 +236,13 @@ impl ShimFs {
         self.lock().hook = Some((event, Box::new(hook)));
     }
 
+    /// Runs `hook` once, straight after the first rename onto a file of this name has
+    /// happened and before the call returns to whoever made it: what the hook sees is
+    /// what any other thread could see at that moment. The hook may use this shim.
+    pub fn pause_after_rename_onto(&self, name: &str, hook: impl FnOnce() + Send + 'static) {
+        self.lock().after_rename = Some((name.to_owned(), Box::new(hook)));
+    }
+
     /// The events so far, in order.
     pub fn events(&self) -> Vec<Event> {
         self.lock().events.clone()
@@ -257,6 +268,12 @@ impl ShimFs {
     /// lost them or kept them, so [`Lost::Names`] has two to this power outcomes.
     pub fn crash_names(&self) -> usize {
         self.lock().crash_names
+    }
+
+    /// After a crash: the names that had changes not yet durable, in the order
+    /// [`Lost::Names`] numbers them, so that a test can choose masks by what a name is.
+    pub fn crash_named(&self) -> Vec<PathBuf> {
+        self.lock().crash_named.clone()
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
@@ -360,6 +377,7 @@ fn crash(state: &mut State, lost: Lost) {
         .collect();
     state.crash_choices = dirs.len();
     state.crash_names = names.len();
+    state.crash_named = names.iter().map(|name| name.to_path_buf()).collect();
     let chosen = |mask: u64, i: Option<usize>| i.is_some_and(|i| i < 64 && mask >> i & 1 == 1);
     let loses: Vec<bool> = pending
         .iter()
@@ -506,6 +524,18 @@ impl Fs for ShimFs {
             replaced,
         });
         state.events.push(event);
+        let onto = |name: &String| to.file_name().is_some_and(|last| last == name.as_str());
+        if state
+            .after_rename
+            .as_ref()
+            .is_some_and(|(name, _)| onto(name))
+        {
+            let hook = state.after_rename.take();
+            drop(state);
+            if let Some((_, hook)) = hook {
+                hook();
+            }
+        }
         Ok(())
     }
 
@@ -526,6 +556,11 @@ impl Fs for ShimFs {
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
         let _state = self.alive()?;
         self.real.read(path)
+    }
+
+    fn read_at_most(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+        let _state = self.alive()?;
+        self.real.read_at_most(path, limit)
     }
 
     fn list(&self, path: &Path) -> io::Result<Vec<PathBuf>> {

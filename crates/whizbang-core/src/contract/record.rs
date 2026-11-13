@@ -2,8 +2,10 @@
 //! account of a run, written whatever its outcome, with a fixed, versioned shape.
 //!
 //! A record holds every group the spec lists. A group that nothing can fill yet is there
-//! and empty, and its type has no value: such a list cannot hold anything in `run/1`.
-//! Whatever first fills one writes a new version of the record.
+//! and empty, and its type has no value: such a list cannot hold anything in `run/2`.
+//! Whatever first fills one writes a new version of the record, except that the fills
+//! made before checkpoint 1A is tagged share `run/2` (ADR 0005). The first of them is
+//! here: `spend` says what was reserved for the run when it was admitted.
 //!
 //! A record is written one way: as JSON on one line, its fields in the order of the
 //! types below, followed by a newline. It is read strictly: a field that is not known, a
@@ -17,19 +19,20 @@ use crate::identity::Digest;
 use crate::store::{self, Entry, Generation, Kind};
 
 use super::journal::{JournalLine, journal_bytes};
-use super::{Outcome, PreparedCall, Secrets, StoreFailure, Value};
+use super::{Outcome, PreparedCall, RequestId, Secrets, StoreFailure, Value};
 
 /// The record's kind, with its version.
-pub const RUN_RECORD: &str = "run/1";
+pub const RUN_RECORD: &str = "run/2";
 
-/// The JSON Schema of a `run/1` record, as a document.
-pub const RUN_RECORD_SCHEMA: &str = include_str!("../../schemas/run-1.json");
+/// The JSON Schema of a `run/2` record, as a document.
+pub const RUN_RECORD_SCHEMA: &str = include_str!("../../schemas/run-2.json");
 
 /// The most bytes a stored record may be: four mebibytes. A record is read whole and
 /// written again to be compared, so what is read is bounded before it is read.
 pub const RECORD_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
-/// The name, among a run's names in the store, of its record.
+/// The name, among a run's names in the store, of its record. A run has it from its end;
+/// before that it has its admission alone ([`super::ADMITTED_NAME`]).
 pub const RECORD_NAME: &str = "record";
 
 /// The name, among a run's names, of its journal: the progress events, one to a line.
@@ -37,6 +40,11 @@ pub const JOURNAL_NAME: &str = "journal";
 
 /// What the name of every diagnostic an action wrote starts with, among a run's names.
 pub const DIAGNOSTICS_PREFIX: &str = "diagnostics/";
+
+/// What the name of every reference a run holds to an output it committed starts with,
+/// among the run's names: the port follows, a `/`, and the output's place among those
+/// returned at that port, from 0 (ADR 0008).
+pub const OUTPUTS_PREFIX: &str = "outputs/";
 
 /// A field that may be null and may not be left out: every field of a record is always
 /// there.
@@ -93,7 +101,9 @@ pub enum Nothing {}
 pub struct Identity {
     /// The run's id.
     pub run: String,
-    /// The caller's request id. None until a call can carry one.
+    /// The caller's id for the request that made the run, or none when it gave none.
+    /// One that is there is a request id ([`RequestId`]): a record with any other text
+    /// here is refused.
     #[serde(deserialize_with = "present")]
     pub request: Option<String>,
     /// The run that called this one. None for a run that nothing nested.
@@ -216,6 +226,21 @@ pub struct Time {
     pub durations: Vec<Nothing>,
 }
 
+/// Spend: what was reserved for the run, and its paid requests.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Spend {
+    /// What was reserved for the run when it was admitted, in millionths of a US
+    /// dollar: the amount of its reservation and of its admission (ADR 0007). None
+    /// when the executor that admitted it had no ledger: nothing was reserved. It is
+    /// never the largest amount there is, which is no amount.
+    #[serde(deserialize_with = "present")]
+    pub reserved_micros: Option<u64>,
+    /// Every paid request, with what was reserved for it, what was settled and what is
+    /// unresolved. No request is dispatched or settled yet: it holds nothing.
+    pub requests: Vec<Nothing>,
+}
+
 /// One diagnostic of the run: its name among the run's names in the store, and the
 /// digest and length of what is stored under it.
 ///
@@ -327,7 +352,7 @@ struct RunRecordWire {
     outcome: Ended,
     time: Time,
     models: Vec<Nothing>,
-    spend: Vec<Nothing>,
+    spend: Spend,
     egress: Vec<Nothing>,
     steps: Vec<Nothing>,
     judge: Vec<Nothing>,
@@ -347,7 +372,7 @@ pub struct RunRecord {
     outcome: Ended,
     time: Time,
     models: Vec<Nothing>,
-    spend: Vec<Nothing>,
+    spend: Spend,
     egress: Vec<Nothing>,
     steps: Vec<Nothing>,
     judge: Vec<Nothing>,
@@ -398,10 +423,15 @@ impl std::error::Error for RecordError {}
 pub struct Ran<'a> {
     /// The run's id.
     pub run: &'a str,
+    /// The caller's id for the request that made the run, when it gave one.
+    pub request: Option<&'a RequestId>,
     /// The version of whizbang.
     pub whizbang: &'a str,
     /// The call as it was prepared.
     pub prepared: &'a PreparedCall,
+    /// What was reserved for the run when it was admitted, in millionths of a US
+    /// dollar, when anything was.
+    pub reserved_micros: Option<u64>,
     /// How the run ended.
     pub outcome: &'a Outcome,
     pub start_ms: u64,
@@ -468,7 +498,7 @@ impl RunRecord {
             record: RUN_RECORD.to_owned(),
             identity: Identity {
                 run: ran.run.to_owned(),
-                request: None,
+                request: ran.request.map(|id| id.as_str().to_owned()),
                 parent: None,
                 whizbang: ran.whizbang.to_owned(),
             },
@@ -494,7 +524,10 @@ impl RunRecord {
                 durations: Vec::new(),
             },
             models: Vec::new(),
-            spend: Vec::new(),
+            spend: Spend {
+                reserved_micros: ran.reserved_micros,
+                requests: Vec::new(),
+            },
             egress: Vec::new(),
             steps: Vec::new(),
             judge: Vec::new(),
@@ -572,6 +605,15 @@ impl RunRecord {
                 return refuse(&format!("{what} is empty"));
             }
         }
+        // The request's id is written as it is, so it is held to the rule of one.
+        if let Some(request) = &self.identity.request
+            && RequestId::parse(request).is_err()
+        {
+            return refuse(
+                "the request's id is not one: 1 to 128 of the ASCII letters, the digits, \
+                 _, -, . and :",
+            );
+        }
         // A diagnostic is the journal, or something the action wrote under a plain name.
         // The record itself is one of the run's names and is not one of its diagnostics.
         let known = |name: &str| {
@@ -599,6 +641,9 @@ impl RunRecord {
         }
         if self.time.end_ms < self.time.start_ms {
             return refuse("the run ends before it starts");
+        }
+        if self.spend.reserved_micros == Some(u64::MAX) {
+            return refuse(super::request::NOT_AN_AMOUNT);
         }
         if !self.diagnostics.is_sorted_by(|a, b| a.name < b.name) {
             return refuse("the diagnostics are not in the order of their names, each once");
@@ -630,6 +675,11 @@ impl RunRecord {
 
     pub fn time(&self) -> &Time {
         &self.time
+    }
+
+    /// What was reserved for the run, and its paid requests.
+    pub fn spend(&self) -> &Spend {
+        &self.spend
     }
 
     /// The run's diagnostics, in the order of their names.
