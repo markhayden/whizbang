@@ -7,9 +7,9 @@ use std::sync::Mutex;
 
 use serde_json::json;
 use whizbang_core::capability::{
-    Controls, Declaration, Fault, FaultKind, Judge, JudgeHandle, JudgeRequest, MESSAGE_LIMIT,
-    Message, Opaque, PART_LIMIT, Part, Role, StopReason, TEXT_LIMIT, TOOL_LIMIT, ToolCall,
-    ToolDefinition, ToolResult, Turn, Unfit, Usage, feature,
+    Bounds, Controls, Declaration, Fault, FaultKind, Judge, JudgeHandle, JudgeRequest,
+    MESSAGE_LIMIT, Message, Opaque, PART_LIMIT, Part, Role, StopReason, TEXT_LIMIT, TOOL_LIMIT,
+    ToolCall, ToolDefinition, ToolResult, Turn, Unfit, Usage, feature,
 };
 use whizbang_core::contract::{Cancellation, ModelIdentity};
 
@@ -481,6 +481,48 @@ fn what_a_backend_names_is_cleaned_before_it_is_kept() {
     assert_eq!(turn.request_id(), None);
 }
 
+#[test]
+fn what_is_printed_of_a_conversation_is_its_shape_and_never_its_words() {
+    let result = ToolResult::new("call_1", "the crop shows a secret", false, vec![picture()]);
+    let messages = vec![
+        Message::new(Role::User, vec![text("is this a secret garden")]).unwrap(),
+        Message::new(
+            Role::Assistant,
+            vec![Part::Opaque(opaque("stub")), Part::ToolCall(call("call_1"))],
+        )
+        .unwrap(),
+        Message::new(Role::User, vec![Part::ToolResult(result.unwrap())]).unwrap(),
+    ];
+    let request = JudgeRequest::new(
+        "a secret system prompt",
+        messages,
+        vec![tool("view")],
+        controls(),
+    )
+    .unwrap();
+    let printed = format!("{request:?}");
+    for part in [
+        "system_bytes: 22",
+        "Text(23 bytes)",
+        "Opaque(stub, ",
+        "ToolCall(call_1, view, arguments of ",
+        "ToolResult(call_1, a text of 23 bytes, error false, [Picture(",
+        "\"view\"",
+    ] {
+        assert!(printed.contains(part), "{part} is not in {printed}");
+    }
+    for word in ["secret", "garden", "trailing", "left"] {
+        assert!(!printed.contains(word), "{word} is in {printed}");
+    }
+    let turn = Turn::new(
+        vec![text("a secret verdict")],
+        StopReason::EndTurn,
+        None,
+        None,
+    );
+    assert!(!format!("{:?}", turn.unwrap()).contains("secret"));
+}
+
 // --- the handle -------------------------------------------------------------------------------------
 
 /// A judge that answers with what it was built to answer and keeps what it was sent.
@@ -510,7 +552,7 @@ impl Judge for Stub {
         &self.declaration
     }
 
-    fn send(&self, request: &JudgeRequest, _: &Cancellation) -> Result<Turn, Fault> {
+    fn send(&self, request: &JudgeRequest, _: &Bounds) -> Result<Turn, Fault> {
         self.sent.lock().unwrap().push(request.clone());
         self.answer.clone()
     }
@@ -527,7 +569,7 @@ fn plain() -> JudgeRequest {
 #[test]
 fn the_handle_sends_the_conversation_as_it_is_and_hands_back_the_turn() {
     let stub = Stub::new(&[feature::IMAGE, feature::TOOL], Ok(yes()));
-    let handle = JudgeHandle::new(stub.clone());
+    let handle = JudgeHandle::new(stub.clone(), Cancellation::new());
     let assistant = Message::new(
         Role::Assistant,
         vec![Part::Opaque(opaque("stub")), Part::ToolCall(call("call_1"))],
@@ -540,7 +582,7 @@ fn the_handle_sends_the_conversation_as_it_is_and_hands_back_the_turn() {
         Message::new(Role::User, vec![Part::ToolResult(result)]).unwrap(),
     ];
     let request = JudgeRequest::new("judge", messages, vec![tool("view")], controls()).unwrap();
-    assert_eq!(handle.send(&request, &Cancellation::new()).unwrap(), yes());
+    assert_eq!(handle.send(&request).unwrap(), yes());
     // What reached the backend is the request, whole and in order.
     assert_eq!(stub.sent.lock().unwrap().as_slice(), [request]);
     assert!(format!("{handle:?}").contains("judge"));
@@ -564,25 +606,25 @@ fn images_and_tools_are_sent_only_to_a_judge_that_declares_them() {
         };
         let request = JudgeRequest::new("", messages, tools, controls()).unwrap();
         let stub = Stub::new(&[other], Ok(yes()));
-        let fault = JudgeHandle::new(stub.clone())
-            .send(&request, &Cancellation::new())
+        let fault = JudgeHandle::new(stub.clone(), Cancellation::new())
+            .send(&request)
             .unwrap_err();
         assert_eq!(fault.kind(), FaultKind::Unsupported);
         assert_eq!(
             fault.sentence(),
-            format!("the backend judge does not declare the feature {needed}")
+            format!("the model judge of the backend stub does not declare the feature {needed}")
         );
         assert_eq!(stub.sent(), 0);
         let stub = Stub::new(&[needed], Ok(yes()));
-        JudgeHandle::new(stub.clone())
-            .send(&request, &Cancellation::new())
+        JudgeHandle::new(stub.clone(), Cancellation::new())
+            .send(&request)
             .unwrap();
         assert_eq!(stub.sent(), 1);
     }
     // A conversation of text alone needs neither.
     let stub = Stub::new(&[], Ok(yes()));
-    JudgeHandle::new(stub.clone())
-        .send(&plain(), &Cancellation::new())
+    JudgeHandle::new(stub.clone(), Cancellation::new())
+        .send(&plain())
         .unwrap();
     assert_eq!(stub.sent(), 1);
 }
@@ -593,8 +635,8 @@ fn an_opaque_part_goes_only_to_the_adapter_that_made_it_and_comes_only_from_it()
     let foreign = Message::new(Role::Assistant, vec![Part::Opaque(opaque("other"))]).unwrap();
     let request = JudgeRequest::new("", vec![user("x"), foreign], Vec::new(), controls()).unwrap();
     let stub = Stub::new(&[], Ok(yes()));
-    let fault = JudgeHandle::new(stub.clone())
-        .send(&request, &Cancellation::new())
+    let fault = JudgeHandle::new(stub.clone(), Cancellation::new())
+        .send(&request)
         .unwrap_err();
     assert_eq!(fault.kind(), FaultKind::Unsupported);
     assert_eq!(
@@ -611,8 +653,8 @@ fn an_opaque_part_goes_only_to_the_adapter_that_made_it_and_comes_only_from_it()
     )
     .unwrap();
     let stub = Stub::new(&[], Ok(claimed));
-    let fault = JudgeHandle::new(stub)
-        .send(&plain(), &Cancellation::new())
+    let fault = JudgeHandle::new(stub, Cancellation::new())
+        .send(&plain())
         .unwrap_err();
     assert_eq!(fault.kind(), FaultKind::Malformed);
     assert_eq!(
@@ -626,8 +668,8 @@ fn nothing_is_sent_once_the_run_is_cancelled_and_a_fault_is_handed_back_as_it_is
     let stub = Stub::new(&[], Ok(yes()));
     let cancellation = Cancellation::new();
     cancellation.cancel();
-    let fault = JudgeHandle::new(stub.clone())
-        .send(&plain(), &cancellation)
+    let fault = JudgeHandle::new(stub.clone(), cancellation)
+        .send(&plain())
         .unwrap_err();
     assert_eq!(fault.kind(), FaultKind::Cancelled);
     assert_eq!(stub.sent(), 0);
@@ -635,8 +677,8 @@ fn nothing_is_sent_once_the_run_is_cancelled_and_a_fault_is_handed_back_as_it_is
     let refused = Fault::new(FaultKind::Credential, "status 401");
     let stub = Stub::new(&[], Err(refused.clone()));
     assert_eq!(
-        JudgeHandle::new(stub)
-            .send(&plain(), &Cancellation::new())
+        JudgeHandle::new(stub, Cancellation::new())
+            .send(&plain())
             .unwrap_err(),
         refused
     );

@@ -95,8 +95,8 @@ fn after_a_filler_repaints_every_pixel_only_the_support_is_changed() {
     // The fake filler repaints the whole image: no pixel it returns is the original.
     let filler = Arc::new(FakeFiller::new(Paint::Inverse));
     let request = FillRequest::new(image.clone(), support.clone(), None).unwrap();
-    let fill = FillHandle::new(filler.clone())
-        .fill(&request, &Cancellation::new())
+    let fill = FillHandle::new(filler.clone(), Cancellation::new())
+        .fill(&request)
         .unwrap();
     assert_eq!(filler.requests(), 1);
     for (at, original) in image.rgba().chunks(4).enumerate() {

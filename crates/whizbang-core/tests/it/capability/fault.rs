@@ -1,5 +1,5 @@
-//! A fault: a typed error of a capability, with one plain sentence that cannot hold a
-//! path or an address (ADR 0006, "Faults").
+//! A fault: a typed error of a capability, with one cleaned sentence (ADR 0006,
+//! "Faults"): what cleaning takes out, and what it is known not to find.
 
 use whizbang_core::capability::{FAULT_LIMIT, Fault, FaultKind, Unfit};
 
@@ -36,10 +36,11 @@ fn a_fault_says_its_kind_and_its_sentence() {
 }
 
 #[test]
-fn a_sentence_cannot_hold_a_path_an_address_or_a_line_break() {
+fn a_sentence_holds_no_separator_of_a_path_or_a_url_and_no_line_break() {
     // What an adapter might pass on from a failed request: a place on the machine, an
-    // address with a credential in it, a header. Every character that could spell a
-    // path or an address is replaced, in the text and in what `{:?}` prints.
+    // address in its URL form with a credential in it, a second line. Every slash,
+    // backslash, `@`, `=`, `&`, quote, angle bracket and line break is replaced, in the
+    // text and in what `{:?}` prints. The words between them are kept.
     let text = "open /srv/keys/key failed\nGET https://user:pw@host/v1?k=v \
                 C:\\keys\\key \"x\" <b> key=abcdefgh";
     let fault = Fault::new(FaultKind::Unavailable, text);
@@ -75,15 +76,37 @@ fn every_character_is_kept_or_replaced_by_the_one_rule() {
     let marks = ". , ; : ' ( ) % + - _";
     let mut kept = 0;
     for c in (0..=0x10FFFF_u32).filter_map(char::from_u32) {
-        let fault = Fault::new(FaultKind::Malformed, &c.to_string());
+        // Between two letters, since a space alone is no sentence.
+        let fault = Fault::new(FaultKind::Malformed, &format!("a{c}b"));
         if c.is_ascii_alphanumeric() || c == ' ' || (marks.contains(c) && c != ' ') {
-            assert_eq!(fault.sentence(), c.to_string(), "{c:?} was not kept");
+            assert_eq!(fault.sentence(), format!("a{c}b"), "{c:?} was not kept");
             kept += 1;
         } else {
-            assert_eq!(fault.sentence(), "?", "{c:?} was kept");
+            assert_eq!(fault.sentence(), "a?b", "{c:?} was kept");
         }
     }
     assert_eq!(kept, 26 + 26 + 10 + 1 + 11);
+}
+
+#[test]
+fn what_cleaning_does_not_find_is_known() {
+    // Cleaning replaces characters. It does not know what a text means, so each of
+    // these goes through unchanged: a host name, an address and its port, a header's
+    // name and value on one line, and a token made of letters, digits, `-`, `_` and
+    // `.`. Redaction (ADR 0005) finds such a token only when the executor was told of
+    // it. So an adapter writes a fault's sentence from its own words and typed fields,
+    // and never copies a provider's body or headers into it (ADR 0006, "Faults").
+    for kept in [
+        "connect to 10.0.3.17:8443 refused",
+        "could not reach build-host-7.corp.internal:9000 (tcp)",
+        "Authorization: Bearer abc.DEF-123_xyz",
+        "x-api-key: tok-live-0123456789abcdef",
+        "user at host.example.com",
+    ] {
+        let fault = Fault::new(FaultKind::Unavailable, kept);
+        assert_eq!(fault.sentence(), kept);
+        assert!(format!("{fault:?}").contains(kept));
+    }
 }
 
 #[test]
@@ -99,9 +122,18 @@ fn a_sentence_is_cut_at_its_limit_and_is_never_empty() {
         Fault::new(FaultKind::Malformed, &wide).sentence(),
         "?".repeat(FAULT_LIMIT)
     );
+    // No text, and a text of spaces alone, are no reason.
+    for nothing in ["", " ", "     "] {
+        assert_eq!(
+            Fault::new(FaultKind::Malformed, nothing).sentence(),
+            "no reason was given"
+        );
+    }
+    // A text cut inside a character of several bytes is cut between characters.
+    let mixed = format!("{}\u{e9}\u{e9}", "a".repeat(FAULT_LIMIT - 1));
     assert_eq!(
-        Fault::new(FaultKind::Malformed, "").sentence(),
-        "no reason was given"
+        Fault::new(FaultKind::Malformed, &mixed).sentence(),
+        format!("{}?", "a".repeat(FAULT_LIMIT - 1))
     );
 }
 

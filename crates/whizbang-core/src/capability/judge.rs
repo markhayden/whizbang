@@ -9,14 +9,14 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::Instant;
 
 use serde_json::Value;
 
 use crate::contract::{Cancellation, text};
 
 use super::fault::clean;
-use super::fill::before_sending;
-use super::{Declaration, Fault, FaultKind, Picture, Unfit, feature};
+use super::{Bounds, Declaration, Fault, FaultKind, Picture, Unfit, feature};
 
 /// The most messages a conversation holds.
 pub const MESSAGE_LIMIT: usize = 1024;
@@ -79,8 +79,9 @@ pub enum Role {
 
 /// A part that only the adapter that made it reads: thinking, a signature, a reasoning
 /// item. Its body is the bytes the provider sent, as text. Whizbang never parses,
-/// orders, trims or prints it again; it gives it back as it is.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// orders, trims or prints it again; it gives it back as it is. What `{:?}` prints of
+/// one is its adapter and its length.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Opaque {
     adapter: String,
     body: String,
@@ -124,8 +125,15 @@ impl Opaque {
     }
 }
 
-/// A model's call of a tool.
-#[derive(Debug, Clone, PartialEq)]
+impl std::fmt::Debug for Opaque {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Opaque({}, {} bytes)", self.adapter, self.body.len())
+    }
+}
+
+/// A model's call of a tool. What `{:?}` prints of one is its id, the name it calls and
+/// how long its arguments are.
+#[derive(Clone, PartialEq)]
 pub struct ToolCall {
     id: String,
     name: String,
@@ -181,8 +189,20 @@ impl ToolCall {
     }
 }
 
+impl std::fmt::Debug for ToolCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ToolCall({}, {}, arguments of {} bytes)",
+            self.id, self.name, self.size
+        )
+    }
+}
+
 /// What a tool answered a call with: text, images, or both, and whether it is an error.
-#[derive(Debug, Clone, PartialEq)]
+/// What `{:?}` prints of one is the call it answers, how long its text is, and its
+/// pictures by size and digest.
+#[derive(Clone, PartialEq)]
 pub struct ToolResult {
     call: String,
     text: String,
@@ -246,15 +266,42 @@ impl ToolResult {
     }
 }
 
+impl std::fmt::Debug for ToolResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ToolResult({}, a text of {} bytes, error {}, {:?})",
+            self.call,
+            self.text.len(),
+            self.error,
+            self.images
+        )
+    }
+}
+
 /// One piece of a message or a turn. A part on its own is checked by nothing: a
-/// [`Message`] and a [`Turn`] check every part they are made of.
-#[derive(Debug, Clone, PartialEq)]
+/// [`Message`] and a [`Turn`] check every part they are made of. What `{:?}` prints of
+/// a part is its kind and its size, never a text, a body or a pixel: a conversation is
+/// a prompt and a model's answers, and megabytes of them.
+#[derive(Clone, PartialEq)]
 pub enum Part {
     Text(String),
     Image(Picture),
     ToolCall(ToolCall),
     ToolResult(ToolResult),
     Opaque(Opaque),
+}
+
+impl std::fmt::Debug for Part {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Part::Text(text) => write!(f, "Text({} bytes)", text.len()),
+            Part::Image(picture) => picture.fmt(f),
+            Part::ToolCall(call) => call.fmt(f),
+            Part::ToolResult(result) => result.fmt(f),
+            Part::Opaque(opaque) => opaque.fmt(f),
+        }
+    }
 }
 
 impl Part {
@@ -419,13 +466,26 @@ impl Controls {
 }
 
 /// What a judge is sent: the system prompt, the conversation so far, the tools on
-/// offer, and the controls.
-#[derive(Debug, Clone, PartialEq)]
+/// offer, and the controls. What `{:?}` prints of one is the system prompt's length,
+/// each message by its parts' kinds and sizes, the tools' names and the controls.
+#[derive(Clone, PartialEq)]
 pub struct JudgeRequest {
     system: String,
     messages: Vec<Message>,
     tools: Vec<ToolDefinition>,
     controls: Controls,
+}
+
+impl std::fmt::Debug for JudgeRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let tools: Vec<&str> = self.tools.iter().map(|tool| tool.name.as_str()).collect();
+        f.debug_struct("JudgeRequest")
+            .field("system_bytes", &self.system.len())
+            .field("messages", &self.messages)
+            .field("tools", &tools)
+            .field("controls", &self.controls)
+            .finish()
+    }
 }
 
 impl JudgeRequest {
@@ -667,25 +727,37 @@ fn opaque_of(parts: &[Part]) -> impl Iterator<Item = &Opaque> {
 
 /// A backend that judges. It answers one request at a time and returns when it has its
 /// answer; it never retries and never changes the conversation. It is expected to stop
-/// early when the cancellation is set.
+/// early when the run is cancelled, and to give up at the run's deadline ([`Bounds`]).
 pub trait Judge: Send + Sync {
     /// The model that answers, and the features it supports. The backend's name is
     /// the adapter its opaque parts are marked with.
     fn declaration(&self) -> &Declaration;
 
     /// Sends one request and returns the model's turn.
-    fn send(&self, request: &JudgeRequest, cancellation: &Cancellation) -> Result<Turn, Fault>;
+    fn send(&self, request: &JudgeRequest, bounds: &Bounds) -> Result<Turn, Fault>;
 }
 
-/// The handle through which an action asks a judge.
+/// The handle through which an action asks a judge. It is bound to one run: it holds
+/// that run's cancellation signal and deadline, so an action hands it neither.
 #[derive(Clone)]
 pub struct JudgeHandle {
     backend: Arc<dyn Judge>,
+    bounds: Bounds,
 }
 
 impl JudgeHandle {
-    pub fn new(backend: Arc<dyn Judge>) -> JudgeHandle {
-        JudgeHandle { backend }
+    /// A handle on this judge for the run with this cancellation signal.
+    pub fn new(backend: Arc<dyn Judge>, cancellation: Cancellation) -> JudgeHandle {
+        JudgeHandle {
+            backend,
+            bounds: Bounds::new(cancellation),
+        }
+    }
+
+    /// The same handle, for a run that must be over by this time.
+    pub fn until(mut self, deadline: Instant) -> JudgeHandle {
+        self.bounds.until(deadline);
+        self
     }
 
     /// What the judge behind the handle declares.
@@ -694,13 +766,13 @@ impl JudgeHandle {
     }
 
     /// Sends the request and hands back the turn. Nothing is sent once the run is
-    /// cancelled; nor when the conversation holds an opaque part of another adapter
+    /// cancelled or its deadline has passed; nor when the conversation holds an opaque part of another adapter
     /// than this backend; nor when it holds an image, or defines a tool, and the judge
     /// does not declare that feature. A turn that holds another adapter's opaque part
     /// is a malformed answer.
-    pub fn send(&self, request: &JudgeRequest, cancellation: &Cancellation) -> Result<Turn, Fault> {
+    pub fn send(&self, request: &JudgeRequest) -> Result<Turn, Fault> {
         let declaration = self.declaration();
-        before_sending(declaration, cancellation, [])?;
+        self.bounds.before_sending(declaration, [])?;
         let backend = declaration.model().backend();
         let foreign = request
             .messages
@@ -719,8 +791,9 @@ impl JudgeHandle {
         }
         let image = request.has_image().then_some(feature::IMAGE);
         let tool = (!request.tools.is_empty()).then_some(feature::TOOL);
-        before_sending(declaration, cancellation, image.into_iter().chain(tool))?;
-        let turn = self.backend.send(request, cancellation)?;
+        self.bounds
+            .before_sending(declaration, image.into_iter().chain(tool))?;
+        let turn = self.backend.send(request, &self.bounds)?;
         if turn.opaque().any(|opaque| opaque.adapter != backend) {
             return Err(Unfit::NotAllowed {
                 what: "a turn",

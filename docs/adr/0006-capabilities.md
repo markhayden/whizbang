@@ -2,6 +2,12 @@
 
 Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-12, after the review of the first part, before it merged. Changed: what
+a fault's cleaning guarantees and what it does not find, with a rule for adapters; a
+handle is bound to its run's cancellation and deadline, and a backend is handed them as
+`Bounds`; a point is in a pixel; an instance's box holds its plane; what rascal's `alpha`,
+`tinted` and `binary` renderings marked, and that a backend cannot rebuild them. Added:
+who retries; how requests will be accounted for.
 Amended: 2026-11-12, with the second pull request of task A8, which this record said
 would add to it. Added: "Judge"; "How a call names its choice"; "The fakes"; the judge's
 trait and handle among what every capability shares; two consequences and three
@@ -39,10 +45,12 @@ What was read, at the commits `docs/sources.toml` pins:
 - Rascal's filler port (`crates/rascal-mask/src/filler/mod.rs`) and its renderings
   (`crates/rascal-core/src/rendering.rs`). A filler is sent an image and, by a profile its
   config names, one of four pictures of the mask: `grey`, 8 bits, `round(255 w)` of the
-  effective weight `w`, 255 to paint; `binary`, 255 where `w` is at least a threshold;
-  `alpha`, the image made transparent where it is to be painted; `tinted`, the image
-  tinted there. It answers with a PNG of exactly the dimensions sent, and anything else
-  is an error.
+  effective weight `w`, 255 to paint; `binary`, 255 where `w` is at least a threshold
+  the config gives; `alpha`, the image made transparent in the unprotected core, and
+  nowhere in the blend; `tinted`, the image tinted in the unprotected core alone. It
+  answers with a PNG of exactly the dimensions sent, and anything else is an error. A
+  call is recorded with how far it got, since that decides whether it may have been
+  charged.
 - Rascal's paste (`crates/rascal-ops/src/paste.rs`), for what is done with a fill's
   alpha: "a base's alpha is kept; a fill's alpha is ignored and the summary says so".
 - Squint's provider interface (`crates/squint-core/src/provider.rs`): one round trip to
@@ -70,18 +78,39 @@ record are in `crates/whizbang-core/tests/it/capability/`.
 
 - **A trait for each capability,** in the core: `Segmenter`, `Filler` and `Judge`. Each
   has two methods. `declaration` says which model answers and which features it supports. The
-  other takes one request and a cancellation signal, and returns the response or a fault.
-  It blocks until it has its answer. A backend is expected to stop early when the signal
-  is set; it never retries. The core holds no implementation.
+  other takes one request and the run's `Bounds`, and returns the response or a fault.
+  It blocks until it has its answer. The core holds no implementation.
+- **`Bounds`** is what a backend is told of the run it answers for: the run's
+  cancellation signal, and its deadline when it has one. Only a handle makes one. Its
+  fields are private and it can gain more, so what a later task needs a backend to
+  know of its run is added to it and no trait changes. A backend is expected to stop
+  early when the signal is set, and to give up at the deadline with the fault
+  `timed_out`. Nothing cuts off a backend that does neither: enforcing a deadline is
+  the worker boundary's, at checkpoint 1C (`docs/carry-over.md`).
 - **A handle for each,** which is what an action asks through: `SegmentHandle`,
-  `FillHandle`, `JudgeHandle`. A handle wraps a backend and does three things the backend is not trusted
-  to do. Once the run is cancelled it sends nothing, and answers with the fault
-  `cancelled`. It sends a request only to a backend that declares every feature the
+  `FillHandle`, `JudgeHandle`. A handle wraps a backend and **is bound to one run**: it is made with
+  that run's cancellation signal, and with its deadline when it has one. The method an
+  action calls takes the request and nothing else, so an action cannot ask on behalf
+  of a run that was cancelled by handing over some other signal. Whoever makes an
+  action's context makes its handles, with the context's own signal; until the
+  executor does (ADR 0004), a test does. A handle does four things the backend is not
+  trusted to do. Once the run is cancelled it sends nothing, and answers with the
+  fault `cancelled`. Once the deadline has passed it sends nothing, and answers
+  `timed_out`. It sends a request only to a backend that declares every feature the
   request needs, and otherwise answers `unsupported` without sending. And it holds the
   answer to the request: an answer that does not fit is the fault `malformed`. The
   handles in an action's context (`Capabilities`, ADR 0004) are these. The executor
   hands an action none of them yet: the first action that asks a capability through it
   brings that, with what the run record keeps of each request (`docs/carry-over.md`).
+- **Nobody retries in checkpoint 1A.** A backend sends one request and returns; a
+  handle sends it once. Whether to ask again is for whoever owns the loop the request
+  is part of, which for the judge is the judge loop of milestone 2, and it decides from
+  a fault's kind and its wait. Squint's retry rule read an HTTP status that a fault
+  does not carry (`docs/carry-over.md`).
+- **Accounting for requests** (task A7: a parent is terminal only when every request a
+  capability was sent is accounted for) will be a decorator over the backend, inside
+  the handle: the handle already stands between every request and its backend. It
+  needs no change to a trait.
 - **Checked types.** Every type a request or a response is made of has private fields
   and is built through a constructor that checks it. None is deserialised. So a value of
   the type is a value that passed the check: there is no support plane out of its range,
@@ -127,26 +156,43 @@ The kinds are read from squint's error classes (`crates/squint-core/src/lib.rs`:
 `credential`, `provider`, `provider_rejected`, `image_limit`, `cancelled`), which told a
 caller the same things: whether to ask again, and whose fault it was.
 
-**A fault holds no path and no address, by how it is made.** A fault is written into a
-run record. Its sentence is cleaned when the fault is made, whatever an adapter passed in:
+**A fault's sentence is cleaned when the fault is made,** whatever an adapter passed in.
+A fault is written into a run record.
 
-- the first 240 characters are taken (`FAULT_LIMIT`);
+- the first 240 characters are taken (`FAULT_LIMIT`), so the cut falls between
+  characters;
 - each is kept when it is an ASCII letter, a digit, a space, or one of
   `. , ; : ' ( ) % + - _`;
 - every other character becomes `?`;
-- a sentence of no characters becomes `no reason was given`.
+- a sentence of no characters, or of spaces alone, becomes `no reason was given`.
 
-So a sentence has no `/` and no `\`, which a path needs; no `/`, `@`, `=` or `&`, which
-an address with a credential or a query needs; no line break, double quote or angle
-bracket. A fault's `{:?}` prints the kind, the cleaned sentence and the wait, and nothing
-else: a fault has no field that holds a request, a body, a header or an address, and no
-source error behind it.
+**What that guarantees.** A sentence has no `/` and no `\`; no `@`, `=` or `&`; no line
+break, double quote or angle bracket. So it holds no path with its separators, no
+address in its URL form, and no second line that could pass for another header or
+another record. A fault's `{:?}` prints the kind, the cleaned sentence and the wait, and
+nothing else: a fault has no field that holds a request, a body, a header or an address,
+and no source error behind it.
 
-What cleaning does not do is find a secret. A key passed in as letters and digits stays
-letters and digits. Two things stand against that. An adapter writes a fault's sentence
-from fixed words, a status and what the provider said was wrong, never from what it sent.
-And the executor takes the secrets it was told of out of every text it writes or reports,
-an error's message among them (ADR 0005, "Redaction").
+**What it does not find.** Cleaning replaces characters; it does not know what a text
+means. Each of these goes through unchanged, and a test pins that
+(`fault::what_cleaning_does_not_find_is_known`):
+
+- a host name, such as `build-host-7.corp.internal`;
+- an IP address and its port, such as `10.0.3.17:8443`;
+- a header's name and value on one line, such as `Authorization: Bearer` and a token;
+- a token made of letters, digits, `-`, `_` and `.`, which is what most keys are.
+
+**Redaction does not close that.** The executor takes the secrets it was told of out of
+every text it writes or reports, an error's message among them (ADR 0005, "Redaction").
+It finds a secret by its value, and only one it was told of. A token that a provider
+sent back in a body, or that an adapter read from a header, is a value the executor was
+never told, and neither cleaning nor redaction finds it.
+
+**So the rule for an adapter is part of the guarantee:** an adapter builds a fault's
+sentence from its own words and from typed fields (a status, a count, a size), and never
+copies a provider's body, a header, or an address into it. Nothing here can check that
+of an adapter that does not exist; the first real adapter is held to it with a test
+(`docs/carry-over.md`).
 
 ### Declarations and features
 
@@ -446,11 +492,13 @@ of:
 | Kind | Holds | Rule |
 |---|---|---|
 | Phrase | a text | 1 to 512 bytes (`PHRASE_LIMIT`) |
-| Point | `x`, `y` | Finite; inside the image |
+| Point | `x`, `y` | Finite; in a pixel of the image: `x` from 0 to under the width, `y` from 0 to under the height |
 | Box | left, top, right, bottom | Finite; inside the image; has area |
 
-Coordinates are in pixels of the image, as ADR 0001's run, and "inside the image"
-includes its edges, as in ADR 0002. One request to a backend is one image, so whatever a
+Coordinates are in pixels of the image, as ADR 0001's run. A box is a region, and
+"inside the image" includes the image's edges for it, as in ADR 0002: its right may be
+the width and its bottom the height. A point picks a pixel, so one on the right or the
+bottom edge, which is in no pixel, is refused. One request to a backend is one image, so whatever a
 backend computes of the image it computes once for the batch (`SPEC.md` section 4).
 
 **The response** is, for each request of the batch and in the batch's order, a list of
@@ -460,13 +508,20 @@ instances, in the order the backend gives them. An `Instance` is:
   255 on the thing and 0 off it. Any other byte is refused, and so is a plane with
   nothing on it: a thing that covers no pixel is not an instance;
 - **a box,** left, top, right and bottom in pixels of the image: finite, inside the
-  image, with area;
+  image, with area. **The box holds the plane:** every pixel that is on lies among the
+  whole pixels the box touches, from the floor of its left and top to the ceiling of
+  its right and bottom. A box that leaves part of its thing outside is refused; a box
+  larger than its thing, as rascal's padded boxes were, is not;
 - **a score:** a number from 0 to 1. One that is not a number is refused.
 
 The handle refuses, as `malformed`, an answer that does not answer each request once, one
 that holds more instances for a request than were asked for, and an instance whose plane
-is of another size than the image. So what a response can cost is bounded by the request:
-64 requests, 64 instances each, a byte a pixel.
+is of another size than the image. So what a response that is accepted can hold is
+bounded by the request: 64 requests, 64 instances each, a byte a pixel. That bound is
+checked after the backend built the response. It does not stop a backend from building
+more before the handle sees it; bounding what is read off a wire or out of a process,
+before anything is built from it, is the backend's, at checkpoint 1C
+(`docs/carry-over.md`).
 
 Not in the request: rascal's threshold, padding, outline rule and least cover. They are
 settings of an adapter, not of a call, and come with the adapters and the config. Nor an
@@ -513,6 +568,10 @@ inside the conversation, as squint's was; it holds text only.
   and every tool call's arguments as written. Pictures are not counted in that; each is
   held to `PIXEL_LIMIT`, and a conversation shares the pixels of a picture it holds more
   than once.
+
+What `{:?}` prints of a request, a message, a turn or a part is its shape: the kind of
+each part and its size, a picture's size and digest, a tool call's id and name. Never a
+text, a body or an argument: a conversation is a prompt and a model's answers.
 
 **A provider-opaque part is kept whole.** An `Opaque` is the bytes a provider sent for
 its own later reading (thinking, a signature, a reasoning item), as text, of 1 to
@@ -596,11 +655,19 @@ asks is built from what the same fakes declare.
 - An action, a fake and a real backend meet at types that cannot hold a malformed plane
   or fill, so a tool does not check what it is handed, and a backend cannot hand over
   what was not checked.
-- A fault can be written to a run record as it is.
+- A fault can be written to a run record after redaction, and what that leaves in it is
+  as good as the adapter's keeping of the rule above.
+- A fault does not say whether a request that failed may have been charged: `unavailable`
+  covers both a backend that was never reached and one that was sent the request and
+  did not answer. The ledger cannot settle from a fault as it is (`docs/carry-over.md`);
+  a fault's fields are private, so it can gain one for that.
 - The support plane is the same for every filler. Rascal's four renderings of a mask for
-  a filler are not carried over as a filler's setting. A backend whose model wants the
-  image made transparent or tinted where it is to be painted makes that picture itself,
-  from the image and the plane.
+  a filler are not carried over as a filler's setting, and a backend cannot rebuild
+  them from what it is sent: the support merges the core and the blend, where `alpha`
+  and `tinted` marked the core alone, `grey` carried the weight, and `binary` cut at a
+  threshold. A backend whose model wants the image made transparent or tinted where it
+  is to be painted can make that picture over the whole support, and no other
+  (`docs/carry-over.md`).
 - A filler that needs a soft edge does not get one. The composite blends by the mask's
   weight whatever the filler painted, so the edge is soft in the result.
 - `Backends::resolve` changed: every implementor takes a choice. Prepare's fingerprint

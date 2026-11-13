@@ -4,11 +4,11 @@
 //! backend computes of the image it computes once for the batch.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::contract::Cancellation;
 
-use super::fill::before_sending;
-use super::{Declaration, Fault, Picture, Unfit, feature, pixel_count};
+use super::{Bounds, Declaration, Fault, Picture, Unfit, feature, pixel_count};
 
 /// The most requests one batch holds.
 pub const QUERY_LIMIT: usize = 64;
@@ -78,7 +78,7 @@ impl Query {
                 what: "the point",
                 at: None,
                 found: numbers(&[x, y]),
-                allowed: "inside the image",
+                allowed: "in a pixel of the image",
             });
         }
         Ok(Query(Kind::Point([x, y])))
@@ -132,8 +132,9 @@ pub struct SegmentRequest {
 
 impl SegmentRequest {
     /// A batch of 1 to [`QUERY_LIMIT`] requests about this image, asking at most
-    /// `max_instances` instances for each, from 1 to [`INSTANCE_LIMIT`]. Every point and
-    /// every box is inside the image; its edges are inside it.
+    /// `max_instances` instances for each, from 1 to [`INSTANCE_LIMIT`]. A point is in a
+    /// pixel of the image: its `x` is under the width and its `y` under the height. A
+    /// box is inside the image, and its edges may be the image's edges.
     pub fn new(
         image: Picture,
         queries: Vec<Query>,
@@ -162,13 +163,18 @@ impl SegmentRequest {
         for query in &queries {
             let (what, allowed, values): (_, _, &[f64]) = match &query.0 {
                 Kind::Phrase(_) => continue,
-                Kind::Point(point) => ("the point", "inside the image", point),
+                Kind::Point(point) => ("the point", "in a pixel of the image", point),
                 Kind::Box(bounds) => ("the box", "inside the image, with area", bounds),
             };
-            let inside = values
-                .iter()
-                .enumerate()
-                .all(|(at, value)| *value <= if at % 2 == 0 { width } else { height });
+            let is_point = matches!(query.0, Kind::Point(_));
+            let inside = values.iter().enumerate().all(|(at, value)| {
+                let side = if at % 2 == 0 { width } else { height };
+                if is_point {
+                    *value < side
+                } else {
+                    *value <= side
+                }
+            });
             if !inside {
                 return Err(Unfit::OutOfRange {
                     what,
@@ -202,8 +208,10 @@ impl SegmentRequest {
 }
 
 /// One thing a segmenter found: its plane, the size of the image, one byte a pixel, 255
-/// on the thing and 0 off it; its box, in pixels of the image; and its score.
-#[derive(Debug, Clone, PartialEq)]
+/// on the thing and 0 off it; its box, in pixels of the image, which holds every pixel
+/// that is on; and its score. What `{:?}` prints of one is its size, how many pixels
+/// are on, its box and its score, never the plane.
+#[derive(Clone, PartialEq)]
 pub struct Instance {
     width: u32,
     height: u32,
@@ -216,8 +224,9 @@ impl Instance {
     /// An instance in an image of this size. Refused: a size of no pixels, or over
     /// [`PIXEL_LIMIT`](super::PIXEL_LIMIT), before a byte is read; a plane of another
     /// count of bytes; a byte that is neither 0 nor 255; a plane with nothing on it; a
-    /// box (left, top, right, bottom) that is not inside the image with area; and a
-    /// score that is not a number from 0 to 1.
+    /// box (left, top, right, bottom) that is not inside the image with area; a pixel
+    /// that is on outside the box, which holds the whole pixels it touches; and a score
+    /// that is not a number from 0 to 1.
     pub fn new(
         width: u32,
         height: u32,
@@ -251,6 +260,20 @@ impl Instance {
                 at: None,
                 found: numbers(&bounds),
                 allowed: "inside the image, with area",
+            });
+        }
+        // The whole pixels the box touches: from the floor of its left and top to the
+        // ceiling of its right and bottom.
+        let columns = bounds[0].floor() as u32..bounds[2].ceil() as u32;
+        let rows = bounds[1].floor() as u32..bounds[3].ceil() as u32;
+        let outside = plane.iter().enumerate().any(|(at, sample)| {
+            let (x, y) = (at as u32 % width, at as u32 / width);
+            *sample == 255 && !(columns.contains(&x) && rows.contains(&y))
+        });
+        if outside {
+            return Err(Unfit::NotAllowed {
+                what,
+                why: "is on outside its box",
             });
         }
         if !(0.0..=1.0).contains(&score) {
@@ -294,6 +317,17 @@ impl Instance {
     }
 }
 
+impl std::fmt::Debug for Instance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let on = self.plane.iter().filter(|sample| **sample == 255).count();
+        write!(
+            f,
+            "Instance({} by {}, {on} on, box {:?}, score {})",
+            self.width, self.height, self.bounds, self.score
+        )
+    }
+}
+
 /// What a segmenter answers: for each request of the batch, in the batch's order, the
 /// instances it found, in the order the backend gives them.
 #[derive(Debug, Clone, PartialEq)]
@@ -315,28 +349,37 @@ impl SegmentResponse {
 }
 
 /// A backend that segments. It answers one batch at a time and returns when it has its
-/// answer; it is expected to stop early when the cancellation is set.
+/// answer; it never retries. It is expected to stop early when the run is cancelled, and
+/// to give up at the run's deadline ([`Bounds`]).
 pub trait Segmenter: Send + Sync {
     /// The model that answers, and the features it supports.
     fn declaration(&self) -> &Declaration;
 
     /// Answers every request of the batch.
-    fn segment(
-        &self,
-        request: &SegmentRequest,
-        cancellation: &Cancellation,
-    ) -> Result<SegmentResponse, Fault>;
+    fn segment(&self, request: &SegmentRequest, bounds: &Bounds) -> Result<SegmentResponse, Fault>;
 }
 
-/// The handle through which an action asks a segmenter.
+/// The handle through which an action asks a segmenter. It is bound to one run: it
+/// holds that run's cancellation signal and deadline, so an action hands it neither.
 #[derive(Clone)]
 pub struct SegmentHandle {
     backend: Arc<dyn Segmenter>,
+    bounds: Bounds,
 }
 
 impl SegmentHandle {
-    pub fn new(backend: Arc<dyn Segmenter>) -> SegmentHandle {
-        SegmentHandle { backend }
+    /// A handle on this segmenter for the run with this cancellation signal.
+    pub fn new(backend: Arc<dyn Segmenter>, cancellation: Cancellation) -> SegmentHandle {
+        SegmentHandle {
+            backend,
+            bounds: Bounds::new(cancellation),
+        }
+    }
+
+    /// The same handle, for a run that must be over by this time.
+    pub fn until(mut self, deadline: Instant) -> SegmentHandle {
+        self.bounds.until(deadline);
+        self
     }
 
     /// What the segmenter behind the handle declares.
@@ -345,20 +388,17 @@ impl SegmentHandle {
     }
 
     /// Sends the batch and hands back the answer. Nothing is sent once the run is
-    /// cancelled, or when the batch holds a kind of request the segmenter does not
-    /// declare. An answer is malformed unless it answers each request once, with no
-    /// more instances than were asked for, each the size of the image.
-    pub fn segment(
-        &self,
-        request: &SegmentRequest,
-        cancellation: &Cancellation,
-    ) -> Result<SegmentResponse, Fault> {
-        before_sending(
+    /// cancelled or its deadline has passed, or when the batch holds a kind of request
+    /// the segmenter does not declare. An answer is malformed unless it answers each
+    /// request once, with no more instances than were asked for, each the size of the
+    /// image. The answer is checked after the backend built it: what a backend may
+    /// build before that is its own to bound (`docs/carry-over.md`).
+    pub fn segment(&self, request: &SegmentRequest) -> Result<SegmentResponse, Fault> {
+        self.bounds.before_sending(
             self.declaration(),
-            cancellation,
             request.queries.iter().map(Query::feature),
         )?;
-        let response = self.backend.segment(request, cancellation)?;
+        let response = self.backend.segment(request, &self.bounds)?;
         let what = "the segmenter's answer";
         if response.answers.len() != request.queries.len() {
             return Err(Unfit::NotAllowed {

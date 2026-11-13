@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use whizbang_core::capability::{
-    Asked, Declaration, Fault, FaultKind, INSTANCE_LIMIT, Instance, PHRASE_LIMIT, QUERY_LIMIT,
-    Query, SegmentHandle, SegmentRequest, SegmentResponse, Segmenter, Unfit, feature,
+    Asked, Bounds, Declaration, Fault, FaultKind, INSTANCE_LIMIT, Instance, PHRASE_LIMIT,
+    QUERY_LIMIT, Query, SegmentHandle, SegmentRequest, SegmentResponse, Segmenter, Unfit, feature,
 };
 use whizbang_core::contract::{Cancellation, ModelIdentity};
 
@@ -54,7 +54,12 @@ fn a_query_is_a_phrase_a_point_or_a_box() {
         Err(Unfit::TooLarge { limit: 512, .. })
     ));
     // A coordinate is a number.
-    for (x, y) in [(f64::NAN, 1.0), (1.0, f64::INFINITY), (-1.0, 1.0)] {
+    for (x, y) in [
+        (f64::NAN, 1.0),
+        (1.0, f64::INFINITY),
+        (-1.0, 1.0),
+        (1.0, -1.0),
+    ] {
         assert_eq!(out_of_range(Query::point(x, y).unwrap_err()).0, "the point");
     }
     // A box has area.
@@ -81,8 +86,10 @@ fn dog() -> Vec<Query> {
 fn a_request_is_one_image_and_a_bounded_batch_inside_it() {
     let queries = vec![
         Query::phrase("a dog").unwrap(),
-        // The edges of the image are inside it.
-        Query::point(W, H).unwrap(),
+        // A point is in a pixel: the last one is just under the width and the height.
+        Query::point(W - 0.001, H - 0.001).unwrap(),
+        Query::point(0.0, 0.0).unwrap(),
+        // A box's edges may be the image's edges.
         Query::boxed(0.0, 0.0, W, H).unwrap(),
     ];
     let request = SegmentRequest::new(picture(), queries.clone(), 8).unwrap();
@@ -115,17 +122,25 @@ fn a_request_is_one_image_and_a_bounded_batch_inside_it() {
         SegmentRequest::new(picture(), dog(), INSTANCE_LIMIT + 1),
         Err(Unfit::OutOfRange { .. })
     ));
-    // A point and a box outside the image.
-    let outside = vec![Query::point(W + 0.5, 1.0).unwrap()];
-    assert_eq!(
-        out_of_range(SegmentRequest::new(picture(), outside, 8).unwrap_err()).0,
-        "the point"
-    );
-    let outside = vec![Query::boxed(1.0, 1.0, 2.0, H + 1.0).unwrap()];
-    assert_eq!(
-        out_of_range(SegmentRequest::new(picture(), outside, 8).unwrap_err()).0,
-        "the box"
-    );
+    // A point on the right or the bottom edge is in no pixel, and is refused; so is
+    // one beyond. The height is less than the width, so a `y` between them is outside.
+    for (x, y) in [(W, 1.0), (1.0, H), (W + 0.5, 1.0), (1.0, H + 1.0)] {
+        let outside = vec![Query::point(x, y).unwrap()];
+        assert_eq!(
+            out_of_range(SegmentRequest::new(picture(), outside, 8).unwrap_err()).0,
+            "the point",
+            "{x}, {y}"
+        );
+    }
+    // A box beyond an edge.
+    for (r, b) in [(W + 0.5, 2.0), (2.0, H + 1.0)] {
+        let outside = vec![Query::boxed(1.0, 1.0, r, b).unwrap()];
+        assert_eq!(
+            out_of_range(SegmentRequest::new(picture(), outside, 8).unwrap_err()).0,
+            "the box",
+            "{r}, {b}"
+        );
+    }
 }
 
 // --- what comes back ----------------------------------------------------------------------------
@@ -182,9 +197,12 @@ fn an_instance_is_a_binary_plane_a_box_and_a_score() {
         Instance::new(WIDTH, HEIGHT, plane.clone(), bounds, score).unwrap();
     }
     // The box: inside the image, with area.
+    // The height is 6 and the width 8: a bottom of 7 is outside, though it is under the
+    // width.
     for bad in [
         [2.0, 1.0, 2.0, 4.0],
         [2.0, 1.0, W + 1.0, 4.0],
+        [2.0, 1.0, 5.0, H + 1.0],
         [-1.0, 1.0, 5.0, 4.0],
         [2.0, f64::NAN, 5.0, 4.0],
     ] {
@@ -193,6 +211,32 @@ fn an_instance_is_a_binary_plane_a_box_and_a_score() {
             "the box of an instance"
         );
     }
+    // The box holds the plane: every pixel that is on lies inside it. A box that is a
+    // column short on any side, or a row, is refused; one that is larger is not.
+    for short in [
+        [3.0, 1.0, 5.0, 4.0],
+        [2.0, 2.0, 5.0, 4.0],
+        [2.0, 1.0, 4.0, 4.0],
+        [2.0, 1.0, 5.0, 3.0],
+    ] {
+        assert_eq!(
+            with(plane.clone(), short, 0.9),
+            Unfit::NotAllowed {
+                what: "the plane of an instance",
+                why: "is on outside its box",
+            },
+            "{short:?}"
+        );
+    }
+    Instance::new(WIDTH, HEIGHT, plane.clone(), [0.0, 0.0, W, H], 0.9).unwrap();
+    // A box between pixels holds the whole pixels it touches.
+    Instance::new(WIDTH, HEIGHT, plane.clone(), [2.5, 1.5, 4.5, 3.5], 0.9).unwrap();
+    // What is printed of an instance is its size, its box and its score, not its plane.
+    let printed = format!("{:?}", self::instance());
+    assert_eq!(
+        printed,
+        "Instance(8 by 6, 9 on, box [2.0, 1.0, 5.0, 4.0], score 0.9)"
+    );
     // The size is refused before the plane is looked at.
     assert!(matches!(
         Instance::new(50_000, 1_001, Vec::new(), bounds, 0.9),
@@ -228,7 +272,7 @@ impl Segmenter for Stub {
         &self.declaration
     }
 
-    fn segment(&self, _: &SegmentRequest, _: &Cancellation) -> Result<SegmentResponse, Fault> {
+    fn segment(&self, _: &SegmentRequest, _: &Bounds) -> Result<SegmentResponse, Fault> {
         self.sent.fetch_add(1, Ordering::SeqCst);
         self.answer.clone()
     }
@@ -239,13 +283,13 @@ const ALL: [&str; 3] = [feature::PHRASE, feature::POINT, feature::BOX];
 #[test]
 fn the_handle_hands_back_the_instances_of_each_request_in_the_batchs_order() {
     let stub = Stub::new(&ALL, vec![vec![instance(), instance()], Vec::new()]);
-    let handle = SegmentHandle::new(stub.clone());
+    let handle = SegmentHandle::new(stub.clone(), Cancellation::new());
     let queries = vec![
         Query::phrase("a dog").unwrap(),
         Query::point(1.0, 1.0).unwrap(),
     ];
     let request = SegmentRequest::new(picture(), queries, 2).unwrap();
-    let response = handle.segment(&request, &Cancellation::new()).unwrap();
+    let response = handle.segment(&request).unwrap();
     assert_eq!(response.answers().len(), 2);
     assert_eq!(response.answers()[0], [instance(), instance()]);
     assert!(response.answers()[1].is_empty());
@@ -257,8 +301,8 @@ fn the_handle_hands_back_the_instances_of_each_request_in_the_batchs_order() {
 fn an_answer_that_does_not_fit_its_request_is_malformed() {
     let ask = |stub: Arc<Stub>, max: u32| {
         let request = SegmentRequest::new(picture(), dog(), max).unwrap();
-        let fault = SegmentHandle::new(stub)
-            .segment(&request, &Cancellation::new())
+        let fault = SegmentHandle::new(stub, Cancellation::new())
+            .segment(&request)
             .unwrap_err();
         assert_eq!(fault.kind(), FaultKind::Malformed);
         fault.sentence().to_owned()
@@ -275,19 +319,22 @@ fn an_answer_that_does_not_fit_its_request_is_malformed() {
         ask(Stub::new(&ALL, vec![vec![instance(), instance()]]), 1),
         "the segmenter's answer holds more instances for a request than were asked for"
     );
-    // An instance of another image's size.
-    let turned = Instance::new(
-        HEIGHT,
-        WIDTH,
-        vec![255; (WIDTH * HEIGHT) as usize],
-        [0.0, 0.0, 1.0, 1.0],
-        0.5,
-    )
-    .unwrap();
-    assert_eq!(
-        ask(Stub::new(&ALL, vec![vec![turned]]), 8),
-        format!("the plane of an instance is {HEIGHT} by {WIDTH}, not {WIDTH} by {HEIGHT}")
-    );
+    // An instance of another image's size: turned, and then of the same width and one
+    // row more, and of the same height and one column more.
+    for (width, height) in [(HEIGHT, WIDTH), (WIDTH, HEIGHT + 1), (WIDTH + 1, HEIGHT)] {
+        let other = Instance::new(
+            width,
+            height,
+            vec![255; (width * height) as usize],
+            [0.0, 0.0, f64::from(width), f64::from(height)],
+            0.5,
+        )
+        .unwrap();
+        assert_eq!(
+            ask(Stub::new(&ALL, vec![vec![other]]), 8),
+            format!("the plane of an instance is {width} by {height}, not {WIDTH} by {HEIGHT}")
+        );
+    }
 }
 
 #[test]
@@ -302,20 +349,22 @@ fn each_kind_of_request_needs_its_feature_and_is_not_sent_without_it() {
         let others: Vec<&str> = ALL.into_iter().filter(|f| *f != needed).collect();
         let stub = Stub::new(&others, vec![Vec::new()]);
         let request = SegmentRequest::new(picture(), vec![query.clone()], 8).unwrap();
-        let fault = SegmentHandle::new(stub.clone())
-            .segment(&request, &Cancellation::new())
+        let fault = SegmentHandle::new(stub.clone(), Cancellation::new())
+            .segment(&request)
             .unwrap_err();
         assert_eq!(fault.kind(), FaultKind::Unsupported);
         assert_eq!(
             fault.sentence(),
-            format!("the backend segmenter does not declare the feature {needed}")
+            format!(
+                "the model segmenter of the backend stub does not declare the feature {needed}"
+            )
         );
         assert_eq!(stub.sent.load(Ordering::SeqCst), 0);
         // With that feature alone it is sent.
         let stub = Stub::new(&[needed], vec![Vec::new()]);
         let request = SegmentRequest::new(picture(), vec![query], 8).unwrap();
-        SegmentHandle::new(stub.clone())
-            .segment(&request, &Cancellation::new())
+        SegmentHandle::new(stub.clone(), Cancellation::new())
+            .segment(&request)
             .unwrap();
         assert_eq!(stub.sent.load(Ordering::SeqCst), 1);
     }
@@ -327,8 +376,8 @@ fn nothing_is_sent_once_the_run_is_cancelled() {
     let cancellation = Cancellation::new();
     cancellation.cancel();
     let request = SegmentRequest::new(picture(), dog(), 8).unwrap();
-    let fault = SegmentHandle::new(stub.clone())
-        .segment(&request, &cancellation)
+    let fault = SegmentHandle::new(stub.clone(), cancellation)
+        .segment(&request)
         .unwrap_err();
     assert_eq!(fault.kind(), FaultKind::Cancelled);
     assert_eq!(stub.sent.load(Ordering::SeqCst), 0);

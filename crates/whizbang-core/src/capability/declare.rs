@@ -12,6 +12,12 @@ use std::collections::BTreeSet;
 
 use crate::contract::{Backends, Capability, ModelIdentity, Unavailable, text};
 
+use super::Shown;
+
+/// The rule of a name, as a refusal says it.
+const NAME_RULE: &str = "a name is a lower-case letter, then lower-case letters, digits, _ or -, \
+                         64 characters at most";
+
 /// The features a request can need, by the names a descriptor and a declaration spell
 /// them with. A request that holds what a feature is for needs that feature (ADR 0006).
 pub mod feature {
@@ -40,13 +46,17 @@ pub struct Declaration {
 impl Declaration {
     /// A declaration of this model with these features. A feature is a name, as an
     /// action's is, and is declared once.
-    pub fn new(model: ModelIdentity, features: &[&str]) -> Result<Declaration, String> {
+    pub fn new(model: ModelIdentity, features: &[&str]) -> Result<Declaration, DeclarationError> {
         let mut declared = BTreeSet::new();
         for feature in features {
-            text::action_name(feature).map_err(|why| format!("a feature: {why}"))?;
-            if !declared.insert((*feature).to_owned()) {
-                return Err(format!("the feature {feature} is declared twice"));
+            let feature = (*feature).to_owned();
+            if text::action_name(&feature).is_err() {
+                return Err(DeclarationError::Name { feature });
             }
+            if declared.contains(&feature) {
+                return Err(DeclarationError::Twice { feature });
+            }
+            declared.insert(feature);
         }
         Ok(Declaration {
             model,
@@ -70,11 +80,54 @@ impl Declaration {
     }
 }
 
+/// Why a declaration could not be made.
+#[derive(Clone, PartialEq, Eq)]
+pub enum DeclarationError {
+    /// The feature is not a name.
+    Name { feature: String },
+    /// The feature is declared twice.
+    Twice { feature: String },
+}
+
+impl std::fmt::Display for DeclarationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeclarationError::Name { feature } => {
+                write!(
+                    f,
+                    "the feature {} is not a name: {NAME_RULE}",
+                    Shown(feature)
+                )
+            }
+            DeclarationError::Twice { feature } => {
+                write!(f, "the feature {} is declared twice", Shown(feature))
+            }
+        }
+    }
+}
+
+impl std::fmt::Debug for DeclarationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (kind, feature) = match self {
+            DeclarationError::Name { feature } => ("Name", feature),
+            DeclarationError::Twice { feature } => ("Twice", feature),
+        };
+        f.debug_struct(kind)
+            .field("feature", &Shown(feature))
+            .finish()
+    }
+}
+
+impl std::error::Error for DeclarationError {}
+
 /// Why a roster could not be built as asked.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum RosterError {
     /// The name is not one a call could choose: it does not keep the rule of a name.
-    Name { capability: Capability, why: String },
+    Name {
+        capability: Capability,
+        name: String,
+    },
     /// The capability already has a backend of this name.
     Twice {
         capability: Capability,
@@ -90,25 +143,45 @@ pub enum RosterError {
 impl std::fmt::Display for RosterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RosterError::Name { capability, why } => {
-                write!(f, "a {} backend: {why}", capability.name())
-            }
+            RosterError::Name { capability, name } => write!(
+                f,
+                "a {} backend cannot be named {}: {NAME_RULE}",
+                capability.name(),
+                Shown(name)
+            ),
             RosterError::Twice { capability, name } => {
                 write!(f, "two {} backends are named {name}", capability.name())
             }
             RosterError::NotOffered { capability, name } => write!(
                 f,
-                "the default for {} is {name}, which is not offered",
-                capability.name()
+                "the default for {} is {}, which is not offered",
+                capability.name(),
+                Shown(name)
             ),
         }
     }
 }
 
+impl std::fmt::Debug for RosterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (kind, capability, name) = match self {
+            RosterError::Name { capability, name } => ("Name", capability, name),
+            RosterError::Twice { capability, name } => ("Twice", capability, name),
+            RosterError::NotOffered { capability, name } => ("NotOffered", capability, name),
+        };
+        f.debug_struct(kind)
+            .field("capability", capability)
+            .field("name", &Shown(name))
+            .finish()
+    }
+}
+
 impl std::error::Error for RosterError {}
 
-/// Why nothing answers a capability for a call.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Why nothing answers a capability for a call. A choice and a feature are what a
+/// caller typed: a sentence and `{:?}` show each escaped, and its first 64 characters at
+/// most.
+#[derive(Clone, PartialEq, Eq)]
 pub enum Unresolved {
     /// The call chose no backend, and no default is configured for the capability.
     NoDefault { capability: Capability },
@@ -128,9 +201,6 @@ pub enum Unresolved {
     },
 }
 
-/// How many characters of a refused choice are shown.
-const SHOWN: usize = 64;
-
 impl std::fmt::Display for Unresolved {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -139,25 +209,50 @@ impl std::fmt::Display for Unresolved {
                 "no default backend is configured for {}, and the call chose none",
                 capability.name()
             ),
-            Unresolved::UnknownChoice { capability, choice } => {
-                // The choice is what a caller typed: shown escaped, and its start only.
-                let count = choice.chars().count();
-                let start: String = choice.chars().take(SHOWN).collect();
-                write!(f, "no {} backend is named {start:?}", capability.name())?;
-                if count > SHOWN {
-                    write!(f, "... ({count} characters)")?;
-                }
-                Ok(())
-            }
+            Unresolved::UnknownChoice { capability, choice } => write!(
+                f,
+                "no {} backend is named {}",
+                capability.name(),
+                Shown(choice)
+            ),
+            // The name is one the roster offers, and so a name; the feature is the
+            // caller's.
             Unresolved::MissingFeature {
                 capability,
                 name,
                 feature,
             } => write!(
                 f,
-                "the {} backend {name} does not declare the feature {feature}",
-                capability.name()
+                "the {} backend {name} does not declare the feature {}",
+                capability.name(),
+                Shown(feature)
             ),
+        }
+    }
+}
+
+impl std::fmt::Debug for Unresolved {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unresolved::NoDefault { capability } => f
+                .debug_struct("NoDefault")
+                .field("capability", capability)
+                .finish(),
+            Unresolved::UnknownChoice { capability, choice } => f
+                .debug_struct("UnknownChoice")
+                .field("capability", capability)
+                .field("choice", &Shown(choice))
+                .finish(),
+            Unresolved::MissingFeature {
+                capability,
+                name,
+                feature,
+            } => f
+                .debug_struct("MissingFeature")
+                .field("capability", capability)
+                .field("name", name)
+                .field("feature", &Shown(feature))
+                .finish(),
         }
     }
 }
@@ -205,7 +300,12 @@ impl Roster {
         name: &str,
         declaration: Declaration,
     ) -> Result<Roster, RosterError> {
-        text::action_name(name).map_err(|why| RosterError::Name { capability, why })?;
+        if text::action_name(name).is_err() {
+            return Err(RosterError::Name {
+                capability,
+                name: name.to_owned(),
+            });
+        }
         if self.find(capability, name).is_some() {
             return Err(RosterError::Twice {
                 capability,

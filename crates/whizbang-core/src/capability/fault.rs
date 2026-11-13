@@ -1,12 +1,26 @@
 //! A fault: the typed error of a capability (ADR 0006, "Faults").
 //!
-//! A fault ends up in a run record, so it is made to hold nothing private. It is a kind,
-//! one sentence and, for a backend that said when to ask again, a wait. The sentence is
-//! cleaned when the fault is made: every character that could spell a path, an address,
-//! a header or markup is replaced. So what a fault says, and what `{:?}` prints of it,
-//! holds no place on the machine whatever an adapter passed in. A secret an adapter
-//! passed in by its value is not found here: redaction takes it out when a run is
-//! written (ADR 0005).
+//! A fault ends up in a run record. It is a kind, one sentence and, for a backend that
+//! said when to ask again, a wait. The sentence is cleaned when the fault is made, and
+//! what `{:?}` prints of a fault is the kind, that sentence and the wait.
+//!
+//! **What cleaning guarantees.** A sentence is at most [`FAULT_LIMIT`] characters, cut
+//! between characters. It holds no `/` and no `\`; no `@`, `=` or `&`; no line break,
+//! no double quote and no angle bracket. So it holds no path with its separators, no
+//! address in its URL form, and no second line that could pass for another record or
+//! header.
+//!
+//! **What cleaning does not find.** It replaces characters and knows nothing of what a
+//! text means. A host name, an IP address and its port, a header's name and value on
+//! one line, and a token made of letters, digits, `-`, `_` and `.` all go through
+//! unchanged. Redaction (ADR 0005) takes a secret out when a run is written, and only
+//! a secret the executor was told of: a token an adapter copied out of a provider's
+//! answer is found by neither.
+//!
+//! **So the rule for an adapter** is the rest of the guarantee: it builds a fault's
+//! sentence from its own words and from typed fields (a status, a count, a size), and
+//! never copies a provider's body, a header or an address into it (ADR 0006,
+//! "Faults").
 
 use super::Unfit;
 
@@ -79,12 +93,13 @@ pub struct Fault {
 impl Fault {
     /// A fault of this kind. The text is cleaned ([`FAULT_LIMIT`]): what is kept of it
     /// is ASCII letters, digits, spaces and `. , ; : ' ( ) % + - _`; every other
-    /// character becomes `?`; and it is cut at the limit.
+    /// character becomes `?`; and it is cut at the limit. A text of nothing, or of
+    /// spaces alone, becomes `no reason was given`.
     pub fn new(kind: FaultKind, text: &str) -> Fault {
         let sentence = clean(text, FAULT_LIMIT);
         Fault {
             kind,
-            sentence: if sentence.is_empty() {
+            sentence: if sentence.trim().is_empty() {
                 "no reason was given".to_owned()
             } else {
                 sentence

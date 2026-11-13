@@ -2,13 +2,15 @@
 //! how a mask's planes become it, the layout of the pixels a filler returns, and the
 //! handle that holds a request to the declaration and an answer to the request.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
+use std::time::{Duration, Instant};
 use whizbang_core::artifact::{Mask, Source, UseCase};
+
 use whizbang_core::capability::{
-    Declaration, Fault, FaultKind, FillHandle, FillRequest, Filler, PIXEL_LIMIT, PROMPT_LIMIT,
-    Painted, Picture, Support, Unfit, feature,
+    Bounds, Declaration, Fault, FaultKind, FillHandle, FillRequest, Filler, PIXEL_LIMIT,
+    PROMPT_LIMIT, Painted, Picture, Support, Unfit, feature,
 };
 use whizbang_core::contract::{Cancellation, ModelIdentity};
 use whizbang_core::identity::CanonicalPixels;
@@ -124,12 +126,22 @@ fn a_support_plane_is_as_many_bytes_as_its_image_has_pixels() {
         );
     }
     // The size is refused before the bytes are looked at: nothing this large need be
-    // held to refuse it.
+    // held to refuse it. Exactly the limit is a size, and what is wrong with no bytes
+    // for it is their count; one pixel more is too large.
+    assert_eq!(PIXEL_LIMIT, 50_000_000);
     assert_eq!(
-        Support::from_plane(50_000, 1_001, Vec::new()).unwrap_err(),
+        Support::from_plane(50_000, 1_000, Vec::new()).unwrap_err(),
+        Unfit::WrongLength {
+            what: "the support plane",
+            expected: PIXEL_LIMIT,
+            found: 0,
+        }
+    );
+    assert_eq!(
+        Support::from_plane(50_000_001, 1, Vec::new()).unwrap_err(),
         Unfit::TooLarge {
             what: "the support plane",
-            size: 50_050_000,
+            size: PIXEL_LIMIT + 1,
             limit: PIXEL_LIMIT,
         }
     );
@@ -165,13 +177,45 @@ fn a_fill_is_three_bytes_a_pixel_with_no_alpha() {
         Unfit::Empty { what: "the fill" }
     );
     assert_eq!(
-        Painted::from_rgb(50_000, 1_001, Vec::new()).unwrap_err(),
+        Painted::from_rgb(50_000, 1_000, Vec::new()).unwrap_err(),
+        Unfit::WrongLength {
+            what: "the fill",
+            expected: PIXEL_LIMIT * 3,
+            found: 0,
+        }
+    );
+    assert_eq!(
+        Painted::from_rgb(1, 50_000_001, Vec::new()).unwrap_err(),
         Unfit::TooLarge {
             what: "the fill",
-            size: 50_050_000,
+            size: PIXEL_LIMIT + 1,
             limit: PIXEL_LIMIT,
         }
     );
+}
+
+#[test]
+fn what_is_printed_of_a_plane_a_fill_or_a_request_is_its_size_and_never_its_bytes() {
+    let support = support();
+    assert_eq!(
+        format!("{support:?}"),
+        format!("Support({WIDTH} by {HEIGHT}, 9 to paint)")
+    );
+    let painted = Painted::from_rgb(WIDTH, HEIGHT, vec![77; PIXELS * 3]).unwrap();
+    assert_eq!(
+        format!("{painted:?}"),
+        format!("Painted({WIDTH} by {HEIGHT})")
+    );
+    // A request prints its picture's digest, its support's size, and how long its
+    // prompt is: not the prompt.
+    let request = FillRequest::new(picture(), support, Some("a secret garden")).unwrap();
+    let printed = format!("{request:?}");
+    assert!(printed.contains("Support(8 by 6, 9 to paint)"), "{printed}");
+    assert!(printed.contains("a prompt of 15 bytes"), "{printed}");
+    assert!(!printed.contains("garden"), "{printed}");
+    assert!(!printed.contains("255, 255"), "{printed}");
+    let request = FillRequest::new(picture(), self::support(), None).unwrap();
+    assert!(format!("{request:?}").contains("no prompt"));
 }
 
 // --- the request ------------------------------------------------------------------------------
@@ -233,6 +277,8 @@ struct Stub {
     declaration: Declaration,
     answer: Result<Painted, Fault>,
     sent: AtomicU64,
+    /// What the last request's bounds said: cancelled or not, and the deadline.
+    seen: Mutex<Option<(bool, Option<Instant>)>>,
 }
 
 impl Stub {
@@ -242,6 +288,7 @@ impl Stub {
                 .unwrap(),
             answer,
             sent: AtomicU64::new(0),
+            seen: Mutex::new(None),
         })
     }
 }
@@ -251,8 +298,9 @@ impl Filler for Stub {
         &self.declaration
     }
 
-    fn fill(&self, _: &FillRequest, _: &Cancellation) -> Result<Painted, Fault> {
+    fn fill(&self, _: &FillRequest, bounds: &Bounds) -> Result<Painted, Fault> {
         self.sent.fetch_add(1, Ordering::SeqCst);
+        *self.seen.lock().unwrap() = Some((bounds.is_cancelled(), bounds.deadline()));
         self.answer.clone()
     }
 }
@@ -264,12 +312,14 @@ fn grey(width: u32, height: u32) -> Painted {
 #[test]
 fn the_handle_sends_a_request_and_hands_back_a_fill_of_its_size() {
     let stub = Stub::new(&[feature::PROMPT], Ok(grey(WIDTH, HEIGHT)));
-    let handle = FillHandle::new(stub.clone());
+    let handle = FillHandle::new(stub.clone(), Cancellation::new());
     assert_eq!(handle.declaration().model().model(), "filler");
     let request = FillRequest::new(picture(), support(), Some("grass")).unwrap();
-    let painted = handle.fill(&request, &Cancellation::new()).unwrap();
+    let painted = handle.fill(&request).unwrap();
     assert_eq!(painted, grey(WIDTH, HEIGHT));
     assert_eq!(stub.sent.load(Ordering::SeqCst), 1);
+    // The backend was handed the run's bounds: not cancelled, and no deadline.
+    assert_eq!(*stub.seen.lock().unwrap(), Some((false, None)));
     // What `{:?}` prints of a handle is its declaration.
     assert!(format!("{handle:?}").contains("filler"));
 }
@@ -279,8 +329,8 @@ fn a_fill_of_other_dimensions_is_a_malformed_answer() {
     for (width, height) in [(HEIGHT, WIDTH), (WIDTH, HEIGHT + 1), (1, 1)] {
         let stub = Stub::new(&[], Ok(grey(width, height)));
         let request = FillRequest::new(picture(), support(), None).unwrap();
-        let fault = FillHandle::new(stub.clone())
-            .fill(&request, &Cancellation::new())
+        let fault = FillHandle::new(stub.clone(), Cancellation::new())
+            .fill(&request)
             .unwrap_err();
         assert_eq!(fault.kind(), FaultKind::Malformed);
         assert_eq!(
@@ -294,32 +344,80 @@ fn a_fill_of_other_dimensions_is_a_malformed_answer() {
 #[test]
 fn a_prompt_is_not_sent_to_a_filler_that_declares_none() {
     let stub = Stub::new(&[], Ok(grey(WIDTH, HEIGHT)));
-    let handle = FillHandle::new(stub.clone());
-    let prompted = FillRequest::new(picture(), support(), Some("grass")).unwrap();
-    let fault = handle.fill(&prompted, &Cancellation::new()).unwrap_err();
-    assert_eq!(fault.kind(), FaultKind::Unsupported);
-    assert_eq!(
-        fault.sentence(),
-        "the backend filler does not declare the feature prompt"
-    );
-    assert_eq!(stub.sent.load(Ordering::SeqCst), 0);
+    let handle = FillHandle::new(stub.clone(), Cancellation::new());
+    // Any prompt needs the feature, a prompt of one byte too.
+    for prompt in ["grass", "g"] {
+        let prompted = FillRequest::new(picture(), support(), Some(prompt)).unwrap();
+        let fault = handle.fill(&prompted).unwrap_err();
+        assert_eq!(fault.kind(), FaultKind::Unsupported);
+        assert_eq!(
+            fault.sentence(),
+            "the model filler of the backend stub does not declare the feature prompt"
+        );
+        assert_eq!(stub.sent.load(Ordering::SeqCst), 0);
+    }
     // Without a prompt the same filler is asked.
     let plain = FillRequest::new(picture(), support(), None).unwrap();
-    handle.fill(&plain, &Cancellation::new()).unwrap();
+    handle.fill(&plain).unwrap();
     assert_eq!(stub.sent.load(Ordering::SeqCst), 1);
 }
 
 #[test]
-fn nothing_is_sent_once_the_run_is_cancelled() {
-    let stub = Stub::new(&[], Ok(grey(WIDTH, HEIGHT)));
-    let cancellation = Cancellation::new();
-    cancellation.cancel();
+fn a_handle_is_bound_to_its_runs_cancellation_and_sends_nothing_once_it_is_set() {
+    // The action hands the handle no signal: the handle holds the run's, from the
+    // moment it was made. Cancelled before the handle was made, or after, nothing is
+    // sent.
     let request = FillRequest::new(picture(), support(), None).unwrap();
-    let fault = FillHandle::new(stub.clone())
-        .fill(&request, &cancellation)
+    let cancelled = Cancellation::new();
+    cancelled.cancel();
+    let stub = Stub::new(&[], Ok(grey(WIDTH, HEIGHT)));
+    let fault = FillHandle::new(stub.clone(), cancelled)
+        .fill(&request)
         .unwrap_err();
     assert_eq!(fault.kind(), FaultKind::Cancelled);
     assert_eq!(stub.sent.load(Ordering::SeqCst), 0);
+
+    let run = Cancellation::new();
+    let handle = FillHandle::new(stub.clone(), run.clone());
+    handle.fill(&request).unwrap();
+    assert_eq!(stub.sent.load(Ordering::SeqCst), 1);
+    run.cancel();
+    assert_eq!(
+        handle.fill(&request).unwrap_err().kind(),
+        FaultKind::Cancelled
+    );
+    // A clone of the handle is bound to the same run.
+    assert_eq!(
+        handle.clone().fill(&request).unwrap_err().kind(),
+        FaultKind::Cancelled
+    );
+    assert_eq!(stub.sent.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_handle_hands_the_backend_its_deadline_and_sends_nothing_once_it_has_passed() {
+    let request = FillRequest::new(picture(), support(), None).unwrap();
+    let stub = Stub::new(&[], Ok(grey(WIDTH, HEIGHT)));
+    let later = Instant::now() + Duration::from_secs(3600);
+    FillHandle::new(stub.clone(), Cancellation::new())
+        .until(later)
+        .fill(&request)
+        .unwrap();
+    assert_eq!(*stub.seen.lock().unwrap(), Some((false, Some(later))));
+
+    let passed = Instant::now()
+        .checked_sub(Duration::from_millis(1))
+        .unwrap();
+    let fault = FillHandle::new(stub.clone(), Cancellation::new())
+        .until(passed)
+        .fill(&request)
+        .unwrap_err();
+    assert_eq!(fault.kind(), FaultKind::TimedOut);
+    assert_eq!(
+        fault.sentence(),
+        "the deadline of the run passed before the request was sent"
+    );
+    assert_eq!(stub.sent.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -328,8 +426,8 @@ fn a_fillers_fault_is_handed_back_as_it_is() {
     let stub = Stub::new(&[], Err(fault.clone()));
     let request = FillRequest::new(picture(), support(), None).unwrap();
     assert_eq!(
-        FillHandle::new(stub)
-            .fill(&request, &Cancellation::new())
+        FillHandle::new(stub, Cancellation::new())
+            .fill(&request)
             .unwrap_err(),
         fault
     );

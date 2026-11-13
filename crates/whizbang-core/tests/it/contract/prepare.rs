@@ -402,7 +402,7 @@ fn a_call_that_names_no_backend_gets_the_default_and_one_that_names_one_gets_it(
     };
     assert_eq!(
         missing[0].why(),
-        "the segment backend tiny does not declare the feature phrase"
+        "the segment backend tiny does not declare the feature \"phrase\""
     );
     assert_eq!(prepared.needs()[0].choice(), Some("tiny"));
     assert!(prepared.needs()[0].model().is_none());
