@@ -271,6 +271,9 @@ an admission that would make a reservation's name the store already holds is ref
 whole by the store; the executor names the run again, as it does for a run's id that
 was taken, within the same eight namings
 (`admit::a_reservation_left_by_a_deleted_run_keeps_its_name_and_the_new_run_is_named_again`).
+A reservation that is already there when the run is named costs none of the eight: the
+executor passes over an id whose reservation the store holds
+(`admit::a_run_is_not_named_with_an_id_whose_reservation_is_still_there`).
 
 The admission says the same amount (`reserved_micros`), in both its copies, which stay
 one content; and the run's record says it when the run ends (`spend.reserved_micros`,
@@ -295,7 +298,7 @@ generation names, and a way to add records of the ledger's own to the same publi
 - It declines because the allowance does not cover the amount. The call is refused with
   `Refusal::OverAllowance`, which gives the amount asked and what is left. The
   publication is dropped with everything it staged: no generation, no run, no name, no
-  file, and the request's id as free as it was
+  file, and the request's id not taken by this request
   (`admit::a_call_the_ledger_declines_is_refused_with_no_run_and_its_id_stays_free`).
 - It fails, or does what a ledger may not. That is `CallError::Ledger`, not a refusal
   of the call, and nothing is published.
@@ -347,9 +350,20 @@ naming that run. A run named eight times and given up leaves eight and none
 
 **What makes none.** Prepare
 (`prepare::prepare_makes_no_reservation`, against an executor that holds the ledger); a
-stale preparation, each of the three cases, on the ledger's count and on the store; a
+stale preparation, each of the four cases, on the ledger's count and on the store; a
 repeat; a conflict; a call that is refused or not ready; an executor that only reads its
 store (`admit::a_repeat_a_conflict_and_a_request_that_does_not_run_reserve_nothing`).
+
+**A refusal after the look.** Between a request's look for its id and its refusal, the
+same id can be admitted for another request, or for the same one sent twice; and that
+admission can be the very reason for the refusal, when it took the last of the
+allowance. So for a request with an id, any refusal that comes after the look (not
+ready, stale, no bound, over the allowance) has the id looked up once more before it is
+returned: an id that is taken by then answers, as a repeat or a conflict, and the
+refusal stands only when it is not
+(`admit::a_refusal_of_a_request_whose_id_was_taken_meanwhile_is_answered_from_the_id`).
+The same second look answers a request whose admission the store refused, so that
+answer does not rest on which of two names the store reports.
 
 **What is read is not trusted.** A stored reservation is bounded before it is read,
 read strictly, and held to be of the run its name says. One that fails stops the

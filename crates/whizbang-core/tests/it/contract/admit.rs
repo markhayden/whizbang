@@ -3170,3 +3170,180 @@ fn a_preparation_handed_to_a_call_that_is_refused_now_is_stale_under_the_calls_a
     );
     assert_eq!((shop.ledger.asked(), shop.world.ran()), (0, 0));
 }
+
+// --- an id that is taken between the look and a refusal ------------------------------------------
+
+type Once = Box<dyn FnOnce() + Send>;
+
+/// A clock that runs a hook the first time it is asked: admission asks the time after
+/// the look for the id and the preparation, and before the ledger is asked.
+struct Hooked(Mutex<Option<Once>>);
+
+impl Clock for Hooked {
+    fn now_ms(&self) -> u64 {
+        let hook = self.0.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook();
+        }
+        7000
+    }
+}
+
+/// Backends that run a hook the first time they are asked, and then offer nothing: a
+/// call that is prepared is not ready.
+struct Withdrawn(Mutex<Option<Once>>);
+
+impl Backends for Withdrawn {
+    fn resolve(
+        &self,
+        _: Capability,
+        _: Option<&str>,
+        _: &[String],
+    ) -> Result<ModelIdentity, Unavailable> {
+        let hook = self.0.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook();
+        }
+        Err(Unavailable::new("the filler was taken away"))
+    }
+}
+
+#[test]
+fn a_refusal_of_a_request_whose_id_was_taken_meanwhile_is_answered_from_the_id() {
+    // A request looks its id up and finds nothing. Before it is admitted, a request
+    // under the same id is, and takes the last of the allowance. The first is then
+    // declined by the ledger. What it is told is what the id says: the same request
+    // has its run, and another request has a conflict. It is not told that it is over
+    // the allowance, with a run of its own request executing and reserved.
+    let race = |text: &'static str| {
+        let world = World::new();
+        let store = world.store();
+        let ledger = Arc::new(FakeLedger::with_allowance(400_000));
+        let priced = |store: &Arc<Store>| {
+            engine_with(store.clone(), &world.runs, Priced::new(250_000))
+                .with_ledger(ledger.clone())
+        };
+        let winner = priced(&store);
+        let first = Arc::new(Mutex::new(None));
+        let hook: Once = {
+            let first = first.clone();
+            Box::new(move || {
+                *first.lock().unwrap() = Some(winner.request(&asked("hello", "order-17")));
+            })
+        };
+        let loser = priced(&store).with_clock(Arc::new(Hooked(Mutex::new(Some(hook)))));
+        let answer = loser.request(&asked(text, "order-17"));
+        let first = ran(first.lock().unwrap().take().unwrap());
+        assert_eq!(ledger.reservations(store.as_ref()).unwrap().len(), 1);
+        assert_eq!(world.ran(), 1);
+        (answer, first)
+    };
+    let (answer, first) = race("hello");
+    let earlier = repeat(answer);
+    assert_eq!(earlier.run(), first.run());
+    assert_eq!(earlier.state(), &RunState::Ended(completed()));
+    let (answer, first) = race("goodbye");
+    assert_eq!(
+        answer.unwrap_err(),
+        CallError::Refused(Refusal::Conflict {
+            request: id("order-17"),
+            run: first.run().clone(),
+        })
+    );
+
+    // The same for a request that is found not ready after its id was taken.
+    let world = World::new();
+    let store = world.store();
+    let winner = world.engine(store.clone());
+    let first = Arc::new(Mutex::new(None));
+    let hook: Once = {
+        let first = first.clone();
+        Box::new(move || {
+            *first.lock().unwrap() = Some(winner.request(&asked("hello", "order-17")));
+        })
+    };
+    let withdrawn = Arc::new(Withdrawn(Mutex::new(Some(hook))));
+    let loser = engine_with(store.clone(), &world.runs, withdrawn);
+    let earlier = repeat(loser.request(&asked("hello", "order-17")));
+    let first = ran(first.lock().unwrap().take().unwrap());
+    assert_eq!(earlier.run(), first.run());
+    // An id that nobody took leaves the refusal as it is.
+    assert!(matches!(
+        loser.request(&asked("hello", "order-18")),
+        Err(CallError::Refused(Refusal::NotReady { .. }))
+    ));
+    assert_eq!(world.ran(), 1);
+}
+
+#[test]
+fn a_run_is_not_named_with_an_id_whose_reservation_is_still_there() {
+    // Two thousand reservations left by runs that were deleted, under the ids the
+    // executor would choose next. It passes over each when it names the run: none of
+    // them costs one of the eight namings, and the ledger is asked once.
+    let world = World::new();
+    let store = world.store();
+    let mut publication = store.begin().unwrap();
+    for count in 1..=2000 {
+        let name = format!("spend/reservations/7000-{count}");
+        publication
+            .create(&name, store::Kind::Diagnostic, b"left behind\n")
+            .unwrap();
+    }
+    publication.publish().unwrap();
+    let asked_times = Arc::new(AtomicU64::new(0));
+    let counting = {
+        let asked_times = asked_times.clone();
+        Scripted(move |_: &Reservation, _: &mut Step<'_, '_>| {
+            asked_times.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+    };
+    let engine = engine_with(store.clone(), &world.runs, Priced::new(250_000))
+        .with_ledger(Arc::new(counting));
+    let finished = ran(engine.request(&asked("hello", "order-17")));
+    assert_eq!(asked_times.load(Ordering::SeqCst), 1);
+    let count: u64 = finished.run().as_str()["7000-".len()..].parse().unwrap();
+    assert!(count > 2000, "{count}");
+    assert_eq!(store.snapshot().unwrap().runs().len(), 1);
+}
+
+#[test]
+fn a_ledgers_name_is_two_hundred_characters_at_most_and_the_fake_does_not_add_past_the_largest() {
+    let made = |length: usize| {
+        let world = World::new();
+        let store = world.store();
+        let name = format!("spend/{}", "x".repeat(length - "spend/".len()));
+        assert_eq!(name.len(), length);
+        let ledger = Scripted(move |_: &Reservation, step: &mut Step<'_, '_>| {
+            step.make(&name, b"x")?;
+            Ok(())
+        });
+        let engine =
+            engine_with(store.clone(), &world.runs, Priced::new(1)).with_ledger(Arc::new(ledger));
+        engine.request(&asked("hello", "order-17"))
+    };
+    ran(made(200));
+    assert!(matches!(made(201), Err(CallError::Ledger { .. })));
+
+    // Two reservations of one under the largest amount, made with no limit. Their sum
+    // is past the largest amount: it stops there, and under an allowance of the
+    // largest amount nothing is left, not what a sum that wrapped would leave.
+    let world = World::new();
+    let store = world.store();
+    let ledger = Arc::new(FakeLedger::new());
+    let backends = Priced::new(u64::MAX - 1);
+    let engine =
+        engine_with(store.clone(), &world.runs, backends.clone()).with_ledger(ledger.clone());
+    engine.submit(&call("one")).unwrap();
+    engine.submit(&call("two")).unwrap();
+    ledger.allow(Some(u64::MAX));
+    backends.bound.store(1, Ordering::SeqCst);
+    assert_eq!(
+        engine.submit(&call("three")).unwrap_err().refusal(),
+        Some(&Refusal::OverAllowance {
+            action: "paint".to_owned(),
+            asked_micros: 1,
+            left_micros: 0,
+        })
+    );
+}

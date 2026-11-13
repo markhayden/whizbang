@@ -167,9 +167,11 @@ impl Engine {
     /// A new run's id: the time in milliseconds since the Unix epoch, a hyphen, and a
     /// count. The count is one for the whole process ([`NAMED`]), so two executors never
     /// make the same id from the same time, and it goes up past any id the store
-    /// already holds now. That an id is still free when its run is admitted is not
-    /// taken on trust: the admission's publication makes the run, and the store refuses
-    /// it if the id was taken meanwhile ([`MAX_NAMINGS`]).
+    /// already holds now, and past any id whose reservation the store still holds: a
+    /// run that was deleted leaves its reservation, and a run that reserves cannot
+    /// have that id. That an id is still free when its run is admitted is not taken on
+    /// trust: the admission's publication makes the run, and the store refuses it if
+    /// the id, or its reservation's name, was taken meanwhile ([`MAX_NAMINGS`]).
     fn name_run(&self, store: &Store, now_ms: u64) -> Result<RunId, CallError> {
         let generation = store
             .snapshot()
@@ -177,7 +179,9 @@ impl Engine {
         loop {
             let count = NAMED.fetch_add(1, Ordering::SeqCst) + 1;
             let id = RunId::minted(now_ms, count);
-            if generation.run(id.as_str()).is_none() {
+            if generation.run(id.as_str()).is_none()
+                && generation.get(&Reservation::name_of(&id)).is_none()
+            {
                 return Ok(id);
             }
         }
@@ -279,6 +283,14 @@ impl Executor for Engine {
         }
         match self.run(request.call(), Some((id, fingerprint)), request.expected()) {
             Ok(finished) => Ok(Answer::Ran(finished)),
+            // A refusal that comes after the look is of a request whose id may have
+            // been taken since: by then the call may no longer prepare the same, be
+            // ready, or fit the allowance, because the request under its id was
+            // admitted. The id is looked up once more, and what it says is the
+            // answer; a refusal stands only when the id is still not taken.
+            Err(Stopped::Refused(error @ CallError::Refused(_))) => {
+                answer(self.look_up(id, fingerprint)?).unwrap_or(Err(error))
+            }
             Err(Stopped::Refused(error)) => Err(error),
             // Another request was admitted under the id between the look and the
             // admission, and the store refused this one. Nothing of this request was

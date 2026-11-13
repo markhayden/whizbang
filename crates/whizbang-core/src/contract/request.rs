@@ -214,7 +214,7 @@ impl std::fmt::Display for RequestRecordError {
         match self {
             RequestRecordError::TooLarge { bytes } => write!(
                 f,
-                "{bytes} bytes, and a record of a request is at most {REQUEST_RECORD_MAX_BYTES}"
+                "{bytes} bytes, and such a record is at most {REQUEST_RECORD_MAX_BYTES}"
             ),
             RequestRecordError::OtherVersion { found } => write!(
                 f,

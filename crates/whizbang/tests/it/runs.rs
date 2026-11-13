@@ -327,6 +327,30 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
     assert!(shown.err.contains(expected), "{}", shown.err);
     assert!(shown.err.contains(" at line 1 column "), "{}", shown.err);
     assert!(!shown.err.contains('\u{1b}'));
+
+    // A record of the version before this one is another version, and is said to be.
+    {
+        let store = Store::open_existing(&root, Arc::new(RealFs)).unwrap();
+        let mut publication = store.begin().unwrap();
+        publication
+            .put_in(
+                "older",
+                "record",
+                Kind::Diagnostic,
+                b"{\"record\":\"run/1\",\"spend\":[]}\n",
+            )
+            .unwrap();
+        publication.publish().unwrap();
+    }
+    let shown = whizbang(&["show", "older"], &root);
+    assert_eq!(shown.code, Some(1));
+    assert!(
+        shown
+            .err
+            .contains("a record of another version: run/1, and this build reads run/2"),
+        "{}",
+        shown.err
+    );
 }
 
 #[test]

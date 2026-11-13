@@ -565,7 +565,7 @@ pub enum Refusal {
     /// The call is ready, and the ledger declined its reservation: it may cost up to
     /// `asked_micros`, and `left_micros` is what is left of the allowance, both in
     /// millionths of a US dollar. No run was made, nothing was reserved, and the
-    /// request's id is free.
+    /// request's id is not taken by this request.
     OverAllowance {
         action: String,
         asked_micros: u64,

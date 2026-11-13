@@ -32,7 +32,9 @@ Amended: 2026-11-12, a fifth note, with the last part of ADR 0007, which reserve
 record is `run/2`, the shared step this record allowed: `spend` is an object that says
 what was reserved for the run, and holds the list of paid requests, which is the empty
 one now. Seven lists are empty where eight were. The schema is `run-2.json`. A `run/1`
-record is another version, and is refused.
+record is another version, and is refused. The admission (ADR 0007) is still
+`admission/1` though it gained a field: it has no schema and no reader outside this
+code, and one written before is refused for the field it lacks.
 Amended: 2026-11-12, a fifth note, with the second part of ADR 0007. Changed: the end of
 a run is published with `Publication::close_run`.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
