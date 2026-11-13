@@ -16,7 +16,9 @@ use whizbang_core::store::Store;
 /// Every action this build ships, registered in the order a door lists them. Tools add
 /// theirs here as they are ported.
 pub fn registry() -> Result<Registry, RegistrationError> {
-    Ok(Registry::new())
+    let mut registry = Registry::new();
+    registry.register(Arc::new(whizbang_rascal::grow::Grow::new()))?;
+    Ok(registry)
 }
 
 /// The executor of this build over a registry and a read of a store: it prepares calls
@@ -32,8 +34,8 @@ pub fn executor(registry: Registry, store: Arc<dyn Contents + Send + Sync>) -> E
 
 /// The executor of this build that runs actions: over a registry and a store opened to
 /// write, which it reads and writes its runs to. It is built as [`executor`] is, with no
-/// backend, no config and no secret to redact: nothing reads a key yet. No command of
-/// the binary runs an action yet; the tests do, with their fakes registered.
+/// backend, no config and no secret to redact: nothing reads a key yet. `whizbang rascal
+/// grow` runs its action on it, and the tests run theirs, with their fakes registered.
 pub fn runner(registry: Registry, store: Arc<Store>) -> Engine {
     Engine::over(registry, Arc::new(NoBackends), store, Digest::of_bytes(b""))
 }

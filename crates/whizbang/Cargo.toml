@@ -18,6 +18,7 @@ path = "tests/it/main.rs"
 
 [dependencies]
 whizbang-core.workspace = true
+whizbang-rascal.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 

@@ -5,4 +5,6 @@
 What `whizbang` 0.0.1 can do, from its static description (version 4).
 The same as data: [description.json](description.json).
 
-This build registers no actions yet.
+## `grow`
+
+Grows the core of a mask by a disc, and further downward for a shadow.

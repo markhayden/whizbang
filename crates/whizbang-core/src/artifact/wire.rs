@@ -352,7 +352,7 @@ impl<'a> Reader<'a> {
         self.tag(b'a', "what the artifact holds inside it")?;
         let found = self.kind()?;
         if found != kind {
-            return Err(refuse(format!("it holds {found} where {kind} belongs")));
+            return Err(refuse(format!("it holds {found:?} where {kind} belongs")));
         }
         Ok(())
     }

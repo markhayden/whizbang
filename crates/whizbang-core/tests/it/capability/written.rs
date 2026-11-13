@@ -293,7 +293,10 @@ fn a_script_is_read_strictly_and_within_its_bounds() {
     assert_eq!(other(json!("judge-script/2")), "judge-script/2");
     assert_eq!(other(json!(EXCHANGE)), EXCHANGE);
     assert_eq!(other(json!(7)), "none");
-    assert_eq!(other(json!("v".repeat(300))).len(), 64);
+    // A kind of more than 64 bytes is not kept at all, however long it is.
+    assert_eq!(other(json!("v".repeat(64))).len(), 64);
+    assert_eq!(other(json!("v".repeat(65))), "none");
+    assert_eq!(other(json!("v".repeat(3_000_000))), "none");
     // A fault of a kind there is not.
     let fault = json!({"fault": {"kind": "tired", "sentence": "x", "retry_after_ms": null}});
     let error = read_script(&script_with(|d| d["entries"][0] = fault)).unwrap_err();

@@ -27,8 +27,10 @@ use whizbang_core::contract::{
 use whizbang_core::contract::{MESSAGE_LIMIT, Value};
 use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::store::{Kind as Stored, Reader};
+use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::capabilities::{FakeFiller, FakeJudge, Paint, roster};
 use whizbang_testkit::schema::validate;
+use whizbang_testkit::threads;
 
 use super::commit::World;
 use super::record::schema;
@@ -1149,13 +1151,17 @@ fn a_record_of_as_many_requests_as_a_run_sends_is_under_the_limit_by_arithmetic(
     assert_eq!((none, all), (0, FEW));
     // A request's model, its duration, its turn and its exchange among the diagnostics.
     let each = (with - without).div_ceil(FEW);
-    assert!((1000..=1200).contains(&each), "{each} bytes a request");
-    // The sum of ADR 0009: the requests, 256 steps of 256 bytes, 256 refusals of 512
-    // characters of six bytes each, and three texts of 4,099 characters of six bytes
-    // each. It leaves two megabytes for what the executor does not bound.
-    let worst = 1200 * REQUESTS_LIMIT + 256 * 256 + 256 * (512 * 6 + 128) + 3 * 4099 * 6;
-    assert_eq!(worst, 2_187_318);
-    assert!((worst as u64) + 2_000_000 < RECORD_MAX_BYTES);
+    assert!((1000..=1211).contains(&each), "{each} bytes a request");
+    // The sum of ADR 0009, with 1,211 bytes a request, which is what one takes when
+    // its times have twenty digits and its indexes four: the requests, 256 steps of
+    // 256 bytes, 256 refusals of 512 characters of six bytes each, and three texts of
+    // 4,099 characters of six bytes each. A count with every field at the schema's
+    // own maximum is 2,364,470. Either leaves 1.8 megabytes for what the executor
+    // does not bound.
+    let worst = 1211 * REQUESTS_LIMIT + 256 * 256 + 256 * (512 * 6 + 128) + 3 * 4099 * 6;
+    assert_eq!(worst, 2_198_582);
+    let apart = 2_364_470;
+    assert!(worst.max(apart) as u64 + 1_800_000 < RECORD_MAX_BYTES);
 }
 
 #[test]
@@ -1251,6 +1257,53 @@ fn a_request_whose_exchange_the_run_has_no_room_for_is_not_sent_and_the_record_s
         "{kept}"
     );
     assert!(!names.contains_key("diagnostics/exchange-0003"));
+}
+
+#[test]
+fn two_requests_at_once_cannot_both_take_the_last_of_what_a_run_may_store() {
+    // The run may store 500,000 bytes. Two requests are open at once, held by the
+    // judge at a barrier, and each is answered with 300,000 bytes. Room for an
+    // exchange is taken in one step with the look at what is left, so one of the two
+    // is kept whole and the other as its sizes, whatever the order: together they are
+    // never over what the run may store. Both actions' threads are handed their turn.
+    let world = World::new();
+    let barriers = Barriers::new();
+    let answer = "a".repeat(300_000);
+    let script = vec![Ok(said(&answer)), Ok(said(&answer))];
+    let judge = Arc::new(FakeJudge::scripted(script).stopping_at(&barriers, "judge"));
+    let asks = {
+        let barriers = barriers.clone();
+        action("asks", judging(), move |_, context| {
+            let judge = context.capabilities().judge().unwrap();
+            threads::scope(|scope| {
+                for _ in 0..2 {
+                    scope.spawn(|| {
+                        let turn = judge.send(&asking("well?", 64)).unwrap();
+                        assert_eq!(turn.text_bytes(), 300_000);
+                    });
+                }
+                barriers.arrived("judge", 2);
+                barriers.open("judge");
+            });
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    )
+    .with_exchanges_budget(500_000);
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let (_, names) = stored(&world, finished.run());
+    let exchanges = names.iter().filter(|(name, _)| name.contains("exchange"));
+    let mut sizes: Vec<usize> = exchanges.map(|(_, bytes)| bytes.len()).collect();
+    sizes.sort_unstable();
+    assert_eq!(sizes.len(), 2);
+    assert!(sizes.iter().sum::<usize>() <= 500_000, "{sizes:?}");
+    assert!(sizes[0] < 1000 && sizes[1] > 300_000, "{sizes:?}");
 }
 
 #[test]
@@ -1599,4 +1652,13 @@ fn the_types_hold_a_record_to_as_many_requests_as_a_run_sends_whatever_else_agre
         Err(RecordError::NotCanonical),
         "the count itself is allowed"
     );
+    // The reader's own check of a name's length, whatever a schema says: a name of
+    // 129 letters is refused by the check that says so, and one of 128 is not.
+    let named = |letters: usize| {
+        let change = |d: &mut Json| d["models"][0]["version"] = json!("v".repeat(letters));
+        RunRecord::from_bytes(&changed(&record, &change).0)
+    };
+    let said = "a model's name is longer than one is kept, or is not ASCII";
+    assert_eq!(named(129), Err(RecordError::Inconsistent(said.to_owned())));
+    assert_eq!(named(128), Err(RecordError::NotCanonical));
 }

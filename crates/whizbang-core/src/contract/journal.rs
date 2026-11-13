@@ -109,19 +109,18 @@ impl Recorder for Kept {
         self.secrets.redact(text)
     }
 
-    fn exchange(&self, place: usize, written: &[u8], room: u64) -> Option<(String, u64)> {
+    fn exchange(&self, place: usize, written: &[u8], room: &dyn Fn(u64) -> bool) -> Option<String> {
         // A name is refused only when it holds a secret: the exchange is then not
         // kept, and the record says so. Nor is one kept that would take, with the
         // secrets taken out, more than there is room for: redaction can lengthen it.
         let name = format!("{EXCHANGE_PREFIX}{:04}", place + 1);
         let made = Diagnostic::written(&name, written, &self.secrets).ok()?;
-        let stored = made.1.len() as u64;
-        if stored > room {
+        if !room(made.1.len() as u64) {
             return None;
         }
         let mut diagnostics = self.diagnostics.lock().unwrap_or_else(|e| e.into_inner());
         diagnostics.insert(name.clone(), made);
-        Some((format!("{DIAGNOSTICS_PREFIX}{name}"), stored))
+        Some(format!("{DIAGNOSTICS_PREFIX}{name}"))
     }
 }
 

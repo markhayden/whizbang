@@ -255,10 +255,11 @@ pub(crate) trait Recorder: Send + Sync {
     fn redact(&self, text: &str) -> String;
 
     /// Keeps the written exchange with a judge that was the run's request at this
-    /// place, from 0, when what would be stored of it, with the secrets taken out, is
-    /// at most `room` bytes. What comes back is the name it is kept under among the
-    /// run's names and how many bytes are stored; or none when it was not kept.
-    fn exchange(&self, place: usize, written: &[u8], room: u64) -> Option<(String, u64)>;
+    /// place, from 0, when `room` takes that many bytes for what would be stored of
+    /// it, with the secrets taken out: `room` is asked once, before anything is
+    /// stored. What comes back is the name it is kept under among the run's names; or
+    /// none when it was not kept.
+    fn exchange(&self, place: usize, written: &[u8], room: &dyn Fn(u64) -> bool) -> Option<String>;
 }
 
 /// The most bytes of exchanges with a judge that one run stores, as they are stored
@@ -395,6 +396,8 @@ impl Tally {
         Ok(Sent {
             tally: self.clone(),
             place: counts.asked.len() - 1,
+            reserved: 0,
+            kept: false,
         })
     }
 
@@ -451,6 +454,10 @@ impl Tally {
 pub(crate) struct Sent {
     tally: Arc<Tally>,
     place: usize,
+    /// How many bytes of what the run may store this request holds for its exchange.
+    reserved: u64,
+    /// Whether the exchange was kept, or found not to be: what is held is then used.
+    kept: bool,
 }
 
 impl Sent {
@@ -472,20 +479,35 @@ impl Sent {
 
     /// Whether the run has room to store the exchange that begins with this. When it
     /// has not, the request is not to be sent: the fault says so.
-    pub(crate) fn room(&self, head: &written::Head) -> Result<(), Fault> {
-        let counts = self.tally.counts();
-        let budget = counts.budget.unwrap_or(EXCHANGES_MAX_BYTES);
+    pub(crate) fn room(&mut self, head: &written::Head) -> Result<(), Fault> {
         let needed = head.len() + ANSWER_ROOM;
-        let left = budget.saturating_sub(counts.stored);
-        if needed > left.min(written::EXCHANGE_MAX_BYTES as u64) {
-            return Err(Fault::new(
+        self.reserve(needed).map_err(|(left, budget)| {
+            Fault::new(
                 FaultKind::TooLarge,
                 &format!(
                     "the exchange would take {needed} bytes or more, and the run may store \
                      {left} more of its {budget}"
                 ),
-            ));
+            )
+        })
+    }
+
+    /// Takes `bytes` of what the run may store for this request's exchange, in place
+    /// of what the request held before, when the run has that much left and an
+    /// exchange may be that large: the look and the taking are one step under the
+    /// tally's lock, so requests that are open at once cannot together take more than
+    /// there is. Refused, nothing changes, and what comes back is what was left and
+    /// the whole.
+    fn reserve(&mut self, bytes: u64) -> Result<(), (u64, u64)> {
+        let mut counts = self.tally.counts();
+        let budget = counts.budget.unwrap_or(EXCHANGES_MAX_BYTES);
+        let others = counts.stored - self.reserved;
+        let left = budget.saturating_sub(others);
+        if bytes > left.min(written::EXCHANGE_MAX_BYTES as u64) {
+            return Err((budget.saturating_sub(counts.stored), budget));
         }
+        counts.stored = others + bytes;
+        self.reserved = bytes;
         Ok(())
     }
 
@@ -493,6 +515,8 @@ impl Sent {
     /// the run's recorder, when the run has one, and what the record says of it here.
     /// The answer is written whole unless `unwritten` holds the turn to write the
     /// sizes of in its place, or the whole would be more than the run has room for.
+    /// Room is taken, for what will be stored, before it is stored; and what the
+    /// request held and did not use is given back.
     pub(crate) fn judged(
         &mut self,
         head: Option<&written::Head>,
@@ -500,35 +524,36 @@ impl Sent {
         answer: &Result<Turn, Fault>,
         unwritten: Option<&Turn>,
     ) {
-        let (recorder, left) = {
-            let counts = self.tally.counts();
-            let budget = counts.budget.unwrap_or(EXCHANGES_MAX_BYTES);
-            (
-                counts.recorder.clone(),
-                budget.saturating_sub(counts.stored),
-            )
-        };
-        let room = left.min(written::EXCHANGE_MAX_BYTES as u64);
-        let kept = recorder.zip(head).and_then(|(recorder, head)| {
+        let recorder = self.tally.recorder();
+        let place = self.place;
+        let kept_as = recorder.zip(head).and_then(|(recorder, head)| {
+            let reserved = std::cell::RefCell::new(&mut *self);
+            let room = |bytes: u64| reserved.borrow_mut().reserve(bytes).is_ok();
             let whole = match unwritten {
-                None => recorder.exchange(self.place, &head.answered(answer), room),
+                None => recorder.exchange(place, &head.answered(answer), &room),
                 Some(_) => None,
             };
             // What does not fit whole is kept with its turn not written.
             let turn = unwritten.or(answer.as_ref().ok());
-            whole.or_else(|| recorder.exchange(self.place, &head.unwritten(turn?), room))
+            whole.or_else(|| recorder.exchange(place, &head.unwritten(turn?), &room))
         });
-        let (kept_as, stored) = kept.unzip();
+        if kept_as.is_none() {
+            // Nothing was stored: what the request held is given back.
+            let _ = self.reserve(0);
+        }
+        self.kept = true;
         let judged = judge::Judged::of(request, answer, kept_as);
-        let mut counts = self.tally.counts();
-        counts.stored += stored.unwrap_or(0);
-        counts.asked[self.place].judged = Some(judged);
+        self.tally.counts().asked[self.place].judged = Some(judged);
     }
 }
 
 impl Drop for Sent {
     fn drop(&mut self) {
         let mut counts = self.tally.counts();
+        // A request that unwound before its exchange was kept stored nothing.
+        if !self.kept {
+            counts.stored -= self.reserved;
+        }
         let now = counts
             .recorder
             .as_ref()

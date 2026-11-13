@@ -176,6 +176,25 @@ fn growth_stops_at_the_edges_of_the_image() {
     for px in [10_000.0, 1e300, f64::INFINITY] {
         assert_eq!(grown_of(&corner(2, 1), 5, 4, px, 0.0), vec![255; 20]);
     }
+    // Nor does it wrap: on a panorama, whose left and right edges meet, a core at the
+    // left edge does not grow across the seam.
+    let panorama = Binding::root(
+        PixelDigest(Digest::of_bytes(b"panorama")),
+        Space::panorama(8, 4).unwrap(),
+    );
+    let at_the_seam = plane(8, 4, |x, y| (x, y) == (0, 1));
+    let mask = Mask::from_core(
+        panorama,
+        UseCase::Remove,
+        at_the_seam,
+        Source::default(),
+        made_by("fixture"),
+    );
+    let made = grow(mask.unwrap(), 1.0, None, &never).unwrap().unwrap();
+    assert_eq!(
+        places(made.mask.core(), 8),
+        BTreeSet::from([(0, 0), (0, 1), (1, 1), (0, 2)])
+    );
     // Nothing grows from nothing, and what is full stays full.
     assert_eq!(grown_of(&[0; 20], 5, 4, 3.0, 2.0), vec![0; 20]);
     assert_eq!(grown_of(&[255; 20], 5, 4, 3.0, 2.0), vec![255; 20]);
@@ -597,4 +616,24 @@ fn a_grow_that_is_told_to_stop_gives_nothing() {
     // 200 rows are looked at in three passes, each every 64 rows.
     assert_eq!(looks, 12);
     assert!(grow(band_mask(), 2.0, None, &|| true).unwrap().is_none());
+}
+
+#[test]
+fn zero_of_either_sign_is_written_as_one_zero() {
+    // A recipe may call the function with a zero that carries a sign. It is the same
+    // radius, and is written the one way: an origin has no second spelling of it.
+    let before = mask_of(5, 4, plane(5, 4, |x, _| x == 2), &[0; 20]);
+    let plain = grow(before.clone(), 0.0, Some(0.0), &never)
+        .unwrap()
+        .unwrap();
+    let signed = grow(before, -0.0, Some(-0.0), &never).unwrap().unwrap();
+    let last = |mask: &Mask| mask.origin().steps().last().unwrap().arguments.clone();
+    let zero = [
+        ("px".to_owned(), "0".to_owned()),
+        ("down_px".to_owned(), "0".to_owned()),
+    ];
+    assert_eq!(last(&signed.mask), zero);
+    assert_eq!(last(&plain.mask), zero);
+    assert_eq!(signed.mask.to_bytes(), plain.mask.to_bytes());
+    assert_eq!(whizbang_rascal::grow::text_of(-0.0), "0");
 }

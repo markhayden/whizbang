@@ -657,3 +657,62 @@ fn a_refusal_inside_a_binding_says_what_is_wrong_once() {
     assert!(matches!(refusal, ArtifactError::Format(_)), "{refusal:?}");
     assert!(!refusal.to_string().contains("binding:"), "{refusal}");
 }
+
+#[test]
+fn an_error_said_without_paths_shows_nothing_a_hostile_file_holds_as_it_is() {
+    // A mask's file whose profile, inside it, starts with a kind that is an escape
+    // sequence: the refusal quotes the kind. Said for a caller elsewhere, the quote is
+    // escaped, and the whole sentence is of a bounded length.
+    let bytes = full_mask(on("photo")).to_bytes();
+    let kind = b"whizbang:band_profile/1";
+    let at = bytes.windows(kind.len()).position(|part| part == kind);
+    let at = at.expect("the profile's band inside the mask") + b"whizbang:".len();
+    let mut hostile = bytes.clone();
+    hostile[at..at + 5].copy_from_slice(b"\x1b[2J\n");
+    let error = Mask::from_bytes(&hostile, &limits()).unwrap_err();
+    assert!(matches!(error, ArtifactError::Format(_)), "{error:?}");
+    let said = error.without_paths();
+    assert!(said.contains("\\u{1b}[2J\\n"), "{said}");
+    assert!(!said.chars().any(char::is_control), "{said:?}");
+    // Any reason, however long, is cut.
+    let long = ArtifactError::Format("x".repeat(100_000));
+    assert!(long.without_paths().chars().count() <= 400);
+    let long = ArtifactError::Invalid {
+        artifact: ArtifactType::Mask,
+        why: "y\u{7}".repeat(50_000),
+    };
+    let said = long.without_paths();
+    assert!(said.chars().count() <= 400 && !said.chars().any(char::is_control));
+}
+
+#[test]
+fn a_store_failure_inside_an_artifacts_error_is_printed_without_the_stores_paths() {
+    // Reading an artifact whose object file is gone: the store's error names the file
+    // by its whole path. Neither `{:?}` nor the sentence without paths shows it.
+    let dir = whizbang_testkit::scratch::Scratch::new("artifact-error");
+    let root = dir.path().join("store");
+    let fs = std::sync::Arc::new(whizbang_core::store::fs::RealFs);
+    let store = whizbang_core::store::Store::open(&root, fs).unwrap();
+    let mask = Artifact::from(rect_mask(on("photo")));
+    let mut publication = store.begin().unwrap();
+    let id = whizbang_core::artifact::put(&mut publication, &mask).unwrap();
+    publication.publish().unwrap();
+    for entry in std::fs::read_dir(root.join("objects")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() {
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    let error = whizbang_core::artifact::get(&store, ArtifactType::Mask, id, &limits());
+    let error = error.unwrap_err();
+    assert!(matches!(error, ArtifactError::Store(_)));
+    let place = dir.path().to_str().unwrap();
+    assert!(
+        error.to_string().contains(place),
+        "the sentence for whoever runs the store"
+    );
+    for said in [format!("{error:?}"), error.without_paths()] {
+        assert!(!said.contains(place) && !said.contains("objects"), "{said}");
+        assert!(said.contains("missing or damaged"), "{said}");
+    }
+}
