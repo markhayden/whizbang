@@ -21,6 +21,13 @@ and the executor names the run again. Added: a secret is refused as a diagnostic
 a reader's reason is cut at 200 characters, a quoted name at 64; that a refusal inside a
 run is not recorded yet; what `--diagnostic` prints; that a record does not give back the
 fingerprint of a call whose argument held a secret; a closed pipe is not an error.
+Amended: 2026-11-12, a fourth note, with ADR 0007, which admits a run. Changed: a run is
+in the store from its admission, in a publication of its own, and its end is a second
+publication that adds to it; so "nothing durable says so until step 5" and "a run is in
+the store whole or not at all" no longer hold as they were written, and "What `submit`
+does" and "What is not built" are written again. `identity.request` is filled, and a
+record whose `request` is no request id is refused. `runs list|show` say when a run was
+admitted and has not ended.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
 
@@ -118,9 +125,12 @@ step to `run/2`, each adding to it as it lands. `run/2` is frozen at that tag. A
 every fill is a new version, and whatever reads records goes on reading the frozen
 versions.
 
-`identity.request` and `identity.parent` are null in every record written today, because
-no call carries a request id and no call nests. They are strings when they are filled, and
-filling them does not change the version: a reader of `run/1` already accepts both.
+`identity.parent` is null in every record written today, because no call nests.
+`identity.request` is the caller's id for the request that made the run, or null when it
+gave none (ADR 0007). They are strings when they are filled, and filling them does not
+change the version: a reader of `run/1` already accepts both. A `request` that is there
+is a request id, 1 to 128 characters of its alphabet: the types refuse any other text,
+and the schema holds it to the two lengths.
 
 ### Written one way, and read strictly
 
@@ -141,6 +151,7 @@ Reading refuses, in this order:
   `request`, `parent`, `error` and `invalid` among them, which may be null and may not be
   absent; a digest, a type or a status that is none; a value under two kinds or under
   none; a number under zero where a time or a length goes;
+- a `request` that is a text and is no request id (ADR 0007);
 - a record of the right shape that says what no run can: an empty run id, version, action
   name, argument name or port; an `error` without the status `error` or the status
   without it; the same for `invalid`; an output of a run that did not complete; an end
@@ -194,6 +205,7 @@ fields):
   with `invalid`, outputs only of a completed run, the end not before the start;
 - what a diagnostic's name may be, the order of the diagnostics, and that no name is
   there twice;
+- the alphabet of a request id: it holds a `request` to its two lengths only;
 - the one way of writing, and the limit on a record's bytes: both are of the bytes, not
   of the document.
 
@@ -316,7 +328,8 @@ that (`docs/carry-over.md`).
 ### Where a record is, in a store
 
 A run's record is the name `record` among the names of that run (the store's
-`Publication::put_in`), as a diagnostic reference. It is not an output: nothing may take a
+`Publication::put_in`), as a diagnostic reference. The run's admission, `admitted`, is
+another of its names and is ADR 0007's; it is not one of the diagnostics a record lists. It is not an output: nothing may take a
 record as an input, and the store refuses a diagnostic where an output is asked for. Being
 one of the run's names, it goes when the run is deleted and its content at the next prune,
 and by nothing else, which is what the spec asks.
@@ -370,30 +383,34 @@ refuses to run one (`Refusal::ReadOnly`), because it was given no way to write.
 `Engine::over` is given a store opened to write, which makes its process the store's one
 writer for as long as the executor lives; it reads that store and writes its runs to it.
 
-**What `submit` does, in order.**
+**What `submit` does, in order.** `Executor::request`, which takes a call that may carry
+a request id, first looks the id up (ADR 0007), and then does the same.
 
 1. Prepares the call. A refusal, or a call that is not ready, is answered as ADR 0004
    says: there is no run and nothing is written.
-2. Names the run and notes the time. From here there is a run.
+2. Notes the time, names the run, and admits it: one publication of the store makes the
+   run (`Publication::create_run`) with its admission, and the record of the request's
+   id when it has one (ADR 0007, "Admission"). The store refuses a publication that
+   makes a run it already holds, looking inside its publishing step; the executor then
+   names the run again and publishes again, up to eight namings, after which the refusal
+   is handed back as the store's failure. From here there is a run, durably.
 3. Runs the action, with a context of its own.
 4. Makes the outcome: completed with no outputs, error, or invalid. The secrets are taken
    out of an error's type and message and of an invalid run's reason here, so what is
    handed back holds none, as what is written holds none.
-5. Publishes, in one publication of the store that makes the run
-   (`Publication::create_run`): the journal under `journal`, each diagnostic the action
-   wrote under `diagnostics/<name>`, and the record under `record`, each as a diagnostic
-   reference of the run. The store refuses a publication that makes a run it already
-   holds, looking inside its publishing step; the executor then names the run again and
-   publishes again, up to eight namings, after which the refusal is handed back as the
-   store's failure.
-6. Answers with the run's id and its outcome, after the publication is durable.
+5. Publishes the end, in one publication that adds to the run and says the run must be
+   there (`Publication::extend_run`): the journal under `journal`, each diagnostic the
+   action wrote under `diagnostics/<name>`, and the record under `record`, each as a
+   diagnostic reference of the run.
+6. Answers with the run's id and its outcome, after that publication is durable.
 
-So a run is in the store whole or not at all, whatever its outcome, and a run that was
-reported survives a loss of power. When the store fails in step 5, `submit` answers with
-the store's failure (ADR 0004's `CallError::Store`), not with a finished run, and the
-store holds nothing of the run; the one exception is the store's own (`Unacknowledged`):
-the generation became visible and its last sync failed, and then the run is whole and was
-not reported as finished.
+So a run is in the store in one of two states, each whole: admitted, with its admission
+alone, or ended, with everything; and a run that was reported survives a loss of power.
+When the store fails in step 2 before the admission is visible, there is no run. When it
+fails in step 5, `submit` answers with the store's failure (ADR 0004's
+`CallError::Store`), not with a finished run, and the run stays as it was admitted. The
+store's own exception (`Unacknowledged`) applies to each publication: it became visible
+and its last sync failed, and then the run is admitted, or ended, and was not reported.
 
 **A run's id** is the time it started, in milliseconds since the Unix epoch, a hyphen, and
 a count: `1794519513123-1`. The count is the process's, one for every executor in it, so
@@ -404,12 +421,13 @@ started, while the time has as many digits; within one millisecond the count is 
 as text, so `-10` comes before `-9`.
 
 **One id, one run, held by the store.** That an id is free when a run is named does not
-make it free when the run is published: the run executes in between, and anything that
-writes the store can publish a run meanwhile. So it is not left to the naming. Adding
-names to a run (`Publication::put_in`) and making a run (`Publication::create_run`) are
-two operations of the store; a publication that makes a run is refused with `RunExists`,
-and publishes nothing, when the generation it would be published onto holds that run.
-Two runs are never merged under one id, whoever named them.
+make it free when the run is admitted: anything that writes the store can publish a run
+between the two. So it is not left to the naming. Adding names to a run
+(`Publication::put_in`) and making a run (`Publication::create_run`) are two operations
+of the store; a publication that makes a run is refused with `RunExists`, and publishes
+nothing, when the generation it would be published onto holds that run. Two runs are
+never merged under one id, whoever named them. And a run that was deleted while it
+executed is not made again by its end: that publication is refused with `NoSuchRun`.
 
 **What an action is handed.** A cancellation signal that nothing sets; no deadline; an
 event sink, which is the run's journal; an empty allowance; the store the executor reads;
@@ -438,20 +456,21 @@ stored: they are not escaped, and the help says so. A reader that stops reading,
 `head` does, is not an error: the command says nothing and exits 0. Both read only. Neither holds a run's id to the rule of a `RunId`: a
 run is looked up under whatever the store has it under, and everything read from a store
 is printed escaped, except the bytes asked for with `--json` and `--diagnostic`. A run
-with no record, or with one this build does not read, is listed with the reason. No
+that was admitted and has not ended is listed and shown as such, from its admission (ADR
+0007); one with no record and no admission, or with a record this build does not read,
+is listed with the reason. No
 command of the binary runs an action yet; the tests run `echo` through the executor the
 binary builds (`wiring::runner`).
 
 **What is not built, and what follows from that.**
 
-- There is no admission. A run exists from step 2, in memory; nothing durable says so
-  until step 5. A process that dies while an action runs leaves nothing of the run in the
-  store: no record, no journal, no diagnostic. Admission (the plan's next task) records a
-  run durably when it is assigned.
-- A journal's events are durable only when the run ends, and cannot be read while it
-  executes.
-- A panic inside an action is not caught: it unwinds through `submit`, and the run has no
-  record.
+- Admission is half built (ADR 0007): a run is recorded durably when it is assigned, and
+  a process that dies while an action runs leaves the run, admitted. It leaves no
+  journal and no diagnostic: those are durable only when the run ends, and cannot be
+  read while it executes. Nothing is reserved, and a prepared call is not yet handed to
+  admission to be checked again.
+- A panic inside an action is not caught: it unwinds through `submit`, and the run stays
+  admitted, with no record.
 - Nothing can cancel a run, and `submit` returns only when the run is over.
 - A refusal inside a run is not recorded. There is one today: a call from inside an
   action is refused (`NoNestedCalls`). The record's `refusals` list has no elements in
@@ -494,9 +513,10 @@ inputs. "Every artifact records what produced it" (the spec's invariant) holds b
 - A record is read whole and written again to be compared, on every read.
 - Reversing this costs every stored record. A change to the fields is a new version.
 
-What this record does not decide, and the code does not do: admission; nested calls,
+What this record does not decide, and the code does not do: admission, which is ADR
+0007's; nested calls,
 cancellation, and an action's outputs with their commit step; how a run that takes long
-is scheduled and watched; the elements of the eight empty lists; how a request id and a parent are assigned; `runs stats` and `runs export`,
+is scheduled and watched; the elements of the eight empty lists; how a parent is assigned; `runs stats` and `runs export`,
 which are milestone 2's (`SPEC.md` section 16); labels for evaluation runs; whether a diagnostic body is cut short (squint cut a
 long body and recorded its full digest; that is on `docs/carry-over.md` with the judge
 loop).

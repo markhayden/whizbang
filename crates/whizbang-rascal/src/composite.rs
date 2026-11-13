@@ -150,7 +150,7 @@ pub fn composite(
     } else {
         // The core looks at both pictures: every pixel the mask weighs nothing is the
         // same in both, or there is no derivation and no composite.
-        let checked = Derivation::checked(image.pixels(), &pixels, mask)
+        let checked = Derivation::checked_of(image, &pixels, mask)
             .map_err(|error| CompositeError::NotPreserved(reason(error)))?;
         Some(checked)
     };

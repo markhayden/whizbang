@@ -1590,6 +1590,9 @@ fn every_failure_can_be_said_without_a_path() {
         Error::RunExists {
             run: "/somewhere/private".to_owned(),
         },
+        Error::NameExists {
+            name: "/somewhere/private".to_owned(),
+        },
     ];
     for failure in &failures {
         let said = failure.without_paths();

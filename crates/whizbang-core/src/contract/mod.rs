@@ -7,8 +7,12 @@
 //! types of what an executing action is [handed](Context) and [hands back](Outcome).
 //! And the second half, as far as it is built (ADR 0005): an action [runs](Action::run)
 //! through [`Executor::submit`], and its run is written to the store as a [`RunRecord`]
-//! with its journal and diagnostics, [redacted](Secrets). Admission, nested calls,
-//! cancellation and an action's outputs are not here yet.
+//! with its journal and diagnostics, [redacted](Secrets). And request ids and the
+//! first half of admission (ADR 0007): a [`Request`] may carry a [`RequestId`], which is
+//! looked up before anything is prepared; a run is made durably, with its
+//! [`Admission`], before its action runs; and the id's record outlives the run. The
+//! estimate, the revalidation of a prepared call and the reservation are the second
+//! half; nested calls, cancellation and an action's outputs are not here yet.
 
 mod call;
 mod context;
@@ -19,6 +23,7 @@ mod prepare;
 pub mod record;
 mod redact;
 mod registry;
+pub mod request;
 mod run;
 pub mod text;
 
@@ -43,4 +48,9 @@ pub use record::{
 };
 pub use redact::{REDACTED, SECRET_MIN_BYTES, SecretRefused, Secrets};
 pub use registry::{Action, Failure, Produced, RegistrationError, Registry};
+pub use request::{
+    ADMISSION_RECORD, ADMITTED_NAME, Admission, Answer, ENDING_RECORD, Earlier, Ending,
+    REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, REQUESTS_PREFIX, Request, RequestId,
+    RequestRecordError, RunState, request_fingerprint,
+};
 pub use run::{Committed, Finished, Outcome, RUN_ID_LIMIT, RunId};

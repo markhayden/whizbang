@@ -22,6 +22,11 @@ tool definitions count toward a conversation's bound; a request id is trimmed be
 is cleaned; `Part`, `StopReason` and `Usage` can gain members; what a conversation's
 types do not check; what an opaque part's adapter mark is and is not; which controls
 are absent; that a need needed only without an argument cannot be chosen by it.
+Amended: 2026-11-12, with ADR 0007, from the review of the last part. Corrected: "a
+derivation cannot be stated of two unrelated pictures of one size" holds only while the
+mask weighs some pixel nothing; a mask whose support is the whole image vouches for any
+picture of its size, and a test pins it. Added: the check takes the digest a picture
+already holds (`Derivation::checked_of`).
 Spec: section 3, "Crates and their edges", "Identities" and "Storage"; section 4,
 "Backends"
 
@@ -463,7 +468,14 @@ mask's space, as before; it adds nothing to that binding and has no identity of 
 `Derivation::stated`, which took a binding at its word, is no longer open: nothing
 outside its module can call it. So the rebind's old boundary, "it trusts that the
 statement is true" (ADR 0002), is closed where it could be: a derivation cannot be
-stated of two unrelated pictures of one size. The test that pinned the old boundary,
+stated of two unrelated pictures of one size, unless the mask it is checked against
+weighs every pixel. The check compares the pictures only where the mask weighs nothing,
+so a mask whose support is the whole image, with nothing protected, leaves no pixel to
+compare and vouches for any two pictures of its size
+(`rebind::known_a_mask_that_weighs_every_pixel_vouches_for_any_picture_of_its_size`).
+That is the maker's statement again: whoever made that mask said every pixel may
+change. The composite hands the check the picture it was given, whose digest is not
+worked out a second time (`Derivation::checked_of`). The test that pinned the old boundary,
 `rebind::a_derivation_is_trusted_to_be_true`, is replaced by its refusal:
 `rebind::a_derivation_is_made_only_of_two_pictures_that_differ_inside_a_mask_alone`.
 

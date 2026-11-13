@@ -41,6 +41,10 @@ pub trait Contents {
     /// and its digest. A diagnostic reference is refused: an artifact is an output, and
     /// diagnostic evidence under an artifact's name is not one.
     fn read(&self, entry: &Entry) -> store::Result<Vec<u8>>;
+    /// The content of an entry of either kind, checked the same way. It is for reading
+    /// a record the executor wrote, of a request id or of a run, which is stored as a
+    /// diagnostic reference; nothing that reads an artifact uses it.
+    fn read_record(&self, entry: &Entry) -> store::Result<Vec<u8>>;
 }
 
 impl Contents for Store {
@@ -51,6 +55,10 @@ impl Contents for Store {
     fn read(&self, entry: &Entry) -> store::Result<Vec<u8>> {
         Store::read_output(self, entry)
     }
+
+    fn read_record(&self, entry: &Entry) -> store::Result<Vec<u8>> {
+        Store::read(self, entry)
+    }
 }
 
 impl Contents for Reader {
@@ -60,6 +68,10 @@ impl Contents for Reader {
 
     fn read(&self, entry: &Entry) -> store::Result<Vec<u8>> {
         Reader::read_output(self, entry)
+    }
+
+    fn read_record(&self, entry: &Entry) -> store::Result<Vec<u8>> {
+        Reader::read(self, entry)
     }
 }
 

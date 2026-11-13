@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use whizbang_core::artifact::{ArtifactId, ArtifactType};
 use whizbang_core::contract::{
-    Allowance, Call, CallError, Cancellation, Capabilities, Committed, Context, Events, Executor,
-    Finished, Outcome, PreparedCall, Refusal, RunId,
+    Allowance, Answer, Call, CallError, Cancellation, Capabilities, Committed, Context, Events,
+    Executor, Finished, Outcome, PreparedCall, Refusal, Request, RunId,
 };
 use whizbang_core::identity::Digest;
 
@@ -109,6 +109,10 @@ impl Executor for Nothing {
     }
 
     fn submit(&self, _: &Call) -> Result<Finished, CallError> {
+        Err(Refusal::NoNestedCalls.into())
+    }
+
+    fn request(&self, _: &Request) -> Result<Answer, CallError> {
         Err(Refusal::NoNestedCalls.into())
     }
 }

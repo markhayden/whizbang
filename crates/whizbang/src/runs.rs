@@ -13,7 +13,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use clap::Subcommand;
+use whizbang_core::contract::Admission;
 use whizbang_core::contract::record::{self, ArgumentValue, RunRecord, StoredRecordError};
+use whizbang_core::contract::request::admitted;
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Generation, Kind, Reader};
 
@@ -22,13 +24,15 @@ use crate::store::Where;
 #[derive(Subcommand)]
 pub enum Command {
     /// List the runs the store holds, each with how it ended, its action, when it
-    /// started and how long it took. A run that has no record, or one this build cannot
-    /// read, is listed with the reason.
+    /// started and how long it took. A run that was admitted and has not ended is
+    /// listed as such; one that has no record, or one this build cannot read, with the
+    /// reason.
     List {
         #[command(flatten)]
         at: Where,
     },
-    /// Show one run's record: what was asked, how it ended, and what it kept.
+    /// Show one run's record: what was asked, how it ended, and what it kept. A run
+    /// that was admitted and has not ended is shown from its admission.
     Show {
         /// The run, by its id, as `runs list` shows it.
         run: String,
@@ -121,8 +125,19 @@ fn list(root: &Path) -> Result<String, String> {
                 utc(record.time().start_ms),
                 record.time().end_ms - record.time().start_ms
             ),
+            // A run is in the store from its admission, and has its record from its
+            // end: one with an admission and no record was admitted and has not ended.
             Some(Err(StoredRecordError::NoRecord)) | None => {
-                format!("{}\tno record", shown(id))
+                match admission_of(&reader, &generation, id) {
+                    Some(admission) => format!(
+                        "{}\tadmitted, not ended\t{} {}\t{}",
+                        shown(id),
+                        shown(admission.action()),
+                        shown(admission.version()),
+                        utc(admission.start_ms())
+                    ),
+                    None => format!("{}\tno record", shown(id)),
+                }
             }
             // The core's sentence is escaped and cut where it quotes the store: it is
             // printed as it is.
@@ -158,6 +173,22 @@ fn show(root: &Path, id: &str, json: bool, diagnostic: Option<&str>) -> Result<V
     }
     let record = match record_of(&reader, &generation, id) {
         Some(Ok(record)) => record,
+        Some(Err(StoredRecordError::NoRecord)) => {
+            let Some(admission) = admission_of(&reader, &generation, id) else {
+                return Err(format!(
+                    "the record of the run {} cannot be shown: the run has no record",
+                    shown(id)
+                ));
+            };
+            if json {
+                return Err(format!(
+                    "the run {} has no record: it was admitted and has not ended; \
+                     --diagnostic admitted prints its admission",
+                    shown(id)
+                ));
+            }
+            return Ok(admitted_text(&admission).into_bytes());
+        }
         Some(Err(error)) => {
             return Err(format!(
                 "the record of the run {} cannot be shown: {error}",
@@ -170,6 +201,30 @@ fn show(root: &Path, id: &str, json: bool, diagnostic: Option<&str>) -> Result<V
         return Ok(record.to_bytes());
     }
     Ok(text_of(&record).into_bytes())
+}
+
+/// The admission of a run, when the run has one that this build reads.
+fn admission_of(reader: &Reader, generation: &Generation, id: &str) -> Option<Admission> {
+    admitted(generation, id, |entry| reader.read(entry))?.ok()
+}
+
+/// A run that was admitted and has not ended, for a person: what its admission holds.
+/// A run's id and a request's id are held to their rules when an admission is read, and
+/// an action's name and version to theirs; they are printed escaped all the same.
+fn admitted_text(admission: &Admission) -> String {
+    let request = match admission.request() {
+        Some(request) => shown(request.as_str()),
+        None => "none".to_owned(),
+    };
+    format!(
+        "run: {}\nrequest: {request}\naction: {} {}\nstatus: admitted, not ended\n\
+         started: {}\nrecord: none: the run was admitted and has not ended; it is executing, \
+         or the process that ran it ended first\n",
+        shown(admission.run().as_str()),
+        shown(admission.action()),
+        shown(admission.version()),
+        utc(admission.start_ms())
+    )
 }
 
 /// A record for a person: every group, the empty ones said to be empty.

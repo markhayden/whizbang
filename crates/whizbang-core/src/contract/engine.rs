@@ -11,17 +11,20 @@ use crate::store::{self, Store};
 use super::journal::Kept;
 use super::prepare::prepare;
 use super::record::{Diagnostic, RECORD_KIND, RECORD_NAME, Ran, RunRecord};
+use super::request::{Found, look_up};
 use super::{
-    Allowance, Backends, Call, CallError, Cancellation, Capabilities, Clock, Context, Failure,
-    Finished, Outcome, PreparedCall, Readiness, Refusal, Registry, RunId, Secrets, StoreFailure,
-    SystemClock,
+    ADMITTED_NAME, Admission, Allowance, Answer, Backends, Call, CallError, Cancellation,
+    Capabilities, Clock, Context, Ending, Failure, Finished, Outcome, PreparedCall, Readiness,
+    Refusal, Registry, Request, RequestId, RunId, Secrets, StoreFailure, SystemClock,
+    request_fingerprint,
 };
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
 /// action all hold one of these and nothing closer to a tool.
 ///
-/// Both methods return when they have their answer: `submit` returns when the run is
-/// over and its record is durable. How a run that takes long is scheduled, watched and
+/// Every method returns when it has its answer: `submit` and `request` return when the
+/// run is over and its record is durable, or, for a request that was sent before, as
+/// soon as its id was looked up. How a run that takes long is scheduled, watched and
 /// cancelled while it executes is not decided here.
 pub trait Executor: Send + Sync {
     /// Can this exact call run now? Nothing is written, nothing is spent, and nothing is
@@ -30,18 +33,29 @@ pub trait Executor: Send + Sync {
     fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError>;
 
     /// The entry point for a call that is to run: the one place a call comes in, whatever
-    /// door it came through. A call that is refused has no run. One that is taken runs,
-    /// and what comes back is its run's id and outcome, after the run's record and
-    /// diagnostics are durable in the store, whatever the outcome.
+    /// door it came through. A call that is refused has no run. One that is taken is
+    /// admitted, which makes its run in the store, and then runs; what comes back is
+    /// its run's id and outcome, after the run's record and diagnostics are durable in
+    /// the store, whatever the outcome (ADR 0007).
     fn submit(&self, call: &Call) -> Result<Finished, CallError>;
+
+    /// The same entry point, for a request that may carry the caller's id. Without an
+    /// id it is [`Executor::submit`]. With one, the id is looked up before anything
+    /// else: a request that was admitted before under the id is answered with the run
+    /// it made then, wherever that run is now, and nothing is prepared and nothing
+    /// runs; another request under the id is refused as a conflict; and an id that was
+    /// never admitted is recorded, durably, in the one step that makes the run, before
+    /// the action runs.
+    fn request(&self, request: &Request) -> Result<Answer, CallError>;
 }
 
 /// The executor of one build: a registry, the backends, a store and the digest of the
 /// config.
 ///
-/// Built over a read of a store ([`Engine::new`]) it prepares calls and runs none. Built
-/// over a store opened to write ([`Engine::over`]) it runs them, and writes each run's
-/// record and diagnostics through that store's publication.
+/// Built over a read of a store ([`Engine::new`]) it prepares calls, answers a request
+/// that was sent before, and runs none. Built over a store opened to write
+/// ([`Engine::over`]) it runs them: it makes each run in the store when it admits it,
+/// and adds the run's record and diagnostics when the run ends.
 pub struct Engine {
     registry: Registry,
     backends: Arc<dyn Backends>,
@@ -114,9 +128,9 @@ impl Engine {
     /// A new run's id: the time in milliseconds since the Unix epoch, a hyphen, and a
     /// count. The count is one for the whole process ([`NAMED`]), so two executors never
     /// make the same id from the same time, and it goes up past any id the store
-    /// already holds now. That an id is still free when its run is published is not
-    /// taken on trust: the publication makes the run, and the store refuses it if the
-    /// id was taken meanwhile ([`MAX_NAMINGS`]).
+    /// already holds now. That an id is still free when its run is admitted is not
+    /// taken on trust: the admission's publication makes the run, and the store refuses
+    /// it if the id was taken meanwhile ([`MAX_NAMINGS`]).
     fn name_run(&self, store: &Store, now_ms: u64) -> Result<RunId, CallError> {
         let generation = store
             .snapshot()
@@ -134,8 +148,8 @@ impl Engine {
 /// The runs this process has named, whichever executor named them.
 static NAMED: AtomicU64 = AtomicU64::new(0);
 
-/// How many times a run is named and published before the store's refusal of its id is
-/// handed back as the store's failure.
+/// How many times a run is named and its admission published before the store's refusal
+/// of its id is handed back as the store's failure.
 const MAX_NAMINGS: u32 = 8;
 
 /// What a running action is given in place of the executor: a call from inside an
@@ -148,6 +162,10 @@ impl Executor for NoNesting {
     }
 
     fn submit(&self, _: &Call) -> Result<Finished, CallError> {
+        Err(Refusal::NoNestedCalls.into())
+    }
+
+    fn request(&self, _: &Request) -> Result<Answer, CallError> {
         Err(Refusal::NoNestedCalls.into())
     }
 }
@@ -170,33 +188,142 @@ impl Executor for Engine {
     }
 
     fn submit(&self, call: &Call) -> Result<Finished, CallError> {
-        // A caller's request id is looked up here, before anything else: a repeated id
-        // answers with the run it already has, and neither readiness nor preparation is
-        // consulted (`SPEC.md` section 3, "Request identity"). A call carries no request
-        // id yet, and there is no record to look one up in.
+        match self.run(call, None) {
+            Ok(finished) => Ok(finished),
+            Err(Stopped::Refused(error)) => Err(error),
+            // Only a request with an id makes the name that can be taken.
+            Err(Stopped::Taken(error)) => Err(CallError::Store(StoreFailure::new(error))),
+        }
+    }
 
+    fn request(&self, request: &Request) -> Result<Answer, CallError> {
+        let Some(id) = request.id() else {
+            return self.submit(request.call()).map(Answer::Ran);
+        };
+        // An id is written as it is, in a name of the store and in two records. One
+        // that redaction would change holds a secret, and is refused without being
+        // shown.
+        if self.secrets.redact(id.as_str()) != id.as_str() {
+            return Err(Refusal::SecretInRequestId.into());
+        }
+        // The id is looked up here, before anything else: a repeated id answers with the
+        // run it already has, and neither readiness nor preparation is consulted
+        // (`SPEC.md` section 3, "Request identity").
+        let fingerprint = request.fingerprint();
+        let answer = |found: Found| match found {
+            Found::Nothing => None,
+            Found::Same(earlier) => Some(Ok(Answer::Repeat(earlier))),
+            Found::Other { run } => Some(Err(CallError::Refused(Refusal::Conflict {
+                request: id.clone(),
+                run,
+            }))),
+        };
+        if let Some(answered) = answer(self.look_up(id, fingerprint)?) {
+            return answered;
+        }
+        match self.run(request.call(), Some((id, fingerprint))) {
+            Ok(finished) => Ok(Answer::Ran(finished)),
+            Err(Stopped::Refused(error)) => Err(error),
+            // Another request was admitted under the id between the look and the
+            // admission, and the store refused this one. Nothing of this request was
+            // published and its action did not run: it is answered as the look would
+            // have answered it a moment later.
+            Err(Stopped::Taken(error)) => answer(self.look_up(id, fingerprint)?)
+                .unwrap_or_else(|| Err(CallError::Store(StoreFailure::new(error)))),
+        }
+    }
+}
+
+/// Why a call did not run to its end.
+enum Stopped {
+    /// It was refused, or the store failed.
+    Refused(CallError),
+    /// The store refused the admission because the request id's name was made
+    /// meanwhile: another request was admitted under the id.
+    Taken(store::Error),
+}
+
+impl From<CallError> for Stopped {
+    fn from(error: CallError) -> Stopped {
+        Stopped::Refused(error)
+    }
+}
+
+impl Engine {
+    fn look_up(&self, id: &RequestId, fingerprint: Digest) -> Result<Found, CallError> {
+        let made_here = |run: &str| self.store.as_ref().is_some_and(|s| s.made_here(run));
+        look_up(self.contents.as_ref(), id, fingerprint, made_here)
+    }
+
+    /// Prepares, admits and runs a call: everything after the look for a request id.
+    fn run(&self, call: &Call, asked: Option<(&RequestId, Digest)>) -> Result<Finished, Stopped> {
         let prepared = self.prepare(call)?;
         if let Readiness::NotReady(missing) = prepared.readiness() {
             return Err(CallError::Refused(Refusal::NotReady {
                 action: prepared.action().to_owned(),
                 missing: missing.clone(),
-            }));
+            })
+            .into());
         }
         let Some(store) = &self.store else {
-            return Err(CallError::Refused(Refusal::ReadOnly));
+            return Err(CallError::Refused(Refusal::ReadOnly).into());
         };
         // Prepare found the action a moment ago, in a registry that does not change.
         let Some(action) = self.registry.get(prepared.action()) else {
             return Err(CallError::Refused(Refusal::UnknownAction {
                 name: prepared.action().to_owned(),
-            }));
+            })
+            .into());
         };
+        let failed = |error| CallError::Store(StoreFailure::new(error));
 
-        // Admission comes here: the preparation is revalidated, the spend is reserved
-        // and the request id is recorded with the run. None of it is built. From the
-        // next line on there is a run, and whatever happens it gets its record.
+        // Admission: one publication makes the run, with its admission among its
+        // names, and, for a request with an id, makes the id's record outside runs.
+        // The store decides both inside its publishing step: a run of that id is named
+        // again, and an id that was admitted meanwhile stops this request with nothing
+        // published. From the publication on there is a run, durably, and whatever
+        // happens to its action it is in the store.
         let start_ms = self.clock.now_ms();
-        let run = self.name_run(store, start_ms)?;
+        let request = asked.map(|(id, _)| id);
+        let fingerprint = match asked {
+            Some((_, fingerprint)) => fingerprint,
+            None => request_fingerprint(call),
+        };
+        let mut run = self.name_run(store, start_ms)?;
+        let mut namings = 1;
+        loop {
+            let admission = Admission::new(
+                run.clone(),
+                request.cloned(),
+                fingerprint,
+                prepared.fingerprint(),
+                prepared.action(),
+                prepared.version(),
+                start_ms,
+            )
+            .to_bytes();
+            let mut publication = store.begin().map_err(failed)?;
+            publication.create_run(run.as_str()).map_err(failed)?;
+            publication
+                .put_in(run.as_str(), ADMITTED_NAME, RECORD_KIND, &admission)
+                .map_err(failed)?;
+            if let Some(id) = request {
+                publication
+                    .create(&id.admission_name(), RECORD_KIND, &admission)
+                    .map_err(failed)?;
+            }
+            match publication.publish() {
+                Ok(_) => break,
+                Err(store::Error::RunExists { .. }) if namings < MAX_NAMINGS => {
+                    namings += 1;
+                    run = self.name_run(store, start_ms)?;
+                }
+                Err(error @ store::Error::NameExists { .. }) if request.is_some() => {
+                    return Err(Stopped::Taken(error));
+                }
+                Err(error) => return Err(failed(error).into()),
+            }
+        }
 
         let kept = Arc::new(Kept::new(self.clock.clone(), self.secrets.clone()));
         let context = Context::new(
@@ -223,52 +350,46 @@ impl Executor for Engine {
                 why: self.secrets.redact(&why),
             },
         };
-        let end_ms = self.clock.now_ms();
+        let end_ms = self.clock.now_ms().max(start_ms);
 
-        // One publication holds the journal, every diagnostic and the record: the run is
-        // in the store whole or not at all, and it is durable before it is reported. The
-        // publication makes the run, so the store refuses it when a run of that id was
-        // published while this one executed; the run is then named again and published
-        // again, and nothing is ever merged into another run.
-        let failed = |error| CallError::Store(StoreFailure::new(error));
+        // The end: one publication adds the journal, every diagnostic and the record to
+        // the run, and, for a request with an id, makes the id's ending outside runs.
+        // The run must still be there: one that was deleted while it executed is not
+        // made again from its last names. The run is reported after this is durable.
         let (lines, written) = kept.take();
         let kept: Vec<(Diagnostic, Vec<u8>)> = std::iter::once(Diagnostic::journal(&lines))
             .chain(written)
             .collect();
-        let mut run = run;
-        let mut namings = 1;
-        loop {
-            let mut publication = store.begin().map_err(failed)?;
-            publication.create_run(run.as_str()).map_err(failed)?;
-            for (diagnostic, bytes) in &kept {
-                publication
-                    .put_in(run.as_str(), diagnostic.name(), RECORD_KIND, bytes)
-                    .map_err(failed)?;
-            }
-            let record = RunRecord::of(
-                Ran {
-                    run: run.as_str(),
-                    whizbang: WHIZBANG_VERSION,
-                    prepared: &prepared,
-                    outcome: &outcome,
-                    start_ms,
-                    end_ms,
-                    diagnostics: kept.iter().map(|(d, _)| d.clone()).collect(),
-                },
-                &self.secrets,
-            );
+        let record = RunRecord::of(
+            Ran {
+                run: run.as_str(),
+                request,
+                whizbang: WHIZBANG_VERSION,
+                prepared: &prepared,
+                outcome: &outcome,
+                start_ms,
+                end_ms,
+                diagnostics: kept.iter().map(|(d, _)| d.clone()).collect(),
+            },
+            &self.secrets,
+        );
+        let mut publication = store.begin().map_err(failed)?;
+        publication.extend_run(run.as_str()).map_err(failed)?;
+        for (diagnostic, bytes) in &kept {
             publication
-                .put_in(run.as_str(), RECORD_NAME, RECORD_KIND, &record.to_bytes())
+                .put_in(run.as_str(), diagnostic.name(), RECORD_KIND, bytes)
                 .map_err(failed)?;
-            match publication.publish() {
-                Ok(_) => break,
-                Err(store::Error::RunExists { .. }) if namings < MAX_NAMINGS => {
-                    namings += 1;
-                    run = self.name_run(store, start_ms)?;
-                }
-                Err(error) => return Err(failed(error)),
-            }
         }
+        publication
+            .put_in(run.as_str(), RECORD_NAME, RECORD_KIND, &record.to_bytes())
+            .map_err(failed)?;
+        if let Some(id) = request {
+            let ending = Ending::new(run.clone(), id.clone(), record.outcome().status, end_ms);
+            publication
+                .create(&id.ending_name(), RECORD_KIND, &ending.to_bytes())
+                .map_err(failed)?;
+        }
+        publication.publish().map_err(failed)?;
         Ok(Finished::new(run, outcome))
     }
 }

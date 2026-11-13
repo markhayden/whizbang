@@ -17,7 +17,7 @@ use crate::identity::Digest;
 use crate::store::{self, Entry, Generation, Kind};
 
 use super::journal::{JournalLine, journal_bytes};
-use super::{Outcome, PreparedCall, Secrets, StoreFailure, Value};
+use super::{Outcome, PreparedCall, RequestId, Secrets, StoreFailure, Value};
 
 /// The record's kind, with its version.
 pub const RUN_RECORD: &str = "run/1";
@@ -29,7 +29,8 @@ pub const RUN_RECORD_SCHEMA: &str = include_str!("../../schemas/run-1.json");
 /// written again to be compared, so what is read is bounded before it is read.
 pub const RECORD_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
-/// The name, among a run's names in the store, of its record.
+/// The name, among a run's names in the store, of its record. A run has it from its end;
+/// before that it has its admission alone ([`super::ADMITTED_NAME`]).
 pub const RECORD_NAME: &str = "record";
 
 /// The name, among a run's names, of its journal: the progress events, one to a line.
@@ -93,7 +94,9 @@ pub enum Nothing {}
 pub struct Identity {
     /// The run's id.
     pub run: String,
-    /// The caller's request id. None until a call can carry one.
+    /// The caller's id for the request that made the run, or none when it gave none.
+    /// One that is there is a request id ([`RequestId`]): a record with any other text
+    /// here is refused.
     #[serde(deserialize_with = "present")]
     pub request: Option<String>,
     /// The run that called this one. None for a run that nothing nested.
@@ -398,6 +401,8 @@ impl std::error::Error for RecordError {}
 pub struct Ran<'a> {
     /// The run's id.
     pub run: &'a str,
+    /// The caller's id for the request that made the run, when it gave one.
+    pub request: Option<&'a RequestId>,
     /// The version of whizbang.
     pub whizbang: &'a str,
     /// The call as it was prepared.
@@ -468,7 +473,7 @@ impl RunRecord {
             record: RUN_RECORD.to_owned(),
             identity: Identity {
                 run: ran.run.to_owned(),
-                request: None,
+                request: ran.request.map(|id| id.as_str().to_owned()),
                 parent: None,
                 whizbang: ran.whizbang.to_owned(),
             },
@@ -571,6 +576,15 @@ impl RunRecord {
             if text.is_empty() {
                 return refuse(&format!("{what} is empty"));
             }
+        }
+        // The request's id is written as it is, so it is held to the rule of one.
+        if let Some(request) = &self.identity.request
+            && RequestId::parse(request).is_err()
+        {
+            return refuse(
+                "the request's id is not one: 1 to 128 of the ASCII letters, the digits, \
+                 _, -, . and :",
+            );
         }
         // A diagnostic is the journal, or something the action wrote under a plain name.
         // The record itself is one of the run's names and is not one of its diagnostics.

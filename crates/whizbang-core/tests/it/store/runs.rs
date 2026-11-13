@@ -264,6 +264,202 @@ fn a_publication_that_makes_a_run_is_refused_when_the_store_holds_that_run() {
 }
 
 #[test]
+fn a_name_that_is_made_is_never_given_other_content() {
+    // A record that must outlive every run is published under a name outside runs, and
+    // made there: a publication that makes a name the store already holds is refused,
+    // whole, and the name keeps what it had.
+    let dir = Scratch::new("store-names");
+    let root = root(&dir);
+    with_runs(&root);
+    let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+    let mut publication = store.begin().unwrap();
+    publication
+        .create("requests/a", Kind::Diagnostic, b"first")
+        .unwrap();
+    publication.publish().unwrap();
+    let before = store.snapshot().unwrap();
+    let entry = before.get("requests/a").unwrap().clone();
+    assert_eq!(entry.kind, Kind::Diagnostic);
+    assert_eq!(store.read(&entry).unwrap(), b"first");
+    assert!(matches!(
+        store.read_output(&entry),
+        Err(Error::NotAnOutput { .. })
+    ));
+
+    // Made again, with a run beside it: nothing of the publication is published.
+    let mut publication = store.begin().unwrap();
+    publication
+        .create("requests/a", Kind::Diagnostic, b"second")
+        .unwrap();
+    publication.create_run("beside").unwrap();
+    let refused = publication.publish().unwrap_err();
+    assert!(
+        matches!(&refused, Error::NameExists { name } if name == "requests/a"),
+        "{refused:?}"
+    );
+    assert_eq!(
+        refused.to_string(),
+        "the store already holds the name \"requests/a\": it is made once and keeps its content"
+    );
+    assert_eq!(
+        refused.without_paths(),
+        "the store already holds a name that is made once"
+    );
+    assert_eq!(store.snapshot().unwrap(), before);
+
+    // The same content again is refused as well: the name was made, by someone.
+    let mut publication = store.begin().unwrap();
+    publication
+        .create("requests/a", Kind::Diagnostic, b"first")
+        .unwrap();
+    assert!(matches!(
+        publication.publish(),
+        Err(Error::NameExists { .. })
+    ));
+
+    // Two publications that each make one name, both begun before either is published:
+    // the first is taken, and the second is refused whatever it saw when it began.
+    let mut first = store.begin().unwrap();
+    let mut second = store.begin().unwrap();
+    first.create("requests/b", Kind::Diagnostic, b"1").unwrap();
+    second.create("requests/b", Kind::Diagnostic, b"2").unwrap();
+    first.publish().unwrap();
+    assert!(matches!(second.publish(), Err(Error::NameExists { .. })));
+    let generation = store.snapshot().unwrap();
+    assert_eq!(
+        store.read(generation.get("requests/b").unwrap()).unwrap(),
+        b"1"
+    );
+
+    // One publication cannot make a name and also give it content by `put`, in either
+    // order: the name would hold whichever came last.
+    let mut publication = store.begin().unwrap();
+    publication
+        .create("requests/c", Kind::Diagnostic, b"1")
+        .unwrap();
+    assert!(matches!(
+        publication.put("requests/c", b"2"),
+        Err(Error::NameExists { .. })
+    ));
+    assert!(matches!(
+        publication.create("requests/c", Kind::Diagnostic, b"3"),
+        Err(Error::NameExists { .. })
+    ));
+    publication.put("free", b"4").unwrap();
+    assert!(matches!(
+        publication.create("free", Kind::Diagnostic, b"5"),
+        Err(Error::NameExists { .. })
+    ));
+}
+
+#[test]
+fn known_a_name_that_was_made_can_still_be_replaced_by_put() {
+    // The limit of "made once", pinned: `create` refuses a name that exists, and `put`
+    // does not ask. A later publication that puts the name replaces what it held. No
+    // code of whizbang puts a name under `requests/` or `spend/`; nothing in the store
+    // stops other code.
+    let dir = Scratch::new("store-names");
+    let root = root(&dir);
+    let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+    let mut publication = store.begin().unwrap();
+    publication
+        .create("requests/a", Kind::Diagnostic, b"first")
+        .unwrap();
+    publication.publish().unwrap();
+    let mut publication = store.begin().unwrap();
+    publication.put("requests/a", b"other").unwrap();
+    publication.publish().unwrap();
+    let generation = store.snapshot().unwrap();
+    assert_eq!(
+        store.read(generation.get("requests/a").unwrap()).unwrap(),
+        b"other"
+    );
+}
+
+#[test]
+fn a_publication_that_adds_to_a_run_that_must_exist_is_refused_when_it_is_gone() {
+    // A run is made in one publication and added to in another. The second says that
+    // the run must be there: when it was deleted in between, nothing is published, and
+    // the run is not made again from the names that were to be added.
+    let dir = Scratch::new("store-names");
+    let root = root(&dir);
+    let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+    let mut publication = store.begin().unwrap();
+    publication.create_run("r").unwrap();
+    publication
+        .put_in("r", "admitted", Kind::Diagnostic, b"a")
+        .unwrap();
+    publication.publish().unwrap();
+
+    // While it is there, names are added to it and the ones it had stay.
+    let mut publication = store.begin().unwrap();
+    publication.extend_run("r").unwrap();
+    publication
+        .put_in("r", "journal", Kind::Diagnostic, b"j")
+        .unwrap();
+    publication.publish().unwrap();
+    let generation = store.snapshot().unwrap();
+    assert_eq!(generation.run("r").unwrap().entries().len(), 2);
+
+    let mut adding = store.begin().unwrap();
+    adding.extend_run("r").unwrap();
+    adding
+        .put_in("r", "record", Kind::Diagnostic, b"x")
+        .unwrap();
+    adding
+        .create("requests/a/ended", Kind::Diagnostic, b"e")
+        .unwrap();
+    store.delete(&["r"]).unwrap();
+    let before = store.snapshot().unwrap();
+    let refused = adding.publish().unwrap_err();
+    assert!(
+        matches!(&refused, Error::NoSuchRun { run } if run == "r"),
+        "{refused:?}"
+    );
+    assert_eq!(store.snapshot().unwrap(), before);
+    assert!(before.run("r").is_none());
+    assert!(before.get("requests/a/ended").is_none());
+    let mut publication = store.begin().unwrap();
+    assert!(matches!(
+        publication.extend_run(""),
+        Err(Error::InvalidRun { .. })
+    ));
+}
+
+#[test]
+fn a_writer_knows_the_runs_it_made_since_it_opened_the_store() {
+    // What tells a run that this process is executing from one that a process now gone
+    // left: the writer made it, by a publication that succeeded, since it opened.
+    let dir = Scratch::new("store-names");
+    let root = root(&dir);
+    {
+        let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+        assert!(!store.made_here("r"));
+        let mut publication = store.begin().unwrap();
+        publication.create_run("r").unwrap();
+        publication.publish().unwrap();
+        assert!(store.made_here("r"));
+        // A run that was only added to, and one whose publication was refused, were
+        // not made here.
+        let mut publication = store.begin().unwrap();
+        publication
+            .put_in("other", "x", Kind::Diagnostic, b"x")
+            .unwrap();
+        publication.publish().unwrap();
+        assert!(!store.made_here("other"));
+        let mut publication = store.begin().unwrap();
+        publication.create_run("r").unwrap();
+        publication.create_run("never").unwrap();
+        publication.publish().unwrap_err();
+        assert!(!store.made_here("never"));
+    }
+    // The next writer made none of them.
+    let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+    assert!(store.snapshot().unwrap().run("r").is_some());
+    assert!(!store.made_here("r"));
+}
+
+#[test]
 fn deleting_a_run_removes_its_references_and_no_others() {
     let dir = Scratch::new("store-runs");
     let root = root(&dir);

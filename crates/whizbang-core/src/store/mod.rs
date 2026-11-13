@@ -121,9 +121,16 @@
 //! Content that another reference still names, in another run or outside runs, is still
 //! named. Nothing removes a name that belongs to no run: that is where the records that
 //! must outlive every run, of spend and of request ids, are published. That is all the
-//! protection there is: a publication can give such a name other content, and what it
-//! had is then named by nothing and is pruned. A record that must be kept is published
-//! under a name that is never used twice.
+//! protection there is against removal. Against replacement there is
+//! [`Publication::create`]: a publication that makes a name is refused, whole, when the
+//! store already holds the name, so a record that must be kept is published under a name
+//! that is made, and is never given other content by code that makes its names.
+//! [`Publication::put`] still replaces what a name had, and what it had is then named by
+//! nothing and is pruned: no code of whizbang puts a name that another makes.
+//!
+//! A run that one publication makes and another adds to is added to with
+//! [`Publication::extend_run`], which refuses the second publication when the run was
+//! deleted in between ([`Error::NoSuchRun`]).
 //!
 //! A run's id is not empty and holds no control character; [`Publication::put_in`]
 //! refuses any other ([`Error::InvalidRun`]). The rule is held where a run is made and,
@@ -631,6 +638,8 @@ pub struct Store {
     in_progress: Mutex<BTreeMap<u64, BTreeSet<Digest>>>,
     /// How many publications are waiting for `publishing` now.
     waiting: AtomicUsize,
+    /// The runs this value made: each by a publication that became visible.
+    made_runs: Mutex<BTreeSet<String>>,
     /// Whether the open that gave this value made the store.
     created: bool,
     /// The writer lock, held for as long as this value lives.
@@ -718,6 +727,19 @@ impl Store {
     #[doc(hidden)]
     pub fn publications_waiting(&self) -> usize {
         self.waiting.load(Ordering::SeqCst)
+    }
+
+    /// Whether this writer made the run `run` since it opened the store: by a
+    /// publication of this value that made the run ([`Publication::create_run`]) and
+    /// became visible. A run the store held when it was opened, one that was only added
+    /// to, and one whose publication was refused, were not made here. One process at a
+    /// time writes a store, so a run that this writer did not make and that is not
+    /// finished is no longer being worked on by anyone.
+    pub fn made_here(&self, run: &str) -> bool {
+        self.made_runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(run)
     }
 
     fn open_at(root: &Path, fs: Arc<dyn Fs>, make: Make) -> Result<Store> {
@@ -808,6 +830,7 @@ impl Store {
             publishing: Mutex::new(()),
             in_progress: Mutex::new(BTreeMap::new()),
             waiting: AtomicUsize::new(0),
+            made_runs: Mutex::new(BTreeSet::new()),
             created,
             lock,
         })
@@ -852,6 +875,8 @@ impl Store {
             run_names: BTreeMap::new(),
             deleted: BTreeSet::new(),
             created: BTreeSet::new(),
+            made: BTreeSet::new(),
+            extended: BTreeSet::new(),
         })
     }
 
@@ -1011,6 +1036,10 @@ pub struct Publication<'s> {
     deleted: BTreeSet<String>,
     /// The runs it makes: each must not be in the generation it is published onto.
     created: BTreeSet<String>,
+    /// The names outside runs it makes: each must not be in that generation either.
+    made: BTreeSet<String>,
+    /// The runs it adds to that must be in that generation.
+    extended: BTreeSet<String>,
 }
 
 impl Publication<'_> {
@@ -1018,6 +1047,12 @@ impl Publication<'_> {
     /// replacing what it had, as an output. The bytes are staged now, and synced, unless
     /// the store already holds them. After an error the same call can be made again.
     pub fn put(&mut self, name: &str, bytes: &[u8]) -> Result<Digest> {
+        // A name this publication makes keeps the content it was made with.
+        if self.made.contains(name) {
+            return Err(Error::NameExists {
+                name: name.to_string(),
+            });
+        }
         let entry = self.stage(bytes, Kind::Output)?;
         let digest = entry.digest;
         self.names.insert(name.to_string(), entry);
@@ -1051,6 +1086,42 @@ impl Publication<'_> {
         check_run_id(run)?;
         self.created.insert(run.to_string());
         self.run_names.entry(run.to_string()).or_default();
+        Ok(())
+    }
+
+    /// Makes `name`, which belongs to no run, with this content, as a reference of this
+    /// kind: it is a new name, and it keeps this content. Publishing is then refused
+    /// with [`Error::NameExists`], and nothing is published, when the generation it
+    /// would be published onto already holds the name. That is looked at inside the
+    /// publishing step, on the generation that is current then, so two publications
+    /// that each make one name cannot both succeed, whatever each saw before. It is
+    /// refused here when this publication already gives the name content, either way.
+    ///
+    /// This is how a record that must outlive every run is published (a request id's,
+    /// a reservation's): under a name that is made, and so never used twice by code
+    /// that makes its names. [`Publication::put`] does not ask whether a name exists.
+    /// Staging is as for [`Publication::put`].
+    pub fn create(&mut self, name: &str, kind: Kind, bytes: &[u8]) -> Result<Digest> {
+        if self.names.contains_key(name) {
+            return Err(Error::NameExists {
+                name: name.to_string(),
+            });
+        }
+        let entry = self.stage(bytes, kind)?;
+        let digest = entry.digest;
+        self.names.insert(name.to_string(), entry);
+        self.made.insert(name.to_string());
+        Ok(digest)
+    }
+
+    /// Says that this publication adds to the run `run`, which must be there: publishing
+    /// is refused with [`Error::NoSuchRun`], and nothing is published, when the
+    /// generation it would be published onto does not hold the run. Without this,
+    /// [`Publication::put_in`] makes the run from the names it adds, which is not
+    /// wanted of a run that was deleted while its last names were on their way.
+    pub fn extend_run(&mut self, run: &str) -> Result<()> {
+        check_run_id(run)?;
+        self.extended.insert(run.to_string());
         Ok(())
     }
 
@@ -1149,6 +1220,20 @@ impl Publication<'_> {
         {
             return Err(Error::RunExists { run: run.clone() });
         }
+        if let Some(run) = self
+            .extended
+            .iter()
+            .find(|run| !generation.runs.contains_key(*run))
+        {
+            return Err(Error::NoSuchRun { run: run.clone() });
+        }
+        if let Some(name) = self
+            .made
+            .iter()
+            .find(|name| generation.entries.contains_key(*name))
+        {
+            return Err(Error::NameExists { name: name.clone() });
+        }
         generation.entries.extend(self.names.clone());
         for (run, names) in &self.run_names {
             let run = generation.runs.entry(run.clone()).or_default();
@@ -1170,6 +1255,13 @@ impl Publication<'_> {
         fs.write_new(&staged, format!("{number}\n").as_bytes())
             .map_err(Error::io("write", &staged))?;
         files.move_into_place(&staged, &layout.pointer())?;
+        // Visible: the runs this publication made are runs this writer made, whether or
+        // not the last sync confirms them.
+        self.store
+            .made_runs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .extend(self.created.iter().cloned());
         fs.sync_dir(&layout.root)
             .map_err(Error::io("sync", &layout.root))
             .map_err(|source| Error::Unacknowledged {
