@@ -116,7 +116,7 @@ fn well_formed(root: &Value, schema: &Value, at: &str) -> Result<(), String> {
                     return wrong("a whole number that is not negative");
                 }
             }
-            "minimum" => {
+            "minimum" | "maximum" => {
                 if !value.is_number() {
                     return wrong("a number");
                 }
@@ -199,6 +199,11 @@ fn check(
         && value.as_f64().is_some_and(|number| number < minimum)
     {
         return Err(format!("{at}: {value} is under {minimum}"));
+    }
+    if let Some(maximum) = schema.get("maximum").and_then(Value::as_f64)
+        && value.as_f64().is_some_and(|number| number > maximum)
+    {
+        return Err(format!("{at}: {value} is over {maximum}"));
     }
     if let Value::Array(items) = value {
         if limit("maxItems").is_some_and(|max| items.len() as u64 > max) {

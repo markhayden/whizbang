@@ -39,6 +39,10 @@ test from making threads without end": how often the guard counts, when a guard 
 guard leaves the watching to the one above, what the Linux limit does when the user's
 threads cannot be counted, that no group of lints is allowed, and what `just test-only`
 takes.
+Amended: 2026-11-13, with a fix after the task. Changed, in "A wait from inside an
+action": a wait by a run whose signal is set says `WaitCancelled` whatever became of
+the run it waited for. Added: a deletion tells those who wait; what a store's count of
+1 means for a started run.
 Amended: 2026-11-13, with ADR 0009 (task A11). Changed: a run is handed the backend its
 call resolved; capability requests are recorded; a run may freeze the actions its calls
 are held to, with two more refusals.
@@ -229,7 +233,8 @@ an executor that wrote a larger one would report a run whose repeat is then answ
 type, its message, a panic's message and the reason a run was invalid are each kept to
 their first 4,096 characters (`MESSAGE_LIMIT`), with three dots after them when there
 were more. The secrets are taken out first, from the whole text, and looked for once
-more after the cut. The outcome that is returned and the record hold the same cut text
+more after the cut. When the three dots themselves complete a secret they are left
+off, so that what is kept is never longer than the limit and three dots (ADR 0009). The outcome that is returned and the record hold the same cut text
 (`commit::what_an_action_or_a_panic_says_is_cut_and_its_record_is_read_back`,
 `commit::a_secret_across_the_place_a_message_is_cut_is_taken_out_before_the_cut`).
 
@@ -818,7 +823,10 @@ started executing at once (`STARTED_LIMIT`); a fifth is refused
 (`Refusal::TooManyStartedUnder`), so one tree cannot take every place: at most 4 + 16
 + 64 = 84 by its own arithmetic, and never more than the count. Both the place and
 the run's share of its parent's four come back when the run is over, before whoever
-waits for it is told. Threads an action makes itself are not counted
+waits for it is told. A started run holds its place while its end waits for the runs
+it called, so where the store's count is 1 a started run can never start a child: the
+child is refused (`TooManyStarted`), and never waited for; it can still call one on
+its own thread. Threads an action makes itself are not counted
 (`nested::a_run_started_from_inside_an_action_takes_a_place_among_the_stores_started_runs`,
 `nested::a_run_starts_only_so_many_runs_at_once_and_one_more_is_refused`,
 `nested::a_run_started_from_inside_an_action_that_gets_no_thread_ends_as_an_error_and_its_caller_is_told`).
@@ -1006,8 +1014,22 @@ wait is given up when the run that waits is cancelled, itself or through a run a
 it (`Refusal::WaitCancelled`): a signal tells those who wait on it when it is set by
 a cancellation, after the lock it was set under is let go, and the waiter looks at the
 signal under the lock of the run it waits for, so the telling is never between its
-look and its wait. So two runs that wait for each other are freed by cancelling
-either, or a run above them. Both refusals are in the record of the run that asked,
+look and its wait. The signal decides when both are so: a wait by a run whose signal is
+set says `WaitCancelled` whatever became of the run it waited for, one that is over
+included, and a wait that is begun by a cancelled run says it at once. Without that
+rule the answer depended on who looked first, and one of two runs that waited for each
+other was told that the other had ended as cancelled
+(`nested::a_wait_by_a_run_that_is_cancelled_is_given_up_whatever_became_of_the_run_it_waited_for`).
+The signal is looked at before the wait, in it, and once more when the run has an
+answer, so a cancellation that lands at any moment before the wait has returned is
+what it says
+(`nested::a_cancellation_that_lands_after_a_wait_looked_at_its_signal_still_gives_the_wait_up`,
+which stops at the moment between the first look and the look at the run). A signal
+that is set after the wait has returned changes nothing of what it returned. A
+deletion of a run tells those who wait as a cancellation does
+(`nested::deleting_an_executing_run_wakes_a_run_under_it_that_waits_for_another`). So
+two runs that wait for each other are freed by cancelling either, or a run above
+them. Both refusals are in the record of the run that asked,
 with no action. `wait` on an executor from outside is unchanged
 (`nested::a_wait_for_the_run_that_asks_or_for_a_run_above_it_is_refused`,
 `nested::two_runs_that_wait_for_each_other_are_freed_when_a_run_above_them_is_cancelled`).

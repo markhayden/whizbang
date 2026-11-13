@@ -19,8 +19,8 @@ use whizbang_core::contract::record::{RunRecord, Status, StepKind};
 use whizbang_core::contract::request::admitted;
 use whizbang_core::contract::{
     Action, ActionDescriptor, Admission, Answer, Argument, Backends, Call, CallError, Cancel,
-    Capabilities, Capability, Clock, Context, DESCENDANTS_LIMIT, Engine, Estimate, Executor,
-    Failure, HeldOpen, InputPort, Kind, LEVELS_LIMIT, ModelIdentity, Outcome, OutputPort,
+    Cancellation, Capabilities, Capability, Clock, Context, DESCENDANTS_LIMIT, Engine, Estimate,
+    Executor, Failure, HeldOpen, InputPort, Kind, LEVELS_LIMIT, ModelIdentity, Outcome, OutputPort,
     PreparedCall, Produced, RECORD_MAX_BYTES, REFUSAL_WHY_LIMIT, REFUSALS_LIMIT, Refusal,
     RefusalKind, Registry, Request, RequestId, Requirement, RunId, RunState, STARTED_LIMIT,
     STEPS_LIMIT, Secrets, Unavailable, Value, ValueType,
@@ -1193,8 +1193,10 @@ fn two_runs_that_wait_for_each_other_are_freed_when_a_run_above_them_is_cancelle
     barriers.arrived("waiting", 2);
     barriers.open("waiting");
     let ids = ids.lock().unwrap().clone();
+    // The end of the run above them waits for the first as well, so the first is
+    // waited for by two before the second is known to be among them.
     until("the two do not wait for each other", || {
-        ids.iter().all(|run| executor.waiting_for(run) > 0)
+        executor.waiting_for(&ids[0]) > 1 && executor.waiting_for(&ids[1]) > 0
     });
     assert_eq!(executor.cancel(&root), Ok(Cancel::Accepted));
     let waited = within("the wait for the run above the two", {
@@ -1218,6 +1220,162 @@ fn two_runs_that_wait_for_each_other_are_freed_when_a_run_above_them_is_cancelle
         assert_eq!(stored.outcome().status, Status::Cancelled);
         let kinds: Vec<_> = stored.outcome().refusals.iter().map(|r| r.kind()).collect();
         assert_eq!(kinds, [RefusalKind::WaitCancelled]);
+    }
+}
+
+#[test]
+fn a_wait_by_a_run_that_is_cancelled_is_given_up_whatever_became_of_the_run_it_waited_for() {
+    // The run that is waited for is over, and the run that waits is cancelled: both
+    // are so at once. The cancellation is what the wait says. Two runs that waited for
+    // each other were once told differently by which of them looked first.
+    let world = World::new();
+    let said: Noted<Result<RunState, Refusal>> = noted();
+    let outer = {
+        let said = said.clone();
+        act("outer", move |_, context| {
+            let executor = context.executor();
+            let inner = executor.submit(&Call::new("inner")).unwrap();
+            let ask = || {
+                let waited = match executor.wait(inner.run()) {
+                    Ok(watched) => Ok(watched.state().clone()),
+                    Err(CallError::Refused(refusal)) => Err(refusal),
+                    Err(other) => panic!("{other:?}"),
+                };
+                said.lock().unwrap().push(waited);
+            };
+            ask();
+            context.cancellation().cancel();
+            ask();
+            Ok(Produced::nothing())
+        })
+    };
+    let inner = act("inner", |_, _| Ok(Produced::nothing()));
+    let executor = engine(world.store(), vec![outer, inner]);
+    let finished = executor.submit(&Call::new("outer")).unwrap();
+    assert_eq!(finished.outcome(), &Outcome::Cancelled);
+    let stored = record(&world, finished.run());
+    let inner = RunId::parse(stored.steps()[0].run()).unwrap();
+    let completed = RunState::Ended(Outcome::Completed {
+        outputs: Vec::new(),
+    });
+    let given_up = Refusal::WaitCancelled { run: inner };
+    assert_eq!(*said.lock().unwrap(), [Ok(completed), Err(given_up)]);
+}
+
+#[test]
+fn a_cancellation_that_lands_after_a_wait_looked_at_its_signal_still_gives_the_wait_up() {
+    // The run that is waited for ended and is no longer open here, so the wait finds
+    // its end in the store and never waits. The waiter is cancelled after the wait's
+    // first look at its signal and before its look at the run: stopped at with a hook.
+    let world = World::new();
+    let said: Noted<Result<RunState, Refusal>> = noted();
+    let waiter: Arc<Mutex<Option<Cancellation>>> = Arc::default();
+    let outer = {
+        let (said, waiter) = (said.clone(), waiter.clone());
+        act("outer", move |_, context| {
+            let inner = context.executor().submit(&Call::new("inner")).unwrap();
+            *waiter.lock().unwrap() = Some(context.cancellation().clone());
+            let waited = match context.executor().wait(inner.run()) {
+                Ok(watched) => Ok(watched.state().clone()),
+                Err(CallError::Refused(refusal)) => Err(refusal),
+                Err(other) => panic!("{other:?}"),
+            };
+            said.lock().unwrap().push(waited);
+            Ok(Produced::nothing())
+        })
+    };
+    let inner = act("inner", |_, _| Ok(Produced::nothing()));
+    let cancels = {
+        let waiter = waiter.clone();
+        Arc::new(move || {
+            if let Some(signal) = waiter.lock().unwrap().take() {
+                signal.cancel();
+            }
+        })
+    };
+    let executor = engine(world.store(), vec![outer, inner]).with_pause_in_a_nested_wait(cancels);
+    let finished = executor.submit(&Call::new("outer")).unwrap();
+    assert_eq!(finished.outcome(), &Outcome::Cancelled);
+    let stored = record(&world, finished.run());
+    let inner = RunId::parse(stored.steps()[0].run()).unwrap();
+    assert_eq!(
+        *said.lock().unwrap(),
+        [Err(Refusal::WaitCancelled { run: inner })]
+    );
+}
+
+#[test]
+fn deleting_an_executing_run_wakes_a_run_under_it_that_waits_for_another() {
+    // Two runs under one: the first is held inside its action, and the second waits
+    // for the first. The run above them is deleted. The second's wait is given up
+    // then, while the first is still held: the deletion tells those who wait.
+    let world = World::new();
+    let store = world.store();
+    let barriers = Barriers::new();
+    let ids: Noted<RunId> = noted();
+    let said: Noted<Result<RunState, Refusal>> = noted();
+    let outer = {
+        let ids = ids.clone();
+        act("outer", move |_, context| {
+            let held = context.executor().start(&Request::new(Call::new("held")));
+            ids.lock().unwrap().push(held.unwrap().run().clone());
+            let waits = context.executor().start(&Request::new(Call::new("waits")));
+            ids.lock().unwrap().push(waits.unwrap().run().clone());
+            Ok(Produced::nothing())
+        })
+    };
+    let held = {
+        let barriers = barriers.clone();
+        act("held", move |_, _| {
+            barriers.stop_at("held");
+            Ok(Produced::nothing())
+        })
+    };
+    let waits = {
+        let (barriers, ids, said) = (barriers.clone(), ids.clone(), said.clone());
+        act("waits", move |_, context| {
+            barriers.stop_at("known");
+            let held = ids.lock().unwrap()[0].clone();
+            let waited = match context.executor().wait(&held) {
+                Ok(watched) => Ok(watched.state().clone()),
+                Err(CallError::Refused(refusal)) => Err(refusal),
+                Err(other) => panic!("{other:?}"),
+            };
+            said.lock().unwrap().push(waited);
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(store.clone(), vec![outer, held, waits]);
+    let Ok(Answer::Started(root)) = executor.start(&Request::new(Call::new("outer"))) else {
+        panic!("the request was not started");
+    };
+    barriers.arrived("held", 1);
+    barriers.arrived("known", 1);
+    barriers.open("known");
+    let ids = ids.lock().unwrap().clone();
+    // The end of the run above waits for the first too: two wait for it.
+    until("the second does not wait for the first", || {
+        executor.waiting_for(&ids[0]) > 1
+    });
+    store.delete(&[root.as_str()]).unwrap();
+    until("the wait was not given up by the deletion", || {
+        said.lock().unwrap().len() == 1
+    });
+    let given_up = Refusal::WaitCancelled {
+        run: ids[0].clone(),
+    };
+    assert_eq!(*said.lock().unwrap(), [Err(given_up)]);
+    assert_eq!(barriers.arrivals("held"), 1);
+    barriers.open("held");
+    for run in ids {
+        let waited = within("the wait for a run under the one that was deleted", {
+            let executor = executor.clone();
+            move || executor.wait(&run)
+        });
+        assert_eq!(
+            waited.unwrap().state(),
+            &RunState::Ended(Outcome::Cancelled)
+        );
     }
 }
 

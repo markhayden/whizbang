@@ -48,8 +48,9 @@ pub const TURNS_LIMIT: usize = 16;
 /// run call (256): a call past it is answered with an error and not dispatched.
 pub const CALLS_LIMIT: usize = 32;
 /// The most bytes of text one turn may hold: its texts, its opaque parts, and its
-/// calls' arguments as written. A larger turn fails the run. Each exchange is kept
-/// whole, so this and [`TURNS_LIMIT`] bound what a run's exchanges come to.
+/// calls' arguments as written. A larger turn is not taken: the handle answers with a
+/// fault, stores the turn's sizes in its place, and the run fails. Each exchange is
+/// kept whole, so this and [`TURNS_LIMIT`] bound what a run's exchanges come to.
 pub const TURN_TEXT_LIMIT: usize = 256 * 1024;
 /// A cut-off turn is asked for again with this many times the output tokens.
 pub const RETRY_FACTOR: u32 = 4;
@@ -254,17 +255,6 @@ fn verdict_of(turn: &Turn) -> Option<Verdict> {
     Some(Verdict::new(decision, why.trim()))
 }
 
-/// How many bytes of text a turn holds.
-fn text_of(turn: &Turn) -> usize {
-    let size = |part: &Part| match part {
-        Part::Text(text) => text.len(),
-        Part::ToolCall(call) => call.arguments().to_string().len(),
-        Part::Opaque(part) => part.body().len(),
-        _ => 0,
-    };
-    turn.parts().iter().map(size).sum()
-}
-
 /// One run of the loop: what it froze, and what it has dispatched and kept so far.
 struct Run<'a> {
     context: &'a Context,
@@ -381,6 +371,8 @@ impl Action for Check {
         let Some(judge) = context.capabilities().judge() else {
             return Err(failed("no_judge", &"the run was handed no judge"));
         };
+        // A turn with more text than the loop reads is not taken, and not stored.
+        let judge = &judge.clone().turns_within(TURN_TEXT_LIMIT as u64);
         // The run's tools are frozen here, once: the names its call gave, each a tool
         // that is on offer now. The executor is told the same list, and holds every
         // call to it. Nothing below reads the toolbox again.
@@ -438,10 +430,6 @@ impl Action for Check {
             let turn = run.judge.send(&request.map_err(unfit)?);
             let turn = turn.map_err(|fault| failed("judge_fault", &fault))?;
             allowed = tokens;
-            if text_of(&turn) > TURN_TEXT_LIMIT {
-                let why = format!("a turn holds more than {TURN_TEXT_LIMIT} bytes of text");
-                return Err(failed("judge_output", &why));
-            }
             match turn.stop() {
                 // Cut off: the turn is left out of the conversation, whatever it
                 // holds, and asked for once more with a larger limit.

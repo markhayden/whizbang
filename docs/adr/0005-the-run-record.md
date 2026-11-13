@@ -144,8 +144,9 @@ settled before the ledger of checkpoint 1B, so that list is the empty one. The a
 of the run and not of a request, which is why it is not an element of the list. It is
 written when the run ends, from what admission reserved; a run that never ends has no
 record, and its admission and its reservation say the same amount. The largest amount
-there is is no amount (ADR 0007): the types refuse it, and the schema, which has no
-maximum in the vocabulary the validator knows, does not.
+there is is no amount (ADR 0007): the types refuse it, and the schema does not: the
+validator holds a number to a maximum as a double, which cannot tell that amount from
+the ones beside it.
 
 **What reading does with a `run/1` record.** It is refused as another version, like any
 other. A store is not kept before the tag of checkpoint 1A, so nothing is migrated

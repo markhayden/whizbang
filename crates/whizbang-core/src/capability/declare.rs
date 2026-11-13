@@ -46,7 +46,22 @@ pub struct Declaration {
 impl Declaration {
     /// A declaration of this model with these features. A feature is a name, as an
     /// action's is, and is declared once.
+    ///
+    /// The backend, the model and the version are each 1 to [`MODEL_NAME_LIMIT`]
+    /// printable ASCII characters with no space, no `"` and no `\`: each is written
+    /// in a run's record once for every request the run sends (ADR 0009).
     pub fn new(model: ModelIdentity, features: &[&str]) -> Result<Declaration, DeclarationError> {
+        let named = [
+            ("backend", model.backend()),
+            ("model", model.model()),
+            ("version", model.version()),
+        ];
+        for (what, name) in named {
+            let plain = |b: u8| b.is_ascii_graphic() && b != b'"' && b != b'\\';
+            if name.is_empty() || name.len() > MODEL_NAME_LIMIT || !name.bytes().all(plain) {
+                return Err(DeclarationError::Model { what });
+            }
+        }
         let mut declared = BTreeSet::new();
         for feature in features {
             let feature = (*feature).to_owned();
@@ -80,9 +95,16 @@ impl Declaration {
     }
 }
 
+/// The most characters of the name of a backend, of a model and of a model's version.
+pub const MODEL_NAME_LIMIT: usize = 128;
+
 /// Why a declaration could not be made.
 #[derive(Clone, PartialEq, Eq)]
 pub enum DeclarationError {
+    /// The name of the backend, of the model or of its version (`what` says which) is
+    /// not 1 to [`MODEL_NAME_LIMIT`] printable ASCII characters with no space, no `"`
+    /// and no `\`. The name is not shown.
+    Model { what: &'static str },
     /// The feature is not a name.
     Name { feature: String },
     /// The feature is declared twice.
@@ -92,6 +114,11 @@ pub enum DeclarationError {
 impl std::fmt::Display for DeclarationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            DeclarationError::Model { what } => write!(
+                f,
+                "the name of the {what} is not 1 to {MODEL_NAME_LIMIT} printable ASCII \
+                 characters with no space, no double quote and no backslash"
+            ),
             DeclarationError::Name { feature } => {
                 write!(
                     f,
@@ -109,6 +136,9 @@ impl std::fmt::Display for DeclarationError {
 impl std::fmt::Debug for DeclarationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (kind, feature) = match self {
+            DeclarationError::Model { what } => {
+                return f.debug_struct("Model").field("what", what).finish();
+            }
             DeclarationError::Name { feature } => ("Name", feature),
             DeclarationError::Twice { feature } => ("Twice", feature),
         };

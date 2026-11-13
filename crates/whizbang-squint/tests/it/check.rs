@@ -827,12 +827,19 @@ fn what_a_judge_that_is_not_trusted_answers_is_a_typed_outcome_and_never_a_panic
     ];
     let left = output(&turns(&again), "the id of a call that was answered before");
     assert_eq!(steps(left.record()).len(), 1);
-    // A turn with more text than the loop takes.
+    // A turn with more text than the loop takes is not taken by its handle: a fault,
+    // and what is stored of the turn is its sizes.
     let long = "x".repeat(TURN_TEXT_LIMIT + 1);
-    output(
-        &turns(&[(json!([{"text": long}]), "end_turn")]),
-        "bytes of text",
+    let script = turns(&[(json!([{"text": long}]), "end_turn")]);
+    let (kind, message, left) = error_of(&world, &script);
+    assert_eq!(kind, "judge_fault");
+    assert!(
+        message.starts_with("too_large: the turn holds 262145 bytes of text"),
+        "{message}"
     );
+    let kept = &left.exchange(1)["answer"]["turn_withheld"];
+    assert_eq!(kept["bytes"].as_u64(), Some(262_145));
+    assert!(left.diagnostic("exchange-0001").len() < 4000);
 }
 
 #[test]

@@ -453,6 +453,12 @@ impl FakeJudge {
         self
     }
 
+    /// The same judge, declaring this in place of what it declared.
+    pub fn declared_as(mut self, declaration: Declaration) -> FakeJudge {
+        self.declaration = declaration;
+        self
+    }
+
     /// The same judge, declaring these features and no others.
     pub fn declaring(mut self, features: &[&str]) -> FakeJudge {
         self.declaration = declaration("fake-judge", features);

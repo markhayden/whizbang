@@ -8,14 +8,18 @@ use std::sync::{Arc, Mutex};
 use whizbang_core::artifact::{self, Artifact, ArtifactId, ArtifactType};
 use whizbang_core::contract::record::RunRecord;
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Call, CallError, Context, Count, Engine, Executor, Failure,
+    Action, ActionDescriptor, Answer, Call, CallError, Context, Count, Engine, Executor, Failure,
     InputPort, Kind, NoBackends, OutputPort, PreparedCall, Produced, Refusal, RefusalKind,
     Registry, Request,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::Store;
 
+use serde_json::Value as Json;
+use whizbang_testkit::schema::validate;
+
 use super::commit::{World, held};
+use super::record::schema;
 use crate::artifact::support::{on, rect_mask};
 
 type Body = Box<dyn Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync>;
@@ -212,6 +216,10 @@ fn a_run_that_froze_its_calls_gives_a_call_only_what_it_was_given_or_its_own_cal
     assert_eq!(record.steps().len(), 3);
     let kinds: Vec<_> = record.outcome().refusals.iter().map(|r| r.kind()).collect();
     assert_eq!(kinds, [RefusalKind::NotReadable; 4]);
+    // A record with such a refusal is one the schema takes.
+    let document: Json = serde_json::from_slice(&record.to_bytes()).unwrap();
+    validate(&schema(), &document).unwrap();
+    assert_eq!(document["outcome"]["refusals"][0]["kind"], "not_readable");
     let why = record.outcome().refusals[1].why();
     assert!(
         why.contains(&guessed.to_string()) && why.contains("was not given"),
@@ -284,4 +292,163 @@ fn a_name_is_held_to_what_a_run_froze_without_a_call_and_the_refusal_is_in_its_r
     // A name that is no action's name by the rule is recorded with no action.
     assert_eq!((said[2].0, said[2].1), (None, RefusalKind::NotOffered));
     assert_eq!(said.len(), 3);
+}
+
+#[test]
+fn a_preparation_from_inside_a_run_that_froze_its_calls_says_no_more_than_a_call_would() {
+    // `other` is an action of the build and `nowhere` is none; the store holds one
+    // mask the run was not given and no artifact of the guessed identity. Preparing a
+    // call the run may not make is refused as the call would be, with the same
+    // sentence for each pair, so nothing is learned of the build or of the store.
+    let world = World::new();
+    let store = world.store();
+    let given = put(&store, "given");
+    let other = put(&store, "other");
+    let guessed = ArtifactId(Digest::of_bytes(b"a guess"));
+    let noted = Noted::default();
+    let outer = {
+        let noted = noted.clone();
+        action("outer", move |_, context| {
+            let takes = |id: ArtifactId| Call::new("takes").input("masks", id);
+            let executor = context.executor();
+            // Before the freeze a preparation is the executor's own.
+            executor.prepare(&Call::new("other")).unwrap();
+            let unknown = refusal(executor.prepare(&Call::new("nowhere")));
+            assert_eq!(unknown.kind(), RefusalKind::UnknownAction);
+            assert!(context.freeze_calls(["takes"]));
+            let mut noted = noted.lock().unwrap();
+            for call in [
+                Call::new("other"),
+                Call::new("nowhere"),
+                takes(other),
+                takes(guessed),
+            ] {
+                let prepared = refusal(executor.prepare(&call));
+                assert_eq!(prepared, refusal(executor.submit(&call)));
+                noted.push(prepared);
+            }
+            executor.prepare(&takes(given)).unwrap();
+            Ok(Produced::nothing())
+        })
+    };
+    let takes = action("takes", |_, _| Ok(Produced::nothing()));
+    let other_action = action("other", |_, _| Ok(Produced::nothing()));
+    let executor = engine(store, vec![outer, takes, other_action]);
+    let finished = executor
+        .submit(&Call::new("outer").input("masks", given))
+        .unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let noted = noted.lock().unwrap();
+    let kinds: Vec<_> = noted.iter().map(Refusal::kind).collect();
+    let (offered, readable) = (RefusalKind::NotOffered, RefusalKind::NotReadable);
+    assert_eq!(kinds, [offered, offered, readable, readable]);
+    let said = |at: usize| noted[at].to_string();
+    assert_eq!(said(0).replace("other", "nowhere"), said(1));
+    assert_eq!(
+        said(2).replace(&other.to_string(), &guessed.to_string()),
+        said(3)
+    );
+    // A preparation is no call: only the four calls are in the record.
+    let record = record(&world, finished.run().as_str());
+    assert_eq!(record.outcome().refusals.len(), 4);
+}
+
+#[test]
+fn a_call_to_start_what_a_run_did_not_freeze_is_told_so_though_no_place_is_free() {
+    // The store's writer may have one started run, and the run that asks holds that
+    // place. A call to start an action that is not on its list is refused for the
+    // list; one that is on it is refused for the place.
+    let world = World::new();
+    let noted = Noted::default();
+    let outer = {
+        let noted = noted.clone();
+        action("outer", move |_, context| {
+            assert!(context.freeze_calls(["inner"]));
+            let start = |name: &str| context.executor().start(&Request::new(Call::new(name)));
+            let mut noted = noted.lock().unwrap();
+            noted.push(refusal(start("other")));
+            noted.push(refusal(start("inner")));
+            Ok(Produced::nothing())
+        })
+    };
+    let inner = action("inner", |_, _| Ok(Produced::nothing()));
+    let other = action("other", |_, _| Ok(Produced::nothing()));
+    let executor = engine(world.store(), vec![outer, inner, other])
+        .with_started_bound(1)
+        .unwrap();
+    let Ok(Answer::Started(run)) = executor.start(&Request::new(Call::new("outer"))) else {
+        panic!("the request was not started");
+    };
+    executor.wait(&run).unwrap();
+    let kinds: Vec<_> = noted.lock().unwrap().iter().map(Refusal::kind).collect();
+    assert_eq!(
+        kinds,
+        [RefusalKind::NotOffered, RefusalKind::TooManyStarted]
+    );
+    let record = record(&world, run.as_str());
+    let kinds: Vec<_> = record.outcome().refusals.iter().map(|r| r.kind()).collect();
+    assert_eq!(
+        kinds,
+        [RefusalKind::NotOffered, RefusalKind::TooManyStarted]
+    );
+}
+
+#[test]
+fn what_a_run_froze_binds_every_run_under_it() {
+    // `outer` froze `mid` and `takes`. `mid` is on the list, and froze nothing of its
+    // own. It is held all the same: it calls no action that `outer` could not, and
+    // gives a call only what it was given itself or its own calls committed, though
+    // the store holds more. A list of its own can only narrow that.
+    let world = World::new();
+    let store = world.store();
+    let given = put(&store, "given");
+    let other = put(&store, "other");
+    let noted = Noted::default();
+    let outer = action("outer", move |_, context| {
+        assert!(context.freeze_calls(["mid", "takes", "makes"]));
+        let mid = Call::new("mid").input("masks", given);
+        let finished = context.executor().submit(&mid).unwrap();
+        assert_eq!(finished.outcome().name(), "completed");
+        Ok(Produced::nothing())
+    });
+    let mid = {
+        let noted = noted.clone();
+        action("mid", move |_, context| {
+            let takes = |id: ArtifactId| Call::new("takes").input("masks", id);
+            let executor = context.executor();
+            let mut noted = noted.lock().unwrap();
+            noted.push(refusal(executor.submit(&Call::new("free"))));
+            noted.push(context.offered("free").unwrap_err());
+            noted.push(refusal(executor.prepare(&Call::new("free"))));
+            noted.push(refusal(executor.submit(&takes(other))));
+            // What it was given, and what a run it called made, it may hand on.
+            executor.submit(&takes(given)).unwrap();
+            let made = executor.submit(&Call::new("makes")).unwrap();
+            executor
+                .submit(&takes(made.outcome().outputs()[0].id()))
+                .unwrap();
+            // Its own list narrows what is left, and widens nothing.
+            assert!(context.freeze_calls(["takes", "free"]));
+            noted.push(refusal(executor.submit(&Call::new("makes"))));
+            noted.push(refusal(executor.submit(&Call::new("free"))));
+            executor.submit(&takes(given)).unwrap();
+            Ok(Produced::nothing())
+        })
+    };
+    let takes = action("takes", |_, _| Ok(Produced::nothing()));
+    let free = action("free", |_, _| Ok(Produced::nothing()));
+    let makes = action("makes", |_, _| {
+        Ok(Produced::nothing().with("made", rect_mask(on("made"))))
+    });
+    let executor = engine(store, vec![outer, mid, takes, free, makes]);
+    let finished = executor
+        .submit(&Call::new("outer").input("masks", given))
+        .unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let kinds: Vec<_> = noted.lock().unwrap().iter().map(Refusal::kind).collect();
+    let (offered, readable) = (RefusalKind::NotOffered, RefusalKind::NotReadable);
+    assert_eq!(
+        kinds,
+        [offered, offered, offered, readable, offered, offered]
+    );
 }

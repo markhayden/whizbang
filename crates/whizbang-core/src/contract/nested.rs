@@ -87,14 +87,19 @@ pub(super) struct Offer {
     /// The run whose calls these are, and the secrets its record is written without:
     /// where a name the action itself held to the list, and refused, is recorded.
     run: Option<(Arc<LiveRun>, Secrets)>,
+    /// What the run that called this one is held to. A run is held to all of it as
+    /// well: what a run froze binds every run under it.
+    above: Option<Arc<Offer>>,
 }
 
 impl Offer {
-    /// The offer of this run: nothing is frozen yet.
-    pub(super) fn of(run: Arc<LiveRun>, secrets: Secrets) -> Offer {
+    /// The offer of this run, under the one of the run that called it: nothing of
+    /// its own is frozen yet.
+    pub(super) fn of(run: Arc<LiveRun>, secrets: Secrets, above: Option<Arc<Offer>>) -> Offer {
         Offer {
             actions: OnceLock::new(),
             run: Some((run, secrets)),
+            above,
         }
     }
 
@@ -103,15 +108,46 @@ impl Offer {
         self.actions.set(actions).is_ok()
     }
 
-    fn frozen(&self) -> Option<&BTreeSet<String>> {
-        self.actions.get()
+    /// Each list that binds the run: its own, when it froze one, and that of every
+    /// run above it that did.
+    fn lists(&self) -> impl Iterator<Item = &BTreeSet<String>> {
+        let mut next = Some(self);
+        std::iter::from_fn(move || {
+            let offer = next?;
+            next = offer.above.as_deref();
+            Some(offer.actions.get())
+        })
+        .flatten()
+    }
+
+    /// Why the run may not make this call, when it may not: the run, or a run above
+    /// it, froze its calls, and the action is not on every such list, or an input is
+    /// neither one of `inputs`, the inputs of the run's own call, nor an output that a
+    /// run it called committed. The store is not looked at.
+    fn refuses(&self, call: &Call, inputs: &BTreeSet<ArtifactId>, nest: &Nest) -> Option<Refusal> {
+        self.lists().next()?;
+        let action = call.action().to_owned();
+        if !self.lists().all(|offered| offered.contains(call.action())) {
+            return Some(Refusal::NotOffered { action });
+        }
+        for (port, ids) in call.inputs() {
+            let unread = |id: &&ArtifactId| !inputs.contains(*id) && !nest.committed(**id);
+            if let Some(id) = ids.iter().find(unread) {
+                return Some(Refusal::NotReadable {
+                    action,
+                    port: port.clone(),
+                    id: *id,
+                });
+            }
+        }
+        None
     }
 
     /// Holds a name to the frozen actions without making a call: refused when the
-    /// actions are frozen and this is none of them, and the refusal is kept for the
-    /// run's record as the executor keeps one of a call it refused.
+    /// run is bound by a list and this is not on every one, and the refusal is kept
+    /// for the run's record as the executor keeps one of a call it refused.
     pub(super) fn held(&self, action: &str) -> Result<(), Refusal> {
-        if self.frozen().is_none_or(|offered| offered.contains(action)) {
+        if self.lists().all(|offered| offered.contains(action)) {
             return Ok(());
         }
         let refusal = Refusal::NotOffered {
@@ -444,6 +480,8 @@ pub(super) struct Family {
     above: Arc<Vec<RunId>>,
     pub(super) tree: Arc<Tree>,
     pub(super) allowance: Allowance,
+    /// What the run that called this one is held to in its calls.
+    pub(super) offer: Option<Arc<Offer>>,
 }
 
 impl Family {
@@ -471,6 +509,7 @@ impl Family {
             above: under.map_or_else(Arc::default, |under| under.above.clone()),
             tree: under.map_or_else(|| Arc::new(Tree::new(descendants)), |u| u.tree.clone()),
             allowance: reserved.map_or_else(Allowance::none, Allowance::of),
+            offer: under.map(|under| under.offer.clone()),
         }
     }
 }
@@ -507,6 +546,12 @@ impl Nested {
         admitted
     }
 
+    /// Why the run's frozen calls refuse this call, when they do.
+    fn frozen(&self, call: &Call) -> Option<Refusal> {
+        let under = &self.under;
+        under.offer.refuses(call, &under.inputs, under.live.nest())
+    }
+
     fn open(&self, request: &Request, start: bool) -> Result<Admitted, CallError> {
         let (under, call) = (&self.under, request.call());
         let action = || call.action().to_owned();
@@ -516,24 +561,8 @@ impl Nested {
         // A run that froze the actions it calls calls no other, and gives a call
         // nothing but what it may read: decided here, where the call is dispatched,
         // from what the run was admitted with and what its own calls came to.
-        if let Some(offered) = under.offer.frozen() {
-            if !offered.contains(call.action()) {
-                return Err(Refusal::NotOffered { action: action() }.into());
-            }
-            let nest = under.live.nest();
-            for (port, ids) in call.inputs() {
-                let unread = ids
-                    .iter()
-                    .find(|id| !under.inputs.contains(*id) && !nest.committed(**id));
-                if let Some(id) = unread {
-                    return Err(Refusal::NotReadable {
-                        action: action(),
-                        port: port.clone(),
-                        id: *id,
-                    }
-                    .into());
-                }
-            }
+        if let Some(refusal) = self.frozen(call) {
+            return Err(refusal.into());
         }
         if under.stack.len() >= LEVELS_LIMIT {
             return Err(Refusal::TooDeep {
@@ -603,7 +632,14 @@ impl Nested {
 
 impl Executor for Nested {
     fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError> {
-        self.engine.prepare(call)
+        // A run that froze its calls is told of a call it may not make what it would
+        // be told if it made it, and nothing more: not whether the action is one of
+        // the build, and not whether the store holds the artifact. As any
+        // preparation, it is not a call, and is not recorded.
+        match self.frozen(call) {
+            Some(refusal) => Err(refusal.into()),
+            None => self.engine.prepare(call),
+        }
     }
 
     fn submit(&self, call: &Call) -> Result<Finished, CallError> {
@@ -622,6 +658,13 @@ impl Executor for Nested {
         // admitted; and a run may have only so many of its own at once. A full count
         // is a refusal, never a wait. Both come back when the run is over, before
         // whoever waits for it is told.
+        // What the run froze is held first: a call the run may not make takes no
+        // place, and is told so whatever the count of started runs is.
+        if let Some(refusal) = self.frozen(request.call()) {
+            let refused = Refused::of(request.call(), &refusal, &self.secrets);
+            self.under.live.nest().refused(refused);
+            return Err(refusal.into());
+        }
         let place = match self.engine.start_place() {
             Ok(place) => place,
             Err(refusal) => {

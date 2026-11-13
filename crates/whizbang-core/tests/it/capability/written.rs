@@ -364,3 +364,56 @@ fn an_exchange_is_read_strictly_and_its_request_is_held_to_a_requests_bounds() {
         "a tool's schema is not a JSON object"
     );
 }
+
+#[test]
+fn the_kind_of_a_document_is_read_first_and_by_itself() {
+    // Another kind is said to be one whatever the rest of the document holds, a kind
+    // that is no text is none, and a kind named twice is no document.
+    let other = |text: &str| match read_script(text.as_bytes()) {
+        Err(Unread::OtherVersion { found }) => found,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        other(r#"{"entries":"not a list","script":"judge-script/9","x":[1,{"y":2}]}"#),
+        "judge-script/9"
+    );
+    assert_eq!(
+        other(r#"{"script":["judge-script/1"],"entries":[]}"#),
+        "none"
+    );
+    assert_eq!(other(r#"{"entries":[]}"#), "none");
+    let twice = r#"{"script":"judge-script/9","script":"judge-script/1","entries":[]}"#;
+    assert!(matches!(
+        read_script(twice.as_bytes()),
+        Err(Unread::Malformed(_))
+    ));
+    for no_object in ["[]", "7", "", "{\"script\":\"judge-script/1\""] {
+        let error = read_script(no_object.as_bytes()).unwrap_err();
+        assert!(
+            matches!(error, Unread::Malformed(_)),
+            "{no_object}: {error}"
+        );
+    }
+    // Arrays nested a hundred thousand deep are refused, and nothing overflows.
+    let deep = format!(
+        r#"{{"script":"judge-script/1","entries":{}{}}}"#,
+        "[".repeat(100_000),
+        "]".repeat(100_000)
+    );
+    assert!(matches!(
+        read_script(deep.as_bytes()),
+        Err(Unread::Malformed(_))
+    ));
+}
+
+#[test]
+fn an_exchange_whose_turn_was_not_written_is_not_read_back() {
+    let written = write_exchange(0, &request(), &Ok(cut_off()), Keep::Whole);
+    let mut document: Json = serde_json::from_slice(&written).unwrap();
+    document["answer"] = json!({"turn_withheld": {
+        "parts": 1, "bytes": 14, "stop": "max_tokens",
+        "digest": Digest::of_bytes(b"The crop shows").to_string(),
+    }});
+    let bytes = serde_json::to_vec(&document).unwrap();
+    assert_eq!(read_exchange(&bytes, &pictures), Err(Unread::Withheld));
+}

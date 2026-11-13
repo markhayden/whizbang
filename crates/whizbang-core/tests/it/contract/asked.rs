@@ -11,9 +11,11 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value as Json, json};
 use whizbang_core::capability::written::EXCHANGE;
 use whizbang_core::capability::{
-    Controls, Excluded, Fault, FaultKind, FillRequest, Judge, JudgeRequest, Message, Opaque, Part,
-    Picture, REQUESTS_LIMIT, Role, Roster, StopReason, Support, ToolCall, Turn, Usage,
+    Controls, Declaration, DeclarationError, EXCHANGES_MAX_BYTES, Excluded, Fault, FaultKind,
+    FillRequest, Judge, JudgeRequest, MODEL_NAME_LIMIT, Message, Opaque, Part, Picture,
+    REQUESTS_LIMIT, Role, Roster, StopReason, Support, ToolCall, Turn, Usage,
 };
+use whizbang_core::contract::ModelIdentity;
 use whizbang_core::contract::record::{
     Decision, Judged, MODELS_LIMIT, RequestEnded, RunRecord, Status, Stop, Timed,
 };
@@ -65,7 +67,8 @@ fn action(
     body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
 ) -> Arc<dyn Action> {
     let mut draft = ActionDescriptor::draft(name, "1.0.0", Kind::Primitive, "A test action.")
-        .argument(Argument::optional("judge", "A judge.", ValueType::Text));
+        .argument(Argument::optional("judge", "A judge.", ValueType::Text))
+        .argument(Argument::optional("note", "A note.", ValueType::Text));
     for need in needs {
         draft = draft.needs(need);
     }
@@ -730,10 +733,11 @@ fn a_secret_in_what_a_judge_was_sent_or_answered_is_in_nothing_the_run_stores() 
     let finished = executor.submit(&Call::new("asks")).unwrap();
     assert_eq!(finished.outcome().name(), "completed");
 
-    // The action was handed the turn and the fault as they came.
+    // The action was handed the turn's text as it came. A fault's sentence is cut, so
+    // it is handed that with the key taken out first.
     let handed = handed.lock().unwrap().clone();
     assert!(
-        handed[0].contains(&key) && handed[1].contains(&key),
+        handed[0].contains(&key) && handed[1] == "refused ?redacted?",
         "{handed:?}"
     );
     // The judge was sent the opaque part back with its key.
@@ -760,7 +764,7 @@ fn a_secret_in_what_a_judge_was_sent_or_answered_is_in_nothing_the_run_stores() 
     let Judged::Turn { provider_id, .. } = &record.judge()[0] else {
         panic!("the first entry is a turn");
     };
-    assert_eq!(provider_id.as_deref(), Some("[redacted]"));
+    assert_eq!(provider_id.as_deref(), Some("?redacted?"));
     // The reason was redacted while it was whole, and then cut.
     let (_, why) = record.verdict().unwrap();
     assert!(
@@ -787,6 +791,545 @@ fn an_action_cannot_write_a_diagnostic_under_an_exchanges_name() {
     let (record, _) = stored(&world, finished.run());
     let names: Vec<_> = record.diagnostics().iter().map(|d| d.name()).collect();
     assert_eq!(names, ["diagnostics/exchanges", "journal"]);
+}
+
+// --- a provider's words, and what is cut ------------------------------------------------------
+
+/// A made-up key that no cleaning changes, and one that holds marks cleaning replaces.
+fn plain_key() -> String {
+    format!("{}{}", "zqHEADofKEY", "0123456789abcdTAIL")
+}
+
+fn marked_key() -> String {
+    format!("{}{}", "zqSLASH/part+two=", "KEY9876543210")
+}
+
+#[test]
+fn a_secret_that_a_cut_of_a_providers_words_goes_through_is_stored_nowhere_and_told_to_no_action() {
+    // A provider's id is cut at 128 characters, its word for a stop reason at 64 and a
+    // fault's sentence at 240, and each is cleaned. A key lies across each cut, and a
+    // key with marks that cleaning replaces lies whole in a fault. The handle takes
+    // the keys out while the words are whole: no part of one is in anything the run
+    // stores, nor in the turn and the faults the action is handed.
+    let world = World::new();
+    let (key, marked) = (plain_key(), marked_key());
+    let secrets = Secrets::new([key.clone(), marked.clone()]).unwrap();
+    let id = format!("{}{key}", "r".repeat(120));
+    let word = format!("{}{key}", "o".repeat(56));
+    let parts = vec![Part::Text("ok".to_owned())];
+    let turn = Turn::new(parts, StopReason::Other(word), None, Some(&id)).unwrap();
+    // Before a handle has looked, the cut has left the head of the key in each.
+    assert!(turn.request_id().unwrap().ends_with(&key[..8]));
+    let cut = Fault::new(FaultKind::Rejected, &format!("{} {key}", "x".repeat(229)));
+    assert!(cut.sentence().ends_with(&key[..10]));
+    let changed = Fault::new(
+        FaultKind::Rejected,
+        &format!("the key {marked} was refused"),
+    );
+    assert!(
+        changed
+            .sentence()
+            .contains("zqSLASH?part+two?KEY9876543210")
+    );
+    let judge = Arc::new(FakeJudge::scripted(vec![Ok(turn), Err(cut), Err(changed)]));
+    let told: Noted<String> = Noted::default();
+    let asks = {
+        let told = told.clone();
+        action("asks", judging(), move |_, context| {
+            let judge = context.capabilities().judge().unwrap();
+            let turn = judge.send(&asking("well?", 64)).unwrap();
+            let mut told = told.lock().unwrap();
+            told.push(format!("{:?} {:?}", turn.stop(), turn.request_id()));
+            for _ in 0..2 {
+                let fault = judge.send(&asking("well?", 64)).unwrap_err();
+                told.push(format!("{fault} {fault:?}"));
+            }
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    )
+    .with_secrets(secrets);
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let parts_of_a_key: [&[u8]; 4] = [b"zqHEAD", b"zqSLASH", b"KEY9876543210", b"TAIL"];
+    let told = told.lock().unwrap().clone();
+    assert_eq!(told.len(), 3);
+    for said in &told {
+        for part in parts_of_a_key {
+            assert!(!holds(said.as_bytes(), part), "the action was told {said}");
+        }
+    }
+    // What it was told instead: the words with the marker where the key stood, cleaned.
+    assert!(
+        told[0].contains(&format!("{}?redacte", "o".repeat(56))),
+        "{}",
+        told[0]
+    );
+    assert!(
+        told[2].contains("the key ?redacted? was refused"),
+        "{}",
+        told[2]
+    );
+    let files = files_under(&world.root());
+    assert!(files.len() > 5);
+    for (path, bytes) in &files {
+        for part in parts_of_a_key {
+            assert!(!holds(bytes, part), "{path:?} holds a part of a key");
+        }
+    }
+    let (record, names) = stored(&world, finished.run());
+    let Judged::Turn { provider_id, .. } = &record.judge()[0] else {
+        panic!("a turn");
+    };
+    assert_eq!(
+        provider_id.as_deref(),
+        Some(format!("{}?redacte", "r".repeat(120)).as_str())
+    );
+    let second: Json = serde_json::from_slice(&names["diagnostics/exchange-0002"]).unwrap();
+    let sentence = second["answer"]["fault"]["sentence"].as_str().unwrap();
+    assert_eq!(sentence, format!("{} ?redacted?", "x".repeat(229)));
+}
+
+#[test]
+fn a_fault_of_any_capability_is_told_to_an_action_with_the_secrets_taken_out_whole() {
+    // A filler's fault whose sentence the cut goes through a key of. The action, which
+    // could copy the sentence into its own failure, is handed none of the key.
+    let world = World::new();
+    let key = plain_key();
+    let fault = Fault::new(
+        FaultKind::Unavailable,
+        &format!("{} {key}", "x".repeat(229)),
+    );
+    let filler = Arc::new(FakeFiller::new(Paint::Fails(fault)));
+    let asks = action(
+        "asks",
+        vec![Requirement::new(Capability::Fill)],
+        |_, context| {
+            let fault = context
+                .capabilities()
+                .fill()
+                .unwrap()
+                .fill(&fill_request())
+                .unwrap_err();
+            Err(Failure::error("fill", fault.sentence()))
+        },
+    );
+    let executor = engine(
+        &world,
+        roster(None, Some(filler.as_ref()), None),
+        Capabilities::none().with_fill(filler.clone()),
+        vec![asks],
+    )
+    .with_secrets(Secrets::new([key.clone()]).unwrap());
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    let (record, names) = stored(&world, finished.run());
+    let message = &record.outcome().error.as_ref().unwrap().message;
+    assert_eq!(*message, format!("{} ?redacted?", "x".repeat(229)));
+    assert!(!holds(&names["record"], b"zqHEAD"));
+}
+
+#[test]
+fn words_that_cleaning_turns_into_a_secret_or_that_are_too_long_to_search_are_not_kept() {
+    // Cleaning replaces a mark by `?`. A secret that is what the cleaned words read
+    // as is found after the cleaning, and then none of the words is kept. Words over
+    // a mebibyte are not searched, and none of them is kept either.
+    let world = World::new();
+    let secret = "pass?word?99".to_owned();
+    let secrets = Secrets::new([secret.clone()]).unwrap();
+    let becomes = Fault::new(FaultKind::Rejected, "it said pass/word=99 to me");
+    assert!(becomes.sentence().contains(&secret));
+    let long = Fault::new(FaultKind::Rejected, &"a long reason ".repeat(80_000));
+    let judge = Arc::new(FakeJudge::scripted(vec![Err(becomes), Err(long)]));
+    let told: Noted<String> = Noted::default();
+    let asks = {
+        let told = told.clone();
+        action("asks", judging(), move |_, context| {
+            let judge = context.capabilities().judge().unwrap();
+            for _ in 0..2 {
+                let fault = judge.send(&asking("well?", 64)).unwrap_err();
+                told.lock().unwrap().push(fault.sentence().to_owned());
+            }
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    )
+    .with_secrets(secrets);
+    executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(*told.lock().unwrap(), ["the reason is not kept"; 2]);
+    for (path, bytes) in files_under(&world.root()) {
+        assert!(!holds(&bytes, secret.as_bytes()), "{path:?}");
+    }
+}
+
+#[test]
+fn an_id_that_redaction_lengthens_is_cut_again_and_its_record_is_read_back() {
+    // The marker is ten bytes and a secret may be eight: an id of 128 characters that
+    // ends in one is longer once it is redacted. It is cut after that, so the record
+    // holds 128 characters, the reader takes it, and a status is answered.
+    let world = World::new();
+    let key = format!("{}{}", "zq7K", "m2Xw");
+    let secrets = Secrets::new([key.clone()]).unwrap();
+    let id = format!("{}{key}", "r".repeat(120));
+    let parts = vec![Part::Text("ok".to_owned())];
+    let turn = Turn::new(parts, StopReason::EndTurn, None, Some(&id)).unwrap();
+    let judge = Arc::new(FakeJudge::scripted(vec![Ok(turn)]));
+    let asks = action("asks", judging(), |_, context| {
+        let judge = context.capabilities().judge().unwrap();
+        let turn = judge.send(&asking("well?", 64)).unwrap();
+        assert_eq!(turn.request_id().unwrap().chars().count(), 128);
+        Ok(Produced::nothing())
+    });
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    )
+    .with_secrets(secrets);
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    let (record, _) = stored(&world, finished.run());
+    let Judged::Turn { provider_id, .. } = &record.judge()[0] else {
+        panic!("a turn");
+    };
+    let expected = format!("{}?redacte", "r".repeat(120));
+    assert_eq!(provider_id.as_deref(), Some(expected.as_str()));
+    executor.status(finished.run()).unwrap();
+}
+
+#[test]
+fn a_text_whose_cut_and_three_dots_complete_a_secret_is_kept_without_the_dots() {
+    // The secret ends in three dots. The reason is cut just after the rest of it, so
+    // the dots that mark the cut complete it. It is not kept that way: the dots are
+    // left off, what is kept is within what a reader takes, and the record is read.
+    let world = World::new();
+    let secret = "abcde...".to_owned();
+    let secrets = Secrets::new([secret.clone()]).unwrap();
+    let concludes = action("concludes", Vec::new(), |_, _| {
+        let why = format!("{}abcde and more", "x".repeat(MESSAGE_LIMIT - 5));
+        Ok(Produced::nothing().with_verdict(Verdict::new(Decision::Pass, &why)))
+    });
+    let executor =
+        engine(&world, Roster::new(), Capabilities::none(), vec![concludes]).with_secrets(secrets);
+    let finished = executor.submit(&Call::new("concludes")).unwrap();
+    let (record, _) = stored(&world, finished.run());
+    let (_, why) = record.verdict().unwrap();
+    assert_eq!(why, format!("{}abcde", "x".repeat(MESSAGE_LIMIT - 5)));
+    for (path, bytes) in files_under(&world.root()) {
+        assert!(!holds(&bytes, secret.as_bytes()), "{path:?}");
+    }
+}
+
+// --- a model's names, and how large a record can be -------------------------------------------
+
+#[test]
+fn the_names_of_a_backend_a_model_and_a_version_are_bounded_where_they_are_declared() {
+    let declared = |backend: &str, model: &str, version: &str| {
+        Declaration::new(ModelIdentity::new(backend, model, version), &[])
+    };
+    let longest = "m".repeat(MODEL_NAME_LIMIT);
+    declared(&longest, &longest, &longest).unwrap();
+    declared("fal.ai", "sam-3/large@2026", "v1.0+cu121").unwrap();
+    let long = "m".repeat(MODEL_NAME_LIMIT + 1);
+    for wrong in [
+        long.as_str(),
+        "",
+        "two words",
+        "caf\u{e9}",
+        "a\"b",
+        "a\\b",
+        "a\nb",
+    ] {
+        let model = |what| Err(DeclarationError::Model { what });
+        assert_eq!(declared(wrong, "m", "1"), model("backend"), "{wrong:?}");
+        assert_eq!(declared("b", wrong, "1"), model("model"), "{wrong:?}");
+        assert_eq!(declared("b", "m", wrong), model("version"), "{wrong:?}");
+    }
+    // The refusal does not show the name.
+    let refusal = declared("b", "se cret", "1").unwrap_err();
+    assert!(!format!("{refusal} {refusal:?}").contains("cret"));
+}
+
+/// A judge of this model, backend and version, whose script is empty.
+struct Named(Declaration);
+
+impl Judge for Named {
+    fn declaration(&self) -> &Declaration {
+        &self.0
+    }
+
+    fn send(&self, _: &JudgeRequest, _: &whizbang_core::capability::Bounds) -> Result<Turn, Fault> {
+        Err(Fault::new(FaultKind::Unavailable, "nobody is there"))
+    }
+}
+
+#[test]
+fn a_secret_and_a_long_text_in_a_models_names_are_redacted_and_then_cut_in_the_record() {
+    // Each name is as long as one may be and ends in a key of eight bytes. Redacted,
+    // each is two characters longer; it is cut after that. The record is read back,
+    // and holds no part of the key that is not a part of the marker.
+    let world = World::new();
+    let key = format!("{}{}", "zq7K", "m2Xw");
+    let secrets = Secrets::new([key.clone()]).unwrap();
+    let name = |first: char| format!("{}{key}", first.to_string().repeat(MODEL_NAME_LIMIT - 8));
+    let model = ModelIdentity::new(&name('b'), &name('m'), &name('v'));
+    let features = ["image", "tool"];
+    let judge = Arc::new(Named(Declaration::new(model, &features).unwrap()));
+    let asks = action("asks", judging(), |_, context| {
+        let judge = context.capabilities().judge().unwrap();
+        judge.send(&asking("well?", 64)).unwrap_err();
+        Ok(Produced::nothing())
+    });
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    )
+    .with_secrets(secrets);
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    let (record, names) = stored(&world, finished.run());
+    let kept = &record.models()[0];
+    let cut = |first: char| format!("{}[redacte", first.to_string().repeat(MODEL_NAME_LIMIT - 8));
+    assert_eq!(
+        (&kept.backend, &kept.model, &kept.version),
+        (&cut('b'), &cut('m'), &cut('v'))
+    );
+    assert!(!holds(&names["record"], key.as_bytes()));
+}
+
+#[test]
+fn a_record_of_as_many_requests_as_a_run_sends_is_under_the_limit_by_arithmetic() {
+    // Twenty-four requests to a judge whose three names are each as long as one may
+    // be, and whose ids are as long as one is kept. What one request adds to the
+    // record is measured, and held to the figure ADR 0009 does its sum with.
+    let world = World::new();
+    let longest = |first: &str| first.repeat(MODEL_NAME_LIMIT);
+    let model = ModelIdentity::new(&longest("b"), &longest("m"), &longest("v"));
+    let declaration = Declaration::new(model, &["image", "tool"]).unwrap();
+    let id = "i".repeat(128);
+    let turn = || {
+        let parts = vec![Part::Text("ok".to_owned())];
+        let usage = Usage::new(u64::MAX, u64::MAX).cached(u64::MAX, u64::MAX);
+        Turn::new(parts, StopReason::MaxTokens, Some(usage), Some(&id)).unwrap()
+    };
+    let script = (0..FEW).map(|_| Ok(turn())).collect();
+    let judge = Arc::new(FakeJudge::scripted(script).declared_as(declaration));
+    let asks = action("asks", judging(), |call, context| {
+        let judge = context.capabilities().judge().unwrap();
+        let sends = call.arguments().iter().any(|(name, _)| name == "note");
+        for _ in 0..if sends { FEW } else { 0 } {
+            judge.send(&asking("well?", u32::MAX)).unwrap();
+            judge.exclude_last(Excluded::Truncated);
+        }
+        Ok(Produced::nothing())
+    });
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    );
+    let bytes = |call: Call| {
+        let finished = executor.submit(&call).unwrap();
+        let (record, names) = stored(&world, finished.run());
+        (record.models().len(), names["record"].len())
+    };
+    let (none, without) = bytes(Call::new("asks"));
+    let (all, with) = bytes(Call::new("asks").argument("note", Value::text("x")));
+    assert_eq!((none, all), (0, FEW));
+    // A request's model, its duration, its turn and its exchange among the diagnostics.
+    let each = (with - without).div_ceil(FEW);
+    assert!((1000..=1200).contains(&each), "{each} bytes a request");
+    // The sum of ADR 0009: the requests, 256 steps of 256 bytes, 256 refusals of 512
+    // characters of six bytes each, and three texts of 4,099 characters of six bytes
+    // each. It leaves two megabytes for what the executor does not bound.
+    let worst = 1200 * REQUESTS_LIMIT + 256 * 256 + 256 * (512 * 6 + 128) + 3 * 4099 * 6;
+    assert_eq!(worst, 2_187_318);
+    assert!((worst as u64) + 2_000_000 < RECORD_MAX_BYTES);
+}
+
+#[test]
+fn a_record_that_would_be_over_the_limit_is_not_published_as_it_is() {
+    // An argument of nearly four mebibytes, which is the caller's and is recorded as
+    // it was given, and requests that take the record over the limit. The record that
+    // would not be read back is not written: the run ends as an error of the type
+    // `record`, and its record, which leaves the requests out and says how many
+    // there were, is read back.
+    let world = World::new();
+    let judge = Arc::new(FakeJudge::scripted(Vec::new()));
+    let asks = action("asks", judging(), |_, context| {
+        let judge = context.capabilities().judge().unwrap();
+        for _ in 0..FEW {
+            judge.send(&asking("again", 64)).unwrap_err();
+        }
+        Ok(Produced::nothing().with_verdict(Verdict::new(Decision::Pass, "fine")))
+    });
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    );
+    let note = "n".repeat(RECORD_MAX_BYTES as usize - 6000);
+    let call = Call::new("asks").argument("note", Value::text(&note));
+    let finished = executor.submit(&call).unwrap();
+    let (record, names) = stored(&world, finished.run());
+    assert_eq!(record.outcome().status, Status::Error);
+    let error = record.outcome().error.as_ref().unwrap();
+    assert_eq!(error.kind, "record");
+    assert!(
+        error
+            .message
+            .starts_with("the run sent 24 capability requests, and"),
+        "{}",
+        error.message
+    );
+    assert!(record.models().is_empty() && record.judge().is_empty());
+    assert!(record.time().durations.is_empty());
+    // The exchanges were kept, and the record still lists them.
+    assert!(names.contains_key("diagnostics/exchange-0024"));
+    executor.status(finished.run()).unwrap();
+}
+
+// --- how much a run stores of its exchanges ---------------------------------------------------
+
+#[test]
+fn a_request_whose_exchange_the_run_has_no_room_for_is_not_sent_and_the_record_says_so() {
+    // The run may store 4,000 bytes of exchanges. Each request here takes about 1,500
+    // as it is written: two are sent, and the third is refused before it is sent.
+    assert_eq!(EXCHANGES_MAX_BYTES, 256 << 20);
+    let world = World::new();
+    let judge = Arc::new(FakeJudge::scripted(vec![Ok(said("yes")), Ok(said("yes"))]));
+    let asks = action("asks", judging(), |_, context| {
+        let judge = context.capabilities().judge().unwrap();
+        let long = "q".repeat(1200);
+        judge.send(&asking(&long, 64)).unwrap();
+        judge.send(&asking(&long, 64)).unwrap();
+        let fault = judge.send(&asking(&long, 64)).unwrap_err();
+        assert_eq!(fault.kind(), FaultKind::TooLarge);
+        assert!(fault.sentence().contains("the run may store"), "{fault}");
+        Ok(Produced::nothing())
+    });
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    )
+    .with_exchanges_budget(4000);
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(judge.requests(), 2);
+    let (record, names) = stored(&world, finished.run());
+    assert_eq!(record.models()[2].ended, RequestEnded::TooLarge);
+    let Judged::Turn {
+        exchange,
+        stop,
+        messages,
+        ..
+    } = &record.judge()[2]
+    else {
+        panic!("a turn");
+    };
+    assert_eq!((exchange, stop, *messages), (&None, &None, 1));
+    let kept: usize = names
+        .iter()
+        .filter(|(name, _)| name.contains("exchange"))
+        .map(|(_, b)| b.len())
+        .sum();
+    assert!(
+        kept <= 4000 && names.contains_key("diagnostics/exchange-0002"),
+        "{kept}"
+    );
+    assert!(!names.contains_key("diagnostics/exchange-0003"));
+}
+
+#[test]
+fn an_answer_the_run_has_no_room_for_is_kept_as_its_sizes_and_the_action_still_has_it() {
+    // There is room for what is sent and not for the turn that comes back. The action
+    // is handed the turn; what is stored says how large it was, with its digest.
+    let world = World::new();
+    let answer = "a".repeat(5000);
+    let judge = Arc::new(FakeJudge::scripted(vec![Ok(said(&answer))]));
+    let asks = {
+        let answer = answer.clone();
+        action("asks", judging(), move |_, context| {
+            let judge = context.capabilities().judge().unwrap();
+            let turn = judge.send(&asking("well?", 64)).unwrap();
+            assert_eq!(turn.texts().next(), Some(answer.as_str()));
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    )
+    .with_exchanges_budget(3000);
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    let (record, names) = stored(&world, finished.run());
+    assert_eq!(record.models()[0].ended, RequestEnded::Answered);
+    let stored: Json = serde_json::from_slice(&names["diagnostics/exchange-0001"]).unwrap();
+    let kept = &stored["answer"]["turn_withheld"];
+    assert_eq!(
+        (kept["parts"].as_u64(), kept["bytes"].as_u64()),
+        (Some(1), Some(5000))
+    );
+    assert_eq!(
+        kept["digest"],
+        json!(Digest::of_bytes(answer.as_bytes()).to_string())
+    );
+    assert_eq!(kept["stop"], "end_turn");
+    assert!(names["diagnostics/exchange-0001"].len() < 1000);
+}
+
+#[test]
+fn a_turn_over_the_limit_its_handle_was_given_is_a_fault_and_is_stored_as_its_sizes() {
+    let world = World::new();
+    let judge = Arc::new(FakeJudge::scripted(vec![
+        Ok(said(&"t".repeat(300))),
+        Ok(said("ok")),
+    ]));
+    let asks = action("asks", judging(), |_, context| {
+        let judge = context.capabilities().judge().unwrap().clone();
+        // A limit is only narrowed.
+        let judge = judge.turns_within(200).turns_within(100_000);
+        let fault = judge.send(&asking("well?", 64)).unwrap_err();
+        assert_eq!(fault.kind(), FaultKind::TooLarge);
+        let said = "the turn holds 300 bytes of text, and at most 200 are taken";
+        assert_eq!(fault.sentence(), said);
+        judge.send(&asking("well?", 64)).unwrap();
+        Ok(Produced::nothing())
+    });
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    );
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    let (record, names) = stored(&world, finished.run());
+    assert_eq!(record.models()[0].ended, RequestEnded::TooLarge);
+    assert_eq!(record.models()[1].ended, RequestEnded::Answered);
+    let stored: Json = serde_json::from_slice(&names["diagnostics/exchange-0001"]).unwrap();
+    assert_eq!(
+        stored["answer"]["turn_withheld"]["bytes"].as_u64(),
+        Some(300)
+    );
+    assert!(!holds(
+        &names["diagnostics/exchange-0001"],
+        "t".repeat(40).as_bytes()
+    ));
 }
 
 // --- the verdict ------------------------------------------------------------------------------
@@ -919,7 +1462,7 @@ fn what_is_no_model_no_duration_and_no_judge_entry_is_refused_by_the_types_and_b
         }
     }
     // A word that is none, a value of the wrong kind, a number under zero.
-    let wrong: [(&str, Json); 16] = [
+    let wrong: [(&str, Json); 19] = [
         ("/models/0/capability", json!("paint")),
         ("/models/0/ended", json!("lost")),
         ("/models/0/device", json!("gpu")),
@@ -934,6 +1477,9 @@ fn what_is_no_model_no_duration_and_no_judge_entry_is_refused_by_the_types_and_b
         ("/judge/0/request", json!(-1)),
         ("/judge/0/usage/input_tokens", json!("many")),
         ("/judge/0/provider_id", json!("p".repeat(129))),
+        ("/judge/0/max_output_tokens", json!(4_294_967_296_u64)),
+        ("/models/0/backend", json!("b".repeat(129))),
+        ("/models/0/version", json!("v".repeat(129))),
         ("/judge/4/decision", json!("maybe")),
         ("/judge/4/why", json!("y".repeat(MESSAGE_LIMIT + 4))),
     ];
@@ -1009,11 +1555,48 @@ fn what_the_schema_cannot_say_of_the_requests_and_the_judge_the_types_still_refu
     types_alone("a verdict of a run that did not complete", &|d| {
         d["outcome"]["status"] = json!("cancelled");
     });
+    // A name that is not ASCII is within the schema's count of characters.
+    types_alone("a model's name that is not ASCII", &|d| {
+        d["models"][0]["model"] = json!("caf\u{e9}");
+    });
     // An exchange that could not be kept is null, and that is a record.
     let (bytes, document) = changed(&record, &|d| d["judge"][0]["exchange"] = json!(null));
     validate(&schema(), &document).unwrap();
     assert_eq!(
         RunRecord::from_bytes(&bytes),
         Err(RecordError::NotCanonical)
+    );
+}
+
+#[test]
+fn the_types_hold_a_record_to_as_many_requests_as_a_run_sends_whatever_else_agrees() {
+    // One request more than a run sends, each with its duration, and none to a judge:
+    // nothing else of the record disagrees, and it is refused for the count.
+    let world = World::new();
+    let (_, run) = judged(
+        &world,
+        Verdict::new(Decision::Pass, "fine"),
+        Secrets::none(),
+    );
+    let (record, _) = stored(&world, &run);
+    let over = |count: usize| {
+        changed(&record, &|d| {
+            let mut model = d["models"][0].clone();
+            model["capability"] = json!("fill");
+            d["models"] = json!(vec![model; count]);
+            let lasted = |at| json!({"of": "request", "index": at, "start_ms": 1, "ms": 1});
+            d["time"]["durations"] = (0..count).map(lasted).collect();
+            d["judge"] = json!([]);
+        })
+        .0
+    };
+    let said = "more capability requests than a run may send";
+    let refused = RunRecord::from_bytes(&over(MODELS_LIMIT + 1));
+    assert_eq!(refused, Err(RecordError::Inconsistent(said.to_owned())));
+    let taken = RunRecord::from_bytes(&over(MODELS_LIMIT));
+    assert_eq!(
+        taken,
+        Err(RecordError::NotCanonical),
+        "the count itself is allowed"
     );
 }

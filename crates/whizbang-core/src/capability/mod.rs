@@ -28,7 +28,8 @@ mod segment;
 pub mod written;
 
 pub use declare::{
-    Declaration, DeclarationError, Resolved, Roster, RosterError, Unresolved, feature,
+    Declaration, DeclarationError, MODEL_NAME_LIMIT, Resolved, Roster, RosterError, Unresolved,
+    feature,
 };
 pub use fault::{FAULT_LIMIT, Fault, FaultKind};
 pub use fill::{FillHandle, FillRequest, Filler, PROMPT_LIMIT, Painted, Support};
@@ -250,11 +251,24 @@ pub(crate) trait Recorder: Send + Sync {
     /// The time, in milliseconds since the Unix epoch, by the executor's clock.
     fn now_ms(&self) -> u64;
 
+    /// The text with the run's secrets taken out.
+    fn redact(&self, text: &str) -> String;
+
     /// Keeps the written exchange with a judge that was the run's request at this
-    /// place, from 0, and gives the name it is kept under among the run's names; or
-    /// none when it could not be kept.
-    fn exchange(&self, place: usize, written: &[u8]) -> Option<String>;
+    /// place, from 0, when what would be stored of it, with the secrets taken out, is
+    /// at most `room` bytes. What comes back is the name it is kept under among the
+    /// run's names and how many bytes are stored; or none when it was not kept.
+    fn exchange(&self, place: usize, written: &[u8], room: u64) -> Option<(String, u64)>;
 }
+
+/// The most bytes of exchanges with a judge that one run stores, as they are stored
+/// (ADR 0009). A request whose exchange would pass it is not sent: the fault is
+/// `too_large`.
+pub const EXCHANGES_MAX_BYTES: u64 = 256 << 20;
+
+/// What an exchange is given beside what was sent, when a handle asks whether there is
+/// room for it: an answer that is not written takes less than this.
+const ANSWER_ROOM: u64 = 1024;
 
 /// How a request that was sent ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -316,6 +330,10 @@ struct Counts {
     recorder: Option<Arc<dyn Recorder>>,
     /// How many requests may be sent, when it is fewer than [`REQUESTS_LIMIT`].
     limit: Option<usize>,
+    /// How many bytes of exchanges the run may store, when it is fewer than
+    /// [`EXCHANGES_MAX_BYTES`], and how many it has stored.
+    budget: Option<u64>,
+    stored: u64,
 }
 
 impl Tally {
@@ -325,11 +343,18 @@ impl Tally {
 
     /// From here on each request is timed by this recorder's clock, and each exchange
     /// with a judge is kept by it.
-    /// At most `limit` requests are sent, and never more than [`REQUESTS_LIMIT`].
-    pub(crate) fn record_with(&self, recorder: Arc<dyn Recorder>, limit: usize) {
+    /// At most `limit` requests are sent, and never more than [`REQUESTS_LIMIT`]; at
+    /// most `budget` bytes of exchanges are stored, and never more than
+    /// [`EXCHANGES_MAX_BYTES`].
+    pub(crate) fn record_with(&self, recorder: Arc<dyn Recorder>, limit: usize, budget: u64) {
         let mut counts = self.counts();
         counts.recorder = Some(recorder);
         counts.limit = Some(limit.min(REQUESTS_LIMIT));
+        counts.budget = Some(budget.min(EXCHANGES_MAX_BYTES));
+    }
+
+    fn recorder(&self) -> Option<Arc<dyn Recorder>> {
+        self.counts().recorder.clone()
     }
 
     /// Counts one request that is about to be sent to this model. Refused once the
@@ -438,17 +463,66 @@ impl Sent {
         self.tally.counts().asked[self.place].ended = ended;
     }
 
+    /// What was sent, written, when the run keeps its exchanges: made before the
+    /// request is sent.
+    pub(crate) fn head(&self, request: &JudgeRequest) -> Option<written::Head> {
+        let recorder = self.tally.recorder();
+        recorder.map(|_| written::head(self.place, request, written::Keep::Digests))
+    }
+
+    /// Whether the run has room to store the exchange that begins with this. When it
+    /// has not, the request is not to be sent: the fault says so.
+    pub(crate) fn room(&self, head: &written::Head) -> Result<(), Fault> {
+        let counts = self.tally.counts();
+        let budget = counts.budget.unwrap_or(EXCHANGES_MAX_BYTES);
+        let needed = head.len() + ANSWER_ROOM;
+        let left = budget.saturating_sub(counts.stored);
+        if needed > left.min(written::EXCHANGE_MAX_BYTES as u64) {
+            return Err(Fault::new(
+                FaultKind::TooLarge,
+                &format!(
+                    "the exchange would take {needed} bytes or more, and the run may store \
+                     {left} more of its {budget}"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     /// Keeps the exchange with a judge that this request was: the whole of it with
     /// the run's recorder, when the run has one, and what the record says of it here.
-    fn judged(&mut self, request: &JudgeRequest, answer: &Result<Turn, Fault>) {
-        let recorder = self.tally.counts().recorder.clone();
-        let kept_as = recorder.and_then(|recorder| {
-            let stored =
-                written::write_exchange(self.place, request, answer, written::Keep::Digests);
-            recorder.exchange(self.place, &stored)
+    /// The answer is written whole unless `unwritten` holds the turn to write the
+    /// sizes of in its place, or the whole would be more than the run has room for.
+    pub(crate) fn judged(
+        &mut self,
+        head: Option<&written::Head>,
+        request: &JudgeRequest,
+        answer: &Result<Turn, Fault>,
+        unwritten: Option<&Turn>,
+    ) {
+        let (recorder, left) = {
+            let counts = self.tally.counts();
+            let budget = counts.budget.unwrap_or(EXCHANGES_MAX_BYTES);
+            (
+                counts.recorder.clone(),
+                budget.saturating_sub(counts.stored),
+            )
+        };
+        let room = left.min(written::EXCHANGE_MAX_BYTES as u64);
+        let kept = recorder.zip(head).and_then(|(recorder, head)| {
+            let whole = match unwritten {
+                None => recorder.exchange(self.place, &head.answered(answer), room),
+                Some(_) => None,
+            };
+            // What does not fit whole is kept with its turn not written.
+            let turn = unwritten.or(answer.as_ref().ok());
+            whole.or_else(|| recorder.exchange(self.place, &head.unwritten(turn?), room))
         });
+        let (kept_as, stored) = kept.unzip();
         let judged = judge::Judged::of(request, answer, kept_as);
-        self.tally.counts().asked[self.place].judged = Some(judged);
+        let mut counts = self.tally.counts();
+        counts.stored += stored.unwrap_or(0);
+        counts.asked[self.place].judged = Some(judged);
     }
 }
 
@@ -509,6 +583,21 @@ impl Bounds {
             sent.ended(&result);
         }
         result
+    }
+
+    /// What takes the run's secrets out of a text, when the run's handles know them.
+    pub(crate) fn redactor(&self) -> Option<Arc<dyn Recorder>> {
+        self.tally.as_ref().and_then(|tally| tally.recorder())
+    }
+
+    /// A fault as the run's action may be told of it: its sentence made again with
+    /// the run's secrets taken out of the whole text first (ADR 0009). Every fault a
+    /// handle hands on goes through here.
+    pub(crate) fn told<T>(&self, result: Result<T, Fault>) -> Result<T, Fault> {
+        result.map_err(|fault| match self.redactor() {
+            Some(recorder) => fault.redacted(&|text| recorder.redact(text)),
+            None => fault,
+        })
     }
 
     /// Marks the answer to the last request the run sent to a judge as left out.

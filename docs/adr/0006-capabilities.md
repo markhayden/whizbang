@@ -38,6 +38,9 @@ backend its call resolved, and no other; a handle keeps each request for the run
 record, and each exchange with a judge; an opaque part's body is never stored; a turn
 and an exchange are written as data and read back through the constructors; what the
 test of prepare holds.
+Amended: 2026-11-13, with the review of ADR 0009's first pull request. Added: a
+declaration's three names are bounded; a fault and a turn are redacted whole by the
+handle before they are cleaned and cut.
 Spec: section 3, "Crates and their edges", "Identities" and "Storage"; section 4,
 "Backends"
 
@@ -223,6 +226,13 @@ every text it writes or reports, an error's message among them (ADR 0005, "Redac
 It finds a secret by its value, and only one it was told of. A token that a provider
 sent back in a body, or that an adapter read from a header, is a value the executor was
 never told, and neither cleaning nor redaction finds it.
+
+**A secret the executor was told of is taken out before the cut.** A fault keeps the
+text it was made of until a handle has looked: a handle that an executor's context made
+takes its run's secrets out of the whole text, and only then is the sentence cleaned
+and cut again, so no part of such a secret is in what an action is told or a run
+stores. The same is done to a turn's stop word and provider's id (ADR 0009, "A
+provider's words are redacted whole").
 
 **So the rule for an adapter is part of the guarantee:** an adapter builds a fault's
 sentence from its own words and from typed fields (a status, a count, a size), and never

@@ -18,7 +18,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::ArtifactType;
-use crate::capability::{Excluded, FaultKind, HowEnded, Logged};
+use crate::capability::{Excluded, FaultKind, HowEnded, Logged, MODEL_NAME_LIMIT};
 use crate::identity::Digest;
 use crate::store::{self, Entry, Generation, Kind};
 
@@ -343,6 +343,9 @@ fn steps_wire<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<S
 /// sends. One more is not sent ([`crate::capability::REQUESTS_LIMIT`]), so the list is
 /// whole.
 pub const MODELS_LIMIT: usize = crate::capability::REQUESTS_LIMIT;
+
+/// The most characters a record keeps of a provider's id for an exchange.
+pub const PROVIDER_ID_LIMIT: usize = 128;
 
 /// How a capability request ended, as a word: `answered`, the kind of its fault (ADR
 /// 0006), or `unwound` for a backend whose call panicked.
@@ -935,11 +938,14 @@ impl RunRecord {
         // long it took, and for a judge what the exchange came to. A text that came
         // from a backend (a model's names, a provider's id) has the secrets taken out.
         let asked = &ran.inside.asked;
+        // Redacted while whole, and only then cut to what the reader takes: a name
+        // that redaction lengthened is still within the bound.
+        let named = |name: &str| super::engine::cut_to(secrets, name, MODEL_NAME_LIMIT, "");
         let models = asked.iter().map(|asked| Model {
             capability: asked.capability,
-            backend: super::engine::said(secrets, asked.model.backend()),
-            model: super::engine::said(secrets, asked.model.model()),
-            version: super::engine::said(secrets, asked.model.version()),
+            backend: named(asked.model.backend()),
+            model: named(asked.model.model()),
+            version: named(asked.model.version()),
             device: None,
             cached: None,
             ended: RequestEnded::of(asked.ended),
@@ -983,8 +989,12 @@ impl RunRecord {
                     cache_read_tokens: usage.cache_read_tokens(),
                     cache_write_tokens: usage.cache_write_tokens(),
                 }),
-                // Cleaned and cut at 128 characters when its turn was made.
-                provider_id: judged.provider_id.as_deref().map(|id| secrets.redact(id)),
+                // Redacted, cleaned and cut by the handle that took the turn (ADR
+                // 0009); and here once more, cut after the redaction.
+                provider_id: judged
+                    .provider_id
+                    .as_deref()
+                    .map(|id| super::engine::cut_to(secrets, id, PROVIDER_ID_LIMIT, "")),
                 excluded: judged.excluded,
             })
         });
@@ -1169,6 +1179,11 @@ impl RunRecord {
         if self.models.len() > MODELS_LIMIT {
             return refuse("more capability requests than a run may send");
         }
+        let names = self.models.iter();
+        let mut names = names.flat_map(|model| [&model.backend, &model.model, &model.version]);
+        if names.any(|name| name.len() > MODEL_NAME_LIMIT || !name.is_ascii()) {
+            return refuse("a model's name is longer than one is kept, or is not ASCII");
+        }
         let durations = &self.time.durations;
         let of_requests = durations.iter().filter(|d| d.of == Timed::Request);
         if !of_requests.map(|d| d.index).eq(0..self.models.len() as u64)
@@ -1209,7 +1224,7 @@ impl RunRecord {
                     }
                     if provider_id
                         .as_ref()
-                        .is_some_and(|id| id.chars().count() > 128)
+                        .is_some_and(|id| id.chars().count() > PROVIDER_ID_LIMIT)
                     {
                         return refuse("a provider's id is longer than one is kept");
                     }

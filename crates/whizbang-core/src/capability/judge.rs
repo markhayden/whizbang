@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use crate::contract::{Cancellation, Capability, text};
 
-use super::fault::clean;
+use super::fault::{Raw, clean};
 use super::{Bounds, Declaration, Fault, FaultKind, Picture, Unfit, feature};
 
 /// The most messages a conversation holds.
@@ -651,13 +651,41 @@ impl Usage {
     }
 }
 
-/// What a judge answered: ordered content, why it stopped, and what it used.
-#[derive(Debug, Clone, PartialEq)]
+/// What a judge answered: ordered content, why it stopped, and what it used. Two turns
+/// are equal when those are, and the provider's id.
+#[derive(Clone)]
 pub struct Turn {
     parts: Vec<Part>,
     stop: StopReason,
     usage: Option<Usage>,
     request_id: Option<String>,
+    /// A provider's word for another stop reason, and its id, as they were given:
+    /// until a handle has looked for secrets in them.
+    raw_stop: Option<Raw>,
+    raw_id: Option<Raw>,
+}
+
+impl PartialEq for Turn {
+    fn eq(&self, other: &Turn) -> bool {
+        (&self.parts, &self.stop, &self.usage, &self.request_id)
+            == (&other.parts, &other.stop, &other.usage, &other.request_id)
+    }
+}
+
+impl std::fmt::Debug for Turn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Turn")
+            .field("parts", &self.parts)
+            .field("stop", &self.stop)
+            .field("usage", &self.usage)
+            .field("request_id", &self.request_id)
+            .finish()
+    }
+}
+
+/// A provider's id, from its text: trimmed, cleaned and cut.
+fn id_of(text: &str) -> String {
+    clean(text.trim(), ID_LIMIT)
 }
 
 impl Turn {
@@ -721,19 +749,48 @@ impl Turn {
                 why: "stopped to use a tool and calls none",
             });
         }
+        let mut raw_stop = None;
         let stop = match stop {
-            StopReason::Other(reason) => StopReason::Other(clean(&reason, NAME_LIMIT)),
+            StopReason::Other(reason) => {
+                raw_stop = Some(Raw::of(&reason));
+                StopReason::Other(clean(&reason, NAME_LIMIT))
+            }
             named => named,
         };
-        let request_id = request_id
-            .map(|id| clean(id.trim(), ID_LIMIT))
-            .filter(|id| !id.is_empty());
+        let raw_id = request_id.map(Raw::of);
+        let request_id = request_id.map(id_of).filter(|id| !id.is_empty());
         Ok(Turn {
             parts,
             stop,
             usage,
             request_id,
+            raw_stop,
+            raw_id,
         })
+    }
+
+    /// The same turn as a run may be told of it and may store it: the provider's word
+    /// for its stop reason and the provider's id made again from the words that were
+    /// given, with the secrets taken out while they were whole, and only then cleaned
+    /// and cut. A handle that knows its run's secrets does this to every turn before
+    /// it hands it on. A second time changes nothing. The parts are not touched: they
+    /// are never cut, and what is stored of them is redacted where it is stored.
+    pub(crate) fn redacted(mut self, redact: &dyn Fn(&str) -> String) -> Turn {
+        if let Some(raw) = self.raw_stop.take() {
+            let shape = |word: &str| clean(word, NAME_LIMIT);
+            self.stop = StopReason::Other(raw.shown(redact, shape, "not kept"));
+        }
+        if let Some(raw) = self.raw_id.take() {
+            let id = raw.shown(redact, id_of, "not kept");
+            self.request_id = Some(id).filter(|id| !id.is_empty());
+        }
+        self
+    }
+
+    /// The bytes of text the turn holds: its texts, its opaque parts, and its calls'
+    /// arguments as written.
+    pub fn text_bytes(&self) -> u64 {
+        self.parts.iter().map(Part::bytes).sum()
     }
 
     /// The content, in the order the model wrote it.
@@ -807,6 +864,8 @@ pub trait Judge: Send + Sync {
 pub struct JudgeHandle {
     backend: Arc<dyn Judge>,
     bounds: Bounds,
+    /// The most bytes of text a turn may hold to be taken, when the action set one.
+    turn_bytes: Option<u64>,
 }
 
 impl JudgeHandle {
@@ -815,6 +874,7 @@ impl JudgeHandle {
         JudgeHandle {
             backend,
             bounds: Bounds::new(cancellation),
+            turn_bytes: None,
         }
     }
 
@@ -855,6 +915,19 @@ impl JudgeHandle {
     /// whole of what was sent and of what came back as a diagnostic of the run, and
     /// what the run's record says of it.
     pub fn send(&self, request: &JudgeRequest) -> Result<Turn, Fault> {
+        self.bounds.told(self.asked(request))
+    }
+
+    /// The same handle, taking no turn that holds more than this many bytes of text
+    /// ([`Turn::text_bytes`]): a larger one is the fault `too_large`, and what the run
+    /// stores of it is its sizes and a digest, not the turn. A limit is only ever
+    /// narrowed, as a deadline is.
+    pub fn turns_within(mut self, bytes: u64) -> JudgeHandle {
+        self.turn_bytes = Some(self.turn_bytes.map_or(bytes, |set| set.min(bytes)));
+        self
+    }
+
+    fn asked(&self, request: &JudgeRequest) -> Result<Turn, Fault> {
         let declaration = self.declaration();
         self.bounds.before_sending(declaration, [])?;
         let backend = declaration.model().backend();
@@ -878,6 +951,17 @@ impl JudgeHandle {
         self.bounds
             .before_sending(declaration, image.into_iter().chain(tool))?;
         let mut sent = self.bounds.sending(Capability::Judge, declaration)?;
+        // What was sent is written before it is sent, when the run keeps its
+        // exchanges: a request whose exchange the run has no room for is not sent.
+        let head = sent.as_ref().and_then(|sent| sent.head(request));
+        if let Some((sent, head)) = sent.as_mut().zip(head.as_ref())
+            && let Err(fault) = sent.room(head)
+        {
+            let refused = Err(fault);
+            sent.ended(&refused);
+            sent.judged(None, request, &refused, None);
+            return refused;
+        }
         let answer = self.backend.send(request, &self.bounds).and_then(|turn| {
             if turn.opaque().any(|opaque| opaque.adapter != backend) {
                 return Err(Unfit::NotAllowed {
@@ -888,9 +972,36 @@ impl JudgeHandle {
             }
             Ok(turn)
         });
+        // The provider's own words, in a turn or in a fault, have the run's secrets
+        // taken out while they are whole, before anything keeps them or is told them.
+        let redactor = self.bounds.redactor();
+        let answer = match (answer, &redactor) {
+            (Ok(turn), Some(recorder)) => Ok(turn.redacted(&|text| recorder.redact(text))),
+            (Err(fault), Some(recorder)) => Err(fault.redacted(&|text| recorder.redact(text))),
+            (answer, None) => answer,
+        };
+        // A turn over the limit this handle was given is not taken, and not stored.
+        let over = |turn: &Turn| {
+            self.turn_bytes
+                .is_some_and(|limit| turn.text_bytes() > limit)
+        };
+        let (answer, unwritten) = match answer {
+            Ok(turn) if over(&turn) => {
+                let fault = Fault::new(
+                    FaultKind::TooLarge,
+                    &format!(
+                        "the turn holds {} bytes of text, and at most {} are taken",
+                        turn.text_bytes(),
+                        self.turn_bytes.unwrap_or(0)
+                    ),
+                );
+                (Err(fault), Some(turn))
+            }
+            answer => (answer, None),
+        };
         if let Some(sent) = &mut sent {
             sent.ended(&answer);
-            sent.judged(request, &answer);
+            sent.judged(head.as_ref(), request, &answer, unwritten.as_ref());
         }
         answer
     }
