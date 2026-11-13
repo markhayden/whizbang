@@ -34,6 +34,11 @@ capability requests, and how a parent reads what a child committed. Changed: the
 paragraph that says which part builds what; when the commit step begins, in
 "Cancellation"; "What is not built" there and in "Nested calls"; what this record
 does not decide yet.
+Amended: 2026-11-13, with the pull request on the thread rule that followed the second. Changed, under "What keeps a
+test from making threads without end": how often the guard counts, when a guard under a
+guard leaves the watching to the one above, what the Linux limit does when the user's
+threads cannot be counted, that no group of lints is allowed, and what `just test-only`
+takes.
 Amended: 2026-11-13, with `grow` through the executor (task A9), the first command that
 runs an action. Added: "The first door". Changed, in "A panic in an action": a door now
 installs the hook.
@@ -437,15 +442,27 @@ part parked threads until the system refused one, and the machine went down.
   lints every target, so a test that makes a thread another way fails it
   (`scripts/tests/test-thread-lint.sh`, on a fixture). This is the stop that works
   against a loop: a loop of raw spawns makes tens of thousands of threads a second.
-- *From outside, five times a second.* Every recipe and script that runs tests runs them
+- *From outside, about three times a second.* Every recipe and script that runs tests runs them
   through `scripts/thread-guard.sh`, which counts the threads of every process under the
   command and kills the whole tree when one process holds more than 300, or when it can
-  no longer count. It catches a process that grows slowly, within about a fifth of a
-  second. It cannot stop a tight loop in time, and it does not see a process whose
-  parent has ended.
+  no longer count. It catches a process that grows slowly, within about a third of a
+  second (0.2 seconds between two counts, and the count's own time). It cannot stop a
+  tight loop in time, and it does not see a process whose parent has ended. A guard
+  under a guard that is at least as strict leaves the watching to the one above; the
+  variable that tells it so is believed only when the limit it states is not above the
+  guard's own and it names a process the guard descends from whose command names the
+  same file by its whole path, which is how a guard runs.
 - *By the system, on Linux.* The guard lowers the number of processes and threads the
-  command's user may hold to what the user held and 4,096 more. macOS has no limit of
-  that kind that counts threads.
+  command's user may hold to what the user held and 4,096 more, and lowers nothing when
+  it cannot count what the user holds. macOS has no limit of that kind that counts
+  threads.
+- *A group of lints is allowed nowhere.* An `allow` of `warnings`, `clippy::all` or
+  `clippy::style` would silence the thread lint without naming it, so the lint test
+  refuses one anywhere in the crates, on one line or several, and refuses the same in a
+  manifest's lints, a second `clippy.toml`, and a cargo config that caps or allows lints.
+- *Some of the tests.* `just test-only` runs without a prompt, so it takes a closed set of
+  arguments (`scripts/test-only.sh`) and refuses any other before anything runs: nextest's
+  own arguments can name a program to run.
 
 A thread made by the product's own spawner in a test is a started run, and is held by
 the bound, which the tests set to 1 or 2. A thread made by something a test depends on,

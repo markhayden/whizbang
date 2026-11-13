@@ -116,7 +116,7 @@ a colour profile without applying it.
 | A rotation on the sphere | Composes with its inverse to the identity; wraps at the seam |
 | A wrapped cut and put | A put after a cut returns every pixel to its original place |
 
-**Verify:** `cargo nextest run -p whizbang-core identity`.
+**Verify:** `just test-only -p whizbang-core identity`.
 **Size:** medium.
 
 ### A2. Store: publication and recovery
@@ -390,6 +390,8 @@ with the composite. A box is ticked by the pull request that makes it true.
 - [x] Before porting the pixel code, check whether a library call does the same. If one does,
       both are run through the record's script on the same masks and the faster one that is
       still exact becomes the method; the comparison goes in the record's "Alternatives".
+      (Ticked on a comparison run once, with the library as a temporary development
+      dependency that was not kept: the note under "Done when" says how.)
 - [x] `whizbang rascal grow --mask <artifact> --px 8 [--down-px 4]`.
 - [x] The first tool record, `docs/reference/tools/grow.md`, as `SPEC.md` section 8 describes:
       two worked examples with their images; exactness against the analytic expectation;
@@ -409,10 +411,12 @@ status, and every diagnostic written before it ended is readable.
 
 **Built in two pull requests,** because the task came to over three thousand lines: first
 the action and its tests, the first three boxes; then the command, the publication tests
-of "Done when" and the tool record, the last two. The fourth box was ticked with the second: no crate whizbang ships
-with does the same job; `imageproc` does, was run through the record's script as a
-development dependency, gave the rule's pixels and took about three times as long, so
-the hand-written method stays (`docs/reference/tools/grow.md`, "Alternatives").
+of "Done when" and the tool record, the last two. The fourth box is ticked with the second, on this basis: no crate
+whizbang depends on does the same job; `imageproc` 0.27.0 does, and was run once, as a
+temporary development dependency, through the record's script on the same masks. It
+gave the rule's pixels and took about three times as long, so the hand-written method
+stays. The dependency was then removed, and the result is in the record's
+"Alternatives" as recorded numbers, marked as not verified again by `just check`.
 
 ### A10. `view`, extracted
 

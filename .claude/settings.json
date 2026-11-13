@@ -8,6 +8,7 @@
       "Bash(just docs)",
       "Bash(just docs-check)",
       "Bash(just test)",
+      "Bash(just test-only *)",
       "Bash(just test-scripts)",
       "Bash(just test-scripts-slow)",
       "Bash(just test-timeout)",

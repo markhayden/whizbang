@@ -16,10 +16,6 @@ path = "tests/it/main.rs"
 whizbang-core.workspace = true
 
 [dev-dependencies]
-# The library `grow` was compared with (`docs/reference/tools/grow.md`, "Alternatives"):
-# the test that writes the tool record calls it, and nothing that ships does. With none of
-# its features: the two calls need none, and no thread pool (`rayon`) is built.
-imageproc = { version = "0.27.0", default-features = false }
 whizbang-testkit.workspace = true
 
 [lints]
