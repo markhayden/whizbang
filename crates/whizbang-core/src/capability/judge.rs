@@ -826,6 +826,12 @@ impl JudgeHandle {
         self
     }
 
+    /// The same handle, holding its deadline to this clock in place of the machine's.
+    pub(crate) fn timed_by(mut self, clock: Arc<dyn crate::contract::Clock>) -> JudgeHandle {
+        self.bounds.timed_by(clock);
+        self
+    }
+
     /// What the judge behind the handle declares.
     pub fn declaration(&self) -> &Declaration {
         self.backend.declaration()

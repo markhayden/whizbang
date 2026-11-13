@@ -89,9 +89,10 @@ pub trait Executor: Send + Sync {
 
     /// Cancels the run (ADR 0008, "Cancellation"). A cancellation that arrives before
     /// the run enters its commit step is accepted: nothing the run made is committed,
-    /// and the run ends as cancelled. One that arrives after is not: it waits for the
-    /// commit, and is answered with how the run ended. A run that had ended is
-    /// answered with how, and nothing changes. A run the store does not hold is
+    /// and the run ends as cancelled. One that arrives after is not: it waits until the
+    /// executor is done with the run, the last sync of its end included, and is
+    /// answered with how the run ended, or that it was abandoned. A run that had ended
+    /// is answered with how, and nothing changes. A run the store does not hold is
     /// refused ([`Refusal::NoSuchRun`]).
     fn cancel(&self, run: &RunId) -> Result<Cancel, CallError>;
 
@@ -400,36 +401,40 @@ impl Executor for Engine {
     fn cancel(&self, run: &RunId) -> Result<Cancel, CallError> {
         let unknown = || CallError::Refused(Refusal::NoSuchRun { run: run.clone() });
         let not = |state| Ok(Cancel::NotAccepted(state));
-        match self.seen(run)? {
-            Seen::Nothing => return Err(unknown()),
-            Seen::Ended(outcome) => return not(RunState::Ended(outcome)),
-            Seen::Open => {}
-        }
-        // The run was admitted and had not ended when the store was looked at. Found
-        // in the table of open runs, with an executor's state, it is cancelled or not
-        // under its own lock (ADR 0008, "Cancellation"): that is the decision, and no
-        // look at the store is. The table's lock is let go before the run's is taken.
+        // The table of open runs is asked first, and not the store (ADR 0008,
+        // "Cancellation"). A run this process made is there from before it is visible
+        // until the executor is done with it, which is after its end's last sync. So
+        // a run found there, with an executor's state, is cancelled or not under its
+        // own lock, and that is the decision: no look at the store is, and an end
+        // that is visible and not yet confirmed is waited for, not reported. The
+        // table's lock is let go before the run's is taken.
         let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
-        let mut unended = RunState::NotEnded { here: false };
+        let mut open = RunState::NotEnded { here: false };
         if let Some(attached) = attached {
-            let Some(live) = live::of(attached) else {
-                return not(RunState::NotEnded { here: true });
-            };
-            if live.cancel() == Told::Accepted {
-                return Ok(Cancel::Accepted);
+            open = RunState::NotEnded { here: true };
+            if let Some(live) = live::of(attached) {
+                if live.cancel() == Told::Accepted {
+                    return Ok(Cancel::Accepted);
+                }
+                // Too late: the run's end had begun, and the executor is done with it
+                // now. An end it did not confirm is not said to be one, whatever the
+                // store shows: the run was abandoned, with the store's failure.
+                if let Some(failure) = live.abandoned() {
+                    // Unless the run was deleted meanwhile: then there is no run.
+                    return match self.seen(run) {
+                        Ok(Seen::Nothing) => Err(unknown()),
+                        _ => not(RunState::Abandoned { failure }),
+                    };
+                }
             }
-            // Too late: the run's end had begun, and it is over now. If the store
-            // still holds it open, it was abandoned.
-            let failure = live.abandoned().flatten();
-            unended = RunState::Abandoned { failure };
         }
-        // Over, or not in the table: as for a status, a second look at the store is
-        // the answer. A run that is still open there was abandoned by this process,
-        // or will not be ended by any.
+        // Ended and confirmed, made by other code of this process, or not in the
+        // table: the store says. A run it holds open that is not in the table was
+        // made by a process that is gone.
         match self.seen(run)? {
             Seen::Nothing => Err(unknown()),
             Seen::Ended(outcome) => not(RunState::Ended(outcome)),
-            Seen::Open => not(unended),
+            Seen::Open => not(open),
         }
     }
 }
@@ -692,7 +697,11 @@ impl Drop for Over {
         if let Some(parent) = self.started_under.take() {
             parent.nest().started_over();
         }
-        if let Some((store, run)) = &self.kept {
+        // Only a run whose end was confirmed is let go of. One whose end is visible
+        // and was not confirmed stays in the table, abandoned: a cancel or a wait
+        // that begins later finds it there, and does not say it ended (ADR 0008,
+        // "Visible before durable").
+        if let (true, Some((store, run))) = (self.ended, &self.kept) {
             store.let_go(run.as_str());
         }
         self.live.over(self.ended, self.failure.take());
@@ -948,6 +957,12 @@ impl Engine {
             }
             publication.create_run(run.as_str()).map_err(failed)?;
             publication.attach(run.as_str(), live.clone());
+            // A run that is deleted while it executes is told to stop: its end will
+            // find no run, so nothing it goes on to do can be kept.
+            publication.tell_when_deleted(run.as_str(), {
+                let live = live.clone();
+                Arc::new(move || live.stop())
+            });
             publication
                 .put_in(run.as_str(), ADMITTED_NAME, RECORD_KIND, &admission)
                 .map_err(failed)?;
@@ -1125,7 +1140,7 @@ impl Engine {
             kept.clone(),
             family.allowance.clone(),
             view,
-            self.capabilities.clone(),
+            self.capabilities.clone().timed_by(self.clock.clone()),
             Arc::new(Nested::new(self.clone(), under, self.secrets.clone())),
         )
         .with_diagnostics(kept.clone());
@@ -1400,6 +1415,12 @@ impl Engine {
     fn watch(&self, run: &RunId, wait: bool) -> Result<Watched, CallError> {
         let unknown = || CallError::Refused(Refusal::NoSuchRun { run: run.clone() });
         let watched = |state, events| Ok(Watched::new(run.clone(), state, events));
+        // What a wait says of a run the executor abandoned, whatever the store shows
+        // of an end that was not confirmed; unless the run was deleted meanwhile.
+        let abandoned = |failure, events| match self.seen(run) {
+            Ok(Seen::Nothing) => Err(unknown()),
+            _ => watched(RunState::Abandoned { failure }, events),
+        };
         match self.seen(run)? {
             Seen::Nothing => return Err(unknown()),
             Seen::Ended(outcome) => {
@@ -1412,6 +1433,10 @@ impl Engine {
                     let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
                     if let Some(live) = attached.and_then(live::of) {
                         live.wait_until_over();
+                        // An end the executor did not confirm is not said to be one.
+                        if let Some(failure) = live.abandoned() {
+                            return abandoned(failure, live.events());
+                        }
                     }
                 }
                 return watched(RunState::Ended(outcome), Vec::new());
@@ -1440,9 +1465,12 @@ impl Engine {
                     Seen::Open => watched(RunState::NotEnded { here: true }, live.events()),
                 };
             };
-            // Nothing here works on it any more, and its end was not confirmed. An end
-            // that became visible all the same is in the store, and is the answer;
-            // otherwise the run was abandoned, as it was admitted.
+            // Nothing here works on it any more, and its end was not confirmed. A wait
+            // says so, whatever became visible. A status says what the store says: an
+            // end that became visible all the same, or the run abandoned as admitted.
+            if wait {
+                return abandoned(failure, live.events());
+            }
             return match self.seen(run)? {
                 Seen::Nothing => Err(unknown()),
                 Seen::Ended(outcome) => watched(RunState::Ended(outcome), Vec::new()),
