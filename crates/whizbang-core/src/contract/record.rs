@@ -129,13 +129,14 @@ pub enum RefusalKind {
     CallBack,
     OverCaller,
     TooManyCalls,
+    TreeFull,
     TooManyStarted,
     IdInside,
 }
 
 impl RefusalKind {
     /// Every kind, in the order above.
-    pub const ALL: [RefusalKind; 20] = [
+    pub const ALL: [RefusalKind; 21] = [
         RefusalKind::UnknownAction,
         RefusalKind::Invalid,
         RefusalKind::Input,
@@ -154,6 +155,7 @@ impl RefusalKind {
         RefusalKind::CallBack,
         RefusalKind::OverCaller,
         RefusalKind::TooManyCalls,
+        RefusalKind::TreeFull,
         RefusalKind::TooManyStarted,
         RefusalKind::IdInside,
     ];

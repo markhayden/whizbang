@@ -15,7 +15,7 @@ use crate::store::{self, Store};
 use super::journal::Kept;
 use super::ledger::{Declined, Reservation, Step};
 use super::live::{self, LiveRun, Told};
-use super::nested::{Family, Nested, Under};
+use super::nested::{DESCENDANTS_LIMIT, Family, Nested, Under};
 use super::prepare::prepare;
 use super::record::{
     Diagnostic, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran, RunRecord,
@@ -117,6 +117,8 @@ pub struct Engine {
     ledger: Option<Arc<dyn Ledger>>,
     /// The backends each run's capability handles are made over.
     capabilities: Capabilities,
+    /// How many runs may be admitted under one run that nothing called.
+    descendants: usize,
 }
 
 /// Where the executor reads the digest of the config. It is asked every time a call is
@@ -157,6 +159,7 @@ impl Engine {
             secrets: Secrets::none(),
             ledger: None,
             capabilities: Capabilities::none(),
+            descendants: DESCENDANTS_LIMIT,
         }
     }
 
@@ -212,6 +215,14 @@ impl Engine {
     pub fn waiting_for(&self, run: &RunId) -> usize {
         let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
         attached.and_then(live::of).map_or(0, |live| live.waiting())
+    }
+
+    /// For tests: the same executor, with this many runs at most under one run that
+    /// nothing called, in place of [`DESCENDANTS_LIMIT`].
+    #[doc(hidden)]
+    pub fn with_descendants_limit(mut self, limit: usize) -> Engine {
+        self.descendants = limit;
+        self
     }
 
     /// The actions this executor runs.
@@ -655,7 +666,7 @@ impl Engine {
             .into());
         }
         let reserved = counted.then(|| prepared.estimate().micros());
-        let taken = match (under, reserved) {
+        let mut taken = match (under, reserved) {
             (Some(under), Some(micros)) => under.allowance.take(micros).map_err(|left_micros| {
                 CallError::Refused(Refusal::OverCaller {
                     action: prepared.action().to_owned(),
@@ -665,7 +676,7 @@ impl Engine {
             })?,
             _ => None,
         };
-        let family = Family::of(under, prepared.action(), reserved);
+        let family = Family::of(under, prepared.action(), reserved, self.descendants);
         let parent = family.parent.as_ref().map(|(run, _)| run.clone());
         // What the run keeps while it executes is made before the run is, and attached
         // to it in the store's table of open runs by the publication that makes it: so
@@ -782,6 +793,14 @@ impl Engine {
                 // Among these is an admission that became visible and was not
                 // confirmed: its run is in the store and open here, and is abandoned.
                 Err(error) => {
+                    // The admission is in the store, naming the run it drew on and
+                    // the amount: what was taken for it stays taken, or the
+                    // admissions that name a run could add up to more than it has.
+                    if let (store::Error::Unacknowledged { .. }, Some(taken)) =
+                        (&error, taken.take())
+                    {
+                        taken.keep();
+                    }
                     let failure = StoreFailure::new(error);
                     over.failure = Some(failure.clone());
                     return Err(CallError::Store(failure).into());
@@ -890,6 +909,7 @@ impl Engine {
             run: run.clone(),
             live: live.clone(),
             stack: family.stack.clone(),
+            tree: family.tree.clone(),
             allowance: family.allowance.clone(),
             deadline,
         };

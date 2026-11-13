@@ -573,7 +573,9 @@ the generation current at its admission, its own journal, diagnostics and record
 its own end publication. `submit` and `request` run it on the calling thread and return
 its outcome; `start` runs it on a thread of its own. `prepare`, `status`, `wait`,
 `cancel` and `request_id` through it are the executor's own. The run that made the
-call is its parent
+call is its parent, and the call's deadline is the earlier of its parent's and the one
+its request came with
+(`nested::a_calls_deadline_is_the_earlier_of_its_callers_and_the_one_its_request_came_with`)
 (`nested::a_call_from_inside_an_action_is_a_run_of_its_own_under_the_run_that_made_it`).
 
 **Threads.** A call through `submit` or `request` runs on the thread that made it,
@@ -604,6 +606,14 @@ called twice in a row by one run is two runs and no call back
 (`nested::a_fifth_level_is_refused_and_the_refusal_is_in_the_record_of_the_run_that_made_the_call`,
 `nested::a_call_back_into_an_action_on_the_stack_is_refused_by_the_actions_name`).
 
+**The order of the refusals.** A call is held, in this order, to: no request id
+(`IdInside`); the levels (`TooDeep`); the stack (`CallBack`); then, under the lock of
+what the caller keeps of its calls, the count of its calls (`TooManyCalls`), the runs
+it has started (`TooManyStarted`, for `start`), and the count of the whole tree
+(`TreeFull`); and then everything admission holds any call to, with the allowance
+after readiness. The first that refuses is the refusal: a call with a request id at a
+fifth level is refused for its id.
+
 **Allowances.** `Context::allowance` holds an amount now: what was reserved for the
 run at its admission (ADR 0007), or nothing when the executor had no ledger. A nested
 call takes its estimate, the one its own admission prepared, from what its parent's
@@ -616,13 +626,25 @@ is reserved twice"). A call whose estimate is more than is left is refused
 as it is for a run nothing called (`Refusal::NoBound`). A parent with no amount counts
 nothing, and its children have none.
 
+*What the allowance does not hold a run to.* Only nested calls draw on it. A run's own
+capability requests take nothing from what is left, and nothing checks them against
+it: a parent can give all of its allowance to its children and still send requests of
+its own. So what a tree really spends can exceed the root's reservation until
+checkpoint 1B debits each request before it is sent (`SPEC.md` section 6;
+`docs/carry-over.md`).
+
 *Where it is decided.* The look at what is left and the taking are one step under the
 allowance's own lock (`Allowance::take`), in memory, in the process that runs the
 parent: not from a snapshot of the store, and not in the publishing step, since the
 store holds nothing of it until the child is admitted. Two calls made at once cannot
 both take the last of it. What was taken is given back only if the admission then
-makes no run. It is not given back when the child ends, however it ended and
-whatever it used: that is settlement, and checkpoint 1B's
+puts nothing in the store. An admission that became visible and was not confirmed
+("A run with nothing behind it") is in the store, naming its parent and the amount,
+so what was taken for it stays taken, though its action never runs: the admissions
+that name a run never add up to more than that run was given
+(`nested::a_call_whose_admission_is_visible_and_not_confirmed_keeps_what_was_taken_for_it`).
+Nothing is given back when a child ends, however it ended and whatever it used: that
+is settlement, and checkpoint 1B's
 (`nested::a_nested_call_draws_on_the_allowance_of_the_run_that_made_it_and_the_ledger_is_asked_once`,
 `nested::two_calls_at_once_cannot_both_take_the_last_of_the_allowance`).
 
@@ -663,7 +685,14 @@ and how the child had ended, or null for a child that had not: one that was aban
 The child's arguments, inputs and outputs are in the child's own record, which the
 step names: that is the spec's "reference to its result". A run
 makes at most 256 calls that are admitted (`STEPS_LIMIT`); one more is refused
-(`Refusal::TooManyCalls`), so the list is never cut. The bound is low because a call
+(`Refusal::TooManyCalls`), so the list is never cut. And the runs under one run that
+nothing called, at every level together, are at most 1,024 (`DESCENDANTS_LIMIT`): one
+count for the tree, taken when a call is taken and given back if the call puts no run
+in the store, and the next call anywhere in the tree is refused (`Refusal::TreeFull`)
+and recorded where it was made. Without it four levels of 256 calls would be sixteen
+million runs
+(`nested::the_runs_under_one_run_that_nothing_called_are_bounded_at_every_level_together`,
+with a count of five set for the test). The bound is low because a call
 is two publications and the cost of a publication grows with what the store holds:
 256 calls from one run took about three seconds on the test kit's disk, and 1,024
 took fifty (`docs/carry-over.md`). With both lists full a record stays far under
@@ -730,7 +759,7 @@ and what was taken for a child is not given back when it ends.
   nowhere but in its diagnostics.
 
 - An action's context holds an executor that runs calls. `Refusal::NoNestedCalls` is
-  gone; `Refusal` has `TooDeep`, `CallBack`, `OverCaller`, `TooManyCalls`,
+  gone; `Refusal` has `TooDeep`, `CallBack`, `OverCaller`, `TooManyCalls`, `TreeFull`,
   `TooManyStarted` and `IdInside`, and each refusal has a kind as a word (`Refusal::kind`).
 - `Allowance` holds an amount, or none.
 - `admission/1` has the field `parent`, and an admission written before it is not

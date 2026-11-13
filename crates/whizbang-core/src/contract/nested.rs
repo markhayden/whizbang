@@ -14,6 +14,8 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
+use crate::store;
+
 use super::engine::{Admitted, Bounded, Stopped};
 use super::live::LiveRun;
 use super::record::{Inside, REFUSALS_LIMIT, Refused, STEPS_LIMIT, Status, Step};
@@ -27,9 +29,44 @@ use super::{
 /// 4 + 16 + 64 = 84 threads between them.
 pub const STARTED_LIMIT: usize = 4;
 
+/// How many runs may be admitted, at every level together, under one run that nothing
+/// called. The next call anywhere under that run is refused
+/// ([`Refusal::TreeFull`]).
+pub const DESCENDANTS_LIMIT: usize = 1024;
+
 /// How many levels calls nest: a run that nothing called is at the first, and a call
 /// made by a run at the fourth is refused.
 pub const LEVELS_LIMIT: usize = 4;
+
+/// The runs admitted under one run that nothing called, at every level together: one
+/// count, shared by every run of the tree.
+pub(super) struct Tree {
+    limit: usize,
+    admitted: Mutex<usize>,
+}
+
+impl Tree {
+    fn new(limit: usize) -> Tree {
+        Tree {
+            limit,
+            admitted: Mutex::new(0),
+        }
+    }
+
+    /// Counts one more run, unless the tree has as many as it may: one step.
+    fn take(&self) -> bool {
+        let mut admitted = self.admitted.lock().unwrap_or_else(PoisonError::into_inner);
+        let free = *admitted < self.limit;
+        *admitted += usize::from(free);
+        free
+    }
+
+    /// A call that was counted made no run.
+    fn give_back(&self) {
+        let mut admitted = self.admitted.lock().unwrap_or_else(PoisonError::into_inner);
+        *admitted = admitted.saturating_sub(1);
+    }
+}
 
 /// One run that a run called.
 struct Child {
@@ -68,7 +105,7 @@ impl Nest {
     /// Takes a call, to be admitted. Refused when the run has called as many as one
     /// may: a call that is being admitted counts as one. And a call to start a run,
     /// when as many as may be are executing: the look and the count are one step.
-    fn begin(&self, action: &str, start: bool) -> Result<(), Refusal> {
+    fn begin(&self, action: &str, start: bool, tree: &Tree) -> Result<(), Refusal> {
         let mut calls = self.calls();
         if start && calls.started >= STARTED_LIMIT {
             return Err(Refusal::TooManyStarted {
@@ -80,6 +117,13 @@ impl Nest {
             return Err(Refusal::TooManyCalls {
                 action: action.to_owned(),
                 limit: STEPS_LIMIT,
+            });
+        }
+        // Last, so that a call refused above is not counted in the tree.
+        if !tree.take() {
+            return Err(Refusal::TreeFull {
+                action: action.to_owned(),
+                limit: tree.limit,
             });
         }
         calls.opening += 1;
@@ -143,11 +187,14 @@ struct Opening<'a> {
     made: bool,
     /// Whether the call is to start a run, and was counted as one.
     start: bool,
+    /// The tree the call was counted in, until it is known to have made a run.
+    tree: Option<&'a Tree>,
 }
 
 impl Opening<'_> {
     fn made(mut self, child: Child) {
         self.made = true;
+        self.tree = None;
         self.nest.done(Some(child));
     }
 }
@@ -158,6 +205,9 @@ impl Drop for Opening<'_> {
             self.nest.done(None);
             if self.start {
                 self.nest.started_over();
+            }
+            if let Some(tree) = self.tree {
+                tree.give_back();
             }
         }
     }
@@ -171,6 +221,9 @@ pub(super) struct Under {
     /// The names of the actions that are running, from the run nothing called down
     /// to this one. Its length is the level this run is at.
     pub(super) stack: Arc<Vec<String>>,
+    /// The count of the runs under the run nothing called, which this run is under
+    /// or is.
+    pub(super) tree: Arc<Tree>,
     /// What this run may spend: each call it makes takes its estimate from it.
     pub(super) allowance: Allowance,
     pub(super) deadline: Option<Instant>,
@@ -181,18 +234,26 @@ pub(super) struct Family {
     /// The run that called it, and that run's live state.
     pub(super) parent: Option<(RunId, Arc<LiveRun>)>,
     pub(super) stack: Arc<Vec<String>>,
+    pub(super) tree: Arc<Tree>,
     pub(super) allowance: Allowance,
 }
 
 impl Family {
     /// The family of a run of this action, called under this run or by nothing, with
-    /// this much reserved or taken for it.
-    pub(super) fn of(under: Option<&Under>, action: &str, reserved: Option<u64>) -> Family {
+    /// this much reserved or taken for it. A run that nothing called begins a tree
+    /// that may hold `descendants` runs under it.
+    pub(super) fn of(
+        under: Option<&Under>,
+        action: &str,
+        reserved: Option<u64>,
+        descendants: usize,
+    ) -> Family {
         let mut stack = under.map_or_else(Vec::new, |under| under.stack.to_vec());
         stack.push(action.to_owned());
         Family {
             parent: under.map(|under| (under.run.clone(), under.live.clone())),
             stack: Arc::new(stack),
+            tree: under.map_or_else(|| Arc::new(Tree::new(descendants)), |u| u.tree.clone()),
             allowance: reserved.map_or_else(Allowance::none, Allowance::of),
         }
     }
@@ -247,11 +308,12 @@ impl Nested {
             return Err(Refusal::CallBack { action: action() }.into());
         }
         let nest = under.live.nest();
-        nest.begin(call.action(), start)?;
-        let opening = Opening {
+        nest.begin(call.action(), start, &under.tree)?;
+        let mut opening = Opening {
             nest,
             made: false,
             start,
+            tree: Some(&under.tree),
         };
         // The call's run has the signal its request came with, or one of its own. A
         // cancellation of this run does not reach it yet.
@@ -269,7 +331,20 @@ impl Nested {
                 Stopped::Refused(error) => error,
                 // Only a request with an id makes the name that can be taken.
                 Stopped::Taken(error) => CallError::Store(StoreFailure::new(error)),
-            })?;
+            });
+        let admitted = match admitted {
+            Ok(admitted) => admitted,
+            Err(error) => {
+                // An admission that is visible and was not confirmed made a run,
+                // which nothing will execute: it stays counted in the tree.
+                if let CallError::Store(failure) = &error
+                    && matches!(failure.cause(), store::Error::Unacknowledged { .. })
+                {
+                    opening.tree = None;
+                }
+                return Err(error);
+            }
+        };
         opening.made(Child {
             run: admitted.run.clone(),
             action: action(),

@@ -56,7 +56,7 @@ pub use ledger::{
     Declined, LEDGER_NAME_LIMIT, Ledger, RESERVATION_RECORD, RESERVATIONS_PREFIX, Reservation,
     SPEND_PREFIX, Step, reservations,
 };
-pub use nested::{LEVELS_LIMIT, STARTED_LIMIT};
+pub use nested::{DESCENDANTS_LIMIT, LEVELS_LIMIT, STARTED_LIMIT};
 pub use prepare::{
     Backends, CallError, Estimate, InputFault, Missing, ModelIdentity, Need, NoBackends,
     PreparedCall, Readiness, Refusal, ResolvedInput, Stale, StoreFailure, Unavailable,
