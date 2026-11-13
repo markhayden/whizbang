@@ -148,9 +148,10 @@
 //! current one, and stored content that no generation left names. Two things are left
 //! though nothing current names them. A generation that a reader still holds, with all
 //! it names: a reader shares the file of the generation of its latest snapshot, and prune
-//! removes only a generation file that it can take alone. And content that a publication
-//! in progress in this process has named. Both go at the first prune after the reader or
-//! the publication has finished.
+//! removes only a generation file that it can take alone. The writer holds a generation
+//! the same way when it asks to ([`Store::hold`]). And content that a publication
+//! in progress in this process has named. Each goes at the first prune after the reader,
+//! the hold or the publication has finished.
 //!
 //! Prune removes generation files, syncs their directory, removes content, and syncs its
 //! directory. It never removes anything the current generation names, so a crash at any
@@ -887,6 +888,20 @@ impl Store {
         self.files.read_output(entry)
     }
 
+    /// Holds the current generation: for as long as what comes back lives, this
+    /// writer's own prune leaves that generation, and everything it names. It shares
+    /// the generation's file, as a [`Reader`] does for its latest snapshot, and a prune
+    /// removes only a generation file it can take alone. [`Store::snapshot`] still
+    /// holds nothing. The empty generation has no file and names nothing: holding it
+    /// holds nothing.
+    pub fn hold(&self) -> Result<Holding> {
+        let (generation, held) = self.files.held_snapshot()?;
+        Ok(Holding {
+            generation,
+            _held: held,
+        })
+    }
+
     /// Starts a publication: a staging directory of its own, and nothing visible until
     /// [`Publication::publish`].
     pub fn begin(&self) -> Result<Publication<'_>> {
@@ -939,7 +954,8 @@ impl Store {
     /// behind for a reader goes at the first prune after that reader has finished.
     ///
     /// This writer's own [`Store::snapshot`] holds nothing: a process that prunes decides
-    /// for itself what it still reads of an older generation.
+    /// for itself what it still reads of an older generation, and says so with
+    /// [`Store::hold`], which a prune finds as it finds a reader's share.
     pub fn prune(&self) -> Result<Pruned> {
         let files = &self.files;
         let fs = files.fs.as_ref();
@@ -1000,6 +1016,20 @@ impl Store {
             fs.sync_dir(&objects).map_err(Error::io("sync", &objects))?;
         }
         Ok(pruned)
+    }
+}
+
+/// A generation that a writer holds ([`Store::hold`]): its names, and the share of its
+/// file that keeps it, and what it names, from a prune.
+pub struct Holding {
+    generation: Generation,
+    _held: Option<Box<dyn Held>>,
+}
+
+impl Holding {
+    /// The generation that is held.
+    pub fn generation(&self) -> &Generation {
+        &self.generation
     }
 }
 

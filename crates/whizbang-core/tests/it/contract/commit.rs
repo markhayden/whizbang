@@ -54,7 +54,7 @@ impl Action for Scripted {
 /// The action `pair`, which returns a mask at `mask` and a location at `where`, and,
 /// for a call that gives `label`, a second location at `extra`. What it hands back is
 /// whatever the test says.
-fn pair(
+pub(super) fn pair(
     body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
 ) -> Arc<dyn Action> {
     let draft = ActionDescriptor::draft("pair", "1.0.0", Kind::Primitive, "Returns two things.")
@@ -90,43 +90,43 @@ fn the_place() -> whizbang_core::artifact::Location {
     line(on("photo"))
 }
 
-fn both() -> Produced {
+pub(super) fn both() -> Produced {
     Produced::nothing()
         .with("mask", the_mask())
         .with("where", the_place())
 }
 
-struct World {
+pub(super) struct World {
     dir: Scratch,
-    fs: Arc<ShimFs>,
+    pub(super) fs: Arc<ShimFs>,
 }
 
 impl World {
-    fn new() -> World {
+    pub(super) fn new() -> World {
         World::on(ShimFs::new())
     }
 
-    fn on(fs: ShimFs) -> World {
+    pub(super) fn on(fs: ShimFs) -> World {
         World {
             dir: Scratch::new("commit"),
             fs: Arc::new(fs),
         }
     }
 
-    fn root(&self) -> PathBuf {
+    pub(super) fn root(&self) -> PathBuf {
         self.dir.path().join("store")
     }
 
-    fn store(&self) -> Arc<Store> {
+    pub(super) fn store(&self) -> Arc<Store> {
         Arc::new(Store::open(&self.root(), self.fs.clone()).unwrap())
     }
 
-    fn engine(&self, actions: Vec<Arc<dyn Action>>) -> Engine {
+    pub(super) fn engine(&self, actions: Vec<Arc<dyn Action>>) -> Engine {
         engine_over(self.store(), actions)
     }
 }
 
-fn engine_over(store: Arc<Store>, actions: Vec<Arc<dyn Action>>) -> Engine {
+pub(super) fn engine_over(store: Arc<Store>, actions: Vec<Arc<dyn Action>>) -> Engine {
     let mut registry = Registry::new();
     for action in actions {
         registry.register(action).unwrap();
@@ -139,17 +139,17 @@ fn engine_over(store: Arc<Store>, actions: Vec<Arc<dyn Action>>) -> Engine {
 /// run, its record when it has one, and whether the run holds anything but its
 /// admission; and whether the store holds the mask and the location, each read whole
 /// and checked.
-struct Held {
-    runs: Vec<(String, Option<RunRecord>, usize)>,
+pub(super) struct Held {
+    pub(super) runs: Vec<(String, Option<RunRecord>, usize)>,
     /// The names of all the runs that are references to a committed output, each with
     /// the content read through it as an output.
-    outputs: Vec<(String, Vec<u8>)>,
-    mask: bool,
-    place: bool,
-    generation: u64,
+    pub(super) outputs: Vec<(String, Vec<u8>)>,
+    pub(super) mask: bool,
+    pub(super) place: bool,
+    pub(super) generation: u64,
 }
 
-fn held(root: &std::path::Path, fs: Arc<dyn Fs>) -> Held {
+pub(super) fn held(root: &std::path::Path, fs: Arc<dyn Fs>) -> Held {
     let reader = Reader::open(root, fs).unwrap();
     let generation = reader.snapshot().unwrap();
     let runs = generation
@@ -187,7 +187,7 @@ fn held(root: &std::path::Path, fs: Arc<dyn Fs>) -> Held {
     }
 }
 
-fn committed() -> Vec<Committed> {
+pub(super) fn committed() -> Vec<Committed> {
     vec![
         Committed::new("mask", ArtifactType::Mask, the_mask().id()),
         Committed::new("where", ArtifactType::Location, the_place().id()),

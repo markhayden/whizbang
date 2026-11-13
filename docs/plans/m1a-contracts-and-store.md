@@ -318,14 +318,14 @@ is ticked by the pull request that makes it true.
 **Depends on:** A6, A8. Rascal's old rule, that a commit which has taken its lock always
 completes, is not carried over without being restated here.
 
-- [ ] The rule, written in the ADR for the contract: a cancellation is accepted if it arrives
+- [x] The rule, written in the ADR for the contract: a cancellation is accepted if it arrives
       before the action enters its commit step, and then nothing is committed; one that
       arrives after returns the completed outcome.
 - [ ] Nested calls through the context's executor, each with an allowance taken from its
       parent's; a fifth level and a call back into an action on the stack are refused.
 - [ ] Cancellation reaches descendants and refuses new ones. A parent is terminal only when
       its descendants are terminal and every request a capability was sent is accounted for.
-- [ ] Progress events; status and cancel answered while an action is busy.
+- [x] Progress events; status and cancel answered while an action is busy.
 - [x] One commit step for an action: all of its output references and its completed status
       are published together, through A2's publication, and the completed outcome is returned
       only after that publication is durable.

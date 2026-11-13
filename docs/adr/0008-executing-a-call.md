@@ -5,6 +5,11 @@ Date: 2026-11-12
 Amended: 2026-11-12, with the second pull request of task A7. Added: "Status, waiting,
 and a run that was started", which is built. Changed: the paragraph that says which part
 builds what; what this record does not decide yet.
+Amended: 2026-11-12, with the third pull request of task A7. Added: "Cancellation",
+which is built: the rule for a cancellation and the commit step, `cancel`, cancelling an
+admission, the handles a context binds to its own signal, and the generation a run
+reads. Changed: the paragraph that says which part builds what; "What is not built";
+what this record does not decide yet.
 Spec: section 3, "The execution contract", "What a run publishes", "Storage" and "What
 every run records"
 
@@ -37,17 +42,17 @@ What there was to build it on:
 Task A7 of the plan for checkpoint 1A is delivered in parts, and this record is written
 with them. **The first part, which this record came with, builds** the commit step and
 what a panic does. **The second builds** a run's status and progress while it executes,
-waiting for a run, and starting one without waiting. The rule for a cancellation and the
-commit step, cancel itself, nested calls with their allowances, and what makes a parent
-terminal are the later parts': each amends this record with the code that builds it, and
-until then nothing here says how they work. Rascal's rule is restated with the
-cancellation, in that amendment; nothing cancels a run yet.
+waiting for a run, and starting one without waiting. **The third builds** the rule for a
+cancellation and the commit step, cancel itself, and what goes with them; rascal's rule
+is restated there. Nested calls with their allowances, a cancellation that reaches
+descendants, and what makes a parent terminal are the last part's: it amends this
+record with the code that builds it, and until then nothing here says how they work.
 
 The code is in `crates/whizbang-core/src/contract/` (`engine.rs`, `registry.rs`),
 `crates/whizbang-core/src/artifact/stored.rs` and
 `crates/whizbang-core/src/store/mod.rs`; the tests that hold it to this record are in
 `crates/whizbang-core/tests/it/contract/commit.rs`, `store/runs.rs` and `store.rs`, and
-`crates/whizbang/tests/it/runs.rs`.
+`crates/whizbang/tests/it/runs.rs`. The two later sections name their own.
 
 ## Decision
 
@@ -272,10 +277,204 @@ before, and a process that dies leaves none of it. They are not bounded. Both st
 `docs/carry-over.md`. The events of a run whose end the store refused stay readable in
 the process that ran it.
 
-**What is not built.** Nothing cancels a run, in its action or in its admission: that is
-the next pull request, with the rule this record owes for a cancellation and the commit
-step. A started run's thread is not counted or bounded, and a process that ends while
-one runs leaves the run admitted. Nothing holds the generation a run reads from.
+**What is not built.** A started run's thread is not counted or bounded, and a process
+that ends while one runs leaves the run admitted.
+
+### Cancellation
+
+The code is in `crates/whizbang-core/src/contract/` (`engine.rs`, `live.rs`,
+`context.rs`, `request.rs`) and `crates/whizbang-core/src/store/mod.rs`; the tests are in
+`crates/whizbang-core/tests/it/contract/cancel.rs` and `run.rs`, `store/prune.rs`,
+`crates/whizbang-testkit/tests/it/capabilities.rs` and `crates/whizbang/tests/it/runs.rs`.
+
+**The rule.** A cancellation is accepted if it arrives before the action's run enters
+its commit step, and then nothing is committed: the run ends as `cancelled`, with no
+output. One that arrives after is not accepted: the commit runs to its end, and the
+cancellation is answered with the completed outcome. This is `SPEC.md` section 3, and it
+is rascal's rule restated (`crates/rascal-core/src/workspace/commit.rs`: a cancellation
+was looked at once, before the writer lock was taken, and a commit that held the lock
+ran to its end), with one change: rascal looked at a flag, and between its look and its
+lock a cancellation could be set and lost without anyone being told. Here the look and
+the entry are one step, and whoever cancels is told which side of it they were on.
+
+**The commit step begins when the action has come back** and the executor starts the
+end of its run: before the first call of the end publication. Every run enters it,
+whatever its action handed back: an artifact, a failure, an invalid input or a panic.
+So "too late" means the same for all of them: the run's end is on its way, and the
+cancellation is answered with how the run ended.
+
+**One signal for each run, and one lock.** A run has one cancellation signal
+(`Cancellation`), from its admission on: the one its request came with
+(`Request::cancelled_by`), or one the executor makes. It is the signal in the action's
+context, and the one every capability handle of the run is bound to. Each open run has
+a lock of its own, in what the executor attaches to the run in the store's table of
+open runs ("Status", above), and under it a phase: executing, ending, over. Two things
+happen under that lock and nowhere else:
+
+- `Executor::cancel` looks at the phase. Executing: it sets the signal, and the answer
+  is `Cancel::Accepted`. Ending: too late.
+- The executor, when the action has come back, changes the phase to ending and reads
+  the signal. Set: the run ends as cancelled, and what the action handed back is
+  dropped. Not set: the run ends as its action ended it, and for a completed run the
+  publication that follows is its commit.
+
+So a cancellation that was answered `Accepted` was set before the entry, and the entry
+saw it; and one that found the run ending changed nothing. There is no moment between a
+look and a lock.
+
+**What is held, and for how long.** The run's lock is held to read or change the phase
+and to set or read the signal: a few instructions. It is never held across a call to
+the file system, the store's publishing step, or the action. The table's lock is held
+to read one entry, and is let go before the run's lock is taken. A cancel that is too
+late waits for the run to be over on the run's condition, holding no lock. So a status
+of any run, the one being committed or cancelled included, is answered while a commit
+is in progress and while a cancel waits for it: one test stops a commit before its
+first call, starts a cancel of that run, waits until the cancel is waiting, and reads
+the run's status from a third thread
+(`cancel::a_cancel_after_the_commit_step_began_waits_and_returns_the_completed_outcome`);
+another does the same and reads the status of a second run, and cancels it
+(`cancel::a_status_of_another_run_is_answered_while_a_cancel_waits_for_a_commit`).
+
+**What a cancel is answered.** `Executor::cancel` takes a run's id, and no reason:
+nothing a caller says is written. It answers as a status does: the store, the table,
+the store.
+
+| The run | `cancel` answers |
+|---|---|
+| Executing in this process, by any executor over the same store value | `Accepted`, at once. It does not wait for the action to come back: `wait` does |
+| In its commit step | It waits for the end of the run, then answers as for a run that ended |
+| Ended, in the store | `NotAccepted(Ended)`, with the outcome. Nothing is written |
+| Its end could not be written | `NotAccepted(NotEnded { here: true })`, without waiting |
+| Its admission became visible and was not confirmed, so its action never started | The same |
+| Made by other code of this process, with no executor's state attached | `NotAccepted(NotEnded { here: true })` |
+| Admitted by a process that is gone | `NotAccepted(NotEnded { here: false })`: nothing can be told to stop |
+| Not in the store: never made, or deleted | The refusal `NoSuchRun` |
+
+The fifth row corrects the part before this one: a run whose admission's last sync
+failed is visible and open here, its caller was told of the store's failure, and
+nothing executes it. The executor now says it is done with such a run when it gives
+the admission up, so a `wait` for it returns, where it waited for ever, and a cancel of
+it is not told it was accepted
+(`cancel::a_run_whose_admission_was_not_confirmed_is_not_cancelled_and_is_not_waited_for`).
+
+An executor that only reads a store cancels nothing: it answers an ended run with its
+outcome, a run that has not ended with `NotEnded { here: false }`, and no run with
+`NoSuchRun`. Two cancels of an executing run are both answered `Accepted`: the second
+finds the signal set and the run still executing, and the run ends once
+(`cancel::a_cancel_is_answered_for_a_run_in_every_state_and_changes_none_that_is_over`,
+`cancel::two_cancels_at_once_are_both_accepted_and_the_run_ends_once`).
+
+**Why the answer is never from a stale look.** The first look at the store answers a
+run that ended or is not there. For a run that was open, the table is asked, and what
+it holds is the run's live state, whose phase is read under the run's lock: that is the
+decision, and it is not a snapshot. A cancel that finds the run ending or over, or not
+in the table, looks at the store again, as a status does, and that look is conclusive
+for the same reason ("Why the last look is conclusive", above). Three tests stop at the
+edges. Straight after the rename that makes an admission visible, a cancel is accepted,
+and the action is never run
+(`cancel::a_cancel_asked_the_moment_a_run_becomes_visible_is_accepted_and_its_action_never_runs`).
+Straight after the rename that makes an end visible, on the publishing thread, a cancel
+is answered with the outcome and does not wait for the thread it is on
+(`cancel::a_cancel_asked_the_moment_a_runs_end_becomes_visible_is_told_how_it_ended`).
+And a cancel whose run ends between its look at the store and its look at the table is
+told how the run ended, not that it was accepted and not that nobody will end it
+(`cancel::a_cancel_that_races_the_end_of_its_run_is_told_how_it_ended`).
+
+**A cancelled run's end** is the end publication of any run that did not complete: the
+journal, the diagnostics and the record are added to the run, the record says
+`cancelled` with no error and no output, and for a request with an id the id's ending
+says `cancelled` too. It is one publication, so the record and the ending are there
+together or neither is: one test refuses each call of it in turn, another loses power
+before each, in the ways the commit's test does
+(`cancel::a_cancelled_end_that_the_store_refuses_at_any_step_publishes_no_status_or_both`,
+`cancel::a_cancelled_run_crashed_inside_its_end_reopens_with_no_status_or_with_both`).
+No output of either kind is committed: neither the run's own references
+(`outputs/<port>/<n>`) nor an artifact's name. The run's reservation stays: settling it
+is the ledger's, at checkpoint 1B. A repeat of its request is answered
+`Ended(Cancelled)`, `wait` and `status` say the same, and `whizbang runs list` and
+`runs show` show the run as cancelled.
+
+**An accepted cancellation decides the outcome, whatever the action then does.** An
+action that ignores the signal and hands back artifacts has none of them committed. One
+that fails, finds its input invalid or panics after the cancellation ends as cancelled
+all the same, and its error is not in the record; what it wrote as diagnostics is
+(`cancel::whatever_an_action_does_after_an_accepted_cancel_its_run_ends_cancelled`). A
+run whose signal is set before its action has started does not run its action.
+
+**Whoever holds the signal can set it.** The caller that kept the signal its request
+came with can set it without going through `cancel`; so can the action, through its
+context, and a backend, through the bounds it is handed. Set before the entry to the
+commit step, it cancels the run, by the same rule; set after, it changes nothing.
+Nobody is told which: only `cancel` answers. A signal given to two requests is one
+signal, and cancels both.
+
+**A cancellation reaches the action's capabilities.** `Capabilities` holds backends
+and no handle. A context makes its own handles when it is made (`Context::new`), each
+bound to the context's signal and held to its deadline, and there is no other way to
+put a handle in a context: an action cannot be handed a handle that is bound to another
+run's signal (`run::the_handles_of_a_context_are_bound_to_its_own_signal_and_deadline`).
+The executor is given the backends (`Engine::with_capabilities`) and makes each run's
+context with the run's signal and deadline. So once a run is cancelled its handles send
+nothing, and a backend that holds a request open sees the signal in its bounds: the
+plan's test is built on that, with a fake filler that holds a request at a barrier
+(`cancel::while_an_action_is_in_blocking_work_a_second_caller_reads_its_status_and_cancels_it`,
+`cancel::each_runs_handles_are_bound_to_its_own_signal_and_deadline`). The executor
+hands every run a handle on every backend it was given, whatever the run's call
+resolved: choosing among several backends by the call's choice, and recording each
+request, come with the first action that asks a capability (task A11,
+`docs/carry-over.md`).
+
+**Cancelling an admission, and its deadline.** An admission has no run to name. It is
+cancelled by the signal its request came with: the caller makes the signal, keeps it,
+and sets it. A request may also come with a deadline (`Request::until`). Admission
+looks at both before it prepares, and again before each attempt at its publication,
+which is each time the ledger is asked: a request whose signal is set is refused with
+`Refusal::Cancelled`, one whose deadline has passed with `Refusal::DeadlinePassed`, and
+nothing of it is published: no run, no reservation, and its id is not taken. A repeat
+is answered before either is looked at. The time is the executor's clock's
+(`Clock::now`), so a test moves it
+(`cancel::a_cancellation_that_arrives_while_a_ledger_is_asked_again_ends_the_admission`,
+`cancel::a_deadline_that_passes_while_a_ledger_is_asked_again_ends_the_admission`).
+A signal set after the last look and before the publication is not lost: the run is
+admitted with its signal set, its action is not run, and it ends as cancelled.
+
+A caller that is asked again and again is still given no turn: the ledger is asked
+without a bound on the count for as long as other admissions are published first. What
+ends it is the caller's own signal or deadline. A request that came with neither can
+still starve (`docs/carry-over.md`).
+
+**A deadline in a run** is carried, and ends nothing by itself: the action reads it
+from its context, and its capability handles send nothing once it has passed (ADR
+0006). The executor does not end a run whose deadline has passed.
+
+**The generation a run reads.** A run is admitted against one generation of the store,
+and reads that generation until it ends. Before it prepares the call, admission takes
+a hold on the current generation (`Store::hold`): a share of the generation's file, as
+a reader takes, which this process's own prune finds and leaves, with everything the
+generation names. The call is prepared against that generation, and the store in the
+action's context is that generation: `snapshot` gives it every time, and what it names
+is read from the store. The hold is let go when the executor is done with the run,
+before whoever waits for the run is told. So an input a run was admitted against, and
+anything else the run reads, cannot be pruned out from under it by a deletion, by a
+name being given other content, or by a prune, in this process
+(`cancel::a_run_reads_the_generation_it_was_admitted_against_through_a_deletion_and_a_prune`,
+`store::prune::what_a_writer_holds_is_left_by_its_own_prune_until_it_lets_go`).
+
+What follows from it, and is known: a run does not see what was published after it was
+admitted, its own admission included; an action that keeps a copy of its context past
+its run keeps the hold for as long; and a generation that is held is not removed by a
+prune, so a run that takes long keeps its generation's content on disk for as long.
+What admission decides inside its own publishing step (that the run's id, the request's
+id and the reservation's name are free, and what the ledger is shown) is still decided
+on the generation that is current then, not on the one that is held. Between the
+preparation and the admission's publication nothing holds the config or the backends
+still: a config that changes in that window is not seen by that admission. That window
+is accepted: the preparation is of the config it read, the record names its digest, and
+the next request sees the change.
+
+**What is not built.** A call from inside an action; a cancellation that reaches a
+run's descendants; a parent that waits for them. Nothing bounds what a run keeps in
+memory, and nothing marks a run that a dead process left.
 
 ## Consequences
 
@@ -306,8 +505,22 @@ one runs leaves the run admitted. Nothing holds the generation a run reads from.
 - A run's events are kept after its end was published or refused, until the last holder
   of its live state lets go.
 
-What this record does not decide yet: cancellation and its rule at the commit step;
-cancel while a run executes; nested calls, allowances, and when a parent is terminal. They are the later parts of the same task, and amend this record.
+- `Executor` has `cancel`, and `Cancel` is its answer. `Request` carries a signal and a
+  deadline, which are no part of its fingerprint; `Refusal` has `Cancelled` and
+  `DeadlinePassed`; `Clock` tells an instant as well as a time of day.
+- `Capabilities` holds backends, where it held handles: `Context::new` makes the
+  handles, and `Context::capabilities` gives `Handles`. `Engine::with_capabilities`
+  gives an executor its backends.
+- A run's call is prepared from, and its action reads, the generation that was current
+  when its admission began, and never a later one. `Store::hold` is how: a share of a
+  generation's file, held by the writer itself.
+- A run whose cancellation was accepted says `cancelled` in its record and in its
+  request's ending, and what its action answered after the cancellation is recorded
+  nowhere but in its diagnostics.
+
+What this record does not decide yet: nested calls, their allowances, a cancellation
+that reaches descendants, and when a parent is terminal. They are the last part of the
+same task, and amend this record.
 
 ## Alternatives
 
@@ -334,3 +547,25 @@ cancel while a run executes; nested calls, allowances, and when a parent is term
 - **Let a panic unwind,** as before. Turned down: the run then has no record, its
   diagnostics are lost, and its request is answered for good as a run that has not
   ended.
+- **Look at the signal once before the commit, as rascal did.** Turned down: a
+  cancellation set between the look and the commit is lost, and whoever set it is told
+  nothing, or is told it was accepted when the outputs were committed.
+- **Hold one lock for all runs across the commit,** so that a cancel waits on the lock
+  itself. Turned down: every status and every other run's cancel would wait for one
+  run's publication, which the spec forbids ("status and cancel stay responsive").
+- **Let `cancel` wait for an accepted cancellation's run to end.** Turned down: an
+  action that does not look at its signal would hold the caller for as long as it
+  runs. `wait` is there for a caller that wants the end.
+- **Take a reason with a cancellation, and record it.** Turned down for now: it is one
+  more text a caller gives that could hold a secret, and nothing reads it.
+- **Cancel an admission by its request's id.** Turned down: a request need not have an
+  id, and an id that is not admitted yet names nothing in the store, so the executor
+  would keep a second table, of admissions in progress, beside the store's table of
+  open runs.
+- **Let a run read the current generation, and only hold the one it was admitted
+  against.** Turned down: what the action reads would then depend on what was
+  published while it ran, and a name it was admitted against could be given other
+  content under it.
+- **Refuse a prune while a run executes** (`docs/carry-over.md` offered it). Turned
+  down: the store would need to know of the executor, and a long run would stop every
+  prune instead of keeping one generation.

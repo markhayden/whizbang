@@ -1,34 +1,75 @@
 //! A run that this process has open: what its executor shares, while the run executes,
-//! with whoever asks after it (ADR 0008, "Status").
+//! with whoever asks after it or cancels it (ADR 0008, "Status", "Cancellation").
 //!
 //! It is attached to the run in the store's table of open runs
 //! ([`crate::store::Publication::attach`]) by the publication that admits the run, so
 //! it is found from just before the run is visible until the run's end is visible, and
 //! by any executor over the same store in this process.
 
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use crate::store::Attached;
 
-use super::JournalLine;
 use super::journal::Kept;
+use super::{Cancellation, JournalLine};
+
+/// Where the executor is with an open run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// The run was admitted and its end has not begun: its action has not started, or
+    /// has not come back.
+    Executing,
+    /// The action has come back, and the executor is ending the run: for a run that
+    /// completed, this is its commit step.
+    Ending,
+    /// The executor is done with the run: it ended, or its end could not be written.
+    Over,
+}
+
+/// What a cancellation of an open run came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Told {
+    /// It arrived before the run's end began: the run's signal is set.
+    Accepted,
+    /// It arrived after: the run is over now, and the store says how.
+    TooLate,
+}
 
 /// One open run.
 pub(super) struct LiveRun {
     kept: Arc<Kept>,
-    /// Whether the executor is done with the run: it ended, or its end could not be
-    /// written. Held only to read or to set the flag, never across anything else.
-    over: Mutex<bool>,
+    /// The run's cancellation signal: the one in its action's context, and the one its
+    /// capability handles are bound to.
+    signal: Cancellation,
+    /// The run's own lock. A cancellation and the beginning of the run's end are each
+    /// decided under it, so one of them is first. It is held only to read or change
+    /// the phase and to set or read the signal: never across a call to the file system,
+    /// to the store or to an action, and never while another lock is taken.
+    phase: Mutex<Phase>,
     changed: Condvar,
+    /// How many callers are waiting, now, for the run to be over.
+    waiting: AtomicUsize,
 }
 
 impl LiveRun {
-    pub(super) fn new(kept: Arc<Kept>) -> LiveRun {
+    pub(super) fn new(kept: Arc<Kept>, signal: Cancellation) -> LiveRun {
         LiveRun {
             kept,
-            over: Mutex::new(false),
+            signal,
+            phase: Mutex::new(Phase::Executing),
             changed: Condvar::new(),
+            waiting: AtomicUsize::new(0),
         }
+    }
+
+    fn phase(&self) -> MutexGuard<'_, Phase> {
+        self.phase.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The run's cancellation signal.
+    pub(super) fn signal(&self) -> &Cancellation {
+        &self.signal
     }
 
     /// The progress events the run has reported so far, the secrets taken out.
@@ -36,21 +77,55 @@ impl LiveRun {
         self.kept.lines()
     }
 
+    /// Cancels the run, if its end has not begun: the rule of ADR 0008. Accepted, the
+    /// signal is set under the run's lock, so the executor sees it when it begins the
+    /// run's end. Too late, this waits until the run is over, holding nothing.
+    pub(super) fn cancel(&self) -> Told {
+        let phase = self.phase();
+        if *phase == Phase::Executing {
+            self.signal.cancel();
+            return Told::Accepted;
+        }
+        self.until_over(phase);
+        Told::TooLate
+    }
+
+    /// The executor begins the run's end: from here on a cancellation is too late.
+    /// What comes back is whether the run was cancelled before this, which is read
+    /// under the same lock a cancellation is accepted under.
+    pub(super) fn begin_end(&self) -> bool {
+        let mut phase = self.phase();
+        *phase = Phase::Ending;
+        self.signal.is_cancelled()
+    }
+
     /// Nothing in this process works on the run any more.
     pub(super) fn over(&self) {
-        *self.over.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        *self.phase() = Phase::Over;
         self.changed.notify_all();
     }
 
     /// Returns once nothing in this process works on the run any more.
     pub(super) fn wait_until_over(&self) {
-        let mut over = self.over.lock().unwrap_or_else(PoisonError::into_inner);
-        while !*over {
-            over = self
+        self.until_over(self.phase());
+    }
+
+    fn until_over(&self, mut phase: MutexGuard<'_, Phase>) {
+        // Counted under the lock, before the first wait: whoever reads the count as
+        // one or more has a caller that is waiting, or about to with the lock let go.
+        self.waiting.fetch_add(1, Ordering::SeqCst);
+        while *phase != Phase::Over {
+            phase = self
                 .changed
-                .wait(over)
+                .wait(phase)
                 .unwrap_or_else(PoisonError::into_inner);
         }
+        self.waiting.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    /// How many callers are waiting, now, for the run to be over.
+    pub(super) fn waiting(&self) -> usize {
+        self.waiting.load(Ordering::SeqCst)
     }
 }
 

@@ -585,6 +585,14 @@ pub enum Refusal {
     /// The text given as a request's id is not one. `why` is the whole sentence, which
     /// shows the text escaped and cut.
     NotARequestId { why: String },
+    /// The signal the request came with was set before the request was admitted
+    /// ([`super::Request::cancelled_by`]). No run was made, nothing was reserved, and
+    /// the request's id is not taken by this request.
+    Cancelled { action: String },
+    /// The deadline the request came with passed before the request was admitted
+    /// ([`super::Request::until`]). No run was made, nothing was reserved, and the
+    /// request's id is not taken by this request.
+    DeadlinePassed { action: String },
 }
 
 impl std::fmt::Display for Refusal {
@@ -655,6 +663,14 @@ impl std::fmt::Display for Refusal {
                  reserved"
             ),
             Refusal::NotARequestId { why } => f.write_str(why),
+            Refusal::Cancelled { action } => write!(
+                f,
+                "{action} was not admitted: its request was cancelled first"
+            ),
+            Refusal::DeadlinePassed { action } => write!(
+                f,
+                "{action} was not admitted: the deadline of its request passed first"
+            ),
             Refusal::SecretInRequestId => f.write_str(
                 "the request id holds something that must not be written: an id is stored \
                  as it is, so it cannot hold a secret",

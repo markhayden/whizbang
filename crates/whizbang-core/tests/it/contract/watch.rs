@@ -42,7 +42,7 @@ impl Action for Scripted {
 }
 
 /// The action `work`, whose run is whatever the test says.
-fn work(
+pub(super) fn work(
     body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
 ) -> Arc<dyn Action> {
     let draft = ActionDescriptor::draft("work", "1.0.0", Kind::Primitive, "Works.");
@@ -50,7 +50,7 @@ fn work(
 }
 
 /// `work` that reports two events around a stop at the barrier `busy`.
-fn busy(barriers: &Barriers, secret: &str) -> Arc<dyn Action> {
+pub(super) fn busy(barriers: &Barriers, secret: &str) -> Arc<dyn Action> {
     let (barriers, secret) = (barriers.clone(), secret.to_owned());
     work(move |_, context| {
         context.events().progress(&format!("began with {secret}"));
@@ -60,7 +60,7 @@ fn busy(barriers: &Barriers, secret: &str) -> Arc<dyn Action> {
     })
 }
 
-fn engine(store: Arc<Store>, actions: Vec<Arc<dyn Action>>) -> Engine {
+pub(super) fn engine(store: Arc<Store>, actions: Vec<Arc<dyn Action>>) -> Engine {
     let mut registry = Registry::new();
     for action in actions {
         registry.register(action).unwrap();
@@ -69,12 +69,12 @@ fn engine(store: Arc<Store>, actions: Vec<Arc<dyn Action>>) -> Engine {
         .with_clock(Arc::new(Stopped(9000)))
 }
 
-fn asked(id: &str) -> Request {
+pub(super) fn asked(id: &str) -> Request {
     Request::new(Call::new("work")).with_id(RequestId::parse(id).unwrap())
 }
 
 /// The one run a reader of its own sees in the store.
-fn the_run(root: &Path) -> RunId {
+pub(super) fn the_run(root: &Path) -> RunId {
     let reader = Reader::open(root, Arc::new(RealFs)).unwrap();
     let generation = reader.snapshot().unwrap();
     assert_eq!(generation.runs().len(), 1);
@@ -351,8 +351,8 @@ fn a_status_asked_the_moment_a_runs_end_becomes_visible_says_it_ended() {
 /// The real file system, which runs a hook once, after the first read of a generation
 /// file after it was armed: between a status's look at the store and its look at the
 /// table of open runs.
-struct AfterTheLook {
-    hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+pub(super) struct AfterTheLook {
+    pub(super) hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl Fs for AfterTheLook {

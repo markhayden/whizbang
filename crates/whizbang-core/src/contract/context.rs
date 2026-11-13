@@ -2,17 +2,18 @@
 //! signal, a deadline, an event sink for progress, a spend allowance, the store,
 //! capability handles and the executor.
 //!
-//! The executor makes one of these for each run (ADR 0005). The cancellation signal and
-//! the deadline are carried and nothing sets them yet, and the allowance is empty until
-//! there is a ledger. The capability handles are the capability interfaces' (ADR 0006);
-//! the executor hands an action none of them yet.
+//! The executor makes one of these for each run (ADR 0005), with the run's cancellation
+//! signal and its deadline (ADR 0008, "Cancellation"); the allowance is empty until
+//! there is a ledger. The capability handles are the capability interfaces' (ADR 0006),
+//! and a context makes its own, bound to its own signal and deadline, from the backends
+//! it is given.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crate::artifact::Contents;
-use crate::capability::{FillHandle, JudgeHandle, SegmentHandle};
+use crate::capability::{FillHandle, Filler, Judge, JudgeHandle, SegmentHandle, Segmenter};
 
 use super::Executor;
 
@@ -20,6 +21,13 @@ use super::Executor;
 /// and none is ever uncancelled.
 #[derive(Debug, Clone, Default)]
 pub struct Cancellation(Arc<AtomicBool>);
+
+/// Two signals are equal when they are the same signal.
+impl PartialEq for Cancellation {
+    fn eq(&self, other: &Cancellation) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
 
 impl Cancellation {
     pub fn new() -> Cancellation {
@@ -76,47 +84,87 @@ impl Allowance {
     }
 }
 
-/// The capabilities a context offers: for each of the three, a handle, or none. An action
-/// reaches a model through one of these and in no other way.
-#[derive(Debug, Clone)]
+/// The backends a context's capability handles are made over: for each of the three
+/// capabilities, a backend, or none. It holds no handle. A handle is bound to one run,
+/// and only a context makes the handles an action is offered, with its own signal and
+/// its own deadline ([`Context::new`]): so an action is never handed a handle bound to
+/// another run's signal (ADR 0006, ADR 0008).
+///
+/// What `{:?}` prints is which of the three there are.
+#[derive(Clone, Default)]
 pub struct Capabilities {
+    segment: Option<Arc<dyn Segmenter>>,
+    fill: Option<Arc<dyn Filler>>,
+    judge: Option<Arc<dyn Judge>>,
+}
+
+impl Capabilities {
+    /// No backend at all.
+    pub fn none() -> Capabilities {
+        Capabilities::default()
+    }
+
+    /// The same set, with this segmenter.
+    pub fn with_segment(mut self, backend: Arc<dyn Segmenter>) -> Capabilities {
+        self.segment = Some(backend);
+        self
+    }
+
+    /// The same set, with this filler.
+    pub fn with_fill(mut self, backend: Arc<dyn Filler>) -> Capabilities {
+        self.fill = Some(backend);
+        self
+    }
+
+    /// The same set, with this judge.
+    pub fn with_judge(mut self, backend: Arc<dyn Judge>) -> Capabilities {
+        self.judge = Some(backend);
+        self
+    }
+
+    /// A handle on each backend, bound to this signal and held to this deadline.
+    fn bound(&self, cancellation: &Cancellation, deadline: Option<Instant>) -> Handles {
+        let run = || cancellation.clone();
+        let segment = self.segment.clone().map(|b| SegmentHandle::new(b, run()));
+        let fill = self.fill.clone().map(|b| FillHandle::new(b, run()));
+        let judge = self.judge.clone().map(|b| JudgeHandle::new(b, run()));
+        match deadline {
+            None => Handles {
+                segment,
+                fill,
+                judge,
+            },
+            Some(by) => Handles {
+                segment: segment.map(|handle| handle.until(by)),
+                fill: fill.map(|handle| handle.until(by)),
+                judge: judge.map(|handle| handle.until(by)),
+            },
+        }
+    }
+}
+
+impl std::fmt::Debug for Capabilities {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Capabilities")
+            .field("segment", &self.segment.is_some())
+            .field("fill", &self.fill.is_some())
+            .field("judge", &self.judge.is_some())
+            .finish()
+    }
+}
+
+/// The capability handles of one context: for each of the three, a handle, or none. An
+/// action reaches a model through one of these and in no other way. Each is bound to
+/// the context's cancellation signal and held to its deadline, which an action may
+/// only shorten. Only a context makes one.
+#[derive(Debug, Clone)]
+pub struct Handles {
     segment: Option<SegmentHandle>,
     fill: Option<FillHandle>,
     judge: Option<JudgeHandle>,
 }
 
-impl Capabilities {
-    /// No capability at all.
-    pub fn none() -> Capabilities {
-        Capabilities {
-            segment: None,
-            fill: None,
-            judge: None,
-        }
-    }
-
-    /// The same set, offering this segmenter. The handle is bound to the run: whoever
-    /// makes the context makes it with the context's cancellation signal, and the
-    /// executor sets its deadline, which an action may only shorten.
-    pub fn with_segment(mut self, handle: SegmentHandle) -> Capabilities {
-        self.segment = Some(handle);
-        self
-    }
-
-    /// The same set, offering this filler. The handle is bound to the run, and the
-    /// executor sets its deadline, as for a segmenter.
-    pub fn with_fill(mut self, handle: FillHandle) -> Capabilities {
-        self.fill = Some(handle);
-        self
-    }
-
-    /// The same set, offering this judge. The handle is bound to the run, and the
-    /// executor sets its deadline, as for a segmenter.
-    pub fn with_judge(mut self, handle: JudgeHandle) -> Capabilities {
-        self.judge = Some(handle);
-        self
-    }
-
+impl Handles {
     pub fn segment(&self) -> Option<&SegmentHandle> {
         self.segment.as_ref()
     }
@@ -138,12 +186,15 @@ pub struct Context {
     events: Arc<dyn Events>,
     allowance: Allowance,
     store: Arc<dyn Contents + Send + Sync>,
-    capabilities: Capabilities,
+    capabilities: Handles,
     executor: Arc<dyn Executor>,
     diagnostics: Arc<dyn Diagnostics>,
 }
 
 impl Context {
+    /// A context with this signal and this deadline. Its capability handles are made
+    /// here, one on each backend of `capabilities`, bound to that signal and held to
+    /// that deadline.
     pub fn new(
         cancellation: Cancellation,
         deadline: Option<Instant>,
@@ -153,6 +204,7 @@ impl Context {
         capabilities: Capabilities,
         executor: Arc<dyn Executor>,
     ) -> Context {
+        let capabilities = capabilities.bound(&cancellation, deadline);
         Context {
             cancellation,
             deadline,
@@ -202,8 +254,8 @@ impl Context {
         self.store.as_ref()
     }
 
-    /// The capability handles.
-    pub fn capabilities(&self) -> &Capabilities {
+    /// The capability handles, each bound to this context's signal and deadline.
+    pub fn capabilities(&self) -> &Handles {
         &self.capabilities
     }
 

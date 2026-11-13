@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +19,12 @@ use super::{Diagnostics, Events, Secrets};
 /// What tells a run the time: milliseconds since the Unix epoch.
 pub trait Clock: Send + Sync {
     fn now_ms(&self) -> u64;
+
+    /// The instant it is now, for what is held to a deadline: the machine's, unless a
+    /// clock says otherwise. A test moves it.
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
 }
 
 /// The machine's clock.

@@ -23,9 +23,11 @@ use crate::identity::{Digest, Encoder, Fields};
 use crate::store::{Entry, Generation};
 
 use super::record::{self, QUOTED_LIMIT, RECORD_NAME, RunRecord, Status, StoredRecordError};
+use std::time::Instant;
+
 use super::{
-    Call, CallError, Committed, JournalLine, Outcome, PreparedCall, RunId, StoreFailure, Value,
-    text,
+    Call, CallError, Cancellation, Committed, JournalLine, Outcome, PreparedCall, RunId,
+    StoreFailure, Value, text,
 };
 
 /// The longest request id, in characters.
@@ -101,6 +103,8 @@ pub struct Request {
     call: Call,
     id: Option<RequestId>,
     expecting: Option<PreparedCall>,
+    cancellation: Option<Cancellation>,
+    deadline: Option<Instant>,
 }
 
 impl Request {
@@ -110,7 +114,37 @@ impl Request {
             call,
             id: None,
             expecting: None,
+            cancellation: None,
+            deadline: None,
         }
+    }
+
+    /// The same request, cancelled by this signal, which its caller keeps (ADR 0008,
+    /// "Cancellation"). Set before the request is admitted, it ends the admission with
+    /// nothing published: that is how an admission, which has no run yet, is
+    /// cancelled. From the admission on it is the run's own signal. It is no part of
+    /// the request's fingerprint.
+    pub fn cancelled_by(mut self, signal: Cancellation) -> Request {
+        self.cancellation = Some(signal);
+        self
+    }
+
+    /// The signal the request is cancelled by, when it came with one.
+    pub fn cancellation(&self) -> Option<&Cancellation> {
+        self.cancellation.as_ref()
+    }
+
+    /// The same request, to be over by this time: an admission that has not been
+    /// published by then is given up, and the run is handed the deadline, with its
+    /// capability handles. It is no part of the request's fingerprint.
+    pub fn until(mut self, deadline: Instant) -> Request {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// When the request must be over, when it has a limit.
+    pub fn deadline(&self) -> Option<Instant> {
+        self.deadline
     }
 
     /// The same request, to be admitted only if its call still prepares as `prepared`:
@@ -578,6 +612,22 @@ impl Answer {
             Answer::Started(run) => run,
         }
     }
+}
+
+/// The answer to a cancellation of a run (ADR 0008, "Cancellation").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Cancel {
+    /// The cancellation was accepted: it arrived before the run entered its commit
+    /// step. Nothing the run made is committed, and the run ends as cancelled. The
+    /// answer does not wait for that end: the action is told, and comes back when it
+    /// does ([`super::Executor::wait`]).
+    Accepted,
+    /// The cancellation was not accepted, and where the run is says why. `Ended`: the
+    /// run had ended, or was in its commit step, which was waited for; this is how it
+    /// ended. `NotEnded { here: true }`: the run's end could not be written, or other
+    /// code of this process made the run. `NotEnded { here: false }`: nothing in this
+    /// process works on the run, so nothing can be told to stop.
+    NotAccepted(RunState),
 }
 
 /// The answer to a question after a run by its id: where the run is now, and, while it

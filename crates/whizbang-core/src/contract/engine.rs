@@ -5,6 +5,7 @@ use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use crate::artifact::{self, Artifact, Contents};
 use crate::capability::Shown;
@@ -13,7 +14,7 @@ use crate::store::{self, Store};
 
 use super::journal::Kept;
 use super::ledger::{Declined, Reservation, Step};
-use super::live::{self, LiveRun};
+use super::live::{self, LiveRun, Told};
 use super::prepare::prepare;
 use super::record::{
     Diagnostic, OUTPUTS_PREFIX, RECORD_KIND, RECORD_NAME, Ran, RunRecord, StoredRecordError,
@@ -21,9 +22,10 @@ use super::record::{
 use super::request::{Found, look_up, outcome_of};
 use super::{
     ADMITTED_NAME, Action, ActionDescriptor, Admission, Allowance, Answer, Backends, Call,
-    CallError, Cancellation, Capabilities, Clock, Committed, Context, Ending, Failure, Finished,
-    Ledger, Outcome, PreparedCall, Produced, Readiness, Refusal, Registry, Request, RequestId,
-    RunId, RunState, Secrets, Stale, StoreFailure, SystemClock, Watched, request_fingerprint,
+    CallError, Cancel, Cancellation, Capabilities, Clock, Committed, Context, Ending, Failure,
+    Finished, Ledger, Outcome, PreparedCall, Produced, Readiness, Refusal, Registry, Request,
+    RequestId, RunId, RunState, Secrets, Stale, StoreFailure, SystemClock, Watched,
+    request_fingerprint,
 };
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
@@ -32,7 +34,7 @@ use super::{
 /// `submit` and `request` return when the run is over and its record is durable, or,
 /// for a request that was sent before, as soon as its id was looked up. `start` returns
 /// once the run is admitted; a run is then asked after by its id (`status`, `wait`),
-/// by any caller (ADR 0008). Nothing cancels a run yet.
+/// and cancelled by it (`cancel`), by any caller (ADR 0008).
 pub trait Executor: Send + Sync {
     /// Can this exact call run now? Nothing is written, nothing is spent, and nothing is
     /// sent to a model. A call that is refused and a store that failed are told apart
@@ -76,6 +78,14 @@ pub trait Executor: Send + Sync {
     /// waits for a run that no process will end: such a run is answered as not ended.
     fn wait(&self, run: &RunId) -> Result<Watched, CallError>;
 
+    /// Cancels the run (ADR 0008, "Cancellation"). A cancellation that arrives before
+    /// the run enters its commit step is accepted: nothing the run made is committed,
+    /// and the run ends as cancelled. One that arrives after is not: it waits for the
+    /// commit, and is answered with how the run ended. A run that had ended is
+    /// answered with how, and nothing changes. A run the store does not hold is
+    /// refused ([`Refusal::NoSuchRun`]).
+    fn cancel(&self, run: &RunId) -> Result<Cancel, CallError>;
+
     /// The request id this text is. A door hands over the text a caller gave here, and
     /// not to [`RequestId::parse`], whose refusal shows the text: this looks first for
     /// the secrets the executor was told of, in the text as it was given, and refuses
@@ -103,6 +113,8 @@ pub struct Engine {
     secrets: Secrets,
     /// The ledger that takes part in admission, when this executor was given one.
     ledger: Option<Arc<dyn Ledger>>,
+    /// The backends each run's capability handles are made over.
+    capabilities: Capabilities,
 }
 
 /// Where the executor reads the digest of the config. It is asked every time a call is
@@ -142,6 +154,7 @@ impl Engine {
             clock: Arc::new(SystemClock),
             secrets: Secrets::none(),
             ledger: None,
+            capabilities: Capabilities::none(),
         }
     }
 
@@ -183,6 +196,20 @@ impl Engine {
     pub fn with_ledger(mut self, ledger: Arc<dyn Ledger>) -> Engine {
         self.ledger = Some(ledger);
         self
+    }
+
+    /// The same executor, handing each run's action a handle on each of these
+    /// backends, bound to that run's cancellation and deadline.
+    pub fn with_capabilities(mut self, capabilities: Capabilities) -> Engine {
+        self.capabilities = capabilities;
+        self
+    }
+
+    /// For tests: how many callers are waiting, now, for the run to be over.
+    #[doc(hidden)]
+    pub fn waiting_for(&self, run: &RunId) -> usize {
+        let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
+        attached.and_then(live::of).map_or(0, |live| live.waiting())
     }
 
     /// The actions this executor runs.
@@ -253,27 +280,19 @@ impl Executor for NoNesting {
     fn wait(&self, _: &RunId) -> Result<Watched, CallError> {
         Err(Refusal::NoNestedCalls.into())
     }
+
+    fn cancel(&self, _: &RunId) -> Result<Cancel, CallError> {
+        Err(Refusal::NoNestedCalls.into())
+    }
 }
 
 impl Executor for Engine {
     fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError> {
-        let Some(action) = self.registry.get(call.action()) else {
-            return Err(CallError::Refused(Refusal::UnknownAction {
-                name: call.action().to_owned(),
-            }));
-        };
-        prepare(
-            action.descriptor(),
-            call,
-            self.contents.as_ref(),
-            self.backends.as_ref(),
-            self.config.digest(),
-            &self.limits,
-        )
+        self.prepare_from(call, self.contents.as_ref())
     }
 
     fn submit(&self, call: &Call) -> Result<Finished, CallError> {
-        match self.admit(call, None, None) {
+        match self.admit(call, None, None, &Bounded::by_nothing()) {
             Ok(admitted) => self.execute(admitted),
             Err(Stopped::Refused(error)) => Err(error),
             // Only a request with an id makes the name that can be taken.
@@ -317,6 +336,39 @@ impl Executor for Engine {
     fn wait(&self, run: &RunId) -> Result<Watched, CallError> {
         self.watch(run, true)
     }
+
+    fn cancel(&self, run: &RunId) -> Result<Cancel, CallError> {
+        let unknown = || CallError::Refused(Refusal::NoSuchRun { run: run.clone() });
+        let not = |state| Ok(Cancel::NotAccepted(state));
+        match self.seen(run)? {
+            Seen::Nothing => return Err(unknown()),
+            Seen::Ended(outcome) => return not(RunState::Ended(outcome)),
+            Seen::Open => {}
+        }
+        // The run was admitted and had not ended when the store was looked at. Found
+        // in the table of open runs, with an executor's state, it is cancelled or not
+        // under its own lock (ADR 0008, "Cancellation"): that is the decision, and no
+        // look at the store is. The table's lock is let go before the run's is taken.
+        let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
+        let here = attached.is_some();
+        if let Some(attached) = attached {
+            let Some(live) = live::of(attached) else {
+                return not(RunState::NotEnded { here: true });
+            };
+            if live.cancel() == Told::Accepted {
+                return Ok(Cancel::Accepted);
+            }
+            // Too late: the run's end had begun, and it is over now.
+        }
+        // Over, or not in the table: as for a status, a second look at the store is
+        // the answer. A run that is still open there was not ended by this process,
+        // or will not be ended by any.
+        match self.seen(run)? {
+            Seen::Nothing => Err(unknown()),
+            Seen::Ended(outcome) => not(RunState::Ended(outcome)),
+            Seen::Open => not(RunState::NotEnded { here }),
+        }
+    }
 }
 
 impl Engine {
@@ -324,8 +376,9 @@ impl Engine {
     /// and the admission. What comes back is the run that was admitted, to be executed,
     /// or the answer to a request that makes no run: a repeat.
     fn begin(&self, request: &Request) -> Result<Result<Admitted, Answer>, CallError> {
+        let bounded = Bounded::by(request);
         let Some(id) = request.id() else {
-            return match self.admit(request.call(), None, request.expected()) {
+            return match self.admit(request.call(), None, request.expected(), &bounded) {
                 Ok(admitted) => Ok(Ok(admitted)),
                 Err(Stopped::Refused(error)) => Err(error),
                 // Only a request with an id makes the name that can be taken.
@@ -353,7 +406,8 @@ impl Engine {
         if let Some(answered) = answer(self.look_up(id, fingerprint)?) {
             return answered;
         }
-        match self.admit(request.call(), Some((id, fingerprint)), request.expected()) {
+        let asked = Some((id, fingerprint));
+        match self.admit(request.call(), asked, request.expected(), &bounded) {
             Ok(admitted) => Ok(Ok(admitted)),
             // A refusal that comes after the look is of a request whose id may have
             // been taken since: by then the call may no longer prepare the same, be
@@ -385,9 +439,65 @@ struct Admitted {
     kept: Arc<Kept>,
     live: Arc<LiveRun>,
     store: Arc<Store>,
+    /// The generation the run was admitted against, held until this is dropped.
+    view: Arc<Pinned>,
+    deadline: Option<Instant>,
+    /// Says that the executor is done with the run, when this is dropped. Executing
+    /// the run takes it out, to drop it after everything else the run held.
+    over: Option<Over>,
+}
+
+/// What bounds a request from outside: the signal it is cancelled by, and its deadline
+/// when it has one.
+struct Bounded {
+    signal: Cancellation,
+    deadline: Option<Instant>,
+}
+
+impl Bounded {
+    /// The signal and the deadline the request came with. A request that came with no
+    /// signal is given one, which is its run's from the admission on.
+    fn by(request: &Request) -> Bounded {
+        Bounded {
+            signal: request.cancellation().cloned().unwrap_or_default(),
+            deadline: request.deadline(),
+        }
+    }
+
+    fn by_nothing() -> Bounded {
+        Bounded {
+            signal: Cancellation::new(),
+            deadline: None,
+        }
+    }
+}
+
+/// The generation a run was admitted against, as the store its call is prepared from
+/// and its action reads (ADR 0008, "The generation a run reads"): every snapshot is
+/// that generation, and for as long as this lives a prune leaves it and what it names.
+struct Pinned {
+    store: Arc<Store>,
+    holding: store::Holding,
+}
+
+impl Contents for Pinned {
+    fn snapshot(&self) -> store::Result<store::Generation> {
+        Ok(self.holding.generation().clone())
+    }
+
+    fn read(&self, entry: &store::Entry) -> store::Result<Vec<u8>> {
+        self.store.read_output(entry)
+    }
+
+    fn read_record(&self, entry: &store::Entry) -> store::Result<Vec<u8>> {
+        self.store.read(entry)
+    }
 }
 
 /// Says, when it is dropped, that nothing in this process works on the run any more.
+/// It is made with the run's live state, before the admission is published: an
+/// admission that is given up, or that became visible and was not confirmed, drops it,
+/// so nobody waits for, or is told they cancelled, a run whose action will never start.
 struct Over(Arc<LiveRun>);
 
 impl Drop for Over {
@@ -440,14 +550,35 @@ impl Engine {
         call: &Call,
         asked: Option<(&RequestId, Digest)>,
         expected: Option<&PreparedCall>,
+        bounded: &Bounded,
     ) -> Result<Admitted, Stopped> {
+        self.still_wanted(call.action(), bounded)?;
+        // The generation the run is admitted against is held from here, before the
+        // call is prepared, until the executor is done with the run: the inputs are
+        // read from it, and so is everything the action reads.
+        let view = match &self.store {
+            Some(store) => {
+                let holding = store
+                    .hold()
+                    .map_err(|error| CallError::Store(StoreFailure::new(error)))?;
+                Some(Arc::new(Pinned {
+                    store: store.clone(),
+                    holding,
+                }))
+            }
+            None => None,
+        };
         let stale = |action: &str, why: Stale| {
             Stopped::Refused(CallError::Refused(Refusal::Stale {
                 action: action.to_owned(),
                 why,
             }))
         };
-        let prepared = match (self.prepare(call), expected) {
+        let prepared = match &view {
+            Some(view) => self.prepare_from(call, view.as_ref()),
+            None => self.prepare(call),
+        };
+        let prepared = match (prepared, expected) {
             (Ok(prepared), _) => prepared,
             // The call prepared once and is refused now: the preparation is stale. A
             // failure of the store is not a judgement of the preparation.
@@ -468,7 +599,7 @@ impl Engine {
             })
             .into());
         }
-        let Some(store) = &self.store else {
+        let Some((store, view)) = self.store.as_ref().zip(view) else {
             return Err(CallError::Refused(Refusal::ReadOnly).into());
         };
         // Prepare found the action a moment ago, in a registry that does not change.
@@ -509,10 +640,15 @@ impl Engine {
         // to it in the store's table of open runs by the publication that makes it: so
         // whoever sees the run in a snapshot finds it there (ADR 0008, "Status").
         let kept = Arc::new(Kept::new(self.clock.clone(), self.secrets.clone()));
-        let live = Arc::new(LiveRun::new(kept.clone()));
+        let live = Arc::new(LiveRun::new(kept.clone(), bounded.signal.clone()));
+        let over = Over(live.clone());
         let mut run = self.name_run(store, start_ms)?;
         let mut namings = 1;
         loop {
+            // Before each attempt, which is each time the ledger is asked: a request
+            // that was cancelled meanwhile, or whose deadline passed, is given up with
+            // nothing published (ADR 0008, "Cancelling an admission").
+            self.still_wanted(prepared.action(), bounded)?;
             // Everything that names the run is made again for every naming: the
             // admission, which is published twice as one content, and the reservation,
             // which holds the admission's digest.
@@ -617,13 +753,59 @@ impl Engine {
             kept,
             live,
             store: store.clone(),
+            view,
+            deadline: bounded.deadline,
+            over: Some(over),
         })
+    }
+
+    /// Refuses a request whose signal is set or whose deadline has passed, by this
+    /// executor's clock: it is not admitted.
+    fn still_wanted(&self, action: &str, bounded: &Bounded) -> Result<(), CallError> {
+        let action = action.to_owned();
+        if bounded.signal.is_cancelled() {
+            return Err(Refusal::Cancelled { action }.into());
+        }
+        if bounded.deadline.is_some_and(|by| self.clock.now() >= by) {
+            return Err(Refusal::DeadlinePassed { action }.into());
+        }
+        Ok(())
+    }
+
+    /// Prepares a call against this read of the store.
+    fn prepare_from(
+        &self,
+        call: &Call,
+        contents: &(dyn Contents + Send + Sync),
+    ) -> Result<PreparedCall, CallError> {
+        let Some(action) = self.registry.get(call.action()) else {
+            return Err(CallError::Refused(Refusal::UnknownAction {
+                name: call.action().to_owned(),
+            }));
+        };
+        prepare(
+            action.descriptor(),
+            call,
+            contents,
+            self.backends.as_ref(),
+            self.config.digest(),
+            &self.limits,
+        )
     }
 
     /// Runs the action of a run that was admitted, and ends the run: everything from
     /// the admission on. Whatever comes back, nothing in this process is working on
     /// the run any more, and whoever waits for it is told so.
-    fn execute(&self, admitted: Admitted) -> Result<Finished, CallError> {
+    fn execute(&self, mut admitted: Admitted) -> Result<Finished, CallError> {
+        let over = admitted.over.take();
+        // Everything the run held is let go in here, its hold on the generation it
+        // read among it, before whoever waits for the run is told that it is over.
+        let ended = self.run_and_end(admitted);
+        drop(over);
+        ended
+    }
+
+    fn run_and_end(&self, admitted: Admitted) -> Result<Finished, CallError> {
         let Admitted {
             action,
             prepared,
@@ -634,17 +816,22 @@ impl Engine {
             kept,
             live,
             store,
+            view,
+            deadline,
+            over: _,
         } = admitted;
-        let _over = Over(live);
         let request = request.as_ref();
         let failed = |error| CallError::Store(StoreFailure::new(error));
+        // The context is the run's: its signal, its deadline, the generation it was
+        // admitted against, and handles that the context binds to that signal and
+        // that deadline itself.
         let context = Context::new(
-            Cancellation::new(),
-            None,
+            live.signal().clone(),
+            deadline,
             kept.clone(),
             Allowance::none(),
-            self.contents.clone(),
-            Capabilities::none(),
+            view,
+            self.capabilities.clone(),
             Arc::new(NoNesting),
         )
         .with_diagnostics(kept.clone());
@@ -652,7 +839,9 @@ impl Engine {
         // record and what it wrote, and the executor goes on (ADR 0008). The context
         // and what it shares are not left broken by one: what a run keeps is behind
         // locks that are taken whatever a panic did to them.
-        let handed = catch_unwind(AssertUnwindSafe(|| action.run(&prepared, &context)));
+        // A run that was cancelled before its action started does not run it.
+        let handed = (!live.signal().is_cancelled())
+            .then(|| catch_unwind(AssertUnwindSafe(|| action.run(&prepared, &context))));
         // The outcome is made here, from what the action handed back, with the secrets
         // taken out: what is reported holds none, as what is written holds none.
         let error = |kind: &str, message: &str| Outcome::Error {
@@ -660,8 +849,10 @@ impl Engine {
             message: self.secrets.redact(message),
         };
         let mut outputs = Vec::new();
-        let outcome = match handed {
-            Ok(Ok(produced)) => match held_to_ports(&prepared, action.descriptor(), produced) {
+        let mut outcome = match handed {
+            None => Outcome::Cancelled,
+            Some(Ok(Ok(produced))) => match held_to_ports(&prepared, action.descriptor(), produced)
+            {
                 Ok(held) => {
                     outputs = held;
                     Outcome::Completed {
@@ -670,12 +861,20 @@ impl Engine {
                 }
                 Err(why) => error("output", &why),
             },
-            Ok(Err(Failure::Error { kind, message })) => error(&kind, &message),
-            Ok(Err(Failure::Invalid { why })) => Outcome::Invalid {
+            Some(Ok(Err(Failure::Error { kind, message }))) => error(&kind, &message),
+            Some(Ok(Err(Failure::Invalid { why }))) => Outcome::Invalid {
                 why: self.secrets.redact(&why),
             },
-            Err(panic) => error("panic", &panic_text(panic.as_ref())),
+            Some(Err(panic)) => error("panic", &panic_text(panic.as_ref())),
         };
+        // The entry to the commit step (ADR 0008, "Cancellation"). From here on a
+        // cancellation is too late. One that was accepted before this was set under
+        // the lock this reads under: the run ends as cancelled, whatever its action
+        // handed back, and nothing of that is committed.
+        if live.begin_end() {
+            outputs.clear();
+            outcome = Outcome::Cancelled;
+        }
         let end_ms = self.clock.now_ms().max(start_ms);
 
         // The end: one publication adds the journal, every diagnostic and the record to

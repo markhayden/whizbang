@@ -131,6 +131,10 @@ impl Executor for Nothing {
     fn wait(&self, _: &RunId) -> Result<whizbang_core::contract::Watched, CallError> {
         Err(Refusal::NoNestedCalls.into())
     }
+
+    fn cancel(&self, _: &RunId) -> Result<whizbang_core::contract::Cancel, CallError> {
+        Err(Refusal::NoNestedCalls.into())
+    }
 }
 
 #[test]
@@ -214,41 +218,119 @@ fn an_outcome_is_one_of_four_and_is_handed_back_with_its_run() {
     assert_eq!(finished.outcome(), &Outcome::Cancelled);
 }
 
+/// A context over an empty store, with this signal, this deadline and these backends.
+fn context_with(
+    cancellation: &Cancellation,
+    deadline: Option<Instant>,
+    capabilities: Capabilities,
+) -> Context {
+    use whizbang_core::store::fs::RealFs;
+    use whizbang_core::store::{Reader, Store};
+    use whizbang_testkit::scratch::Scratch;
+    let dir = Scratch::new("context");
+    let root = dir.path().join("store");
+    drop(Store::open(&root, Arc::new(RealFs)).unwrap());
+    Context::new(
+        cancellation.clone(),
+        deadline,
+        Arc::new(Heard(std::sync::Mutex::new(Vec::new()))),
+        Allowance::none(),
+        Arc::new(Reader::open(&root, Arc::new(RealFs)).unwrap()),
+        capabilities,
+        Arc::new(Nothing),
+    )
+}
+
 #[test]
-fn capabilities_offer_the_handles_they_were_given_and_no_others() {
-    use whizbang_core::capability::{FillHandle, JudgeHandle, SegmentHandle};
+fn a_context_offers_a_handle_on_each_backend_it_was_given_and_no_others() {
     use whizbang_testkit::capabilities::{FakeFiller, FakeJudge, FakeSegmenter, Paint};
-    let none = Capabilities::none();
+    let run = Cancellation::new();
+    let none = context_with(&run, None, Capabilities::none());
+    let none = none.capabilities();
     assert!(none.segment().is_none() && none.fill().is_none() && none.judge().is_none());
 
-    let filler = Arc::new(FakeFiller::new(Paint::Inverse));
-    let fill_only = Capabilities::none().with_fill(FillHandle::new(filler, Cancellation::new()));
-    assert!(fill_only.segment().is_none());
-    assert!(fill_only.judge().is_none());
-    let model = |capabilities: &Capabilities| {
-        let handle = capabilities.fill().unwrap();
-        handle.declaration().model().model().to_owned()
-    };
-    assert_eq!(model(&fill_only), "fake-filler");
-
+    let fill_only = Capabilities::none().with_fill(Arc::new(FakeFiller::new(Paint::Inverse)));
     let all = fill_only
-        .with_segment(SegmentHandle::new(
-            Arc::new(FakeSegmenter::new()),
-            Cancellation::new(),
-        ))
-        .with_judge(JudgeHandle::new(
-            Arc::new(FakeJudge::scripted(Vec::new())),
-            Cancellation::new(),
-        ));
+        .clone()
+        .with_segment(Arc::new(FakeSegmenter::new()))
+        .with_judge(Arc::new(FakeJudge::scripted(Vec::new())));
+    let fill_only = context_with(&run, None, fill_only);
+    let fill_only = fill_only.capabilities();
+    assert!(fill_only.segment().is_none() && fill_only.judge().is_none());
+    let model = fill_only.fill().unwrap().declaration().model().model();
+    assert_eq!(model, "fake-filler");
+
+    let all = context_with(&run, None, all);
+    let all = all.capabilities();
     assert_eq!(
         all.segment().unwrap().declaration().model().model(),
         "fake-segmenter"
     );
-    assert_eq!(model(&all), "fake-filler");
+    assert_eq!(
+        all.fill().unwrap().declaration().model().model(),
+        "fake-filler"
+    );
     assert_eq!(
         all.judge().unwrap().declaration().model().model(),
         "fake-judge"
     );
     // The handles a contract names are the capability interfaces' own.
     let _: Option<&whizbang_core::contract::FillHandle> = all.fill();
+    // What is printed of the backends a context is made over is which there are.
+    let printed = format!(
+        "{:?}",
+        Capabilities::none().with_judge(Arc::new(FakeJudge::scripted(Vec::new())))
+    );
+    assert_eq!(
+        printed,
+        "Capabilities { segment: false, fill: false, judge: true }"
+    );
+}
+
+#[test]
+fn the_handles_of_a_context_are_bound_to_its_own_signal_and_deadline() {
+    // A context is given backends, never handles, and makes its handles itself, with
+    // its own signal and its own deadline. So there is no way to hand an action a
+    // handle that is bound to another run's signal: this is the only way in.
+    use whizbang_core::capability::{FaultKind, FillRequest, Picture, Support};
+    use whizbang_core::identity::CanonicalPixels;
+    use whizbang_testkit::capabilities::{FakeFiller, Paint};
+    let request = {
+        let pixels = CanonicalPixels::from_rgba(2, 1, vec![9; 8]).unwrap();
+        let support = Support::from_plane(2, 1, vec![255, 0]).unwrap();
+        FillRequest::new(Picture::new(pixels).unwrap(), support, None).unwrap()
+    };
+    let filler = Arc::new(FakeFiller::new(Paint::Inverse));
+    let backends = Capabilities::none().with_fill(filler.clone());
+
+    // Two contexts over the same backends. One is cancelled: its handle sends
+    // nothing, and the other's still sends.
+    let (one, two) = (Cancellation::new(), Cancellation::new());
+    let first = context_with(&one, None, backends.clone());
+    let second = context_with(&two, None, backends.clone());
+    one.cancel();
+    let fault = first.capabilities().fill().unwrap().fill(&request);
+    assert_eq!(fault.unwrap_err().kind(), FaultKind::Cancelled);
+    assert_eq!(filler.requests(), 0);
+    second
+        .capabilities()
+        .fill()
+        .unwrap()
+        .fill(&request)
+        .unwrap();
+    assert_eq!(filler.requests(), 1);
+    // A clone of the context, and of its handle, is bound as the context is.
+    two.cancel();
+    let cloned = second.clone().capabilities().fill().unwrap().clone();
+    assert_eq!(
+        cloned.fill(&request).unwrap_err().kind(),
+        FaultKind::Cancelled
+    );
+
+    // A context whose deadline has passed: its handle sends nothing.
+    let passed = Instant::now();
+    let late = context_with(&Cancellation::new(), Some(passed), backends);
+    let fault = late.capabilities().fill().unwrap().fill(&request);
+    assert_eq!(fault.unwrap_err().kind(), FaultKind::TimedOut);
+    assert_eq!(filler.requests(), 1);
 }
