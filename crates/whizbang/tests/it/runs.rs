@@ -420,6 +420,16 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
         "{}",
         shown.err
     );
+    // And `runs list` lists the run with the same reason, in place of its fields.
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(listed.code, Some(0), "{}", listed.err);
+    let expected = "older\trecord not read: a record of another version: run/1, and this build \
+                    reads run/2";
+    assert!(
+        listed.text().lines().any(|line| line == expected),
+        "{}",
+        listed.text()
+    );
 }
 
 #[test]
