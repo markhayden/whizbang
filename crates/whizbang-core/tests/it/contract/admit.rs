@@ -368,7 +368,7 @@ fn the_fingerprint_of_a_request_is_of_the_call_as_it_was_given() {
 // --- the two records -----------------------------------------------------------------------------
 
 const ADMISSION: &str = concat!(
-    r#"{"record":"admission/1","run":"7000-1","request":"order-17","#,
+    r#"{"record":"admission/1","run":"7000-1","request":"order-17","parent":null,"#,
     r#""fingerprint":"sha256:f93fc011cfbdeda221670f83fa218719c8133d99d92b95492d70211584063c40","#,
     r#""prepared":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","#,
     r#""reserved_micros":500000,"action":"echo","version":"1.0.0","start_ms":7000}"#,

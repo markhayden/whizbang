@@ -45,6 +45,9 @@ and the run stayed admitted). The list of what is not built and of what this rec
 not decide lose both.
 Amended: 2026-11-13, with the third pull request of task A7 (ADR 0008). Changed: what an
 action is handed, and the sentence that said nothing can cancel a run.
+Amended: 2026-11-13, with the last pull request of task A7 (ADR 0008, "Nested calls").
+Changed: `identity.parent`, `steps` and `outcome.refusals` are filled, in `run/2`, and
+`outcome` gains `refusals_omitted`; five lists hold nothing, and a sixth inside `spend`.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
 
@@ -98,12 +101,12 @@ A record is one JSON object with thirteen fields, always all of them, in this or
 | `asked` | What was asked | `action` and `version`; `arguments`, each as its `name` and its `value`; `settings`; `config`, the digest of the config the settings came from |
 | `inputs` | Inputs and outputs | Each input as its `port`, its `type`, the identity of the `artifact` and the identity of the `binding` the artifact belongs to |
 | `outputs` | Inputs and outputs | Each committed output as its `port`, its `type` and the identity of the `artifact` |
-| `outcome` | Outcome | `status`: `completed`, `cancelled`, `error` or `invalid`; `error`, its `kind` and `message`, or null; `invalid`, the reason, or null; `refusals` |
+| `outcome` | Outcome | `status`: `completed`, `cancelled`, `error` or `invalid`; `error`, its `kind` and `message`, or null; `invalid`, the reason, or null; `refusals`, each call from inside the run that was refused, as its `action` or null, its `kind` and `why`, at most 256; `refusals_omitted`, how many more there were (ADR 0008, "Nested calls") |
 | `time` | Time | `start_ms` and `end_ms`, in milliseconds since the Unix epoch; `durations` |
 | `models` | Models | |
 | `spend` | Spend | `reserved_micros`, what was reserved for the run when it was admitted, in millionths of a US dollar, or null when nothing was; `requests` |
 | `egress` | Egress | |
-| `steps` | Steps | |
+| `steps` | Steps | Each call the run made of another action that was admitted, in order, at most 256: `step`, the word `call`; `run`, the run the call made; `action`; `status`, how that run had ended, or null (ADR 0008, "Nested calls") |
 | `judge` | Judge runs | |
 | `diagnostics` | Diagnostics | Each diagnostic of the run as its `name` among the run's names in the store, the `digest` of what is stored under it, and its length in `bytes`; in the order of their names |
 
@@ -121,9 +124,10 @@ as a clock that went back gives, is written as the start.
 
 ### What is empty in `run/2`, and how it stops being empty
 
-Seven lists hold nothing in this version, and cannot: `asked.settings`, `outcome.refusals`,
-`time.durations`, `models`, `egress`, `steps` and `judge`; and an eighth inside `spend`,
-`spend.requests`. Each is there, as an empty list, in every record. In the code the
+Five lists hold nothing in this version, and cannot: `asked.settings`,
+`time.durations`, `models`, `egress` and `judge`; and a sixth inside `spend`,
+`spend.requests`. (`outcome.refusals` and `steps` were two more until nested calls
+filled them: ADR 0008.) Each is there, as an empty list, in every record. In the code the
 element of each is a type that has no value; in the schema each has at most zero items. A
 record with anything in one of them is not a `run/2` record.
 
@@ -158,7 +162,8 @@ step to `run/2`, each adding to it as it lands. `run/2` is frozen at that tag. A
 every fill is a new version, and whatever reads records goes on reading the frozen
 versions.
 
-`identity.parent` is null in every record written today, because no call nests.
+`identity.parent` is null for a run that nothing called, and names the run that called
+it for any other (ADR 0008, "Nested calls").
 `identity.request` is the caller's id for the request that made the run, or null when it
 gave none (ADR 0007). They are strings when they are filled, and filling them does not
 change the version: a reader of `run/1` already accepted both. A `request` that is there
@@ -471,8 +476,9 @@ executed is not made again by its end: that publication is refused with `NoSuchR
 request came with one (ADR 0008, "Cancellation"); an event sink, which is the run's
 journal; an empty allowance; the store as it was when the run's admission began; a
 handle on each backend the executor was given, bound to that signal and that deadline;
-an executor that refuses every call (`Refusal::NoNestedCalls`), because calls do not
-nest yet; and a place for diagnostics.
+an executor that refused every call, until calls nested (ADR 0008, "Nested calls": it
+now admits a call under the run, and the allowance holds what was reserved); and a
+place for diagnostics.
 
 **Diagnostics.** `Context::diagnostics` takes bytes under a name: a lower-case letter or a
 digit, then lower-case letters, digits, `_`, `-` or `.`, 64 characters at most, written
@@ -510,9 +516,8 @@ binary builds (`wiring::runner`).
   read while it executes.
 - `submit` returns only when the run is over; `start` does not wait, and a run's status
   is read, and the run cancelled, while it executes (ADR 0008).
-- A refusal inside a run is not recorded. There is one today: a call from inside an
-  action is refused (`NoNestedCalls`). The record's `refusals` list has no elements in
-  `run/1`, so the action's own error is the only trace of it, if the action reports it.
+- A refusal inside a run was not recorded when this was written. It is since nested
+  calls were built: `outcome.refusals` of `run/2` (ADR 0008, "Nested calls").
 - Diagnostics are held in memory, without a bound, until the run ends.
 
 ### The origin does not name the run or the models
@@ -552,9 +557,9 @@ inputs. "Every artifact records what produced it" (the spec's invariant) holds b
 - Reversing this costs every stored record. A change to the fields is a new version.
 
 What this record does not decide, and the code does not do: admission, which is ADR
-0007's; an action's outputs with their commit step, which are ADR 0008's; nested calls
-and cancellation; how a run that takes long
-is scheduled and watched; the elements of the empty lists; how a parent is assigned; `runs stats` and `runs export`,
+0007's; an action's outputs with their commit step, nested calls and cancellation, which
+are ADR 0008's; how a run that takes long
+is scheduled and watched; the elements of the empty lists; `runs stats` and `runs export`,
 which are milestone 2's (`SPEC.md` section 16); labels for evaluation runs; whether a diagnostic body is cut short (squint cut a
 long body and recorded its full digest; that is on `docs/carry-over.md` with the judge
 loop).

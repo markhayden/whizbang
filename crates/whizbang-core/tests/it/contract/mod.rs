@@ -3,7 +3,7 @@
 //! description. Part two: preparing a call (ADR 0004). Part three: the run record, and
 //! running an action (ADR 0005). And request ids and the admission of a run (ADR 0007). And the commit step, in
 //! which a run's outputs and its completed status are published, a run's status
-//! while it executes, and cancelling one (ADR 0008).
+//! while it executes, cancelling one, and nested calls (ADR 0008).
 
 mod admit;
 mod cancel;
@@ -12,6 +12,7 @@ mod describe;
 mod descriptor;
 mod execute;
 mod fixtures;
+mod nested;
 mod prepare;
 mod record;
 mod redact;

@@ -12,6 +12,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use crate::store::Attached;
 
 use super::journal::Kept;
+use super::nested::Nest;
 use super::{Cancellation, JournalLine, StoreFailure};
 
 /// Where the executor is with an open run.
@@ -60,6 +61,8 @@ pub(super) struct LiveRun {
     changed: Condvar,
     /// How many callers are waiting, now, for the run to be over.
     waiting: AtomicUsize,
+    /// The calls the run's action makes of other actions (ADR 0008, "Nested calls").
+    nest: Nest,
 }
 
 impl LiveRun {
@@ -70,7 +73,13 @@ impl LiveRun {
             phase: Mutex::new(Phase::Executing),
             changed: Condvar::new(),
             waiting: AtomicUsize::new(0),
+            nest: Nest::default(),
         }
+    }
+
+    /// The calls the run's action makes of other actions.
+    pub(super) fn nest(&self) -> &Nest {
+        &self.nest
     }
 
     fn phase(&self) -> MutexGuard<'_, Phase> {

@@ -15,6 +15,7 @@ use crate::store::{self, Store};
 use super::journal::Kept;
 use super::ledger::{Declined, Reservation, Step};
 use super::live::{self, LiveRun, Told};
+use super::nested::{Family, Nested, Under};
 use super::prepare::prepare;
 use super::record::{
     Diagnostic, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran, RunRecord,
@@ -22,10 +23,10 @@ use super::record::{
 };
 use super::request::{Found, look_up, outcome_of};
 use super::{
-    ADMITTED_NAME, Action, ActionDescriptor, Admission, Allowance, Answer, Backends, Call,
-    CallError, Cancel, Cancellation, Capabilities, Clock, Committed, Context, Ending, Failure,
-    Finished, Ledger, MESSAGE_LIMIT, Outcome, PreparedCall, Produced, Readiness, Refusal, Registry,
-    Request, RequestId, RunId, RunState, Secrets, Stale, StoreFailure, SystemClock, Watched,
+    ADMITTED_NAME, Action, ActionDescriptor, Admission, Answer, Backends, Call, CallError, Cancel,
+    Cancellation, Capabilities, Clock, Committed, Context, Ending, Failure, Finished, Ledger,
+    MESSAGE_LIMIT, Outcome, PreparedCall, Produced, Readiness, Refusal, Registry, Request,
+    RequestId, RunId, RunState, Secrets, Stale, StoreFailure, SystemClock, Watched,
     request_fingerprint,
 };
 
@@ -249,51 +250,13 @@ static NAMED: AtomicU64 = AtomicU64::new(0);
 /// of its id is handed back as the store's failure.
 const MAX_NAMINGS: u32 = 8;
 
-/// What a running action is given in place of the executor: a call from inside an
-/// action is refused until calls can nest.
-struct NoNesting;
-
-impl Executor for NoNesting {
-    fn prepare(&self, _: &Call) -> Result<PreparedCall, CallError> {
-        Err(Refusal::NoNestedCalls.into())
-    }
-
-    fn submit(&self, _: &Call) -> Result<Finished, CallError> {
-        Err(Refusal::NoNestedCalls.into())
-    }
-
-    fn request(&self, _: &Request) -> Result<Answer, CallError> {
-        Err(Refusal::NoNestedCalls.into())
-    }
-
-    fn request_id(&self, _: &str) -> Result<RequestId, CallError> {
-        Err(Refusal::NoNestedCalls.into())
-    }
-
-    fn start(&self, _: &Request) -> Result<Answer, CallError> {
-        Err(Refusal::NoNestedCalls.into())
-    }
-
-    fn status(&self, _: &RunId) -> Result<Watched, CallError> {
-        Err(Refusal::NoNestedCalls.into())
-    }
-
-    fn wait(&self, _: &RunId) -> Result<Watched, CallError> {
-        Err(Refusal::NoNestedCalls.into())
-    }
-
-    fn cancel(&self, _: &RunId) -> Result<Cancel, CallError> {
-        Err(Refusal::NoNestedCalls.into())
-    }
-}
-
 impl Executor for Engine {
     fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError> {
         self.prepare_from(call, self.contents.as_ref())
     }
 
     fn submit(&self, call: &Call) -> Result<Finished, CallError> {
-        match self.admit(call, None, None, &Bounded::by_nothing()) {
+        match self.admit(call, None, None, &Bounded::by_nothing(), None) {
             Ok(admitted) => self.execute(admitted),
             Err(Stopped::Refused(error)) => Err(error),
             // Only a request with an id makes the name that can be taken.
@@ -382,7 +345,7 @@ impl Engine {
     fn begin(&self, request: &Request) -> Result<Result<Admitted, Answer>, CallError> {
         let bounded = Bounded::by(request);
         let Some(id) = request.id() else {
-            return match self.admit(request.call(), None, request.expected(), &bounded) {
+            return match self.admit(request.call(), None, request.expected(), &bounded, None) {
                 Ok(admitted) => Ok(Ok(admitted)),
                 Err(Stopped::Refused(error)) => Err(error),
                 // Only a request with an id makes the name that can be taken.
@@ -411,7 +374,7 @@ impl Engine {
             return answered;
         }
         let asked = Some((id, fingerprint));
-        match self.admit(request.call(), asked, request.expected(), &bounded) {
+        match self.admit(request.call(), asked, request.expected(), &bounded, None) {
             Ok(admitted) => Ok(Ok(admitted)),
             // A refusal that comes after the look is of a request whose id may have
             // been taken since: by then the call may no longer prepare the same, be
@@ -433,15 +396,17 @@ impl Engine {
 }
 
 /// A run that was admitted and whose action has not run yet: what executing it needs.
-struct Admitted {
+pub(super) struct Admitted {
     action: Arc<dyn Action>,
     prepared: PreparedCall,
-    run: RunId,
+    pub(super) run: RunId,
     request: Option<RequestId>,
     reserved: Option<u64>,
     start_ms: u64,
     kept: Arc<Kept>,
-    live: Arc<LiveRun>,
+    pub(super) live: Arc<LiveRun>,
+    /// The run that called this one, the actions running above it, and its allowance.
+    family: Family,
     store: Arc<Store>,
     /// The generation the run was admitted against, held until this is dropped.
     view: Arc<Pinned>,
@@ -453,9 +418,9 @@ struct Admitted {
 
 /// What bounds a request from outside: the signal it is cancelled by, and its deadline
 /// when it has one.
-struct Bounded {
-    signal: Cancellation,
-    deadline: Option<Instant>,
+pub(super) struct Bounded {
+    pub(super) signal: Cancellation,
+    pub(super) deadline: Option<Instant>,
 }
 
 impl Bounded {
@@ -510,16 +475,31 @@ struct Over {
     live: Arc<LiveRun>,
     ended: bool,
     failure: Option<StoreFailure>,
+    /// The run that started this one from inside its action, which counts the runs it
+    /// started that are not over (ADR 0008, "Nested calls").
+    started_under: Option<Arc<LiveRun>>,
+}
+
+impl Admitted {
+    /// The run was started by this run's action, on a thread of its own.
+    pub(super) fn started_under(&mut self, parent: Arc<LiveRun>) {
+        if let Some(over) = &mut self.over {
+            over.started_under = Some(parent);
+        }
+    }
 }
 
 impl Drop for Over {
     fn drop(&mut self) {
+        if let Some(parent) = self.started_under.take() {
+            parent.nest().started_over();
+        }
         self.live.over(self.ended, self.failure.take());
     }
 }
 
 /// Why a call was not admitted.
-enum Stopped {
+pub(super) enum Stopped {
     /// It was refused, or the store failed.
     Refused(CallError),
     /// The store refused the admission because the request id's name was made
@@ -575,13 +555,15 @@ impl Engine {
     /// before the action. `expected` is the preparation the request came with, when it came with one: the
     /// call is prepared again here, under the config and the backends as they are now,
     /// and a request whose preparation no longer holds is refused before anything is
-    /// admitted.
-    fn admit(
+    /// admitted. `under` is the run whose action made the call, for a call from inside
+    /// an action (ADR 0008, "Nested calls").
+    pub(super) fn admit(
         &self,
         call: &Call,
         asked: Option<(&RequestId, Digest)>,
         expected: Option<&PreparedCall>,
         bounded: &Bounded,
+        under: Option<&Under>,
     ) -> Result<Admitted, Stopped> {
         self.still_wanted(call.action(), bounded)?;
         // The generation the run is admitted against is held from here, before the
@@ -657,16 +639,34 @@ impl Engine {
         // What is reserved is the estimate of the preparation made a moment ago, here,
         // and never of the one the request came with, which was only compared. A cost
         // without a bound is not an amount to reserve: the ledger is not asked.
-        let reserved = match &self.ledger {
-            Some(_) if prepared.estimate().is_unbounded() => {
-                return Err(CallError::Refused(Refusal::NoBound {
-                    action: prepared.action().to_owned(),
-                })
-                .into());
-            }
-            Some(_) => Some(prepared.estimate().micros()),
-            None => None,
+        // A call from inside an action draws on its caller's allowance, and the
+        // ledger is not asked: the estimate is taken from what the caller has left,
+        // in one step under the allowance's lock, and is given back if no run is made
+        // (ADR 0008, "Nested calls"). A caller that was admitted with no ledger has
+        // no amount, and nothing is counted.
+        let counted = match under {
+            Some(under) => under.allowance.total_micros().is_some(),
+            None => self.ledger.is_some(),
         };
+        if counted && prepared.estimate().is_unbounded() {
+            return Err(CallError::Refused(Refusal::NoBound {
+                action: prepared.action().to_owned(),
+            })
+            .into());
+        }
+        let reserved = counted.then(|| prepared.estimate().micros());
+        let taken = match (under, reserved) {
+            (Some(under), Some(micros)) => under.allowance.take(micros).map_err(|left_micros| {
+                CallError::Refused(Refusal::OverCaller {
+                    action: prepared.action().to_owned(),
+                    asked_micros: micros,
+                    left_micros,
+                })
+            })?,
+            _ => None,
+        };
+        let family = Family::of(under, prepared.action(), reserved);
+        let parent = family.parent.as_ref().map(|(run, _)| run.clone());
         // What the run keeps while it executes is made before the run is, and attached
         // to it in the store's table of open runs by the publication that makes it: so
         // whoever sees the run in a snapshot finds it there (ADR 0008, "Status").
@@ -676,6 +676,7 @@ impl Engine {
             live: live.clone(),
             ended: false,
             failure: None,
+            started_under: None,
         };
         let mut run = self.name_run(store, start_ms)?;
         let mut namings = 1;
@@ -697,6 +698,7 @@ impl Engine {
                 prepared.version(),
                 start_ms,
             )
+            .under(parent.clone())
             .to_bytes();
             let mut publication = store.begin().map_err(failed)?;
             // The ledger takes part here: it judges, and adds what it must to this
@@ -704,7 +706,10 @@ impl Engine {
             // dropped with all it staged.
             let mut reservation_name = None;
             let mut ledgers = Vec::new();
-            if let (Some(ledger), Some(micros)) = (&self.ledger, reserved) {
+            // The ledger is asked for a run that nothing called, and for no other:
+            // nothing is reserved twice (`SPEC.md` section 6).
+            let ledger = self.ledger.as_ref().filter(|_| under.is_none());
+            if let (Some(ledger), Some(micros)) = (ledger, reserved) {
                 let reservation = Reservation::new(
                     run.clone(),
                     request.cloned(),
@@ -784,6 +789,10 @@ impl Engine {
             }
         }
 
+        // The run is made: what was taken from its caller's allowance stays taken.
+        if let Some(taken) = taken {
+            taken.keep();
+        }
         Ok(Admitted {
             action: action.clone(),
             prepared,
@@ -793,6 +802,7 @@ impl Engine {
             start_ms,
             kept,
             live,
+            family,
             store: store.clone(),
             view,
             deadline: bounded.deadline,
@@ -837,7 +847,7 @@ impl Engine {
     /// Runs the action of a run that was admitted, and ends the run: everything from
     /// the admission on. Whatever comes back, nothing in this process is working on
     /// the run any more, and whoever waits for it is told so.
-    fn execute(&self, mut admitted: Admitted) -> Result<Finished, CallError> {
+    pub(super) fn execute(&self, mut admitted: Admitted) -> Result<Finished, CallError> {
         let mut over = admitted.over.take();
         // Everything the run held is let go in here, its hold on the generation it
         // read among it, before whoever waits for the run is told that it is over.
@@ -864,6 +874,7 @@ impl Engine {
             start_ms,
             kept,
             live,
+            family,
             store,
             view,
             deadline,
@@ -874,14 +885,22 @@ impl Engine {
         // The context is the run's: its signal, its deadline, the generation it was
         // admitted against, and handles that the context binds to that signal and
         // that deadline itself.
+        // The executor in it admits a call under this run (ADR 0008, "Nested calls").
+        let under = Under {
+            run: run.clone(),
+            live: live.clone(),
+            stack: family.stack.clone(),
+            allowance: family.allowance.clone(),
+            deadline,
+        };
         let context = Context::new(
             live.signal().clone(),
             deadline,
             kept.clone(),
-            Allowance::none(),
+            family.allowance.clone(),
             view,
             self.capabilities.clone(),
-            Arc::new(NoNesting),
+            Arc::new(Nested::new(self.clone(), under, self.secrets.clone())),
         )
         .with_diagnostics(kept.clone());
         // A panic in the action is caught: its run ends as any other does, with its
@@ -940,6 +959,9 @@ impl Engine {
         let kept: Vec<(Diagnostic, Vec<u8>)> = std::iter::once(Diagnostic::journal(&lines))
             .chain(written)
             .collect();
+        // What the run's record says of the calls its action made.
+        let parent = family.parent.as_ref().map(|(run, _)| run.clone());
+        let inside = live.nest().inside(parent);
         let record_of = |outcome: &Outcome| {
             RunRecord::of(
                 Ran {
@@ -952,6 +974,7 @@ impl Engine {
                     start_ms,
                     end_ms,
                     diagnostics: kept.iter().map(|(d, _)| d.clone()).collect(),
+                    inside: inside.clone(),
                 },
                 &self.secrets,
             )
@@ -999,6 +1022,10 @@ impl Engine {
                 .map_err(failed)?;
         }
         publication.publish().map_err(failed)?;
+        // The run that called this one is told how it ended, for its record.
+        if let Some((_, parent)) = &family.parent {
+            parent.nest().ended(&run, record.outcome().status);
+        }
         Ok(Finished::new(run, outcome))
     }
 }
@@ -1071,7 +1098,7 @@ fn held_to_ports(
 /// when there were more. The secrets are taken out first, while the text is whole: a
 /// secret that the cut went through would no longer be found. They are looked for once
 /// more after the cut, in case the three dots completed one.
-fn said(secrets: &Secrets, text: &str) -> String {
+pub(super) fn said(secrets: &Secrets, text: &str) -> String {
     let whole = secrets.redact(text);
     match whole.char_indices().nth(MESSAGE_LIMIT) {
         Some((cut, _)) => secrets.redact(&format!("{}...", &whole[..cut])),

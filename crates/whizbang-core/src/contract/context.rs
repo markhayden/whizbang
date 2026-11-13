@@ -3,13 +3,14 @@
 //! capability handles and the executor.
 //!
 //! The executor makes one of these for each run (ADR 0005), with the run's cancellation
-//! signal and its deadline (ADR 0008, "Cancellation"); the allowance is empty until
-//! there is a ledger. The capability handles are the capability interfaces' (ADR 0006),
+//! signal and its deadline (ADR 0008, "Cancellation"); the allowance is what was
+//! reserved for the run, or carved for it from its caller's (ADR 0008, "Nested
+//! calls"). The capability handles are the capability interfaces' (ADR 0006),
 //! and a context makes its own, bound to its own signal and deadline, from the backends
 //! it is given.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use crate::artifact::Contents;
@@ -70,17 +71,110 @@ impl Diagnostics for NoDiagnostics {
     }
 }
 
-/// What an action may spend. It holds nothing yet: amounts, reservation and settlement
-/// arrive with the ledger.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What a run may spend, in millionths of a US dollar: what was reserved for it when
+/// it was admitted, or, for a run another run called, what was carved for it from its
+/// caller's allowance (ADR 0008, "Nested calls"). Each call the run makes takes its
+/// estimate from what is left, under one lock, so two calls made at once cannot both
+/// take the last of it. A run that was admitted with no ledger has no amount: nothing
+/// was reserved, and nothing is counted. Settlement arrives with the ledger.
+///
+/// A clone is the same allowance. Two are equal when they are the same one.
+#[derive(Debug, Clone)]
 pub struct Allowance {
-    _contents: (),
+    purse: Option<Arc<Purse>>,
 }
 
+#[derive(Debug)]
+struct Purse {
+    total: u64,
+    left: Mutex<u64>,
+}
+
+impl PartialEq for Allowance {
+    fn eq(&self, other: &Allowance) -> bool {
+        match (&self.purse, &other.purse) {
+            (None, None) => true,
+            (Some(one), Some(other)) => Arc::ptr_eq(one, other),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Allowance {}
+
 impl Allowance {
-    /// An allowance of nothing.
+    /// No amount: nothing was reserved, and nothing is counted.
     pub fn none() -> Allowance {
-        Allowance { _contents: () }
+        Allowance { purse: None }
+    }
+
+    /// An allowance of this much.
+    pub(super) fn of(micros: u64) -> Allowance {
+        Allowance {
+            purse: Some(Arc::new(Purse {
+                total: micros,
+                left: Mutex::new(micros),
+            })),
+        }
+    }
+
+    /// What the run was given, when it was given an amount.
+    pub fn total_micros(&self) -> Option<u64> {
+        self.purse.as_ref().map(|purse| purse.total)
+    }
+
+    /// What is left of it now: the amount, less what the calls the run made took.
+    pub fn left_micros(&self) -> Option<u64> {
+        let purse = self.purse.as_ref()?;
+        Some(*purse.left.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Takes this much for a call the run makes, when that much is left; otherwise
+    /// nothing is taken, and what is left comes back. The look and the taking are one
+    /// step, under the allowance's lock. None when the allowance has no amount.
+    pub(super) fn take(&self, micros: u64) -> Result<Option<Taken>, u64> {
+        let Some(purse) = &self.purse else {
+            return Ok(None);
+        };
+        let mut left = purse.left.lock().unwrap_or_else(PoisonError::into_inner);
+        if micros > *left {
+            return Err(*left);
+        }
+        *left -= micros;
+        Ok(Some(Taken {
+            purse: purse.clone(),
+            micros,
+            kept: false,
+        }))
+    }
+}
+
+/// What was taken from an allowance for a call. Dropped before the call's run was
+/// made, it is given back.
+#[derive(Debug)]
+pub(super) struct Taken {
+    purse: Arc<Purse>,
+    micros: u64,
+    kept: bool,
+}
+
+impl Taken {
+    /// The call's run was made: what was taken stays taken.
+    pub(super) fn keep(mut self) {
+        self.kept = true;
+    }
+}
+
+impl Drop for Taken {
+    fn drop(&mut self) {
+        if !self.kept {
+            let mut left = self
+                .purse
+                .left
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            *left = left.saturating_add(self.micros);
+        }
     }
 }
 
