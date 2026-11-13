@@ -656,8 +656,15 @@ pub struct Store {
     /// The runs this value made and has open, each by a publication that became
     /// visible, with what its maker attached to it. It is the one table of what this
     /// process is working on in this store: a run is in it from just before it is
-    /// visible until its closing or its deletion is visible.
-    made_runs: Mutex<BTreeMap<String, Attached>>,
+    /// visible until its closing or its deletion is visible; or, for a run whose
+    /// closing publication asked for that ([`Publication::keep_until_let_go`]), until
+    /// its closer lets it go ([`Store::let_go`]). The flag says that the run's closing
+    /// is visible and it is kept for its closer.
+    made_runs: Mutex<BTreeMap<String, (Attached, bool)>>,
+    /// How many places are taken now among the runs of this value that were started on
+    /// threads of their own ([`Store::start_place`]). It is kept here, beside the table
+    /// of open runs, because it is this writer's count, whoever starts the runs.
+    started: Arc<AtomicUsize>,
     /// Whether the open that gave this value made the store.
     created: bool,
     /// The writer lock, held for as long as this value lives.
@@ -669,6 +676,17 @@ impl Drop for Store {
     /// that it does not outlive its holder; a writer that dies leaves its name behind.
     fn drop(&mut self) {
         let _ = self.lock.record(b"");
+    }
+}
+
+/// A place among the runs a writer has started on threads of their own
+/// ([`Store::start_place`]). It is given back when this is dropped, however that comes
+/// about: a return, a panic that unwinds, a closure that was never run.
+pub struct Place(Arc<AtomicUsize>);
+
+impl Drop for Place {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -765,19 +783,46 @@ impl Store {
         self.attached(run).is_some()
     }
 
+    /// Takes a place among the runs this writer has started on threads of their own,
+    /// when fewer than `bound` are taken: the place is held until what comes back is
+    /// dropped. `None` when `bound` or more are taken, and then nothing changed. The
+    /// count is one for this value, so everything that starts runs over it is held to
+    /// the same count, each against the bound it asks with. The store counts and does
+    /// nothing else: what a place stands for is its taker's.
+    pub fn start_place(&self, bound: usize) -> Option<Place> {
+        let taken = |now: usize| (now < bound).then_some(now + 1);
+        self.started
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, taken)
+            .ok()
+            .map(|_| Place(self.started.clone()))
+    }
+
     /// What the maker of the run `run` attached to it ([`Publication::attach`]), when
     /// this writer made the run and has it open: exactly when [`Store::made_here`] says
     /// so, since the two are one table. A run that was made with nothing attached has
     /// the unit value. So what is attached to a run can be had from just before the run
     /// is visible, and is gone once its closing or its deletion is visible, and never
     /// before: whoever sees in a snapshot a run that is still open, and then finds
-    /// nothing here, learns from a second snapshot how it closed.
+    /// nothing here, learns from a second snapshot how it closed. A run that was closed
+    /// and kept for its closer ([`Publication::keep_until_let_go`]) is had for longer:
+    /// until the closer lets it go ([`Store::let_go`]).
     pub fn attached(&self, run: &str) -> Option<Attached> {
         self.made_runs
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(run)
-            .cloned()
+            .map(|(attached, _)| attached.clone())
+    }
+
+    /// Takes out of the table of open runs a run whose closing is visible and that was
+    /// kept there for its closer ([`Publication::keep_until_let_go`]). It does nothing
+    /// to any other run: one that is still open stays, and so does one whose closing
+    /// publication never became visible.
+    pub fn let_go(&self, run: &str) {
+        let mut made = self.made_runs.lock().unwrap_or_else(|e| e.into_inner());
+        if made.get(run).is_some_and(|(_, closed)| *closed) {
+            made.remove(run);
+        }
     }
 
     fn open_at(root: &Path, fs: Arc<dyn Fs>, make: Make) -> Result<Store> {
@@ -869,6 +914,7 @@ impl Store {
             in_progress: Mutex::new(BTreeMap::new()),
             waiting: AtomicUsize::new(0),
             made_runs: Mutex::new(BTreeMap::new()),
+            started: Arc::new(AtomicUsize::new(0)),
             created,
             lock,
         })
@@ -930,6 +976,7 @@ impl Store {
             made: BTreeSet::new(),
             extended: BTreeSet::new(),
             closed: BTreeSet::new(),
+            held_closed: BTreeSet::new(),
             kept: BTreeMap::new(),
             attached: BTreeMap::new(),
         })
@@ -1112,6 +1159,8 @@ pub struct Publication<'s> {
     extended: BTreeSet<String>,
     /// The runs it closes: no longer counted as made and open once it is visible.
     closed: BTreeSet<String>,
+    /// Those of them that stay in the table of open runs after that, for their closer.
+    held_closed: BTreeSet<String>,
     /// The names outside runs it keeps: each is left as it is where that generation
     /// holds it as an output, and given this content where it does not.
     kept: BTreeMap<String, Entry>,
@@ -1249,6 +1298,16 @@ impl Publication<'_> {
         self.extend_run(run)?;
         self.closed.insert(run.to_string());
         Ok(())
+    }
+
+    /// Keeps a run this publication closes in the table of open runs after the closing
+    /// is visible, with what is attached to it, until its closer says it is done with
+    /// the run ([`Store::let_go`]). For a closer that still holds something of the run
+    /// when its closing becomes visible, and wants whoever finds the run in the table
+    /// to be able to wait for that. It has no effect on a run this publication does
+    /// not close, and a deletion takes the run out whatever was asked here.
+    pub fn keep_until_let_go(&mut self, run: &str) {
+        self.held_closed.insert(run.to_string());
     }
 
     /// Stages the bytes unless the store or this publication already holds them.
@@ -1402,7 +1461,8 @@ impl Publication<'_> {
             for run in &self.created {
                 if !made.contains_key(run) {
                     let what = self.attached.get(run).cloned();
-                    made.insert(run.clone(), what.unwrap_or_else(|| Arc::new(())));
+                    let what = what.unwrap_or_else(|| Arc::new(()));
+                    made.insert(run.clone(), (what, false));
                     added.push(run);
                 }
             }
@@ -1419,7 +1479,15 @@ impl Publication<'_> {
         // a run that was closed or deleted is forgotten, and only from here on.
         {
             let mut made = made_runs();
-            for run in self.closed.iter().chain(&self.deleted) {
+            for run in &self.closed {
+                // Kept for its closer, a closed run is marked and stays; a deletion
+                // below takes it out all the same.
+                match made.get_mut(run) {
+                    Some((_, closed)) if self.held_closed.contains(run) => *closed = true,
+                    _ => drop(made.remove(run)),
+                }
+            }
+            for run in &self.deleted {
                 made.remove(run);
             }
         }

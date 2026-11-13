@@ -103,7 +103,7 @@
             "required": ["action", "kind", "why"],
             "properties": {
               "action": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
-              "kind": { "enum": ["unknown_action", "invalid", "input", "not_ready", "read_only", "no_such_run", "conflict", "stale", "over_allowance", "no_bound", "secret_in_request_id", "not_a_request_id", "cancelled", "deadline_passed", "too_deep", "call_back", "over_caller", "too_many_calls", "tree_full", "too_many_started", "id_inside"] },
+              "kind": { "enum": ["unknown_action", "invalid", "input", "not_ready", "read_only", "no_such_run", "conflict", "stale", "over_allowance", "no_bound", "secret_in_request_id", "not_a_request_id", "cancelled", "deadline_passed", "too_deep", "call_back", "over_caller", "too_many_calls", "tree_full", "too_many_started", "too_many_started_under", "id_inside"] },
               "why": { "type": "string", "minLength": 1, "maxLength": 512 }
             }
           }

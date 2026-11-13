@@ -108,7 +108,7 @@ impl Nest {
     fn begin(&self, action: &str, start: bool, tree: &Tree) -> Result<(), Refusal> {
         let mut calls = self.calls();
         if start && calls.started >= STARTED_LIMIT {
-            return Err(Refusal::TooManyStarted {
+            return Err(Refusal::TooManyStartedUnder {
                 action: action.to_owned(),
                 limit: STARTED_LIMIT,
             });
@@ -370,14 +370,24 @@ impl Executor for Nested {
     }
 
     fn start(&self, request: &Request) -> Result<Answer, CallError> {
-        // A started run is a thread, and a run may have only so many at once: the
-        // count goes down when the run is over, before whoever waits for it is told.
+        // A started run is a thread. It takes a place among the started runs of the
+        // store's writer, the count a request from outside is held to, before it is
+        // admitted; and a run may have only so many of its own at once. A full count
+        // is a refusal, never a wait. Both come back when the run is over, before
+        // whoever waits for it is told.
+        let place = match self.engine.start_place() {
+            Ok(place) => place,
+            Err(refusal) => {
+                let refused = Refused::of(request.call(), &refusal, &self.secrets);
+                self.under.live.nest().refused(refused);
+                return Err(refusal.into());
+            }
+        };
         let mut admitted = self.admit(request, true)?;
         admitted.started_under(self.under.live.clone());
-        let run = admitted.run.clone();
-        let engine = self.engine.clone();
-        std::thread::spawn(move || drop(engine.execute(admitted)));
-        Ok(Answer::Started(run))
+        // The thread is made where every run's thread is made; a thread that cannot
+        // be made ends the run as an error, and the caller is told.
+        self.engine.launch(admitted, place)
     }
 
     fn status(&self, run: &RunId) -> Result<Watched, CallError> {

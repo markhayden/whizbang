@@ -3,8 +3,9 @@
 //!
 //! It is attached to the run in the store's table of open runs
 //! ([`crate::store::Publication::attach`]) by the publication that admits the run, so
-//! it is found from just before the run is visible until the run's end is visible, and
-//! by any executor over the same store in this process.
+//! it is found from just before the run is visible until the run's end is visible and
+//! the executor is done with the run, and by any executor over the same store in this
+//! process.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -158,6 +159,25 @@ impl LiveRun {
     /// How many callers are waiting, now, for the run to be over.
     pub(super) fn waiting(&self) -> usize {
         self.waiting.load(Ordering::SeqCst)
+    }
+
+    /// For a test: the lock whoever waits is told under, held. While it is held nobody
+    /// is told that the run is over.
+    #[cfg(test)]
+    pub(super) fn not_told_yet(&self) -> NotTold<'_> {
+        NotTold(self.phase())
+    }
+}
+
+/// For a test: the lock of a run, held ([`LiveRun::not_told_yet`]).
+#[cfg(test)]
+pub(super) struct NotTold<'a>(MutexGuard<'a, Phase>);
+
+#[cfg(test)]
+impl NotTold<'_> {
+    /// Whether the run is over for this process.
+    pub(super) fn is_over(&self) -> bool {
+        self.0.is_over()
     }
 }
 

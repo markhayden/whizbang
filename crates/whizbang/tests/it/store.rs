@@ -457,7 +457,7 @@ fn second_writers_and_readers_beside_a_writer_at_work_are_never_told_of_damage()
     let done = Arc::new(AtomicU64::new(0));
     let writer = {
         let (stop, done) = (stop.clone(), done.clone());
-        std::thread::spawn(move || {
+        whizbang_testkit::threads::spawn(move || {
             let mut rounds = 0u64;
             while !stop.load(Ordering::Relaxed) {
                 let mut publication = store.begin().unwrap();

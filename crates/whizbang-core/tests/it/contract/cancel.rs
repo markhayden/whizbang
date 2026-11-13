@@ -99,7 +99,7 @@ fn a_cancel_before_the_commit_step_is_accepted_and_the_run_ends_cancelled_with_n
         engine_over(store.clone(), vec![stubborn(&barriers, &saw)]).with_ledger(ledger.clone());
     // Whoever cancels has an executor of its own over the same store.
     let second = engine_over(store.clone(), Vec::new());
-    let run = std::thread::scope(|scope| {
+    let run = whizbang_testkit::threads::scope(|scope| {
         let running = scope.spawn(|| first.request(&request("r-1")));
         barriers.arrived("busy", 1);
         let run = the_run(&world.root());
@@ -198,7 +198,7 @@ fn a_cancel_after_the_commit_step_began_waits_and_returns_the_completed_outcome(
                 let run = the_run(&root);
                 let cancelling = {
                     let (asking, run) = (asking.clone(), run.clone());
-                    std::thread::spawn(move || asking.cancel(&run))
+                    whizbang_testkit::threads::spawn(move || asking.cancel(&run))
                 };
                 let limit = Instant::now() + LIMIT;
                 while asking.waiting_for(&run) == 0 && !cancelling.is_finished() {
@@ -211,7 +211,7 @@ fn a_cancel_after_the_commit_step_began_waits_and_returns_the_completed_outcome(
                 let waits = !cancelling.is_finished();
                 let status = {
                     let (asking, run) = (asking.clone(), run.clone());
-                    std::thread::spawn(move || asking.status(&run))
+                    whizbang_testkit::threads::spawn(move || asking.status(&run))
                 };
                 let status = status.join().unwrap();
                 *seen.lock().unwrap() = Some((waits, status, cancelling));
@@ -286,7 +286,7 @@ fn a_status_of_another_run_is_answered_while_a_cancel_waits_for_a_commit() {
                 let this = RunId::parse(this.unwrap()).unwrap();
                 let cancelling = {
                     let (asking, this) = (asking.clone(), this.clone());
-                    std::thread::spawn(move || asking.cancel(&this))
+                    whizbang_testkit::threads::spawn(move || asking.cancel(&this))
                 };
                 let limit = Instant::now() + LIMIT;
                 while asking.waiting_for(&this) == 0 {
@@ -295,7 +295,7 @@ fn a_status_of_another_run_is_answered_while_a_cancel_waits_for_a_commit() {
                 }
                 let of_other = {
                     let (asking, executing) = (asking.clone(), executing.clone());
-                    std::thread::spawn(move || {
+                    whizbang_testkit::threads::spawn(move || {
                         (asking.status(&executing), asking.cancel(&executing))
                     })
                 };
@@ -325,7 +325,7 @@ fn two_cancels_at_once_are_both_accepted_and_the_run_ends_once() {
     let barriers = Barriers::new();
     let saw = Arc::new(Mutex::new(Vec::new()));
     let executor = engine_over(store.clone(), vec![stubborn(&barriers, &saw)]);
-    std::thread::scope(|scope| {
+    whizbang_testkit::threads::scope(|scope| {
         let running = scope.spawn(|| executor.request(&request("r-2")));
         barriers.arrived("busy", 1);
         let run = the_run(&world.root());
@@ -580,7 +580,7 @@ fn a_cancel_that_waits_for_a_commit_the_store_then_refuses_is_told_the_run_was_a
                 let run = the_run(&root);
                 let cancelling = {
                     let (asking, run) = (asking.clone(), run.clone());
-                    std::thread::spawn(move || asking.cancel(&run))
+                    whizbang_testkit::threads::spawn(move || asking.cancel(&run))
                 };
                 let limit = Instant::now() + LIMIT;
                 while asking.waiting_for(&run) == 0 {
@@ -734,7 +734,7 @@ fn a_cancel_that_races_the_end_of_its_run_is_told_how_it_ended() {
     let barriers = Barriers::new();
     let first = engine(store.clone(), vec![busy(&barriers, "nothing")]);
     let second = engine(store.clone(), Vec::new());
-    std::thread::scope(|scope| {
+    whizbang_testkit::threads::scope(|scope| {
         let running = scope.spawn(|| first.request(&asked("order-5")));
         barriers.arrived("busy", 1);
         let run = the_run(&root);
