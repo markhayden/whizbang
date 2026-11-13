@@ -1318,6 +1318,12 @@ fn prepare_sends_no_capability_request() {
     // from what those same fakes declare, as a build makes its roster from its
     // adapters; and preparing calls that are ready, not ready and refused sends none
     // of them a request.
+    //
+    // As it stands this cannot fail. Prepare holds a roster made from copies of the
+    // fakes' declarations and never the fakes, so nothing prepare could do would reach
+    // one. It shows the shape of the claim, and becomes a test of it when the executor
+    // holds the fakes' handles: the row of `docs/carry-over.md` on the executor handing
+    // an action no capability has it rewritten then.
     let segmenter = Arc::new(FakeSegmenter::new());
     let filler = Arc::new(FakeFiller::new(Paint::Inverse));
     let judge = Arc::new(FakeJudge::scripted(Vec::new()));

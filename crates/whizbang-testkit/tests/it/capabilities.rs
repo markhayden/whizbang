@@ -82,6 +82,37 @@ fn the_fake_filler_paints_one_colour_everywhere_or_in_the_support_alone() {
 }
 
 #[test]
+fn the_fake_filler_reads_the_support_plane_and_never_a_blend() {
+    // `Paint::Support` paints where the request's support plane is 255. A support plane
+    // holds 0 and 255 and nothing between, by its type, so the fake never meets a
+    // weight: a mask's faintest blend, of 1, is in the support (ADR 0006), and is
+    // painted the whole colour like the core. Mixing by the weight is the composite's.
+    use whizbang_core::artifact::{Mask, Origin, Source, Step, UseCase};
+    use whizbang_core::identity::{Binding, Space};
+    let image = picture();
+    let binding = Binding::root(image.digest(), Space::flat(WIDTH, HEIGHT).unwrap());
+    let origin = Origin::new(Step::new("test", "1")).unwrap();
+    let mut core = vec![0; PIXELS];
+    core[0] = 255;
+    let mut mask =
+        Mask::from_core(binding, UseCase::Remove, core, Source::default(), origin).unwrap();
+    let mut blend = vec![0; PIXELS];
+    (blend[1], blend[2], blend[3]) = (1, 128, 254);
+    mask.set_blend(blend).unwrap();
+    let support = Support::of(&mask);
+    assert_eq!(&support.plane()[..5], [255, 255, 255, 255, 0]);
+
+    let request = FillRequest::new(image.clone(), support, None).unwrap();
+    let painted = FillHandle::new(Arc::new(FakeFiller::new(Paint::Support([9, 8, 7]))), now())
+        .fill(&request)
+        .unwrap();
+    for at in 0..4 {
+        assert_eq!(&painted.rgb()[at * 3..at * 3 + 3], [9, 8, 7], "pixel {at}");
+    }
+    assert_eq!(&painted.rgb()[12..15], &image.rgba()[16..19]);
+}
+
+#[test]
 fn the_fake_filler_counts_the_requests_it_was_sent() {
     let filler = Arc::new(FakeFiller::new(Paint::Inverse));
     assert_eq!(filler.requests(), 0);

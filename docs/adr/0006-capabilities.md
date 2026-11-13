@@ -17,7 +17,11 @@ still empty, and that prepare handed resolution no choice.
 Amended: 2026-11-12, with the third and last pull request of task A8. Added: "The
 composite"; "Who vouches for a derivation"; three consequences and four alternatives.
 Changed: the sentences that left the alpha of a filled picture, and the keeping of
-pixels outside the support, to this part.
+pixels outside the support, to this part. And from the review of the second part:
+tool definitions count toward a conversation's bound; a request id is trimmed before it
+is cleaned; `Part`, `StopReason` and `Usage` can gain members; what a conversation's
+types do not check; what an opaque part's adapter mark is and is not; which controls
+are absent; that a need needed only without an argument cannot be chosen by it.
 Spec: section 3, "Crates and their edges", "Identities" and "Storage"; section 4,
 "Backends"
 
@@ -277,6 +281,14 @@ prepared need says the choice it was resolved with (`Need::choice`).
   `prepare::a_filler_named_in_a_call_is_prepared_against_that_filler`.
 - A call that names none gets the default.
 - A need that names no argument is always answered by the default.
+- **Naming the default and naming nothing are two preparations of one model.** A call
+  that names the default backend and a call that leaves the argument out resolve to the
+  same model and have different fingerprints, because their arguments differ. That is
+  intended: a fingerprint is of what was asked and what was seen, and task A6's
+  admission compares a call with itself.
+- Two needs may name one choosing argument: one name then chooses a backend for each.
+- A need that holds only when an argument is left out cannot be chosen by that
+  argument; such a descriptor is refused.
 
 The fingerprint `prepared/1` keeps its kind and its encoding. The choice is an argument,
 which was hashed already, and the model it resolves to is the need's, which was hashed
@@ -566,11 +578,13 @@ inside the conversation, as squint's was; it holds text only.
 - **A tool definition** is a name, which keeps the rule of an action's name; a
   description of 1 to 4,096 bytes; and a schema, a JSON object of at most 1,048,576
   bytes when written. A request defines at most 128, no two of one name.
-- **The controls** are the most output tokens, 1 or more. Others come with the adapters
-  that need them.
+- **The controls** are the most output tokens, 1 or more. A choice of tool, a
+  temperature, a seed, stop sequences and hints for a provider's cache are absent, as
+  they were in squint's interface; each comes with the adapter that needs it.
 - **Bounds on the whole.** At most 1,024 messages, and at most 67,108,864 bytes of text
-  in all: the system prompt, every text, every tool result's text, every opaque body
-  and every tool call's arguments as written. Pictures are not counted in that; each is
+  in all: the system prompt, every text, every tool result's text, every opaque body,
+  every tool call's arguments as written, and each tool definition's name, description
+  and schema as written. Pictures are not counted in that; each is
   held to `PIXEL_LIMIT`, and a conversation shares the pixels of a picture it holds more
   than once.
 
@@ -600,8 +614,14 @@ What "whole" covers, and what it does not:
 - The adapter's name is the backend's name: the first part of the model identity a
   backend declares. It keeps the rule of an action's name, so a backend that makes
   opaque parts has such a name.
-- The handle sends an opaque part only to the adapter that made it. A conversation that
-  holds another adapter's part is not sent: the fault is `unsupported`.
+- The handle sends an opaque part only to the adapter it is marked with. A conversation
+  that holds a part marked with another, anywhere in it, is not sent: the fault is
+  `unsupported`.
+- **The mark is a tag the handle checks when it sends, not proof of where a part came
+  from.** `Opaque::new` is open to any code and takes the tag it is given. The tag is a
+  backend's name, so two models of one backend take each other's parts, and all three
+  fakes are `fake`. What it stops is a conversation carried from one provider to
+  another by mistake.
 - A turn that holds a part marked with another adapter than the backend that answered
   is `malformed`.
 
@@ -635,8 +655,21 @@ an adapter that reads a body of any size and parses it has spent that memory bef
 turn is refused. Bounding what is read is the adapter's, at checkpoint 1C, on the row
 that holds the same for segment and fill (`docs/carry-over.md`).
 
+**What the types do not check is the shape of a conversation.** They hold each part and
+each bound. They do not hold: the order of roles; that a tool result answers a call
+that was made; that two calls in one message have two ids, which a turn does check;
+that a stop reason agrees with the content, beyond the two rules above; that another
+stop reason has any words. A conversation that is wrong in one of these ways is made
+and is sent. Keeping the shape is the harness's, which builds the conversation, and
+refusing a wrong one is the provider's. A test pins three of them
+(`judge::what_a_conversation_does_not_check_is_known`).
+
+`Part`, `StopReason` and `Usage` can each gain a member without breaking code that
+reads them: the two enums are not matched exhaustively outside the core, and a usage is
+made through `Usage::new` and read through its methods.
+
 A stop reason in the provider's word and the provider's id are a provider's text, and
-end up in a record. Each is cleaned as a fault's sentence is, and cut at 64 and at 128
+end up in a record. White space at the ends of an id is dropped first. Each is cleaned as a fault's sentence is, and cut at 64 and at 128
 characters.
 
 **Typed errors** are faults, the same eight kinds for every capability. A backend sends
@@ -677,7 +710,9 @@ sends anything, and each counts the requests it was sent, answered or not.
 Each fake may be shared across threads, and counts every request then too. The judge
 takes a request and plays its next entry in one step, so of many simultaneous requests
 each gets one entry, and the request kept in place `n` is the one answered with entry
-`n` (task A6 sends two requests at once through them).
+`n`. Nothing in checkpoint 1A sends two requests to a capability at once: task A6's two
+simultaneous requests are calls to the executor. And no fake can hold a request open
+or look at the `Bounds` it was handed, which task A7 needs (`docs/carry-over.md`).
 
 A request the handle refused, because the run was cancelled or the fake does not
 declare a feature, never reaches the fake and is not counted. Prepare is shown to send
@@ -714,7 +749,8 @@ asks is built from what the same fakes declare.
 - Rebinding a mask needs the derivation, and a derivation exists only where a composite
   was just made. An action that fills and returns its mask on the result rebinds it then
   (ADR 0003, `rebound_onto`). Nothing can rebind a mask onto a stored composite later;
-  no action of checkpoint 1A needs to.
+  no action of checkpoint 1A needs to, and the first that does is given a way
+  (`docs/carry-over.md`).
 - The composite pastes by the mask's weight and in no other way. Rascal's `hard` and
   `poisson` pastes, and a fill pasted back through a crop or a wrapped cut, are not
   here (`docs/carry-over.md`).

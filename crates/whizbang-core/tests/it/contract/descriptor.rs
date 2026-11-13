@@ -871,6 +871,25 @@ fn a_need_can_name_the_argument_that_chooses_its_backend() {
     with(Argument::optional("which", "Which.", ValueType::Text))
         .build()
         .unwrap();
+    // A need that holds only when its choosing argument is left out could never be
+    // chosen by it.
+    refused(
+        base().needs(
+            Requirement::new(Capability::Fill)
+                .when(When::not_given("filler"))
+                .chosen_by("filler"),
+        ),
+        &[
+            "the need for fill",
+            "is chosen by filler, which it is needed only without",
+        ],
+    );
+    // Two needs may be chosen by one argument: one name for a segmenter and a filler.
+    base()
+        .needs(Requirement::new(Capability::Fill).chosen_by("filler"))
+        .needs(Requirement::new(Capability::Segment).chosen_by("filler"))
+        .build()
+        .unwrap();
 }
 
 #[test]
