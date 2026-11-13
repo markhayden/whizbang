@@ -632,6 +632,9 @@ pub enum Refusal {
         asked_micros: u64,
         left_micros: u64,
     },
+    /// A call from inside an action whose own run was over, or ending: the action had
+    /// come back, and something it left behind made the call. No run was made.
+    CallerOver { action: String },
     /// A call from inside an action whose run has already called `limit` others,
     /// which is as many as one run may. No run was made.
     TooManyCalls { action: String, limit: usize },
@@ -647,6 +650,13 @@ pub enum Refusal {
     /// known by the run that made it and its place among that run's calls, and
     /// carries no id of its own. No run was made, and the id was not looked up.
     IdInside { action: String },
+    /// A run was waited for from inside an action whose own run it is, or is under:
+    /// that run is over only after the one that waits, so the wait would never end.
+    /// Nothing was waited for.
+    WaitAbove { run: RunId },
+    /// A wait from inside an action was given up because the run that waited was
+    /// cancelled, or one above it was. The run that was waited for is as it was.
+    WaitCancelled { run: RunId },
 }
 
 impl Refusal {
@@ -670,11 +680,14 @@ impl Refusal {
             Refusal::TooDeep { .. } => RefusalKind::TooDeep,
             Refusal::CallBack { .. } => RefusalKind::CallBack,
             Refusal::OverCaller { .. } => RefusalKind::OverCaller,
+            Refusal::CallerOver { .. } => RefusalKind::CallerOver,
             Refusal::TooManyCalls { .. } => RefusalKind::TooManyCalls,
             Refusal::TreeFull { .. } => RefusalKind::TreeFull,
             Refusal::TooManyStarted { .. } => RefusalKind::TooManyStarted,
             Refusal::TooManyStartedUnder { .. } => RefusalKind::TooManyStartedUnder,
             Refusal::IdInside { .. } => RefusalKind::IdInside,
+            Refusal::WaitAbove { .. } => RefusalKind::WaitAbove,
+            Refusal::WaitCancelled { .. } => RefusalKind::WaitCancelled,
         }
     }
 }
@@ -739,6 +752,10 @@ impl std::fmt::Display for Refusal {
                 "{action} was not called: it may cost up to {asked_micros} millionths of a \
                  US dollar, and {left_micros} are left of its caller's allowance"
             ),
+            Refusal::CallerOver { action } => write!(
+                f,
+                "{action} was not called: the action that called it had come back"
+            ),
             Refusal::TooManyCalls { action, limit } => write!(
                 f,
                 "{action} was not called: its caller has called {limit} actions, which \
@@ -753,6 +770,15 @@ impl std::fmt::Display for Refusal {
                 f,
                 "{action} was not started: {limit} runs that its caller started are \
                  executing, which is as many as may at once"
+            ),
+            Refusal::WaitAbove { run } => write!(
+                f,
+                "the run {run} was not waited for: it is the run that asked, or one above \
+                 it, and is over only after the run that asked"
+            ),
+            Refusal::WaitCancelled { run } => write!(
+                f,
+                "the wait for the run {run} was given up: the run that waited was cancelled"
             ),
             Refusal::IdInside { action } => write!(
                 f,

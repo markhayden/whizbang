@@ -22,8 +22,8 @@
 //! ([`Executor::cancel`]), which is accepted before the run's commit step and never
 //! after. And nested calls: the executor in an action's [`Context`] admits a call under
 //! the action's run, with an allowance taken from that run's, and refuses a fifth level
-//! and a call back. A cancellation does not reach the runs a run called yet, and a
-//! run does not wait for them. The ledger itself and settlement are not here.
+//! and a call back; a cancellation reaches every run under the one it cancels. The
+//! ledger itself and settlement are not here.
 
 mod call;
 mod context;
@@ -59,6 +59,8 @@ pub use ledger::{
     Declined, LEDGER_NAME_LIMIT, Ledger, RESERVATION_RECORD, RESERVATIONS_PREFIX, Reservation,
     SPEND_PREFIX, Step, reservations,
 };
+#[doc(hidden)]
+pub use nested::HeldOpen;
 pub use nested::{DESCENDANTS_LIMIT, LEVELS_LIMIT, STARTED_LIMIT};
 pub use prepare::{
     Backends, CallError, Estimate, InputFault, Missing, ModelIdentity, Need, NoBackends,

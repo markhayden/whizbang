@@ -328,7 +328,7 @@ completes, is not carried over without being restated here.
       arrives after returns the completed outcome.
 - [x] Nested calls through the context's executor, each with an allowance taken from its
       parent's; a fifth level and a call back into an action on the stack are refused.
-- [ ] Cancellation reaches descendants and refuses new ones. A parent is terminal only when
+- [x] Cancellation reaches descendants and refuses new ones. A parent is terminal only when
       its descendants are terminal and every request a capability was sent is accounted for.
 - [x] Progress events; status and cancel answered while an action is busy.
 - [x] One commit step for an action: all of its output references and its completed status
