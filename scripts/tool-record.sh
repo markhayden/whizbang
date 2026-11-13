@@ -12,17 +12,18 @@
 # machine. The script keeps the times the record holds unless one of them moved by more
 # than a third, or something else between the marks changed. That assumes a quiet
 # machine: when a run on a busy one changes the times alone, discard the change and run
-# this again.
+# this again. The test that writes the record runs through scripts/thread-guard.sh, as
+# every test run does.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 case "${1:-}" in
   view)
-    cargo test --release -p whizbang-squint --test it -- \
+    scripts/thread-guard.sh cargo test --release -p whizbang-squint --test it -- \
       --ignored --exact record::write_the_record
     ;;
   grow)
-    cargo test --release -p whizbang-rascal --test it -- \
+    scripts/thread-guard.sh cargo test --release -p whizbang-rascal --test it -- \
       --ignored --exact record::write_the_record
     ;;
   *)

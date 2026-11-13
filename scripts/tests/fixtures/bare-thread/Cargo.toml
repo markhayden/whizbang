@@ -1,0 +1,12 @@
+# A fixture for scripts/tests/test-thread-lint.sh, not part of the whizbang workspace: a
+# test file that makes threads the ways this repo's clippy.toml refuses.
+[package]
+name = "bare-thread"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[workspace]

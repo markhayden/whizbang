@@ -387,7 +387,7 @@ with the composite. A box is ticked by the pull request that makes it true.
 - [x] Tests, extracted for `grow` alone with fixtures built directly: growth by a fractional
       radius matches the analytic expectation; downward extension; protect takes precedence;
       the refinement is cleared.
-- [ ] Before porting the pixel code, check whether a library call does the same. If one does,
+- [x] Before porting the pixel code, check whether a library call does the same. If one does,
       both are run through the record's script on the same masks and the faster one that is
       still exact becomes the method; the comparison goes in the record's "Alternatives".
 - [x] `whizbang rascal grow --mask <artifact> --px 8 [--down-px 4]`.
@@ -409,12 +409,10 @@ status, and every diagnostic written before it ended is readable.
 
 **Built in two pull requests,** because the task came to over three thousand lines: first
 the action and its tests, the first three boxes; then the command, the publication tests
-of "Done when" and the tool record, the last two. **The fourth box is open.** No crate
-whizbang depends on does the same job, and the one that does, `imageproc`, was not
-fetched: the task was built without the network. The record's "Alternatives" compares
-the method with rascal's distance transform and with the disc stamped from every core
-pixel, on the same masks through the record's script, and names the library as not run;
-`docs/carry-over.md` holds the comparison that is owed.
+of "Done when" and the tool record, the last two. The fourth box was ticked with the second: no crate whizbang ships
+with does the same job; `imageproc` does, was run through the record's script as a
+development dependency, gave the rule's pixels and took about three times as long, so
+the hand-written method stays (`docs/reference/tools/grow.md`, "Alternatives").
 
 ### A10. `view`, extracted
 

@@ -130,13 +130,17 @@ pub enum RefusalKind {
     OverCaller,
     CallerOver,
     TooManyCalls,
+    TreeFull,
     TooManyStarted,
+    TooManyStartedUnder,
     IdInside,
+    WaitAbove,
+    WaitCancelled,
 }
 
 impl RefusalKind {
     /// Every kind, in the order above.
-    pub const ALL: [RefusalKind; 21] = [
+    pub const ALL: [RefusalKind; 25] = [
         RefusalKind::UnknownAction,
         RefusalKind::Invalid,
         RefusalKind::Input,
@@ -156,8 +160,12 @@ impl RefusalKind {
         RefusalKind::OverCaller,
         RefusalKind::CallerOver,
         RefusalKind::TooManyCalls,
+        RefusalKind::TreeFull,
         RefusalKind::TooManyStarted,
+        RefusalKind::TooManyStartedUnder,
         RefusalKind::IdInside,
+        RefusalKind::WaitAbove,
+        RefusalKind::WaitCancelled,
     ];
 }
 
@@ -202,6 +210,18 @@ impl Refused {
         let named = clean && text::action_name(call.action()).is_ok();
         Refused {
             action: named.then(|| call.action().to_owned()),
+            kind: refusal.kind(),
+            why: why.chars().take(REFUSAL_WHY_LIMIT).collect(),
+        }
+    }
+
+    /// A refusal of something an action asked of a run, which names no action: a
+    /// wait that was refused or given up. Its sentence holds a run's id and fixed
+    /// words, and goes through the same redaction and cut.
+    pub(super) fn of_a_question(refusal: &super::Refusal, secrets: &Secrets) -> Refused {
+        let why = super::engine::said(secrets, &refusal.to_string());
+        Refused {
+            action: None,
             kind: refusal.kind(),
             why: why.chars().take(REFUSAL_WHY_LIMIT).collect(),
         }

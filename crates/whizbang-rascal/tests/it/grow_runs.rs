@@ -129,7 +129,7 @@ fn a_cancelled_grow_commits_nothing() {
         };
         let first = engine_over(store.clone(), Arc::new(around));
         let second = engine_over(store.clone(), Arc::new(Grow::new()));
-        std::thread::scope(|scope| {
+        whizbang_testkit::threads::scope(|scope| {
             let running = scope.spawn(|| first.request(&request(input, "r-1")));
             barriers.arrived("busy", 1);
             let run = held(&world.root(), world.fs.clone()).runs[0].id.clone();
@@ -285,7 +285,7 @@ fn world_on(fs: ShimFs) -> (World, ArtifactId) {
 }
 
 #[test]
-fn a_completed_grow_is_not_reported_before_its_publication_is_durable() {
+fn a_grow_crashed_inside_its_commit_is_not_reported_before_its_publication_is_durable() {
     // `grow` has handed back its mask. Power is lost before each call that changes the
     // disk from then on, with each way a disk can lose what was not yet durable: every
     // name undone, every name kept with its content cut, every choice of directories,

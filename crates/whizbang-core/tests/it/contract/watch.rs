@@ -81,13 +81,13 @@ pub(super) fn the_run(root: &Path) -> RunId {
     RunId::parse(generation.runs().keys().next().unwrap()).unwrap()
 }
 
-fn completed() -> RunState {
+pub(super) fn completed() -> RunState {
     RunState::Ended(Outcome::Completed {
         outputs: Vec::new(),
     })
 }
 
-fn messages(watched: &Watched) -> Vec<&str> {
+pub(super) fn messages(watched: &Watched) -> Vec<&str> {
     watched.events().iter().map(|line| line.message()).collect()
 }
 
@@ -104,7 +104,7 @@ fn a_second_caller_reads_the_status_and_the_progress_of_a_run_whose_action_is_bu
         .with_secrets(Secrets::new([key.clone()]).unwrap());
     // The second caller has an executor of its own over the same store.
     let second = engine(store.clone(), Vec::new());
-    std::thread::scope(|scope| {
+    whizbang_testkit::threads::scope(|scope| {
         let running = scope.spawn(|| first.request(&asked("order-1")));
         barriers.arrived("busy", 1);
         let run = the_run(&root);
@@ -133,6 +133,8 @@ fn a_second_caller_reads_the_status_and_the_progress_of_a_run_whose_action_is_bu
         assert_eq!(finished.run(), &run);
         let waited = waiting.join().unwrap().unwrap();
         assert_eq!(waited.state(), &completed());
+        // What it reported is in its journal now, and not in the answer.
+        assert!(waited.events().is_empty());
 
         // Ended, the run is answered from its record, by anyone; its events are in
         // its journal, in the store.
@@ -421,7 +423,7 @@ fn a_status_that_races_the_end_of_its_run_is_not_told_the_run_will_never_end() {
     let barriers = Barriers::new();
     let first = engine(store.clone(), vec![busy(&barriers, "nothing")]);
     let second = engine(store.clone(), Vec::new());
-    std::thread::scope(|scope| {
+    whizbang_testkit::threads::scope(|scope| {
         let running = scope.spawn(|| first.request(&asked("order-5")));
         barriers.arrived("busy", 1);
         let run = the_run(&root);
@@ -479,7 +481,7 @@ fn a_second_caller_reads_the_status_of_a_run_while_its_end_is_being_published() 
                     .keys()
                     .find(|id| **id != executing.as_str());
                 let this = RunId::parse(this.unwrap()).unwrap();
-                let asked = std::thread::spawn(move || {
+                let asked = whizbang_testkit::threads::spawn(move || {
                     (
                         asking.status(&this).unwrap(),
                         asking.status(&executing).unwrap(),

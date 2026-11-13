@@ -621,6 +621,67 @@ fn a_writer_knows_the_runs_it_made_since_it_opened_the_store() {
 }
 
 #[test]
+fn a_closed_run_that_was_kept_for_its_closer_stays_in_the_table_until_it_is_let_go() {
+    // Whoever closes a run may still hold something of it when the closing becomes
+    // visible. Asked to, the store keeps the run in its table, with what is attached,
+    // until the closer lets it go; and lets go of nothing that was not closed that way.
+    let dir = Scratch::new("store-names");
+    let store = Store::open(&root(&dir), Arc::new(ShimFs::new())).unwrap();
+    let made = |run: &str| {
+        let mut publication = store.begin().unwrap();
+        publication.create_run(run).unwrap();
+        publication.attach(run, Arc::new("its own"));
+        publication.publish().unwrap();
+    };
+    for run in ["kept", "plain", "open", "deleted", "refused"] {
+        made(run);
+    }
+
+    // Closed and kept: still in the table once the closing is visible, and out of it
+    // when it is let go, and not before.
+    let mut publication = store.begin().unwrap();
+    publication.close_run("kept").unwrap();
+    publication.keep_until_let_go("kept");
+    // Asked for a run the publication does not close: nothing comes of it.
+    publication.keep_until_let_go("open");
+    publication.publish().unwrap();
+    assert!(store.made_here("kept"));
+    assert!(store.attached("kept").unwrap().downcast::<&str>().is_ok());
+    store.let_go("kept");
+    assert!(!store.made_here("kept"));
+    assert!(store.attached("kept").is_none());
+
+    // Closed without being kept: gone when the closing is visible, as before.
+    let mut publication = store.begin().unwrap();
+    publication.close_run("plain").unwrap();
+    publication.publish().unwrap();
+    assert!(!store.made_here("plain"));
+
+    // A run that is open is not let go, whoever asks; nor is one that is not there.
+    store.let_go("open");
+    store.let_go("never made");
+    assert!(store.made_here("open"));
+
+    // A closing that was to be kept and was never published closed nothing: the run
+    // is open, and letting it go changes nothing.
+    let mut publication = store.begin().unwrap();
+    publication.close_run("refused").unwrap();
+    publication.keep_until_let_go("refused");
+    drop(publication);
+    store.let_go("refused");
+    assert!(store.made_here("refused"));
+
+    // A run that is kept and then deleted is out of the table at the deletion.
+    let mut publication = store.begin().unwrap();
+    publication.close_run("deleted").unwrap();
+    publication.keep_until_let_go("deleted");
+    publication.publish().unwrap();
+    assert!(store.made_here("deleted"));
+    store.delete(&["deleted"]).unwrap();
+    assert!(!store.made_here("deleted"));
+}
+
+#[test]
 fn what_is_attached_to_a_run_is_had_while_the_writer_has_the_run_open_and_no_longer() {
     // The table of the runs a writer made and has open holds, for each, what its maker
     // attached: one table, so "made here" and "what is attached" never disagree.

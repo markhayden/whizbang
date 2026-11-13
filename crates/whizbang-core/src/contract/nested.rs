@@ -29,6 +29,11 @@ use super::{
 /// 4 + 16 + 64 = 84 threads between them.
 pub const STARTED_LIMIT: usize = 4;
 
+/// How many runs may be admitted, at every level together, under one run that nothing
+/// called. The next call anywhere under that run is refused
+/// ([`Refusal::TreeFull`]).
+pub const DESCENDANTS_LIMIT: usize = 1024;
+
 /// How many levels calls nest: a run that nothing called is at the first, and a call
 /// made by a run at the fourth is refused.
 pub const LEVELS_LIMIT: usize = 4;
@@ -66,6 +71,36 @@ impl Added {
             }
         }
         Ok(generation)
+    }
+}
+
+/// The runs admitted under one run that nothing called, at every level together: one
+/// count, shared by every run of the tree.
+pub(super) struct Tree {
+    limit: usize,
+    admitted: Mutex<usize>,
+}
+
+impl Tree {
+    fn new(limit: usize) -> Tree {
+        Tree {
+            limit,
+            admitted: Mutex::new(0),
+        }
+    }
+
+    /// Counts one more run, unless the tree has as many as it may: one step.
+    fn take(&self) -> bool {
+        let mut admitted = self.admitted.lock().unwrap_or_else(PoisonError::into_inner);
+        let free = *admitted < self.limit;
+        *admitted += usize::from(free);
+        free
+    }
+
+    /// A call that was counted made no run.
+    fn give_back(&self) {
+        let mut admitted = self.admitted.lock().unwrap_or_else(PoisonError::into_inner);
+        *admitted = admitted.saturating_sub(1);
     }
 }
 
@@ -139,7 +174,7 @@ impl Nest {
     /// Takes a call, to be admitted: from here until it is refused or has its run,
     /// the run's end waits for it. Refused once the run's action has come back, and
     /// when the run has called as many as one may.
-    fn begin(&self, action: &str, start: bool) -> Result<(), Refusal> {
+    fn begin(&self, action: &str, start: bool, tree: &Tree) -> Result<(), Refusal> {
         let mut calls = self.calls();
         let action = action.to_owned();
         if calls.closed {
@@ -147,7 +182,7 @@ impl Nest {
         }
         // A call to start a run, when as many as may be are executing.
         if start && calls.started >= STARTED_LIMIT {
-            return Err(Refusal::TooManyStarted {
+            return Err(Refusal::TooManyStartedUnder {
                 action,
                 limit: STARTED_LIMIT,
             });
@@ -156,6 +191,13 @@ impl Nest {
             return Err(Refusal::TooManyCalls {
                 action,
                 limit: STEPS_LIMIT,
+            });
+        }
+        // Last, so that a call refused above is not counted in the tree.
+        if !tree.take() {
+            return Err(Refusal::TreeFull {
+                action: action.to_owned(),
+                limit: tree.limit,
             });
         }
         calls.opening += 1;
@@ -270,11 +312,14 @@ struct Opening<'a> {
     made: bool,
     /// Whether the call is to start a run, and was counted as one.
     start: bool,
+    /// The tree the call was counted in, until it is known to have made a run.
+    tree: Option<&'a Tree>,
 }
 
 impl Opening<'_> {
     fn made(mut self, child: Child) {
         self.made = true;
+        self.tree = None;
         self.nest.done(Some(child));
     }
 }
@@ -285,6 +330,9 @@ impl Drop for Opening<'_> {
             self.nest.done(None);
             if self.start {
                 self.nest.started_over();
+            }
+            if let Some(tree) = self.tree {
+                tree.give_back();
             }
         }
     }
@@ -298,6 +346,11 @@ pub(super) struct Under {
     /// The names of the actions that are running, from the run nothing called down
     /// to this one. Its length is the level this run is at.
     pub(super) stack: Arc<Vec<String>>,
+    /// The runs from the one nothing called down to this one, this one last.
+    pub(super) above: Arc<Vec<RunId>>,
+    /// The count of the runs under the run nothing called, which this run is under
+    /// or is.
+    pub(super) tree: Arc<Tree>,
     /// What this run may spend: each call it makes takes its estimate from it.
     pub(super) allowance: Allowance,
     pub(super) deadline: Option<Instant>,
@@ -308,18 +361,36 @@ pub(super) struct Family {
     /// The run that called it, and that run's live state.
     pub(super) parent: Option<(RunId, Arc<LiveRun>)>,
     pub(super) stack: Arc<Vec<String>>,
+    /// The runs above this one, from the one nothing called down to its parent.
+    above: Arc<Vec<RunId>>,
+    pub(super) tree: Arc<Tree>,
     pub(super) allowance: Allowance,
 }
 
 impl Family {
+    /// The runs above this run and this run, which is named only once it is admitted.
+    pub(super) fn above_with(&self, run: &RunId) -> Arc<Vec<RunId>> {
+        let mut above = self.above.to_vec();
+        above.push(run.clone());
+        Arc::new(above)
+    }
+
     /// The family of a run of this action, called under this run or by nothing, with
-    /// this much reserved or taken for it.
-    pub(super) fn of(under: Option<&Under>, action: &str, reserved: Option<u64>) -> Family {
+    /// this much reserved or taken for it. A run that nothing called begins a tree
+    /// that may hold `descendants` runs under it.
+    pub(super) fn of(
+        under: Option<&Under>,
+        action: &str,
+        reserved: Option<u64>,
+        descendants: usize,
+    ) -> Family {
         let mut stack = under.map_or_else(Vec::new, |under| under.stack.to_vec());
         stack.push(action.to_owned());
         Family {
             parent: under.map(|under| (under.run.clone(), under.live.clone())),
             stack: Arc::new(stack),
+            above: under.map_or_else(Arc::default, |under| under.above.clone()),
+            tree: under.map_or_else(|| Arc::new(Tree::new(descendants)), |u| u.tree.clone()),
             allowance: reserved.map_or_else(Allowance::none, Allowance::of),
         }
     }
@@ -377,11 +448,12 @@ impl Nested {
         // A call made once the run's signal is set is refused by admission's own look
         // at the call's signal, which is under the run's.
         let nest = under.live.nest();
-        nest.begin(call.action(), start)?;
-        let opening = Opening {
+        nest.begin(call.action(), start, &under.tree)?;
+        let mut opening = Opening {
             nest,
             made: false,
             start,
+            tree: Some(&under.tree),
         };
         // The call's run has a signal of its own, under this run's and under the one
         // the request came with: cancelling this run, or any above it, cancels it.
@@ -403,7 +475,20 @@ impl Nested {
                 Stopped::Refused(error) => error,
                 // Only a request with an id makes the name that can be taken.
                 Stopped::Taken(error) => CallError::Store(StoreFailure::new(error)),
-            })?;
+            });
+        let admitted = match admitted {
+            Ok(admitted) => admitted,
+            Err(error) => {
+                // An admission that is visible and was not confirmed made a run,
+                // which nothing will execute: it stays counted in the tree.
+                if let CallError::Store(failure) = &error
+                    && matches!(failure.cause(), store::Error::Unacknowledged { .. })
+                {
+                    opening.tree = None;
+                }
+                return Err(error);
+            }
+        };
         opening.made(Child {
             run: admitted.run.clone(),
             action: action(),
@@ -430,14 +515,24 @@ impl Executor for Nested {
     }
 
     fn start(&self, request: &Request) -> Result<Answer, CallError> {
-        // A started run is a thread, and a run may have only so many at once: the
-        // count goes down when the run is over, before whoever waits for it is told.
+        // A started run is a thread. It takes a place among the started runs of the
+        // store's writer, the count a request from outside is held to, before it is
+        // admitted; and a run may have only so many of its own at once. A full count
+        // is a refusal, never a wait. Both come back when the run is over, before
+        // whoever waits for it is told.
+        let place = match self.engine.start_place() {
+            Ok(place) => place,
+            Err(refusal) => {
+                let refused = Refused::of(request.call(), &refusal, &self.secrets);
+                self.under.live.nest().refused(refused);
+                return Err(refusal.into());
+            }
+        };
         let mut admitted = self.admit(request, true)?;
         admitted.started_under(self.under.live.clone());
-        let run = admitted.run.clone();
-        let engine = self.engine.clone();
-        std::thread::spawn(move || drop(engine.execute(admitted)));
-        Ok(Answer::Started(run))
+        // The thread is made where every run's thread is made; a thread that cannot
+        // be made ends the run as an error, and the caller is told.
+        self.engine.launch(admitted, place)
     }
 
     fn status(&self, run: &RunId) -> Result<Watched, CallError> {
@@ -445,7 +540,24 @@ impl Executor for Nested {
     }
 
     fn wait(&self, run: &RunId) -> Result<Watched, CallError> {
-        self.engine.wait(run)
+        // A run is over only after the runs it called: a wait for this run, or for
+        // one above it, would never end, and is refused. Any other wait is given up
+        // when this run is cancelled, so two runs that wait for each other are freed
+        // by cancelling either, or a run above them. Both are kept for the record.
+        let under = &self.under;
+        let waited = if under.above.contains(run) {
+            Err(Refusal::WaitAbove { run: run.clone() }.into())
+        } else {
+            self.engine.wait_unless(run, under.live.signal())
+        };
+        if let Err(CallError::Refused(
+            refusal @ (Refusal::WaitAbove { .. } | Refusal::WaitCancelled { .. }),
+        )) = &waited
+        {
+            let refused = Refused::of_a_question(refusal, &self.secrets);
+            under.live.nest().refused(refused);
+        }
+        waited
     }
 
     fn cancel(&self, run: &RunId) -> Result<Cancel, CallError> {

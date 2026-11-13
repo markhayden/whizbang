@@ -218,26 +218,36 @@ Measured on Apple M4 Max (macos, aarch64), in a release build; each time is the 
 
 | Mask | Megapixels | File | `grow`, `px` 8 and `down_px` 4 | `grow`, `px` 1000 | `grow`, `px` 10000 | Reading the mask from its file | A whole run through the executor |
 |---|---|---|---|---|---|---|---|
-| 1024x768 | 0.8 | 0.03 MB | 3.5 | 3.3 | 3.2 | 3.2 | 80 |
-| 4096x3072 | 12.6 | 0.52 MB | 55 | 56 | 55 | 52 | 257 |
-| 8000x6000 | 48.0 | 1.98 MB | 212 | 208 | 200 | 193 | 770 |
+| 1024x768 | 0.8 | 0.03 MB | 3.4 | 3.3 | 3.3 | 3.0 | 76 |
+| 4096x3072 | 12.6 | 0.52 MB | 53 | 54 | 51 | 49 | 249 |
+| 8000x6000 | 48.0 | 1.98 MB | 206 | 203 | 198 | 184 | 750 |
 
 | Mask | `px` | Method | Pixels that differ from the rule | Time |
 |---|---|---|---|---|
 | The vectors' dots, 97x61 | 3.605551275463989 | Two sweeps in whole numbers (the method) | 0 | under 0.1 |
 | | | The distance transform in doubles, as in rascal | 434 | under 0.1 |
+| | | `imageproc`'s squared distances, compared with K | 0 | under 0.1 |
+| | | `imageproc`'s dilation with the L2 norm | no such radius | no such radius |
 | | | The disc stamped from every core pixel | 0 | under 0.1 |
 | The mask of the times, 1024x768 | 8 | Two sweeps in whole numbers (the method) | 0 | 1.7 |
-| | | The distance transform in doubles, as in rascal | 0 | 6.9 |
-| | | The disc stamped from every core pixel | 0 | 11 |
+| | | The distance transform in doubles, as in rascal | 0 | 6.7 |
+| | | `imageproc`'s squared distances, compared with K | 0 | 4.6 |
+| | | `imageproc`'s dilation with the L2 norm | 0 | 4.8 |
+| | | The disc stamped from every core pixel | 0 | 10 |
 | The mask of the times, 1024x768 | 100 | Two sweeps in whole numbers (the method) | 0 | 1.9 |
-| | | The distance transform in doubles, as in rascal | 0 | 6.9 |
-| | | The disc stamped from every core pixel | 0 | 1495 |
+| | | The distance transform in doubles, as in rascal | 0 | 6.7 |
+| | | `imageproc`'s squared distances, compared with K | 0 | 4.7 |
+| | | `imageproc`'s dilation with the L2 norm | 0 | 5.0 |
+| | | The disc stamped from every core pixel | 0 | 1465 |
 | The mask of the times, 4096x3072 | 8 | Two sweeps in whole numbers (the method) | 0 | 27 |
-| | | The distance transform in doubles, as in rascal | 0 | 155 |
-| | | The disc stamped from every core pixel | 0 | 163 |
+| | | The distance transform in doubles, as in rascal | 0 | 152 |
+| | | `imageproc`'s squared distances, compared with K | 0 | 98 |
+| | | `imageproc`'s dilation with the L2 norm | 0 | 101 |
+| | | The disc stamped from every core pixel | 0 | 164 |
 | The mask of the times, 4096x3072 | 1000 | Two sweeps in whole numbers (the method) | 0 | 34 |
-| | | The distance transform in doubles, as in rascal | 0 | 157 |
+| | | The distance transform in doubles, as in rascal | 0 | 156 |
+| | | `imageproc`'s squared distances, compared with K | 0 | 97 |
+| | | `imageproc`'s dilation with the L2 norm | no such radius | no such radius |
 | | | The disc stamped from every core pixel | not run | not run |
 
 <!-- timed: end -->
@@ -266,7 +276,7 @@ here: the rule of `view`'s record, with the same caution about a busy machine.
 
 ## Alternatives
 
-The second table under "Speed and cost" compares three ways of doing step 2, the growth by
+The second table under "Speed and cost" compares five ways of doing step 2, the growth by
 a disc, on the same masks. Steps 3 to 5 are the same whatever does step 2.
 
 - **Two sweeps in whole numbers** is the method. It is exact by the rule, its time does not
@@ -287,19 +297,27 @@ a disc, on the same masks. Steps 3 to 5 are the same whatever does step 2.
   the table, where it would stamp three million offsets from each of over a million core
   pixels.
 
-Neither of the other two is in the code: both are written out only in the test file that
-writes this page, and a fast test holds each to what this section says of it
+None of the other methods is in the code: each is written out, or called, only in the test
+file that writes this page, and a fast test holds each to what this section says of it
 (`the_other_methods_do_the_same_job_where_the_record_says_they_do`).
 
-**Not run: a library.** The plan asks whether a library call does the same job, and for
-both to be run through this script if one does. Among the crates whizbang already depends
-on, none does: the `image` crate has no dilation and no distance transform. The `imageproc`
-crate has both (`morphology::dilate` with the L2 norm, which takes a whole radius up to
-255, and `distance_transform::euclidean_squared_distance_transform`, in doubles, whose
-result could be compared with K). It is not a dependency, and it was not fetched or run:
-this page was written without access to the network. The comparison is owed
-(`docs/carry-over.md`). Whatever it shows, a method that works in doubles has to be shown
-equal to the rule on the vectors above before it could replace the two sweeps.
+**A library.** The plan asks whether a library call does the same job, and for both to be
+run through this script if one does. No crate whizbang ships with does. `imageproc` does,
+in two calls, and both are in the table, run on the same masks:
+
+- **`distance_transform::euclidean_squared_distance_transform`**, in doubles, whose result
+  is compared with K. It gave the rule's pixels on every mask of the table and on all
+  sixteen vectors, the radius under the square root of 13 among them: its squared
+  distances are whole numbers held exactly, and the comparison is with the exact K, not
+  with a product of doubles. It took about three times as long as the two sweeps on the
+  masks large enough to time, and holds eight bytes a pixel.
+- **`morphology::dilate` with the L2 norm** takes a whole radius up to 255, so it cannot do
+  a fractional radius or a large one. Where it applies it gave the rule's pixels, in about
+  the time of the first call, which it is built on.
+
+So the library is exact and slower, and the two sweeps stay the method. `imageproc` is a
+development dependency of `whizbang-rascal` only (0.27.0, without its default features):
+the test file that writes this page calls it, and nothing that ships does.
 
 ## Limits
 
@@ -321,8 +339,8 @@ equal to the rule on the vectors above before it could replace the two sweeps.
 ## Mark and history
 
 **Mark.** None: marks belong to tools the upper rungs apply to, and `grow` is a pure pixel
-operation, to which rungs 1 and 2 apply. It is complete when its record shows both. This
-record does, with one comparison owed: a library's method ("Alternatives").
+operation, to which rungs 1 and 2 apply. It is complete when its record shows both, and this
+record does.
 
 | Rung | Result | Evidence |
 |---|---|---|

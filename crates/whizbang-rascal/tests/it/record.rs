@@ -661,6 +661,30 @@ fn by_distances(core: &[u8], width: usize, height: usize, px: f64) -> Vec<u8> {
         .collect()
 }
 
+/// The same job by a library: `imageproc`'s squared Euclidean distance transform, in
+/// doubles, compared with K. The library measures to the nearest pixel that is not 0.
+fn by_library_distances(core: &[u8], width: usize, height: usize, px: f64) -> Vec<u8> {
+    use imageproc::distance_transform::euclidean_squared_distance_transform;
+    use imageproc::image::GrayImage;
+    let image = GrayImage::from_raw(width as u32, height as u32, core.to_vec()).unwrap();
+    let k = radius_squared(px) as f64;
+    let squared = euclidean_squared_distance_transform(&image);
+    let within = squared
+        .as_raw()
+        .iter()
+        .map(|d| if *d <= k { 255 } else { 0 });
+    within.collect()
+}
+
+/// The same job by a library, for a whole radius up to 255: `imageproc`'s dilation with
+/// the L2 norm.
+fn by_library_dilation(core: &[u8], width: usize, height: usize, px: u8) -> Vec<u8> {
+    use imageproc::distance_transform::Norm;
+    use imageproc::image::GrayImage;
+    let image = GrayImage::from_raw(width as u32, height as u32, core.to_vec()).unwrap();
+    imageproc::morphology::dilate(&image, Norm::L2, px).into_raw()
+}
+
 #[test]
 fn the_other_methods_do_the_same_job_where_the_record_says_they_do() {
     // Small masks, so that the comparison the script makes at size is also held here:
@@ -680,6 +704,36 @@ fn the_other_methods_do_the_same_job_where_the_record_says_they_do() {
         let rule = grown(&core, width, height, px, 0.0, &never).unwrap();
         assert_eq!(by_stamping(&core, width, height, px), rule, "px {px}");
         assert_eq!(by_distances(&core, width, height, px), rule, "px {px}");
+    }
+    // The library's two calls give the rule's pixels: the distances at every radius
+    // tried, the one under the square root of 13 among them, and the dilation at whole
+    // radii.
+    for px in [0.0, 1.0, 2.5, 3.605_551_275_463_989, 7.3, 40.0] {
+        let rule = grown(&core, width, height, px, 0.0, &never).unwrap();
+        assert_eq!(
+            by_library_distances(&core, width, height, px),
+            rule,
+            "px {px}"
+        );
+    }
+    for px in [0u8, 1, 3, 7, 40, 255] {
+        let rule = grown(&core, width, height, f64::from(px), 0.0, &never).unwrap();
+        assert_eq!(
+            by_library_dilation(&core, width, height, px),
+            rule,
+            "px {px}"
+        );
+    }
+    // And on all sixteen vectors' masks, at each one's own radius.
+    for vector in &VECTORS {
+        let (name, width, height, px, ..) = *vector;
+        let core = vector_mask(vector).core().to_vec();
+        let rule = grown(&core, width, height, px, 0.0, &never).unwrap();
+        assert_eq!(
+            by_library_distances(&core, width, height, px),
+            rule,
+            "{name} {px}"
+        );
     }
 }
 
@@ -786,6 +840,31 @@ fn timed() -> String {
             differ(&by_distances(core, width, height, px)),
             millis(time(5, || (), |()| by_distances(core, width, height, px))),
         ));
+        out.push_str(&format!(
+            "| | | `imageproc`'s squared distances, compared with K | {} | {} |\n",
+            differ(&by_library_distances(core, width, height, px)),
+            millis(time(
+                5,
+                || (),
+                |()| by_library_distances(core, width, height, px)
+            )),
+        ));
+        if px.fract() == 0.0 && px <= 255.0 {
+            let whole = px as u8;
+            out.push_str(&format!(
+                "| | | `imageproc`'s dilation with the L2 norm | {} | {} |\n",
+                differ(&by_library_dilation(core, width, height, whole)),
+                millis(time(
+                    5,
+                    || (),
+                    |()| by_library_dilation(core, width, height, whole)
+                )),
+            ));
+        } else {
+            out.push_str(
+                "| | | `imageproc`'s dilation with the L2 norm | no such radius | no such radius |\n",
+            );
+        }
         if stamp {
             out.push_str(&format!(
                 "| | | The disc stamped from every core pixel | {} | {} |\n",
