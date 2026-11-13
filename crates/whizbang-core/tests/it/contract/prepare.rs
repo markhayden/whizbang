@@ -842,7 +842,9 @@ fn a_mask_made_by_hand_on_an_image_placed_onto_another_is_taken_at_its_makers_wo
     // The trust boundary (ADR 0006, "Who vouches for a derivation"): a mask is the
     // statement of whoever made it, and what holds is that it is used only on the image
     // its binding's source names. No call can carry a derivation, and no code can make
-    // one of two unrelated pictures; but a mask can be made by hand on a binding that
+    // one of two unrelated pictures except against a mask that weighs every pixel
+    // (`rebind::known_a_mask_that_weighs_every_pixel_vouches_for_any_picture_of_its_size`);
+    // but a mask can be made by hand on a binding that
     // places the second photograph onto the first, and prepare accepts it on the second:
     // nothing in a mask says who vouched, and prepare asks for no record that would.
     let world = world();

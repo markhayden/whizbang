@@ -8,12 +8,15 @@
 //! One is made in one way: by looking at both pictures ([`Derivation::checked`]; ADR
 //! 0006, "Who vouches for a derivation"). The new picture is the size of the one it was
 //! made from, and every pixel that a mask on that image weighs nothing is the same in
-//! both. So the statement cannot be made of two unrelated pictures of one size, and
-//! whoever holds a derivation holds one that was checked.
+//! both. So the statement cannot be made of two unrelated pictures of one size, unless
+//! the mask it was checked against weighs every pixel: a mask whose support is the whole
+//! image leaves no pixel to compare, and vouches for any picture of its size. Whoever
+//! holds a derivation holds one that was checked, against a mask that someone made.
 //!
 //! What that does not do is make a rebound mask a kind of its own. A mask made by hand
 //! on a derivation's binding is the same artifact as the rebound one (ADR 0004).
 
+use crate::capability::Picture;
 use crate::identity::{Binding, CanonicalPixels, Destination, Direction, Mapping, PixelDigest};
 
 use super::{ArtifactError, Mask, Result};
@@ -44,8 +47,30 @@ impl Derivation {
         derived: &CanonicalPixels,
         mask: &Mask,
     ) -> Result<Derivation> {
+        Derivation::check(parent, parent.digest(), derived, mask)
+    }
+
+    /// As [`Derivation::checked`], of a picture that holds the digest of its pixels: the
+    /// digest is the picture's own, made when the picture was, and is not worked out a
+    /// second time.
+    pub fn checked_of(
+        parent: &Picture,
+        derived: &CanonicalPixels,
+        mask: &Mask,
+    ) -> Result<Derivation> {
+        Derivation::check(parent.pixels(), parent.digest(), derived, mask)
+    }
+
+    /// The check, with the digest of `parent`'s pixels, which both callers have from the
+    /// pixels themselves.
+    fn check(
+        parent: &CanonicalPixels,
+        from: PixelDigest,
+        derived: &CanonicalPixels,
+        mask: &Mask,
+    ) -> Result<Derivation> {
         let space = mask.space();
-        let (from, to) = (parent.digest(), derived.digest());
+        let to = derived.digest();
         mask.require_image(from, space)?;
         let refuse = |why: String| Err(ArtifactError::NotDerived(why));
         let size = (space.width(), space.height());

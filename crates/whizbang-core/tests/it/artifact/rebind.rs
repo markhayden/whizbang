@@ -71,6 +71,64 @@ fn a_mask_is_refused_on_an_unrelated_image_of_the_same_size() {
 }
 
 #[test]
+fn known_a_mask_that_weighs_every_pixel_vouches_for_any_picture_of_its_size() {
+    // The limit of the check, pinned: it compares the two pictures only where the mask
+    // weighs nothing. A mask whose core is the whole image weighs nothing nowhere, so
+    // the check compares no pixel, and an unrelated picture of the same size passes as
+    // derived. Whoever makes such a mask has said that every pixel may change.
+    let (photo, unrelated) = (pixels("photo"), pixels("another photo"));
+    let everywhere = Mask::from_core(
+        shown("photo"),
+        whizbang_core::artifact::UseCase::Custom,
+        vec![255; (WIDTH * HEIGHT) as usize],
+        whizbang_core::artifact::Source::default(),
+        made_by("by hand"),
+    )
+    .unwrap();
+    let derivation = Derivation::checked(&photo, &unrelated, &everywhere).unwrap();
+    assert_eq!(derivation.parent(), photo.digest());
+    assert_eq!(derivation.image(), unrelated.digest());
+    // One pixel that the mask weighs nothing is enough to refuse it again.
+    let mut core = vec![255; (WIDTH * HEIGHT) as usize];
+    core[0] = 0;
+    let all_but_one = Mask::from_core(
+        shown("photo"),
+        whizbang_core::artifact::UseCase::Custom,
+        core,
+        whizbang_core::artifact::Source::default(),
+        made_by("by hand"),
+    )
+    .unwrap();
+    let why = not_derived(Derivation::checked(&photo, &unrelated, &all_but_one));
+    assert!(
+        why.contains("1 pixel that the mask weighs nothing differs"),
+        "{why}"
+    );
+}
+
+#[test]
+fn a_derivation_checked_from_a_picture_is_the_one_checked_from_its_pixels() {
+    // A picture holds the digest of its pixels, and the check uses it instead of
+    // working it out again. What it states is the same.
+    use whizbang_core::capability::Picture;
+    let photo = pixels("photo");
+    let mask = full_mask(shown("photo"));
+    let composite = painted_through(&photo, &mask);
+    let picture = Picture::new(photo.clone()).unwrap();
+    assert_eq!(
+        Derivation::checked_of(&picture, &composite, &mask).unwrap(),
+        Derivation::checked(&photo, &composite, &mask).unwrap()
+    );
+    // And it refuses what the other refuses.
+    let why = not_derived(Derivation::checked_of(
+        &picture,
+        &pixels("another photo"),
+        &mask,
+    ));
+    assert!(why.contains("differ"), "{why}");
+}
+
+#[test]
 fn a_mask_is_accepted_through_a_checked_rebind_on_a_composite_derived_from_its_image() {
     let photo = pixels("photo");
     let mask = full_mask(shown("photo"));
