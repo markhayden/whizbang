@@ -116,7 +116,7 @@ a colour profile without applying it.
 | A rotation on the sphere | Composes with its inverse to the identity; wraps at the seam |
 | A wrapped cut and put | A put after a cut returns every pixel to its original place |
 
-**Verify:** `cargo nextest run -p whizbang-core identity`.
+**Verify:** `just test-only -p whizbang-core identity`.
 **Size:** medium.
 
 ### A2. Store: publication and recovery

@@ -39,4 +39,106 @@ allowed=$(grep -r -l -F 'disallowed_methods' crates --include='*.rs' | sort | tr
 grep -B1 -F 'fn spawn_thread(' crates/whizbang-core/src/contract/engine.rs | grep -F 'allow(clippy::disallowed_methods)' >/dev/null ||
   fail "the executor's allow is on spawn_thread"
 
+# Every way a thread is made is named in clippy.toml. The fixture shows four of the six
+# being refused; the other two are a builder's scoped and unchecked spawns, of which the
+# second needs `unsafe`, which this workspace forbids, so both are held by their lines.
+for path in 'std::thread::spawn' 'std::thread::scope' 'std::thread::Scope::spawn' 'std::thread::Builder::spawn' \
+  'std::thread::Builder::spawn_scoped' 'std::thread::Builder::spawn_unchecked'; do
+  grep -q -F "{ path = \"$path\", reason = " clippy.toml || fail "clippy.toml refuses $path"
+done
+
+# An allow of a whole group silences the lint with it, and names no lint: none is allowed or
+# expected anywhere in the crates, in any form of attribute, on one line or over several.
+# Each file is read with its white space made single spaces, so a line break inside the
+# attribute hides nothing.
+check_groups() { # <folder>
+  local file found=""
+  while IFS= read -r file; do
+    if tr -s '[:space:]' ' ' <"$file" | grep -E '(allow|expect) ?\([^)]*(warnings|clippy :: all|clippy::all|clippy :: style|clippy::style)' >/dev/null; then
+      found="$found $file"
+    fi
+  done < <(find "$1" -type f -name '*.rs' ! -path '*/target/*')
+  [ -z "$found" ] || { echo "a group of lints is allowed, and the thread lint with it:$found"; return 1; }
+}
+expect_pass "no group of lints is allowed in the crates" check_groups crates
+mkdir -p "$tmp/group/src"
+for attribute in '#![allow(clippy::style)]' '#[allow(clippy::all)]' '#[expect(warnings)]' \
+  '#![cfg_attr(test, allow(unused, clippy::style))]' '#[allow( warnings )]' \
+  "$(printf '#[allow(\n    unused,\n    clippy::style,\n)]')" "$(printf '#![expect\n(\nwarnings\n)]')"; do
+  printf '%s\nfn f() {}\n' "$attribute" >"$tmp/group/src/lib.rs"
+  expect_fail "a file with $attribute" "a group of lints is allowed" check_groups "$tmp/group"
+done
+printf '#[allow(clippy::too_many_arguments)]\nfn f() {}\n' >"$tmp/group/src/lib.rs"
+expect_pass "an allow of one lint by its name" check_groups "$tmp/group"
+
+# A manifest can allow a lint for a whole crate or the workspace. None sets the thread lint,
+# or a group that holds it, or every warning, to allow.
+check_manifests() { # <folder>
+  local found
+  # A lint is set on a line of its own (`style = "allow"`, `style.level = 'allow'`, or a
+  # table in braces), or in a table named for it whose `level` is on a later line.
+  found=$(find "$1" -type f -name Cargo.toml ! -path '*/target/*' -exec awk -v q="'" '
+    function allows(text) { return text ~ ("[\"" q "]allow[\"" q "]") }
+    /^[[:space:]]*\[/ {
+      named = ($0 ~ /[.[:space:]]"?(disallowed_methods|style|all|warnings)"?[[:space:]]*\][[:space:]]*$/)
+      next
+    }
+    /^[[:space:]]*"?(disallowed_methods|style|all|warnings)"?[[:space:]]*(\.[[:space:]]*level[[:space:]]*)?=/ && allows($0) { print FILENAME ":" FNR ": " $0 }
+    named && /^[[:space:]]*level[[:space:]]*=/ && allows($0) { print FILENAME ":" FNR ": " $0 }
+  ' {} + || true)
+  [ -z "$found" ] || { echo "a manifest allows the thread lint or a group that holds it: $found"; return 1; }
+}
+expect_pass "no manifest allows the thread lint" check_manifests .
+mkdir -p "$tmp/manifest"
+for setting in 'disallowed_methods = "allow"' 'style = "allow"' 'all = { level = "allow", priority = -1 }' \
+  '  warnings = "allow"' '"style" = "allow"' 'style.level = "allow"' "style = 'allow'" \
+  "all = { priority = -1, level = 'allow' }" 'disallowed_methods.level="allow"'; do
+  printf '[workspace.lints.clippy]\n%s\n' "$setting" >"$tmp/manifest/Cargo.toml"
+  expect_fail "a manifest with $setting" "a manifest allows the thread lint" check_manifests "$tmp/manifest"
+done
+for table in '[lints.clippy.style]' '[workspace.lints.clippy.style]' '[workspace.lints.clippy.all]' \
+  '[lints.clippy.disallowed_methods]' '[ workspace.lints.rust.warnings ]'; do
+  printf '%s\npriority = -1\nlevel = "allow"\n' "$table" >"$tmp/manifest/Cargo.toml"
+  expect_fail "a manifest with the table $table" "a manifest allows the thread lint" check_manifests "$tmp/manifest"
+done
+printf '[workspace.lints.clippy.unwrap_used]\nlevel = "allow"\n[workspace.lints.clippy.all]\nlevel = "warn"\n' >"$tmp/manifest/Cargo.toml"
+expect_pass "a manifest whose table allows another lint" check_manifests "$tmp/manifest"
+printf '[workspace.lints.clippy]\nall = { level = "warn", priority = -1 }\nunwrap_used = "allow"\n' >"$tmp/manifest/Cargo.toml"
+expect_pass "a manifest that allows another lint" check_manifests "$tmp/manifest"
+
+# clippy reads the clippy.toml nearest a crate, so a second one would take the list away
+# from the crates under it. There is one, at the root.
+check_one_list() { # <folder>
+  local found
+  found=$(cd "$1" && find . -type f \( -name clippy.toml -o -name .clippy.toml \) ! -path './target/*' ! -path './clippy.toml' | sort | tr '\n' ' ')
+  [ -z "$found" ] || { echo "a second list of what clippy refuses: $found"; return 1; }
+}
+expect_pass "one clippy.toml, at the root" check_one_list .
+mkdir -p "$tmp/lists/crates/x"
+: >"$tmp/lists/clippy.toml"
+expect_pass "a root with its own list alone" check_one_list "$tmp/lists"
+: >"$tmp/lists/crates/x/clippy.toml"
+expect_fail "a clippy.toml in a crate" "a second list" check_one_list "$tmp/lists"
+rm "$tmp/lists/crates/x/clippy.toml"
+: >"$tmp/lists/.clippy.toml"
+expect_fail "a hidden clippy.toml" "a second list" check_one_list "$tmp/lists"
+
+# cargo's own config can hand the compiler flags that cap or allow lints. No config in this
+# repo does.
+check_flags() { # <folder>
+  local found
+  found=$(find "$1" -type f \( -path '*/.cargo/config.toml' -o -path '*/.cargo/config' \) ! -path '*/target/*' \
+    -exec grep -n -H -E -e '--cap-lints|(^|[^A-Za-z0-9_-])-A([^A-Za-z0-9_-]|$)|(^|[^A-Za-z0-9_-])-A[a-z]|--allow' {} + || true)
+  [ -z "$found" ] || { echo "a cargo config caps or allows lints: $found"; return 1; }
+}
+expect_pass "no cargo config caps or allows lints" check_flags .
+mkdir -p "$tmp/flags/.cargo"
+for flags in 'rustflags = ["--cap-lints", "allow"]' 'rustflags = ["-A", "clippy::disallowed_methods"]' \
+  'rustflags = ["-Aclippy::style"]' 'rustflags = "--allow warnings"'; do
+  printf '[build]\n%s\n' "$flags" >"$tmp/flags/.cargo/config.toml"
+  expect_fail "a cargo config with $flags" "a cargo config caps or allows lints" check_flags "$tmp/flags"
+done
+printf '[build]\nrustflags = ["-D", "warnings"]\n[alias]\nA-thing = "check"\n' >"$tmp/flags/.cargo/config.toml"
+expect_pass "a cargo config that denies" check_flags "$tmp/flags"
+
 finished

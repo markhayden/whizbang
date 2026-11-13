@@ -105,7 +105,7 @@ check_kickoff() {
     'gh pr create --base main' 'gh pr checks <number>' '(cd "$text" && "$repo/scripts/scan.sh")' \
     "sed '$strip' >\"\$plain\"" 'scripts/scan.sh --message "$plain"' \
     "git rev-parse '<base>^{commit}'" 'git rev-parse origin/main' \
-    'cargo nextest run -p <crate>' 'bash scripts/tests/<name>.sh' \
+    'just test-only -p <crate>' 'bash scripts/tests/<name>.sh' \
     'git reset --soft <good>' \
     'printf '"'%s\\n'"' "type(scope): summary" >"$text/title.txt"' 'cat >"$text/body.md" <<' \
     'cat "$text/title.txt" "$text/body.md"          # read first' \
@@ -128,7 +128,7 @@ check_kickoff() {
     'Never push with `--no-verify`, never force a push, and never push to `main`.' \
     'Finding no row that names the task is normal.' \
     "from inside the repo's main checkout" \
-    'Neither command is on the allow list' \
+    'The script test is not on the allow list, so it asks first' 'only through `whizbang_testkit::threads`' \
     'makes true once it merges' 'is ticked by a later pull request' \
     "a pass covers a commit only when it ran on exactly that commit's tree" \
     'after the commit `git status --short`' 'has passed on exactly the tree being pushed' \
