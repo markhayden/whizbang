@@ -3,14 +3,16 @@
 //! capability handles and the executor.
 //!
 //! The executor makes one of these for each run (ADR 0005). The cancellation signal and
-//! the deadline are carried and nothing sets them yet; the allowance and the capability
-//! handles are empty until there is a ledger and there are capability interfaces.
+//! the deadline are carried and nothing sets them yet, and the allowance is empty until
+//! there is a ledger. The capability handles are the capability interfaces' (ADR 0006);
+//! the executor hands an action none of them yet.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crate::artifact::Contents;
+use crate::capability::{FillHandle, JudgeHandle, SegmentHandle};
 
 use super::Executor;
 
@@ -74,27 +76,6 @@ impl Allowance {
     }
 }
 
-/// The handle through which an action asks a segmenter. Its contents, the request and
-/// the response, are the capability interfaces' to define.
-#[derive(Debug, Clone)]
-pub struct SegmentHandle {
-    _contents: (),
-}
-
-/// The handle through which an action asks a filler. Its contents are the capability
-/// interfaces' to define.
-#[derive(Debug, Clone)]
-pub struct FillHandle {
-    _contents: (),
-}
-
-/// The handle through which an action asks a judge. Its contents are the capability
-/// interfaces' to define.
-#[derive(Debug, Clone)]
-pub struct JudgeHandle {
-    _contents: (),
-}
-
 /// The capabilities a context offers: for each of the three, a handle, or none. An action
 /// reaches a model through one of these and in no other way.
 #[derive(Debug, Clone)]
@@ -105,13 +86,31 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
-    /// No capability at all. It is the only set there is until a handle can be made.
+    /// No capability at all.
     pub fn none() -> Capabilities {
         Capabilities {
             segment: None,
             fill: None,
             judge: None,
         }
+    }
+
+    /// The same set, offering this segmenter.
+    pub fn with_segment(mut self, handle: SegmentHandle) -> Capabilities {
+        self.segment = Some(handle);
+        self
+    }
+
+    /// The same set, offering this filler.
+    pub fn with_fill(mut self, handle: FillHandle) -> Capabilities {
+        self.fill = Some(handle);
+        self
+    }
+
+    /// The same set, offering this judge.
+    pub fn with_judge(mut self, handle: JudgeHandle) -> Capabilities {
+        self.judge = Some(handle);
+        self
     }
 
     pub fn segment(&self) -> Option<&SegmentHandle> {
