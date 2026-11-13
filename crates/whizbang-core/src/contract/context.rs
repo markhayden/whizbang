@@ -95,19 +95,23 @@ impl Capabilities {
         }
     }
 
-    /// The same set, offering this segmenter.
+    /// The same set, offering this segmenter. The handle is bound to the run: whoever
+    /// makes the context makes it with the context's cancellation signal, and the
+    /// executor sets its deadline, which an action may only shorten.
     pub fn with_segment(mut self, handle: SegmentHandle) -> Capabilities {
         self.segment = Some(handle);
         self
     }
 
-    /// The same set, offering this filler.
+    /// The same set, offering this filler. The handle is bound to the run, and the
+    /// executor sets its deadline, as for a segmenter.
     pub fn with_fill(mut self, handle: FillHandle) -> Capabilities {
         self.fill = Some(handle);
         self
     }
 
-    /// The same set, offering this judge.
+    /// The same set, offering this judge. The handle is bound to the run, and the
+    /// executor sets its deadline, as for a segmenter.
     pub fn with_judge(mut self, handle: JudgeHandle) -> Capabilities {
         self.judge = Some(handle);
         self

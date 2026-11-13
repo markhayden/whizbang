@@ -123,12 +123,19 @@ fn a_sentence_is_cut_at_its_limit_and_is_never_empty() {
         "?".repeat(FAULT_LIMIT)
     );
     // No text, and a text of spaces alone, are no reason.
-    for nothing in ["", " ", "     "] {
+    // White space of any kind is trimmed before the text is cleaned, so a tab or a
+    // line break alone is not a sentence of one question mark.
+    for nothing in ["", " ", "     ", "\t", "\n", " \r\n\t ", "\u{a0}\u{2003}"] {
         assert_eq!(
             Fault::new(FaultKind::Malformed, nothing).sentence(),
             "no reason was given"
         );
     }
+    // And the white space at the ends of a text is not part of its sentence.
+    assert_eq!(
+        Fault::new(FaultKind::Malformed, "\n  status 500 \t").sentence(),
+        "status 500"
+    );
     // A text cut inside a character of several bytes is cut between characters.
     let mixed = format!("{}\u{e9}\u{e9}", "a".repeat(FAULT_LIMIT - 1));
     assert_eq!(

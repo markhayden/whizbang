@@ -230,8 +230,13 @@ impl Bounds {
         }
     }
 
+    /// Narrows the deadline: the earlier of the one already set and this one is kept.
+    /// A deadline is never moved later.
     pub(crate) fn until(&mut self, deadline: Instant) {
-        self.deadline = Some(deadline);
+        self.deadline = Some(match self.deadline {
+            Some(set) => set.min(deadline),
+            None => deadline,
+        });
     }
 
     /// The run's cancellation signal. A backend is expected to stop early when it is

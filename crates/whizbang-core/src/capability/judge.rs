@@ -754,7 +754,10 @@ impl JudgeHandle {
         }
     }
 
-    /// The same handle, for a run that must be over by this time.
+    /// The same handle, for a run that must be over by this time. A deadline is only
+    /// ever narrowed: the executor sets it, and an action that holds the handle, or a
+    /// clone of it, may shorten it; a later time than the one already set changes
+    /// nothing.
     pub fn until(mut self, deadline: Instant) -> JudgeHandle {
         self.bounds.until(deadline);
         self
