@@ -1374,8 +1374,10 @@ fn a_call_whose_admission_is_visible_and_not_confirmed_keeps_what_was_taken_for_
                     other => note(format!("{other:?}")),
                 }
                 note(format!("{:?} left", context.allowance().left_micros()));
-                for _ in 0..2 {
-                    match context.executor().submit(&Call::new("inner")) {
+                // The run it made is counted among the runs under this one, too: the
+                // third run here is the last the tree may hold.
+                for called in ["inner", "inner", "free", "free"] {
+                    match context.executor().submit(&Call::new(called)) {
                         Ok(_) => note("ran".to_owned()),
                         Err(CallError::Refused(refusal)) => note(format!("{:?}", refusal.kind())),
                         other => note(format!("{other:?}")),
@@ -1386,13 +1388,22 @@ fn a_call_whose_admission_is_visible_and_not_confirmed_keeps_what_was_taken_for_
         )
     };
     let inner = action("inner", &[Capability::Fill], |_, _| Ok(Produced::nothing()));
+    let free = act("free", |_, _| Ok(Produced::nothing()));
     let bound = Arc::new(Priced(AtomicU64::new(100)));
-    let executor = engine_on(world.store(), bound, vec![outer, inner])
-        .with_ledger(Arc::new(FakeLedger::new()));
+    let executor = engine_on(world.store(), bound, vec![outer, inner, free])
+        .with_ledger(Arc::new(FakeLedger::new()))
+        .with_descendants_limit(3);
     let finished = executor.submit(&Call::new("outer")).unwrap();
     assert_eq!(
         *said.lock().unwrap(),
-        ["unconfirmed", "Some(100) left", "ran", "OverCaller"]
+        [
+            "unconfirmed",
+            "Some(100) left",
+            "ran",
+            "OverCaller",
+            "ran",
+            "TreeFull"
+        ]
     );
     let all = records(&world);
     let taken: u64 = all
@@ -1401,7 +1412,7 @@ fn a_call_whose_admission_is_visible_and_not_confirmed_keeps_what_was_taken_for_
         .filter(|admitted| admitted.parent() == Some(finished.run()))
         .map(|admitted| admitted.reserved_micros().unwrap())
         .sum();
-    assert_eq!((all.len(), taken), (3, 200));
+    assert_eq!((all.len(), taken), (4, 200));
 }
 
 #[test]

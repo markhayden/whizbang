@@ -823,9 +823,9 @@ called twice in a row by one run is two runs and no call back
 
 **The order of the refusals.** A call is held, in this order, to: no request id
 (`IdInside`); the levels (`TooDeep`); the stack (`CallBack`); then, under the lock of
-what the caller keeps of its calls, the count of its calls (`TooManyCalls`), the runs
-it has started (`TooManyStartedUnder`, for `start`), and the count of the whole tree
-(`TreeFull`); and then everything admission holds any call to, with the allowance
+what the caller keeps of its calls, whether its action has come back (`CallerOver`),
+the runs it has started (`TooManyStartedUnder`, for `start`), the count of its calls
+(`TooManyCalls`), and the count of the whole tree (`TreeFull`); and then everything admission holds any call to, with the allowance
 after readiness. The first that refuses is the refusal: a call with a request id at a
 fifth level is refused for its id. For `start`, a place among the store's started
 runs is taken before any of these, so a full count (`TooManyStarted`) is said first.
