@@ -131,6 +131,9 @@ pub struct Engine {
     requests: usize,
     /// How many bytes of exchanges with a judge one run may store.
     exchanges: u64,
+    /// For tests: what is done in a wait from inside an action, between its first
+    /// look at the waiter's signal and its look at the run.
+    before_watch: Option<Arc<dyn Fn() + Send + Sync>>,
     /// How many started runs the store's writer may have, not over, when this executor
     /// starts one more ([`Engine::with_started_bound`]).
     started_bound: usize,
@@ -221,6 +224,7 @@ impl Engine {
             descendants: DESCENDANTS_LIMIT,
             requests: REQUESTS_LIMIT,
             exchanges: EXCHANGES_MAX_BYTES,
+            before_watch: None,
             started_bound: STARTED_RUNS_DEFAULT,
             spawn: spawn_thread,
         }
@@ -310,6 +314,15 @@ impl Engine {
         attached
             .and_then(live::of)
             .map(|live| live.nest().held_open())
+    }
+
+    /// For tests: the same executor, doing this in every wait from inside an action,
+    /// after the wait has looked at the waiter's signal and before it looks at the
+    /// run: the moment at which a cancellation could be missed.
+    #[doc(hidden)]
+    pub fn with_pause_in_a_nested_wait(mut self, then: Arc<dyn Fn() + Send + Sync>) -> Engine {
+        self.before_watch = Some(then);
+        self
     }
 
     /// For tests: the same executor, with this many runs at most under one run that
@@ -1518,7 +1531,22 @@ impl Engine {
         run: &RunId,
         signal: &Cancellation,
     ) -> Result<Watched, CallError> {
-        self.watch(run, true, Some(signal))
+        // A run that is cancelled is told so before anything is looked at: a run that
+        // is not open here, or is over, is not waited for, and would be answered.
+        if signal.is_cancelled() {
+            return Err(Refusal::WaitCancelled { run: run.clone() }.into());
+        }
+        if let Some(then) = &self.before_watch {
+            then();
+        }
+        let watched = self.watch(run, true, Some(signal))?;
+        // And once more before the run is answered for: a cancellation that landed
+        // after the first look, with a run that had ended and left the table by the
+        // time the store was looked at, was never waited on and so never seen.
+        if signal.is_cancelled() {
+            return Err(Refusal::WaitCancelled { run: run.clone() }.into());
+        }
+        Ok(watched)
     }
 
     /// Where the run is now (ADR 0008, "Status"): a look at the store, then at the
@@ -1626,6 +1654,18 @@ mod tests {
 
     use super::*;
     use crate::store::fs::RealFs;
+
+    #[test]
+    fn a_wait_for_a_run_that_is_over_by_a_waiter_that_is_cancelled_says_the_waiter_was() {
+        // Both are so before the wait begins: no thread, and no race.
+        let kept = Arc::new(Kept::new(Arc::new(SystemClock), Secrets::none()));
+        let live = Arc::new(LiveRun::new(kept, Cancellation::new(), Arc::default()));
+        live.over(true, None);
+        let signal = Cancellation::new();
+        assert!(live.wait_until_over_unless(&signal));
+        signal.cancel();
+        assert!(!live.wait_until_over_unless(&signal));
+    }
 
     #[test]
     fn a_runs_place_is_free_before_whoever_waits_for_the_run_is_told() {
