@@ -95,6 +95,12 @@ impl Committed {
     }
 }
 
+/// How many characters an outcome keeps of a text an action or a panic gave: an error's
+/// type, its message, and the reason a run was invalid. A longer one is cut there, and
+/// three dots follow (ADR 0008, "What an action or a panic says is cut"). A record
+/// holds these texts, and a record is bounded ([`super::RECORD_MAX_BYTES`]).
+pub const MESSAGE_LIMIT: usize = 4096;
+
 /// How a run ended (`SPEC.md` section 3): completed, cancelled, error or invalid. A
 /// refusal is not one of these: it happens before any run exists ([`super::Refusal`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,11 +109,11 @@ pub enum Outcome {
     Completed { outputs: Vec<Committed> },
     /// A cancellation was accepted before the outputs were committed. None were.
     Cancelled,
-    /// The action failed: the type of the failure and what it said. No output was
-    /// committed.
+    /// The action failed: the type of the failure and what it said, each cut at
+    /// [`MESSAGE_LIMIT`] characters. No output was committed.
     Error { kind: String, message: String },
-    /// The action ran and found that what it was given cannot be worked on. No output
-    /// was committed.
+    /// The action ran and found that what it was given cannot be worked on; the reason
+    /// is cut at [`MESSAGE_LIMIT`] characters. No output was committed.
     Invalid { why: String },
 }
 
