@@ -69,6 +69,24 @@ fn a_sentence_cannot_hold_a_path_an_address_or_a_line_break() {
 }
 
 #[test]
+fn every_character_is_kept_or_replaced_by_the_one_rule() {
+    // Every character there is, one at a time: an ASCII letter, a digit, a space and
+    // eleven marks are kept, and each of the others becomes a question mark.
+    let marks = ". , ; : ' ( ) % + - _";
+    let mut kept = 0;
+    for c in (0..=0x10FFFF_u32).filter_map(char::from_u32) {
+        let fault = Fault::new(FaultKind::Malformed, &c.to_string());
+        if c.is_ascii_alphanumeric() || c == ' ' || (marks.contains(c) && c != ' ') {
+            assert_eq!(fault.sentence(), c.to_string(), "{c:?} was not kept");
+            kept += 1;
+        } else {
+            assert_eq!(fault.sentence(), "?", "{c:?} was kept");
+        }
+    }
+    assert_eq!(kept, 26 + 26 + 10 + 1 + 11);
+}
+
+#[test]
 fn a_sentence_is_cut_at_its_limit_and_is_never_empty() {
     assert_eq!(FAULT_LIMIT, 240);
     let long = "a".repeat(FAULT_LIMIT + 60);
