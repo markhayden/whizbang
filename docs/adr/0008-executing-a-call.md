@@ -659,8 +659,9 @@ the action left behind, is recorded nowhere
 **The record lists the calls.** `steps` holds one element for each call that was
 admitted, in the order of admission: the word `call`, the child's run id, the action,
 and how the child had ended, or null for a child that had not: one that was abandoned
-("A run with nothing behind it"), or one that was started and was still executing. The child's arguments, inputs and outputs are in the child's own
-record, which the step names: that is the spec's "reference to its result". A run
+("A run with nothing behind it"), or one that was started and was still executing.
+The child's arguments, inputs and outputs are in the child's own record, which the
+step names: that is the spec's "reference to its result". A run
 makes at most 256 calls that are admitted (`STEPS_LIMIT`); one more is refused
 (`Refusal::TooManyCalls`), so the list is never cut. The bound is low because a call
 is two publications and the cost of a publication grows with what the store holds:
