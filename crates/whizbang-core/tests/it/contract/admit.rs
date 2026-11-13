@@ -1204,7 +1204,12 @@ fn a_run_whose_end_could_not_be_written_is_answered_as_not_ended_here() {
         Err(CallError::Store(_))
     ));
     let earlier = repeat(engine.request(&asked("hello", "order-17")));
-    assert_eq!(earlier.state(), &RunState::NotEnded { here: true });
+    // Abandoned (ADR 0008, "A run with nothing behind it"): open here, and nothing ends it.
+    assert!(
+        matches!(earlier.state(), RunState::Abandoned { failure: Some(_) }),
+        "{:?}",
+        earlier.state()
+    );
     assert_eq!(world.ran(), 1);
 }
 
@@ -2005,7 +2010,12 @@ fn an_admission_that_was_visible_and_not_confirmed_takes_the_id_and_never_runs()
     );
     assert_eq!(world.ran(), 0);
     let earlier = repeat(engine.request(&asked("hello", "order-17")));
-    assert_eq!(earlier.state(), &RunState::NotEnded { here: true });
+    // Abandoned (ADR 0008, "A run with nothing behind it"): open here, and nothing ends it.
+    assert!(
+        matches!(earlier.state(), RunState::Abandoned { failure: Some(_) }),
+        "{:?}",
+        earlier.state()
+    );
     assert!(matches!(
         engine.request(&asked("goodbye", "order-17")),
         Err(CallError::Refused(Refusal::Conflict { .. }))
@@ -3148,7 +3158,12 @@ fn a_run_whose_closing_was_refused_before_it_was_visible_is_still_this_writers()
         Err(CallError::Store(_))
     ));
     let earlier = repeat(engine.request(&asked("hello", "order-17")));
-    assert_eq!(earlier.state(), &RunState::NotEnded { here: true });
+    // Abandoned (ADR 0008, "A run with nothing behind it"): open here, and nothing ends it.
+    assert!(
+        matches!(earlier.state(), RunState::Abandoned { failure: Some(_) }),
+        "{:?}",
+        earlier.state()
+    );
     assert!(store.made_here(earlier.run().as_str()));
     assert_eq!(world.ran(), 1);
 }

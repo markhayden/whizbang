@@ -11,6 +11,7 @@ use whizbang_core::capability::{
 };
 use whizbang_core::contract::Cancellation;
 use whizbang_core::identity::CanonicalPixels;
+use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::capabilities::{FakeFiller, FakeJudge, FakeSegmenter, Paint};
 
 const WIDTH: u32 = 6;
@@ -394,4 +395,101 @@ fn the_fake_judge_gives_each_of_many_simultaneous_requests_one_turn_of_its_scrip
         }
     }
     assert_eq!((played.len(), past_the_end), (200, 40));
+}
+
+// --- a request held open ----------------------------------------------------------------------
+
+#[test]
+fn a_fake_that_stops_at_a_barrier_sees_its_runs_cancellation_while_it_holds_the_request() {
+    // Each fake, told to stop at a barrier, holds every request it is sent open until
+    // the test lets it go, and notes what the bounds it was handed say on the way in
+    // and on the way out. Cancelled meanwhile, the request stops with the fault
+    // `cancelled`; otherwise it is answered as the fake answers.
+    type Ask = Box<dyn Fn(&Cancellation) -> Option<FaultKind> + Send + Sync>;
+    let barriers = Barriers::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3600);
+    let filler = Arc::new(FakeFiller::new(Paint::Inverse).stopping_at(&barriers, "fill"));
+    let segmenter = Arc::new(FakeSegmenter::new().stopping_at(&barriers, "segment"));
+    let turn = said(vec![text("yes")], StopReason::EndTurn);
+    let judge = Arc::new(
+        FakeJudge::scripted(vec![Ok(turn.clone()), Ok(turn)]).stopping_at(&barriers, "judge"),
+    );
+    let asks: [(&str, Ask); 3] = [
+        ("fill", {
+            let filler = filler.clone();
+            Box::new(move |run| {
+                let handle = FillHandle::new(filler.clone(), run.clone()).until(deadline);
+                handle.fill(&fill_request(None)).err().map(|f| f.kind())
+            })
+        }),
+        ("segment", {
+            let segmenter = segmenter.clone();
+            Box::new(move |run| {
+                let handle = SegmentHandle::new(segmenter.clone(), run.clone()).until(deadline);
+                let one = vec![Query::phrase("a dog").unwrap()];
+                let request = SegmentRequest::new(picture(), one, 1).unwrap();
+                handle.segment(&request).err().map(|f| f.kind())
+            })
+        }),
+        ("judge", {
+            let judge = judge.clone();
+            Box::new(move |run| {
+                let handle = JudgeHandle::new(judge.clone(), run.clone()).until(deadline);
+                handle.send(&asking("well?")).err().map(|f| f.kind())
+            })
+        }),
+    ];
+    for (name, ask) in &asks {
+        // One request that is let go as it is, and one whose run is cancelled while
+        // the fake holds it.
+        for (turn, cancel) in [(1, false), (2, true)] {
+            let run = now();
+            let answer = whizbang_testkit::threads::scope(|scope| {
+                let asking = scope.spawn(|| ask(&run));
+                barriers.arrived(name, turn);
+                assert!(!asking.is_finished(), "{name}");
+                if cancel {
+                    run.cancel();
+                }
+                barriers.release(name);
+                asking.join().unwrap()
+            });
+            let expected = cancel.then_some(FaultKind::Cancelled);
+            assert_eq!(answer, expected, "{name}");
+        }
+    }
+    let seen = [filler.observed(), segmenter.observed(), judge.observed()];
+    for observed in &seen {
+        let told: Vec<_> = observed
+            .iter()
+            .map(|one| {
+                (
+                    one.cancelled_on_arrival(),
+                    one.cancelled_on_release(),
+                    one.deadline(),
+                )
+            })
+            .collect();
+        let deadline = Some(deadline);
+        assert_eq!(told, [(false, false, deadline), (false, true, deadline)]);
+    }
+    // A request that was held open was sent, and is counted, however it ended.
+    assert_eq!(
+        (filler.requests(), segmenter.requests(), judge.requests()),
+        (2, 2, 2)
+    );
+    // A fake that was not told to stop observes nothing.
+    assert!(FakeFiller::new(Paint::Inverse).observed().is_empty());
+}
+
+#[test]
+fn the_fake_segmenter_fails_when_it_was_told_to() {
+    let fault = Fault::new(FaultKind::Unavailable, "the model is loading");
+    let segmenter = Arc::new(FakeSegmenter::new().failing(fault.clone()));
+    let one = SegmentRequest::new(picture(), vec![Query::phrase("a dog").unwrap()], 1).unwrap();
+    let handle = SegmentHandle::new(segmenter.clone(), now());
+    assert_eq!(handle.segment(&one).unwrap_err(), fault);
+    assert_eq!(handle.segment(&one).unwrap_err(), fault);
+    // A request that was answered with a fault was sent, and is counted.
+    assert_eq!(segmenter.requests(), 2);
 }

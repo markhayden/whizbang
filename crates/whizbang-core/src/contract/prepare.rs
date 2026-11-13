@@ -491,8 +491,9 @@ pub enum CallError {
     },
     /// The run was admitted to be started, and no thread could be made for its action:
     /// `why` is the system's sentence. This is not a judgement of the call. The run is
-    /// in the store, ended as an error that says the same, unless that end could not
-    /// be written; nothing works on it, and nobody waits for it.
+    /// in the store, ended as an error that says the same; or, when that end could
+    /// not be written, as it was admitted, and abandoned
+    /// ([`super::RunState::Abandoned`]). Nothing works on it, and nobody waits for it.
     NotStarted {
         run: super::RunId,
         why: String,
@@ -607,6 +608,14 @@ pub enum Refusal {
     /// The text given as a request's id is not one. `why` is the whole sentence, which
     /// shows the text escaped and cut.
     NotARequestId { why: String },
+    /// The signal the request came with was set before the request was admitted
+    /// ([`super::Request::cancelled_by`]). No run was made, nothing was reserved, and
+    /// the request's id is not taken by this request.
+    Cancelled { action: String },
+    /// The deadline the request came with passed before the request was admitted
+    /// ([`super::Request::until`]). No run was made, nothing was reserved, and the
+    /// request's id is not taken by this request.
+    DeadlinePassed { action: String },
 }
 
 impl std::fmt::Display for Refusal {
@@ -682,6 +691,14 @@ impl std::fmt::Display for Refusal {
                  reserved"
             ),
             Refusal::NotARequestId { why } => f.write_str(why),
+            Refusal::Cancelled { action } => write!(
+                f,
+                "{action} was not admitted: its request was cancelled first"
+            ),
+            Refusal::DeadlinePassed { action } => write!(
+                f,
+                "{action} was not admitted: the deadline of its request passed first"
+            ),
             Refusal::SecretInRequestId => f.write_str(
                 "the request id holds something that must not be written: an id is stored \
                  as it is, so it cannot hold a secret",

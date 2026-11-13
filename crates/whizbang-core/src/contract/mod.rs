@@ -18,8 +18,9 @@
 //! hands back artifacts ([`Produced`]), and the executor publishes them with the run's
 //! completed status in the one publication that ends the run; a panic in an action ends
 //! its run as an error. And asking after a run by its id: [`Executor::start`],
-//! [`Executor::status`] and [`Executor::wait`]. The ledger itself and settlement are not
-//! here, and neither are nested calls and cancellation.
+//! [`Executor::status`] and [`Executor::wait`]; and cancelling it
+//! ([`Executor::cancel`]), which is accepted before the run's commit step and never
+//! after. The ledger itself and settlement are not here, and neither are nested calls.
 
 mod call;
 mod context;
@@ -39,7 +40,7 @@ pub mod text;
 pub use crate::capability::{FillHandle, JudgeHandle, SegmentHandle};
 pub use call::Call;
 pub use context::{
-    Allowance, Cancellation, Capabilities, Context, Diagnostics, Events, NoDiagnostics,
+    Allowance, Cancellation, Capabilities, Context, Diagnostics, Events, Handles, NoDiagnostics,
 };
 pub use descriptor::{
     ActionDescriptor, Argument, Capability, Count, DescriptorError, Draft, InputPort, Kind,
@@ -65,7 +66,7 @@ pub use record::{
 pub use redact::{REDACTED, SECRET_MIN_BYTES, SecretRefused, Secrets};
 pub use registry::{Action, Failure, Produced, RegistrationError, Registry};
 pub use request::{
-    ADMISSION_RECORD, ADMITTED_NAME, Admission, Answer, ENDING_RECORD, Earlier, Ending,
+    ADMISSION_RECORD, ADMITTED_NAME, Admission, Answer, Cancel, ENDING_RECORD, Earlier, Ending,
     REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, REQUESTS_PREFIX, Request, RequestId,
     RequestRecordError, RunState, Watched, request_fingerprint,
 };

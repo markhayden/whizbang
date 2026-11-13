@@ -17,7 +17,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::contract::Cancellation;
+use crate::contract::{Cancellation, Clock};
 use crate::identity::{CanonicalPixels, PixelDigest};
 
 mod declare;
@@ -215,11 +215,23 @@ pub(crate) fn pixel_count(what: &'static str, width: u32, height: u32) -> Result
 /// one. A handle makes it, from the run it is bound to, and hands it to the backend with
 /// every request; nothing else can make one. What a later task needs a backend to know
 /// of its run is added here, and no trait changes for it.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct Bounds {
     cancellation: Cancellation,
     deadline: Option<Instant>,
+    /// What tells the time the deadline is held to, when it is not the machine's: the
+    /// clock of the executor that made the run (ADR 0008, "A deadline in a run").
+    clock: Option<Arc<dyn Clock>>,
+}
+
+impl std::fmt::Debug for Bounds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Bounds")
+            .field("cancelled", &self.is_cancelled())
+            .field("deadline", &self.deadline)
+            .finish()
+    }
 }
 
 impl Bounds {
@@ -227,7 +239,13 @@ impl Bounds {
         Bounds {
             cancellation,
             deadline: None,
+            clock: None,
         }
+    }
+
+    /// Holds the deadline to this clock, in place of the machine's.
+    pub(crate) fn timed_by(&mut self, clock: Arc<dyn Clock>) {
+        self.clock = Some(clock);
     }
 
     /// Narrows the deadline: the earlier of the one already set and this one is kept.
@@ -271,10 +289,8 @@ impl Bounds {
                 "the run was cancelled before the request was sent",
             ));
         }
-        if self
-            .deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-        {
+        let now = || self.clock.as_ref().map_or_else(Instant::now, |c| c.now());
+        if self.deadline.is_some_and(|deadline| now() >= deadline) {
             return Err(Fault::new(
                 FaultKind::TimedOut,
                 "the deadline of the run passed before the request was sent",
