@@ -1442,6 +1442,11 @@ impl Engine {
         run: &RunId,
         signal: &Cancellation,
     ) -> Result<Watched, CallError> {
+        // A run that is cancelled is told so before anything is looked at: a run that
+        // is not open here, or is over, is not waited for, and would be answered.
+        if signal.is_cancelled() {
+            return Err(Refusal::WaitCancelled { run: run.clone() }.into());
+        }
         self.watch(run, true, Some(signal))
     }
 
