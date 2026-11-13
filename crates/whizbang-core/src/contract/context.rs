@@ -14,9 +14,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use crate::artifact::Contents;
-use crate::capability::{FillHandle, Filler, Judge, JudgeHandle, SegmentHandle, Segmenter, Tally};
+use crate::capability::{
+    Declaration, FillHandle, Filler, Judge, JudgeHandle, Recorder, SegmentHandle, Segmenter, Tally,
+};
 
-use super::Executor;
+use super::nested::Offer;
+use super::{Capability, Executor, PreparedCall};
 
 /// A cancellation signal. Every clone is the same signal: once one is cancelled, all are,
 /// and none is ever uncancelled.
@@ -199,17 +202,21 @@ impl Drop for Taken {
 }
 
 /// The backends a context's capability handles are made over: for each of the three
-/// capabilities, a backend, or none. It holds no handle. A handle is bound to one run,
-/// and only a context makes the handles an action is offered, with its own signal and
-/// its own deadline ([`Context::new`]): so an action is never handed a handle bound to
-/// another run's signal (ADR 0006, ADR 0008).
+/// capabilities, the backends there are, in the order they were given. It holds no
+/// handle. A handle is bound to one run, and only a context makes the handles an action
+/// is offered, with its own signal and its own deadline ([`Context::new`]): so an
+/// action is never handed a handle bound to another run's signal (ADR 0006, ADR 0008).
+///
+/// An executor holds every backend of its build, and hands a run those its call
+/// resolved ([`Capabilities::resolved_for`], ADR 0009). A context is handed at most one
+/// backend of each capability: it makes its handle over the first.
 ///
 /// What `{:?}` prints is which of the three there are.
 #[derive(Clone, Default)]
 pub struct Capabilities {
-    segment: Option<Arc<dyn Segmenter>>,
-    fill: Option<Arc<dyn Filler>>,
-    judge: Option<Arc<dyn Judge>>,
+    segment: Vec<Arc<dyn Segmenter>>,
+    fill: Vec<Arc<dyn Filler>>,
+    judge: Vec<Arc<dyn Judge>>,
 }
 
 impl Capabilities {
@@ -218,26 +225,59 @@ impl Capabilities {
         Capabilities::default()
     }
 
-    /// The same set, with this segmenter.
+    /// The same set, with this segmenter after those it holds.
     pub fn with_segment(mut self, backend: Arc<dyn Segmenter>) -> Capabilities {
-        self.segment = Some(backend);
+        self.segment.push(backend);
         self
     }
 
-    /// The same set, with this filler.
+    /// The same set, with this filler after those it holds.
     pub fn with_fill(mut self, backend: Arc<dyn Filler>) -> Capabilities {
-        self.fill = Some(backend);
+        self.fill.push(backend);
         self
     }
 
-    /// The same set, with this judge.
+    /// The same set, with this judge after those it holds.
     pub fn with_judge(mut self, backend: Arc<dyn Judge>) -> Capabilities {
-        self.judge = Some(backend);
+        self.judge.push(backend);
         self
     }
 
-    /// A handle on each backend, bound to this signal and held to this deadline, each
-    /// counting the requests it sends in this tally.
+    /// Of these backends, the ones this call resolved (ADR 0009): for each capability
+    /// the call needs and a model answers, the first backend here that declares that
+    /// model, by its backend, its model and its version; and none for a capability the
+    /// call does not need, or whose model no backend here declares. A call with two
+    /// needs of one capability is handed the backend of the first.
+    pub(super) fn resolved_for(&self, prepared: &PreparedCall) -> Capabilities {
+        let model_of = |capability: Capability| {
+            let mut needs = prepared.needs().iter();
+            let need = needs.find(|need| need.capability() == capability)?;
+            need.model()
+        };
+        fn pick<B: ?Sized>(
+            backends: &[Arc<B>],
+            model: Option<&super::ModelIdentity>,
+            declared: impl Fn(&B) -> &Declaration,
+        ) -> Vec<Arc<B>> {
+            let found = model.and_then(|model| {
+                let mut backends = backends.iter();
+                backends.find(|backend| declared(backend.as_ref()).model() == model)
+            });
+            found.cloned().into_iter().collect()
+        }
+        Capabilities {
+            segment: pick(&self.segment, model_of(Capability::Segment), |b| {
+                b.declaration()
+            }),
+            fill: pick(&self.fill, model_of(Capability::Fill), |b| b.declaration()),
+            judge: pick(&self.judge, model_of(Capability::Judge), |b| {
+                b.declaration()
+            }),
+        }
+    }
+
+    /// A handle on the first backend of each capability, bound to this signal and held
+    /// to this deadline, each counting the requests it sends in this tally.
     fn bound(
         &self,
         cancellation: &Cancellation,
@@ -245,11 +285,11 @@ impl Capabilities {
         tally: &Arc<Tally>,
     ) -> Handles {
         let run = || cancellation.clone();
-        let segment = self.segment.clone();
+        let segment = self.segment.first().cloned();
         let segment = segment.map(|b| SegmentHandle::new(b, run()).counted(tally.clone()));
-        let fill = self.fill.clone();
+        let fill = self.fill.first().cloned();
         let fill = fill.map(|b| FillHandle::new(b, run()).counted(tally.clone()));
-        let judge = self.judge.clone();
+        let judge = self.judge.first().cloned();
         let judge = judge.map(|b| JudgeHandle::new(b, run()).counted(tally.clone()));
         match deadline {
             None => Handles {
@@ -269,9 +309,9 @@ impl Capabilities {
 impl std::fmt::Debug for Capabilities {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Capabilities")
-            .field("segment", &self.segment.is_some())
-            .field("fill", &self.fill.is_some())
-            .field("judge", &self.judge.is_some())
+            .field("segment", &!self.segment.is_empty())
+            .field("fill", &!self.fill.is_empty())
+            .field("judge", &!self.judge.is_empty())
             .finish()
     }
 }
@@ -314,6 +354,8 @@ pub struct Context {
     requests: Arc<Tally>,
     executor: Arc<dyn Executor>,
     diagnostics: Arc<dyn Diagnostics>,
+    /// The actions the run's calls are held to, once it froze them.
+    offer: Arc<Offer>,
 }
 
 impl Context {
@@ -341,7 +383,33 @@ impl Context {
             requests,
             executor,
             diagnostics: Arc::new(NoDiagnostics),
+            offer: Arc::new(Offer::default()),
         }
+    }
+
+    /// The same context, whose executor holds its calls to what is frozen here.
+    pub(super) fn offering(mut self, offer: Arc<Offer>) -> Context {
+        self.offer = offer;
+        self
+    }
+
+    /// Freezes the actions this run may call, by name (ADR 0009): from here on a call
+    /// through [`Context::executor`] of any other action is refused, and so is a call
+    /// that gives as an input an artifact that is neither an input of this run's own
+    /// call nor an output that a run it called committed. Each refusal is in the
+    /// run's record. It is said once: false when the run froze them before, and then
+    /// nothing changes. A context that no executor made freezes nothing its executor
+    /// reads.
+    pub fn freeze_calls<'a>(&self, actions: impl IntoIterator<Item = &'a str>) -> bool {
+        let actions = actions.into_iter().map(str::to_owned).collect();
+        self.offer.freeze(actions)
+    }
+
+    /// The same context, whose handles keep what they send with this recorder: each
+    /// request timed by its clock, and each exchange with a judge kept by it.
+    pub(super) fn recording(self, recorder: Arc<dyn Recorder>) -> Context {
+        self.requests.record_with(recorder);
+        self
     }
 
     /// The same context, writing its diagnostics here.

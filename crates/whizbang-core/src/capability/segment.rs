@@ -408,10 +408,18 @@ impl SegmentHandle {
             self.declaration(),
             request.queries.iter().map(Query::feature),
         )?;
-        let response = {
-            let _sent = self.bounds.sending()?;
-            self.backend.segment(request, &self.bounds)
-        }?;
+        let capability = crate::contract::Capability::Segment;
+        self.bounds.send(capability, self.declaration(), || {
+            self.held(request, self.backend.segment(request, &self.bounds)?)
+        })
+    }
+
+    /// The backend's answer, held to the request.
+    fn held(
+        &self,
+        request: &SegmentRequest,
+        response: SegmentResponse,
+    ) -> Result<SegmentResponse, Fault> {
         let what = "the segmenter's answer";
         if response.answers.len() != request.queries.len() {
             return Err(Unfit::NotAllowed {

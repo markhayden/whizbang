@@ -13,7 +13,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use super::record::{Diagnostic, quoted};
+use crate::capability::Recorder;
+
+use super::record::{DIAGNOSTICS_PREFIX, Diagnostic, quoted};
 use super::{Diagnostics, Events, Secrets};
 
 /// What tells a run the time: milliseconds since the Unix epoch.
@@ -93,8 +95,35 @@ impl Events for Kept {
     }
 }
 
+/// What the name of every exchange with a judge starts with, among the diagnostics of
+/// a run: `exchange-`, then the exchange's number among the run's requests, from 1, in
+/// four digits. The executor's handles write these, and an action cannot (ADR 0009).
+pub const EXCHANGE_PREFIX: &str = "exchange-";
+
+impl Recorder for Kept {
+    fn now_ms(&self) -> u64 {
+        self.clock.now_ms()
+    }
+
+    fn exchange(&self, place: usize, written: &[u8]) -> Option<String> {
+        // A name is refused only when it holds a secret: the exchange is then not
+        // kept, and the record says so.
+        let name = format!("{EXCHANGE_PREFIX}{:04}", place + 1);
+        let made = Diagnostic::written(&name, written, &self.secrets).ok()?;
+        let mut diagnostics = self.diagnostics.lock().unwrap_or_else(|e| e.into_inner());
+        diagnostics.insert(name.clone(), made);
+        Some(format!("{DIAGNOSTICS_PREFIX}{name}"))
+    }
+}
+
 impl Diagnostics for Kept {
     fn write(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        if name.starts_with(EXCHANGE_PREFIX) {
+            return Err(format!(
+                "a diagnostic whose name starts with {EXCHANGE_PREFIX} is an exchange with a \
+                 judge, which the executor writes"
+            ));
+        }
         let made = Diagnostic::written(name, bytes, &self.secrets)?;
         let mut diagnostics = self.diagnostics.lock().unwrap_or_else(|e| e.into_inner());
         if diagnostics.contains_key(name) {

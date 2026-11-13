@@ -14,15 +14,16 @@ use std::time::{Duration, Instant};
 use whizbang_core::capability::{FaultKind, FillRequest, Picture, Support};
 use whizbang_core::contract::record::{DIAGNOSTICS_PREFIX, JOURNAL_NAME, Status};
 use whizbang_core::contract::{
-    Action, Answer, Call, CallError, Cancel, Cancellation, Capabilities, Clock, Context, Declined,
-    Ending, Engine, Executor, Failure, Ledger, NoBackends, Outcome, Produced, Refusal, Registry,
-    Request, RequestId, Reservation, RunId, RunState, Step, StoreFailure, Value, read_journal,
+    Action, Answer, Backends, Call, CallError, Cancel, Cancellation, Capabilities, Capability,
+    Clock, Context, Declined, Ending, Engine, Executor, Failure, Ledger, NoBackends, Outcome,
+    Produced, Refusal, Registry, Request, RequestId, Reservation, RunId, RunState, Step,
+    StoreFailure, Value, read_journal,
 };
 use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::store::fs::{Fs, RealFs};
 use whizbang_core::store::{self, Reader, Store};
 use whizbang_testkit::barrier::Barriers;
-use whizbang_testkit::capabilities::{FakeFiller, Paint};
+use whizbang_testkit::capabilities::{FakeFiller, Paint, roster};
 use whizbang_testkit::echo::Echo;
 use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
 use whizbang_testkit::ledger::FakeLedger;
@@ -32,7 +33,7 @@ use whizbang_testkit::scratch::Scratch;
 use super::commit::{World, both, committed, engine_over, held, pair};
 use super::execute::Taker;
 use super::record::schema;
-use super::watch::{AfterTheLook, asked, busy, engine, the_run, work};
+use super::watch::{AfterTheLook, asked, busy, engine, engine_on, the_run, work, work_needing};
 
 /// How long a wait for another thread may last before it is taken for a test that
 /// cannot pass: a limit, not a pause.
@@ -910,11 +911,16 @@ fn fill_request() -> FillRequest {
     FillRequest::new(picture, support, None).unwrap()
 }
 
+/// Backends that offer this filler as the default: its call then resolves it.
+fn offering(filler: &Arc<FakeFiller>) -> Arc<dyn Backends> {
+    Arc::new(roster(None, Some(filler.as_ref()), None))
+}
+
 /// `work` that asks the filler it was handed twice, and notes what each request came
 /// to: the kind of its fault, or none.
 fn fills(asked: &Arc<Mutex<Vec<Option<FaultKind>>>>) -> Arc<dyn Action> {
     let asked = asked.clone();
-    work(move |_, context| {
+    work_needing(&[Capability::Fill], move |_, context| {
         context.events().progress("asking the filler");
         let fill = context.capabilities().fill();
         let fill = fill.expect("the executor hands the action its filler");
@@ -936,7 +942,7 @@ fn while_an_action_is_in_blocking_work_a_second_caller_reads_its_status_and_canc
     let barriers = Barriers::new();
     let filler = Arc::new(FakeFiller::new(Paint::Inverse).stopping_at(&barriers, "fill"));
     let faults = Arc::new(Mutex::new(Vec::new()));
-    let first = engine(store.clone(), vec![fills(&faults)])
+    let first = engine_on(store.clone(), offering(&filler), vec![fills(&faults)])
         .with_capabilities(Capabilities::none().with_fill(filler.clone()));
     let second = engine(store.clone(), Vec::new());
     let Ok(Answer::Started(run)) = first.start(&asked("order-1")) else {
@@ -971,7 +977,7 @@ fn each_runs_handles_are_bound_to_its_own_signal_and_deadline() {
     let barriers = Barriers::new();
     let filler = Arc::new(FakeFiller::new(Paint::Inverse).stopping_at(&barriers, "fill"));
     let faults = Arc::new(Mutex::new(Vec::new()));
-    let executor = engine(store.clone(), vec![fills(&faults)])
+    let executor = engine_on(store.clone(), offering(&filler), vec![fills(&faults)])
         .with_capabilities(Capabilities::none().with_fill(filler.clone()));
     let Ok(Answer::Started(one)) = executor.start(&asked("order-1")) else {
         panic!("the request was not started");

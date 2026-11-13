@@ -20,6 +20,9 @@ capability requests, and how a parent reads what a child committed. Changed: the
 paragraph that says which part builds what; when the commit step begins, in
 "Cancellation"; "What is not built" there and in "Nested calls"; what this record
 does not decide yet.
+Amended: 2026-11-13, with ADR 0009 (task A11). Changed: a run is handed the backend its
+call resolved; capability requests are recorded; a run may freeze the actions its calls
+are held to, with two more refusals.
 Spec: section 3, "The execution contract", "What a run publishes", "Nested calls",
 "Storage" and "What every run records"; section 6, "Spend"
 
@@ -511,10 +514,8 @@ nothing, and a backend that holds a request open sees the signal in its bounds: 
 plan's test is built on that, with a fake filler that holds a request at a barrier
 (`cancel::while_an_action_is_in_blocking_work_a_second_caller_reads_its_status_and_cancels_it`,
 `cancel::each_runs_handles_are_bound_to_its_own_signal_and_deadline`). The executor
-hands every run a handle on every backend it was given, whatever the run's call
-resolved: choosing among several backends by the call's choice, and recording each
-request, come with the first action that asks a capability (task A11,
-`docs/carry-over.md`).
+hands a run a handle on the backend its call resolved for each capability it needs, and
+on no other, and each request is in the run's record (ADR 0009).
 
 **Cancelling an admission, and its deadline.** An admission has no run to name. It is
 cancelled by the signal its request came with: the caller makes the signal, keeps it,
@@ -722,9 +723,8 @@ descendant. And it waits until every request its handles sent is accounted for.
 no change to a trait. A context's handles share one count (`Tally`). A handle counts a
 request just before it calls its backend, after every check that sends nothing, and
 accounts for it when the backend's call is over: answered, failed, or unwound by a
-panic. A request a backend still holds is outstanding. Nothing of a request is written
-to a record yet: that, with `models` and `time.durations`, comes with the first action
-that asks a capability (task A11).
+panic. A request a backend still holds is outstanding. Each request is kept for the
+run's record, in `models` and `time.durations` (ADR 0009).
 
 While it waits, the run is executing: `status` says `NotEnded { here: true }`, `wait`
 does not return, the store holds no record of it, and a `cancel` is accepted and
@@ -771,7 +771,12 @@ writer of its store).
 visible and was not confirmed: that child is abandoned, never ran, and names its
 parent in its own admission. What was taken for a child is not given back when it
 ends. A run that waits for itself, by asking `wait` of an id above it, waits for
-ever. Capability requests are counted and not recorded.
+ever.
+
+**A run may freeze the actions its calls are held to** (`Context::freeze_calls`, ADR
+0009): a call of any other action is then refused (`Refusal::NotOffered`), and so is a
+call that gives an input the run was not given and no run it called committed
+(`Refusal::NotReadable`). Each is recorded as any refusal inside a run is.
 
 ## Consequences
 

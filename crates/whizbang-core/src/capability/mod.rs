@@ -17,7 +17,7 @@
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
-use crate::contract::Cancellation;
+use crate::contract::{Cancellation, Capability, ModelIdentity};
 use crate::identity::{CanonicalPixels, PixelDigest};
 
 mod declare;
@@ -25,6 +25,7 @@ mod fault;
 mod fill;
 mod judge;
 mod segment;
+pub mod written;
 
 pub use declare::{
     Declaration, DeclarationError, Resolved, Roster, RosterError, Unresolved, feature,
@@ -32,7 +33,7 @@ pub use declare::{
 pub use fault::{FAULT_LIMIT, Fault, FaultKind};
 pub use fill::{FillHandle, FillRequest, Filler, PROMPT_LIMIT, Painted, Support};
 pub use judge::{
-    CONVERSATION_LIMIT, Controls, DESCRIPTION_LIMIT, Judge, JudgeHandle, JudgeRequest,
+    CONVERSATION_LIMIT, Controls, DESCRIPTION_LIMIT, Excluded, Judge, JudgeHandle, JudgeRequest,
     MESSAGE_LIMIT, Message, Opaque, PART_LIMIT, Part, RESULT_IMAGE_LIMIT, Role, StopReason,
     TEXT_LIMIT, TOOL_LIMIT, ToolCall, ToolDefinition, ToolResult, Turn, Usage,
 };
@@ -224,6 +225,49 @@ pub struct Bounds {
     tally: Option<Arc<Tally>>,
 }
 
+/// The most requests the handles of one run send. One more is not sent: the fault is
+/// `too_large`. A run's record lists every request it sent (ADR 0009), and a record is
+/// read back only under a bound, so the list has one.
+pub const REQUESTS_LIMIT: usize = 1024;
+
+/// What the handles of one run are given by the executor to keep what they send: the
+/// run's clock, and where the whole of an exchange with a judge is kept. The executor's
+/// own keeper of a run's diagnostics is the one implementation.
+pub(crate) trait Recorder: Send + Sync {
+    /// The time, in milliseconds since the Unix epoch, by the executor's clock.
+    fn now_ms(&self) -> u64;
+
+    /// Keeps the written exchange with a judge that was the run's request at this
+    /// place, from 0, and gives the name it is kept under among the run's names; or
+    /// none when it could not be kept.
+    fn exchange(&self, place: usize, written: &[u8]) -> Option<String>;
+}
+
+/// How a request that was sent ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HowEnded {
+    /// The backend answered, and the handle took the answer.
+    Answered,
+    /// It ended in a fault of this kind, the backend's or the handle's refusal of what
+    /// the backend answered.
+    Fault(FaultKind),
+    /// The backend's call unwound: it panicked.
+    Unwound,
+}
+
+/// One request a handle of the run sent: to which capability, which model answered,
+/// when it was sent and when it was over, and how it ended.
+#[derive(Debug, Clone)]
+pub(crate) struct Logged {
+    pub(crate) capability: Capability,
+    pub(crate) model: ModelIdentity,
+    pub(crate) start_ms: u64,
+    pub(crate) end_ms: u64,
+    pub(crate) ended: HowEnded,
+    /// For a request to a judge: what the record keeps of the exchange.
+    pub(crate) judged: Option<judge::Judged>,
+}
+
 /// The requests the handles of one run were sent, and how many of them are accounted
 /// for: answered, failed, or given up by a backend that returned or panicked (ADR 0006,
 /// "Accounting for requests"; ADR 0008, "Nested calls"). It is the decorator inside
@@ -231,19 +275,32 @@ pub struct Bounds {
 /// accounts for it when the backend's call is over, whatever it came to. A run is
 /// terminal only once every request counted here is accounted for, and from the moment
 /// its action has come back nothing more is sent.
-#[derive(Debug, Default)]
+///
+/// It also keeps each request for the run's record (ADR 0009): what was asked of
+/// which model, how long it took and how it ended.
+#[derive(Default)]
 pub(crate) struct Tally {
     counts: Mutex<Counts>,
     changed: Condvar,
 }
 
-#[derive(Debug, Default)]
+impl std::fmt::Debug for Tally {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let counts = self.counts();
+        write!(f, "Tally({} sent, {} over)", counts.sent, counts.accounted)
+    }
+}
+
+#[derive(Default)]
 struct Counts {
     sent: u64,
     accounted: u64,
     closed: bool,
     /// How many callers are waiting, now, for every request to be accounted for.
     waiting: usize,
+    /// Every request that was sent, in the order they were sent.
+    asked: Vec<Logged>,
+    recorder: Option<Arc<dyn Recorder>>,
 }
 
 impl Tally {
@@ -251,10 +308,20 @@ impl Tally {
         self.counts.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Counts one request that is about to be sent. Refused once the tally is closed:
-    /// the look and the count are one step, so a request is either waited for or not
-    /// sent.
-    fn send(self: &Arc<Tally>) -> Result<Sent, Fault> {
+    /// From here on each request is timed by this recorder's clock, and each exchange
+    /// with a judge is kept by it.
+    pub(crate) fn record_with(&self, recorder: Arc<dyn Recorder>) {
+        self.counts().recorder = Some(recorder);
+    }
+
+    /// Counts one request that is about to be sent to this model. Refused once the
+    /// tally is closed, and when the run has sent as many as one may: the look and
+    /// the count are one step, so a request is either waited for or not sent.
+    fn send(
+        self: &Arc<Tally>,
+        capability: Capability,
+        model: &ModelIdentity,
+    ) -> Result<Sent, Fault> {
         let mut counts = self.counts();
         if counts.closed {
             return Err(Fault::new(
@@ -262,8 +329,31 @@ impl Tally {
                 "the action of the run had come back before the request was sent",
             ));
         }
+        if counts.asked.len() >= REQUESTS_LIMIT {
+            return Err(Fault::new(
+                FaultKind::TooLarge,
+                &format!(
+                    "the run has sent {REQUESTS_LIMIT} requests, which is as many as one run may"
+                ),
+            ));
+        }
+        let now = counts
+            .recorder
+            .as_ref()
+            .map_or(0, |recorder| recorder.now_ms());
         counts.sent += 1;
-        Ok(Sent(self.clone()))
+        counts.asked.push(Logged {
+            capability,
+            model: model.clone(),
+            start_ms: now,
+            end_ms: now,
+            ended: HowEnded::Unwound,
+            judged: None,
+        });
+        Ok(Sent {
+            tally: self.clone(),
+            place: counts.asked.len() - 1,
+        })
     }
 
     /// From here on nothing is sent.
@@ -295,16 +385,67 @@ impl Tally {
         let counts = self.counts();
         counts.sent - counts.accounted
     }
+
+    /// Every request that was sent, in order, as each is now.
+    pub(crate) fn asked(&self) -> Vec<Logged> {
+        self.counts().asked.clone()
+    }
+
+    /// Marks the answer of the last request sent to a judge as left out of the
+    /// conversation that went on. False when no judge was asked.
+    fn exclude_last(&self, why: judge::Excluded) -> bool {
+        let mut counts = self.counts();
+        let last = counts
+            .asked
+            .iter_mut()
+            .rev()
+            .find_map(|asked| asked.judged.as_mut());
+        last.map(|judged| judged.excluded = Some(why)).is_some()
+    }
 }
 
 /// One request that was counted as sent. Dropped, by a return or by a panic that
 /// unwinds through the handle, it is accounted for.
-pub(crate) struct Sent(Arc<Tally>);
+pub(crate) struct Sent {
+    tally: Arc<Tally>,
+    place: usize,
+}
+
+impl Sent {
+    /// The request ended this way: with an answer the handle took, or in a fault.
+    pub(crate) fn ended<T>(&mut self, result: &Result<T, Fault>) {
+        let ended = match result {
+            Ok(_) => HowEnded::Answered,
+            Err(fault) => HowEnded::Fault(fault.kind()),
+        };
+        self.tally.counts().asked[self.place].ended = ended;
+    }
+
+    /// Keeps the exchange with a judge that this request was: the whole of it with
+    /// the run's recorder, when the run has one, and what the record says of it here.
+    fn judged(&mut self, request: &JudgeRequest, answer: &Result<Turn, Fault>) {
+        let recorder = self.tally.counts().recorder.clone();
+        let kept_as = recorder.and_then(|recorder| {
+            let stored =
+                written::write_exchange(self.place, request, answer, written::Keep::Digests);
+            recorder.exchange(self.place, &stored)
+        });
+        let judged = judge::Judged::of(request, answer, kept_as);
+        self.tally.counts().asked[self.place].judged = Some(judged);
+    }
+}
 
 impl Drop for Sent {
     fn drop(&mut self) {
-        self.0.counts().accounted += 1;
-        self.0.changed.notify_all();
+        let mut counts = self.tally.counts();
+        let now = counts
+            .recorder
+            .as_ref()
+            .map_or(0, |recorder| recorder.now_ms());
+        let asked = &mut counts.asked[self.place];
+        asked.end_ms = now.max(asked.start_ms);
+        counts.accounted += 1;
+        self.tally.changed.notify_all();
     }
 }
 
@@ -322,10 +463,40 @@ impl Bounds {
         self.tally = Some(tally);
     }
 
-    /// Counts the request that is about to be sent, when the run counts them. What
-    /// comes back is held until the backend's call is over.
-    pub(crate) fn sending(&self) -> Result<Option<Sent>, Fault> {
-        self.tally.as_ref().map(Tally::send).transpose()
+    /// Counts the request that is about to be sent to this backend, when the run
+    /// counts them. What comes back is held until the request is over.
+    pub(crate) fn sending(
+        &self,
+        capability: Capability,
+        declaration: &Declaration,
+    ) -> Result<Option<Sent>, Fault> {
+        let tally = self.tally.as_ref();
+        tally
+            .map(|tally| tally.send(capability, declaration.model()))
+            .transpose()
+    }
+
+    /// Sends one request: counts it, calls `ask`, which calls the backend and holds
+    /// its answer to the request, and keeps how it ended. A panic in `ask` unwinds
+    /// through here, and the request is accounted for as unwound.
+    pub(crate) fn send<T>(
+        &self,
+        capability: Capability,
+        declaration: &Declaration,
+        ask: impl FnOnce() -> Result<T, Fault>,
+    ) -> Result<T, Fault> {
+        let mut sent = self.sending(capability, declaration)?;
+        let result = ask();
+        if let Some(sent) = &mut sent {
+            sent.ended(&result);
+        }
+        result
+    }
+
+    /// Marks the answer to the last request the run sent to a judge as left out.
+    pub(crate) fn exclude_last(&self, why: judge::Excluded) -> bool {
+        let tally = self.tally.as_ref();
+        tally.is_some_and(|tally| tally.exclude_last(why))
     }
 
     /// Narrows the deadline: the earlier of the one already set and this one is kept.

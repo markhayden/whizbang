@@ -75,6 +75,14 @@ fn well_formed(root: &Value, schema: &Value, at: &str) -> Result<(), String> {
                 }
             }
             "items" => well_formed(root, value, &format!("{at}/items"))?,
+            "oneOf" => {
+                let Some(schemas) = value.as_array().filter(|schemas| !schemas.is_empty()) else {
+                    return wrong("a list of schemas");
+                };
+                for (index, inner) in schemas.iter().enumerate() {
+                    well_formed(root, inner, &format!("{at}/oneOf/{index}"))?;
+                }
+            }
             "type" => {
                 let known = |name: &Value| name.as_str().is_some_and(|n| TYPES.contains(&n));
                 let fine = match value {
@@ -144,6 +152,15 @@ fn check(
             at,
             references + 1,
         )?;
+    }
+    if let Some(schemas) = schema.get("oneOf").and_then(Value::as_array) {
+        let fits = |inner: &&Value| check(root, inner, value, at, references).is_ok();
+        let fitting = schemas.iter().filter(fits).count();
+        if fitting != 1 {
+            return Err(format!(
+                "{at}: the value fits {fitting} of the schemas of which it must fit one"
+            ));
+        }
     }
     if let Some(types) = schema.get("type") {
         let found = type_of(value);

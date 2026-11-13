@@ -15,7 +15,7 @@ use crate::store::{self, Store};
 use super::journal::Kept;
 use super::ledger::{Declined, Reservation, Step};
 use super::live::{self, LiveRun, Told};
-use super::nested::{Added, Family, HeldOpen, Nested, Under};
+use super::nested::{Added, Family, HeldOpen, Nested, Offer, Under};
 use super::prepare::prepare;
 use super::record::{
     Diagnostic, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran, RunRecord,
@@ -901,12 +901,15 @@ impl Engine {
         // admitted against, and handles that the context binds to that signal and
         // that deadline itself.
         // The executor in it admits a call under this run (ADR 0008, "Nested calls").
+        let offer = Arc::new(Offer::default());
         let under = Under {
             run: run.clone(),
             live: live.clone(),
             stack: family.stack.clone(),
             allowance: family.allowance.clone(),
             deadline,
+            inputs: Arc::new(prepared.inputs().iter().map(|input| input.id()).collect()),
+            offer: offer.clone(),
         };
         let context = Context::new(
             live.signal().clone(),
@@ -914,10 +917,13 @@ impl Engine {
             kept.clone(),
             family.allowance.clone(),
             view,
-            self.capabilities.clone(),
+            // The backends the call resolved, and no other (ADR 0009).
+            self.capabilities.resolved_for(&prepared),
             Arc::new(Nested::new(self.clone(), under, self.secrets.clone())),
         )
-        .with_diagnostics(kept.clone());
+        .with_diagnostics(kept.clone())
+        .recording(kept.clone())
+        .offering(offer);
         live.nest().watch(context.requests().clone());
         // A panic in the action is caught: its run ends as any other does, with its
         // record and what it wrote, and the executor goes on (ADR 0008). The context
@@ -947,9 +953,11 @@ impl Engine {
             message: said(message),
         };
         let mut outputs = Vec::new();
+        let mut verdict = None;
         let mut outcome = match handed {
             None => Outcome::Cancelled,
             Some(Ok(Ok(produced))) => {
+                verdict = produced.verdict().cloned();
                 match held_to_ports(&prepared, action.descriptor(), produced, &self.secrets) {
                     Ok(held) => {
                         outputs = held;
@@ -984,7 +992,10 @@ impl Engine {
             .collect();
         // What the run's record says of the calls its action made: they are all over.
         let parent = family.parent.as_ref().map(|(run, _)| run.clone());
-        let inside = live.nest().inside(parent);
+        // A verdict is written only in the record of a run that completed: the record
+        // drops it for any other (ADR 0009).
+        let mut inside = live.nest().inside(parent);
+        inside.verdict = verdict;
         let record_of = |outcome: &Outcome| {
             RunRecord::of(
                 Ran {
@@ -1049,9 +1060,10 @@ impl Engine {
         // what it committed: before this run is over, which is what its caller waits
         // for.
         if let Some((_, parent)) = &family.parent {
+            let times = (start_ms, end_ms);
             parent
                 .nest()
-                .ended(&run, record.outcome().status, outcome.outputs());
+                .ended(&run, record.outcome().status, outcome.outputs(), times);
         }
         Ok(Finished::new(run, outcome))
     }

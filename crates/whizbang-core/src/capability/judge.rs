@@ -11,9 +11,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Instant;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::contract::{Cancellation, text};
+use crate::contract::{Cancellation, Capability, text};
 
 use super::fault::clean;
 use super::{Bounds, Declaration, Fault, FaultKind, Picture, Unfit, feature};
@@ -843,6 +844,10 @@ impl JudgeHandle {
     /// than this backend; nor when it holds an image, or defines a tool, and the judge
     /// does not declare that feature. A turn that holds another adapter's opaque part
     /// is a malformed answer.
+    ///
+    /// A handle that an executor's context made keeps the exchange (ADR 0009): the
+    /// whole of what was sent and of what came back as a diagnostic of the run, and
+    /// what the run's record says of it.
     pub fn send(&self, request: &JudgeRequest) -> Result<Turn, Fault> {
         let declaration = self.declaration();
         self.bounds.before_sending(declaration, [])?;
@@ -866,18 +871,101 @@ impl JudgeHandle {
         let tool = (!request.tools.is_empty()).then_some(feature::TOOL);
         self.bounds
             .before_sending(declaration, image.into_iter().chain(tool))?;
-        let turn = {
-            let _sent = self.bounds.sending()?;
-            self.backend.send(request, &self.bounds)
-        }?;
-        if turn.opaque().any(|opaque| opaque.adapter != backend) {
-            return Err(Unfit::NotAllowed {
-                what: "a turn",
-                why: "holds a part of another adapter than the backend that answered",
+        let mut sent = self.bounds.sending(Capability::Judge, declaration)?;
+        let answer = self.backend.send(request, &self.bounds).and_then(|turn| {
+            if turn.opaque().any(|opaque| opaque.adapter != backend) {
+                return Err(Unfit::NotAllowed {
+                    what: "a turn",
+                    why: "holds a part of another adapter than the backend that answered",
+                }
+                .into());
             }
-            .into());
+            Ok(turn)
+        });
+        if let Some(sent) = &mut sent {
+            sent.ended(&answer);
+            sent.judged(request, &answer);
         }
-        Ok(turn)
+        answer
+    }
+
+    /// Says that the answer to the last request the run sent to a judge was left out
+    /// of the conversation that went on, and why: the harness's decision, which the
+    /// run's record keeps with the turn (ADR 0009). It is for a loop that sends one
+    /// request at a time. False when the handle keeps nothing, or no judge was asked.
+    pub fn exclude_last(&self, why: Excluded) -> bool {
+        self.bounds.exclude_last(why)
+    }
+}
+
+/// Why the harness left a judge's answer out of the conversation that went on. The
+/// words are those of the baseline's transcripts (`docs/baseline/transcript.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Excluded {
+    /// The answer was cut off at the most output tokens.
+    Truncated,
+    /// The model declined.
+    Refusal,
+    /// The answer called no tool and gave no verdict.
+    NoCall,
+}
+
+impl Excluded {
+    /// Every reason, in the order above.
+    pub const ALL: [Excluded; 3] = [Excluded::Truncated, Excluded::Refusal, Excluded::NoCall];
+}
+
+/// What a run's record says of one exchange with a judge (ADR 0009): a summary within
+/// a bound. The whole exchange is a diagnostic of the run, named here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Judged {
+    /// The name, among the run's names, of the diagnostic that holds the exchange.
+    pub(crate) exchange: Option<String>,
+    pub(crate) max_output_tokens: u32,
+    /// How many messages were sent.
+    pub(crate) messages: usize,
+    /// Why the turn ended, as a word; none when no turn came back.
+    pub(crate) stop: Option<&'static str>,
+    /// How many tools the turn called.
+    pub(crate) tool_calls: usize,
+    pub(crate) usage: Option<Usage>,
+    /// The provider's name for the exchange, cleaned when the turn was made.
+    pub(crate) provider_id: Option<String>,
+    pub(crate) excluded: Option<Excluded>,
+}
+
+impl Judged {
+    pub(crate) fn of(
+        request: &JudgeRequest,
+        answer: &Result<Turn, Fault>,
+        exchange: Option<String>,
+    ) -> Judged {
+        let turn = answer.as_ref().ok();
+        Judged {
+            exchange,
+            max_output_tokens: request.controls.max_output_tokens,
+            messages: request.messages.len(),
+            stop: turn.map(|turn| turn.stop.word()),
+            tool_calls: turn.map_or(0, |turn| turn.tool_calls().count()),
+            usage: turn.and_then(Turn::usage),
+            provider_id: turn.and_then(|turn| turn.request_id.clone()),
+            excluded: None,
+        }
+    }
+}
+
+impl StopReason {
+    /// The reason as a word. Another reason is `other`: the provider's own word is in
+    /// the turn.
+    pub fn word(&self) -> &'static str {
+        match self {
+            StopReason::EndTurn => "end_turn",
+            StopReason::ToolUse => "tool_use",
+            StopReason::MaxTokens => "max_tokens",
+            StopReason::Refusal => "refusal",
+            StopReason::Other(_) => "other",
+        }
     }
 }
 

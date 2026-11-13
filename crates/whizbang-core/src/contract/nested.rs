@@ -9,10 +9,10 @@
 //! view of the store gains when a run it called commits outputs ([`Added`]).
 
 use std::collections::BTreeSet;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
-use crate::artifact;
+use crate::artifact::{self, ArtifactId};
 use crate::capability::Tally;
 use crate::store::{self, Generation, Store};
 
@@ -69,6 +69,27 @@ impl Added {
     }
 }
 
+/// The actions the calls of one run are held to, once the run has said which (ADR
+/// 0009). It is said once: what is frozen stays as it was frozen for as long as the
+/// run lives. A run that says nothing calls any action, as before.
+///
+/// From the moment it is frozen, a call the run makes is also held to what the run
+/// may read: each input it gives is an input of the run's own call, or an output that
+/// a run it called committed.
+#[derive(Default)]
+pub(super) struct Offer(OnceLock<BTreeSet<String>>);
+
+impl Offer {
+    /// Freezes the actions. False when they were frozen before: nothing changes.
+    pub(super) fn freeze(&self, actions: BTreeSet<String>) -> bool {
+        self.0.set(actions).is_ok()
+    }
+
+    fn frozen(&self) -> Option<&BTreeSet<String>> {
+        self.0.get()
+    }
+}
+
 /// One run that a run called.
 struct Child {
     run: RunId,
@@ -76,6 +97,8 @@ struct Child {
     live: Arc<LiveRun>,
     /// How it ended, once its end was published.
     status: Option<Status>,
+    /// When it started and when it ended, once its end was published.
+    times: Option<(u64, u64)>,
 }
 
 #[derive(Default)]
@@ -93,6 +116,8 @@ struct Calls {
     refusals_omitted: u64,
     /// The requests the run's own capability handles were sent.
     requests: Option<Arc<Tally>>,
+    /// The identity of every output that a run this run called committed.
+    committed: BTreeSet<ArtifactId>,
 }
 
 /// What a run keeps of the calls its action makes. It has a lock of its own, which is
@@ -191,16 +216,29 @@ impl Nest {
 
     /// A run this run called has ended, and its end is published: how, and with which
     /// outputs. From here on this run's view of the store has them.
-    pub(super) fn ended(&self, run: &RunId, status: Status, outputs: &[Committed]) {
+    pub(super) fn ended(
+        &self,
+        run: &RunId,
+        status: Status,
+        outputs: &[Committed],
+        times: (u64, u64),
+    ) {
         let mut names = self.added.names();
         for output in outputs {
             names.insert(artifact::name(output.artifact(), output.id()));
         }
         drop(names);
         let mut calls = self.calls();
+        calls.committed.extend(outputs.iter().map(Committed::id));
         if let Some(child) = calls.children.iter_mut().find(|child| child.run == *run) {
             child.status = Some(status);
+            child.times = Some(times);
         }
+    }
+
+    /// Whether a run this run called committed an output of this identity.
+    fn committed(&self, id: ArtifactId) -> bool {
+        self.calls().committed.contains(&id)
     }
 
     /// The run's action has come back. From here on no call is taken and no request
@@ -232,10 +270,17 @@ impl Nest {
         }
     }
 
-    /// What the run's record says of its calls, for a run with this parent.
+    /// What the run's record says of its calls and of the requests its capability
+    /// handles sent, for a run with this parent.
     pub(super) fn inside(&self, parent: Option<RunId>) -> Inside {
         let calls = self.calls();
+        let timed = calls.children.iter().enumerate();
         Inside {
+            asked: calls.requests.as_ref().map_or_else(Vec::new, |r| r.asked()),
+            timed: timed
+                .filter_map(|(at, child)| child.times.map(|(start, end)| (at, start, end)))
+                .collect(),
+            verdict: None,
             parent,
             steps: calls
                 .children
@@ -301,6 +346,10 @@ pub(super) struct Under {
     /// What this run may spend: each call it makes takes its estimate from it.
     pub(super) allowance: Allowance,
     pub(super) deadline: Option<Instant>,
+    /// The identity of every input of this run's own call.
+    pub(super) inputs: Arc<BTreeSet<ArtifactId>>,
+    /// The actions this run's calls are held to, once it froze them.
+    pub(super) offer: Arc<Offer>,
 }
 
 /// Where a run is among the calls that led to it, from its admission on.
@@ -363,6 +412,28 @@ impl Nested {
         if request.id().is_some() {
             return Err(Refusal::IdInside { action: action() }.into());
         }
+        // A run that froze the actions it calls calls no other, and gives a call
+        // nothing but what it may read: decided here, where the call is dispatched,
+        // from what the run was admitted with and what its own calls came to.
+        if let Some(offered) = under.offer.frozen() {
+            if !offered.contains(call.action()) {
+                return Err(Refusal::NotOffered { action: action() }.into());
+            }
+            let nest = under.live.nest();
+            for (port, ids) in call.inputs() {
+                let unread = ids
+                    .iter()
+                    .find(|id| !under.inputs.contains(*id) && !nest.committed(**id));
+                if let Some(id) = unread {
+                    return Err(Refusal::NotReadable {
+                        action: action(),
+                        port: port.clone(),
+                        id: *id,
+                    }
+                    .into());
+                }
+            }
+        }
         if under.stack.len() >= LEVELS_LIMIT {
             return Err(Refusal::TooDeep {
                 action: action(),
@@ -409,6 +480,7 @@ impl Nested {
             action: action(),
             live: admitted.live.clone(),
             status: None,
+            times: None,
         });
         Ok(admitted)
     }

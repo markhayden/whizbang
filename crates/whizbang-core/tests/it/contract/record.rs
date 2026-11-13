@@ -135,17 +135,11 @@ fn every_group_of_the_spec_is_in_the_schema_and_required() {
 
 #[test]
 fn a_group_that_nothing_fills_yet_cannot_hold_anything() {
-    // By the type, on reading, and by the schema: a record of this version with a model,
-    // a spend, an egress, a judge turn, a setting or a duration in it is not a record
-    // of this version. Steps and refusals are filled (`nested.rs`).
-    for path in [
-        "/models",
-        "/spend/requests",
-        "/egress",
-        "/judge",
-        "/asked/settings",
-        "/time/durations",
-    ] {
+    // By the type, on reading, and by the schema: a record of this version with a
+    // paid request, an egress or a setting in it is not a record of this version.
+    // Steps and refusals are filled (`nested.rs`), and so are the models, the
+    // durations and the judge group (`asked.rs`).
+    for path in ["/spend/requests", "/egress", "/asked/settings"] {
         let bytes = changed(|document| {
             *document.pointer_mut(path).unwrap() = json!([{ "anything": 1 }]);
         });

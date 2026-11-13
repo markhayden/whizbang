@@ -33,6 +33,11 @@ handles; the fakes can hold a request open and see their bounds, and the fake
 segmenter can fail.
 Amended: 2026-11-13, with the last pull request of task A7 (ADR 0008, "Nested calls").
 Changed: accounting for requests is built, inside the handle.
+Amended: 2026-11-13, with ADR 0009 (task A11). Changed: the executor hands a run the
+backend its call resolved, and no other; a handle keeps each request for the run's
+record, and each exchange with a judge; an opaque part's body is never stored; a turn
+and an exchange are written as data and read back through the constructors; what the
+test of prepare holds.
 Spec: section 3, "Crates and their edges", "Identities" and "Storage"; section 4,
 "Backends"
 
@@ -121,11 +126,10 @@ record are in `crates/whizbang-core/tests/it/capability/`.
   `timed_out`. It sends a request only to a backend that declares every feature the
   request needs, and otherwise answers `unsupported` without sending. And it holds the
   answer to the request: an answer that does not fit is the fault `malformed`. The
-  handles in an action's context (`Handles`, ADR 0004) are these. The executor hands
-  each run a handle on every backend it was given (`Engine::with_capabilities`, ADR
-  0008), whatever the run's call resolved: choosing among backends by the call's
-  choice, and what the run record keeps of each request, come with the first action
-  that asks a capability (`docs/carry-over.md`).
+  handles in an action's context (`Handles`, ADR 0004) are these. Of the backends an
+  executor was given (`Engine::with_capabilities`, ADR 0008), a run is handed the one
+  its call resolved for each capability it needs, and no other; and a handle keeps
+  each request it sends for the run's record (ADR 0009).
 - **Nobody retries in checkpoint 1A.** A backend sends one request and returns; a
   handle sends it once. Whether to ask again is for whoever owns the loop the request
   is part of, which for the judge is the judge loop of milestone 2, and it decides from
@@ -139,7 +143,9 @@ record are in `crates/whizbang-core/tests/it/capability/`.
   nothing once its run's action has come back (ADR 0008, "Nested calls"). A handle
   made by other code counts nothing.
 - **Checked types.** Every type a request or a response is made of has private fields
-  and is built through a constructor that checks it. None is deserialised. So a value of
+  and is built through a constructor that checks it. None is deserialised: a turn and
+  an exchange that are read from data are read into a private mirror, and each value
+  is then made by its constructor (ADR 0009, "A turn and an exchange as data"). So a value of
   the type is a value that passed the check: there is no support plane out of its range,
   no fill of four channels, no instance with a score that is not a number. What does not
   pass is refused with an `Unfit`, which is a type (empty, too large, wrong length, wrong
@@ -708,9 +714,10 @@ that is what is sent. What is written of a run passes through redaction like eve
 other text (ADR 0005): a secret the executor was told of is taken out of an opaque
 part's body too, and a part so changed is no longer the part the provider sent. A
 secret is not expected inside a provider's part, and one inside an encoding of it is
-not found (ADR 0005, "What redaction does not find"). What the `judge` group of the run
-record keeps of a part, and whether it marks one that redaction changed, is decided with
-that group (`docs/carry-over.md`).
+not found (ADR 0005, "What redaction does not find"). That was the rule until a
+conversation was written. Since ADR 0009 an opaque part's body is not written at all:
+what a run stores of one is its adapter, the digest of its body and its length, so
+nothing stored passes for the part the provider sent.
 
 Not carried over from squint's provider interface, each on `docs/carry-over.md`: a
 backend's prices, the preparation of an image for a provider and its version, and who
@@ -750,8 +757,10 @@ with a fault (`failing`).
 
 A request the handle refused, because the run was cancelled or the fake does not
 declare a feature, never reaches the fake and is not counted. Prepare is shown to send
-none of them a request (`prepare::prepare_sends_no_capability_request`): the roster it
-asks is built from what the same fakes declare.
+none of them a request (`prepare::prepare_sends_no_capability_request`): the executor
+that prepares holds those very fakes, and its roster is built from what they declare
+(`capabilities::roster`). A scripted judge can be read from data
+(`FakeJudge::from_script`, ADR 0009), and can declare another model (`as_model`).
 
 ## Consequences
 

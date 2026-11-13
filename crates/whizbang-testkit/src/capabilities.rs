@@ -8,11 +8,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
+use whizbang_core::capability::written::{Unread, read_script};
 use whizbang_core::capability::{
     Asked, Bounds, Declaration, Fault, FaultKind, FillRequest, Filler, Instance, Judge,
-    JudgeRequest, Painted, SegmentRequest, SegmentResponse, Segmenter, Support, Turn, feature,
+    JudgeRequest, Painted, Roster, SegmentRequest, SegmentResponse, Segmenter, Support, Turn,
+    feature,
 };
-use whizbang_core::contract::ModelIdentity;
+use whizbang_core::contract::{Capability, ModelIdentity};
 
 use crate::barrier::Barriers;
 
@@ -25,6 +27,45 @@ fn declaration(model: &str, features: &[&str]) -> Declaration {
         // The features are written in this file or by a test, and a test builds each.
         Err(why) => panic!("{why}"),
     }
+}
+
+/// The roster a build makes of these backends: each is offered under the name `fake`
+/// and is its capability's default, so a call that needs the capability resolves the
+/// model the backend declares, and an executor that holds the backend hands the call's
+/// action a handle on it (ADR 0009).
+pub fn roster(
+    segmenter: Option<&dyn Segmenter>,
+    filler: Option<&dyn Filler>,
+    judge: Option<&dyn Judge>,
+) -> Roster {
+    let declared = [
+        (
+            Capability::Segment,
+            segmenter.map(|backend| backend.declaration()),
+        ),
+        (
+            Capability::Fill,
+            filler.map(|backend| backend.declaration()),
+        ),
+        (
+            Capability::Judge,
+            judge.map(|backend| backend.declaration()),
+        ),
+    ];
+    let mut roster = Roster::new();
+    for (capability, declaration) in declared {
+        let Some(declaration) = declaration else {
+            continue;
+        };
+        let offered = roster.offer(capability, BACKEND, declaration.clone());
+        let offered = offered.and_then(|roster| roster.default_for(capability, BACKEND));
+        roster = match offered {
+            Ok(roster) => roster,
+            // One backend of each capability, under a name that is one.
+            Err(why) => panic!("{why}"),
+        };
+    }
+    roster
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -395,6 +436,21 @@ impl FakeJudge {
             }),
             stop: None,
         }
+    }
+
+    /// A judge that plays the script these bytes are (`judge-script/1`, ADR 0009): each
+    /// entry is read through the constructors that check a turn and a fault.
+    pub fn from_script(bytes: &[u8]) -> Result<FakeJudge, Unread> {
+        Ok(FakeJudge::scripted(read_script(bytes)?))
+    }
+
+    /// The same judge, declaring this model in place of `fake-judge`, with the features
+    /// it declared: a second judge of one build.
+    pub fn as_model(mut self, model: &str) -> FakeJudge {
+        let features: Vec<String> = self.declaration.features().map(str::to_owned).collect();
+        let features: Vec<&str> = features.iter().map(String::as_str).collect();
+        self.declaration = declaration(model, &features);
+        self
     }
 
     /// The same judge, declaring these features and no others.

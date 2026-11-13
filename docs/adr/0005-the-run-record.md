@@ -48,6 +48,9 @@ action is handed, and the sentence that said nothing can cancel a run.
 Amended: 2026-11-13, with the last pull request of task A7 (ADR 0008, "Nested calls").
 Changed: `identity.parent`, `steps` and `outcome.refusals` are filled, in `run/2`, and
 `outcome` gains `refusals_omitted`; five lists hold nothing, and a sixth inside `spend`.
+Amended: 2026-11-13, with ADR 0009 (task A11). Changed: `models`, `time.durations` and
+`judge` are filled, in `run/2`; three lists hold nothing, where six did; a diagnostic
+whose name starts with `exchange-` is the executor's.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
 
@@ -102,12 +105,12 @@ A record is one JSON object with thirteen fields, always all of them, in this or
 | `inputs` | Inputs and outputs | Each input as its `port`, its `type`, the identity of the `artifact` and the identity of the `binding` the artifact belongs to |
 | `outputs` | Inputs and outputs | Each committed output as its `port`, its `type` and the identity of the `artifact` |
 | `outcome` | Outcome | `status`: `completed`, `cancelled`, `error` or `invalid`; `error`, its `kind` and `message`, or null; `invalid`, the reason, or null; `refusals`, each call from inside the run that was refused, as its `action` or null, its `kind` and `why`, at most 256; `refusals_omitted`, how many more there were (ADR 0008, "Nested calls") |
-| `time` | Time | `start_ms` and `end_ms`, in milliseconds since the Unix epoch; `durations` |
-| `models` | Models | |
+| `time` | Time | `start_ms` and `end_ms`, in milliseconds since the Unix epoch; `durations`, one for each capability request and each call that ended (ADR 0009) |
+| `models` | Models | Each capability request the run sent, in order, at most 1,024: `capability`, `backend`, `model`, `version`, `device` and `cached` (both null: not known), and `ended` (ADR 0009) |
 | `spend` | Spend | `reserved_micros`, what was reserved for the run when it was admitted, in millionths of a US dollar, or null when nothing was; `requests` |
 | `egress` | Egress | |
 | `steps` | Steps | Each call the run made of another action that was admitted, in order, at most 256: `step`, the word `call`; `run`, the run the call made; `action`; `status`, how that run had ended, or null (ADR 0008, "Nested calls") |
-| `judge` | Judge runs | |
+| `judge` | Judge runs | Each request to a judge as a `turn`, in order, a summary that names the diagnostic holding the whole exchange; then the `verdict`, when the run concluded one (ADR 0009) |
 | `diagnostics` | Diagnostics | Each diagnostic of the run as its `name` among the run's names in the store, the `digest` of what is stored under it, and its length in `bytes`; in the order of their names |
 
 An argument's value is an object with one field, named for its kind: `number`, `integer`,
@@ -124,10 +127,11 @@ as a clock that went back gives, is written as the start.
 
 ### What is empty in `run/2`, and how it stops being empty
 
-Five lists hold nothing in this version, and cannot: `asked.settings`,
-`time.durations`, `models`, `egress` and `judge`; and a sixth inside `spend`,
-`spend.requests`. (`outcome.refusals` and `steps` were two more until nested calls
-filled them: ADR 0008.) Each is there, as an empty list, in every record. In the code the
+Two lists hold nothing in this version, and cannot: `asked.settings` and `egress`; and
+a third inside `spend`, `spend.requests`. (`outcome.refusals` and `steps` were two more
+until nested calls filled them: ADR 0008. `time.durations`, `models` and `judge` were
+three more until the first action asked a capability through the executor: ADR 0009.)
+Each is there, as an empty list, in every record. In the code the
 element of each is a type that has no value; in the schema each has at most zero items. A
 record with anything in one of them is not a `run/2` record.
 
@@ -482,8 +486,9 @@ place for diagnostics.
 
 **Diagnostics.** `Context::diagnostics` takes bytes under a name: a lower-case letter or a
 digit, then lower-case letters, digits, `_`, `-` or `.`, 64 characters at most, written
-once in a run. The content has the secrets taken out before it is kept, whatever its
-encoding. The name is a key in the store, written as it is in the generation file and in
+once in a run, and not starting with `exchange-`: those names are the executor's, for
+the exchanges with a judge (ADR 0009). The content has the secrets taken out before it
+is kept, whatever its encoding. The name is a key in the store, written as it is in the generation file and in
 the record: a name that redaction would change, because it is or holds a secret, is
 refused, and the refusal does not show it. No other name of a run comes from outside the
 build: a port and an argument are named by the action's descriptor, a call that names

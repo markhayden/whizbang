@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Answer, Call, CallError, Clock, Context, Engine, Executor, Failure,
-    Kind, NoBackends, Outcome, PreparedCall, Produced, Refusal, Registry, Request, RequestId,
-    RunId, RunState, Secrets, Watched,
+    Action, ActionDescriptor, Answer, Backends, Call, CallError, Capability, Clock, Context,
+    Engine, Executor, Failure, Kind, NoBackends, Outcome, PreparedCall, Produced, Refusal,
+    Registry, Request, RequestId, Requirement, RunId, RunState, Secrets, Watched,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::{Fs, Held, LockFile, RealFs};
@@ -45,7 +45,19 @@ impl Action for Scripted {
 pub(super) fn work(
     body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
 ) -> Arc<dyn Action> {
-    let draft = ActionDescriptor::draft("work", "1.0.0", Kind::Primitive, "Works.");
+    work_needing(&[], body)
+}
+
+/// `work`, with a descriptor that says it needs these capabilities: an action is
+/// handed a handle on the backend its call resolved, and on no other (ADR 0009).
+pub(super) fn work_needing(
+    needs: &[Capability],
+    body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
+) -> Arc<dyn Action> {
+    let mut draft = ActionDescriptor::draft("work", "1.0.0", Kind::Primitive, "Works.");
+    for need in needs {
+        draft = draft.needs(Requirement::new(*need));
+    }
     Arc::new(Scripted(draft.build().unwrap(), Box::new(body)))
 }
 
@@ -61,11 +73,20 @@ pub(super) fn busy(barriers: &Barriers, secret: &str) -> Arc<dyn Action> {
 }
 
 pub(super) fn engine(store: Arc<Store>, actions: Vec<Arc<dyn Action>>) -> Engine {
+    engine_on(store, Arc::new(NoBackends), actions)
+}
+
+/// The same executor, whose calls are resolved by these backends.
+pub(super) fn engine_on(
+    store: Arc<Store>,
+    backends: Arc<dyn Backends>,
+    actions: Vec<Arc<dyn Action>>,
+) -> Engine {
     let mut registry = Registry::new();
     for action in actions {
         registry.register(action).unwrap();
     }
-    Engine::over(registry, Arc::new(NoBackends), store, Digest::of_bytes(b""))
+    Engine::over(registry, backends, store, Digest::of_bytes(b""))
         .with_clock(Arc::new(Stopped(9000)))
 }
 

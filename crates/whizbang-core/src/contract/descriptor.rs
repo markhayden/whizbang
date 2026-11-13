@@ -12,7 +12,7 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::artifact::ArtifactType;
 
@@ -32,7 +32,7 @@ pub enum Kind {
 
 /// What a model does for an action. The request and the response of each are the
 /// capability interfaces; a descriptor only names which an action needs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Capability {
     Segment,
