@@ -553,6 +553,9 @@ pub enum Refusal {
     /// The call is ready, and this executor was built to read its store: it prepares
     /// calls and runs none.
     ReadOnly,
+    /// A run was asked after by its id, and the store holds no run of that id: none
+    /// was made, or it was deleted.
+    NoSuchRun { run: super::RunId },
     /// A call from inside a running action. This build does not nest calls yet.
     NoNestedCalls,
     /// The request's id was admitted before for another request, which made `run`. An
@@ -624,6 +627,7 @@ impl std::fmt::Display for Refusal {
             Refusal::ReadOnly => f.write_str(
                 "the call is ready, and this executor only reads its store: it runs nothing",
             ),
+            Refusal::NoSuchRun { run } => write!(f, "the store holds no run {run}"),
             Refusal::NoNestedCalls => f.write_str(
                 "an action cannot call another action yet: this build does not nest calls",
             ),

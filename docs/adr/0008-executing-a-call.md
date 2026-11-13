@@ -2,6 +2,9 @@
 
 Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-12, with the second pull request of task A7. Added: "Status, waiting,
+and a run that was started", which is built. Changed: the paragraph that says which part
+builds what; what this record does not decide yet.
 Spec: section 3, "The execution contract", "What a run publishes", "Storage" and "What
 every run records"
 
@@ -33,8 +36,9 @@ What there was to build it on:
 
 Task A7 of the plan for checkpoint 1A is delivered in parts, and this record is written
 with them. **The first part, which this record came with, builds** the commit step and
-what a panic does. The rule for a cancellation and the commit step, status and cancel
-while a run executes, nested calls with their allowances, and what makes a parent
+what a panic does. **The second builds** a run's status and progress while it executes,
+waiting for a run, and starting one without waiting. The rule for a cancellation and the
+commit step, cancel itself, nested calls with their allowances, and what makes a parent
 terminal are the later parts': each amends this record with the code that builds it, and
 until then nothing here says how they work. Rascal's rule is restated with the
 cancellation, in that amendment; nothing cancels a run yet.
@@ -187,6 +191,92 @@ What is not caught: a build whose panics abort the process, and a panic outside
 prints what it prints, the place of the panic among it; none of that is written to the
 store.
 
+### Status, waiting, and a run that was started
+
+The code is in `crates/whizbang-core/src/contract/` (`engine.rs`, `live.rs`) and
+`crates/whizbang-core/src/store/mod.rs`; the tests are in
+`crates/whizbang-core/tests/it/contract/watch.rs` and `store/runs.rs`.
+
+**Three more methods of the executor.** `start` takes a request as `request` does, and
+answers once the run is admitted, durably, with `Answer::Started` and the run's id; the
+action runs on a thread of its own, one for each started run. `status` takes a run's id
+and says where the run is now, as a `RunState` (ADR 0007), with the progress events the
+run has reported so far when it executes in this process. `wait` is `status` once
+nothing in this process works on the run any more. `submit` and `request` still run the
+action on the caller's thread and return when the run is over; a run they made is asked
+after in the same way, by another caller.
+
+| The run | `status` and `wait` answer |
+|---|---|
+| Ended, in the store | `Ended`, with the outcome, from its record; no events: they are in its journal |
+| Executing in this process | `status`: `NotEnded { here: true }`, with its events so far. `wait`: waits, then answers as for a run that ended |
+| Its end could not be written | `NotEnded { here: true }`, with its events; `wait` does not wait |
+| Admitted by a process that is gone | `NotEnded { here: false }`; `wait` does not wait: nothing will end it |
+| Not in the store | The refusal `NoSuchRun`: it was never made, or it was deleted |
+
+An executor that only reads a store says `here: false` of every run that has not ended,
+as it does for a repeat. A run is asked after by any executor over the same store value:
+the second caller in the first of these tests has an executor of its own
+(`watch::a_second_caller_reads_the_status_and_the_progress_of_a_run_whose_action_is_busy`,
+`watch::a_caller_that_starts_a_run_and_leaves_finds_it_again_by_its_id`,
+`watch::waiting_for_a_run_that_no_process_will_end_returns_and_says_so`).
+
+**One table of open runs, which is the store's.** The store already kept the runs its
+writer made and has open (`Store::made_here`, ADR 0007). That table now holds, for each
+run, what its maker attached to it (`Publication::attach`, `Store::attached`), and the
+executor attaches the run's live state: its events, and whether anything still works on
+it. There is no second table. The store's rule is the one rule: a run is in the table
+from just before the rename that makes it visible, is taken out again if that rename
+fails, and leaves only once the generation that closes or deletes it is visible
+(`store::runs::what_is_attached_to_a_run_is_had_while_the_writer_has_the_run_open_and_no_longer`).
+
+**How a status is answered: the store, the table, the store.**
+
+1. The current generation is read. No such run: `NoSuchRun`. A run with its record:
+   `Ended`.
+2. Otherwise the run was admitted and had no record. The table is asked. Found: the run
+   is open in this process.
+3. Not found: the current generation is read again, and what it says is the answer; a
+   run that still has no record is `NotEnded { here: false }`.
+
+**Why the last look is conclusive.** A run this process made was in the table before it
+was visible, so the first look could not have seen it before the table held it. It
+leaves the table only after its closing or its deletion is visible. So when step 2 does
+not find it, either this process never made it, and since one process writes a store
+nobody is working on it; or it has left the table, and then its end or its deletion was
+visible before step 2, and is in the generation step 3 reads. Step 3 cannot see a run
+of this process that is still open.
+
+Three tests stop at the moments this could go wrong. Straight after the rename that
+makes an admission visible, a status says `here: true`
+(`watch::a_status_asked_the_moment_a_run_becomes_visible_says_it_is_executing_here`).
+Straight after the rename that makes an end visible, while the store still has the run
+in its table, a status says `Ended`
+(`watch::a_status_asked_the_moment_a_runs_end_becomes_visible_says_it_ended`). And a
+status whose run ends between its first look and its look at the table is told `Ended`,
+not that no process will end the run
+(`watch::a_status_that_races_the_end_of_its_run_is_not_told_the_run_will_never_end`).
+
+**What is held, and for how long.** A status takes the table's lock to read one entry,
+and the run's own lock to copy its events or read one flag; neither is held across a
+file-system call, and the store's publishing step holds neither while it writes. So a
+status is answered while another run's end, or the same run's, is being published: a
+test stops a publication after its pointer is replaced and before its last sync, and a
+second thread reads the status of that run and of another that is executing
+(`watch::a_second_caller_reads_the_status_of_a_run_while_its_end_is_being_published`).
+
+**Progress.** An action's progress events are kept in memory, the secrets taken out when
+each is reported, and are read through `status` while the run executes here. They are
+not published while the run executes: the journal is durable with the run's end, as
+before, and a process that dies leaves none of it. They are not bounded. Both stay on
+`docs/carry-over.md`. The events of a run whose end the store refused stay readable in
+the process that ran it.
+
+**What is not built.** Nothing cancels a run, in its action or in its admission: that is
+the next pull request, with the rule this record owes for a cancellation and the commit
+step. A started run's thread is not counted or bounded, and a process that ends while
+one runs leaves the run admitted. Nothing holds the generation a run reads from.
+
 ## Consequences
 
 - An action returns artifacts. `Produced` is no longer made only as nothing, and is no
@@ -210,9 +300,14 @@ store.
 - Reversing this costs every action written against `Produced`, and the guarantee every
   caller reads a completed outcome by.
 
+- `Executor` has three more methods, and `Answer` a third case, `Started`. `Engine` is
+  cloned cheaply: a started run's thread holds one, with the store.
+- `Refusal` has `NoSuchRun`.
+- A run's events are kept after its end was published or refused, until the last holder
+  of its live state lets go.
+
 What this record does not decide yet: cancellation and its rule at the commit step;
-status, progress and cancel while a run executes; nested calls, allowances, and when a
-parent is terminal. They are the later parts of the same task, and amend this record.
+cancel while a run executes; nested calls, allowances, and when a parent is terminal. They are the later parts of the same task, and amend this record.
 
 ## Alternatives
 

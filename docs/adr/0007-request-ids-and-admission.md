@@ -26,6 +26,9 @@ visible could be answered as made by a process that is gone.
 Amended: 2026-11-12, with ADR 0008, which catches a panic in an action. Changed, in
 "What a repeat is answered with": a run whose action panicked ends as an error and is
 answered as `Ended`; `NotEnded { here: true }` no longer covers it.
+Amended: 2026-11-12, with the second pull request of task A7 (ADR 0008). Changed: the
+store's table of the runs its writer has open also holds what was attached to each; a
+run's status and a wait are ADR 0008's.
 Spec: section 3, "The execution contract", "Storage" and "What every run records";
 section 6, "Spend"
 
@@ -527,8 +530,9 @@ What `NotEnded` does not tell apart, each pinned by a test or a row:
   `docs/carry-over.md`).
 - An executor that only reads a store says `here: false` of every run that has not
   ended, because it cannot know: another process may be executing it.
-- A repeat does not wait for a run that is executing. Status and cancel while a run
-  executes are the next task's.
+- A repeat does not wait for a run that is executing. A run is waited for, and its
+  status read, by its id (ADR 0008, "Status, waiting, and a run that was started");
+  cancel is still to come.
 
 A conflict is a refusal (`Refusal::Conflict`), not an outcome: no run exists for the
 second request.

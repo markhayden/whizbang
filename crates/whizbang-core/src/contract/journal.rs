@@ -58,10 +58,19 @@ impl Kept {
     /// order of their names: what was kept until now. What is written after this is not
     /// part of the run.
     pub(super) fn take(&self) -> (Vec<JournalLine>, Vec<(Diagnostic, Vec<u8>)>) {
-        let lines = std::mem::take(&mut *self.lines.lock().unwrap_or_else(|e| e.into_inner()));
+        // The lines stay: a run whose end the store then refuses has them nowhere
+        // else, and whoever asks after it is still shown them.
+        let lines = self.lines();
         let diagnostics =
             std::mem::take(&mut *self.diagnostics.lock().unwrap_or_else(|e| e.into_inner()));
         (lines, diagnostics.into_values().collect())
+    }
+}
+
+impl Kept {
+    /// The journal's lines so far: the run goes on.
+    pub(super) fn lines(&self) -> Vec<JournalLine> {
+        self.lines.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 

@@ -1047,14 +1047,14 @@ fn two_simultaneous_requests_with_one_id_produce_one_run() {
         .iter()
         .filter_map(|a| match a {
             Answer::Ran(finished) => Some(finished),
-            Answer::Repeat(_) => None,
+            Answer::Repeat(_) | Answer::Started(_) => None,
         })
         .collect();
     let earlier: Vec<_> = answers
         .iter()
         .filter_map(|a| match a {
             Answer::Repeat(earlier) => Some(earlier),
-            Answer::Ran(_) => None,
+            Answer::Ran(_) | Answer::Started(_) => None,
         })
         .collect();
     assert_eq!((finished.len(), earlier.len()), (1, 1), "{answers:?}");

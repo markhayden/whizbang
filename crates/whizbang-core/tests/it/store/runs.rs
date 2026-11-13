@@ -621,6 +621,73 @@ fn a_writer_knows_the_runs_it_made_since_it_opened_the_store() {
 }
 
 #[test]
+fn what_is_attached_to_a_run_is_had_while_the_writer_has_the_run_open_and_no_longer() {
+    // The table of the runs a writer made and has open holds, for each, what its maker
+    // attached: one table, so "made here" and "what is attached" never disagree.
+    let dir = Scratch::new("store-names");
+    let root = root(&dir);
+    let fs = Arc::new(ShimFs::new());
+    let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+    let word = |run: &str| {
+        let attached = store.attached(run)?;
+        Some(
+            attached
+                .downcast::<&str>()
+                .map_or("something else", |word| *word),
+        )
+    };
+    assert_eq!(word("r"), None);
+
+    // Had at the moment the run becomes visible, and not before it is published.
+    let mut publication = store.begin().unwrap();
+    publication.create_run("r").unwrap();
+    publication.attach("r", Arc::new("the run's own"));
+    publication.attach("not made", Arc::new("nothing"));
+    assert_eq!(word("r"), None);
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    fs.pause_after_rename_onto("CURRENT", {
+        let (store, seen) = (store.clone(), seen.clone());
+        move || {
+            let attached = store.attached("r").map(|a| *a.downcast::<&str>().unwrap());
+            *seen.lock().unwrap() = Some(attached);
+        }
+    });
+    publication.publish().unwrap();
+    assert_eq!(*seen.lock().unwrap(), Some(Some("the run's own")));
+    assert_eq!(word("r"), Some("the run's own"));
+    assert_eq!(word("not made"), None);
+
+    // A run made with nothing attached is made here all the same.
+    let mut publication = store.begin().unwrap();
+    publication.create_run("plain").unwrap();
+    publication.publish().unwrap();
+    assert_eq!(word("plain"), Some("something else"));
+    assert!(store.made_here("plain"));
+
+    // Still had at the moment the closing becomes visible, and gone once it has.
+    let mut publication = store.begin().unwrap();
+    publication.close_run("r").unwrap();
+    fs.pause_after_rename_onto("CURRENT", {
+        let (store, seen) = (store.clone(), seen.clone());
+        move || {
+            let attached = store.attached("r").map(|a| *a.downcast::<&str>().unwrap());
+            *seen.lock().unwrap() = Some(attached);
+        }
+    });
+    publication.publish().unwrap();
+    assert_eq!(*seen.lock().unwrap(), Some(Some("the run's own")));
+    assert_eq!(word("r"), None);
+    assert!(!store.made_here("r"));
+
+    // A publication that is refused attaches nothing.
+    let mut publication = store.begin().unwrap();
+    publication.create_run("plain").unwrap();
+    publication.attach("plain", Arc::new("a second maker's"));
+    assert!(publication.publish().is_err());
+    assert_eq!(word("plain"), Some("something else"));
+}
+
+#[test]
 fn a_run_is_known_as_made_here_from_the_moment_it_is_visible() {
     // Whoever sees a run in a snapshot and then asks whether this writer made it must
     // not be told no of a run this writer has just made. The look is made at the one

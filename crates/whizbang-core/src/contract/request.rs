@@ -23,7 +23,10 @@ use crate::identity::{Digest, Encoder, Fields};
 use crate::store::{Entry, Generation};
 
 use super::record::{self, QUOTED_LIMIT, RECORD_NAME, RunRecord, Status, StoredRecordError};
-use super::{Call, CallError, Committed, Outcome, PreparedCall, RunId, StoreFailure, Value, text};
+use super::{
+    Call, CallError, Committed, JournalLine, Outcome, PreparedCall, RunId, StoreFailure, Value,
+    text,
+};
 
 /// The longest request id, in characters.
 pub const REQUEST_ID_LIMIT: usize = 128;
@@ -561,6 +564,9 @@ pub enum Answer {
     Ran(super::Finished),
     /// The request was sent before under this id: the run it made then.
     Repeat(Earlier),
+    /// This request made a run, which is executing: it was started, not waited for
+    /// ([`super::Executor::start`]).
+    Started(RunId),
 }
 
 impl Answer {
@@ -569,7 +575,37 @@ impl Answer {
         match self {
             Answer::Ran(finished) => finished.run(),
             Answer::Repeat(earlier) => earlier.run(),
+            Answer::Started(run) => run,
         }
+    }
+}
+
+/// The answer to a question after a run by its id: where the run is now, and, while it
+/// executes in this process, the progress events it has reported so far, in order, the
+/// secrets taken out. For a run that ended, the events are in its journal, in the store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Watched {
+    run: RunId,
+    state: RunState,
+    events: Vec<JournalLine>,
+}
+
+impl Watched {
+    pub(super) fn new(run: RunId, state: RunState, events: Vec<JournalLine>) -> Watched {
+        Watched { run, state, events }
+    }
+
+    pub fn run(&self) -> &RunId {
+        &self.run
+    }
+
+    pub fn state(&self) -> &RunState {
+        &self.state
+    }
+
+    /// The progress events of a run that is executing here; none of any other.
+    pub fn events(&self) -> &[JournalLine] {
+        &self.events
     }
 }
 
@@ -697,7 +733,7 @@ fn ending_of(
 
 /// The outcome a run's record holds: what the run's first answer said, since the
 /// secrets were taken out of both alike.
-fn outcome_of(record: &RunRecord) -> Outcome {
+pub(super) fn outcome_of(record: &RunRecord) -> Outcome {
     let ended = record.outcome();
     match ended.status {
         Status::Completed => Outcome::Completed {
