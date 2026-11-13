@@ -10,6 +10,9 @@
 # which starts after everything is built; a suite's seconds are the sum of its tests'
 # durations, so with tests running in parallel the rows can add up to more than the total.
 #
+# The tests run through scripts/thread-guard.sh, which kills them, and fails, when one test
+# process holds more threads than its limit.
+#
 # --junit FILE prints the table for a saved result file and runs nothing; it exists for
 # scripts/tests/test-timing.sh.
 set -euo pipefail
@@ -38,7 +41,7 @@ if [ -z "$junit" ]; then
   target=$(cargo metadata --format-version 1 --no-deps | jq -r .target_directory)
   junit="$target/nextest/default/junit.xml"
   rm -f "$junit"
-  cargo nextest run --workspace --profile default || test_status=$?
+  scripts/thread-guard.sh cargo nextest run --workspace --profile default || test_status=$?
 fi
 
 if [ ! -r "$junit" ]; then

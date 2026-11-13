@@ -724,7 +724,7 @@ fn a_writer_that_let_go_is_not_held_by_a_child_being_started_on_another_thread()
     let program = dir.path().join("no-such-program");
     let done = AtomicBool::new(false);
     let started = AtomicU64::new(0);
-    std::thread::scope(|scope| {
+    whizbang_testkit::threads::scope(|scope| {
         for _ in 0..4 {
             scope.spawn(|| {
                 while !done.load(Ordering::Relaxed) {

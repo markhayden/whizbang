@@ -490,6 +490,15 @@ pub enum CallError {
     Ledger {
         why: String,
     },
+    /// The run was admitted to be started, and no thread could be made for its action:
+    /// `why` is the system's sentence. This is not a judgement of the call. The run is
+    /// in the store, ended as an error that says the same; or, when that end could
+    /// not be written, as it was admitted, and abandoned
+    /// ([`super::RunState::Abandoned`]). Nothing works on it, and nobody waits for it.
+    NotStarted {
+        run: super::RunId,
+        why: String,
+    },
 }
 
 impl CallError {
@@ -497,7 +506,10 @@ impl CallError {
     pub fn refusal(&self) -> Option<&Refusal> {
         match self {
             CallError::Refused(refusal) => Some(refusal),
-            CallError::Store(_) | CallError::Record { .. } | CallError::Ledger { .. } => None,
+            CallError::Store(_)
+            | CallError::Record { .. }
+            | CallError::Ledger { .. }
+            | CallError::NotStarted { .. } => None,
         }
     }
 }
@@ -520,6 +532,11 @@ impl std::fmt::Display for CallError {
                 )
             }
             CallError::Ledger { why } => write!(f, "the ledger failed: {why}"),
+            CallError::NotStarted { run, why } => write!(
+                f,
+                "the run {run} was admitted and could not be started: no thread could be \
+                 made for its action: {why}"
+            ),
         }
     }
 }
@@ -557,6 +574,12 @@ pub enum Refusal {
     /// A run was asked after by its id, and the store holds no run of that id: none
     /// was made, or it was deleted.
     NoSuchRun { run: super::RunId },
+    /// The request was to be started ([`super::Executor::start`]), and the store's
+    /// writer already has `bound` started runs that are not over: as many as this
+    /// executor runs at once, each on a thread of its own. No run was made, nothing was
+    /// reserved, nothing was written, and the request's id is not taken by this
+    /// request. A run that is over makes room.
+    TooManyStarted { bound: usize },
     /// The request's id was admitted before for another request, which made `run`. An
     /// id is one request's: nothing was prepared and nothing ran.
     Conflict { request: RequestId, run: RunId },
@@ -615,14 +638,25 @@ pub enum Refusal {
     /// A call from inside an action whose run has already called `limit` others,
     /// which is as many as one run may. No run was made.
     TooManyCalls { action: String, limit: usize },
+    /// A call from inside an action, when `limit` runs have been admitted under the
+    /// run that nothing called, at any level, which is as many as one such run may
+    /// have under it. No run was made.
+    TreeFull { action: String, limit: usize },
     /// A call from inside an action to start a run, when `limit` runs that the same
     /// run started are executing, which is as many as may at once: each is a thread.
     /// No run was made; the caller waits for one of them, or runs the call itself.
-    TooManyStarted { action: String, limit: usize },
+    TooManyStartedUnder { action: String, limit: usize },
     /// A call from inside an action that came with a request id. A nested call is
     /// known by the run that made it and its place among that run's calls, and
     /// carries no id of its own. No run was made, and the id was not looked up.
     IdInside { action: String },
+    /// A run was waited for from inside an action whose own run it is, or is under:
+    /// that run is over only after the one that waits, so the wait would never end.
+    /// Nothing was waited for.
+    WaitAbove { run: RunId },
+    /// A wait from inside an action was given up because the run that waited was
+    /// cancelled, or one above it was. The run that was waited for is as it was.
+    WaitCancelled { run: RunId },
 }
 
 impl Refusal {
@@ -648,8 +682,12 @@ impl Refusal {
             Refusal::OverCaller { .. } => RefusalKind::OverCaller,
             Refusal::CallerOver { .. } => RefusalKind::CallerOver,
             Refusal::TooManyCalls { .. } => RefusalKind::TooManyCalls,
+            Refusal::TreeFull { .. } => RefusalKind::TreeFull,
             Refusal::TooManyStarted { .. } => RefusalKind::TooManyStarted,
+            Refusal::TooManyStartedUnder { .. } => RefusalKind::TooManyStartedUnder,
             Refusal::IdInside { .. } => RefusalKind::IdInside,
+            Refusal::WaitAbove { .. } => RefusalKind::WaitAbove,
+            Refusal::WaitCancelled { .. } => RefusalKind::WaitCancelled,
         }
     }
 }
@@ -723,15 +761,34 @@ impl std::fmt::Display for Refusal {
                 "{action} was not called: its caller has called {limit} actions, which \
                  is as many as one run may"
             ),
-            Refusal::TooManyStarted { action, limit } => write!(
+            Refusal::TreeFull { action, limit } => write!(
+                f,
+                "{action} was not called: {limit} runs were made under the run that \
+                 began these calls, which is as many as one may have under it"
+            ),
+            Refusal::TooManyStartedUnder { action, limit } => write!(
                 f,
                 "{action} was not started: {limit} runs that its caller started are \
                  executing, which is as many as may at once"
+            ),
+            Refusal::WaitAbove { run } => write!(
+                f,
+                "the run {run} was not waited for: it is the run that asked, or one above \
+                 it, and is over only after the run that asked"
+            ),
+            Refusal::WaitCancelled { run } => write!(
+                f,
+                "the wait for the run {run} was given up: the run that waited was cancelled"
             ),
             Refusal::IdInside { action } => write!(
                 f,
                 "{action} was not called: a call from inside an action carries no \
                  request id"
+            ),
+            Refusal::TooManyStarted { bound } => write!(
+                f,
+                "the request was not started: {bound} started runs are not over yet, and \
+                 this executor runs no more than that at once"
             ),
             Refusal::Conflict { request, run } => write!(
                 f,

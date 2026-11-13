@@ -360,7 +360,7 @@ fn a_jpeg_segment_shorter_than_its_own_length_field_is_refused() {
         bytes.extend_from_slice(&length.to_be_bytes());
         bytes.extend_from_slice(&flat_jpeg(3, 8)[2..]);
         let (send, receive) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
+        whizbang_testkit::threads::spawn(move || {
             let _ = send.send(identify(&bytes, &DecodeLimits::default()));
         });
         let result = receive

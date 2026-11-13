@@ -1029,7 +1029,7 @@ fn two_simultaneous_requests_with_one_id_produce_one_run() {
             engine(store.clone(), vec![held]).with_clock(clock.clone())
         })
         .collect();
-    let answers: Vec<Answer> = std::thread::scope(|scope| {
+    let answers: Vec<Answer> = whizbang_testkit::threads::scope(|scope| {
         let threads: Vec<_> = engines
             .iter()
             .map(|engine| {
@@ -1076,7 +1076,7 @@ fn two_simultaneous_requests_that_differ_under_one_id_are_one_run_and_one_confli
     let engines: Vec<Engine> = (0..2)
         .map(|_| world.engine(store.clone()).with_clock(clock.clone()))
         .collect();
-    let answers: Vec<Result<Answer, CallError>> = std::thread::scope(|scope| {
+    let answers: Vec<Result<Answer, CallError>> = whizbang_testkit::threads::scope(|scope| {
         let threads: Vec<_> = engines
             .iter()
             .zip(["hello", "goodbye"])
@@ -1105,7 +1105,7 @@ fn many_requests_at_once_under_a_few_ids_make_one_run_for_each_id() {
     let world = World::new();
     let store = world.store();
     let engines = [world.engine(store.clone()), world.engine(store.clone())];
-    let answers: Vec<(usize, Answer)> = std::thread::scope(|scope| {
+    let answers: Vec<(usize, Answer)> = whizbang_testkit::threads::scope(|scope| {
         let threads: Vec<_> = (0..8)
             .map(|thread| {
                 let engine = &engines[thread % 2];
@@ -1215,8 +1215,10 @@ fn a_run_whose_end_could_not_be_written_is_answered_as_not_ended_here() {
 
 // --- a crash inside the admission step -----------------------------------------------------------
 
-#[test]
-fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it() {
+/// Crashes inside the admission step, at every fourth of its steps from `part`: the
+/// whole takes eight seconds, and more on a busy machine, against a limit of thirty,
+/// so it is four tests, which between them try every step and every mask.
+fn crashes_inside_the_admission_step(part: usize) {
     // An executor with a ledger admits a call that may cost a quarter of a dollar. The
     // calls that change the disk during one admission are found by running one: from
     // the request to the moment the action starts.
@@ -1252,7 +1254,7 @@ fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it() {
     // record, the run and the reservation are there together or none of them is.
     let mut outcomes = std::collections::BTreeSet::new();
     let (mut most_dirs, mut most_names, mut crashes) = (0, 0, 0);
-    for step in 0..=steps {
+    for step in (0..=steps).filter(|step| step % 4 == part) {
         let mut ways = vec![Lost::Unsynced, Lost::ContentOnly, Lost::Subset(0)];
         let mut next = 0;
         while next < ways.len() {
@@ -1332,9 +1334,11 @@ fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it() {
             }
         }
     }
-    assert_eq!(
-        outcomes.into_iter().collect::<Vec<_>>(),
-        ["all of it", "nothing"]
+    // Before the last step there is nothing, and at it there is all of it.
+    assert!(outcomes.contains("nothing"), "{outcomes:?}");
+    assert!(
+        steps % 4 != part || outcomes.contains("all of it"),
+        "{outcomes:?}"
     );
     // The masks were not a formality: some step left several directories and several
     // names undecided, and each of their choices was a crash of its own.
@@ -1343,6 +1347,26 @@ fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it() {
         "{most_dirs} {most_names}"
     );
     assert!(crashes > 200, "{crashes}");
+}
+
+#[test]
+fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_first_steps_of_four() {
+    crashes_inside_the_admission_step(0);
+}
+
+#[test]
+fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_second_steps_of_four() {
+    crashes_inside_the_admission_step(1);
+}
+
+#[test]
+fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_third_steps_of_four() {
+    crashes_inside_the_admission_step(2);
+}
+
+#[test]
+fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_fourth_steps_of_four() {
+    crashes_inside_the_admission_step(3);
 }
 
 // --- what is stored is not trusted ---------------------------------------------------------------
@@ -2124,7 +2148,7 @@ fn a_repeat_that_races_the_end_of_its_run_is_not_told_the_run_will_never_end() {
     let first = engine(store.clone(), vec![held]);
     let second = engine(store.clone(), vec![paint(&runs)]);
     let (ended, has_ended) = mpsc::channel::<()>();
-    std::thread::scope(|scope| {
+    whizbang_testkit::threads::scope(|scope| {
         let running = scope.spawn(|| {
             let finished = ran(first.request(&asked("hello", "order-17")));
             ended.send(()).unwrap();
@@ -2467,7 +2491,7 @@ fn two_simultaneous_requests_with_one_id_make_one_reservation() {
                 .with_ledger(both.clone())
         })
         .collect();
-    let answers: Vec<Answer> = std::thread::scope(|scope| {
+    let answers: Vec<Answer> = whizbang_testkit::threads::scope(|scope| {
         let threads: Vec<_> = engines
             .iter()
             .map(|engine| scope.spawn(move || engine.request(&asked("hello", "order-17")).unwrap()))
@@ -2557,7 +2581,7 @@ fn two_simultaneous_admissions_cannot_both_take_the_last_of_the_allowance() {
             engine_with(store.clone(), &world.runs, Priced::new(250_000)).with_ledger(both.clone())
         })
         .collect();
-    let answers: Vec<Result<Answer, CallError>> = std::thread::scope(|scope| {
+    let answers: Vec<Result<Answer, CallError>> = whizbang_testkit::threads::scope(|scope| {
         let threads: Vec<_> = engines
             .iter()
             .zip(["order-17", "order-18"])
