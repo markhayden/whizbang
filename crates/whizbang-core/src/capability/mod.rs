@@ -19,11 +19,17 @@ use crate::identity::{CanonicalPixels, PixelDigest};
 mod declare;
 mod fault;
 mod fill;
+mod judge;
 mod segment;
 
 pub use declare::{Declaration, Resolved, Roster, RosterError, Unresolved, feature};
 pub use fault::{FAULT_LIMIT, Fault, FaultKind};
 pub use fill::{FillHandle, FillRequest, Filler, PROMPT_LIMIT, Painted, Support};
+pub use judge::{
+    CONVERSATION_LIMIT, Controls, DESCRIPTION_LIMIT, Judge, JudgeHandle, JudgeRequest,
+    MESSAGE_LIMIT, Message, Opaque, PART_LIMIT, Part, RESULT_IMAGE_LIMIT, Role, StopReason,
+    TEXT_LIMIT, TOOL_LIMIT, ToolCall, ToolDefinition, ToolResult, Turn, Usage,
+};
 pub use segment::{
     Asked, INSTANCE_LIMIT, Instance, PHRASE_LIMIT, QUERY_LIMIT, Query, SegmentHandle,
     SegmentRequest, SegmentResponse, Segmenter,

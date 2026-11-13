@@ -4,5 +4,6 @@
 
 mod fault;
 pub mod fill;
+mod judge;
 mod resolve;
 mod segment;
