@@ -400,7 +400,7 @@ fn no_publication_completes_inside_a_prune() {
         move || {
             let thread = {
                 let store = store.clone();
-                std::thread::spawn(move || {
+                whizbang_testkit::threads::spawn(move || {
                     let mut publication = store.begin().unwrap();
                     publication.put("new", b"published beside a prune").unwrap();
                     publication.publish().unwrap()
@@ -654,4 +654,49 @@ fn every_path_the_store_creates_is_for_its_owner_only() {
     let seen = owner_only(&root, 8, "pruned");
     assert!(seen.contains(Path::new("generations/2.json")));
     assert!(!seen.contains(Path::new("generations/1.json")));
+}
+
+#[test]
+fn what_a_writer_holds_is_left_by_its_own_prune_until_it_lets_go() {
+    // A writer's snapshot shares nothing. A hold shares the file of the generation it
+    // was taken on, as a reader does: the writer's own prune leaves that generation,
+    // and what it names, for as long as the hold lives.
+    let dir = Scratch::new("store-prune");
+    let root = root(&dir);
+    let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+    // The empty generation has no file, names nothing, and needs no holding.
+    assert_eq!(store.hold().unwrap().generation().number(), 0);
+
+    let mut publication = store.begin().unwrap();
+    publication
+        .put_in("one", "note", Kind::Diagnostic, b"the run's alone")
+        .unwrap();
+    publication.put("kept", b"first").unwrap();
+    publication.publish().unwrap();
+    let hold = store.hold().unwrap();
+    let also = store.hold().unwrap();
+    let held = hold.generation().clone();
+    assert_eq!(held.number(), 1);
+    let note = held.run("one").unwrap().get("note").unwrap();
+    let kept = held.get("kept").unwrap();
+
+    store.delete(&["one"]).unwrap();
+    let mut publication = store.begin().unwrap();
+    publication.put("kept", b"second").unwrap();
+    publication.publish().unwrap();
+    let pruned = store.prune().unwrap();
+    assert_eq!(pruned.generations_removed, vec![2]);
+    assert_eq!(pruned.generations_in_use, vec![1]);
+    assert_eq!(pruned.objects_removed, 0);
+    assert_eq!(store.read(note).unwrap(), b"the run's alone");
+    assert_eq!(store.read(kept).unwrap(), b"first");
+
+    // One of two holds let go: the generation is still held.
+    drop(also);
+    assert_eq!(store.prune().unwrap().generations_in_use, vec![1]);
+    drop(hold);
+    let pruned = store.prune().unwrap();
+    assert_eq!(pruned.generations_removed, vec![1]);
+    assert_eq!(pruned.objects_removed, 2);
+    assert!(store.read(note).is_err() && store.read(kept).is_err());
 }

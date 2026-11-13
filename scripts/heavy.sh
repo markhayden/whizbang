@@ -6,6 +6,9 @@
 # A second invocation, from any worktree or clone, waits until the first has finished, then
 # runs. The exit status is the command's.
 #
+# The command runs through scripts/thread-guard.sh, which kills it, and fails, when one of
+# its processes holds more threads than a limit: a heavy command is where tests run.
+#
 # The lock is a directory, because creating one is atomic and macOS has no flock(1). It
 # holds the holder's process id and label.
 #
@@ -107,7 +110,7 @@ trap 'exit 143' TERM
 
 echo "heavy: [$label] running" >&2
 status=0
-"$@" || status=$?
+"$(dirname "${BASH_SOURCE[0]}")/thread-guard.sh" "$@" || status=$?
 echo "heavy: [$label] finished with status $status" >&2
 done_ok=1
 exit "$status"

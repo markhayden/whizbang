@@ -23,7 +23,12 @@ use crate::identity::{Digest, Encoder, Fields};
 use crate::store::{Entry, Generation};
 
 use super::record::{self, QUOTED_LIMIT, RECORD_NAME, RunRecord, Status, StoredRecordError};
-use super::{Call, CallError, Committed, Outcome, PreparedCall, RunId, StoreFailure, Value, text};
+use std::time::Instant;
+
+use super::{
+    Call, CallError, Cancellation, Committed, JournalLine, Outcome, PreparedCall, RunId,
+    StoreFailure, Value, text,
+};
 
 /// The longest request id, in characters.
 pub const REQUEST_ID_LIMIT: usize = 128;
@@ -98,6 +103,8 @@ pub struct Request {
     call: Call,
     id: Option<RequestId>,
     expecting: Option<PreparedCall>,
+    cancellation: Option<Cancellation>,
+    deadline: Option<Instant>,
 }
 
 impl Request {
@@ -107,7 +114,37 @@ impl Request {
             call,
             id: None,
             expecting: None,
+            cancellation: None,
+            deadline: None,
         }
+    }
+
+    /// The same request, cancelled by this signal, which its caller keeps (ADR 0008,
+    /// "Cancellation"). Set before the request is admitted, it ends the admission with
+    /// nothing published: that is how an admission, which has no run yet, is
+    /// cancelled. From the admission on it is the run's own signal. It is no part of
+    /// the request's fingerprint.
+    pub fn cancelled_by(mut self, signal: Cancellation) -> Request {
+        self.cancellation = Some(signal);
+        self
+    }
+
+    /// The signal the request is cancelled by, when it came with one.
+    pub fn cancellation(&self) -> Option<&Cancellation> {
+        self.cancellation.as_ref()
+    }
+
+    /// The same request, to be over by this time: an admission that has not been
+    /// published by then is given up, and the run is handed the deadline, with its
+    /// capability handles. It is no part of the request's fingerprint.
+    pub fn until(mut self, deadline: Instant) -> Request {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// When the request must be over, when it has a limit.
+    pub fn deadline(&self) -> Option<Instant> {
+        self.deadline
     }
 
     /// The same request, to be admitted only if its call still prepares as `prepared`:
@@ -277,6 +314,8 @@ struct AdmissionWire {
     run: String,
     #[serde(deserialize_with = "present")]
     request: Option<String>,
+    #[serde(deserialize_with = "present")]
+    parent: Option<String>,
     fingerprint: Digest,
     prepared: Digest,
     #[serde(deserialize_with = "present")]
@@ -303,6 +342,7 @@ where
 pub struct Admission {
     run: RunId,
     request: Option<RequestId>,
+    parent: Option<RunId>,
     fingerprint: Digest,
     prepared: Digest,
     reserved_micros: Option<u64>,
@@ -326,6 +366,7 @@ impl Admission {
         Admission {
             run,
             request,
+            parent: None,
             fingerprint,
             prepared,
             reserved_micros,
@@ -333,6 +374,20 @@ impl Admission {
             version: version.to_owned(),
             start_ms,
         }
+    }
+
+    /// The same admission, of a run that this run called from inside its action.
+    pub(super) fn under(mut self, parent: Option<RunId>) -> Admission {
+        self.parent = parent;
+        self
+    }
+
+    /// The run that called this one from inside its action, when one did (ADR 0008,
+    /// "Nested calls"). Such a run has no request id and no reservation: what
+    /// [`Admission::reserved_micros`] says of it was taken from its parent's
+    /// allowance, and the ledger was not asked.
+    pub fn parent(&self) -> Option<&RunId> {
+        self.parent.as_ref()
     }
 
     /// The run that was made.
@@ -357,8 +412,9 @@ impl Admission {
 
     /// What was reserved for the run when it was admitted, in millionths of a US
     /// dollar: the amount of its reservation ([`super::Reservation`]), which the same
-    /// publication made. None when the executor that admitted the run had no ledger:
-    /// nothing was reserved, and the run has no reservation.
+    /// publication made; or, for a run with a parent, what was taken for it from its
+    /// parent's allowance, with no reservation. None when the executor that admitted
+    /// the run had no ledger: nothing was reserved, and the run has no reservation.
     pub fn reserved_micros(&self) -> Option<u64> {
         self.reserved_micros
     }
@@ -384,6 +440,7 @@ impl Admission {
             record: ADMISSION_RECORD.to_owned(),
             run: self.run.as_str().to_owned(),
             request: self.request.as_ref().map(|id| id.as_str().to_owned()),
+            parent: self.parent.as_ref().map(|run| run.as_str().to_owned()),
             fingerprint: self.fingerprint,
             prepared: self.prepared,
             reserved_micros: self.reserved_micros,
@@ -414,9 +471,20 @@ impl Admission {
             // The rule's sentence shows what it refuses escaped already: it is cut, and
             // not escaped a second time.
             .map_err(|why| inconsistent(why.chars().take(record::REASON_LIMIT).collect()))?;
+        let parent = match &wire.parent {
+            Some(parent) => Some(RunId::parse(parent).map_err(inconsistent)?),
+            None => None,
+        };
+        // A run another run called is not its own parent, and carries no request id.
+        if parent.as_ref() == Some(&run) || (parent.is_some() && request.is_some()) {
+            return Err(inconsistent(
+                "the parent is the run itself, or a run with a parent has a request id".to_owned(),
+            ));
+        }
         let admission = Admission {
             run,
             request,
+            parent,
             fingerprint: wire.fingerprint,
             prepared: wire.prepared,
             reserved_micros: wire.reserved_micros,
@@ -519,6 +587,13 @@ pub enum RunState {
     /// executor that writes the store, the process that made the run is gone and the
     /// run will never end; an executor that only reads the store cannot tell.
     NotEnded { here: bool },
+    /// The run was admitted, has not ended, and was abandoned by the process that
+    /// answers, which made it: nothing in this process will end it. Its admission
+    /// became visible and was not confirmed, so its action never started; or its end
+    /// was refused by the store; or the executor's own code panicked. `failure` is the
+    /// store's failure, when one was the cause. Only the process that abandoned the
+    /// run says so: to any other it is `NotEnded { here: false }`.
+    Abandoned { failure: Option<StoreFailure> },
     /// The run ended, and its record is in the store: how it ended, as the first
     /// answer said it.
     Ended(Outcome),
@@ -552,6 +627,12 @@ impl Earlier {
     pub fn state(&self) -> &RunState {
         &self.state
     }
+
+    /// The same answer, with the run in this state.
+    pub(super) fn in_state(mut self, state: RunState) -> Earlier {
+        self.state = state;
+        self
+    }
 }
 
 /// What a request that was taken is answered with.
@@ -561,6 +642,9 @@ pub enum Answer {
     Ran(super::Finished),
     /// The request was sent before under this id: the run it made then.
     Repeat(Earlier),
+    /// This request made a run, which is executing: it was started, not waited for
+    /// ([`super::Executor::start`]).
+    Started(RunId),
 }
 
 impl Answer {
@@ -569,7 +653,56 @@ impl Answer {
         match self {
             Answer::Ran(finished) => finished.run(),
             Answer::Repeat(earlier) => earlier.run(),
+            Answer::Started(run) => run,
         }
+    }
+}
+
+/// The answer to a cancellation of a run (ADR 0008, "Cancellation").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Cancel {
+    /// The cancellation was accepted: it arrived before the run entered its commit
+    /// step. Nothing the run made is committed, and the run ends as cancelled. The
+    /// answer does not wait for that end: the action is told, and comes back when it
+    /// does ([`super::Executor::wait`]).
+    Accepted,
+    /// The cancellation was not accepted, and where the run is says why. `Ended`: the
+    /// run had ended, or was in its commit step, which was waited for until the
+    /// executor confirmed it; this is how it ended. `Abandoned`: this process made the
+    /// run and will not end it: its end was refused by the store or not confirmed, its
+    /// admission was not confirmed, or the executor's own code panicked.
+    /// `NotEnded { here: true }`: other code of this process made the run.
+    /// `NotEnded { here: false }`: nothing in this process works on the run, so
+    /// nothing can be told to stop.
+    NotAccepted(RunState),
+}
+
+/// The answer to a question after a run by its id: where the run is now, and, while it
+/// executes in this process, the progress events it has reported so far, in order, the
+/// secrets taken out. For a run that ended, the events are in its journal, in the store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Watched {
+    run: RunId,
+    state: RunState,
+    events: Vec<JournalLine>,
+}
+
+impl Watched {
+    pub(super) fn new(run: RunId, state: RunState, events: Vec<JournalLine>) -> Watched {
+        Watched { run, state, events }
+    }
+
+    pub fn run(&self) -> &RunId {
+        &self.run
+    }
+
+    pub fn state(&self) -> &RunState {
+        &self.state
+    }
+
+    /// The progress events of a run that is executing here; none of any other.
+    pub fn events(&self) -> &[JournalLine] {
+        &self.events
     }
 }
 
@@ -697,7 +830,7 @@ fn ending_of(
 
 /// The outcome a run's record holds: what the run's first answer said, since the
 /// secrets were taken out of both alike.
-fn outcome_of(record: &RunRecord) -> Outcome {
+pub(super) fn outcome_of(record: &RunRecord) -> Outcome {
     let ended = record.outcome();
     match ended.status {
         Status::Completed => Outcome::Completed {

@@ -17,11 +17,20 @@ fmt-check:
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
 
-# The fast tests alone, without the timing table or its limit.
+# The fast tests alone, without the timing table or its limit. They run through
+# scripts/thread-guard.sh, which kills a test process that holds too many threads.
 test:
-    cargo nextest run --workspace
+    scripts/thread-guard.sh cargo nextest run --workspace
 
-# The fast tests, then seconds per suite; fails when test time exceeds 180 seconds.
+# Some of the tests, through the same guard: the arguments are nextest's, as in
+# `just test-only -p whizbang-core watch::`. This, and not a bare `cargo nextest run`, is
+# how one crate's tests or one test are run.
+[positional-arguments]
+test-only +args:
+    scripts/thread-guard.sh cargo nextest run "$@"
+
+# The fast tests, then seconds per suite; fails when test time exceeds 180 seconds. They
+# run through scripts/thread-guard.sh too.
 timing:
     scripts/timing.sh
 

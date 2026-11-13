@@ -298,7 +298,11 @@ is ticked by the pull request that makes it true.
   than its entry says. That covers the files under `objects/` only: `CURRENT`, the
   generation files and the lock file are still read whole (`docs/carry-over.md`, task
   A12).
-- **Part 2, cancellation, status and progress:** boxes 1 and 4, and of box 3 that a
+- **Part 2, in two pull requests,** because the first half alone came to about a
+  thousand lines. First, status and progress: `start`, `status` and `wait` on the
+  executor, one table of open runs, and of "Done when" the caller that disconnects and
+  returns, and the second caller reading a status. Then cancellation, with everything
+  else listed here. Together: boxes 1 and 4, and of box 3 that a
   cancellation is accepted or comes too late. Status and cancel answered while an action
   is busy, by a second caller; progress events; a run found by its id after its caller
   left; a fake capability that blocks at a named barrier and sees the cancellation; a
@@ -312,18 +316,21 @@ is ticked by the pull request that makes it true.
   the refusals in the run record. Of "Done when": the grandchild refused after a
   cancellation; the parent that stays non-terminal while a capability request is
   outstanding; the completed child whose outputs remain when its parent fails.
+  It came to over three thousand lines, and is **two pull requests** in turn. First:
+  box 2, with the allowance, the two refusals, and the parent, the calls and the
+  refusals in the run record. Then: the rest of box 3, with those three of "Done when".
 
 **Depends on:** A6, A8. Rascal's old rule, that a commit which has taken its lock always
 completes, is not carried over without being restated here.
 
-- [ ] The rule, written in the ADR for the contract: a cancellation is accepted if it arrives
+- [x] The rule, written in the ADR for the contract: a cancellation is accepted if it arrives
       before the action enters its commit step, and then nothing is committed; one that
       arrives after returns the completed outcome.
-- [ ] Nested calls through the context's executor, each with an allowance taken from its
+- [x] Nested calls through the context's executor, each with an allowance taken from its
       parent's; a fifth level and a call back into an action on the stack are refused.
-- [ ] Cancellation reaches descendants and refuses new ones. A parent is terminal only when
+- [x] Cancellation reaches descendants and refuses new ones. A parent is terminal only when
       its descendants are terminal and every request a capability was sent is accounted for.
-- [ ] Progress events; status and cancel answered while an action is busy.
+- [x] Progress events; status and cancel answered while an action is busy.
 - [x] One commit step for an action: all of its output references and its completed status
       are published together, through A2's publication, and the completed outcome is returned
       only after that publication is durable.

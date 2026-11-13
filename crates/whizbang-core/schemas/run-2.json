@@ -13,7 +13,7 @@
       "properties": {
         "run": { "type": "string", "minLength": 1 },
         "request": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
-        "parent": { "type": ["string", "null"] },
+        "parent": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
         "whizbang": { "type": "string", "minLength": 1 }
       }
     },
@@ -81,7 +81,7 @@
     "outcome": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "error", "invalid", "refusals"],
+      "required": ["status", "error", "invalid", "refusals", "refusals_omitted"],
       "properties": {
         "status": { "enum": ["completed", "cancelled", "error", "invalid"] },
         "error": {
@@ -94,7 +94,21 @@
           }
         },
         "invalid": { "type": ["string", "null"] },
-        "refusals": { "type": "array", "maxItems": 0 }
+        "refusals": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["action", "kind", "why"],
+            "properties": {
+              "action": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+              "kind": { "enum": ["unknown_action", "invalid", "input", "not_ready", "read_only", "no_such_run", "conflict", "stale", "over_allowance", "no_bound", "secret_in_request_id", "not_a_request_id", "cancelled", "deadline_passed", "too_deep", "call_back", "over_caller", "caller_over", "too_many_calls", "tree_full", "too_many_started", "too_many_started_under", "id_inside", "wait_above", "wait_cancelled"] },
+              "why": { "type": "string", "minLength": 1, "maxLength": 512 }
+            }
+          }
+        },
+        "refusals_omitted": { "type": "integer", "minimum": 0 }
       }
     },
     "time": {
@@ -118,7 +132,21 @@
       }
     },
     "egress": { "type": "array", "maxItems": 0 },
-    "steps": { "type": "array", "maxItems": 0 },
+    "steps": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["step", "run", "action", "status"],
+        "properties": {
+          "step": { "enum": ["call"] },
+          "run": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "action": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "status": { "enum": ["completed", "cancelled", "error", "invalid", null] }
+        }
+      }
+    },
     "judge": { "type": "array", "maxItems": 0 },
     "diagnostics": {
       "type": "array",

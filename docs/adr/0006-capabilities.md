@@ -27,6 +27,12 @@ derivation cannot be stated of two unrelated pictures of one size" holds only wh
 mask weighs some pixel nothing; a mask whose support is the whole image vouches for any
 picture of its size, and a test pins it. Added: the check takes the digest a picture
 already holds (`Derivation::checked_of`).
+Amended: 2026-11-13, with the third pull request of task A7 (ADR 0008). Changed: a
+context makes its own handles from backends, and the executor hands each run its
+handles; the fakes can hold a request open and see their bounds, and the fake
+segmenter can fail.
+Amended: 2026-11-13, with the last pull request of task A7 (ADR 0008, "Nested calls").
+Changed: accounting for requests is built, inside the handle.
 Spec: section 3, "Crates and their edges", "Identities" and "Storage"; section 4,
 "Backends"
 
@@ -104,26 +110,36 @@ record are in `crates/whizbang-core/tests/it/capability/`.
   can clone it, may only shorten it; setting a later time than the one already set
   changes nothing. The method an
   action calls takes the request and nothing else, so an action cannot ask on behalf
-  of a run that was cancelled by handing over some other signal. Whoever makes an
-  action's context makes its handles, with the context's own signal; until the
-  executor does (ADR 0004), a test does. A handle does four things the backend is not
+  of a run that was cancelled by handing over some other signal. An action's context
+  makes its own handles, with its own signal and its own deadline, from the backends
+  it is given (`Capabilities`, which holds backends and no handle; `Context::new`): so
+  a context never holds a handle that is bound to another run's signal (ADR 0008,
+  "Cancellation"). A handle made by other code, as a test makes one, is bound to the
+  signal it was made with, and tells its deadline by the machine's clock; the handles
+  an executor's context makes tell it by the executor's clock (ADR 0008, "A deadline in
+  a run"). A handle does four things the backend is not
   trusted to do. Once the run is cancelled it sends nothing, and answers with the
   fault `cancelled`. Once the deadline has passed it sends nothing, and answers
   `timed_out`. It sends a request only to a backend that declares every feature the
   request needs, and otherwise answers `unsupported` without sending. And it holds the
   answer to the request: an answer that does not fit is the fault `malformed`. The
-  handles in an action's context (`Capabilities`, ADR 0004) are these. The executor
-  hands an action none of them yet: the first action that asks a capability through it
-  brings that, with what the run record keeps of each request (`docs/carry-over.md`).
+  handles in an action's context (`Handles`, ADR 0004) are these. The executor hands
+  each run a handle on every backend it was given (`Engine::with_capabilities`, ADR
+  0008), whatever the run's call resolved: choosing among backends by the call's
+  choice, and what the run record keeps of each request, come with the first action
+  that asks a capability (`docs/carry-over.md`).
 - **Nobody retries in checkpoint 1A.** A backend sends one request and returns; a
   handle sends it once. Whether to ask again is for whoever owns the loop the request
   is part of, which for the judge is the judge loop of milestone 2, and it decides from
   a fault's kind and its wait. Squint's retry rule read an HTTP status that a fault
   does not carry (`docs/carry-over.md`).
 - **Accounting for requests** (task A7: a parent is terminal only when every request a
-  capability was sent is accounted for) will be a decorator over the backend, inside
-  the handle: the handle already stands between every request and its backend. It
-  needs no change to a trait.
+  capability was sent is accounted for) is inside the handle, which already stands
+  between every request and its backend, and needed no change to a trait. The handles
+  a context makes share one count: a handle counts a request just before it calls its
+  backend and accounts for it when that call is over, however it ended, and it sends
+  nothing once its run's action has come back (ADR 0008, "Nested calls"). A handle
+  made by other code counts nothing.
 - **Checked types.** Every type a request or a response is made of has private fields
   and is built through a constructor that checks it. None is deserialised. So a value of
   the type is a value that passed the check: there is no support plane out of its range,
@@ -723,8 +739,16 @@ Each fake may be shared across threads, and counts every request then too. The j
 takes a request and plays its next entry in one step, so of many simultaneous requests
 each gets one entry, and the request kept in place `n` is the one answered with entry
 `n`. Nothing in checkpoint 1A sends two requests to a capability at once: task A6's two
-simultaneous requests are calls to the executor. And no fake can hold a request open
-or look at the `Bounds` it was handed, which task A7 needs (`docs/carry-over.md`).
+simultaneous requests are calls to the executor.
+
+Each fake can be told to stop at a named barrier of the test kit (`stopping_at`): it
+then holds every request it is sent open until a test lets it go, having counted it,
+and notes what the `Bounds` it was handed say of the run's cancellation when the
+request arrives and when it goes on, and the deadline (`observed`). A request whose run
+was cancelled meanwhile is answered with the fault `cancelled`. A judge that stops
+keeps the request before it stops and plays an entry after, so a request cancelled
+while it is held plays none. And the fake segmenter can be told to answer every request
+with a fault (`failing`).
 
 A request the handle refused, because the run was cancelled or the fake does not
 declare a feature, never reaches the fake and is not counted. Prepare is shown to send

@@ -17,6 +17,7 @@ use crate::identity::{Binding, BindingId, DecodeLimits, Digest, Encoder, Fields}
 
 use crate::store;
 
+use super::record::RefusalKind;
 use super::{ActionDescriptor, Call, Capability, Count, InputPort, RequestId, RunId, Value};
 
 /// Which model answers a capability: the backend, the model, and the model's version or
@@ -489,6 +490,15 @@ pub enum CallError {
     Ledger {
         why: String,
     },
+    /// The run was admitted to be started, and no thread could be made for its action:
+    /// `why` is the system's sentence. This is not a judgement of the call. The run is
+    /// in the store, ended as an error that says the same; or, when that end could
+    /// not be written, as it was admitted, and abandoned
+    /// ([`super::RunState::Abandoned`]). Nothing works on it, and nobody waits for it.
+    NotStarted {
+        run: super::RunId,
+        why: String,
+    },
 }
 
 impl CallError {
@@ -496,7 +506,10 @@ impl CallError {
     pub fn refusal(&self) -> Option<&Refusal> {
         match self {
             CallError::Refused(refusal) => Some(refusal),
-            CallError::Store(_) | CallError::Record { .. } | CallError::Ledger { .. } => None,
+            CallError::Store(_)
+            | CallError::Record { .. }
+            | CallError::Ledger { .. }
+            | CallError::NotStarted { .. } => None,
         }
     }
 }
@@ -519,6 +532,11 @@ impl std::fmt::Display for CallError {
                 )
             }
             CallError::Ledger { why } => write!(f, "the ledger failed: {why}"),
+            CallError::NotStarted { run, why } => write!(
+                f,
+                "the run {run} was admitted and could not be started: no thread could be \
+                 made for its action: {why}"
+            ),
         }
     }
 }
@@ -553,8 +571,15 @@ pub enum Refusal {
     /// The call is ready, and this executor was built to read its store: it prepares
     /// calls and runs none.
     ReadOnly,
-    /// A call from inside a running action. This build does not nest calls yet.
-    NoNestedCalls,
+    /// A run was asked after by its id, and the store holds no run of that id: none
+    /// was made, or it was deleted.
+    NoSuchRun { run: super::RunId },
+    /// The request was to be started ([`super::Executor::start`]), and the store's
+    /// writer already has `bound` started runs that are not over: as many as this
+    /// executor runs at once, each on a thread of its own. No run was made, nothing was
+    /// reserved, nothing was written, and the request's id is not taken by this
+    /// request. A run that is over makes room.
+    TooManyStarted { bound: usize },
     /// The request's id was admitted before for another request, which made `run`. An
     /// id is one request's: nothing was prepared and nothing ran.
     Conflict { request: RequestId, run: RunId },
@@ -582,6 +607,89 @@ pub enum Refusal {
     /// The text given as a request's id is not one. `why` is the whole sentence, which
     /// shows the text escaped and cut.
     NotARequestId { why: String },
+    /// The signal the request came with was set before the request was admitted
+    /// ([`super::Request::cancelled_by`]). No run was made, nothing was reserved, and
+    /// the request's id is not taken by this request.
+    Cancelled { action: String },
+    /// The deadline the request came with passed before the request was admitted
+    /// ([`super::Request::until`]). No run was made, nothing was reserved, and the
+    /// request's id is not taken by this request.
+    DeadlinePassed { action: String },
+    /// A call from inside an action that would run deeper than calls nest: the run
+    /// that made it is at the level `levels`, the last there is (`SPEC.md` section 3,
+    /// "Nested calls"; ADR 0008). No run was made.
+    TooDeep { action: String, levels: usize },
+    /// A call from inside an action, back into an action that is already running
+    /// among the calls that led to this one: the caller's own, or one further up.
+    /// Actions are compared by name. No run was made.
+    CallBack { action: String },
+    /// A call from inside an action that may cost up to `asked_micros`, when
+    /// `left_micros` are left of what its caller may spend, both in millionths of a
+    /// US dollar. A nested call draws on its caller's allowance, and the ledger is
+    /// not asked. No run was made, and nothing was taken.
+    OverCaller {
+        action: String,
+        asked_micros: u64,
+        left_micros: u64,
+    },
+    /// A call from inside an action whose own run was over, or ending: the action had
+    /// come back, and something it left behind made the call. No run was made.
+    CallerOver { action: String },
+    /// A call from inside an action whose run has already called `limit` others,
+    /// which is as many as one run may. No run was made.
+    TooManyCalls { action: String, limit: usize },
+    /// A call from inside an action, when `limit` runs have been admitted under the
+    /// run that nothing called, at any level, which is as many as one such run may
+    /// have under it. No run was made.
+    TreeFull { action: String, limit: usize },
+    /// A call from inside an action to start a run, when `limit` runs that the same
+    /// run started are executing, which is as many as may at once: each is a thread.
+    /// No run was made; the caller waits for one of them, or runs the call itself.
+    TooManyStartedUnder { action: String, limit: usize },
+    /// A call from inside an action that came with a request id. A nested call is
+    /// known by the run that made it and its place among that run's calls, and
+    /// carries no id of its own. No run was made, and the id was not looked up.
+    IdInside { action: String },
+    /// A run was waited for from inside an action whose own run it is, or is under:
+    /// that run is over only after the one that waits, so the wait would never end.
+    /// Nothing was waited for.
+    WaitAbove { run: RunId },
+    /// A wait from inside an action was given up because the run that waited was
+    /// cancelled, or one above it was. The run that was waited for is as it was.
+    WaitCancelled { run: RunId },
+}
+
+impl Refusal {
+    /// What kind of refusal this is, as a run's record spells it.
+    pub fn kind(&self) -> RefusalKind {
+        match self {
+            Refusal::UnknownAction { .. } => RefusalKind::UnknownAction,
+            Refusal::Invalid { .. } => RefusalKind::Invalid,
+            Refusal::Input { .. } => RefusalKind::Input,
+            Refusal::NotReady { .. } => RefusalKind::NotReady,
+            Refusal::ReadOnly => RefusalKind::ReadOnly,
+            Refusal::NoSuchRun { .. } => RefusalKind::NoSuchRun,
+            Refusal::Conflict { .. } => RefusalKind::Conflict,
+            Refusal::Stale { .. } => RefusalKind::Stale,
+            Refusal::OverAllowance { .. } => RefusalKind::OverAllowance,
+            Refusal::NoBound { .. } => RefusalKind::NoBound,
+            Refusal::SecretInRequestId => RefusalKind::SecretInRequestId,
+            Refusal::NotARequestId { .. } => RefusalKind::NotARequestId,
+            Refusal::Cancelled { .. } => RefusalKind::Cancelled,
+            Refusal::DeadlinePassed { .. } => RefusalKind::DeadlinePassed,
+            Refusal::TooDeep { .. } => RefusalKind::TooDeep,
+            Refusal::CallBack { .. } => RefusalKind::CallBack,
+            Refusal::OverCaller { .. } => RefusalKind::OverCaller,
+            Refusal::CallerOver { .. } => RefusalKind::CallerOver,
+            Refusal::TooManyCalls { .. } => RefusalKind::TooManyCalls,
+            Refusal::TreeFull { .. } => RefusalKind::TreeFull,
+            Refusal::TooManyStarted { .. } => RefusalKind::TooManyStarted,
+            Refusal::TooManyStartedUnder { .. } => RefusalKind::TooManyStartedUnder,
+            Refusal::IdInside { .. } => RefusalKind::IdInside,
+            Refusal::WaitAbove { .. } => RefusalKind::WaitAbove,
+            Refusal::WaitCancelled { .. } => RefusalKind::WaitCancelled,
+        }
+    }
 }
 
 impl std::fmt::Display for Refusal {
@@ -624,8 +732,63 @@ impl std::fmt::Display for Refusal {
             Refusal::ReadOnly => f.write_str(
                 "the call is ready, and this executor only reads its store: it runs nothing",
             ),
-            Refusal::NoNestedCalls => f.write_str(
-                "an action cannot call another action yet: this build does not nest calls",
+            Refusal::NoSuchRun { run } => write!(f, "the store holds no run {run}"),
+            Refusal::TooDeep { action, levels } => write!(
+                f,
+                "{action} was not called: its caller runs at level {levels}, and calls \
+                 nest {levels} levels deep at most"
+            ),
+            Refusal::CallBack { action } => write!(
+                f,
+                "{action} was not called: it is already running among the calls that led \
+                 to this one, and an action is not called back into"
+            ),
+            Refusal::OverCaller {
+                action,
+                asked_micros,
+                left_micros,
+            } => write!(
+                f,
+                "{action} was not called: it may cost up to {asked_micros} millionths of a \
+                 US dollar, and {left_micros} are left of its caller's allowance"
+            ),
+            Refusal::CallerOver { action } => write!(
+                f,
+                "{action} was not called: the action that called it had come back"
+            ),
+            Refusal::TooManyCalls { action, limit } => write!(
+                f,
+                "{action} was not called: its caller has called {limit} actions, which \
+                 is as many as one run may"
+            ),
+            Refusal::TreeFull { action, limit } => write!(
+                f,
+                "{action} was not called: {limit} runs were made under the run that \
+                 began these calls, which is as many as one may have under it"
+            ),
+            Refusal::TooManyStartedUnder { action, limit } => write!(
+                f,
+                "{action} was not started: {limit} runs that its caller started are \
+                 executing, which is as many as may at once"
+            ),
+            Refusal::WaitAbove { run } => write!(
+                f,
+                "the run {run} was not waited for: it is the run that asked, or one above \
+                 it, and is over only after the run that asked"
+            ),
+            Refusal::WaitCancelled { run } => write!(
+                f,
+                "the wait for the run {run} was given up: the run that waited was cancelled"
+            ),
+            Refusal::IdInside { action } => write!(
+                f,
+                "{action} was not called: a call from inside an action carries no \
+                 request id"
+            ),
+            Refusal::TooManyStarted { bound } => write!(
+                f,
+                "the request was not started: {bound} started runs are not over yet, and \
+                 this executor runs no more than that at once"
             ),
             Refusal::Conflict { request, run } => write!(
                 f,
@@ -651,6 +814,14 @@ impl std::fmt::Display for Refusal {
                  reserved"
             ),
             Refusal::NotARequestId { why } => f.write_str(why),
+            Refusal::Cancelled { action } => write!(
+                f,
+                "{action} was not admitted: its request was cancelled first"
+            ),
+            Refusal::DeadlinePassed { action } => write!(
+                f,
+                "{action} was not admitted: the deadline of its request passed first"
+            ),
             Refusal::SecretInRequestId => f.write_str(
                 "the request id holds something that must not be written: an id is stored \
                  as it is, so it cannot hold a secret",

@@ -8,8 +8,9 @@ use std::sync::Arc;
 use whizbang_core::artifact::{ArtifactType, Location, Origin, Shape, Step};
 use whizbang_core::contract::OutputPort;
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Admission, Answer, Call, CallError, Context, Executor, Failure,
-    Outcome, PreparedCall, Produced, RUN_RECORD_SCHEMA, Request, RequestId, RunId, RunState, Value,
+    Action, ActionDescriptor, Admission, Answer, Call, CallError, Cancel, Context, Executor,
+    Failure, Outcome, PreparedCall, Produced, RUN_RECORD_SCHEMA, Request, RequestId, RunId,
+    RunState, Value,
 };
 use whizbang_core::identity::{Binding, Digest, PixelDigest, Space};
 use whizbang_core::store::fs::RealFs;
@@ -116,6 +117,7 @@ fn echo_runs_through_the_binarys_executor_and_runs_list_and_show_read_it() {
         "parent: none".to_owned(),
         "action: echo 1.0.0".to_owned(),
         "status: completed".to_owned(),
+        "refusals: none".to_owned(),
         "settings: none".to_owned(),
         "arguments: 1".to_owned(),
         "  text = \"hello\"".to_owned(),
@@ -135,6 +137,64 @@ fn echo_runs_through_the_binarys_executor_and_runs_list_and_show_read_it() {
     }
     assert!(text.contains("config: sha256:e3b0c442"));
     assert!(text.contains("  journal\t"));
+}
+
+#[test]
+fn a_cancelled_run_is_listed_and_shown_as_cancelled_with_its_diagnostics() {
+    // `echo`, cancelled the moment its run is admitted, through the binary's executor:
+    // the hook is the file system's, straight after the admission becomes visible.
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let fs = Arc::new(ShimFs::new());
+    let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+    let mut registry = whizbang::wiring::registry().expect("the registry builds");
+    registry.register(Arc::new(Echo::new())).unwrap();
+    let executor = whizbang::wiring::runner(registry, store.clone());
+    fs.pause_after_rename_onto("CURRENT", {
+        let (executor, store) = (executor.clone(), store.clone());
+        move || {
+            let generation = store.snapshot().unwrap();
+            let run = RunId::parse(generation.runs().keys().next().unwrap()).unwrap();
+            assert_eq!(executor.cancel(&run), Ok(Cancel::Accepted));
+        }
+    });
+    let request = Request::new(echo("hello")).with_id(RequestId::parse("order-9").unwrap());
+    let Ok(Answer::Ran(finished)) = executor.request(&request) else {
+        panic!("the request did not run");
+    };
+    assert_eq!(finished.outcome(), &Outcome::Cancelled);
+    let run = finished.run().as_str();
+    drop(executor);
+    drop(store);
+
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(listed.code, Some(0), "{}", listed.err);
+    let lines: Vec<&str> = listed.text().lines().collect();
+    assert_eq!(lines[0], "runs: 1");
+    let fields: Vec<&str> = lines[1].split('\t').collect();
+    assert_eq!(&fields[..3], [run, "cancelled", "echo 1.0.0"]);
+
+    let shown = whizbang(&["show", run], &root);
+    assert_eq!(shown.code, Some(0), "{}", shown.err);
+    let text = shown.text();
+    for line in [
+        format!("run: {run}"),
+        "request: order-9".to_owned(),
+        "status: cancelled".to_owned(),
+        "outputs: none".to_owned(),
+        "diagnostics: 1".to_owned(),
+    ] {
+        assert!(
+            text.lines().any(|l| l == line),
+            "{line:?} is not in:\n{text}"
+        );
+    }
+    let shown = whizbang(&["show", run, "--json"], &root);
+    let document: serde_json::Value = serde_json::from_slice(&shown.out).unwrap();
+    let schema: serde_json::Value = serde_json::from_str(RUN_RECORD_SCHEMA).unwrap();
+    validate(&schema, &document).unwrap();
+    assert_eq!(document["outcome"]["status"], "cancelled");
+    assert_eq!(document["outcome"]["error"], serde_json::Value::Null);
 }
 
 #[test]
@@ -548,7 +608,8 @@ fn a_run_that_was_admitted_and_did_not_end_is_listed_and_shown_as_such() {
         let Ok(Answer::Repeat(earlier)) = executor.request(&request("boom")) else {
             panic!("the request ran again");
         };
-        assert_eq!(earlier.state(), &RunState::NotEnded { here: true });
+        let abandoned = matches!(earlier.state(), RunState::Abandoned { failure: Some(_) });
+        assert!(abandoned, "{:?}", earlier.state());
     }
     let listed = whizbang(&["list"], &root);
     assert_eq!(listed.code, Some(0), "{}", listed.err);
@@ -569,7 +630,7 @@ fn a_run_that_was_admitted_and_did_not_end_is_listed_and_shown_as_such() {
     let text = shown.text();
     assert!(
         text.starts_with(&format!(
-            "run: {run}\nrequest: order-17\naction: boom 1.2.3\nstatus: admitted, not ended\n\
+            "run: {run}\nrequest: order-17\nparent: none\naction: boom 1.2.3\nstatus: admitted, not ended\n\
              started: "
         )),
         "{text}"
@@ -581,7 +642,7 @@ fn a_run_that_was_admitted_and_did_not_end_is_listed_and_shown_as_such() {
         ),
         "{text}"
     );
-    assert_eq!(text.lines().count(), 7, "{text}");
+    assert_eq!(text.lines().count(), 8, "{text}");
     // Its admission is one of its names, and is printed as it is stored.
     let admission = whizbang(&["show", &run, "--diagnostic", "admitted"], &root);
     let admission = Admission::from_bytes(&admission.out).unwrap();
@@ -664,4 +725,72 @@ fn a_run_whose_admission_is_not_one_is_listed_and_shown_with_the_reason() {
         "{}",
         shown.err
     );
+}
+
+/// An action that calls `echo`, and then an action there is none of.
+struct Nests(ActionDescriptor);
+
+impl Action for Nests {
+    fn descriptor(&self) -> &ActionDescriptor {
+        &self.0
+    }
+
+    fn run(&self, _: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+        let inner = context.executor().submit(&echo("inside"));
+        assert!(inner.is_ok(), "{inner:?}");
+        let refused = context.executor().submit(&Call::new("no\u{1b}such"));
+        assert!(matches!(refused, Err(CallError::Refused(_))), "{refused:?}");
+        Ok(Produced::nothing())
+    }
+}
+
+#[test]
+fn a_run_another_run_called_is_marked_in_the_list_and_each_is_shown_with_the_other() {
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let parent = {
+        let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+        let mut registry = whizbang::wiring::registry().expect("the registry builds");
+        registry.register(Arc::new(Echo::new())).unwrap();
+        let kind = whizbang_core::contract::Kind::Primitive;
+        let nests = ActionDescriptor::draft("nests", "1.0.0", kind, "A test action.");
+        registry
+            .register(Arc::new(Nests(nests.build().unwrap())))
+            .unwrap();
+        let executor = whizbang::wiring::runner(registry, store);
+        let finished = executor.submit(&Call::new("nests")).unwrap();
+        assert_eq!(finished.outcome().name(), "completed");
+        finished.run().as_str().to_owned()
+    };
+
+    // The list marks the run that was called, with the run that called it.
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(listed.code, Some(0), "{}", listed.err);
+    let lines: Vec<Vec<&str>> = listed
+        .text()
+        .lines()
+        .skip(1)
+        .map(|line| line.split('\t').collect())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    let of = |action: &str| lines.iter().find(|fields| fields[2] == action).unwrap();
+    assert_eq!(of("nests 1.0.0").len(), 5);
+    assert_eq!(of("nests 1.0.0")[0], parent);
+    let child = of("echo 1.0.0")[0].to_owned();
+    assert_eq!(of("echo 1.0.0")[5], format!("called by {parent}"));
+
+    // Each is shown with the other: the parent of one, a step of the other. What was
+    // refused is shown escaped.
+    let shown = whizbang(&["show", &child], &root);
+    assert!(shown.text().contains(&format!("\nparent: {parent}\n")));
+    assert!(shown.text().contains("\nsteps: none\n"));
+    let shown = whizbang(&["show", &parent], &root);
+    let text = shown.text();
+    assert!(text.contains("\nparent: none\n"), "{text}");
+    let step = format!("\nsteps: 1\n  call\t{child}\techo\tcompleted\n");
+    assert!(text.contains(&step), "{text}");
+    let refusal = "\nrefusals: 1\n  none\tunknown_action\tno action named no\\u{1b}such is \
+                   registered\n";
+    assert!(text.contains(refusal), "{text}");
+    assert!(!shown.out.contains(&0x1b));
 }

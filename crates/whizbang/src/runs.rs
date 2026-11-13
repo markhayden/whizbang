@@ -117,13 +117,14 @@ fn list(root: &Path) -> Result<String, String> {
     for id in generation.runs().keys() {
         let line = match record_of(&reader, &generation, id) {
             Some(Ok(record)) => format!(
-                "{}\t{}\t{} {}\t{}\t{} ms",
+                "{}\t{}\t{} {}\t{}\t{} ms{}",
                 shown(id),
                 record.outcome().status.name(),
                 shown(&record.asked().action),
                 shown(&record.asked().version),
                 utc(record.time().start_ms),
-                record.time().end_ms - record.time().start_ms
+                record.time().end_ms - record.time().start_ms,
+                called_by(record.identity().parent.as_deref())
             ),
             // A run is in the store from its admission, and has its record from its
             // end: one with an admission and no record was admitted and has not ended.
@@ -134,11 +135,12 @@ fn list(root: &Path) -> Result<String, String> {
                         format!("{}\tno record; admission not read: {why}", shown(id))
                     }
                     Some(Ok(admission)) => format!(
-                        "{}\tadmitted, not ended\t{} {}\t{}",
+                        "{}\tadmitted, not ended\t{} {}\t{}{}",
                         shown(id),
                         shown(admission.action()),
                         shown(admission.version()),
-                        utc(admission.start_ms())
+                        utc(admission.start_ms()),
+                        called_by(admission.parent().map(|run| run.as_str()))
                     ),
                     None => format!("{}\tno record", shown(id)),
                 }
@@ -231,6 +233,15 @@ fn admission_of(
     }
 }
 
+/// The mark `runs list` gives a run that another run called: one more field, naming
+/// that run. A run that nothing called has none.
+fn called_by(parent: Option<&str>) -> String {
+    match parent {
+        Some(parent) => format!("\tcalled by {}", shown(parent)),
+        None => String::new(),
+    }
+}
+
 /// What was reserved for a run, for a person.
 fn reserved(micros: Option<u64>) -> String {
     match micros {
@@ -247,8 +258,12 @@ fn admitted_text(admission: &Admission) -> String {
         Some(request) => shown(request.as_str()),
         None => "none".to_owned(),
     };
+    let parent = match admission.parent() {
+        Some(parent) => shown(parent.as_str()),
+        None => "none".to_owned(),
+    };
     format!(
-        "run: {}\nrequest: {request}\naction: {} {}\nstatus: admitted, not ended\n\
+        "run: {}\nrequest: {request}\nparent: {parent}\naction: {} {}\nstatus: admitted, not ended\n\
          started: {}\nspend: {}\nrecord: none: the run was admitted and has not ended; it is executing, \
          or the process that ran it ended first\n",
         shown(admission.run().as_str()),
@@ -294,6 +309,23 @@ fn text_of(record: &RunRecord) -> String {
     if let Some(why) = &outcome.invalid {
         line(format!("invalid: {}", why.escape_debug()));
     }
+    // What the run's action called and was refused: no run was made for these.
+    line(format!("refusals: {}", count(outcome.refusals.len())));
+    for refused in &outcome.refusals {
+        let kind = serde_json::to_value(refused.kind()).unwrap_or_default();
+        line(format!(
+            "  {}\t{}\t{}",
+            refused.action().map_or_else(|| "none".to_owned(), shown),
+            kind.as_str().unwrap_or_default(),
+            refused.why().escape_debug()
+        ));
+    }
+    if outcome.refusals_omitted > 0 {
+        line(format!(
+            "  and {} more, not listed",
+            outcome.refusals_omitted
+        ));
+    }
     line(format!("started: {}", utc(time.start_ms)));
     line(format!(
         "ended: {} ({} ms)",
@@ -336,9 +368,18 @@ fn text_of(record: &RunRecord) -> String {
         "spend: {}; paid requests: none",
         reserved(record.spend().reserved_micros)
     ));
-    for group in ["egress", "steps", "judge"] {
-        line(format!("{group}: none"));
+    line("egress: none".to_owned());
+    // The runs this one called, in order: each is shown by its own id.
+    line(format!("steps: {}", count(record.steps().len())));
+    for step in record.steps() {
+        line(format!(
+            "  call\t{}\t{}\t{}",
+            shown(step.run()),
+            shown(step.action()),
+            step.status().map_or("not ended", |status| status.name())
+        ));
     }
+    line("judge: none".to_owned());
     line(format!(
         "diagnostics: {}",
         count(record.diagnostics().len())

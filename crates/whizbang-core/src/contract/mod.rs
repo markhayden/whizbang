@@ -17,8 +17,13 @@
 //! asked for in the admission's own step. And the commit step (ADR 0008): an action
 //! hands back artifacts ([`Produced`]), and the executor publishes them with the run's
 //! completed status in the one publication that ends the run; a panic in an action ends
-//! its run as an error. The ledger itself and settlement are not here, and neither are
-//! nested calls and cancellation.
+//! its run as an error. And asking after a run by its id: [`Executor::start`],
+//! [`Executor::status`] and [`Executor::wait`]; and cancelling it
+//! ([`Executor::cancel`]), which is accepted before the run's commit step and never
+//! after. And nested calls: the executor in an action's [`Context`] admits a call under
+//! the action's run, with an allowance taken from that run's, and refuses a fifth level
+//! and a call back; a cancellation reaches every run under the one it cancels. The
+//! ledger itself and settlement are not here.
 
 mod call;
 mod context;
@@ -26,6 +31,8 @@ mod descriptor;
 mod engine;
 mod journal;
 pub mod ledger;
+mod live;
+mod nested;
 mod prepare;
 pub mod record;
 mod redact;
@@ -37,31 +44,37 @@ pub mod text;
 pub use crate::capability::{FillHandle, JudgeHandle, SegmentHandle};
 pub use call::Call;
 pub use context::{
-    Allowance, Cancellation, Capabilities, Context, Diagnostics, Events, NoDiagnostics,
+    Allowance, Cancellation, Capabilities, Context, Diagnostics, Events, Handles, NoDiagnostics,
 };
 pub use descriptor::{
     ActionDescriptor, Argument, Capability, Count, DescriptorError, Draft, InputPort, Kind,
     OutputPort, PortRef, Requirement, Value, ValueType, When,
 };
-pub use engine::{ConfigSource, Engine, Executor, WHIZBANG_VERSION};
+pub use engine::{
+    BoundRefused, ConfigSource, Engine, Executor, STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT,
+    Spawn, WHIZBANG_VERSION,
+};
 pub use journal::{Clock, JournalLine, SystemClock, journal_bytes, read_journal};
 pub use ledger::{
     Declined, LEDGER_NAME_LIMIT, Ledger, RESERVATION_RECORD, RESERVATIONS_PREFIX, Reservation,
     SPEND_PREFIX, Step, reservations,
 };
+#[doc(hidden)]
+pub use nested::HeldOpen;
+pub use nested::{DESCENDANTS_LIMIT, LEVELS_LIMIT, STARTED_LIMIT};
 pub use prepare::{
     Backends, CallError, Estimate, InputFault, Missing, ModelIdentity, Need, NoBackends,
     PreparedCall, Readiness, Refusal, ResolvedInput, Stale, StoreFailure, Unavailable,
 };
 pub use record::{
-    DIAGNOSTIC_NAME_LIMIT, RECORD_MAX_BYTES, RUN_RECORD, RUN_RECORD_SCHEMA, RecordError, RunRecord,
-    is_diagnostic_name,
+    DIAGNOSTIC_NAME_LIMIT, RECORD_MAX_BYTES, REFUSAL_WHY_LIMIT, REFUSALS_LIMIT, RUN_RECORD,
+    RUN_RECORD_SCHEMA, RecordError, RefusalKind, RunRecord, STEPS_LIMIT, is_diagnostic_name,
 };
 pub use redact::{REDACTED, SECRET_MIN_BYTES, SecretRefused, Secrets};
 pub use registry::{Action, Failure, Produced, RegistrationError, Registry};
 pub use request::{
-    ADMISSION_RECORD, ADMITTED_NAME, Admission, Answer, ENDING_RECORD, Earlier, Ending,
+    ADMISSION_RECORD, ADMITTED_NAME, Admission, Answer, Cancel, ENDING_RECORD, Earlier, Ending,
     REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, REQUESTS_PREFIX, Request, RequestId,
-    RequestRecordError, RunState, request_fingerprint,
+    RequestRecordError, RunState, Watched, request_fingerprint,
 };
 pub use run::{Committed, Finished, MESSAGE_LIMIT, Outcome, RUN_ID_LIMIT, RunId};

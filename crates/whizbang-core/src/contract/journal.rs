@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +19,12 @@ use super::{Diagnostics, Events, Secrets};
 /// What tells a run the time: milliseconds since the Unix epoch.
 pub trait Clock: Send + Sync {
     fn now_ms(&self) -> u64;
+
+    /// The instant it is now, for what is held to a deadline: the machine's, unless a
+    /// clock says otherwise. A test moves it.
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
 }
 
 /// The machine's clock.
@@ -58,10 +64,19 @@ impl Kept {
     /// order of their names: what was kept until now. What is written after this is not
     /// part of the run.
     pub(super) fn take(&self) -> (Vec<JournalLine>, Vec<(Diagnostic, Vec<u8>)>) {
-        let lines = std::mem::take(&mut *self.lines.lock().unwrap_or_else(|e| e.into_inner()));
+        // The lines stay: a run whose end the store then refuses has them nowhere
+        // else, and whoever asks after it is still shown them.
+        let lines = self.lines();
         let diagnostics =
             std::mem::take(&mut *self.diagnostics.lock().unwrap_or_else(|e| e.into_inner()));
         (lines, diagnostics.into_values().collect())
+    }
+}
+
+impl Kept {
+    /// The journal's lines so far: the run goes on.
+    pub(super) fn lines(&self) -> Vec<JournalLine> {
+        self.lines.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 
@@ -105,14 +120,16 @@ pub struct JournalLine {
 }
 
 impl JournalLine {
-    /// The event at this place and time, saying this, with the secrets taken out. It is
-    /// the one way to make a line, beside reading a stored journal: a line in a journal
-    /// was redacted when it was made.
+    /// The event at this place and time, saying this, with the secrets taken out and
+    /// then cut at [`super::MESSAGE_LIMIT`] characters, as every text a run keeps is
+    /// (ADR 0008, "What an action or a panic says is cut"). It is the one way to make a
+    /// line, beside reading a stored journal: a line in a journal was redacted and cut
+    /// when it was made.
     pub fn new(seq: u64, at_ms: u64, message: &str, secrets: &Secrets) -> JournalLine {
         JournalLine {
             seq,
             at_ms,
-            message: secrets.redact(message),
+            message: super::engine::said(secrets, message),
         }
     }
 

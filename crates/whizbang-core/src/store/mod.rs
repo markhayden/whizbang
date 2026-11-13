@@ -148,9 +148,10 @@
 //! current one, and stored content that no generation left names. Two things are left
 //! though nothing current names them. A generation that a reader still holds, with all
 //! it names: a reader shares the file of the generation of its latest snapshot, and prune
-//! removes only a generation file that it can take alone. And content that a publication
-//! in progress in this process has named. Both go at the first prune after the reader or
-//! the publication has finished.
+//! removes only a generation file that it can take alone. The writer holds a generation
+//! the same way when it asks to ([`Store::hold`]). And content that a publication
+//! in progress in this process has named. Each goes at the first prune after the reader,
+//! the hold or the publication has finished.
 //!
 //! Prune removes generation files, syncs their directory, removes content, and syncs its
 //! directory. It never removes anything the current generation names, so a crash at any
@@ -652,8 +653,18 @@ pub struct Store {
     in_progress: Mutex<BTreeMap<u64, BTreeSet<Digest>>>,
     /// How many publications are waiting for `publishing` now.
     waiting: AtomicUsize,
-    /// The runs this value made: each by a publication that became visible.
-    made_runs: Mutex<BTreeSet<String>>,
+    /// The runs this value made and has open, each by a publication that became
+    /// visible, with what its maker attached to it. It is the one table of what this
+    /// process is working on in this store: a run is in it from just before it is
+    /// visible until its closing or its deletion is visible; or, for a run whose
+    /// closing publication asked for that ([`Publication::keep_until_let_go`]), until
+    /// its closer lets it go ([`Store::let_go`]). The flag says that the run's closing
+    /// is visible and it is kept for its closer.
+    made_runs: Mutex<BTreeMap<String, OpenRun>>,
+    /// How many places are taken now among the runs of this value that were started on
+    /// threads of their own ([`Store::start_place`]). It is kept here, beside the table
+    /// of open runs, because it is this writer's count, whoever starts the runs.
+    started: Arc<AtomicUsize>,
     /// Whether the open that gave this value made the store.
     created: bool,
     /// The writer lock, held for as long as this value lives.
@@ -667,6 +678,30 @@ impl Drop for Store {
         let _ = self.lock.record(b"");
     }
 }
+
+/// A place among the runs a writer has started on threads of their own
+/// ([`Store::start_place`]). It is given back when this is dropped, however that comes
+/// about: a return, a panic that unwinds, a closure that was never run.
+pub struct Place(Arc<AtomicUsize>);
+
+impl Drop for Place {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// What the maker of a run attaches to it for as long as the run is open: whatever the
+/// code that works on the run shares with whoever asks after it in this process. The
+/// store keeps it and never looks inside.
+pub type Attached = Arc<dyn std::any::Any + Send + Sync>;
+
+/// One run in the table of open runs: what was attached to it, whether its closing is
+/// visible and it is kept for its closer, and what to do if it is deleted meanwhile.
+type OpenRun = (Attached, bool, Option<WhenDeleted>);
+
+/// What the maker of a run has the store do when the run is deleted while it is open
+/// ([`Publication::tell_when_deleted`]).
+pub type WhenDeleted = Arc<dyn Fn() + Send + Sync>;
 
 /// A run's id: not empty, and no control character (a line break, a tab, an escape). This
 /// is the floor. The executor names a run with a [`crate::contract::RunId`], whose rule is
@@ -753,10 +788,49 @@ impl Store {
     /// not made here. One process at a time writes a store, so a run that this writer
     /// did not make and that is not finished is no longer being worked on by anyone.
     pub fn made_here(&self, run: &str) -> bool {
+        self.attached(run).is_some()
+    }
+
+    /// Takes a place among the runs this writer has started on threads of their own,
+    /// when fewer than `bound` are taken: the place is held until what comes back is
+    /// dropped. `None` when `bound` or more are taken, and then nothing changed. The
+    /// count is one for this value, so everything that starts runs over it is held to
+    /// the same count, each against the bound it asks with. The store counts and does
+    /// nothing else: what a place stands for is its taker's.
+    pub fn start_place(&self, bound: usize) -> Option<Place> {
+        let taken = |now: usize| (now < bound).then_some(now + 1);
+        self.started
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, taken)
+            .ok()
+            .map(|_| Place(self.started.clone()))
+    }
+
+    /// What the maker of the run `run` attached to it ([`Publication::attach`]), when
+    /// this writer made the run and has it open: exactly when [`Store::made_here`] says
+    /// so, since the two are one table. A run that was made with nothing attached has
+    /// the unit value. So what is attached to a run can be had from just before the run
+    /// is visible, and is gone once its closing or its deletion is visible, and never
+    /// before: whoever sees in a snapshot a run that is still open, and then finds
+    /// nothing here, learns from a second snapshot how it closed. A run that was closed
+    /// and kept for its closer ([`Publication::keep_until_let_go`]) is had for longer:
+    /// until the closer lets it go ([`Store::let_go`]).
+    pub fn attached(&self, run: &str) -> Option<Attached> {
         self.made_runs
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .contains(run)
+            .get(run)
+            .map(|(attached, _, _)| attached.clone())
+    }
+
+    /// Takes out of the table of open runs a run whose closing is visible and that was
+    /// kept there for its closer ([`Publication::keep_until_let_go`]). It does nothing
+    /// to any other run: one that is still open stays, and so does one whose closing
+    /// publication never became visible.
+    pub fn let_go(&self, run: &str) {
+        let mut made = self.made_runs.lock().unwrap_or_else(|e| e.into_inner());
+        if made.get(run).is_some_and(|(_, closed, _)| *closed) {
+            made.remove(run);
+        }
     }
 
     fn open_at(root: &Path, fs: Arc<dyn Fs>, make: Make) -> Result<Store> {
@@ -847,7 +921,8 @@ impl Store {
             publishing: Mutex::new(()),
             in_progress: Mutex::new(BTreeMap::new()),
             waiting: AtomicUsize::new(0),
-            made_runs: Mutex::new(BTreeSet::new()),
+            made_runs: Mutex::new(BTreeMap::new()),
+            started: Arc::new(AtomicUsize::new(0)),
             created,
             lock,
         })
@@ -867,6 +942,20 @@ impl Store {
     /// [`Error::NotAnOutput`], whatever other reference the same bytes have.
     pub fn read_output(&self, entry: &Entry) -> Result<Vec<u8>> {
         self.files.read_output(entry)
+    }
+
+    /// Holds the current generation: for as long as what comes back lives, this
+    /// writer's own prune leaves that generation, and everything it names. It shares
+    /// the generation's file, as a [`Reader`] does for its latest snapshot, and a prune
+    /// removes only a generation file it can take alone. [`Store::snapshot`] still
+    /// holds nothing. The empty generation has no file and names nothing: holding it
+    /// holds nothing.
+    pub fn hold(&self) -> Result<Holding> {
+        let (generation, held) = self.files.held_snapshot()?;
+        Ok(Holding {
+            generation,
+            _held: held,
+        })
     }
 
     /// Starts a publication: a staging directory of its own, and nothing visible until
@@ -895,7 +984,10 @@ impl Store {
             made: BTreeSet::new(),
             extended: BTreeSet::new(),
             closed: BTreeSet::new(),
+            held_closed: BTreeSet::new(),
             kept: BTreeMap::new(),
+            attached: BTreeMap::new(),
+            when_deleted: BTreeMap::new(),
         })
     }
 
@@ -920,7 +1012,8 @@ impl Store {
     /// behind for a reader goes at the first prune after that reader has finished.
     ///
     /// This writer's own [`Store::snapshot`] holds nothing: a process that prunes decides
-    /// for itself what it still reads of an older generation.
+    /// for itself what it still reads of an older generation, and says so with
+    /// [`Store::hold`], which a prune finds as it finds a reader's share.
     pub fn prune(&self) -> Result<Pruned> {
         let files = &self.files;
         let fs = files.fs.as_ref();
@@ -981,6 +1074,20 @@ impl Store {
             fs.sync_dir(&objects).map_err(Error::io("sync", &objects))?;
         }
         Ok(pruned)
+    }
+}
+
+/// A generation that a writer holds ([`Store::hold`]): its names, and the share of its
+/// file that keeps it, and what it names, from a prune.
+pub struct Holding {
+    generation: Generation,
+    _held: Option<Box<dyn Held>>,
+}
+
+impl Holding {
+    /// The generation that is held.
+    pub fn generation(&self) -> &Generation {
+        &self.generation
     }
 }
 
@@ -1061,9 +1168,15 @@ pub struct Publication<'s> {
     extended: BTreeSet<String>,
     /// The runs it closes: no longer counted as made and open once it is visible.
     closed: BTreeSet<String>,
+    /// Those of them that stay in the table of open runs after that, for their closer.
+    held_closed: BTreeSet<String>,
     /// The names outside runs it keeps: each is left as it is where that generation
     /// holds it as an output, and given this content where it does not.
     kept: BTreeMap<String, Entry>,
+    /// What it attaches to the runs it makes.
+    attached: BTreeMap<String, Attached>,
+    /// What it has the store do when a run it makes is deleted while it is open.
+    when_deleted: BTreeMap<String, WhenDeleted>,
 }
 
 impl Publication<'_> {
@@ -1112,6 +1225,25 @@ impl Publication<'_> {
         self.created.insert(run.to_string());
         self.run_names.entry(run.to_string()).or_default();
         Ok(())
+    }
+
+    /// Attaches `what` to the run `run`, which this publication makes
+    /// ([`Publication::create_run`]): from just before the run is visible until its
+    /// closing or its deletion is, [`Store::attached`] gives it back. It has no effect
+    /// on a run this publication does not make.
+    pub fn attach(&mut self, run: &str, what: Attached) {
+        self.attached.insert(run.to_string(), what);
+    }
+
+    /// Has the store do `this` when the run `run`, which this publication makes, is
+    /// deleted while this writer still has it open: once, straight after the deletion
+    /// is visible, on the thread that deleted it. For a maker that has something
+    /// working on the run, to tell it that the run is gone. What it does is the
+    /// maker's, and the store never looks inside; it must not publish, and must not
+    /// wait for anything that does. It must not panic and must not block: it runs
+    /// inside the deletion, on the deleting thread.
+    pub fn tell_when_deleted(&mut self, run: &str, this: WhenDeleted) {
+        self.when_deleted.insert(run.to_string(), this);
     }
 
     /// Makes `name`, which belongs to no run, with this content, as a reference of this
@@ -1188,6 +1320,16 @@ impl Publication<'_> {
         self.extend_run(run)?;
         self.closed.insert(run.to_string());
         Ok(())
+    }
+
+    /// Keeps a run this publication closes in the table of open runs after the closing
+    /// is visible, with what is attached to it, until its closer says it is done with
+    /// the run ([`Store::let_go`]). For a closer that still holds something of the run
+    /// when its closing becomes visible, and wants whoever finds the run in the table
+    /// to be able to wait for that. It has no effect on a run this publication does
+    /// not close, and a deletion takes the run out whatever was asked here.
+    pub fn keep_until_let_go(&mut self, run: &str) {
+        self.held_closed.insert(run.to_string());
     }
 
     /// Stages the bytes unless the store or this publication already holds them.
@@ -1337,8 +1479,17 @@ impl Publication<'_> {
         };
         let added: Vec<&String> = {
             let mut made = made_runs();
-            let new = |run: &&String| made.insert((*run).clone());
-            self.created.iter().filter(new).collect()
+            let mut added = Vec::new();
+            for run in &self.created {
+                if !made.contains_key(run) {
+                    let what = self.attached.get(run).cloned();
+                    let what = what.unwrap_or_else(|| Arc::new(()));
+                    let told = self.when_deleted.get(run).cloned();
+                    made.insert(run.clone(), (what, false, told));
+                    added.push(run);
+                }
+            }
+            added
         };
         if let Err(error) = files.move_into_place(&staged, &layout.pointer()) {
             let mut made = made_runs();
@@ -1347,13 +1498,29 @@ impl Publication<'_> {
             }
             return Err(error);
         }
+        let mut deleted_open = Vec::new();
         // Visible. What this value remembers is bounded by the runs that are open now:
         // a run that was closed or deleted is forgotten, and only from here on.
         {
             let mut made = made_runs();
-            for run in self.closed.iter().chain(&self.deleted) {
-                made.remove(run);
+            for run in &self.closed {
+                // Kept for its closer, a closed run is marked and stays; a deletion
+                // below takes it out all the same.
+                match made.get_mut(run) {
+                    Some((_, closed, _)) if self.held_closed.contains(run) => *closed = true,
+                    _ => drop(made.remove(run)),
+                }
             }
+            for run in &self.deleted {
+                // A run that was open, or kept for its closer, and whose maker asked
+                // to be told: told below, with the table's lock let go.
+                if let Some((_, _, Some(told))) = made.remove(run) {
+                    deleted_open.push(told);
+                }
+            }
+        }
+        for told in deleted_open {
+            told();
         }
         fs.sync_dir(&layout.root)
             .map_err(Error::io("sync", &layout.root))

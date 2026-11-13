@@ -38,7 +38,7 @@ fn whizbang_within(args: &[&str], seconds: u64) -> (i32, String, String) {
         .expect("the binary runs");
     let id = child.id();
     let (ended, has_ended) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
+    whizbang_testkit::threads::spawn(move || {
         let _ = ended.send(child.wait_with_output());
     });
     let Ok(out) = has_ended.recv_timeout(std::time::Duration::from_secs(seconds)) else {

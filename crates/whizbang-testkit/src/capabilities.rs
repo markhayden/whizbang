@@ -6,12 +6,15 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::time::Instant;
 
 use whizbang_core::capability::{
     Asked, Bounds, Declaration, Fault, FaultKind, FillRequest, Filler, Instance, Judge,
     JudgeRequest, Painted, SegmentRequest, SegmentResponse, Segmenter, Support, Turn, feature,
 };
 use whizbang_core::contract::ModelIdentity;
+
+use crate::barrier::Barriers;
 
 /// The backend every fake declares.
 const BACKEND: &str = "fake";
@@ -26,6 +29,80 @@ fn declaration(model: &str, features: &[&str]) -> Declaration {
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// What a fake that stops at a barrier saw of the run it answered for, in the bounds
+/// it was handed with one request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Observed {
+    on_arrival: bool,
+    on_release: bool,
+    deadline: Option<Instant>,
+}
+
+impl Observed {
+    /// Whether the run was cancelled when the request arrived.
+    pub fn cancelled_on_arrival(&self) -> bool {
+        self.on_arrival
+    }
+
+    /// Whether the run was cancelled when the test let the request go.
+    pub fn cancelled_on_release(&self) -> bool {
+        self.on_release
+    }
+
+    /// The deadline the request was sent with.
+    pub fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+}
+
+/// Where a fake holds every request it is sent, and what it saw of each.
+struct Stop {
+    barriers: Barriers,
+    name: String,
+    observed: Mutex<Vec<Observed>>,
+}
+
+impl Stop {
+    fn at(barriers: &Barriers, name: &str) -> Option<Stop> {
+        Some(Stop {
+            barriers: barriers.clone(),
+            name: name.to_owned(),
+            observed: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// Holds one request at the barrier until a test lets it go, and notes what its
+    /// bounds said when it arrived and when it went on. A request whose run was
+    /// cancelled by then stops here, with the fault `cancelled`.
+    fn hold(&self, bounds: &Bounds) -> Result<(), Fault> {
+        let on_arrival = bounds.is_cancelled();
+        self.barriers.stop_at(&self.name);
+        let on_release = bounds.is_cancelled();
+        lock(&self.observed).push(Observed {
+            on_arrival,
+            on_release,
+            deadline: bounds.deadline(),
+        });
+        if on_release {
+            return Err(Fault::new(
+                FaultKind::Cancelled,
+                "the run was cancelled while the request was open",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Holds a request where the fake was told to stop, if it was, and gives what it saw.
+fn held(stop: &Option<Stop>, bounds: &Bounds) -> Result<(), Fault> {
+    stop.as_ref().map_or(Ok(()), |stop| stop.hold(bounds))
+}
+
+fn observed(stop: &Option<Stop>) -> Vec<Observed> {
+    stop.as_ref()
+        .map_or_else(Vec::new, |stop| lock(&stop.observed).clone())
 }
 
 /// What a [`FakeFiller`] paints.
@@ -56,6 +133,7 @@ pub struct FakeFiller {
     declaration: Declaration,
     paint: Paint,
     requests: AtomicU64,
+    stop: Option<Stop>,
 }
 
 impl FakeFiller {
@@ -64,6 +142,7 @@ impl FakeFiller {
             declaration: declaration("fake-filler", &[feature::PROMPT]),
             paint,
             requests: AtomicU64::new(0),
+            stop: None,
         }
     }
 
@@ -79,13 +158,29 @@ impl FakeFiller {
     }
 }
 
+impl FakeFiller {
+    /// The same filler, which holds every request it is sent open at the barrier
+    /// `name` until a test lets it go, after it has counted the request. A request
+    /// whose run is cancelled by then is answered with the fault `cancelled`.
+    pub fn stopping_at(mut self, barriers: &Barriers, name: &str) -> FakeFiller {
+        self.stop = Stop::at(barriers, name);
+        self
+    }
+
+    /// What it saw of each request it held open, in the order they were let go.
+    pub fn observed(&self) -> Vec<Observed> {
+        observed(&self.stop)
+    }
+}
+
 impl Filler for FakeFiller {
     fn declaration(&self) -> &Declaration {
         &self.declaration
     }
 
-    fn fill(&self, request: &FillRequest, _: &Bounds) -> Result<Painted, Fault> {
+    fn fill(&self, request: &FillRequest, bounds: &Bounds) -> Result<Painted, Fault> {
         self.requests.fetch_add(1, Ordering::SeqCst);
+        held(&self.stop, bounds)?;
         let image = request.image();
         let pixels = image.rgba().as_chunks::<4>().0.iter();
         let rgb: Vec<u8> = match &self.paint {
@@ -129,6 +224,8 @@ pub struct FakeSegmenter {
     declaration: Declaration,
     told: Vec<(String, [u32; 4])>,
     requests: AtomicU64,
+    stop: Option<Stop>,
+    fails: Option<Fault>,
 }
 
 impl FakeSegmenter {
@@ -140,6 +237,8 @@ impl FakeSegmenter {
             ),
             told: Vec::new(),
             requests: AtomicU64::new(0),
+            stop: None,
+            fails: None,
         }
     }
 
@@ -159,6 +258,26 @@ impl FakeSegmenter {
     /// How many requests it was sent, answered or not. A batch is one request.
     pub fn requests(&self) -> u64 {
         self.requests.load(Ordering::SeqCst)
+    }
+}
+
+impl FakeSegmenter {
+    /// The same segmenter, which holds every request open at the barrier `name`, as
+    /// [`FakeFiller::stopping_at`] does.
+    pub fn stopping_at(mut self, barriers: &Barriers, name: &str) -> FakeSegmenter {
+        self.stop = Stop::at(barriers, name);
+        self
+    }
+
+    /// What it saw of each request it held open, in the order they were let go.
+    pub fn observed(&self) -> Vec<Observed> {
+        observed(&self.stop)
+    }
+
+    /// The same segmenter, which answers every request with this fault.
+    pub fn failing(mut self, fault: Fault) -> FakeSegmenter {
+        self.fails = Some(fault);
+        self
     }
 }
 
@@ -191,8 +310,12 @@ impl Segmenter for FakeSegmenter {
         &self.declaration
     }
 
-    fn segment(&self, request: &SegmentRequest, _: &Bounds) -> Result<SegmentResponse, Fault> {
+    fn segment(&self, request: &SegmentRequest, bounds: &Bounds) -> Result<SegmentResponse, Fault> {
         self.requests.fetch_add(1, Ordering::SeqCst);
+        held(&self.stop, bounds)?;
+        if let Some(fault) = &self.fails {
+            return Err(fault.clone());
+        }
         let (width, height) = (request.image().width(), request.image().height());
         let most = request.max_instances() as usize;
         let mut answers = Vec::new();
@@ -249,6 +372,7 @@ impl Segmenter for FakeSegmenter {
 pub struct FakeJudge {
     declaration: Declaration,
     played: Mutex<Played>,
+    stop: Option<Stop>,
 }
 
 /// What is left of the script, and what was received, behind one lock.
@@ -269,6 +393,7 @@ impl FakeJudge {
                 script: script.into(),
                 received: Vec::new(),
             }),
+            stop: None,
         }
     }
 
@@ -294,14 +419,36 @@ impl FakeJudge {
     }
 }
 
+impl FakeJudge {
+    /// The same judge, which holds every request open at the barrier `name`, as
+    /// [`FakeFiller::stopping_at`] does: after it has kept the request, and before it
+    /// plays an entry. So a request that is cancelled while it is held plays none, and
+    /// of several held at once each plays the next entry when it is let go.
+    pub fn stopping_at(mut self, barriers: &Barriers, name: &str) -> FakeJudge {
+        self.stop = Stop::at(barriers, name);
+        self
+    }
+
+    /// What it saw of each request it held open, in the order they were let go.
+    pub fn observed(&self) -> Vec<Observed> {
+        observed(&self.stop)
+    }
+}
+
 impl Judge for FakeJudge {
     fn declaration(&self) -> &Declaration {
         &self.declaration
     }
 
-    fn send(&self, request: &JudgeRequest, _: &Bounds) -> Result<Turn, Fault> {
+    fn send(&self, request: &JudgeRequest, bounds: &Bounds) -> Result<Turn, Fault> {
+        if self.stop.is_some() {
+            lock(&self.played).received.push(request.clone());
+            held(&self.stop, bounds)?;
+        }
         let mut played = lock(&self.played);
-        played.received.push(request.clone());
+        if self.stop.is_none() {
+            played.received.push(request.clone());
+        }
         played.script.pop_front().unwrap_or_else(|| {
             Err(Fault::new(
                 FaultKind::Malformed,

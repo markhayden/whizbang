@@ -14,10 +14,10 @@
 //! three bytes a pixel, an instance whose box holds its plane, a turn with something in
 //! it. What does not pass is [`Unfit`].
 
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
-use crate::contract::Cancellation;
+use crate::contract::{Cancellation, Clock};
 use crate::identity::{CanonicalPixels, PixelDigest};
 
 mod declare;
@@ -215,11 +215,109 @@ pub(crate) fn pixel_count(what: &'static str, width: u32, height: u32) -> Result
 /// one. A handle makes it, from the run it is bound to, and hands it to the backend with
 /// every request; nothing else can make one. What a later task needs a backend to know
 /// of its run is added here, and no trait changes for it.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub struct Bounds {
     cancellation: Cancellation,
     deadline: Option<Instant>,
+    /// Where the handle counts each request it sends, when its run counts them.
+    tally: Option<Arc<Tally>>,
+    /// What tells the time the deadline is held to, when it is not the machine's: the
+    /// clock of the executor that made the run (ADR 0008, "A deadline in a run").
+    clock: Option<Arc<dyn Clock>>,
+}
+
+impl std::fmt::Debug for Bounds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Bounds")
+            .field("cancelled", &self.is_cancelled())
+            .field("deadline", &self.deadline)
+            .finish()
+    }
+}
+
+/// The requests the handles of one run were sent, and how many of them are accounted
+/// for: answered, failed, or given up by a backend that returned or panicked (ADR 0006,
+/// "Accounting for requests"; ADR 0008, "Nested calls"). It is the decorator inside
+/// the handle: a handle counts a request here just before its backend is called and
+/// accounts for it when the backend's call is over, whatever it came to. A run is
+/// terminal only once every request counted here is accounted for, and from the moment
+/// its action has come back nothing more is sent.
+#[derive(Debug, Default)]
+pub(crate) struct Tally {
+    counts: Mutex<Counts>,
+    changed: Condvar,
+}
+
+#[derive(Debug, Default)]
+struct Counts {
+    sent: u64,
+    accounted: u64,
+    closed: bool,
+    /// How many callers are waiting, now, for every request to be accounted for.
+    waiting: usize,
+}
+
+impl Tally {
+    fn counts(&self) -> MutexGuard<'_, Counts> {
+        self.counts.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Counts one request that is about to be sent. Refused once the tally is closed:
+    /// the look and the count are one step, so a request is either waited for or not
+    /// sent.
+    fn send(self: &Arc<Tally>) -> Result<Sent, Fault> {
+        let mut counts = self.counts();
+        if counts.closed {
+            return Err(Fault::new(
+                FaultKind::Cancelled,
+                "the action of the run had come back before the request was sent",
+            ));
+        }
+        counts.sent += 1;
+        Ok(Sent(self.clone()))
+    }
+
+    /// From here on nothing is sent.
+    pub(crate) fn close(&self) {
+        self.counts().closed = true;
+    }
+
+    /// Returns once every request that was sent is accounted for. It has no bound: a
+    /// backend that never returns is waited for.
+    pub(crate) fn wait(&self) {
+        let mut counts = self.counts();
+        while counts.accounted < counts.sent {
+            counts.waiting += 1;
+            counts = self
+                .changed
+                .wait(counts)
+                .unwrap_or_else(PoisonError::into_inner);
+            counts.waiting -= 1;
+        }
+    }
+
+    /// Whether a caller is waiting, now, for a request that is not accounted for.
+    pub(crate) fn waited_for(&self) -> bool {
+        self.counts().waiting > 0
+    }
+
+    /// How many requests were sent and are not accounted for, now.
+    pub(crate) fn outstanding(&self) -> u64 {
+        let counts = self.counts();
+        counts.sent - counts.accounted
+    }
+}
+
+/// One request that was counted as sent. Dropped, by a return or by a panic that
+/// unwinds through the handle, it is accounted for.
+pub(crate) struct Sent(Arc<Tally>);
+
+impl Drop for Sent {
+    fn drop(&mut self) {
+        self.0.counts().accounted += 1;
+        self.0.changed.notify_all();
+    }
 }
 
 impl Bounds {
@@ -227,7 +325,25 @@ impl Bounds {
         Bounds {
             cancellation,
             deadline: None,
+            tally: None,
+            clock: None,
         }
+    }
+
+    /// Counts every request sent under these bounds in this tally.
+    pub(crate) fn counted(&mut self, tally: Arc<Tally>) {
+        self.tally = Some(tally);
+    }
+
+    /// Counts the request that is about to be sent, when the run counts them. What
+    /// comes back is held until the backend's call is over.
+    pub(crate) fn sending(&self) -> Result<Option<Sent>, Fault> {
+        self.tally.as_ref().map(Tally::send).transpose()
+    }
+
+    /// Holds the deadline to this clock, in place of the machine's.
+    pub(crate) fn timed_by(&mut self, clock: Arc<dyn Clock>) {
+        self.clock = Some(clock);
     }
 
     /// Narrows the deadline: the earlier of the one already set and this one is kept.
@@ -271,10 +387,8 @@ impl Bounds {
                 "the run was cancelled before the request was sent",
             ));
         }
-        if self
-            .deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-        {
+        let now = || self.clock.as_ref().map_or_else(Instant::now, |c| c.now());
+        if self.deadline.is_some_and(|deadline| now() >= deadline) {
             return Err(Fault::new(
                 FaultKind::TimedOut,
                 "the deadline of the run passed before the request was sent",
