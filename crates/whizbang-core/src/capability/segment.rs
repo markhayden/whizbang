@@ -385,6 +385,13 @@ impl SegmentHandle {
         self
     }
 
+    /// The same handle, counting each request it sends in this tally, which the
+    /// executor waits on before it ends the run (ADR 0008, "Nested calls").
+    pub(crate) fn counted(mut self, tally: std::sync::Arc<super::Tally>) -> SegmentHandle {
+        self.bounds.counted(tally);
+        self
+    }
+
     /// The same handle, holding its deadline to this clock in place of the machine's.
     pub(crate) fn timed_by(mut self, clock: Arc<dyn crate::contract::Clock>) -> SegmentHandle {
         self.bounds.timed_by(clock);
@@ -407,7 +414,10 @@ impl SegmentHandle {
             self.declaration(),
             request.queries.iter().map(Query::feature),
         )?;
-        let response = self.backend.segment(request, &self.bounds)?;
+        let response = {
+            let _sent = self.bounds.sending()?;
+            self.backend.segment(request, &self.bounds)
+        }?;
         let what = "the segmenter's answer";
         if response.answers.len() != request.queries.len() {
             return Err(Unfit::NotAllowed {

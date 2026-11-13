@@ -13,7 +13,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use crate::store::Attached;
 
 use super::journal::Kept;
-use super::nested::Nest;
+use super::nested::{Added, Nest};
 use super::{Cancellation, JournalLine, StoreFailure};
 
 /// Where the executor is with an open run.
@@ -67,20 +67,25 @@ pub(super) struct LiveRun {
 }
 
 impl LiveRun {
-    pub(super) fn new(kept: Arc<Kept>, signal: Cancellation) -> LiveRun {
+    pub(super) fn new(kept: Arc<Kept>, signal: Cancellation, added: Arc<Added>) -> LiveRun {
         LiveRun {
             kept,
             signal,
             phase: Mutex::new(Phase::Executing),
             changed: Condvar::new(),
             waiting: AtomicUsize::new(0),
-            nest: Nest::default(),
+            nest: Nest::new(added),
         }
     }
 
     /// The calls the run's action makes of other actions.
     pub(super) fn nest(&self) -> &Nest {
         &self.nest
+    }
+
+    /// Whether nothing in this process works on the run any more.
+    pub(super) fn is_over(&self) -> bool {
+        self.phase().is_over()
     }
 
     fn phase(&self) -> MutexGuard<'_, Phase> {
@@ -103,7 +108,11 @@ impl LiveRun {
     pub(super) fn cancel(&self) -> Told {
         let phase = self.phase();
         if *phase == Phase::Executing {
-            self.signal.cancel();
+            // Set under the lock; those who wait on the signal are told after it is
+            // let go, since being told takes the lock of the run they wait for.
+            self.signal.set();
+            drop(phase);
+            self.signal.tell();
             return Told::Accepted;
         }
         self.until_over(phase);
@@ -112,9 +121,18 @@ impl LiveRun {
 
     /// Sets the run's signal if its end has not begun, and waits for nothing: for the
     /// thread that deleted the run from the store, which the run's end would wait for.
+    ///
+    /// The signal of every run under this one reads as set from that moment, since
+    /// each is under this one's (ADR 0008, "Nested calls"): so deleting a run reaches
+    /// the runs it called, as cancelling it does. Those who wait on the signal are
+    /// told after the run's lock is let go; telling them publishes nothing and waits
+    /// for nothing.
     pub(super) fn stop(&self) {
-        if *self.phase() == Phase::Executing {
-            self.signal.cancel();
+        let phase = self.phase();
+        if *phase == Phase::Executing {
+            self.signal.set();
+            drop(phase);
+            self.signal.tell();
         }
     }
 
@@ -149,6 +167,29 @@ impl LiveRun {
     /// Returns once nothing in this process works on the run any more.
     pub(super) fn wait_until_over(&self) {
         self.until_over(self.phase());
+    }
+
+    /// Returns once nothing in this process works on the run any more, or once this
+    /// signal is set by a cancellation, whichever is first. What comes back is
+    /// whether the run is over.
+    pub(super) fn wait_until_over_unless(self: &Arc<LiveRun>, signal: &Cancellation) -> bool {
+        // Told of the cancellation under this run's lock, so that it is seen before
+        // the wait or wakes it: never between the look and the wait.
+        let this = self.clone();
+        let _telling = signal.telling(Arc::new(move || {
+            let _phase = this.phase();
+            this.changed.notify_all();
+        }));
+        let mut phase = self.phase();
+        self.waiting.fetch_add(1, Ordering::SeqCst);
+        while !phase.is_over() && !signal.is_cancelled() {
+            phase = self
+                .changed
+                .wait(phase)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        self.waiting.fetch_sub(1, Ordering::SeqCst);
+        phase.is_over()
     }
 
     fn until_over(&self, mut phase: MutexGuard<'_, Phase>) {

@@ -15,7 +15,7 @@ use crate::store::{self, Store};
 use super::journal::Kept;
 use super::ledger::{Declined, Reservation, Step};
 use super::live::{self, LiveRun, Told};
-use super::nested::{DESCENDANTS_LIMIT, Family, Nested, Under};
+use super::nested::{Added, DESCENDANTS_LIMIT, Family, HeldOpen, Nested, Under};
 use super::prepare::prepare;
 use super::record::{
     Diagnostic, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran, RunRecord,
@@ -297,6 +297,15 @@ impl Engine {
         attached.and_then(live::of).map_or(0, |live| live.waiting())
     }
 
+    /// For tests: what holds the run open, now, when this process has it open.
+    #[doc(hidden)]
+    pub fn held_open(&self, run: &RunId) -> Option<HeldOpen> {
+        let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
+        attached
+            .and_then(live::of)
+            .map(|live| live.nest().held_open())
+    }
+
     /// For tests: the same executor, with this many runs at most under one run that
     /// nothing called, in place of [`DESCENDANTS_LIMIT`].
     #[doc(hidden)]
@@ -391,11 +400,11 @@ impl Executor for Engine {
     }
 
     fn status(&self, run: &RunId) -> Result<Watched, CallError> {
-        self.watch(run, false)
+        self.watch(run, false, None)
     }
 
     fn wait(&self, run: &RunId) -> Result<Watched, CallError> {
-        self.watch(run, true)
+        self.watch(run, true, None)
     }
 
     fn cancel(&self, run: &RunId) -> Result<Cancel, CallError> {
@@ -636,14 +645,18 @@ impl Bounded {
 /// The generation a run was admitted against, as the store its call is prepared from
 /// and its action reads (ADR 0008, "The generation a run reads"): every snapshot is
 /// that generation, and for as long as this lives a prune leaves it and what it names.
+/// One thing is added to it: the name of each artifact that a run this run called has
+/// committed, as the current generation holds it (ADR 0008, "Nested calls").
 struct Pinned {
     store: Arc<Store>,
     holding: store::Holding,
+    added: Arc<Added>,
 }
 
 impl Contents for Pinned {
     fn snapshot(&self) -> store::Result<store::Generation> {
-        Ok(self.holding.generation().clone())
+        self.added
+            .onto(self.holding.generation().clone(), &self.store)
     }
 
     fn read(&self, entry: &store::Entry) -> store::Result<Vec<u8>> {
@@ -776,6 +789,7 @@ impl Engine {
         under: Option<&Under>,
     ) -> Result<Admitted, Stopped> {
         self.still_wanted(call.action(), bounded)?;
+        let added = Arc::new(Added::default());
         // The generation the run is admitted against is held from here, before the
         // call is prepared, until the executor is done with the run: the inputs are
         // read from it, and so is everything the action reads.
@@ -787,6 +801,7 @@ impl Engine {
                 Some(Arc::new(Pinned {
                     store: store.clone(),
                     holding,
+                    added: added.clone(),
                 }))
             }
             None => None,
@@ -881,7 +896,7 @@ impl Engine {
         // to it in the store's table of open runs by the publication that makes it: so
         // whoever sees the run in a snapshot finds it there (ADR 0008, "Status").
         let kept = Arc::new(Kept::new(self.clock.clone(), self.secrets.clone()));
-        let live = Arc::new(LiveRun::new(kept.clone(), bounded.signal.clone()));
+        let live = Arc::new(LiveRun::new(kept.clone(), bounded.signal.clone(), added));
         let mut over = Over {
             place: None,
             kept: None,
@@ -1130,6 +1145,7 @@ impl Engine {
             run: run.clone(),
             live: live.clone(),
             stack: family.stack.clone(),
+            above: family.above_with(&run),
             tree: family.tree.clone(),
             allowance: family.allowance.clone(),
             deadline,
@@ -1144,6 +1160,7 @@ impl Engine {
             Arc::new(Nested::new(self.clone(), under, self.secrets.clone())),
         )
         .with_diagnostics(kept.clone());
+        live.nest().watch(context.requests().clone());
         // A panic in the action is caught: its run ends as any other does, with its
         // record and what it wrote, and the executor goes on (ADR 0008). The context
         // and what it shares are not left broken by one: what a run keeps is behind
@@ -1157,10 +1174,17 @@ impl Engine {
                 message: why.to_owned(),
             })),
         });
+        // The action has come back. No call and no capability request is taken from
+        // here on, and the run waits for those there are: every run it called is over,
+        // and every request its handles sent is accounted for, before it ends (ADR
+        // 0008, "Nested calls"). A cancellation is still accepted while it waits, and
+        // reaches them.
+        live.nest().settle();
         // The entry to the commit step (ADR 0008, "Cancellation"): the action has come
-        // back, with whatever it came back with. From here on a cancellation is too
-        // late. One that was accepted before this was set under the lock this reads
-        // under: the run ends as cancelled, and nothing it handed back is committed.
+        // back, with whatever it came back with, and nothing it started is left. From
+        // here on a cancellation is too late. One that was accepted before this was
+        // set under the lock this reads under: the run ends as cancelled, and nothing
+        // it handed back is committed.
         let cancelled = live.begin_end();
         // The outcome is made here, from what the action handed back, with the secrets
         // taken out: what is reported holds none, as what is written holds none. And
@@ -1206,7 +1230,7 @@ impl Engine {
         let kept: Vec<(Diagnostic, Vec<u8>)> = std::iter::once(Diagnostic::journal(&lines))
             .chain(written)
             .collect();
-        // What the run's record says of the calls its action made.
+        // What the run's record says of the calls its action made: they are all over.
         let parent = family.parent.as_ref().map(|(run, _)| run.clone());
         let inside = live.nest().inside(parent);
         let record_of = |outcome: &Outcome| {
@@ -1273,9 +1297,13 @@ impl Engine {
                 .map_err(failed)?;
         }
         publication.publish().map_err(failed)?;
-        // The run that called this one is told how it ended, for its record.
+        // The run that called this one is told how it ended, and from here on reads
+        // what it committed: before this run is over, which is what its caller waits
+        // for.
         if let Some((_, parent)) = &family.parent {
-            parent.nest().ended(&run, record.outcome().status);
+            parent
+                .nest()
+                .ended(&run, record.outcome().status, outcome.outputs());
         }
         Ok(Finished::new(run, outcome))
     }
@@ -1408,12 +1436,38 @@ impl Engine {
         }
     }
 
+    /// A wait from inside an action, which is given up when this signal is set.
+    pub(super) fn wait_unless(
+        &self,
+        run: &RunId,
+        signal: &Cancellation,
+    ) -> Result<Watched, CallError> {
+        self.watch(run, true, Some(signal))
+    }
+
     /// Where the run is now (ADR 0008, "Status"): a look at the store, then at the
     /// store's table of the runs this process has open, then, when the run is in
     /// neither state, at the store again. With `wait`, a run that this process has
     /// open is waited for first.
-    fn watch(&self, run: &RunId, wait: bool) -> Result<Watched, CallError> {
+    /// `unless` is the signal of a run that waits from inside its action: set, the
+    /// wait is given up ([`Refusal::WaitCancelled`]).
+    fn watch(
+        &self,
+        run: &RunId,
+        wait: bool,
+        unless: Option<&Cancellation>,
+    ) -> Result<Watched, CallError> {
         let unknown = || CallError::Refused(Refusal::NoSuchRun { run: run.clone() });
+        let wait_for = |live: &Arc<LiveRun>| match unless {
+            None => {
+                live.wait_until_over();
+                Ok(())
+            }
+            Some(signal) if live.wait_until_over_unless(signal) => Ok(()),
+            Some(_) => Err(CallError::Refused(Refusal::WaitCancelled {
+                run: run.clone(),
+            })),
+        };
         let watched = |state, events| Ok(Watched::new(run.clone(), state, events));
         // What a wait says of a run the executor abandoned, whatever the store shows
         // of an end that was not confirmed; unless the run was deleted meanwhile.
@@ -1432,7 +1486,7 @@ impl Engine {
                 if wait {
                     let attached = self.store.as_ref().and_then(|s| s.attached(run.as_str()));
                     if let Some(live) = attached.and_then(live::of) {
-                        live.wait_until_over();
+                        wait_for(&live)?;
                         // An end the executor did not confirm is not said to be one.
                         if let Some(failure) = live.abandoned() {
                             return abandoned(failure, live.events());
@@ -1452,7 +1506,7 @@ impl Engine {
                 return watched(RunState::NotEnded { here: true }, Vec::new());
             };
             if wait {
-                live.wait_until_over();
+                wait_for(&live)?;
             }
             let Some(failure) = live.abandoned() else {
                 if !wait {
@@ -1509,7 +1563,7 @@ mod tests {
         let dir = Scratch::new("over");
         let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap());
         let kept = Arc::new(Kept::new(Arc::new(SystemClock), Secrets::none()));
-        let live = Arc::new(LiveRun::new(kept, Cancellation::new()));
+        let live = Arc::new(LiveRun::new(kept, Cancellation::new(), Arc::default()));
         let over = Over {
             place: Some(store.start_place(1).unwrap()),
             kept: Some((store.clone(), RunId::minted(1, 1))),

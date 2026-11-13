@@ -31,6 +31,8 @@ Amended: 2026-11-13, with the third pull request of task A7 (ADR 0008). Changed:
 context makes its own handles from backends, and the executor hands each run its
 handles; the fakes can hold a request open and see their bounds, and the fake
 segmenter can fail.
+Amended: 2026-11-13, with the last pull request of task A7 (ADR 0008, "Nested calls").
+Changed: accounting for requests is built, inside the handle.
 Spec: section 3, "Crates and their edges", "Identities" and "Storage"; section 4,
 "Backends"
 
@@ -132,9 +134,12 @@ record are in `crates/whizbang-core/tests/it/capability/`.
   a fault's kind and its wait. Squint's retry rule read an HTTP status that a fault
   does not carry (`docs/carry-over.md`).
 - **Accounting for requests** (task A7: a parent is terminal only when every request a
-  capability was sent is accounted for) will be a decorator over the backend, inside
-  the handle: the handle already stands between every request and its backend. It
-  needs no change to a trait.
+  capability was sent is accounted for) is inside the handle, which already stands
+  between every request and its backend, and needed no change to a trait. The handles
+  a context makes share one count: a handle counts a request just before it calls its
+  backend and accounts for it when that call is over, however it ended, and it sends
+  nothing once its run's action has come back (ADR 0008, "Nested calls"). A handle
+  made by other code counts nothing.
 - **Checked types.** Every type a request or a response is made of has private fields
   and is built through a constructor that checks it. None is deserialised. So a value of
   the type is a value that passed the check: there is no support plane out of its range,
