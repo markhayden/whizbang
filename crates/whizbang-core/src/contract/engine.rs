@@ -1,23 +1,26 @@
 //! The executor: its interface, and the one implementation, which the binary builds and
 //! hands to whatever runs actions.
 
+use std::any::Any;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::artifact::Contents;
+use crate::artifact::{self, Artifact, Contents};
+use crate::capability::Shown;
 use crate::identity::{DecodeLimits, Digest};
 use crate::store::{self, Store};
 
 use super::journal::Kept;
 use super::ledger::{Declined, Reservation, Step};
 use super::prepare::prepare;
-use super::record::{Diagnostic, RECORD_KIND, RECORD_NAME, Ran, RunRecord};
+use super::record::{Diagnostic, OUTPUTS_PREFIX, RECORD_KIND, RECORD_NAME, Ran, RunRecord};
 use super::request::{Found, look_up};
 use super::{
-    ADMITTED_NAME, Admission, Allowance, Answer, Backends, Call, CallError, Cancellation,
-    Capabilities, Clock, Context, Ending, Failure, Finished, Ledger, Outcome, PreparedCall,
-    Readiness, Refusal, Registry, Request, RequestId, RunId, RunState, Secrets, Stale,
-    StoreFailure, SystemClock, request_fingerprint,
+    ADMITTED_NAME, ActionDescriptor, Admission, Allowance, Answer, Backends, Call, CallError,
+    Cancellation, Capabilities, Clock, Committed, Context, Ending, Failure, Finished, Ledger,
+    Outcome, PreparedCall, Produced, Readiness, Refusal, Registry, Request, RequestId, RunId,
+    RunState, Secrets, Stale, StoreFailure, SystemClock, request_fingerprint,
 };
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
@@ -506,26 +509,44 @@ impl Engine {
             Arc::new(NoNesting),
         )
         .with_diagnostics(kept.clone());
+        // A panic in the action is caught: its run ends as any other does, with its
+        // record and what it wrote, and the executor goes on (ADR 0008). The context
+        // and what it shares are not left broken by one: what a run keeps is behind
+        // locks that are taken whatever a panic did to them.
+        let handed = catch_unwind(AssertUnwindSafe(|| action.run(&prepared, &context)));
         // The outcome is made here, from what the action handed back, with the secrets
         // taken out: what is reported holds none, as what is written holds none.
-        let outcome = match action.run(&prepared, &context) {
-            Ok(_) => Outcome::Completed {
-                outputs: Vec::new(),
+        let error = |kind: &str, message: &str| Outcome::Error {
+            kind: self.secrets.redact(kind),
+            message: self.secrets.redact(message),
+        };
+        let mut outputs = Vec::new();
+        let outcome = match handed {
+            Ok(Ok(produced)) => match held_to_ports(&prepared, action.descriptor(), produced) {
+                Ok(held) => {
+                    outputs = held;
+                    Outcome::Completed {
+                        outputs: outputs.iter().map(|(output, _)| output.clone()).collect(),
+                    }
+                }
+                Err(why) => error("output", &why),
             },
-            Err(Failure::Error { kind, message }) => Outcome::Error {
-                kind: self.secrets.redact(&kind),
-                message: self.secrets.redact(&message),
-            },
-            Err(Failure::Invalid { why }) => Outcome::Invalid {
+            Ok(Err(Failure::Error { kind, message })) => error(&kind, &message),
+            Ok(Err(Failure::Invalid { why })) => Outcome::Invalid {
                 why: self.secrets.redact(&why),
             },
+            Err(panic) => error("panic", &panic_text(panic.as_ref())),
         };
         let end_ms = self.clock.now_ms().max(start_ms);
 
         // The end: one publication adds the journal, every diagnostic and the record to
         // the run, and, for a request with an id, makes the id's ending outside runs.
-        // The run must still be there: one that was deleted while it executed is not
-        // made again from its last names. The run is reported after this is durable.
+        // For a run that completed it is the commit step (ADR 0008): the same
+        // publication gives every output its name, so the outputs and the completed
+        // status become visible together or not at all, and `outputs` holds something
+        // only then. The run must still be there: one that was deleted while it
+        // executed is not made again from its last names. The run is reported after
+        // this is durable.
         let (lines, written) = kept.take();
         let kept: Vec<(Diagnostic, Vec<u8>)> = std::iter::once(Diagnostic::journal(&lines))
             .chain(written)
@@ -546,6 +567,15 @@ impl Engine {
         );
         let mut publication = store.begin().map_err(failed)?;
         publication.close_run(run.as_str()).map_err(failed)?;
+        let mut place = 0;
+        for (at, (output, artifact)) in outputs.iter().enumerate() {
+            // The outputs of one port are together, in the order they were handed back.
+            let first = at == 0 || outputs[at - 1].0.port() != output.port();
+            place = if first { 0 } else { place + 1 };
+            let reference = format!("{OUTPUTS_PREFIX}{}/{place}", output.port());
+            artifact::commit(&mut publication, run.as_str(), &reference, artifact)
+                .map_err(failed)?;
+        }
         for (diagnostic, bytes) in &kept {
             publication
                 .put_in(run.as_str(), diagnostic.name(), RECORD_KIND, bytes)
@@ -562,5 +592,78 @@ impl Engine {
         }
         publication.publish().map_err(failed)?;
         Ok(Finished::new(run, outcome))
+    }
+}
+
+/// What an action handed back, held to the output ports its call returns (ADR 0008):
+/// every artifact at one of those ports and of the port's type, and every port with as
+/// many as its count says. What comes back is each output with the artifact to commit,
+/// in the order of the descriptor's ports, and within a port in the order handed back;
+/// or why nothing of it is committed, in fixed words, with a port's name as the action
+/// wrote it shown escaped and cut.
+fn held_to_ports(
+    prepared: &PreparedCall,
+    descriptor: &ActionDescriptor,
+    produced: Produced,
+) -> Result<Vec<(Committed, Artifact)>, String> {
+    let returned: Vec<_> = descriptor
+        .outputs()
+        .iter()
+        .filter(|port| prepared.outputs().iter().any(|name| name == port.name()))
+        .collect();
+    let mut at_port: Vec<Vec<Artifact>> = returned.iter().map(|_| Vec::new()).collect();
+    for (name, artifact) in produced.into_outputs() {
+        let Some(place) = returned.iter().position(|port| port.name() == name) else {
+            return Err(format!(
+                "the action handed back an artifact at {}, which is no output port this \
+                 call returns",
+                Shown(&name)
+            ));
+        };
+        let port = returned[place];
+        if artifact.artifact_type() != port.artifact() {
+            return Err(format!(
+                "the action handed back {} at the output port {}, which returns {}",
+                artifact.artifact_type().with_article(),
+                Shown(port.name()),
+                port.artifact().with_article()
+            ));
+        }
+        at_port[place].push(artifact);
+    }
+    let mut outputs = Vec::new();
+    for (port, artifacts) in returned.into_iter().zip(at_port) {
+        let count = artifacts.len() as u64;
+        let said = |bound: u32, which: &str| {
+            format!(
+                "the action handed back {count} artifacts at the output port {}, which \
+                 returns {bound} at {which}",
+                Shown(port.name())
+            )
+        };
+        if let Some(max) = port.count().max().filter(|max| count > u64::from(*max)) {
+            return Err(said(max, "most"));
+        }
+        if count < u64::from(port.count().min()) {
+            return Err(said(port.count().min(), "least"));
+        }
+        for artifact in artifacts {
+            let output = Committed::new(port.name(), port.artifact(), artifact.id());
+            outputs.push((output, artifact));
+        }
+    }
+    Ok(outputs)
+}
+
+/// What a caught panic says, as the message of the error its run ends with: the text
+/// the panic carried, when it carried one.
+fn panic_text(panic: &(dyn Any + Send)) -> String {
+    let text = panic
+        .downcast_ref::<&str>()
+        .map(|text| (*text).to_owned())
+        .or_else(|| panic.downcast_ref::<String>().cloned());
+    match text {
+        Some(text) => format!("the action panicked: {text}"),
+        None => "the action panicked, and its panic carried no text".to_owned(),
     }
 }

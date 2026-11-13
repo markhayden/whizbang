@@ -23,6 +23,9 @@ bound is an `Estimate`, not a bare number; the crash test tries every choice of 
 disk loses; the run record is `run/2` (ADR 0005). Corrected: a refusal of a stored
 admission showed an action's name or version escaped twice; a run that had just become
 visible could be answered as made by a process that is gone.
+Amended: 2026-11-12, with ADR 0008, which catches a panic in an action. Changed, in
+"What a repeat is answered with": a run whose action panicked ends as an error and is
+answered as `Ended`; `NotEnded { here: true }` no longer covers it.
 Spec: section 3, "The execution contract", "Storage" and "What every run records";
 section 6, "Spend"
 
@@ -497,11 +500,11 @@ forgotten only once its closing is visible, not when `close_run` is called
 
 What `NotEnded` does not tell apart, each pinned by a test or a row:
 
-- `here: true` is also what a run is whose end could not be written (the store failed),
-  and whose action panicked: a panic is not caught yet (`docs/carry-over.md`, with
-  nested calls, cancellation and publication), it unwinds through `request`, and the run
-  stays admitted, in that process and after it has ended, when only `here` changes.
-  Both are answered without running anything.
+- `here: true` is also what a run is whose end could not be written (the store failed):
+  the run stays admitted, in that process and after it has ended, when only `here`
+  changes, and is answered without running anything. A run whose action panicked is not
+  one of these any more: the panic is caught, the run ends as an error with its record,
+  and a repeat is answered `Ended` (ADR 0008, "A panic in an action").
 - It is also what a run is whose admission became visible and was not confirmed durable
   (the store's `Unacknowledged`): the caller was told of the store's failure, the action
   never started, and the id is taken all the same. The store cannot take a visible

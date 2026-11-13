@@ -5,13 +5,17 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 
+use whizbang_core::artifact::{ArtifactType, Location, Origin, Shape, Step};
+use whizbang_core::contract::OutputPort;
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Admission, Answer, Call, Context, Executor, Failure, Outcome,
-    PreparedCall, Produced, RUN_RECORD_SCHEMA, Request, RequestId, RunId, RunState, Value,
+    Action, ActionDescriptor, Admission, Answer, Call, CallError, Context, Executor, Failure,
+    Outcome, PreparedCall, Produced, RUN_RECORD_SCHEMA, Request, RequestId, RunId, RunState, Value,
 };
+use whizbang_core::identity::{Binding, Digest, PixelDigest, Space};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Kind, Store};
 use whizbang_testkit::echo::Echo;
+use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::schema::validate;
 use whizbang_testkit::scratch::Scratch;
 
@@ -169,6 +173,71 @@ fn a_failed_runs_record_and_diagnostics_are_kept_and_readable() {
     let listed = String::from_utf8(out.stdout).unwrap();
     assert!(
         listed.contains(&format!("{failed}\toutputs 0\tdiagnostics 4\t")),
+        "{listed}"
+    );
+}
+
+/// An action that returns one location.
+struct Find(ActionDescriptor);
+
+fn the_place() -> Location {
+    let photo = Binding::root(
+        PixelDigest(Digest::of_bytes(b"a photo")),
+        Space::flat(8, 6).unwrap(),
+    );
+    let origin = Origin::new(Step::new("find", "1.0.0")).unwrap();
+    Location::new(photo, Shape::WholeImage, origin).unwrap()
+}
+
+impl Action for Find {
+    fn descriptor(&self) -> &ActionDescriptor {
+        &self.0
+    }
+
+    fn run(&self, _: &PreparedCall, _: &Context) -> Result<Produced, Failure> {
+        Ok(Produced::nothing().with("where", the_place()))
+    }
+}
+
+#[test]
+fn a_run_that_committed_an_output_is_shown_and_listed_with_it() {
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let run = {
+        let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+        let mut registry = whizbang::wiring::registry().expect("the registry builds");
+        let find = whizbang_core::contract::Kind::Primitive;
+        let find = ActionDescriptor::draft("find", "1.0.0", find, "A test action.").output(
+            OutputPort::one("where", ArtifactType::Location, "Where it is."),
+        );
+        registry
+            .register(Arc::new(Find(find.build().unwrap())))
+            .unwrap();
+        let executor = whizbang::wiring::runner(registry, store);
+        let finished = executor.submit(&Call::new("find")).unwrap();
+        assert_eq!(finished.outcome().outputs().len(), 1);
+        finished.run().as_str().to_owned()
+    };
+    let shown = whizbang(&["show", &run], &root);
+    assert_eq!(shown.code, Some(0), "{}", shown.err);
+    let id = the_place().id();
+    assert!(
+        shown
+            .text()
+            .contains(&format!("outputs: 1\n  where\tlocation {id}\n")),
+        "{}",
+        shown.text()
+    );
+    // `store list` counts what the run holds: one output, and its admission, its
+    // journal and its record.
+    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+        .args(["store", "list", "--store"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    let listed = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        listed.contains(&format!("{run}\toutputs 1\tdiagnostics 3\t")),
         "{listed}"
     );
 }
@@ -404,8 +473,9 @@ fn a_reader_that_stops_reading_is_not_an_error() {
     }
 }
 
-/// An action that panics when it runs.
-struct Boom(ActionDescriptor);
+/// An action whose run cannot be ended: it has the store's file system refuse the next
+/// call that changes the disk, which is the first of the publication that ends its run.
+struct Boom(ActionDescriptor, Arc<ShimFs>);
 
 impl Action for Boom {
     fn descriptor(&self) -> &ActionDescriptor {
@@ -413,33 +483,33 @@ impl Action for Boom {
     }
 
     fn run(&self, _: &PreparedCall, _: &Context) -> Result<Produced, Failure> {
-        panic!("boom")
+        self.1.refuse_before(self.1.events().len());
+        Ok(Produced::nothing())
     }
 }
 
 #[test]
 fn a_run_that_was_admitted_and_did_not_end_is_listed_and_shown_as_such() {
-    // A run is in the store from its admission. An action that panics is not caught
-    // yet (`docs/carry-over.md`), so its run never ends: it stays as it was admitted,
-    // which is also what a process that died while an action ran leaves. `runs list`
-    // and `runs show` say so, with what the admission holds.
+    // A run is in the store from its admission. One whose end the store could not
+    // write never ends: it stays as it was admitted, which is also what a process that
+    // died while an action ran leaves. `runs list` and `runs show` say so, with what
+    // the admission holds.
     let dir = Scratch::new("runs");
     let root = dir.path().join("store");
     let id = RequestId::parse("order-17").unwrap();
     let request = |action: &str| Request::new(Call::new(action)).with_id(id.clone());
     {
-        let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
+        let fs = Arc::new(ShimFs::new());
+        let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
         let mut registry = whizbang::wiring::registry().expect("the registry builds");
         let boom = whizbang_core::contract::Kind::Primitive;
         let boom = ActionDescriptor::draft("boom", "1.2.3", boom, "A test action.");
         registry
-            .register(Arc::new(Boom(boom.build().unwrap())))
+            .register(Arc::new(Boom(boom.build().unwrap(), fs)))
             .unwrap();
         let executor = whizbang::wiring::runner(registry, store);
-        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            executor.request(&request("boom"))
-        }));
-        assert!(unwound.is_err());
+        let unended = executor.request(&request("boom"));
+        assert!(matches!(unended, Err(CallError::Store(_))), "{unended:?}");
         // The same request again, in the process that admitted it, is not run again.
         let Ok(Answer::Repeat(earlier)) = executor.request(&request("boom")) else {
             panic!("the request ran again");

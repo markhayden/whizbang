@@ -357,6 +357,99 @@ fn the_same_bytes_are_stored_once() {
 }
 
 #[test]
+fn a_stored_file_far_larger_than_its_entry_says_is_refused_and_not_read_whole() {
+    // Damage, or other hands, can leave a file under `objects/` that is far larger
+    // than its entry says. The store reads no more of it than the entry's length and
+    // one byte, which is enough to know that it is not the entry's.
+    let dir = Scratch::new("store");
+    let root = with_old(&dir);
+    let object = root.join("objects").join(Digest::of_bytes(B).hex());
+    std::fs::remove_file(&object).unwrap();
+    std::fs::write(&object, vec![7u8; 1 << 20]).unwrap();
+    let most = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let fs = Arc::new(Measured(most.clone()));
+    let reader = Reader::open(&root, fs.clone()).unwrap();
+    let generation = reader.snapshot().unwrap();
+    let entry = generation.get("b").unwrap();
+    let refused = reader.read(entry).unwrap_err();
+    assert!(matches!(refused, Error::Corrupt { .. }), "{refused:?}");
+    let said = refused.to_string();
+    assert!(
+        said.contains(&format!(
+            "is more than the {} bytes its entry says",
+            B.len()
+        )),
+        "{said}"
+    );
+    assert_eq!(
+        most.load(std::sync::atomic::Ordering::SeqCst),
+        B.len() + 1,
+        "more of the file was read than its entry's length and one byte"
+    );
+    // A writer reads the same way.
+    drop(reader);
+    let store = Store::open(&root, fs).unwrap();
+    assert!(matches!(store.read(entry), Err(Error::Corrupt { .. })));
+    assert!(matches!(
+        store.read_output(entry),
+        Err(Error::Corrupt { .. })
+    ));
+    assert_eq!(most.load(std::sync::atomic::Ordering::SeqCst), B.len() + 1);
+}
+
+/// The real file system, noting the most bytes of stored content one read gave back.
+struct Measured(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Measured {
+    fn note(&self, path: &Path, read: io::Result<Vec<u8>>) -> io::Result<Vec<u8>> {
+        if let (Ok(bytes), true) = (&read, path.parent().is_some_and(|p| p.ends_with("objects"))) {
+            self.0
+                .fetch_max(bytes.len(), std::sync::atomic::Ordering::SeqCst);
+        }
+        read
+    }
+}
+
+impl Fs for Measured {
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
+        RealFs.create_dir(path)
+    }
+    fn write_new(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        RealFs.write_new(path, bytes)
+    }
+    fn sync_dir(&self, path: &Path) -> io::Result<()> {
+        RealFs.sync_dir(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        RealFs.rename(from, to)
+    }
+    fn remove_all(&self, path: &Path) -> io::Result<()> {
+        RealFs.remove_all(path)
+    }
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        self.note(path, RealFs.read(path))
+    }
+    fn read_at_most(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+        self.note(path, RealFs.read_at_most(path, limit))
+    }
+    fn list(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
+        RealFs.list(path)
+    }
+    fn exists(&self, path: &Path) -> io::Result<bool> {
+        RealFs.exists(path)
+    }
+    fn hold_lock_file(&self, path: &Path, create: bool) -> io::Result<Option<Box<dyn LockFile>>> {
+        RealFs.hold_lock_file(path, create)
+    }
+    fn share(&self, path: &Path) -> io::Result<Box<dyn Held>> {
+        RealFs.share(path)
+    }
+    fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
+        RealFs.try_alone(path)
+    }
+}
+
+#[test]
 fn a_stored_file_that_no_longer_matches_its_entry_is_refused_by_its_digest() {
     // Other bytes of the same length; fewer bytes; no file at all.
     let same_length: Vec<u8> = B.iter().map(|byte| byte ^ 1).collect();

@@ -33,6 +33,30 @@ pub fn put(publication: &mut Publication<'_>, artifact: &Artifact) -> Result<Art
     Ok(id)
 }
 
+/// Adds the artifact to a publication as an output the run `run` commits: two
+/// references to its canonical file, both committed outputs (ADR 0008, "The commit
+/// step").
+///
+/// One is the run's own, among its names, under `reference`: it is to the file this run
+/// made, and goes when the run is deleted. The other is the artifact's name, outside
+/// runs, which is how a later call takes it; it is given this file unless the store
+/// already holds an artifact under that name when the publication is published. Then
+/// the name keeps the file it has, which is the same artifact with the origin it was
+/// first stored with: an identity does not cover an origin, and a name holds one file.
+/// The store decides that inside its publishing step ([`Publication::keep`]).
+pub fn commit(
+    publication: &mut Publication<'_>,
+    run: &str,
+    reference: &str,
+    artifact: &Artifact,
+) -> store::Result<ArtifactId> {
+    let id = artifact.id();
+    let bytes = artifact.to_bytes();
+    publication.put_in(run, reference, Kind::Output, &bytes)?;
+    publication.keep(&name(artifact.artifact_type(), id), &bytes)?;
+    Ok(id)
+}
+
 /// What artifacts are read from: a store opened to write, or to read.
 pub trait Contents {
     /// The current generation.

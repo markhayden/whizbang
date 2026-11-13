@@ -286,6 +286,31 @@ true.
 
 ### A7. Nested calls, cancellation and publication
 
+**Built in three pull requests** (ADR 0008 is written with them, each part amending it),
+because every task of this size so far came to two or three times the size of one. A box
+is ticked by the pull request that makes it true.
+
+- **Part 1, the commit step:** box 5. An action hands back artifacts; the executor holds
+  them to the ports its call returns and publishes them, with the completed status, in
+  the publication that ends the run; a panic in an action ends its run through the same
+  publication. Of "Done when": the fake action with two outputs, crashed inside its
+  commit. With it, from `docs/carry-over.md`: the store reads no more of a stored file
+  than its entry says.
+- **Part 2, cancellation, status and progress:** boxes 1 and 4, and of box 3 that a
+  cancellation is accepted or comes too late. Status and cancel answered while an action
+  is busy, by a second caller; progress events; a run found by its id after its caller
+  left; a fake capability that blocks at a named barrier and sees the cancellation; a
+  hold on the generation a run's inputs were read from. Of "Done when": the cancel before
+  the commit step and the one after it; the second caller that reads a status and
+  cancels; the caller that disconnects and returns.
+- **Part 3, nested calls:** box 2 and the rest of box 3. Calls through the context's
+  executor, each with an allowance taken from its parent's; the fifth level and the call
+  back refused; a cancellation that reaches descendants; a parent that is terminal only
+  when its descendants are and every capability request is accounted for; the parent and
+  the refusals in the run record. Of "Done when": the grandchild refused after a
+  cancellation; the parent that stays non-terminal while a capability request is
+  outstanding; the completed child whose outputs remain when its parent fails.
+
 **Depends on:** A6, A8. Rascal's old rule, that a commit which has taken its lock always
 completes, is not carried over without being restated here.
 
@@ -297,7 +322,7 @@ completes, is not carried over without being restated here.
 - [ ] Cancellation reaches descendants and refuses new ones. A parent is terminal only when
       its descendants are terminal and every request a capability was sent is accounted for.
 - [ ] Progress events; status and cancel answered while an action is busy.
-- [ ] One commit step for an action: all of its output references and its completed status
+- [x] One commit step for an action: all of its output references and its completed status
       are published together, through A2's publication, and the completed outcome is returned
       only after that publication is durable.
 

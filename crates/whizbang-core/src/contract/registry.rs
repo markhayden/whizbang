@@ -5,21 +5,63 @@
 
 use std::sync::Arc;
 
+use crate::artifact::Artifact;
+use crate::capability::Shown;
+
 use super::{ActionDescriptor, Context, PreparedCall};
 
-/// What an action hands back when it finished. It holds nothing yet: an action cannot
-/// hand back an artifact until there is a commit step to publish it in (the plan's task
-/// for nested calls, cancellation and publication). It cannot be made outside this crate
-/// except as nothing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What an action hands back when it finished: the artifacts it made, each at the
+/// output port it is returned at.
+///
+/// Handing an artifact back commits nothing. The executor holds what is handed back to
+/// the ports the call returns, and commits all of it, with the run's completed status,
+/// in one publication of the store (ADR 0008): an action has no other way to put an
+/// output in the store.
+///
+/// What `{:?}` prints is each output's port, type and identity, never its content.
+#[derive(Clone, PartialEq, Default)]
 pub struct Produced {
-    _contents: (),
+    outputs: Vec<(String, Artifact)>,
 }
 
 impl Produced {
     /// The action finished, and made no artifact.
     pub fn nothing() -> Produced {
-        Produced { _contents: () }
+        Produced::default()
+    }
+
+    /// The same, with this artifact returned at this output port, after those already
+    /// returned there.
+    pub fn with(mut self, port: &str, artifact: impl Into<Artifact>) -> Produced {
+        self.outputs.push((port.to_owned(), artifact.into()));
+        self
+    }
+
+    /// What was handed back, to be committed.
+    pub(super) fn into_outputs(self) -> Vec<(String, Artifact)> {
+        self.outputs
+    }
+
+    /// Each artifact handed back with its port, in the order they were added.
+    pub fn outputs(&self) -> impl Iterator<Item = (&str, &Artifact)> {
+        self.outputs
+            .iter()
+            .map(|(port, artifact)| (port.as_str(), artifact))
+    }
+}
+
+impl std::fmt::Debug for Produced {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut list = f.debug_list();
+        for (port, artifact) in &self.outputs {
+            list.entry(&format_args!(
+                "{} at {}: {}",
+                artifact.artifact_type(),
+                Shown(port),
+                artifact.id()
+            ));
+        }
+        list.finish()
     }
 }
 
