@@ -820,4 +820,17 @@ fn a_panic_in_an_action_ends_its_run_as_an_error_with_its_record() {
     );
     let again = engine.submit(&Call::new("pair")).unwrap();
     assert_ne!(again.run(), finished.run());
+
+    // A panic that carries words written in the code, and nothing made at run time,
+    // says them too.
+    let world = World::new();
+    let engine = world.engine(vec![pair(|_, _| panic!("plain words"))]);
+    let finished = engine.submit(&Call::new("pair")).unwrap();
+    assert_eq!(
+        finished.outcome(),
+        &Outcome::Error {
+            kind: "panic".to_owned(),
+            message: "the action panicked: plain words".to_owned(),
+        }
+    );
 }
