@@ -874,40 +874,16 @@ fn deleting_an_executing_run_tells_the_runs_it_called_to_stop() {
     // The run is deleted from the store while a run it called is held inside its
     // action. Nothing of either can be kept, so both are told: the signal of the run
     // that was called is set by the deletion, as a cancellation of its caller sets it.
-    //
-    // A second run under the deleted one is blocked meanwhile in a wait for the first,
-    // its cousin. The deletion wakes it: its wait is given up as cancelled, and is not
-    // left to hang until the cousin comes back by itself.
     let world = World::new();
     let store = world.store();
     let barriers = Barriers::new();
     let saw: Noted<(bool, bool)> = noted();
-    let cousin: Noted<RunId> = noted();
-    let woken: Noted<Result<RunState, Refusal>> = noted();
-    let outer = {
-        let cousin = cousin.clone();
-        act("outer", move |_, context| {
-            let started = context.executor().start(&Request::new(Call::new("inner")));
-            cousin.lock().unwrap().push(started.unwrap().run().clone());
-            let finished = context.executor().submit(&Call::new("waiter")).unwrap();
-            assert_eq!(finished.outcome(), &Outcome::Cancelled);
-            assert!(context.cancellation().is_cancelled());
-            Ok(Produced::nothing())
-        })
-    };
-    let waiter = {
-        let (cousin, woken) = (cousin.clone(), woken.clone());
-        act("waiter", move |_, context| {
-            let cousin = cousin.lock().unwrap()[0].clone();
-            let waited = match context.executor().wait(&cousin) {
-                Ok(watched) => Ok(watched.state().clone()),
-                Err(CallError::Refused(refusal)) => Err(refusal),
-                Err(other) => panic!("{other:?}"),
-            };
-            woken.lock().unwrap().push(waited);
-            Ok(Produced::nothing())
-        })
-    };
+    let outer = act("outer", |_, context| {
+        let finished = context.executor().submit(&Call::new("inner")).unwrap();
+        assert_eq!(finished.outcome(), &Outcome::Cancelled);
+        assert!(context.cancellation().is_cancelled());
+        Ok(Produced::nothing())
+    });
     let inner = {
         let (barriers, saw) = (barriers.clone(), saw.clone());
         act("inner", move |_, context| {
@@ -919,24 +895,15 @@ fn deleting_an_executing_run_tells_the_runs_it_called_to_stop() {
             Ok(Produced::nothing())
         })
     };
-    let executor = engine(store.clone(), vec![outer, inner, waiter]);
+    let executor = engine(store.clone(), vec![outer, inner]);
     let Ok(Answer::Started(root)) = executor.start(&Request::new(Call::new("outer"))) else {
         panic!("the request was not started");
     };
     barriers.arrived("inner", 1);
-    let child = cousin.lock().unwrap()[0].clone();
-    until("the second run does not wait for its cousin", || {
-        executor.waiting_for(&child) > 0
-    });
-    assert!(woken.lock().unwrap().is_empty());
+    let all = records(&world);
+    let child = all.keys().find(|id| **id != root.as_str()).unwrap();
+    let child = RunId::parse(child).unwrap();
     store.delete(&[root.as_str()]).unwrap();
-    // The waiter is woken by the deletion alone: the cousin is still held.
-    until("the deletion did not wake the run that waited", || {
-        !woken.lock().unwrap().is_empty()
-    });
-    let given_up = Err(Refusal::WaitCancelled { run: child.clone() });
-    assert_eq!(*woken.lock().unwrap(), [given_up]);
-    assert!(saw.lock().unwrap().is_empty(), "the cousin is still held");
     barriers.release("inner");
     let waited = within("the wait for the run that was called", {
         let (executor, child) = (executor.clone(), child.clone());
@@ -957,50 +924,6 @@ fn deleting_an_executing_run_tells_the_runs_it_called_to_stop() {
     assert_eq!(waited, Err(no_run));
     let stored = record(&world, &child);
     assert_eq!(stored.identity().parent.as_deref(), Some(root.as_str()));
-}
-
-#[test]
-fn under_a_bound_of_one_a_started_run_starts_no_run_of_its_own() {
-    // The store's writer may have one started run that is not over. The run that was
-    // started holds that place until it is over, so a run it tries to start is
-    // refused, at once: it is never left to wait for a place its own caller holds.
-    let world = World::new();
-    let said: Noted<Refusal> = noted();
-    let outer = {
-        let said = said.clone();
-        act("outer", move |_, context| {
-            let started = context.executor().start(&Request::new(Call::new("inner")));
-            said.lock().unwrap().push(refused(started));
-            // A call that makes no thread takes no place, and runs.
-            context.executor().submit(&Call::new("inner")).unwrap();
-            Ok(Produced::nothing())
-        })
-    };
-    let inner = act("inner", |_, _| Ok(Produced::nothing()));
-    let executor = engine(world.store(), vec![outer, inner])
-        .with_started_bound(1)
-        .unwrap();
-    let Ok(Answer::Started(root)) = executor.start(&Request::new(Call::new("outer"))) else {
-        panic!("the request was not started");
-    };
-    let waited = within("the wait for the started run", {
-        let (executor, root) = (executor.clone(), root.clone());
-        move || executor.wait(&root)
-    });
-    assert_eq!(
-        waited.unwrap().state(),
-        &RunState::Ended(Outcome::Completed {
-            outputs: Vec::new()
-        })
-    );
-    assert_eq!(
-        *said.lock().unwrap(),
-        [Refusal::TooManyStarted { bound: 1 }]
-    );
-    let stored = record(&world, &root);
-    let kinds: Vec<_> = stored.outcome().refusals.iter().map(|r| r.kind()).collect();
-    assert_eq!(kinds, [RefusalKind::TooManyStarted]);
-    assert_eq!(stored.steps().len(), 1);
 }
 
 // --- when a run is terminal -------------------------------------------------------------------

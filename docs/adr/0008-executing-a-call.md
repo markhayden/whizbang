@@ -818,12 +818,7 @@ started executing at once (`STARTED_LIMIT`); a fifth is refused
 (`Refusal::TooManyStartedUnder`), so one tree cannot take every place: at most 4 + 16
 + 64 = 84 by its own arithmetic, and never more than the count. Both the place and
 the run's share of its parent's four come back when the run is over, before whoever
-waits for it is told. A started run holds its place for as long as it is not over,
-which includes the time its end waits for the runs it called: so under a store bound
-of 1 a started run can never start a run of its own, which is refused
-(`TooManyStarted`) and never waited for
-(`nested::under_a_bound_of_one_a_started_run_starts_no_run_of_its_own`). Threads an
-action makes itself are not counted
+waits for it is told. Threads an action makes itself are not counted
 (`nested::a_run_started_from_inside_an_action_takes_a_place_among_the_stores_started_runs`,
 `nested::a_run_starts_only_so_many_runs_at_once_and_one_more_is_refused`,
 `nested::a_run_started_from_inside_an_action_that_gets_no_thread_ends_as_an_error_and_its_caller_is_told`).

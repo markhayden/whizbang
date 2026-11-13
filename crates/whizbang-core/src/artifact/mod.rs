@@ -181,6 +181,20 @@ impl std::fmt::Display for ArtifactError {
     }
 }
 
+impl ArtifactError {
+    /// The error in words that hold no path: what an action may put in a message, which
+    /// is kept in its run's record and handed to a caller who is not on this machine. A
+    /// failure of the store is said as the store says it without paths
+    /// ([`store::Error::without_paths`]); every other error is its own sentence, which
+    /// names no file.
+    pub fn without_paths(&self) -> String {
+        match self {
+            ArtifactError::Store(error) => error.without_paths(),
+            other => other.to_string(),
+        }
+    }
+}
+
 impl std::error::Error for ArtifactError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
