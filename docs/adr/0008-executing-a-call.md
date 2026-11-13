@@ -43,6 +43,10 @@ Amended: 2026-11-13, with a fix after the task. Changed, in "A wait from inside 
 action": a wait by a run whose signal is set says `WaitCancelled` whatever became of
 the run it waited for. Added: a deletion tells those who wait; what a store's count of
 1 means for a started run.
+Amended: 2026-11-13, with `grow` through the executor (task A9), the first command that
+runs an action. Added: "The first door". Changed, in "A panic in an action": a door now
+installs the hook; in "Cancellation", under a deadline in a run: a context says whether
+its deadline has passed, by the executor's clock.
 Spec: section 3, "The execution contract", "What a run publishes", "Nested calls",
 "Storage" and "What every run records"; section 6, "Spend"
 
@@ -266,7 +270,7 @@ executor catches anything, and the default hook prints the panic's text and the 
 the source it came from to stderr: the whole text, with no secret taken out and nothing
 cut. None of that is written to the store, and the executor does not change the hook,
 which belongs to the process. A door that runs actions must install its own hook, one
-that prints nothing an action said (`docs/carry-over.md`).
+that prints nothing an action said: the command line does ("The first door").
 
 ### Status, waiting, and a run that was started
 
@@ -756,7 +760,11 @@ from its context, and its capability handles send nothing once it has passed (AD
 for it: the handles the executor makes hold the deadline to the executor's clock, the
 one admission goes by (`Capabilities::timed_by`;
 `cancel::a_handle_holds_its_runs_deadline_to_the_executors_clock`). A handle made by
-other code goes by the machine's.
+other code goes by the machine's. An action that works for long without a handle asks
+its context whether the deadline has passed (`Context::deadline_passed`), which goes by
+the same clock, and does not compare the deadline with the machine's: `grow` does, every
+64 rows
+(`grow_action::grow_stops_when_its_deadline_passes_by_the_executors_clock_and_commits_nothing`).
 
 **The generation a run reads.** A run is admitted against one generation of the store,
 and reads that generation until it ends. Before it prepares the call, admission takes
@@ -1068,6 +1076,45 @@ parent in its own admission. What was taken for a child is not given back when i
 ends. Capability requests are counted and not recorded. The store in a context
 takes a snapshot of the current generation at every look once a child has committed
 (`docs/carry-over.md`).
+
+### The first door
+
+`whizbang rascal grow` is the first command that runs an action
+(`crates/whizbang/src/door.rs`). What it does around the executor is what each door
+after it does.
+
+- **One entry point.** It makes a `Request` and hands it to `Executor::request`, and waits.
+  It prepares nothing itself: a call the action cannot take is refused by the executor,
+  in the executor's sentence, before any run exists.
+- **A request id goes through the executor.** The text a caller gave as an id is handed
+  to `Executor::request_id`, which refuses text that holds a secret without showing it
+  (ADR 0007), and never to `RequestId::parse`
+  (`rascal::a_request_id_that_holds_a_secret_is_refused_without_being_shown`).
+- **The panic hook.** The binary replaces the process's hook, first of all, with one that
+  prints one fixed line and nothing of the panic: not its text, and not its place in the
+  source. A panic in an action still ends its run as an error, and the door then says so
+  from the run's outcome, which has the secrets taken out
+  (`rascal::a_panic_leaves_nothing_it_said_and_no_place_in_the_source_on_stderr`). A
+  panic outside an action ends the process with the exit code 101 and that one line.
+- **What is printed.** What the executor says of a run has had the secrets taken out and
+  been cut already; the door escapes it, so that no control character reaches a
+  terminal, and cuts nothing shorter. A refusal is the executor's sentence as it is,
+  which quotes what it quotes escaped. The binary then passes every complaint, of
+  every command, through the same escape where it prints it: a store's failure names a
+  path, which is whatever a caller typed or a folder held (`escape.rs`, a test for
+  each command). The escape leaves a backslash as it is, so doing it twice is doing it
+  once. Text the executor never saw, such as
+  something given as an artifact's identity that is none, is not said back: a door holds
+  no list of secrets to take out of it.
+- **One process owns every run it makes.** The command runs the action in its own
+  process and waits for it. The table of open runs is that process's ("Cancellation"),
+  so no other process can cancel the run or wait for it: a second process sees it as
+  admitted and not ended. That is stated, and not solved: a door that is not the process
+  that runs the action, such as the server, has to route a cancel, a status and a wait
+  to the process that owns the run (`docs/carry-over.md`).
+- **Exit codes.** 0 when the run completed; 1 when nothing ran or the run did not
+  complete; 2 for a command line that was not understood; 3 when the output could not be
+  written. They are those of the store and runs commands.
 
 ## Consequences
 
