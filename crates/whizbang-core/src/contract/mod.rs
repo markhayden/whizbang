@@ -7,20 +7,22 @@
 //! types of what an executing action is [handed](Context) and [hands back](Outcome).
 //! And the second half, as far as it is built (ADR 0005): an action [runs](Action::run)
 //! through [`Executor::submit`], and its run is written to the store as a [`RunRecord`]
-//! with its journal and diagnostics, [redacted](Secrets). And request ids and the
-//! first half of admission (ADR 0007): a [`Request`] may carry a [`RequestId`], which is
+//! with its journal and diagnostics, [redacted](Secrets). And request ids and
+//! admission (ADR 0007): a [`Request`] may carry a [`RequestId`], which is
 //! looked up before anything is prepared; a run is made durably, with its
 //! [`Admission`], before its action runs; and the id's record outlives the run. Prepare
 //! returns an [`Estimate`], and a request that comes with the preparation its caller
 //! was shown is refused as [stale](Stale) when its call no longer prepares the same.
-//! The reservation is still to come; nested calls, cancellation and an action's
-//! outputs are not here yet.
+//! A run is admitted with a [`Reservation`] of that estimate, which a [`Ledger`] is
+//! asked for in the admission's own step. The ledger itself and settlement are not
+//! here, and neither are nested calls, cancellation and an action's outputs.
 
 mod call;
 mod context;
 mod descriptor;
 mod engine;
 mod journal;
+pub mod ledger;
 mod prepare;
 pub mod record;
 mod redact;
@@ -40,6 +42,10 @@ pub use descriptor::{
 };
 pub use engine::{ConfigSource, Engine, Executor, WHIZBANG_VERSION};
 pub use journal::{Clock, JournalLine, SystemClock, journal_bytes, read_journal};
+pub use ledger::{
+    Declined, LEDGER_NAME_LIMIT, Ledger, RESERVATION_RECORD, RESERVATIONS_PREFIX, Reservation,
+    SPEND_PREFIX, Step, reservations,
+};
 pub use prepare::{
     Backends, CallError, Estimate, InputFault, Missing, ModelIdentity, Need, NoBackends,
     PreparedCall, Readiness, Refusal, ResolvedInput, Stale, StoreFailure, Unavailable,

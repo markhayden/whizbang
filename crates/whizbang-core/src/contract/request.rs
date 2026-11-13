@@ -2,7 +2,7 @@
 //!
 //! A caller may give a request an id. The id is bound to a fingerprint of the request as
 //! it was submitted, and admission records the id, the fingerprint and the run in the
-//! one publication that makes the run. The record is published under a name that
+//! one publication that makes the run, with the reservation ([`super::ledger`]). The record is published under a name that
 //! belongs to no run, so it is still there when the run is deleted and pruned, and it
 //! is what answers the same request sent again.
 //!
@@ -214,7 +214,7 @@ impl std::fmt::Display for RequestRecordError {
         match self {
             RequestRecordError::TooLarge { bytes } => write!(
                 f,
-                "{bytes} bytes, and a record of a request is at most {REQUEST_RECORD_MAX_BYTES}"
+                "{bytes} bytes, and such a record is at most {REQUEST_RECORD_MAX_BYTES}"
             ),
             RequestRecordError::OtherVersion { found } => write!(
                 f,
@@ -233,8 +233,12 @@ impl std::fmt::Display for RequestRecordError {
 
 impl std::error::Error for RequestRecordError {}
 
+/// Why the largest amount there is is not one a record holds.
+pub(super) const NOT_AN_AMOUNT: &str = "what was reserved is the largest amount there is, which is no amount: nothing is \
+     reserved for a cost without a bound";
+
 /// The kind field of a stored record, looked at first and by itself.
-fn kind_of(bytes: &[u8], reads: &str) -> Result<(), RequestRecordError> {
+pub(super) fn kind_of(bytes: &[u8], reads: &str) -> Result<(), RequestRecordError> {
     if bytes.len() as u64 > REQUEST_RECORD_MAX_BYTES {
         return Err(RequestRecordError::TooLarge {
             bytes: bytes.len() as u64,
@@ -254,13 +258,13 @@ fn kind_of(bytes: &[u8], reads: &str) -> Result<(), RequestRecordError> {
 
 /// One line of JSON and a newline. Such a record holds strings and whole numbers;
 /// writing one cannot fail.
-fn line_of<T: Serialize>(record: &T) -> Vec<u8> {
+pub(super) fn line_of<T: Serialize>(record: &T) -> Vec<u8> {
     let mut bytes = serde_json::to_vec(record).unwrap_or_default();
     bytes.push(b'\n');
     bytes
 }
 
-fn malformed(error: serde_json::Error) -> RequestRecordError {
+pub(super) fn malformed(error: serde_json::Error) -> RequestRecordError {
     RequestRecordError::Malformed(error.to_string())
 }
 
@@ -275,13 +279,15 @@ struct AdmissionWire {
     request: Option<String>,
     fingerprint: Digest,
     prepared: Digest,
+    #[serde(deserialize_with = "present")]
+    reserved_micros: Option<u64>,
     action: String,
     version: String,
     start_ms: u64,
 }
 
 /// A field that may be null and may not be left out.
-fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+pub(super) fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,
@@ -299,17 +305,20 @@ pub struct Admission {
     request: Option<RequestId>,
     fingerprint: Digest,
     prepared: Digest,
+    reserved_micros: Option<u64>,
     action: String,
     version: String,
     start_ms: u64,
 }
 
 impl Admission {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         run: RunId,
         request: Option<RequestId>,
         fingerprint: Digest,
         prepared: Digest,
+        reserved_micros: Option<u64>,
         action: &str,
         version: &str,
         start_ms: u64,
@@ -319,6 +328,7 @@ impl Admission {
             request,
             fingerprint,
             prepared,
+            reserved_micros,
             action: action.to_owned(),
             version: version.to_owned(),
             start_ms,
@@ -345,6 +355,14 @@ impl Admission {
         self.prepared
     }
 
+    /// What was reserved for the run when it was admitted, in millionths of a US
+    /// dollar: the amount of its reservation ([`super::Reservation`]), which the same
+    /// publication made. None when the executor that admitted the run had no ledger:
+    /// nothing was reserved, and the run has no reservation.
+    pub fn reserved_micros(&self) -> Option<u64> {
+        self.reserved_micros
+    }
+
     /// The action's name.
     pub fn action(&self) -> &str {
         &self.action
@@ -368,6 +386,7 @@ impl Admission {
             request: self.request.as_ref().map(|id| id.as_str().to_owned()),
             fingerprint: self.fingerprint,
             prepared: self.prepared,
+            reserved_micros: self.reserved_micros,
             action: self.action.clone(),
             version: self.version.clone(),
             start_ms: self.start_ms,
@@ -392,16 +411,22 @@ impl Admission {
         };
         text::action_name(&wire.action)
             .and_then(|()| text::version(&wire.version))
-            .map_err(|why| inconsistent(record::quoted(&why)))?;
+            // The rule's sentence shows what it refuses escaped already: it is cut, and
+            // not escaped a second time.
+            .map_err(|why| inconsistent(why.chars().take(record::REASON_LIMIT).collect()))?;
         let admission = Admission {
             run,
             request,
             fingerprint: wire.fingerprint,
             prepared: wire.prepared,
+            reserved_micros: wire.reserved_micros,
             action: wire.action,
             version: wire.version,
             start_ms: wire.start_ms,
         };
+        if admission.reserved_micros == Some(u64::MAX) {
+            return Err(inconsistent(NOT_AN_AMOUNT.to_owned()));
+        }
         if admission.to_bytes() != bytes {
             return Err(RequestRecordError::NotCanonical);
         }

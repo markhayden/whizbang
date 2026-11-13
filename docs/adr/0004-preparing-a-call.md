@@ -50,6 +50,9 @@ Amended: 2026-11-12, with the second part of ADR 0007. Changed: prepare returns 
 estimate, which is not in the fingerprint; `Backends` has a second question, the bound;
 the config's digest is read each time a call is prepared; and comparing a preparation
 with the call prepared again is done, at admission.
+Amended: 2026-11-12, with the last part of ADR 0007. Changed: the bound a backend
+states is an `Estimate`, not a bare number; that prepare reserves nothing is shown
+against a ledger that counts.
 Spec: section 3, "The execution contract", "Identities" and "Storage"; section 6,
 "Readiness"
 
@@ -199,8 +202,8 @@ ledger. An
 implementor could still do anything inside `resolve`; nothing checks that it sends
 nothing. A count of zero requests on the capabilities themselves is shown against task
 A8's fakes (`prepare::prepare_sends_no_capability_request`). A count of zero reservations
-on the ledger needs the fake that task A6 brings; an ignored test in `prepare.rs` names
-what completes it.
+is shown against the fake ledger of ADR 0007, which the executor under test holds
+(`prepare::prepare_makes_no_reservation`).
 
 ### Bound to what it saw
 
@@ -373,8 +376,8 @@ known case that does not, and it goes with rascal's recipes to milestone 3
   the vector is now made by hand on that binding. For the same reason closing it did not
   change what prepare accepts (above).
 
-What this record does not decide: an estimate, admission and request ids, which are ADR
-0007's; reservations;
+What this record does not decide: an estimate, admission, request ids and reservations,
+which are ADR 0007's;
 an action's commit step and cancellation. Executing an action, the run record and how a
 run id is minted are ADR 0005's.
 

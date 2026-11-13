@@ -732,10 +732,12 @@ impl Store {
     /// Whether this writer made the run `run` since it opened the store and the run is
     /// still open: a publication of this value made it ([`Publication::create_run`])
     /// and became visible, and none has closed it ([`Publication::close_run`]) or
-    /// deleted it since. A run the store held when it was opened, one that was only
-    /// added to, and one whose publication was refused, were not made here. One process at a
-    /// time writes a store, so a run that this writer did not make and that is not
-    /// finished is no longer being worked on by anyone.
+    /// deleted it since. It is true from just before the run is visible, so that it is
+    /// never false of a run a snapshot already shows, and false again if the
+    /// publication then fails to become visible. A run the store held when it was
+    /// opened, one that was only added to, and one whose publication was refused, were
+    /// not made here. One process at a time writes a store, so a run that this writer
+    /// did not make and that is not finished is no longer being worked on by anyone.
     pub fn made_here(&self, run: &str) -> bool {
         self.made_runs
             .lock()
@@ -1267,18 +1269,32 @@ impl Publication<'_> {
         let staged = self.dir.join("CURRENT");
         fs.write_new(&staged, format!("{number}\n").as_bytes())
             .map_err(Error::io("write", &staged))?;
-        files.move_into_place(&staged, &layout.pointer())?;
-        // Visible: the runs this publication made are runs this writer made, whether or
-        // not the last sync confirms them.
-        {
-            // What this value remembers is bounded by the runs that are open now: a
-            // run that was closed or deleted is forgotten.
-            let mut made = self
-                .store
+        // The runs this publication makes are counted as made here before the rename
+        // that shows them, and taken out again if it fails: whoever sees a run in a
+        // snapshot and then asks whether this writer made it is never told no of a
+        // run that has just become visible.
+        let made_runs = || {
+            self.store
                 .made_runs
                 .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            made.extend(self.created.iter().cloned());
+                .unwrap_or_else(|e| e.into_inner())
+        };
+        let added: Vec<&String> = {
+            let mut made = made_runs();
+            let new = |run: &&String| made.insert((*run).clone());
+            self.created.iter().filter(new).collect()
+        };
+        if let Err(error) = files.move_into_place(&staged, &layout.pointer()) {
+            let mut made = made_runs();
+            for run in added {
+                made.remove(run);
+            }
+            return Err(error);
+        }
+        // Visible. What this value remembers is bounded by the runs that are open now:
+        // a run that was closed or deleted is forgotten, and only from here on.
+        {
+            let mut made = made_runs();
             for run in self.closed.iter().chain(&self.deleted) {
                 made.remove(run);
             }

@@ -118,7 +118,7 @@ fn echo_runs_through_the_binarys_executor_and_runs_list_and_show_read_it() {
         "inputs: none".to_owned(),
         "outputs: none".to_owned(),
         "models: none".to_owned(),
-        "spend: none".to_owned(),
+        "spend: nothing reserved; paid requests: none".to_owned(),
         "egress: none".to_owned(),
         "steps: none".to_owned(),
         "judge: none".to_owned(),
@@ -308,7 +308,7 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
                 "broken",
                 "record",
                 Kind::Diagnostic,
-                b"{\"record\":\"run/1\",\"\\u001b[2J\":1}\n",
+                b"{\"record\":\"run/2\",\"\\u001b[2J\":1}\n",
             )
             .unwrap();
         publication.publish().unwrap();
@@ -327,6 +327,30 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
     assert!(shown.err.contains(expected), "{}", shown.err);
     assert!(shown.err.contains(" at line 1 column "), "{}", shown.err);
     assert!(!shown.err.contains('\u{1b}'));
+
+    // A record of the version before this one is another version, and is said to be.
+    {
+        let store = Store::open_existing(&root, Arc::new(RealFs)).unwrap();
+        let mut publication = store.begin().unwrap();
+        publication
+            .put_in(
+                "older",
+                "record",
+                Kind::Diagnostic,
+                b"{\"record\":\"run/1\",\"spend\":[]}\n",
+            )
+            .unwrap();
+        publication.publish().unwrap();
+    }
+    let shown = whizbang(&["show", "older"], &root);
+    assert_eq!(shown.code, Some(1));
+    assert!(
+        shown
+            .err
+            .contains("a record of another version: run/1, and this build reads run/2"),
+        "{}",
+        shown.err
+    );
 }
 
 #[test]
@@ -472,12 +496,12 @@ fn a_run_that_was_admitted_and_did_not_end_is_listed_and_shown_as_such() {
     );
     assert!(
         text.ends_with(
-            "record: none: the run was admitted and has not ended; it is executing, or the \
+            "spend: nothing reserved\nrecord: none: the run was admitted and has not ended; it is executing, or the \
              process that ran it ended first\n"
         ),
         "{text}"
     );
-    assert_eq!(text.lines().count(), 6, "{text}");
+    assert_eq!(text.lines().count(), 7, "{text}");
     // Its admission is one of its names, and is printed as it is stored.
     let admission = whizbang(&["show", &run, "--diagnostic", "admitted"], &root);
     let admission = Admission::from_bytes(&admission.out).unwrap();

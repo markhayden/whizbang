@@ -9,14 +9,15 @@ use crate::identity::{DecodeLimits, Digest};
 use crate::store::{self, Store};
 
 use super::journal::Kept;
+use super::ledger::{Declined, Reservation, Step};
 use super::prepare::prepare;
 use super::record::{Diagnostic, RECORD_KIND, RECORD_NAME, Ran, RunRecord};
 use super::request::{Found, look_up};
 use super::{
     ADMITTED_NAME, Admission, Allowance, Answer, Backends, Call, CallError, Cancellation,
-    Capabilities, Clock, Context, Ending, Failure, Finished, Outcome, PreparedCall, Readiness,
-    Refusal, Registry, Request, RequestId, RunId, RunState, Secrets, Stale, StoreFailure,
-    SystemClock, request_fingerprint,
+    Capabilities, Clock, Context, Ending, Failure, Finished, Ledger, Outcome, PreparedCall,
+    Readiness, Refusal, Registry, Request, RequestId, RunId, RunState, Secrets, Stale,
+    StoreFailure, SystemClock, request_fingerprint,
 };
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
@@ -74,6 +75,8 @@ pub struct Engine {
     limits: DecodeLimits,
     clock: Arc<dyn Clock>,
     secrets: Secrets,
+    /// The ledger that takes part in admission, when this executor was given one.
+    ledger: Option<Arc<dyn Ledger>>,
 }
 
 /// Where the executor reads the digest of the config. It is asked every time a call is
@@ -112,6 +115,7 @@ impl Engine {
             limits: DecodeLimits::default(),
             clock: Arc::new(SystemClock),
             secrets: Secrets::none(),
+            ledger: None,
         }
     }
 
@@ -148,6 +152,13 @@ impl Engine {
         self
     }
 
+    /// The same executor, admitting every run with a reservation that this ledger is
+    /// asked for (ADR 0007, "The reservation"). Without one nothing is reserved.
+    pub fn with_ledger(mut self, ledger: Arc<dyn Ledger>) -> Engine {
+        self.ledger = Some(ledger);
+        self
+    }
+
     /// The actions this executor runs.
     pub fn registry(&self) -> &Registry {
         &self.registry
@@ -156,9 +167,11 @@ impl Engine {
     /// A new run's id: the time in milliseconds since the Unix epoch, a hyphen, and a
     /// count. The count is one for the whole process ([`NAMED`]), so two executors never
     /// make the same id from the same time, and it goes up past any id the store
-    /// already holds now. That an id is still free when its run is admitted is not
-    /// taken on trust: the admission's publication makes the run, and the store refuses
-    /// it if the id was taken meanwhile ([`MAX_NAMINGS`]).
+    /// already holds now, and past any id whose reservation the store still holds: a
+    /// run that was deleted leaves its reservation, and a run that reserves cannot
+    /// have that id. That an id is still free when its run is admitted is not taken on
+    /// trust: the admission's publication makes the run, and the store refuses it if
+    /// the id, or its reservation's name, was taken meanwhile ([`MAX_NAMINGS`]).
     fn name_run(&self, store: &Store, now_ms: u64) -> Result<RunId, CallError> {
         let generation = store
             .snapshot()
@@ -166,7 +179,9 @@ impl Engine {
         loop {
             let count = NAMED.fetch_add(1, Ordering::SeqCst) + 1;
             let id = RunId::minted(now_ms, count);
-            if generation.run(id.as_str()).is_none() {
+            if generation.run(id.as_str()).is_none()
+                && generation.get(&Reservation::name_of(&id)).is_none()
+            {
                 return Ok(id);
             }
         }
@@ -268,6 +283,14 @@ impl Executor for Engine {
         }
         match self.run(request.call(), Some((id, fingerprint)), request.expected()) {
             Ok(finished) => Ok(Answer::Ran(finished)),
+            // A refusal that comes after the look is of a request whose id may have
+            // been taken since: by then the call may no longer prepare the same, be
+            // ready, or fit the allowance, because the request under its id was
+            // admitted. The id is looked up once more, and what it says is the
+            // answer; a refusal stands only when the id is still not taken.
+            Err(Stopped::Refused(error @ CallError::Refused(_))) => {
+                answer(self.look_up(id, fingerprint)?).unwrap_or(Err(error))
+            }
             Err(Stopped::Refused(error)) => Err(error),
             // Another request was admitted under the id between the look and the
             // admission, and the store refused this one. Nothing of this request was
@@ -375,20 +398,76 @@ impl Engine {
             Some((_, fingerprint)) => fingerprint,
             None => request_fingerprint(call),
         };
+        // What is reserved is the estimate of the preparation made a moment ago, here,
+        // and never of the one the request came with, which was only compared. A cost
+        // without a bound is not an amount to reserve: the ledger is not asked.
+        let reserved = match &self.ledger {
+            Some(_) if prepared.estimate().is_unbounded() => {
+                return Err(CallError::Refused(Refusal::NoBound {
+                    action: prepared.action().to_owned(),
+                })
+                .into());
+            }
+            Some(_) => Some(prepared.estimate().micros()),
+            None => None,
+        };
         let mut run = self.name_run(store, start_ms)?;
         let mut namings = 1;
         loop {
+            // Everything that names the run is made again for every naming: the
+            // admission, which is published twice as one content, and the reservation,
+            // which holds the admission's digest.
             let admission = Admission::new(
                 run.clone(),
                 request.cloned(),
                 fingerprint,
                 prepared.fingerprint(),
+                reserved,
                 prepared.action(),
                 prepared.version(),
                 start_ms,
             )
             .to_bytes();
             let mut publication = store.begin().map_err(failed)?;
+            // The ledger takes part here: it judges, and adds what it must to this
+            // publication, before anything is published. Declined, the publication is
+            // dropped with all it staged.
+            let mut reservation_name = None;
+            let mut ledgers = Vec::new();
+            if let (Some(ledger), Some(micros)) = (&self.ledger, reserved) {
+                let reservation = Reservation::new(
+                    run.clone(),
+                    request.cloned(),
+                    Digest::of_bytes(&admission),
+                    micros,
+                    start_ms,
+                );
+                let generation = store.snapshot().map_err(failed)?;
+                let mut step = Step::new(
+                    &mut publication,
+                    &generation,
+                    self.contents.as_ref(),
+                    &self.secrets,
+                );
+                match ledger.reserve(&reservation, &mut step) {
+                    Ok(()) => {}
+                    Err(Declined::OverAllowance { left_micros }) => {
+                        return Err(CallError::Refused(Refusal::OverAllowance {
+                            action: prepared.action().to_owned(),
+                            asked_micros: micros,
+                            left_micros,
+                        })
+                        .into());
+                    }
+                    Err(Declined::Failed(error)) => return Err(error.into()),
+                }
+                ledgers = step.into_made();
+                let name = reservation.name();
+                publication
+                    .create(&name, RECORD_KIND, &reservation.to_bytes())
+                    .map_err(failed)?;
+                reservation_name = Some(name);
+            }
             publication.create_run(run.as_str()).map_err(failed)?;
             publication
                 .put_in(run.as_str(), ADMITTED_NAME, RECORD_KIND, &admission)
@@ -404,7 +483,24 @@ impl Engine {
                     namings += 1;
                     run = self.name_run(store, start_ms)?;
                 }
-                Err(error @ store::Error::NameExists { .. }) if request.is_some() => {
+                // The reservation of a run that had this id, and was deleted, is still
+                // there: the id is not free for a run that reserves.
+                Err(store::Error::NameExists { name })
+                    if reservation_name.as_ref() == Some(&name) && namings < MAX_NAMINGS =>
+                {
+                    namings += 1;
+                    run = self.name_run(store, start_ms)?;
+                }
+                // A name the ledger made was made meanwhile: another admission was
+                // published since the ledger judged. It is asked again, on the
+                // generation as it is now. The store changed each time this happens.
+                Err(store::Error::NameExists { name }) if ledgers.contains(&name) => {}
+                Err(error @ store::Error::NameExists { .. })
+                    if request.is_some_and(|id| {
+                        matches!(&error, store::Error::NameExists { name }
+                            if *name == id.admission_name())
+                    }) =>
+                {
                     return Err(Stopped::Taken(error));
                 }
                 Err(error) => return Err(failed(error).into()),
@@ -452,6 +548,7 @@ impl Engine {
                 request,
                 whizbang: WHIZBANG_VERSION,
                 prepared: &prepared,
+                reserved_micros: reserved,
                 outcome: &outcome,
                 start_ms,
                 end_ms,

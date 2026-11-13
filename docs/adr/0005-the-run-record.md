@@ -28,6 +28,13 @@ the store whole or not at all" no longer hold as they were written, and "What `s
 does" and "What is not built" are written again. `identity.request` is filled, and a
 record whose `request` is no request id is refused. `runs list|show` say when a run was
 admitted and has not ended.
+Amended: 2026-11-12, a fifth note, with the last part of ADR 0007, which reserves. The
+record is `run/2`, the shared step this record allowed: `spend` is an object that says
+what was reserved for the run, and holds the list of paid requests, which is the empty
+one now. Seven lists are empty where eight were. The schema is `run-2.json`. A `run/1`
+record is another version, and is refused. The admission (ADR 0007) is still
+`admission/1` though it gained a field: it has no schema and no reader outside this
+code, and one written before is refused for the field it lacks.
 Amended: 2026-11-12, a fifth note, with the second part of ADR 0007. Changed: the end of
 a run is published with `Publication::close_run`.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
@@ -68,17 +75,17 @@ The record's shape is costly to reverse: once a store is kept, every record in i
 ## Decision
 
 The code of the record is in `crates/whizbang-core/src/contract/` (`record.rs`,
-`redact.rs`, `journal.rs`), the schema in `crates/whizbang-core/schemas/run-1.json`, and
+`redact.rs`, `journal.rs`), the schema in `crates/whizbang-core/schemas/run-2.json`, and
 the tests that hold them to this record in
 `crates/whizbang-core/tests/it/contract/record.rs` and `redact.rs`.
 
-### The shape, `run/1`
+### The shape, `run/2`
 
 A record is one JSON object with thirteen fields, always all of them, in this order:
 
 | Field | Group of the spec | What it holds |
 |---|---|---|
-| `record` | | The kind and version: `run/1` |
+| `record` | | The kind and version: `run/2` |
 | `identity` | Identity | `run`, the run's id; `request`, the caller's request id, or null; `parent`, the run that called this one, or null; `whizbang`, the version that ran it |
 | `asked` | What was asked | `action` and `version`; `arguments`, each as its `name` and its `value`; `settings`; `config`, the digest of the config the settings came from |
 | `inputs` | Inputs and outputs | Each input as its `port`, its `type`, the identity of the `artifact` and the identity of the `binding` the artifact belongs to |
@@ -86,7 +93,7 @@ A record is one JSON object with thirteen fields, always all of them, in this or
 | `outcome` | Outcome | `status`: `completed`, `cancelled`, `error` or `invalid`; `error`, its `kind` and `message`, or null; `invalid`, the reason, or null; `refusals` |
 | `time` | Time | `start_ms` and `end_ms`, in milliseconds since the Unix epoch; `durations` |
 | `models` | Models | |
-| `spend` | Spend | |
+| `spend` | Spend | `reserved_micros`, what was reserved for the run when it was admitted, in millionths of a US dollar, or null when nothing was; `requests` |
 | `egress` | Egress | |
 | `steps` | Steps | |
 | `judge` | Judge runs | |
@@ -104,13 +111,29 @@ arguments, the inputs and the config's digest are the prepared call's; the statu
 error or the reason, and the outputs are the outcome's. An end that is before the start,
 as a clock that went back gives, is written as the start.
 
-### What is empty in `run/1`, and how it stops being empty
+### What is empty in `run/2`, and how it stops being empty
 
-Eight lists hold nothing in this version, and cannot: `asked.settings`, `outcome.refusals`,
-`time.durations`, `models`, `spend`, `egress`, `steps` and `judge`. Each is there, as an
-empty list, in every record. In the code the element of each is a type that has no value;
-in the schema each has at most zero items. A record with anything in one of them is not a
-`run/1` record.
+Seven lists hold nothing in this version, and cannot: `asked.settings`, `outcome.refusals`,
+`time.durations`, `models`, `egress`, `steps` and `judge`; and an eighth inside `spend`,
+`spend.requests`. Each is there, as an empty list, in every record. In the code the
+element of each is a type that has no value; in the schema each has at most zero items. A
+record with anything in one of them is not a `run/2` record.
+
+**What `run/2` filled, so far.** `spend` was an empty list in `run/1`. It is an object:
+`reserved_micros`, the amount of the reservation the run was admitted with (ADR 0007,
+"The reservation"), or null when the executor that admitted it had no ledger and nothing
+was reserved; and `requests`, the list the spec asks for, of every paid request with what
+was reserved for it, what was settled and what is unresolved. No request is dispatched or
+settled before the ledger of checkpoint 1B, so that list is the empty one. The amount is
+of the run and not of a request, which is why it is not an element of the list. It is
+written when the run ends, from what admission reserved; a run that never ends has no
+record, and its admission and its reservation say the same amount. The largest amount
+there is is no amount (ADR 0007): the types refuse it, and the schema, which has no
+maximum in the vocabulary the validator knows, does not.
+
+**What reading does with a `run/1` record.** It is refused as another version, like any
+other. A store is not kept before the tag of checkpoint 1A, so nothing is migrated
+(`record::a_record_of_another_version_is_another_version_not_damage`).
 
 The shape of what goes in them is not decided here, because it follows from things that
 do not exist: the request and response of a capability, the ledger's reservation, a
@@ -130,7 +153,7 @@ versions.
 `identity.parent` is null in every record written today, because no call nests.
 `identity.request` is the caller's id for the request that made the run, or null when it
 gave none (ADR 0007). They are strings when they are filled, and filling them does not
-change the version: a reader of `run/1` already accepts both. A `request` that is there
+change the version: a reader of `run/1` already accepted both. A `request` that is there
 is a request id, 1 to 128 characters of its alphabet: the types refuse any other text,
 and the schema holds it to the two lengths.
 
@@ -183,7 +206,7 @@ name.
 
 ### The schema
 
-`crates/whizbang-core/schemas/run-1.json` is the JSON Schema (2020-12) of a `run/1`
+`crates/whizbang-core/schemas/run-2.json` is the JSON Schema (2020-12) of a `run/2`
 record, written by hand, and the core carries it as text (`RUN_RECORD_SCHEMA`). It and the
 types are two statements of one shape, and the tests hold them together in three ways:
 
@@ -208,6 +231,7 @@ fields):
 - what a diagnostic's name may be, the order of the diagnostics, and that no name is
   there twice;
 - the alphabet of a request id: it holds a `request` to its two lengths only;
+- that what was reserved is not the largest amount there is;
 - the one way of writing, and the limit on a record's bytes: both are of the bytes, not
   of the document.
 
@@ -466,11 +490,10 @@ binary builds (`wiring::runner`).
 
 **What is not built, and what follows from that.**
 
-- Admission is half built (ADR 0007): a run is recorded durably when it is assigned, and
+- Admission is built (ADR 0007): a run is recorded durably when it is assigned, and
   a process that dies while an action runs leaves the run, admitted. It leaves no
   journal and no diagnostic: those are durable only when the run ends, and cannot be
-  read while it executes. Nothing is reserved, and a prepared call is not yet handed to
-  admission to be checked again.
+  read while it executes.
 - A panic inside an action is not caught: it unwinds through `submit`, and the run stays
   admitted, with no record.
 - Nothing can cancel a run, and `submit` returns only when the run is over.
@@ -502,7 +525,7 @@ inputs. "Every artifact records what produced it" (the spec's invariant) holds b
 
 - Whatever lists, shows, counts or exports runs reads one shape. An export of one JSON
   object per line (the spec's `runs export`) can write the stored bytes as they are.
-- Filling the eight empty lists changes the version: once, to `run/2`, for all that the
+- Filling the empty lists changes the version: once, to `run/2`, for all that the
   tasks of checkpoint 1A fill, and once for each fill after the store is kept ("When a
   store starts being kept", above). Reading then has to choose: read both versions, or
   refuse the old one. Before a store is kept, refusing is free.
@@ -518,7 +541,7 @@ inputs. "Every artifact records what produced it" (the spec's invariant) holds b
 What this record does not decide, and the code does not do: admission, which is ADR
 0007's; nested calls,
 cancellation, and an action's outputs with their commit step; how a run that takes long
-is scheduled and watched; the elements of the eight empty lists; how a parent is assigned; `runs stats` and `runs export`,
+is scheduled and watched; the elements of the empty lists; how a parent is assigned; `runs stats` and `runs export`,
 which are milestone 2's (`SPEC.md` section 16); labels for evaluation runs; whether a diagnostic body is cut short (squint cut a
 long body and recorded its full digest; that is on `docs/carry-over.md` with the judge
 loop).

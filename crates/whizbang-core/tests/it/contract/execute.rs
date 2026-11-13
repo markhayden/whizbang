@@ -244,9 +244,12 @@ fn every_group_of_a_real_record_is_filled_or_explicitly_empty() {
         "time",
         "diagnostics",
     ];
-    let empty = [
-        "inputs", "outputs", "models", "spend", "egress", "steps", "judge",
-    ];
+    let empty = ["inputs", "outputs", "models", "egress", "steps", "judge"];
+    // No ledger took part: nothing was reserved, and no request was paid.
+    assert_eq!(
+        document["spend"],
+        serde_json::json!({"reserved_micros": null, "requests": []})
+    );
     for group in filled {
         let value = &document[group];
         assert!(
@@ -261,7 +264,7 @@ fn every_group_of_a_real_record_is_filled_or_explicitly_empty() {
     }
     assert_eq!(
         document.as_object().unwrap().len(),
-        filled.len() + empty.len()
+        filled.len() + empty.len() + 1
     );
 }
 
@@ -298,7 +301,7 @@ fn a_failed_echo_writes_the_same_record_with_its_error_and_keeps_its_diagnostics
     // The record, by hand: the same shape, the error in its place, no output and no
     // completed status.
     let by_hand = concat!(
-        r#"{"record":"run/1","#,
+        r#"{"record":"run/2","#,
         r#""identity":{"run":"1000-1","request":null,"parent":null,"whizbang":"0.0.1"},"#,
         r#""asked":{"action":"echo","version":"1.0.0","#,
         r#""arguments":[{"name":"text","value":{"text":"hello"}},"#,
@@ -308,7 +311,8 @@ fn a_failed_echo_writes_the_same_record_with_its_error_and_keeps_its_diagnostics
         r#""outcome":{"status":"error","error":{"kind":"echo","message":"boom"},"#,
         r#""invalid":null,"refusals":[]},"#,
         r#""time":{"start_ms":1000,"end_ms":1002,"durations":[]},"#,
-        r#""models":[],"spend":[],"egress":[],"steps":[],"judge":[],"#,
+        r#""models":[],"spend":{"reserved_micros":null,"requests":[]},"egress":[],"steps":[],"#,
+        r#""judge":[],"#,
         r#""diagnostics":[{"name":"diagnostics/echo.txt","#,
         r#""digest":"sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","#,
         r#""bytes":5},{"name":"journal","#,
@@ -998,14 +1002,44 @@ fn a_run_that_was_deleted_while_it_executed_is_not_made_again_by_its_end() {
 /// A file system that takes a run's id from under the executor: each time a run's
 /// admission is about to be written, it first publishes a run of the id the admission
 /// names, as other hands would, for as many times as it was told to.
-struct Taker {
+pub(super) struct Taker {
     inner: RealFs,
     store: std::sync::OnceLock<Arc<Store>>,
     left: AtomicU64,
+    /// Whether it takes the names of reservations, and not the ids of runs.
+    reservations: std::sync::atomic::AtomicBool,
     taken: std::sync::Mutex<Vec<String>>,
 }
 
 impl Taker {
+    /// A store at `root` on a file system that takes a run's id this many times.
+    pub(super) fn store(root: &Path, takes: u64) -> (Arc<Taker>, Arc<Store>) {
+        let fs = Arc::new(Taker {
+            inner: RealFs,
+            store: std::sync::OnceLock::new(),
+            left: AtomicU64::new(takes),
+            reservations: std::sync::atomic::AtomicBool::new(false),
+            taken: std::sync::Mutex::new(Vec::new()),
+        });
+        let store = Arc::new(Store::open(root, fs.clone()).unwrap());
+        assert!(fs.store.set(store.clone()).is_ok());
+        (fs, store)
+    }
+
+    /// The same, taking not the run's id but the name of its reservation: it
+    /// publishes, as a run that was deleted since would have left it, a reservation
+    /// under the name the admission's own would be made with.
+    pub(super) fn store_taking_reservations(root: &Path, takes: u64) -> (Arc<Taker>, Arc<Store>) {
+        let (fs, store) = Taker::store(root, takes);
+        fs.reservations.store(true, Ordering::SeqCst);
+        (fs, store)
+    }
+
+    /// The ids it took, in order.
+    pub(super) fn taken(&self) -> Vec<String> {
+        self.taken.lock().unwrap().clone()
+    }
+
     fn take(&self, bytes: &[u8]) {
         let Ok(record) = serde_json::from_slice::<serde_json::Value>(bytes) else {
             return;
@@ -1025,9 +1059,24 @@ impl Taker {
         taken.push(id.to_owned());
         drop(taken);
         let mut publication = store.begin().unwrap();
-        publication
-            .put_in(id, "theirs", store::Kind::Diagnostic, b"y")
-            .unwrap();
+        if self.reservations.load(Ordering::SeqCst) {
+            let old = format!(
+                "{{\"record\":\"reservation/1\",\"run\":\"{id}\",\"request\":null,\
+                 \"admission\":\"{}\",\"reserved_micros\":1,\"start_ms\":1}}\n",
+                whizbang_core::identity::Digest::of_bytes(b"gone")
+            );
+            publication
+                .create(
+                    &format!("spend/reservations/{id}"),
+                    store::Kind::Diagnostic,
+                    old.as_bytes(),
+                )
+                .unwrap();
+        } else {
+            publication
+                .put_in(id, "theirs", store::Kind::Diagnostic, b"y")
+                .unwrap();
+        }
         publication.publish().unwrap();
     }
 }
@@ -1082,17 +1131,10 @@ fn a_run_is_named_eight_times_at_most() {
     let submit = |takes: u64| {
         let dir = Scratch::new("execute-namings");
         let root = dir.path().join("store");
-        let fs = Arc::new(Taker {
-            inner: RealFs,
-            store: std::sync::OnceLock::new(),
-            left: AtomicU64::new(takes),
-            taken: std::sync::Mutex::new(Vec::new()),
-        });
-        let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
-        assert!(fs.store.set(store.clone()).is_ok());
+        let (fs, store) = Taker::store(&root, takes);
         let engine = engine_over(store, Vec::new(), 9000);
         let result = engine.submit(&Call::new("echo").argument("text", Value::text("hello")));
-        let taken = fs.taken.lock().unwrap().clone();
+        let taken = fs.taken();
         let runs = runs_of(&root, Arc::new(RealFs));
         (result, taken, runs)
     };

@@ -1,6 +1,8 @@
 //! Request ids, and the admission of a run (ADR 0007): an id is looked up before
 //! anything is prepared; one publication makes the run and the id's record; the record
 //! outlives the run; and the same request sent again is answered with the run it made.
+//! And the reservation: the ledger is asked in the admission's step, and what was
+//! reserved is published with the run and the id's record or not at all.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,10 +13,11 @@ use whizbang_core::contract::record::{self, Status};
 use whizbang_core::contract::request::{StoredAdmissionError, admitted};
 use whizbang_core::contract::{
     ADMITTED_NAME, Action, ActionDescriptor, Admission, Answer, Argument, Backends, Call,
-    CallError, Capability, Clock, Context, Ending, Engine, Executor, Failure, Kind, ModelIdentity,
-    NoBackends, Outcome, PreparedCall, Produced, REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES,
-    Refusal, Registry, Request, RequestId, RequestRecordError, Requirement, RunState, Secrets,
-    Unavailable, Value, ValueType, request_fingerprint,
+    CallError, Capability, Clock, Context, Declined, Ending, Engine, Estimate, Executor, Failure,
+    Kind, Ledger, ModelIdentity, NoBackends, Outcome, PreparedCall, Produced, REQUEST_ID_LIMIT,
+    REQUEST_RECORD_MAX_BYTES, Refusal, Registry, Request, RequestId, RequestRecordError,
+    Requirement, Reservation, RunState, Secrets, Step, Unavailable, Value, ValueType,
+    request_fingerprint, reservations,
 };
 use whizbang_core::contract::{ConfigSource, InputFault, InputPort, Readiness, Stale};
 use whizbang_core::identity::Digest;
@@ -22,8 +25,10 @@ use whizbang_core::store::fs::{Fs, RealFs};
 use whizbang_core::store::{self, Reader, Store};
 use whizbang_testkit::echo::Echo;
 use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
+use whizbang_testkit::ledger::FakeLedger;
 use whizbang_testkit::scratch::Scratch;
 
+use super::execute::Taker;
 use super::redact::made_up_key;
 
 // --- what the tests are made of ----------------------------------------------------------------
@@ -366,7 +371,7 @@ const ADMISSION: &str = concat!(
     r#"{"record":"admission/1","run":"7000-1","request":"order-17","#,
     r#""fingerprint":"sha256:f93fc011cfbdeda221670f83fa218719c8133d99d92b95492d70211584063c40","#,
     r#""prepared":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","#,
-    r#""action":"echo","version":"1.0.0","start_ms":7000}"#,
+    r#""reserved_micros":500000,"action":"echo","version":"1.0.0","start_ms":7000}"#,
     "\n"
 );
 
@@ -386,6 +391,7 @@ fn an_admission_and_an_ending_are_written_one_way_and_read_back() {
         request_fingerprint(&Call::new("echo").argument("text", Value::text("hello")))
     );
     assert_eq!(admission.prepared(), Digest::of_bytes(b""));
+    assert_eq!(admission.reserved_micros(), Some(500_000));
     assert_eq!((admission.action(), admission.version()), ("echo", "1.0.0"));
     assert_eq!(admission.start_ms(), 7000);
     assert_eq!(admission.to_bytes(), ADMISSION.as_bytes());
@@ -394,6 +400,15 @@ fn an_admission_and_an_ending_are_written_one_way_and_read_back() {
     let admission = Admission::from_bytes(without.as_bytes()).unwrap();
     assert_eq!(admission.request(), None);
     assert_eq!(admission.to_bytes(), without.as_bytes());
+    // A run that was admitted with no ledger: nothing was reserved, which is not a
+    // reservation of nothing.
+    let unreserved = ADMISSION.replace(r#""reserved_micros":500000"#, r#""reserved_micros":null"#);
+    let admission = Admission::from_bytes(unreserved.as_bytes()).unwrap();
+    assert_eq!(admission.reserved_micros(), None);
+    assert_eq!(admission.to_bytes(), unreserved.as_bytes());
+    let nothing = ADMISSION.replace(r#""reserved_micros":500000"#, r#""reserved_micros":0"#);
+    let admission = Admission::from_bytes(nothing.as_bytes()).unwrap();
+    assert_eq!(admission.reserved_micros(), Some(0));
 
     let ending = Ending::from_bytes(ENDING.as_bytes()).unwrap();
     assert_eq!(ending.run().as_str(), "7000-1");
@@ -443,6 +458,34 @@ fn what_is_not_an_admission_or_an_ending_is_refused_without_being_trusted() {
         (
             "a field twice",
             ADMISSION.replace(r#""run":"7000-1","#, r#""run":"7000-1","run":"7000-2","#),
+            malformed,
+        ),
+        (
+            "no word on what was reserved, as the first parts of the task wrote it",
+            ADMISSION.replace(r#""reserved_micros":500000,"#, ""),
+            malformed,
+        ),
+        (
+            "an amount under zero",
+            ADMISSION.replace(r#""reserved_micros":500000"#, r#""reserved_micros":-1"#),
+            malformed,
+        ),
+        (
+            "an amount that is not whole",
+            ADMISSION.replace(r#""reserved_micros":500000"#, r#""reserved_micros":0.5"#),
+            malformed,
+        ),
+        (
+            "the largest amount there is, which is no amount",
+            ADMISSION.replace(":500000", ":18446744073709551615"),
+            inconsistent,
+        ),
+        (
+            "an amount as text",
+            ADMISSION.replace(
+                r#""reserved_micros":500000"#,
+                r#""reserved_micros":"500000""#,
+            ),
             malformed,
         ),
         (
@@ -597,6 +640,13 @@ fn a_request_with_an_id_is_admitted_with_its_run_in_one_step_and_ended_in_anothe
         ("paint", "1.0.0")
     );
     assert_eq!(admission.start_ms(), 7000);
+    // This executor was given no ledger: nothing was reserved, and the store holds no
+    // reservation.
+    assert_eq!(admission.reserved_micros(), None);
+    let reader = Reader::open(&world.root(), world.fs.clone()).unwrap();
+    let generation = reader.snapshot().unwrap();
+    assert_eq!(reservations(&generation, |e| reader.read(e)), Ok(vec![]));
+    assert!(!generation.entries().keys().any(|n| n.starts_with("spend/")));
 
     // After the end: one generation more, the run's record with the id in it, and the
     // id's ending outside runs.
@@ -1162,8 +1212,12 @@ fn a_run_whose_end_could_not_be_written_is_answered_as_not_ended_here() {
 
 #[test]
 fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it() {
-    // The calls that change the disk during one admission, found by running one: from
+    // An executor with a ledger admits a call that may cost a quarter of a dollar. The
+    // calls that change the disk during one admission are found by running one: from
     // the request to the moment the action starts.
+    let admitting = |world: &World, ledger: &Arc<FakeLedger>, store: Arc<Store>| {
+        engine_with(store, &world.runs, Priced::new(250_000)).with_ledger(ledger.clone())
+    };
     let (opened, steps) = {
         let world = World::new();
         let store = world.store();
@@ -1176,29 +1230,46 @@ fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it() {
                 Ok(Produced::nothing())
             })
         };
-        ran(engine(store, vec![noting]).request(&asked("hello", "order-17")));
+        let mut registry = Registry::new();
+        registry.register(noting).unwrap();
+        let engine = Engine::over(registry, Priced::new(250_000), store, Digest::of_bytes(b""))
+            .with_ledger(Arc::new(FakeLedger::new()));
+        ran(engine.request(&asked("hello", "order-17")));
         (opened, started.load(Ordering::SeqCst) as usize - opened)
     };
     assert!(steps > 8, "{steps}");
 
     // Power is lost before each of them in turn, with each way a disk can lose what
-    // was not yet durable. Whatever is left, the id's record and the run are there
-    // together or not at all.
+    // was not yet durable: every name undone, every name kept, and every choice there
+    // is of which directories, and of which names, lose theirs. How many directories
+    // and names a crash at a step leaves undecided is learnt from the first crash
+    // there, and every mask over them is then tried. Whatever is left, the id's
+    // record, the run and the reservation are there together or none of them is.
     let mut outcomes = std::collections::BTreeSet::new();
+    let (mut most_dirs, mut most_names, mut crashes) = (0, 0, 0);
     for step in 0..=steps {
-        for lost in [
-            Lost::Unsynced,
-            Lost::ContentOnly,
-            Lost::Subset(0b0101),
-            Lost::Names(0b1010),
-        ] {
-            let world = World::on(ShimFs::new().crash_before(opened + step, lost));
-            let engine = world.engine(world.store());
+        let mut ways = vec![Lost::Unsynced, Lost::ContentOnly, Lost::Subset(0)];
+        let mut next = 0;
+        while next < ways.len() {
+            let lost = &ways[next].clone();
+            next += 1;
+            crashes += 1;
+            let world = World::on(ShimFs::new().crash_before(opened + step, *lost));
+            let ledger = Arc::new(FakeLedger::new());
+            let engine = admitting(&world, &ledger, world.store());
             let answer = engine.request(&asked("hello", "order-17"));
             assert!(
                 matches!(answer, Err(CallError::Store(_))),
                 "step {step}: {answer:?}"
             );
+            if *lost == Lost::Subset(0) {
+                let (dirs, names) = (world.fs.crash_choices(), world.fs.crash_names());
+                assert!(dirs <= 10 && names <= 10, "step {step}: {dirs} {names}");
+                ways.extend((1..1u64 << dirs).map(Lost::Subset));
+                ways.extend((0..1u64 << names).map(Lost::Names));
+                most_dirs = most_dirs.max(dirs);
+                most_names = most_names.max(names);
+            }
             // The action started only where the admission was whole and durable: the
             // last call of the step clears its staging away, and the admission does
             // not depend on it.
@@ -1206,36 +1277,53 @@ fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it() {
             assert!(!admitted_here || step >= steps - 1, "step {step}");
             drop(engine);
 
-            // The next writer recovers the store, and reads what survived.
-            let fs: Arc<dyn Fs> = Arc::new(RealFs);
+            // The next writer recovers the store, and reads what survived: whatever
+            // is on the disk after a crash is durable.
+            let fs: Arc<dyn Fs> = Arc::new(ShimFs::new());
             let store = Arc::new(Store::open(&world.root(), fs.clone()).unwrap());
             let (_, names, runs) = held(&world.root(), fs.clone());
+            let reserved = ledger.reservations(store.as_ref()).unwrap();
+            let at = format!("step {step}, {lost:?}");
             match (names.as_slice(), runs.as_slice()) {
                 ([], []) => {
-                    // Nothing: no action had started, and the same request is admitted
-                    // and runs, once.
-                    assert!(!admitted_here, "step {step}: an action ran unadmitted");
-                    let again = world.engine(store);
+                    // Nothing: no id's record, no run, no reservation. No action had
+                    // started, and the same request is admitted and runs, once.
+                    assert_eq!(reserved, [], "{at}");
+                    assert!(!admitted_here, "{at}: an action ran unadmitted");
+                    let again = admitting(&world, &ledger, store.clone());
                     ran(again.request(&asked("hello", "order-17")));
-                    assert_eq!(world.ran(), 1, "step {step}");
+                    assert_eq!(world.ran(), 1, "{at}");
+                    assert_eq!(ledger.reservations(store.as_ref()).unwrap().len(), 1);
                     outcomes.insert("nothing");
                 }
-                ([(name, bytes)], [(run, held)]) => {
-                    // All of it: the record names the run, the run holds the same
-                    // admission, and the same request is answered with that run.
-                    assert_eq!(name, "requests/order-17/admitted", "step {step}");
+                ([(name, bytes), (sequence, _), (reservation, stored)], [(run, held)]) => {
+                    // All of it: the id's record names the run, the run holds the same
+                    // admission, the reservation is of that run and that request, for
+                    // the amount the admission says, and the same request is answered
+                    // with that run and reserves nothing more.
+                    assert_eq!(name, "requests/order-17/admitted", "{at}");
                     let admission = Admission::from_bytes(bytes).unwrap();
-                    assert_eq!(admission.run().as_str(), run, "step {step}");
-                    assert_eq!(held, &[ADMITTED_NAME.to_owned()], "step {step}");
-                    let before = world.ran();
-                    let again = world.engine(store);
+                    assert_eq!(admission.run().as_str(), run, "{at}");
+                    assert_eq!(admission.reserved_micros(), Some(250_000), "{at}");
+                    assert_eq!(held, &[ADMITTED_NAME.to_owned()], "{at}");
+                    assert_eq!(sequence, "spend/fake/1", "{at}");
+                    assert_eq!(reservation, &format!("spend/reservations/{run}"), "{at}");
+                    let stored = Reservation::from_bytes(stored).unwrap();
+                    assert_eq!(reserved, std::slice::from_ref(&stored), "{at}");
+                    assert_eq!(stored.run().as_str(), run, "{at}");
+                    assert_eq!(stored.request(), Some(&id("order-17")), "{at}");
+                    assert_eq!((stored.micros(), stored.start_ms()), (250_000, 7000));
+                    let (before, asked_before) = (world.ran(), ledger.asked());
+                    let again = admitting(&world, &ledger, store.clone());
                     let earlier = repeat(again.request(&asked("hello", "order-17")));
-                    assert_eq!(world.ran(), before, "step {step}");
+                    assert_eq!(world.ran(), before, "{at}");
                     assert_eq!(earlier.run().as_str(), run);
                     assert_eq!(earlier.state(), &RunState::NotEnded { here: false });
+                    assert_eq!(ledger.asked(), asked_before, "{at}");
+                    assert_eq!(ledger.reservations(store.as_ref()).unwrap(), reserved);
                     outcomes.insert("all of it");
                 }
-                other => panic!("step {step}, {lost:?}: a part of an admission: {other:?}"),
+                other => panic!("{at}: a part of an admission: {other:?}"),
             }
         }
     }
@@ -1243,6 +1331,13 @@ fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it() {
         outcomes.into_iter().collect::<Vec<_>>(),
         ["all of it", "nothing"]
     );
+    // The masks were not a formality: some step left several directories and several
+    // names undecided, and each of their choices was a crash of its own.
+    assert!(
+        most_dirs >= 2 && most_names >= 4,
+        "{most_dirs} {most_names}"
+    );
+    assert!(crashes > 200, "{crashes}");
 }
 
 // --- what is stored is not trusted ---------------------------------------------------------------
@@ -1425,8 +1520,8 @@ impl Backends for Priced {
         }
     }
 
-    fn bound(&self, _: Capability, _: &ModelIdentity) -> u64 {
-        self.bound.load(Ordering::SeqCst)
+    fn bound(&self, _: Capability, _: &ModelIdentity) -> Estimate {
+        Estimate::of_micros(self.bound.load(Ordering::SeqCst))
     }
 }
 
@@ -1460,12 +1555,13 @@ fn retouch(runs: &Arc<AtomicU64>) -> Arc<dyn Action> {
 }
 
 /// A world with two photographs in its store, and an executor with `retouch` over
-/// backends and a config the test can change.
+/// backends and a config the test can change, and a ledger that counts.
 struct Shop {
     world: World,
     store: Arc<Store>,
     backends: Arc<Priced>,
     config: Arc<Config>,
+    ledger: Arc<FakeLedger>,
     engine: Engine,
     photo: ArtifactId,
     other: ArtifactId,
@@ -1485,6 +1581,7 @@ fn shop() -> Shop {
     publication.publish().unwrap();
     let backends = Priced::new(250_000);
     let config = Arc::new(Config(Mutex::new(Digest::of_bytes(b"config"))));
+    let ledger = Arc::new(FakeLedger::new());
     let mut registry = Registry::new();
     registry.register(retouch(&world.runs)).unwrap();
     let engine = Engine::over(
@@ -1494,12 +1591,14 @@ fn shop() -> Shop {
         Digest::of_bytes(b"unused"),
     )
     .with_config(config.clone())
-    .with_clock(Arc::new(Stopped(7000)));
+    .with_clock(Arc::new(Stopped(7000)))
+    .with_ledger(ledger.clone());
     Shop {
         world,
         store,
         backends,
         config,
+        ledger,
         engine,
         photo,
         other,
@@ -1523,11 +1622,18 @@ impl Shop {
         )
     }
 
+    /// What was reserved: the reservations the store names.
+    fn reserved(&self) -> Vec<Reservation> {
+        self.ledger.reservations(self.store.as_ref()).unwrap()
+    }
+
     /// The request is refused as stale for this reason, and nothing came of it: no run,
-    /// no name in the store, no action run, and the id it came with still free.
+    /// no reservation (the ledger was not asked for one, and the store names none
+    /// more), no name in the store, no action run, and the id it came with still free.
     #[track_caller]
     fn refused_as_stale(&self, request: Request, why: Stale) {
         let before = self.state();
+        let (asked, reserved) = (self.ledger.asked(), self.reserved());
         let request = request.with_id(id("order-17"));
         let refused = self.engine.request(&request).unwrap_err();
         assert_eq!(
@@ -1538,6 +1644,8 @@ impl Shop {
             })
         );
         assert_eq!(self.state(), before);
+        assert_eq!(self.ledger.asked(), asked);
+        assert_eq!(self.reserved(), reserved);
         assert_eq!(self.world.ran(), 0);
         assert!(
             self.store
@@ -1628,7 +1736,8 @@ fn a_preparation_is_refused_at_admission_when_its_input_is_no_longer_in_the_stor
         shop.backends.clone(),
         elsewhere.store(),
         Digest::of_bytes(b"config"),
-    );
+    )
+    .with_ledger(shop.ledger.clone());
     let request = Request::new(shop.call(shop.photo))
         .expecting(&prepared)
         .with_id(id("order-17"));
@@ -1662,6 +1771,7 @@ fn a_preparation_is_refused_at_admission_when_its_input_is_no_longer_in_the_stor
         (0, vec![], vec![])
     );
     assert_eq!(elsewhere.ran(), 0);
+    assert_eq!(shop.ledger.asked(), 0);
 }
 
 #[test]
@@ -1685,6 +1795,12 @@ fn a_preparation_is_refused_at_admission_when_the_config_changed() {
     let request = Request::new(shop.call(shop.photo)).expecting(&again);
     ran(shop.engine.request(&request.with_id(id("order-17"))));
     assert_eq!(shop.world.ran(), 1);
+    // And that is when its half dollar is reserved, once.
+    assert_eq!(shop.ledger.asked(), 1);
+    let reserved = shop.reserved();
+    assert_eq!(reserved.len(), 1);
+    assert_eq!(reserved[0].micros(), again.estimate().micros());
+    assert_eq!(reserved[0].micros(), 500_000);
 }
 
 #[test]
@@ -2016,4 +2132,1218 @@ fn a_repeat_that_races_the_end_of_its_run_is_not_told_the_run_will_never_end() {
         assert_eq!(earlier.state(), &RunState::Ended(completed()));
     });
     assert_eq!(runs.load(Ordering::SeqCst), 1);
+}
+
+// --- the reservation -----------------------------------------------------------------------------
+
+const RESERVATION: &str = concat!(
+    r#"{"record":"reservation/1","run":"7000-1","request":"order-17","#,
+    r#""admission":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","#,
+    r#""reserved_micros":500000,"start_ms":7000}"#,
+    "\n"
+);
+
+#[test]
+fn a_reservation_is_written_one_way_and_read_back_strictly() {
+    let reservation = Reservation::from_bytes(RESERVATION.as_bytes()).unwrap();
+    assert_eq!(reservation.run().as_str(), "7000-1");
+    assert_eq!(reservation.request(), Some(&id("order-17")));
+    assert_eq!(reservation.admission(), Digest::of_bytes(b""));
+    assert_eq!(
+        (reservation.micros(), reservation.start_ms()),
+        (500_000, 7000)
+    );
+    assert_eq!(reservation.name(), "spend/reservations/7000-1");
+    assert_eq!(reservation.to_bytes(), RESERVATION.as_bytes());
+    let without = RESERVATION.replace(r#""request":"order-17""#, r#""request":null"#);
+    let reservation = Reservation::from_bytes(without.as_bytes()).unwrap();
+    assert_eq!(reservation.request(), None);
+    assert_eq!(reservation.to_bytes(), without.as_bytes());
+    // One under the largest amount there is, which is itself no amount.
+    let most = RESERVATION.replace("500000", &(u64::MAX - 1).to_string());
+    let reservation = Reservation::from_bytes(most.as_bytes()).unwrap();
+    assert_eq!(reservation.micros(), u64::MAX - 1);
+
+    type Fault = fn(&RequestRecordError) -> bool;
+    let malformed: Fault = |e| matches!(e, RequestRecordError::Malformed(_));
+    let inconsistent: Fault = |e| matches!(e, RequestRecordError::Inconsistent(_));
+    let other_version: Fault = |e| matches!(e, RequestRecordError::OtherVersion { .. });
+    let not_canonical: Fault = |e| matches!(e, RequestRecordError::NotCanonical);
+    let too_large: Fault = |e| matches!(e, RequestRecordError::TooLarge { .. });
+    let control = r"\u001b[31m".repeat(30);
+    let cases: Vec<(&str, String, Fault)> = vec![
+        ("no bytes", String::new(), malformed),
+        ("not JSON", "not json\n".to_owned(), malformed),
+        ("an admission", ADMISSION.to_owned(), other_version),
+        (
+            "another version",
+            RESERVATION.replace("reservation/1", "reservation/2"),
+            other_version,
+        ),
+        (
+            "another kind",
+            RESERVATION.replace("reservation/1", &control),
+            other_version,
+        ),
+        (
+            "an unknown field",
+            RESERVATION.replace(r#""reserved_micros""#, r#""settled":1,"reserved_micros""#),
+            malformed,
+        ),
+        (
+            "a field left out",
+            RESERVATION.replace(r#""request":"order-17","#, ""),
+            malformed,
+        ),
+        (
+            "a field twice",
+            RESERVATION.replace(
+                r#""reserved_micros":500000,"#,
+                r#""reserved_micros":1,"reserved_micros":500000,"#,
+            ),
+            malformed,
+        ),
+        (
+            "a run that is no run id",
+            RESERVATION.replace("7000-1", "../7000"),
+            inconsistent,
+        ),
+        (
+            "a request that is no request id",
+            RESERVATION.replace("order-17", "order 17"),
+            inconsistent,
+        ),
+        (
+            "a digest that is none",
+            RESERVATION.replace("sha256:e3b0", "sha256:zzzz"),
+            malformed,
+        ),
+        (
+            "an amount under zero",
+            RESERVATION.replace("500000", "-1"),
+            malformed,
+        ),
+        (
+            "the largest amount there is, which is no amount",
+            RESERVATION.replace("500000", "18446744073709551615"),
+            inconsistent,
+        ),
+        (
+            "an amount past the largest",
+            RESERVATION.replace("500000", "18446744073709551616"),
+            malformed,
+        ),
+        (
+            "an amount that is not whole",
+            RESERVATION.replace("500000", "0.5"),
+            malformed,
+        ),
+        (
+            "an amount with a zero before it",
+            RESERVATION.replace("500000", "0500000"),
+            malformed,
+        ),
+        (
+            "an amount written another way",
+            RESERVATION.replace("500000", "5e5"),
+            malformed,
+        ),
+        (
+            "a space between tokens",
+            RESERVATION.replace(r#","run""#, r#", "run""#),
+            not_canonical,
+        ),
+        (
+            "no newline",
+            RESERVATION.trim_end().to_owned(),
+            not_canonical,
+        ),
+        (
+            "something after the record",
+            format!("{RESERVATION}{RESERVATION}"),
+            malformed,
+        ),
+        (
+            "more bytes than a record may be",
+            RESERVATION.replace("order-17", &"x".repeat(2000)),
+            too_large,
+        ),
+    ];
+    for (what, bytes, fault) in &cases {
+        let error = Reservation::from_bytes(bytes.as_bytes()).unwrap_err();
+        assert!(fault(&error), "{what}: {error:?}");
+        let said = error.to_string();
+        assert!(!said.chars().any(char::is_control), "{what}: {said:?}");
+        assert!(said.len() < 500, "{what}: {}", said.len());
+    }
+    // Neither of the other two records is read as a reservation, nor it as them.
+    assert!(other_version(
+        &Admission::from_bytes(RESERVATION.as_bytes()).unwrap_err()
+    ));
+    assert!(other_version(
+        &Reservation::from_bytes(ENDING.as_bytes()).unwrap_err()
+    ));
+}
+
+/// The content of every file under the store's `objects`, whatever names it or does
+/// not, that is a reservation.
+fn reservations_in_objects(root: &Path) -> Vec<Reservation> {
+    files(&root.join("objects"))
+        .into_iter()
+        .filter_map(|(_, bytes)| Reservation::from_bytes(&bytes).ok())
+        .collect()
+}
+
+#[test]
+fn admission_reserves_the_estimate_in_the_step_that_makes_the_run_and_the_ids_record() {
+    let shop = shop();
+    assert_eq!(shop.state(), (1, 2, 0));
+    let prepared = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    assert_eq!(prepared.estimate().micros(), 500_000);
+    assert_eq!((shop.ledger.asked(), shop.reserved()), (0, vec![]));
+
+    let request = Request::new(shop.call(shop.photo))
+        .expecting(&prepared)
+        .with_id(id("order-17"));
+    let finished = ran(shop.engine.request(&request));
+    let run = finished.run().clone();
+    assert_eq!(shop.ledger.asked(), 1);
+
+    // The admission was one generation: the run, the id's record, the reservation and
+    // the ledger's own record came with it together. The end was the next.
+    let reader = Reader::open(&shop.world.root(), shop.world.fs.clone()).unwrap();
+    let admitted_at = Reader::open(&shop.world.root(), shop.world.fs.clone()).unwrap();
+    let generation = admitted_at.snapshot().unwrap();
+    assert_eq!(generation.number(), 3);
+    let names: Vec<&str> = generation
+        .entries()
+        .keys()
+        .map(String::as_str)
+        .filter(|name| !name.starts_with("artifacts/"))
+        .collect();
+    let reservation_name = format!("spend/reservations/{run}");
+    assert_eq!(
+        names,
+        [
+            "requests/order-17/admitted",
+            "requests/order-17/ended",
+            "spend/fake/1",
+            reservation_name.as_str(),
+        ]
+    );
+    // Generation 2, the admission's, is still on the disk: it holds the run with its
+    // admission alone, and every name but the ending.
+    let second = std::fs::read(shop.world.root().join("generations").join("2.json")).unwrap();
+    let second: serde_json::Value = serde_json::from_slice(&second).unwrap();
+    for name in [names[0], names[2], names[3]] {
+        assert!(second["entries"].get(name).is_some(), "{name}: {second}");
+    }
+    assert!(second["entries"].get(names[1]).is_none());
+    let first = std::fs::read(shop.world.root().join("generations").join("1.json")).unwrap();
+    let first: serde_json::Value = serde_json::from_slice(&first).unwrap();
+    for name in &names {
+        assert!(first["entries"].get(*name).is_none(), "{name}");
+    }
+
+    // The reservation: of this run and this request, for the estimate, in a name made
+    // from the run's id, and holding the digest of the run's own admission.
+    let reserved = shop.reserved();
+    assert_eq!(reserved.len(), 1);
+    let reservation = &reserved[0];
+    assert_eq!(reservation.run(), &run);
+    assert_eq!(reservation.request(), Some(&id("order-17")));
+    assert_eq!(reservation.micros(), 500_000);
+    assert_eq!(reservation.start_ms(), 7000);
+    assert_eq!(Reservation::name_of(&run), reservation_name);
+    let entry = generation.get(&reservation_name).unwrap();
+    assert_eq!(entry.kind, store::Kind::Diagnostic);
+    let own = generation.run(run.as_str()).unwrap();
+    let admitted_entry = own.get(ADMITTED_NAME).unwrap();
+    assert_eq!(reservation.admission(), admitted_entry.digest);
+    // The admission says what was reserved, in both its copies, which are one content.
+    let outside = generation.get("requests/order-17/admitted").unwrap();
+    assert_eq!(outside.digest, admitted_entry.digest);
+    let admission = Admission::from_bytes(&reader.read(outside).unwrap()).unwrap();
+    assert_eq!(admission.reserved_micros(), Some(500_000));
+    assert_eq!(admission.run(), &run);
+    // And the run's record says it too.
+    let record = record::stored(&generation, run.as_str(), |e| reader.read(e))
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.spend().reserved_micros, Some(500_000));
+
+    // The same request again reserves nothing more, and the ledger is not asked.
+    assert_eq!(repeat(shop.engine.request(&request)).run(), &run);
+    assert_eq!((shop.ledger.asked(), shop.reserved().len()), (1, 1));
+}
+
+#[test]
+fn a_call_the_ledger_declines_is_refused_with_no_run_and_its_id_stays_free() {
+    let shop = shop();
+    // The call may cost half a dollar, and forty cents may be reserved.
+    shop.ledger.allow(Some(400_000));
+    let request = Request::new(shop.call(shop.photo)).with_id(id("order-17"));
+    let before = (shop.state(), files(&shop.world.root()).len());
+    let refused = shop.engine.request(&request).unwrap_err();
+    assert_eq!(
+        refused,
+        CallError::Refused(Refusal::OverAllowance {
+            action: "retouch".to_owned(),
+            asked_micros: 500_000,
+            left_micros: 400_000,
+        })
+    );
+    assert_eq!(
+        refused.to_string(),
+        "retouch was not admitted: it may cost up to 500000 millionths of a US dollar, and \
+         400000 are left of the ledger's allowance"
+    );
+    // The ledger was asked, and nothing came of it: no generation, no run, no name, no
+    // file, no action run.
+    assert_eq!(shop.ledger.asked(), 1);
+    assert_eq!((shop.state(), files(&shop.world.root()).len()), before);
+    assert_eq!(shop.reserved(), []);
+    assert_eq!(reservations_in_objects(&shop.world.root()), []);
+    assert_eq!(shop.world.ran(), 0);
+    // The same without an id.
+    assert!(matches!(
+        shop.engine.submit(&shop.call(shop.photo)),
+        Err(CallError::Refused(Refusal::OverAllowance { .. }))
+    ));
+    assert_eq!((shop.state(), files(&shop.world.root()).len()), before);
+
+    // The id is free: with a dollar and twenty cents allowed, the same request is
+    // admitted under it, and a second call too. A third is refused for what is left.
+    shop.ledger.allow(Some(1_200_000));
+    let first = ran(shop.engine.request(&request));
+    let second = shop.engine.submit(&shop.call(shop.other)).unwrap();
+    let refused = shop.engine.submit(&shop.call(shop.photo)).unwrap_err();
+    assert_eq!(
+        refused.refusal(),
+        Some(&Refusal::OverAllowance {
+            action: "retouch".to_owned(),
+            asked_micros: 500_000,
+            left_micros: 200_000,
+        })
+    );
+    let reserved: Vec<_> = shop.reserved().iter().map(|r| r.run().clone()).collect();
+    let mut made = vec![first.run().clone(), second.run().clone()];
+    made.sort();
+    assert_eq!(reserved, made);
+    assert_eq!(shop.world.ran(), 2);
+    // An exact fit is taken.
+    shop.backends.bound.store(100_000, Ordering::SeqCst);
+    shop.engine.submit(&shop.call(shop.photo)).unwrap();
+    assert_eq!(shop.reserved().len(), 3);
+}
+
+#[test]
+fn two_simultaneous_requests_with_one_id_make_one_reservation() {
+    // Two executors over one store and one ledger, held together once each has looked
+    // the id up and prepared. Each asks the ledger, and each stages a reservation for
+    // the run it named. The store admits one. The other's reservation is content that
+    // no name leads to: it is not counted, and a prune removes it.
+    let world = World::new();
+    let store = world.store();
+    let clock = Arc::new(Together::new(2));
+    let ledger = Arc::new(FakeLedger::new());
+    // Each waits inside the ledger too, so that both reservations are staged before
+    // either admission is published.
+    let both = Arc::new(Waiting::new(ledger.clone(), 2));
+    let engines: Vec<Engine> = (0..2)
+        .map(|_| {
+            engine_with(store.clone(), &world.runs, Priced::new(250_000))
+                .with_clock(clock.clone())
+                .with_ledger(both.clone())
+        })
+        .collect();
+    let answers: Vec<Answer> = std::thread::scope(|scope| {
+        let threads: Vec<_> = engines
+            .iter()
+            .map(|engine| scope.spawn(move || engine.request(&asked("hello", "order-17")).unwrap()))
+            .collect();
+        threads.into_iter().map(|t| t.join().unwrap()).collect()
+    });
+    let made: Vec<_> = answers
+        .iter()
+        .filter(|a| matches!(a, Answer::Ran(_)))
+        .collect();
+    assert_eq!(made.len(), 1, "{answers:?}");
+    assert_eq!(answers[0].run(), answers[1].run());
+    assert_eq!(world.ran(), 1);
+    // Asked twice; one reservation, of the run that was made.
+    assert_eq!(ledger.asked(), 2);
+    let reserved = ledger.reservations(store.as_ref()).unwrap();
+    assert_eq!(reserved.len(), 1, "{reserved:?}");
+    assert_eq!(reserved[0].run(), made[0].run());
+    assert_eq!(reserved[0].request(), Some(&id("order-17")));
+    // The refused attempt's reservation is in the store's content all the same, for
+    // another run: whatever counted content, and not names, would count two.
+    let in_objects = reservations_in_objects(&world.root());
+    assert_eq!(in_objects.len(), 2, "{in_objects:?}");
+    assert!(in_objects.contains(&reserved[0]));
+    let orphan = in_objects.iter().find(|r| **r != reserved[0]).unwrap();
+    assert_ne!(orphan.run(), reserved[0].run());
+    assert!(
+        store
+            .snapshot()
+            .unwrap()
+            .run(orphan.run().as_str())
+            .is_none()
+    );
+    store.prune().unwrap();
+    assert_eq!(reservations_in_objects(&world.root()), reserved);
+    assert_eq!(ledger.reservations(store.as_ref()).unwrap(), reserved);
+}
+
+/// A ledger that holds the first callers, once the ledger behind it has answered each,
+/// until as many are there as the barrier takes: each has judged, and staged what it
+/// adds, on a generation in which none of the others has reserved.
+struct Waiting {
+    inner: Arc<FakeLedger>,
+    barrier: Barrier,
+    left: Mutex<usize>,
+}
+
+impl Waiting {
+    fn new(inner: Arc<FakeLedger>, callers: usize) -> Waiting {
+        Waiting {
+            inner,
+            barrier: Barrier::new(callers),
+            left: Mutex::new(callers),
+        }
+    }
+}
+
+impl Ledger for Waiting {
+    fn reserve(&self, reservation: &Reservation, step: &mut Step<'_, '_>) -> Result<(), Declined> {
+        let answer = self.inner.reserve(reservation, step);
+        let waits = {
+            let mut left = self.left.lock().unwrap();
+            let waits = *left > 0;
+            *left = left.saturating_sub(1);
+            waits
+        };
+        if waits {
+            self.barrier.wait();
+        }
+        answer
+    }
+}
+
+#[test]
+fn two_simultaneous_admissions_cannot_both_take_the_last_of_the_allowance() {
+    // Two requests under two ids, each for a quarter of a dollar, and forty cents may
+    // be reserved. Each asks the ledger on a generation in which nothing is reserved,
+    // and each is told yes. Both cannot be published: the ledger made the same name in
+    // both, the store refuses the later whole, and the executor asks the ledger again,
+    // on the generation as it is then. That one is declined.
+    let world = World::new();
+    let store = world.store();
+    let ledger = Arc::new(FakeLedger::with_allowance(400_000));
+    let both = Arc::new(Waiting::new(ledger.clone(), 2));
+    let engines: Vec<Engine> = (0..2)
+        .map(|_| {
+            engine_with(store.clone(), &world.runs, Priced::new(250_000)).with_ledger(both.clone())
+        })
+        .collect();
+    let answers: Vec<Result<Answer, CallError>> = std::thread::scope(|scope| {
+        let threads: Vec<_> = engines
+            .iter()
+            .zip(["order-17", "order-18"])
+            .map(|(engine, id)| scope.spawn(move || engine.request(&asked("hello", id))))
+            .collect();
+        threads.into_iter().map(|t| t.join().unwrap()).collect()
+    });
+    let made: Vec<_> = answers.iter().filter_map(|a| a.as_ref().ok()).collect();
+    let refused: Vec<_> = answers.iter().filter_map(|a| a.as_ref().err()).collect();
+    assert_eq!((made.len(), refused.len()), (1, 1), "{answers:?}");
+    assert_eq!(
+        refused[0].refusal(),
+        Some(&Refusal::OverAllowance {
+            action: "paint".to_owned(),
+            asked_micros: 250_000,
+            left_micros: 150_000,
+        })
+    );
+    assert_eq!(ledger.asked(), 3);
+    let reserved = ledger.reservations(store.as_ref()).unwrap();
+    assert_eq!(reserved.len(), 1);
+    assert_eq!(reserved[0].run(), made[0].run());
+    assert_eq!(world.ran(), 1);
+    // One run, one id's two records, the ledger's record and the reservation: the
+    // refused request left no name, and its id is free.
+    let (_, names, runs) = held(&world.root(), world.fs.clone());
+    assert_eq!((names.len(), runs.len()), (4, 1), "{names:?}");
+    let taken = made[0].run();
+    let free = answers.iter().position(|a| a.is_err()).unwrap();
+    let free = ["order-17", "order-18"][free];
+    assert!(names.iter().all(|(name, _)| !name.contains(free)));
+    assert!(runs.iter().all(|(id, _)| id == taken.as_str()));
+}
+
+#[test]
+fn a_run_that_is_named_again_has_one_reservation_which_names_its_final_run() {
+    // The id the executor chose for the run is taken three times, each time as its
+    // admission is about to be written. The admission and the reservation are made
+    // again for each new id, and the ledger is asked each time. What the store names
+    // is one reservation, of the run that was made, with that run's own admission.
+    let dir = Scratch::new("admit-renamed");
+    let root = dir.path().join("store");
+    let (fs, store) = Taker::store(&root, 3);
+    let runs = Arc::new(AtomicU64::new(0));
+    let ledger = Arc::new(FakeLedger::new());
+    let engine =
+        engine_with(store.clone(), &runs, Priced::new(250_000)).with_ledger(ledger.clone());
+    let finished = ran(engine.request(&asked("hello", "order-17")));
+    let taken = fs.taken();
+    assert_eq!(taken.len(), 3);
+    assert!(!taken.iter().any(|id| id == finished.run().as_str()));
+    assert_eq!(ledger.asked(), 4);
+
+    let reserved = ledger.reservations(store.as_ref()).unwrap();
+    assert_eq!(reserved.len(), 1, "{reserved:?}");
+    assert_eq!(reserved[0].run(), finished.run());
+    let generation = store.snapshot().unwrap();
+    let own = generation.run(finished.run().as_str()).unwrap();
+    let admitted_entry = own.get(ADMITTED_NAME).unwrap();
+    assert_eq!(reserved[0].admission(), admitted_entry.digest);
+    let outside = generation.get("requests/order-17/admitted").unwrap();
+    assert_eq!(outside.digest, admitted_entry.digest);
+    let admission = Admission::from_bytes(&store.read(outside).unwrap()).unwrap();
+    assert_eq!(admission.run(), finished.run());
+    assert_eq!(admission.reserved_micros(), Some(250_000));
+    // The id's record and the run's own admission are the same bytes, and both name
+    // the run that was made.
+    let inside = store.read(admitted_entry).unwrap();
+    assert_eq!(inside, store.read(outside).unwrap());
+    assert_eq!(
+        Admission::from_bytes(&inside).unwrap().run(),
+        finished.run()
+    );
+    let spend: Vec<&String> = generation
+        .entries()
+        .keys()
+        .filter(|name| name.starts_with("spend/"))
+        .collect();
+    assert_eq!(
+        spend,
+        [
+            "spend/fake/1",
+            &format!("spend/reservations/{}", finished.run())
+        ]
+    );
+    // The three refused attempts each left a reservation in the store's content, of an
+    // id that other hands hold: four by content, one by name.
+    let in_objects = reservations_in_objects(&root);
+    assert_eq!(in_objects.len(), 4, "{in_objects:?}");
+    for id in &taken {
+        assert!(in_objects.iter().any(|r| r.run().as_str() == id), "{id}");
+    }
+    // The same request again is answered with the run, from the two copies of the
+    // admission, which were made again together.
+    assert_eq!(
+        repeat(engine.request(&asked("hello", "order-17"))).run(),
+        finished.run()
+    );
+    assert_eq!(ledger.asked(), 4);
+}
+
+#[test]
+fn a_run_that_is_named_eight_times_and_given_up_reserves_nothing() {
+    let dir = Scratch::new("admit-given-up");
+    let root = dir.path().join("store");
+    let (fs, store) = Taker::store(&root, 8);
+    let runs = Arc::new(AtomicU64::new(0));
+    let ledger = Arc::new(FakeLedger::new());
+    let engine =
+        engine_with(store.clone(), &runs, Priced::new(250_000)).with_ledger(ledger.clone());
+    let refused = engine.request(&asked("hello", "order-17")).unwrap_err();
+    let CallError::Store(failure) = &refused else {
+        panic!("{refused:?}");
+    };
+    assert!(matches!(failure.cause(), store::Error::RunExists { .. }));
+    assert_eq!(fs.taken().len(), 8);
+    assert_eq!(ledger.asked(), 8);
+    assert_eq!(ledger.reservations(store.as_ref()).unwrap(), []);
+    assert_eq!(runs.load(Ordering::SeqCst), 0);
+    // Nothing outside the eight runs of other hands: no id's record, no name of spend.
+    let generation = store.snapshot().unwrap();
+    assert_eq!(generation.entries().len(), 0);
+    assert_eq!(generation.runs().len(), 8);
+    assert_eq!(reservations_in_objects(&root).len(), 8);
+    // The id is free, and the request is admitted under it once ids are.
+    let finished = ran(engine.request(&asked("hello", "order-17")));
+    let reserved = ledger.reservations(store.as_ref()).unwrap();
+    assert_eq!(reserved.len(), 1);
+    assert_eq!(reserved[0].run(), finished.run());
+}
+
+#[test]
+fn a_reservation_left_by_a_deleted_run_keeps_its_name_and_the_new_run_is_named_again() {
+    // A run's id is free once the run is deleted, and its reservation is not removed.
+    // A run that would be given that id cannot make the reservation's name: the store
+    // refuses the admission whole, and the run is named again.
+    let dir = Scratch::new("admit-reservation-taken");
+    let root = dir.path().join("store");
+    let (fs, store) = Taker::store_taking_reservations(&root, 2);
+    let runs = Arc::new(AtomicU64::new(0));
+    let ledger = Arc::new(FakeLedger::new());
+    let engine =
+        engine_with(store.clone(), &runs, Priced::new(250_000)).with_ledger(ledger.clone());
+    let finished = ran(engine.request(&asked("hello", "order-17")));
+    let taken = fs.taken();
+    assert_eq!(taken.len(), 2);
+    assert!(!taken.iter().any(|id| id == finished.run().as_str()));
+    assert_eq!(ledger.asked(), 3);
+    // The two old reservations are as they were, and the run's own is the third.
+    let reserved = ledger.reservations(store.as_ref()).unwrap();
+    assert_eq!(reserved.len(), 3);
+    let own: Vec<_> = reserved
+        .iter()
+        .filter(|r| r.run() == finished.run())
+        .collect();
+    assert_eq!(own.len(), 1);
+    assert_eq!(own[0].micros(), 250_000);
+    for old in reserved.iter().filter(|r| r.run() != finished.run()) {
+        assert_eq!((old.micros(), old.start_ms()), (1, 1));
+    }
+    assert_eq!(store.snapshot().unwrap().runs().len(), 1);
+
+    // These namings are among the eight a run is given: with the name taken eight
+    // times the store's refusal is what the caller is told, and nothing was admitted.
+    let dir = Scratch::new("admit-reservation-taken-8");
+    let root = dir.path().join("store");
+    let (fs, store) = Taker::store_taking_reservations(&root, 8);
+    let engine = engine_with(store.clone(), &runs, Priced::new(250_000))
+        .with_ledger(Arc::new(FakeLedger::new()));
+    let refused = engine.request(&asked("hello", "order-17")).unwrap_err();
+    let CallError::Store(failure) = &refused else {
+        panic!("{refused:?}");
+    };
+    assert!(matches!(failure.cause(), store::Error::NameExists { .. }));
+    assert_eq!(fs.taken().len(), 8);
+    let generation = store.snapshot().unwrap();
+    assert_eq!(
+        (generation.entries().len(), generation.runs().len()),
+        (8, 0)
+    );
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_repeat_a_conflict_and_a_request_that_does_not_run_reserve_nothing() {
+    let shop = shop();
+    let request = Request::new(shop.call(shop.photo)).with_id(id("order-17"));
+    let finished = ran(shop.engine.request(&request));
+    let reserved = shop.reserved();
+    assert_eq!((shop.ledger.asked(), reserved.len()), (1, 1));
+    #[track_caller]
+    fn unchanged(shop: &Shop, reserved: &[Reservation]) {
+        assert_eq!(shop.ledger.asked(), 1);
+        assert_eq!(shop.reserved(), reserved);
+        assert_eq!(reservations_in_objects(&shop.world.root()), reserved);
+    }
+
+    // A repeat.
+    assert_eq!(repeat(shop.engine.request(&request)).run(), finished.run());
+    unchanged(&shop, &reserved);
+    // A conflict.
+    let other = Request::new(shop.call(shop.other)).with_id(id("order-17"));
+    assert!(matches!(
+        shop.engine.request(&other),
+        Err(CallError::Refused(Refusal::Conflict { .. }))
+    ));
+    unchanged(&shop, &reserved);
+    // A call that is no call of the action, and one of no action.
+    let invalid = Request::new(Call::new("retouch")).with_id(id("order-18"));
+    assert!(matches!(
+        shop.engine.request(&invalid),
+        Err(CallError::Refused(Refusal::Invalid { .. }))
+    ));
+    assert!(shop.engine.submit(&Call::new("vanish")).is_err());
+    unchanged(&shop, &reserved);
+    // A request that is not ready.
+    *shop.backends.version.lock().unwrap() = None;
+    let unready = Request::new(shop.call(shop.photo)).with_id(id("order-18"));
+    assert!(matches!(
+        shop.engine.request(&unready),
+        Err(CallError::Refused(Refusal::NotReady { .. }))
+    ));
+    unchanged(&shop, &reserved);
+    *shop.backends.version.lock().unwrap() = Some("1".to_owned());
+    // An executor that only reads the store, with the same ledger.
+    let mut registry = Registry::new();
+    registry.register(retouch(&shop.world.runs)).unwrap();
+    let reading = Engine::new(
+        registry,
+        shop.backends.clone(),
+        Arc::new(Reader::open(&shop.world.root(), shop.world.fs.clone()).unwrap()),
+        Digest::of_bytes(b"config"),
+    )
+    .with_ledger(shop.ledger.clone());
+    assert_eq!(
+        reading.request(&unready).unwrap_err(),
+        CallError::Refused(Refusal::ReadOnly)
+    );
+    unchanged(&shop, &reserved);
+    assert_eq!(shop.world.ran(), 1);
+}
+
+#[test]
+fn a_reservation_stays_when_its_run_fails_and_when_its_run_is_deleted_and_pruned() {
+    // What is done with a reservation when its run is over is settlement, which is not
+    // built: nothing here releases, charges or removes one. It stays as it was made,
+    // and it names its run, so that whatever settles it can find it.
+    let world = World::new();
+    let store = world.store();
+    let ledger = Arc::new(FakeLedger::new());
+    let engine =
+        engine_with(store.clone(), &world.runs, Priced::new(250_000)).with_ledger(ledger.clone());
+    let failing = Request::new(call("hello").argument("fail", Value::text("no paint left")))
+        .with_id(id("order-17"));
+    let failed = ran(engine.request(&failing));
+    assert_eq!(failed.outcome().name(), "error");
+    let reserved = ledger.reservations(store.as_ref()).unwrap();
+    assert_eq!(reserved.len(), 1);
+    assert_eq!(reserved[0].run(), failed.run());
+    assert_eq!(reserved[0].micros(), 250_000);
+    // The failed run's record says what was reserved for it.
+    let generation = store.snapshot().unwrap();
+    let record = record::stored(&generation, failed.run().as_str(), |e| store.read(e))
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.spend().reserved_micros, Some(250_000));
+
+    store.delete(&[failed.run().as_str()]).unwrap();
+    store.prune().unwrap();
+    assert_eq!(ledger.reservations(store.as_ref()).unwrap(), reserved);
+    // From the id: the id's record names the run, and the run's id names the
+    // reservation.
+    let generation = store.snapshot().unwrap();
+    let outside = generation.get(&id("order-17").admission_name()).unwrap();
+    let admission = Admission::from_bytes(&store.read(outside).unwrap()).unwrap();
+    let entry = generation
+        .get(&Reservation::name_of(admission.run()))
+        .unwrap();
+    let found = Reservation::from_bytes(&store.read(entry).unwrap()).unwrap();
+    assert_eq!(found, reserved[0]);
+    assert_eq!(found.admission(), outside.digest);
+    assert_eq!(admission.reserved_micros(), Some(found.micros()));
+}
+
+#[test]
+fn a_run_whose_process_died_keeps_its_reservation() {
+    let world = World::new();
+    let ledger = Arc::new(FakeLedger::new());
+    let dying = {
+        let fs = world.fs.clone();
+        paint_with(&world.runs, move |_, _| {
+            fs.crash(Lost::Unsynced);
+            Ok(Produced::nothing())
+        })
+    };
+    let mut registry = Registry::new();
+    registry.register(dying).unwrap();
+    let engine = Engine::over(
+        registry,
+        Priced::new(250_000),
+        world.store(),
+        Digest::of_bytes(b""),
+    )
+    .with_ledger(ledger.clone());
+    assert!(matches!(
+        engine.request(&asked("hello", "order-17")),
+        Err(CallError::Store(_))
+    ));
+    drop(engine);
+    let fs: Arc<dyn Fs> = Arc::new(RealFs);
+    let store = Arc::new(Store::open(&world.root(), fs).unwrap());
+    let reserved = ledger.reservations(store.as_ref()).unwrap();
+    assert_eq!(reserved.len(), 1);
+    // The run is there, admitted and never ended, and it is the reservation's: it
+    // holds the admission the reservation names.
+    let generation = store.snapshot().unwrap();
+    let run = generation.run(reserved[0].run().as_str()).unwrap();
+    assert_eq!(run.entries().len(), 1);
+    assert_eq!(
+        run.get(ADMITTED_NAME).unwrap().digest,
+        reserved[0].admission()
+    );
+}
+
+// --- a stored reservation is not trusted, and neither is a ledger --------------------------------
+
+#[test]
+fn a_stored_reservation_that_is_not_one_is_refused_and_nothing_is_admitted() {
+    type Planted = (&'static str, Vec<u8>, &'static str);
+    let good = RESERVATION.replace("7000-1", "1-1");
+    let cases: Vec<Planted> = vec![
+        ("spend/reservations/1-1", b"not json\n".to_vec(), "expected"),
+        (
+            "spend/reservations/1-2",
+            good.clone().into_bytes(),
+            "it is the reservation of another run",
+        ),
+        (
+            "spend/reservations/1-1",
+            vec![b' '; REQUEST_RECORD_MAX_BYTES as usize + 1],
+            "1025 bytes",
+        ),
+        (
+            "spend/reservations/1-1",
+            good.replace("reservation/1", "reservation/7").into_bytes(),
+            "another kind or version",
+        ),
+        (
+            "spend/reservations/\u{1b}[31m",
+            good.clone().into_bytes(),
+            "another run",
+        ),
+    ];
+    for (name, bytes, says) in cases {
+        let world = World::new();
+        let store = world.store();
+        let mut publication = store.begin().unwrap();
+        publication
+            .create(name, store::Kind::Diagnostic, &bytes)
+            .unwrap();
+        publication.publish().unwrap();
+        let ledger = Arc::new(FakeLedger::new());
+        let engine = engine_with(store.clone(), &world.runs, Priced::new(250_000))
+            .with_ledger(ledger.clone());
+        let before = held(&world.root(), world.fs.clone());
+        let refused = engine.request(&asked("hello", "order-17")).unwrap_err();
+        let CallError::Record { what, why } = &refused else {
+            panic!("{name:?}: {refused:?}");
+        };
+        assert_eq!(*what, "a reservation");
+        assert!(why.contains(says), "{name:?}: {why}");
+        // The sentence and what `{:?}` prints hold no control character and no path.
+        let said = format!("{refused} {refused:?}");
+        assert!(!said.chars().any(char::is_control), "{said:?}");
+        assert!(!said.contains(world.root().to_str().unwrap()), "{said}");
+        assert!(said.len() < 1200, "{}", said.len());
+        // Nothing was admitted, and the id is free.
+        assert_eq!(held(&world.root(), world.fs.clone()), before);
+        assert_eq!(world.ran(), 0);
+        assert_eq!(ledger.reservations(store.as_ref()).unwrap_err(), refused);
+        // One that is too large is refused by its length in the store's entry: its
+        // content is never read.
+        if says == "1025 bytes" {
+            let generation = store.snapshot().unwrap();
+            assert_eq!(reservations(&generation, |_| panic!("read")), Err(refused));
+        }
+    }
+    // A name beside the prefix is no reservation, and is not read.
+    let world = World::new();
+    let store = world.store();
+    let mut publication = store.begin().unwrap();
+    for name in ["spend/reservation", "spend/reservationz/1-1", "spend0"] {
+        publication
+            .create(name, store::Kind::Diagnostic, b"not one")
+            .unwrap();
+    }
+    publication.publish().unwrap();
+    let generation = store.snapshot().unwrap();
+    assert_eq!(reservations(&generation, |_| panic!("read")), Ok(vec![]));
+}
+
+/// A ledger that does what the test says with the step.
+struct Scripted<F>(F);
+
+impl<F> Ledger for Scripted<F>
+where
+    F: Fn(&Reservation, &mut Step<'_, '_>) -> Result<(), Declined> + Send + Sync,
+{
+    fn reserve(&self, reservation: &Reservation, step: &mut Step<'_, '_>) -> Result<(), Declined> {
+        (self.0)(reservation, step)
+    }
+}
+
+#[test]
+fn a_ledger_adds_to_the_step_only_names_of_its_own_and_nothing_secret() {
+    let key = made_up_key("");
+    // What a ledger may not make, and what the refusal says.
+    let long = format!("spend/{}", "x".repeat(200));
+    let with_key = format!("spend/{key}");
+    let cases: Vec<(&str, Vec<u8>, &str)> = vec![
+        (
+            "requests/order-17/admitted",
+            b"x".to_vec(),
+            "is no name for",
+        ),
+        ("spend/reservations/7000-1", b"x".to_vec(), "is no name for"),
+        ("ledger/1", b"x".to_vec(), "is no name for"),
+        ("spend/a b", b"x".to_vec(), "is no name for"),
+        ("spend/\u{1b}[31m", b"x".to_vec(), "is no name for"),
+        (&long, b"x".to_vec(), "is no name for"),
+        ("spend/held", b"x".to_vec(), "a name is made once"),
+        (&with_key, b"x".to_vec(), "must not be written"),
+        ("spend/ok", key.clone().into_bytes(), "must not be written"),
+    ];
+    for (name, bytes, says) in cases {
+        let world = World::new();
+        let store = world.store();
+        let mut publication = store.begin().unwrap();
+        publication
+            .create("spend/held", store::Kind::Diagnostic, b"held")
+            .unwrap();
+        publication.publish().unwrap();
+        let ledger = {
+            let (name, bytes) = (name.to_owned(), bytes.clone());
+            Scripted(move |_: &Reservation, step: &mut Step<'_, '_>| {
+                step.make(&name, &bytes)?;
+                Ok(())
+            })
+        };
+        let engine = engine_with(store.clone(), &world.runs, Priced::new(250_000))
+            .with_secrets(Secrets::new([key.clone()]).unwrap())
+            .with_ledger(Arc::new(ledger));
+        let before = files(&world.root()).len();
+        let refused = engine.request(&asked("hello", "order-17")).unwrap_err();
+        let CallError::Ledger { why } = &refused else {
+            panic!("{name:?}: {refused:?}");
+        };
+        assert!(why.contains(says), "{name:?}: {why}");
+        let said = format!("{refused} {refused:?}");
+        assert!(said.starts_with("the ledger failed: "), "{said}");
+        assert!(!said.contains(&key), "{name:?}");
+        assert!(!said.chars().any(char::is_control), "{said:?}");
+        assert!(said.len() < 1200, "{}", said.len());
+        // Nothing was published, and nothing of the attempt is left in the store.
+        assert_eq!(store.snapshot().unwrap().number(), 1);
+        assert_eq!(files(&world.root()).len(), before, "{name:?}");
+        assert_eq!(world.ran(), 0);
+    }
+
+    // A ledger that fails says so, and nothing is published; one that adds a record
+    // of its own has it published with the admission, as a diagnostic reference.
+    let world = World::new();
+    let store = world.store();
+    let failing = Scripted(|_: &Reservation, _: &mut Step<'_, '_>| {
+        Err(Declined::Failed(CallError::Ledger {
+            why: "its books do not balance".to_owned(),
+        }))
+    });
+    let engine = engine_with(store.clone(), &world.runs, Priced::new(250_000))
+        .with_ledger(Arc::new(failing));
+    assert_eq!(
+        engine
+            .request(&asked("hello", "order-17"))
+            .unwrap_err()
+            .to_string(),
+        "the ledger failed: its books do not balance"
+    );
+    assert_eq!(held(&world.root(), world.fs.clone()), (0, vec![], vec![]));
+    let adding = Scripted(|reservation: &Reservation, step: &mut Step<'_, '_>| {
+        assert_eq!(step.generation().number(), 0);
+        assert_eq!(step.reserved(), Ok(vec![]));
+        step.make(&format!("spend/notes/{}", reservation.run()), b"a note\n")?;
+        Ok(())
+    });
+    let engine =
+        engine_with(store.clone(), &world.runs, Priced::new(250_000)).with_ledger(Arc::new(adding));
+    let finished = ran(engine.request(&asked("hello", "order-17")));
+    let generation = store.snapshot().unwrap();
+    let note = generation
+        .get(&format!("spend/notes/{}", finished.run()))
+        .unwrap();
+    assert_eq!(note.kind, store::Kind::Diagnostic);
+    assert_eq!(store.read(note).unwrap(), b"a note\n");
+}
+
+#[test]
+fn a_call_whose_cost_has_no_bound_is_not_admitted_and_the_ledger_is_not_asked() {
+    // A sum of bounds that passes the largest amount stops there. That is not an
+    // amount to reserve or to add to: an executor that reserves refuses the call, and
+    // its ledger is never handed it.
+    let shop = shop();
+    shop.backends.bound.store(u64::MAX - 5, Ordering::SeqCst);
+    let prepared = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    assert!(prepared.estimate().is_unbounded());
+    assert!(!Estimate::of_micros(u64::MAX - 1).is_unbounded());
+    let before = shop.state();
+    let request = Request::new(shop.call(shop.photo))
+        .expecting(&prepared)
+        .with_id(id("order-17"));
+    let refused = shop.engine.request(&request).unwrap_err();
+    assert_eq!(
+        refused,
+        CallError::Refused(Refusal::NoBound {
+            action: "retouch".to_owned()
+        })
+    );
+    assert_eq!(
+        refused.to_string(),
+        "retouch was not admitted: what it may cost has no bound that can be reserved"
+    );
+    assert_eq!((shop.ledger.asked(), shop.reserved()), (0, vec![]));
+    assert_eq!((shop.state(), shop.world.ran()), (before, 0));
+    // One backend alone stating the largest amount is the same.
+    shop.backends.bound.store(u64::MAX, Ordering::SeqCst);
+    assert!(matches!(
+        shop.engine.submit(&shop.call(shop.photo)),
+        Err(CallError::Refused(Refusal::NoBound { .. }))
+    ));
+    assert_eq!(shop.ledger.asked(), 0);
+    // The fake ledger does not add past the largest amount either: with all but one
+    // millionth reserved, a call for two is declined for the one that is left.
+    shop.ledger.allow(Some(u64::MAX));
+    shop.backends
+        .bound
+        .store((u64::MAX - 1) / 2, Ordering::SeqCst);
+    shop.engine.submit(&shop.call(shop.photo)).unwrap();
+    shop.backends.bound.store(1, Ordering::SeqCst);
+    let refused = shop.engine.submit(&shop.call(shop.photo)).unwrap_err();
+    assert_eq!(
+        refused.refusal(),
+        Some(&Refusal::OverAllowance {
+            action: "retouch".to_owned(),
+            asked_micros: 2,
+            left_micros: 1,
+        })
+    );
+}
+
+#[test]
+fn what_is_reserved_is_the_estimate_of_the_preparation_made_at_admission() {
+    // The preparation a request comes with is compared and no more. A lower bound now
+    // is a stale preparation like a higher one; and a request that came with none
+    // reserves what the backends state when it is admitted.
+    let shop = shop();
+    let prepared = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    shop.backends.bound.store(100_000, Ordering::SeqCst);
+    let request = Request::new(shop.call(shop.photo)).expecting(&prepared);
+    shop.refused_as_stale(request, Stale::Estimate);
+    shop.engine.submit(&shop.call(shop.photo)).unwrap();
+    let reserved = shop.reserved();
+    assert_eq!(reserved.len(), 1);
+    assert_eq!(reserved[0].micros(), 200_000);
+    // The bound a backend states afterwards changes nothing that was recorded.
+    shop.backends.bound.store(900_000, Ordering::SeqCst);
+    assert_eq!(shop.reserved(), reserved);
+}
+
+#[test]
+fn a_run_whose_closing_was_refused_before_it_was_visible_is_still_this_writers() {
+    // The end's publication calls `close_run` and is then refused at the generation's
+    // file, before the pointer is renamed. The run was not closed: the store still
+    // counts it among those this writer made, and the same request again is told so.
+    let world = World::new();
+    let store = world.store();
+    let failing = {
+        let fs = world.fs.clone();
+        paint_with(&world.runs, move |_, _| {
+            fs.refuse_matching(
+                0,
+                |event| matches!(event, Event::Write(path) if path.ends_with("generation.json")),
+            );
+            Ok(Produced::nothing())
+        })
+    };
+    let engine = engine(store.clone(), vec![failing]);
+    assert!(matches!(
+        engine.request(&asked("hello", "order-17")),
+        Err(CallError::Store(_))
+    ));
+    let earlier = repeat(engine.request(&asked("hello", "order-17")));
+    assert_eq!(earlier.state(), &RunState::NotEnded { here: true });
+    assert!(store.made_here(earlier.run().as_str()));
+    assert_eq!(world.ran(), 1);
+}
+
+#[test]
+fn a_preparation_handed_to_a_call_that_is_refused_now_is_stale_under_the_calls_action() {
+    // The refusal names the action that was called, not the one the preparation is of.
+    let shop = shop();
+    let prepared = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    let request = Request::new(Call::new("vanish")).expecting(&prepared);
+    assert_eq!(
+        shop.engine.request(&request).unwrap_err(),
+        CallError::Refused(Refusal::Stale {
+            action: "vanish".to_owned(),
+            why: Stale::Refused(Box::new(Refusal::UnknownAction {
+                name: "vanish".to_owned()
+            })),
+        })
+    );
+    assert_eq!((shop.ledger.asked(), shop.world.ran()), (0, 0));
+}
+
+// --- an id that is taken between the look and a refusal ------------------------------------------
+
+type Once = Box<dyn FnOnce() + Send>;
+
+/// A clock that runs a hook the first time it is asked: admission asks the time after
+/// the look for the id and the preparation, and before the ledger is asked.
+struct Hooked(Mutex<Option<Once>>);
+
+impl Clock for Hooked {
+    fn now_ms(&self) -> u64 {
+        let hook = self.0.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook();
+        }
+        7000
+    }
+}
+
+/// Backends that run a hook the first time they are asked, and then offer nothing: a
+/// call that is prepared is not ready.
+struct Withdrawn(Mutex<Option<Once>>);
+
+impl Backends for Withdrawn {
+    fn resolve(
+        &self,
+        _: Capability,
+        _: Option<&str>,
+        _: &[String],
+    ) -> Result<ModelIdentity, Unavailable> {
+        let hook = self.0.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook();
+        }
+        Err(Unavailable::new("the filler was taken away"))
+    }
+}
+
+#[test]
+fn a_refusal_of_a_request_whose_id_was_taken_meanwhile_is_answered_from_the_id() {
+    // A request looks its id up and finds nothing. Before it is admitted, a request
+    // under the same id is, and takes the last of the allowance. The first is then
+    // declined by the ledger. What it is told is what the id says: the same request
+    // has its run, and another request has a conflict. It is not told that it is over
+    // the allowance, with a run of its own request executing and reserved.
+    let race = |text: &'static str| {
+        let world = World::new();
+        let store = world.store();
+        let ledger = Arc::new(FakeLedger::with_allowance(400_000));
+        let priced = |store: &Arc<Store>| {
+            engine_with(store.clone(), &world.runs, Priced::new(250_000))
+                .with_ledger(ledger.clone())
+        };
+        let winner = priced(&store);
+        let first = Arc::new(Mutex::new(None));
+        let hook: Once = {
+            let first = first.clone();
+            Box::new(move || {
+                *first.lock().unwrap() = Some(winner.request(&asked("hello", "order-17")));
+            })
+        };
+        let loser = priced(&store).with_clock(Arc::new(Hooked(Mutex::new(Some(hook)))));
+        let answer = loser.request(&asked(text, "order-17"));
+        let first = ran(first.lock().unwrap().take().unwrap());
+        assert_eq!(ledger.reservations(store.as_ref()).unwrap().len(), 1);
+        assert_eq!(world.ran(), 1);
+        (answer, first)
+    };
+    let (answer, first) = race("hello");
+    let earlier = repeat(answer);
+    assert_eq!(earlier.run(), first.run());
+    assert_eq!(earlier.state(), &RunState::Ended(completed()));
+    let (answer, first) = race("goodbye");
+    assert_eq!(
+        answer.unwrap_err(),
+        CallError::Refused(Refusal::Conflict {
+            request: id("order-17"),
+            run: first.run().clone(),
+        })
+    );
+
+    // The same for a request that is found not ready after its id was taken.
+    let world = World::new();
+    let store = world.store();
+    let winner = world.engine(store.clone());
+    let first = Arc::new(Mutex::new(None));
+    let hook: Once = {
+        let first = first.clone();
+        Box::new(move || {
+            *first.lock().unwrap() = Some(winner.request(&asked("hello", "order-17")));
+        })
+    };
+    let withdrawn = Arc::new(Withdrawn(Mutex::new(Some(hook))));
+    let loser = engine_with(store.clone(), &world.runs, withdrawn);
+    let earlier = repeat(loser.request(&asked("hello", "order-17")));
+    let first = ran(first.lock().unwrap().take().unwrap());
+    assert_eq!(earlier.run(), first.run());
+    // An id that nobody took leaves the refusal as it is.
+    assert!(matches!(
+        loser.request(&asked("hello", "order-18")),
+        Err(CallError::Refused(Refusal::NotReady { .. }))
+    ));
+    assert_eq!(world.ran(), 1);
+}
+
+#[test]
+fn a_run_is_not_named_with_an_id_whose_reservation_is_still_there() {
+    // Two thousand reservations left by runs that were deleted, under the ids the
+    // executor would choose next. It passes over each when it names the run: none of
+    // them costs one of the eight namings, and the ledger is asked once.
+    let world = World::new();
+    let store = world.store();
+    let mut publication = store.begin().unwrap();
+    for count in 1..=2000 {
+        let name = format!("spend/reservations/7000-{count}");
+        publication
+            .create(&name, store::Kind::Diagnostic, b"left behind\n")
+            .unwrap();
+    }
+    publication.publish().unwrap();
+    let asked_times = Arc::new(AtomicU64::new(0));
+    let counting = {
+        let asked_times = asked_times.clone();
+        Scripted(move |_: &Reservation, _: &mut Step<'_, '_>| {
+            asked_times.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+    };
+    let engine = engine_with(store.clone(), &world.runs, Priced::new(250_000))
+        .with_ledger(Arc::new(counting));
+    let finished = ran(engine.request(&asked("hello", "order-17")));
+    assert_eq!(asked_times.load(Ordering::SeqCst), 1);
+    let count: u64 = finished.run().as_str()["7000-".len()..].parse().unwrap();
+    assert!(count > 2000, "{count}");
+    assert_eq!(store.snapshot().unwrap().runs().len(), 1);
+}
+
+#[test]
+fn a_ledgers_name_is_two_hundred_characters_at_most_and_the_fake_does_not_add_past_the_largest() {
+    let made = |length: usize| {
+        let world = World::new();
+        let store = world.store();
+        let name = format!("spend/{}", "x".repeat(length - "spend/".len()));
+        assert_eq!(name.len(), length);
+        let ledger = Scripted(move |_: &Reservation, step: &mut Step<'_, '_>| {
+            step.make(&name, b"x")?;
+            Ok(())
+        });
+        let engine =
+            engine_with(store.clone(), &world.runs, Priced::new(1)).with_ledger(Arc::new(ledger));
+        engine.request(&asked("hello", "order-17"))
+    };
+    ran(made(200));
+    assert!(matches!(made(201), Err(CallError::Ledger { .. })));
+
+    // Two reservations of one under the largest amount, made with no limit. Their sum
+    // is past the largest amount: it stops there, and under an allowance of the
+    // largest amount nothing is left, not what a sum that wrapped would leave.
+    let world = World::new();
+    let store = world.store();
+    let ledger = Arc::new(FakeLedger::new());
+    let backends = Priced::new(u64::MAX - 1);
+    let engine =
+        engine_with(store.clone(), &world.runs, backends.clone()).with_ledger(ledger.clone());
+    engine.submit(&call("one")).unwrap();
+    engine.submit(&call("two")).unwrap();
+    ledger.allow(Some(u64::MAX));
+    backends.bound.store(1, Ordering::SeqCst);
+    assert_eq!(
+        engine.submit(&call("three")).unwrap_err().refusal(),
+        Some(&Refusal::OverAllowance {
+            action: "paint".to_owned(),
+            asked_micros: 1,
+            left_micros: 0,
+        })
+    );
 }

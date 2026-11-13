@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "A whizbang run record, version run/1 (ADR 0005)",
+  "title": "A whizbang run record, version run/2 (ADR 0005)",
   "type": "object",
   "additionalProperties": false,
   "required": ["record", "identity", "asked", "inputs", "outputs", "outcome", "time", "models", "spend", "egress", "steps", "judge", "diagnostics"],
   "properties": {
-    "record": { "const": "run/1" },
+    "record": { "const": "run/2" },
     "identity": {
       "type": "object",
       "additionalProperties": false,
@@ -108,7 +108,15 @@
       }
     },
     "models": { "type": "array", "maxItems": 0 },
-    "spend": { "type": "array", "maxItems": 0 },
+    "spend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reserved_micros", "requests"],
+      "properties": {
+        "reserved_micros": { "type": ["integer", "null"], "minimum": 0 },
+        "requests": { "type": "array", "maxItems": 0 }
+      }
+    },
     "egress": { "type": "array", "maxItems": 0 },
     "steps": { "type": "array", "maxItems": 0 },
     "judge": { "type": "array", "maxItems": 0 },

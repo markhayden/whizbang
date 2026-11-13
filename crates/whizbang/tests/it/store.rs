@@ -515,10 +515,14 @@ fn the_records_of_request_ids_are_left_by_delete_and_prune_and_still_answer() {
     // Request-id records are never deleted by these commands (`SPEC.md` section 3,
     // "Storage"). Two requests with ids run through the binary's own executor; every
     // run is then deleted and the store pruned, by the real commands; and every record
-    // of the two ids is read back as it was, and still answers its request.
+    // of the two ids is read back as it was, and still answers its request. The
+    // executor has a ledger, the test kit's: the reservation of each run, and the
+    // ledger's own records, are spend records, and are left as the ids' are.
     use whizbang_core::contract::record::Status;
     use whizbang_core::contract::{Answer, Call, Executor, Request, RequestId, RunState, Value};
+    use whizbang_core::contract::{Reservation, reservations};
     use whizbang_testkit::echo::Echo;
+    use whizbang_testkit::ledger::FakeLedger;
 
     let dir = Scratch::new("store-requests");
     let root = dir.path().join("store");
@@ -535,7 +539,7 @@ fn the_records_of_request_ids_are_left_by_delete_and_prune_and_still_answer() {
         let store = Arc::new(Store::open(root, Arc::new(RealFs)).unwrap());
         let mut registry = whizbang::wiring::registry().expect("the registry builds");
         registry.register(Arc::new(Echo::new())).unwrap();
-        whizbang::wiring::runner(registry, store)
+        whizbang::wiring::runner(registry, store).with_ledger(Arc::new(FakeLedger::new()))
     };
     let records = |root: &Path| -> Vec<(String, Vec<u8>)> {
         let reader = Reader::open(root, Arc::new(RealFs)).unwrap();
@@ -564,8 +568,18 @@ fn the_records_of_request_ids_are_left_by_delete_and_prune_and_still_answer() {
             "requests/order-17/ended",
             "requests/order-18/admitted",
             "requests/order-18/ended",
+            "spend/fake/1",
+            "spend/fake/2",
+            &format!("spend/reservations/{}", runs[0]),
+            &format!("spend/reservations/{}", runs[1]),
         ]
     );
+    let reserved = |root: &Path| -> Vec<Reservation> {
+        let reader = Reader::open(root, Arc::new(RealFs)).unwrap();
+        reservations(&reader.snapshot().unwrap(), |entry| reader.read(entry)).unwrap()
+    };
+    let reserved_before = reserved(&root);
+    assert_eq!(reserved_before.len(), 2);
 
     let deleted = whizbang(&["delete", &runs[0], &runs[1]], &root);
     assert_eq!(deleted.code, Some(0), "{}", deleted.err);
@@ -573,11 +587,16 @@ fn the_records_of_request_ids_are_left_by_delete_and_prune_and_still_answer() {
     assert_eq!(pruned.code, Some(0), "{}", pruned.err);
     let listed = whizbang(&["list"], &root);
     assert!(
-        listed.out.contains("names outside runs: 4\nruns: 0\n"),
+        listed.out.contains("names outside runs: 8\nruns: 0\n"),
         "{}",
         listed.out
     );
     assert_eq!(records(&root), before);
+    // Each reservation is read back, and still names the run it was made for.
+    assert_eq!(reserved(&root), reserved_before);
+    for (reservation, run) in reserved_before.iter().zip(&runs) {
+        assert_eq!(reservation.run().as_str(), run);
+    }
 
     let executor = executor(&root);
     for (id, fail, status, run) in [
