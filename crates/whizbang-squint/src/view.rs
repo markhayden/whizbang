@@ -8,7 +8,12 @@
 
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{ExtendedColorType, ImageEncoder};
-use whizbang_core::artifact::{ArtifactError, Image, ImageRole, Origin, Step};
+use whizbang_core::artifact::{self, Artifact, ArtifactError, ArtifactType, Image, ImageRole};
+use whizbang_core::artifact::{Origin, Step};
+use whizbang_core::contract::{
+    Action, ActionDescriptor, Argument, Context, Count, DescriptorError, Failure, InputPort, Kind,
+    OutputPort, PreparedCall, Produced, Value, ValueType,
+};
 use whizbang_core::identity::{
     Binding, CanonicalPixels, DecodeLimits, Direction, IdentityError, Mapping, Projection, Topology,
 };
@@ -242,4 +247,107 @@ fn png(pixels: &CanonicalPixels) -> Result<Vec<u8>, ViewError> {
         )
         .map_err(|error| ViewError::Failed(format!("cannot encode the crop as a PNG: {error}")))?;
     Ok(file)
+}
+
+/// `view` as an action (ADR 0009): it takes the image at `image`, and a second at
+/// `also` when one is given, and the box as four numbers, and returns the crops at
+/// `crops`, the first image's first. A request the function refuses as the caller's
+/// mistake ends the run as invalid, with the function's sentence.
+///
+/// The binding of a crop onto its source is not returned: a port returns artifacts,
+/// and a binding is none (`docs/carry-over.md`). The crop's origin names the box and
+/// the image it was cut from.
+pub struct View(ActionDescriptor);
+
+/// The version of the action's descriptor. [`VERSION`] is what a crop's origin records,
+/// and is part of every crop's file.
+pub const ACTION_VERSION: &str = "1.0.0";
+
+/// The names of the four arguments that are the box, in the order of [`Request::bbox`].
+pub const SIDES: [&str; 4] = ["left", "top", "right", "bottom"];
+
+impl View {
+    pub fn new() -> Result<View, DescriptorError> {
+        let side = |name: &str, purpose: &str| {
+            Argument::required(name, purpose, ValueType::number(Some(0.0), Some(1.0)))
+        };
+        let draft = ActionDescriptor::draft(
+            NAME,
+            ACTION_VERSION,
+            Kind::Primitive,
+            "Shows a region of an image closer, and the same region of a second image when one is given.",
+        )
+        .input(InputPort::required(
+            "image",
+            ArtifactType::Image,
+            "The image to look into.",
+        ))
+        .input(InputPort::optional(
+            "also",
+            ArtifactType::Image,
+            "A second image to show the same region of.",
+        ))
+        .argument(side("left", "The left edge of the region, as a fraction of the width."))
+        .argument(side("top", "The top edge of the region, as a fraction of the height."))
+        .argument(side("right", "The right edge of the region, as a fraction of the width."))
+        .argument(side("bottom", "The bottom edge of the region, as a fraction of the height."))
+        .output(OutputPort::counted(
+            "crops",
+            ArtifactType::Image,
+            "The region of each image, the first image's first.",
+            Count::between(1, 2),
+        ))
+        .concurrent(true);
+        Ok(View(draft.build()?))
+    }
+}
+
+impl Action for View {
+    fn descriptor(&self) -> &ActionDescriptor {
+        &self.0
+    }
+
+    fn run(&self, call: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+        let limits = DecodeLimits::default();
+        let failed = |why: &dyn std::fmt::Display| Failure::error("view", &why.to_string());
+        let at = |port: &str| -> Result<Option<Image>, Failure> {
+            let Some(input) = call.inputs().iter().find(|input| input.port() == port) else {
+                return Ok(None);
+            };
+            match artifact::get(context.store(), ArtifactType::Image, input.id(), &limits) {
+                Ok(Artifact::Image(image)) => Ok(Some(image)),
+                Ok(_) => Err(failed(&"the input is not an image")),
+                Err(error) => Err(failed(&error)),
+            }
+        };
+        let Some(image) = at("image")? else {
+            return Err(failed(&"the call gives no image"));
+        };
+        let also = at("also")?;
+        let mut bbox = [0.0; 4];
+        for (side, name) in bbox.iter_mut().zip(SIDES) {
+            let given = call
+                .arguments()
+                .iter()
+                .find(|(argument, _)| argument == name);
+            let Some((_, Value::Number(number))) = given else {
+                return Err(failed(&format!("the call gives no number for {name}")));
+            };
+            *side = *number;
+        }
+        let request = Request {
+            image: &image,
+            also: also.as_ref(),
+            bbox,
+        };
+        let crops = view(&request, &limits).map_err(|error| match error {
+            ViewError::Invalid(why) => Failure::invalid(&why),
+            other => failed(&other),
+        })?;
+        let mut produced = Produced::nothing();
+        for crop in crops {
+            produced = produced.with("crops", crop.image);
+        }
+        Ok(produced)
+    }
 }

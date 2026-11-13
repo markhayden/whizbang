@@ -431,13 +431,23 @@ source image within one pixel, and the record's examples run as tests.
 **Depends on:** A7, A8, A10. **Reads:** squint `crates/squint-core/src/run.rs`, for the shape
 of the loop and how returned crops become readable in later turns.
 
-- [ ] `whizbang-squint` gains the action `check`: a judge loop against the fake judge. A run
+- [x] `whizbang-squint` gains the action `check`: a judge loop against the fake judge. A run
       freezes its list of tools and the images it may read. A crop returned by a tool in this
       run becomes readable in later turns of this run.
-- [ ] Evidence a tool returns is kept as a diagnostic and can be read back by the same run. It
+- [x] Evidence a tool returns is kept as a diagnostic and can be read back by the same run. It
       cannot become an output of the action or be read by another run.
-- [ ] The loop is the smallest that proves the contract. Squint's rules, checklist and
+- [x] The loop is the smallest that proves the contract. Squint's rules, checklist and
       submission format are not ported here.
+
+**As built** (ADR 0009). Of the second box: a tool is called through the executor, so
+its crop is the committed output of the tool's own run as well as a diagnostic of the
+`check` run. Another run's judge cannot read it; a caller of the executor that is no
+judge takes it by its identity, as any artifact (`docs/carry-over.md`). The task came to
+about twice the size of one and is **two pull requests**: first what the contract
+gained, in the core and the test kit (a run is handed the backend its call resolved;
+each request and each exchange with a judge is recorded; a turn and an exchange as data;
+a verdict; the calls a run froze); then `view` as an action, `check`, and the
+transcripts. The boxes are ticked by the second.
 
 **Done when** these scripted transcripts behave as stated:
 

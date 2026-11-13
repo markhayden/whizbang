@@ -36,11 +36,11 @@ task A11 of checkpoint 1A:
 
 The code is in `crates/whizbang-core/src/capability/` (`mod.rs`, `judge.rs`,
 `written.rs`), `crates/whizbang-core/src/contract/` (`context.rs`, `engine.rs`,
-`journal.rs`, `nested.rs`, `record.rs`, `registry.rs`). The tests that hold it to this
-record are in `crates/whizbang-core/tests/it/contract/asked.rs` and `scope.rs`, and
-`crates/whizbang-core/tests/it/capability/written.rs`. The scripted run itself, `check`
-in `whizbang-squint`, is the second part of task A11 and adds its sections to this
-record.
+`journal.rs`, `nested.rs`, `record.rs`, `registry.rs`) and `crates/whizbang-squint/src/`
+(`check.rs`, `view.rs`). The tests that hold it to this record are in
+`crates/whizbang-core/tests/it/contract/asked.rs` and `scope.rs`,
+`crates/whizbang-core/tests/it/capability/written.rs` and
+`crates/whizbang-squint/tests/it/check.rs`.
 
 ## Decision
 
@@ -210,7 +210,7 @@ where the spec's "Judge runs" group already puts it:
 What is not decided, and is milestone 2's with squint's checklist and submission format:
 the shape of a real verdict (dispositions, findings, locations); whether an outcome
 carries it; and a descriptor that says which actions answer with one. Until then any
-action may hand one back, and none of this build does yet (`docs/carry-over.md`).
+action may hand one back, and nothing but `check` does (`docs/carry-over.md`).
 
 ### A run freezes what its calls may be
 
@@ -241,6 +241,91 @@ readable, not those of runs further down. Freezing binds the calls an action mak
 through the executor; what the action itself reads through `Context::store` is not held
 to it: the action is this build's code, and the judge is not.
 
+### `check`, and what a judge may do
+
+`whizbang-squint` gains two actions.
+
+**`view`** is the function of task A10 behind a descriptor: an image at `image`, an
+optional second at `also`, the box as `left`, `top`, `right` and `bottom`, and the crops
+at `crops`. A request the function refuses as the caller's mistake ends the run as
+invalid, with the function's sentence. A box that reaches past the image is refused, as
+squint refused it. The binding of a crop onto its source is not returned: a port returns
+artifacts (`docs/carry-over.md`).
+
+**`check`** is the smallest judge loop that proves the contract. It takes one to eight
+images, the tools by name (`tools`, by default `view`), an optional choice of judge, and
+an output limit. It needs a judge with `image` and `tool`. It returns no artifact, and
+concludes with a verdict. Squint's rules, checklist and submission format are not in it:
+the judge ends its turn with `pass`, `fail` or `unsure` on the first line of its text.
+
+- **Frozen when the run starts.** The names the call gave are held against the tools on
+  offer (`Toolbox`) once, and handed to `freeze_calls`. Nothing reads the toolbox again.
+  The names are an argument, so they were fixed at admission and are in the record; a
+  tool withdrawn after that does not leave a run that has started, and the next run sees
+  the change
+  (`check::changing_the_tool_list_after_admission_has_no_effect_on_the_run`). Between a
+  run's admission and its action's first step, a tool that is withdrawn makes the run
+  invalid: it is never run with a tool that was not on offer when it started.
+- **Every call goes to the executor.** A call of a listed tool is made from the judge's
+  arguments; a call of anything else is handed to the executor as it was named, with
+  nothing in it, and the executor refuses it. So a refusal is recorded by the one that
+  dispatches, whatever the loop got wrong. An image is named by its identity, as the
+  judge was told it; the executor decides whether the run may read it.
+- **A cut-off turn** is left out of the conversation, whatever it holds, marked
+  `truncated`, and asked for once more with four times the output limit
+  (`RETRY_FACTOR`). A second one fails the run. No call inside one is dispatched.
+- **Bounds.** At most 16 requests to the judge (`TURNS_LIMIT`), and at most 32 tool calls
+  dispatched (`CALLS_LIMIT`, far under the executor's 256): a call past that is answered
+  with an error and makes no run. A turn of more than 256 KiB of text fails the run
+  (`TURN_TEXT_LIMIT`).
+- **A judge is not trusted.** A tool that is not on the list, arguments that are not the
+  tool's, an identity that was guessed or is another run's, an id an earlier call had, a
+  turn that ends without a verdict or with calls unanswered, a stop reason the loop does
+  not know, a refusal, and a judge that never concludes: each is an error result to the
+  judge or a typed failure of the run, and none is a panic
+  (`check::what_a_judge_that_is_not_trusted_answers_is_a_typed_outcome_and_never_a_panic`,
+  `check::a_judge_that_never_concludes_is_stopped_at_the_loops_bounds`). A tool result
+  for no call cannot be made: a result answers a call of the turn it follows, and a
+  script that holds one in a turn is refused when it is read.
+
+### Evidence
+
+A tool's result is the committed output of the tool's own run: `view` is called through
+the executor, a nested call is a run of its own, and a completed child keeps what it
+committed whatever its parent comes to (ADR 0008; `SPEC.md` section 3, "What a run
+publishes"). The plan's sentence was written before that was decided, and the spec comes
+first. What is built:
+
+- **Kept as a diagnostic.** `check` writes each crop a call returned among its own
+  diagnostics (`evidence-001`, ...), as the image's canonical file. It is kept whatever
+  the run comes to: after a failure on the second turn and after an accepted cancellation
+  the store, opened anew, holds the run's terminal status, no verdict, no committed
+  output and no completed status, and the evidence with every other diagnostic written
+  before the run ended (`check::a_failure_on_turn_two`,
+  `check::a_cancelled_check_has_no_verdict_and_keeps_its_evidence`).
+- **Read back by the same run.** A crop a call of this run returned is readable in later
+  turns of this run: the executor takes it as the input of a later call
+  (`check::look_then_look_closer_at_part_of_the_first_crop_then_decide`).
+- **Never an output of the action.** `check` has no output port, so the executor would
+  refuse an artifact it handed back (ADR 0008), and a diagnostic reference is refused by
+  the store wherever an output is asked for (ADR 0005).
+- **Not read by another run's judge.** A second run of `check` whose judge names the
+  crop's identity is refused: it was not given that image and no call of its own returned
+  it, though the store holds it
+  (`check::evidence_is_no_output_of_check_and_another_runs_judge_cannot_read_it`).
+
+**What is not held, and why it is accepted.** The crop is also an image artifact in the
+store, under its identity, as the output of the `view` run that cut it. A caller of the
+executor that is no judge, a door or a recipe, takes it as an input by that identity, as
+it takes any artifact
+(`check::known_a_crop_that_a_view_run_committed_is_an_artifact_a_caller_of_the_executor_may_take`).
+A store has one owner and no boundary between the runs of its callers; the boundary the
+spec draws is around the judge model, and that one holds. A crop is a function of an
+image and a box, and holds nothing of what the judge said. Making a tool's result
+invisible to every other run would need a third kind of reference, an output of a child
+that only its parent reads, in the store and in the commit step; it is on
+`docs/carry-over.md` for milestone 2, with the tools a judge may call.
+
 ## Consequences
 
 - An action reaches the model its call resolved. A test that hands an executor a backend
@@ -255,14 +340,14 @@ to it: the action is this build's code, and the judge is not.
 - `Produced` holds a verdict beside its artifacts.
 - A diagnostic name that starts with `exchange-` is the executor's.
 - Each exchange holds the whole request, so what a run keeps grows with the square of
-  its turns, and nothing bounds that but the 1,024 requests a run sends and the 64 MiB
-  a request may hold: a loop bounds its own turns. Diagnostics are held in memory until
-  the run ends, as before (`docs/carry-over.md`).
+  its turns. `check` bounds its turns and the text of a turn; the turn that breaks that
+  bound is itself kept, at up to the 64 MiB a turn may hold. Diagnostics are held in
+  memory until the run ends, as before (`docs/carry-over.md`).
 - A run that sends all 1,024 requests to a judge ends with 1,024 exchanges to publish:
   that took six seconds on the test kit's disk, and its record is read back.
 - A stored conversation with an opaque part cannot be sent again.
 - Reversing the record's groups costs every stored record after the tag; reversing the
-  frozen calls costs every loop written against them.
+  frozen calls costs `check` and every loop after it.
 
 ## Alternatives
 
@@ -288,3 +373,14 @@ to it: the action is this build's code, and the judge is not.
 - **A verdict as a seventh artifact type.** Turned down above.
 - **A verdict as a location or a series.** Turned down: a type is never taken for
   another (ADR 0002).
+- **Keep the list of readable images in the loop,** as a set the loop checks. Turned
+  down: the check would be the loop's to forget, and a refusal would be recorded only if
+  the loop recorded it.
+- **Call `view` as a function from inside `check`,** with no nested run. Turned down: a
+  tool reaches a tool only through the executor (`SPEC.md` section 3), and the record's
+  steps and refusals would have to be written by the loop.
+- **Have a tool's run commit nothing and hand its crop back some other way.** Turned
+  down for now: see "Evidence".
+- **Freeze the tool list in the descriptor,** before admission. Turned down: which tools
+  a run names is the call's, and which are on offer is the machine's state, which a
+  descriptor does not hold (ADR 0003).
