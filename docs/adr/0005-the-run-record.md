@@ -43,6 +43,8 @@ Changed, in "Running an action, and writing its run": an action hands back artif
 panic in an action is caught and ends its run as an error (it unwound through `submit`
 and the run stayed admitted). The list of what is not built and of what this record does
 not decide lose both.
+Amended: 2026-11-13, with the third pull request of task A7 (ADR 0008). Changed: what an
+action is handed, and the sentence that said nothing can cancel a run.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
 
@@ -465,10 +467,12 @@ nothing, when the generation it would be published onto holds that run. Two runs
 never merged under one id, whoever named them. And a run that was deleted while it
 executed is not made again by its end: that publication is refused with `NoSuchRun`.
 
-**What an action is handed.** A cancellation signal that nothing sets; no deadline; an
-event sink, which is the run's journal; an empty allowance; the store the executor reads;
-no capability; an executor that refuses every call (`Refusal::NoNestedCalls`), because
-calls do not nest yet; and a place for diagnostics.
+**What an action is handed.** The run's cancellation signal, and its deadline when its
+request came with one (ADR 0008, "Cancellation"); an event sink, which is the run's
+journal; an empty allowance; the store as it was when the run's admission began; a
+handle on each backend the executor was given, bound to that signal and that deadline;
+an executor that refuses every call (`Refusal::NoNestedCalls`), because calls do not
+nest yet; and a place for diagnostics.
 
 **Diagnostics.** `Context::diagnostics` takes bytes under a name: a lower-case letter or a
 digit, then lower-case letters, digits, `_`, `-` or `.`, 64 characters at most, written
@@ -504,8 +508,8 @@ binary builds (`wiring::runner`).
   a process that dies while an action runs leaves the run, admitted. It leaves no
   journal and no diagnostic: those are durable only when the run ends, and cannot be
   read while it executes.
-- Nothing can cancel a run. `submit` returns only when the run is over; `start` does
-  not wait, and a run's status is read while it executes (ADR 0008).
+- `submit` returns only when the run is over; `start` does not wait, and a run's status
+  is read, and the run cancelled, while it executes (ADR 0008).
 - A refusal inside a run is not recorded. There is one today: a call from inside an
   action is refused (`NoNestedCalls`). The record's `refusals` list has no elements in
   `run/1`, so the action's own error is the only trace of it, if the action reports it.

@@ -405,8 +405,10 @@ fn an_action_is_handed_a_context_and_cannot_yet_call_another_action() {
         assert!(!context.cancellation().is_cancelled());
         assert!(context.deadline().is_none());
         assert!(context.capabilities().segment().is_none());
-        // The store can be read from inside a run, and holds the run's admission.
-        assert_eq!(context.store().snapshot().unwrap().number(), 1);
+        // The store can be read from inside a run: it is the generation the run was
+        // admitted against, which is the one before its own admission (ADR 0008, "The
+        // generation a run reads").
+        assert_eq!(context.store().snapshot().unwrap().number(), 0);
         // A call to another action is refused, by name, and prepared no further.
         let refused = context.executor().submit(&echo("inner")).unwrap_err();
         assert_eq!(refused, CallError::Refused(Refusal::NoNestedCalls));

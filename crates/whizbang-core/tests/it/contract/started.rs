@@ -1,6 +1,7 @@
 //! Runs that were started (ADR 0008, "How many runs are started at once"): the bound on
 //! them, which the store's writer counts, what a refusal for it leaves behind, what
-//! gives a place back, and a run whose thread could not be made.
+//! gives a place back, and a run whose thread could not be made, which is ended as an
+//! error, or abandoned when that end cannot be written.
 //!
 //! Nothing here makes threads until something gives way. The bound is 1 or 2, a thread
 //! that cannot be made is one the test's own spawner refused to make, and every wait is
@@ -290,7 +291,9 @@ fn a_started_run_whose_end_the_store_refuses_gives_its_place_back() {
         let (executor, run) = (executor.clone(), run.clone());
         move || executor.wait(&run)
     });
-    assert_eq!(waited.unwrap().state(), &RunState::NotEnded { here: true });
+    let waited = waited.unwrap();
+    let abandoned = matches!(waited.state(), RunState::Abandoned { failure: Some(_) });
+    assert!(abandoned, "{:?}", waited.state());
     let next = started(executor.start(&asked("quick", "order-2")));
     assert_eq!(executor.wait(&next).unwrap().state(), &completed());
 }
@@ -486,6 +489,58 @@ fn a_run_whose_thread_cannot_be_made_is_ended_as_an_error_and_nobody_waits_for_i
     let next = started(real.start(&asked("first", "order-2")));
     barriers.arrived("first", 1);
     barriers.open("first");
+    assert_eq!(real.wait(&next).unwrap().state(), &completed());
+}
+
+/// The file system of the test below, for its spawner, which is a plain function.
+static TO_REFUSE: Mutex<Option<Arc<ShimFs>>> = Mutex::new(None);
+
+/// A spawner that makes no thread, and has the store refuse the next call that changes
+/// the disk: the first of the publication that would end the run.
+fn no_thread_and_no_store(_: String, _: Box<dyn FnOnce() + Send + 'static>) -> std::io::Result<()> {
+    let fs = TO_REFUSE.lock().unwrap().clone().expect("the test set it");
+    fs.refuse_before(fs.events().len());
+    Err(std::io::Error::other("no thread is left"))
+}
+
+#[test]
+fn a_run_whose_thread_cannot_be_made_and_whose_end_cannot_be_written_is_abandoned() {
+    // The end of a run that could not be started is a publication, and the store can
+    // refuse it. Then the run stays as it was admitted, and is abandoned: nothing waits
+    // for it, its place is given back, and the caller is told the same as before.
+    let dir = Scratch::new("started");
+    let root = dir.path().join("store");
+    let fs = Arc::new(ShimFs::new());
+    let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+    *TO_REFUSE.lock().unwrap() = Some(fs);
+    let executor = engine(store.clone(), vec![quick("quick")])
+        .with_started_bound(1)
+        .unwrap()
+        .with_spawn(no_thread_and_no_store);
+    let answer = executor.start(&asked("quick", "order-1"));
+    let Err(CallError::NotStarted { run, why }) = &answer else {
+        panic!("the failure to make a thread was not handed back: {answer:?}");
+    };
+    assert_eq!(why, "no thread is left");
+
+    let waited = within("the wait for a run that was never started or ended", {
+        let (executor, run) = (executor.clone(), run.clone());
+        move || executor.wait(&run)
+    })
+    .unwrap();
+    let abandoned = matches!(waited.state(), RunState::Abandoned { failure: Some(_) });
+    assert!(abandoned, "{:?}", waited.state());
+    assert_eq!(executor.status(run).unwrap(), waited);
+    let Ok(Answer::Repeat(earlier)) = executor.start(&asked("quick", "order-1")) else {
+        panic!("the request was not answered as a repeat");
+    };
+    assert_eq!(earlier.state(), waited.state());
+
+    // Its place was given back.
+    let real = engine(store, vec![quick("quick")])
+        .with_started_bound(1)
+        .unwrap();
+    let next = started(real.start(&asked("quick", "order-2")));
     assert_eq!(real.wait(&next).unwrap().state(), &completed());
 }
 

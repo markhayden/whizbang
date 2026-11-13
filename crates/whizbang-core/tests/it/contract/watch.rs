@@ -234,10 +234,11 @@ fn waiting_for_a_run_that_no_process_will_end_returns_and_says_so() {
             Err(CallError::Store(_))
         ));
         let run = the_run(&root);
-        // In the process that admitted it, the run is still this process's, and a
-        // wait for it does not block: nothing here works on it any more.
+        // In the process that admitted it, the run is still this process's, and was
+        // abandoned, with the store's failure: a wait for it does not block.
         let waited = executor.wait(&run).unwrap();
-        assert_eq!(waited.state(), &RunState::NotEnded { here: true });
+        let abandoned = matches!(waited.state(), RunState::Abandoned { failure: Some(_) });
+        assert!(abandoned, "{:?}", waited.state());
         assert_eq!(messages(&waited), ["the last thing it said"]);
         assert_eq!(executor.status(&run).unwrap(), waited);
         run
@@ -353,8 +354,8 @@ fn a_status_asked_the_moment_a_runs_end_becomes_visible_says_it_ended() {
 /// The real file system, which runs a hook once, after the first read of a generation
 /// file after it was armed: between a status's look at the store and its look at the
 /// table of open runs.
-struct AfterTheLook {
-    hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+pub(super) struct AfterTheLook {
+    pub(super) hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl Fs for AfterTheLook {
