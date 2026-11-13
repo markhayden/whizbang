@@ -1,13 +1,14 @@
 //! The `whizbang` binary: argument parsing and wiring only.
 
 mod import;
+mod rascal;
 mod runs;
 mod store;
 
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use whizbang::wiring;
+use whizbang::{door, wiring};
 
 #[derive(Parser)]
 #[command(
@@ -41,6 +42,11 @@ enum Command {
     Runs {
         #[command(subcommand)]
         command: runs::Command,
+    },
+    /// Rascal: its operations on masks, each run as an action against a store.
+    Rascal {
+        #[command(subcommand)]
+        command: rascal::Command,
     },
 }
 
@@ -84,6 +90,7 @@ fn emit(bytes: &[u8]) -> ExitCode {
 }
 
 fn main() -> ExitCode {
+    door::quiet_panics();
     let cli = Cli::parse();
     match cli.command {
         Command::Describe { json, pretty } => match describe(json, pretty) {
@@ -102,6 +109,13 @@ fn main() -> ExitCode {
         },
         Command::Runs { command } => match runs::run(&command) {
             Ok(bytes) => emit(&bytes),
+            Err(complaint) => {
+                eprintln!("whizbang: {complaint}");
+                ExitCode::from(1)
+            }
+        },
+        Command::Rascal { command } => match rascal::run(&command) {
+            Ok(text) => emit(text.as_bytes()),
             Err(complaint) => {
                 eprintln!("whizbang: {complaint}");
                 ExitCode::from(1)

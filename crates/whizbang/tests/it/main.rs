@@ -4,5 +4,6 @@
 mod describe;
 mod executor;
 mod import;
+mod rascal;
 mod runs;
 mod store;

@@ -2,7 +2,67 @@
   "description_version": 4,
   "name": "whizbang",
   "version": "0.0.1",
-  "actions": [],
+  "actions": [
+    {
+      "name": "grow",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Grows the core of a mask by a disc, and further downward for a shadow.",
+      "arguments": [
+        {
+          "name": "px",
+          "purpose": "The radius of the disc, in pixels of the mask's image, from 0 to 10000.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 10000.0
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "down_px",
+          "purpose": "How many pixels further down the grown core reaches, from 0 to 10000.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 10000.0
+          },
+          "required": false,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask whose core is grown.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "artifact": "mask",
+          "purpose": "The mask with the grown core, its blend cleared and its protect kept.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    }
+  ],
   "artifact_types": [
     {
       "name": "mask",
