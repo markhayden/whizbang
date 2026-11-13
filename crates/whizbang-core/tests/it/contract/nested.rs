@@ -19,16 +19,17 @@ use whizbang_core::contract::record::{RunRecord, Status, StepKind};
 use whizbang_core::contract::request::admitted;
 use whizbang_core::contract::{
     Action, ActionDescriptor, Admission, Answer, Argument, Backends, Call, CallError, Cancel,
-    Capabilities, Capability, Clock, Context, Engine, Estimate, Executor, Failure, HeldOpen,
-    InputPort, Kind, LEVELS_LIMIT, ModelIdentity, Outcome, OutputPort, PreparedCall, Produced,
-    RECORD_MAX_BYTES, REFUSAL_WHY_LIMIT, REFUSALS_LIMIT, Refusal, RefusalKind, Registry, Request,
-    RequestId, Requirement, RunId, RunState, STARTED_LIMIT, STEPS_LIMIT, Secrets, Unavailable,
-    Value, ValueType,
+    Capabilities, Capability, Clock, Context, DESCENDANTS_LIMIT, Engine, Estimate, Executor,
+    Failure, HeldOpen, InputPort, Kind, LEVELS_LIMIT, ModelIdentity, Outcome, OutputPort,
+    PreparedCall, Produced, RECORD_MAX_BYTES, REFUSAL_WHY_LIMIT, REFUSALS_LIMIT, Refusal,
+    RefusalKind, Registry, Request, RequestId, Requirement, RunId, RunState, STARTED_LIMIT,
+    STEPS_LIMIT, Secrets, Unavailable, Value, ValueType,
 };
 use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::store::{Reader, Store};
 use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::capabilities::{FakeFiller, Paint};
+use whizbang_testkit::fs_shim::Event;
 use whizbang_testkit::ledger::FakeLedger;
 use whizbang_testkit::schema::validate;
 
@@ -1077,6 +1078,144 @@ fn a_run_reads_what_a_run_it_called_committed_as_its_own_output_and_as_the_input
     let taken = stored.steps()[1].run();
     let taken = record(&world, &RunId::parse(taken).unwrap());
     assert_eq!(taken.inputs()[0].artifact, mask.0);
+}
+
+#[test]
+fn a_call_whose_admission_is_visible_and_not_confirmed_keeps_what_was_taken_for_it() {
+    // The store shows the first call's run, with its admission naming the run that
+    // made the call and the amount, though the caller was told of the store's
+    // failure. What was taken for it stays taken: the admissions that name a run
+    // never add up to more than that run was given.
+    let world = World::new();
+    let said: Noted<String> = noted();
+    let outer = {
+        let (fs, root, said) = (world.fs.clone(), world.root(), said.clone());
+        action(
+            "outer",
+            &[Capability::Fill, Capability::Judge],
+            move |_, context| {
+                let root = root.clone();
+                fs.refuse_matching(
+                    0,
+                    move |event| matches!(event, Event::SyncDir(dir) if *dir == root),
+                );
+                let note = |what: String| said.lock().unwrap().push(what);
+                match context.executor().submit(&Call::new("inner")) {
+                    Err(CallError::Store(_)) => note("unconfirmed".to_owned()),
+                    other => note(format!("{other:?}")),
+                }
+                note(format!("{:?} left", context.allowance().left_micros()));
+                for _ in 0..2 {
+                    match context.executor().submit(&Call::new("inner")) {
+                        Ok(_) => note("ran".to_owned()),
+                        Err(CallError::Refused(refusal)) => note(format!("{:?}", refusal.kind())),
+                        other => note(format!("{other:?}")),
+                    }
+                }
+                Ok(Produced::nothing())
+            },
+        )
+    };
+    let inner = action("inner", &[Capability::Fill], |_, _| Ok(Produced::nothing()));
+    let bound = Arc::new(Priced(AtomicU64::new(100)));
+    let executor = engine_on(world.store(), bound, vec![outer, inner])
+        .with_ledger(Arc::new(FakeLedger::new()));
+    let finished = executor.submit(&Call::new("outer")).unwrap();
+    assert_eq!(
+        *said.lock().unwrap(),
+        ["unconfirmed", "Some(100) left", "ran", "OverCaller"]
+    );
+    let all = records(&world);
+    let taken: u64 = all
+        .keys()
+        .map(|id| admission(&world, id))
+        .filter(|admitted| admitted.parent() == Some(finished.run()))
+        .map(|admitted| admitted.reserved_micros().unwrap())
+        .sum();
+    assert_eq!((all.len(), taken), (3, 200));
+}
+
+#[test]
+fn the_runs_under_one_run_that_nothing_called_are_bounded_at_every_level_together() {
+    assert_eq!(DESCENDANTS_LIMIT, 1024);
+    let world = World::new();
+    let said: Noted<(String, Refusal)> = noted();
+    let outer = {
+        let said = said.clone();
+        act("outer", move |_, context| {
+            for _ in 0..4 {
+                let called = context.executor().submit(&Call::new("middle"));
+                if let Err(CallError::Refused(refusal)) = called {
+                    said.lock().unwrap().push(("outer".to_owned(), refusal));
+                }
+            }
+            Ok(Produced::nothing())
+        })
+    };
+    let leaf = act("leaf", |_, _| Ok(Produced::nothing()));
+    let actions = vec![outer, calls("middle", "leaf", &said), leaf];
+    let executor = engine(world.store(), actions).with_descendants_limit(5);
+    let finished = executor.submit(&Call::new("outer")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    // Five runs under the first: three of `middle` and two of `leaf`. The third
+    // `middle` is refused its `leaf`, and the first run its fourth `middle`.
+    let full = |action: &str| Refusal::TreeFull {
+        action: action.to_owned(),
+        limit: 5,
+    };
+    assert_eq!(
+        *said.lock().unwrap(),
+        [
+            ("middle".to_owned(), full("leaf")),
+            ("outer".to_owned(), full("middle"))
+        ]
+    );
+    let all = records(&world);
+    assert_eq!(all.len(), 6);
+    let kinds = |stored: &RunRecord| -> Vec<RefusalKind> {
+        stored.outcome().refusals.iter().map(|r| r.kind()).collect()
+    };
+    assert_eq!(
+        kinds(&record(&world, finished.run())),
+        [RefusalKind::TreeFull]
+    );
+    let refusing = all.values().flatten().filter(|r| !kinds(r).is_empty());
+    assert_eq!(refusing.count(), 2);
+    // Another run that nothing called has a count of its own.
+    let again = executor.submit(&Call::new("middle")).unwrap();
+    assert_eq!(record(&world, again.run()).steps().len(), 1);
+}
+
+#[test]
+fn a_calls_deadline_is_the_earlier_of_its_callers_and_the_one_its_request_came_with() {
+    let world = World::new();
+    let now = Instant::now();
+    let at = move |hours: u64| now + Duration::from_secs(3600 * hours);
+    let seen: Noted<Option<Instant>> = noted();
+    let outer = act("outer", move |_, context| {
+        let executor = context.executor();
+        let inner = || Request::new(Call::new("inner"));
+        executor.request(&inner()).unwrap();
+        executor.request(&inner().until(at(1))).unwrap();
+        executor.request(&inner().until(at(3))).unwrap();
+        Ok(Produced::nothing())
+    });
+    let inner = {
+        let seen = seen.clone();
+        act("inner", move |_, context| {
+            seen.lock().unwrap().push(context.deadline());
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(world.store(), vec![outer, inner]);
+    let outer = || Request::new(Call::new("outer"));
+    executor.request(&outer().until(at(2))).unwrap();
+    executor.request(&outer()).unwrap();
+    let hours = |hours: u64| Some(at(hours));
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [hours(2), hours(1), hours(2), None, hours(1), hours(3)]
+    );
 }
 
 // --- the record -------------------------------------------------------------------------------

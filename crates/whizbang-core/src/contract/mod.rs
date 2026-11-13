@@ -58,7 +58,7 @@ pub use ledger::{
 };
 #[doc(hidden)]
 pub use nested::HeldOpen;
-pub use nested::{LEVELS_LIMIT, STARTED_LIMIT};
+pub use nested::{DESCENDANTS_LIMIT, LEVELS_LIMIT, STARTED_LIMIT};
 pub use prepare::{
     Backends, CallError, Estimate, InputFault, Missing, ModelIdentity, Need, NoBackends,
     PreparedCall, Readiness, Refusal, ResolvedInput, Stale, StoreFailure, Unavailable,

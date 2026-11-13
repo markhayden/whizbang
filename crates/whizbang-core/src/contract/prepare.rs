@@ -615,6 +615,10 @@ pub enum Refusal {
     /// A call from inside an action whose run has already called `limit` others,
     /// which is as many as one run may. No run was made.
     TooManyCalls { action: String, limit: usize },
+    /// A call from inside an action, when `limit` runs have been admitted under the
+    /// run that nothing called, at any level, which is as many as one such run may
+    /// have under it. No run was made.
+    TreeFull { action: String, limit: usize },
     /// A call from inside an action to start a run, when `limit` runs that the same
     /// run started are executing, which is as many as may at once: each is a thread.
     /// No run was made; the caller waits for one of them, or runs the call itself.
@@ -648,6 +652,7 @@ impl Refusal {
             Refusal::OverCaller { .. } => RefusalKind::OverCaller,
             Refusal::CallerOver { .. } => RefusalKind::CallerOver,
             Refusal::TooManyCalls { .. } => RefusalKind::TooManyCalls,
+            Refusal::TreeFull { .. } => RefusalKind::TreeFull,
             Refusal::TooManyStarted { .. } => RefusalKind::TooManyStarted,
             Refusal::IdInside { .. } => RefusalKind::IdInside,
         }
@@ -722,6 +727,11 @@ impl std::fmt::Display for Refusal {
                 f,
                 "{action} was not called: its caller has called {limit} actions, which \
                  is as many as one run may"
+            ),
+            Refusal::TreeFull { action, limit } => write!(
+                f,
+                "{action} was not called: {limit} runs were made under the run that \
+                 began these calls, which is as many as one may have under it"
             ),
             Refusal::TooManyStarted { action, limit } => write!(
                 f,
