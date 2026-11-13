@@ -22,7 +22,9 @@ use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::scratch::Scratch;
 
 use super::fixtures;
-use crate::artifact::support::{image_of, line, made_by, photo, png, rect, rect_mask};
+use crate::artifact::support::{
+    image_of, line, made_by, painted_through, photo, png, rect, rect_mask,
+};
 
 struct Fake(ActionDescriptor);
 
@@ -155,13 +157,12 @@ struct World {
     other: ArtifactId,
     mask_on_photo: ArtifactId,
     mask_on_other: ArtifactId,
-    /// The mask on the first photograph, moved onto the second by a derivation that was
-    /// only stated.
+    /// The first photograph's mask as it would be on the second: made by hand on the
+    /// binding that places the second photograph onto the first by the identity, which
+    /// is what a derivation of the second from the first would hold. No derivation made
+    /// it, and none could: the two are unrelated.
     moved: ArtifactId,
     place_on_photo: ArtifactId,
-    /// The binding of that derivation: the second photograph placed onto the first by
-    /// the identity.
-    second_onto_first: Binding,
     /// The first photograph's pixels under another space of the same size, and a place
     /// stated on that.
     place_in_another_space: ArtifactId,
@@ -180,7 +181,8 @@ fn world() -> World {
     assert_eq!(first.space(), second.space());
     let mask_on_photo = rect_mask(first.binding());
     let mask_on_other = rect_mask(second.binding());
-    // The second photograph "derived from" the first: untrue, and nothing here can tell.
+    // The second photograph "derived from" the first: untrue. `Derivation::checked`
+    // refuses the two pictures, and the binding can still be written by hand.
     let untrue = Binding::new(
         second.identity().pixels,
         second.space(),
@@ -190,9 +192,14 @@ fn world() -> World {
         Mapping::Identity,
     )
     .unwrap();
-    let moved = mask_on_photo
-        .rebind(&Derivation::stated(untrue.clone()).unwrap())
-        .unwrap();
+    let moved = Mask::from_core(
+        untrue,
+        UseCase::Custom,
+        rect(2, 1, 5, 4),
+        Source::default(),
+        made_by("rect"),
+    )
+    .unwrap();
     let place = line(first.binding());
     let bounded_panorama = Space::new(
         first.space().width(),
@@ -209,7 +216,6 @@ fn world() -> World {
         mask_on_other: mask_on_other.id(),
         moved: moved.id(),
         place_on_photo: place.id(),
-        second_onto_first: untrue,
         place_in_another_space: elsewhere.id(),
         _dir: dir,
         fs: fs.clone(),
@@ -832,26 +838,36 @@ fn a_mask_made_by_hand_on_an_image_is_a_mask_on_that_image() {
 }
 
 #[test]
-fn a_mask_rebound_by_a_stated_derivation_is_still_taken_at_its_word() {
-    // What holds (ADR 0004, "Who may state a derivation"): a mask is used only on the
-    // image its binding's source names. No call can carry a derivation, so a door cannot
-    // ask for a rebind. But a mask that code moved with `Derivation::stated` names the
-    // second photograph, and prepare accepts it there: nothing in a mask says who
-    // vouched. Closing `Derivation::stated` (task A8) cannot make prepare refuse this
-    // mask, because the same artifact can be made with no derivation at all (the next
-    // test). So this test is not inverted when `stated` closes; only
-    // `rebind::a_derivation_is_trusted_to_be_true` is. Task A8 decides, and the row of
-    // `docs/carry-over.md` on who vouches for a derivation says between what: this test
-    // is rewritten with `Mask::from_core` and stays accepted, or prepare gains a record
-    // the executor wrote that a mask made by hand cannot have.
+fn a_mask_made_by_hand_on_an_image_placed_onto_another_is_taken_at_its_makers_word() {
+    // The trust boundary (ADR 0006, "Who vouches for a derivation"): a mask is the
+    // statement of whoever made it, and what holds is that it is used only on the image
+    // its binding's source names. No call can carry a derivation, and no code can make
+    // one of two unrelated pictures; but a mask can be made by hand on a binding that
+    // places the second photograph onto the first, and prepare accepts it on the second:
+    // nothing in a mask says who vouched, and prepare asks for no record that would.
     let world = world();
+    // The two photographs are unrelated, and no derivation of one from the other exists.
+    let limits = whizbang_core::identity::DecodeLimits::default();
+    let first = image_of(photo(), ImageRole::Picture);
+    let second = image_of(other_photo(), ImageRole::Picture);
+    let refusal = Derivation::checked(
+        &first.pixels(&limits).unwrap(),
+        &second.pixels(&limits).unwrap(),
+        &rect_mask(first.binding()),
+    );
+    assert!(matches!(
+        refusal,
+        Err(artifact::ArtifactError::NotDerived(_))
+    ));
+
     let engine = world.engine(segmenter());
     let on_other = Call::new("remove_prompt")
         .argument("prompt", Value::text("a dog"))
         .input("image", world.other)
         .input("protect", world.moved);
     engine.prepare(&on_other).unwrap();
-    // On the photograph it was moved from, it is refused like any mask on another image.
+    // On the photograph its binding is placed onto, it is refused like any mask on
+    // another image.
     refused(
         engine.prepare(&world.remove().input("protect", world.moved)),
         &["the input protect", "the mask belongs to the image"],
@@ -860,66 +876,39 @@ fn a_mask_rebound_by_a_stated_derivation_is_still_taken_at_its_word() {
 
 #[test]
 fn a_mask_made_by_hand_on_a_derivations_binding_is_the_rebound_mask() {
-    // The fact that bounds what task A8 can close. A derivation holds a binding and adds
-    // nothing to it, and an origin is not part of an identity. So the mask made directly
-    // with `Mask::from_core` on the binding that places the second photograph onto the
-    // first has the identity of the first photograph's mask rebound through
-    // `Derivation::stated`: one artifact, made two ways, and only one way leaves a
-    // `rebind` step in its origin.
-    let world = world();
+    // Why prepare cannot tell the two apart, and does not try. A derivation holds a
+    // binding and adds nothing to it, and an origin is not part of an identity. So the
+    // mask made directly with `Mask::from_core` on a derivation's binding has the
+    // identity of the mask rebound through that derivation: one artifact, made two
+    // ways, and only one way leaves a `rebind` step in its origin.
+    let limits = whizbang_core::identity::DecodeLimits::default();
+    let first = image_of(photo(), ImageRole::Picture);
+    let pixels = first.pixels(&limits).unwrap();
+    let mask = rect_mask(first.binding());
+    let composite = painted_through(&pixels, &mask);
+    let derivation = Derivation::checked(&pixels, &composite, &mask).unwrap();
+    let rebound = mask.rebind(&derivation).unwrap();
     let by_hand = Mask::from_core(
-        world.second_onto_first.clone(),
+        derivation.binding().clone(),
         UseCase::Custom,
         rect(2, 1, 5, 4),
         Source::default(),
         made_by("rect"),
     )
     .unwrap();
-    assert_eq!(by_hand.id(), world.moved);
+    assert_eq!(by_hand.id(), rebound.id());
     let steps = |mask: &Mask| -> Vec<String> {
         let origin = mask.origin().steps();
         origin.iter().map(|step| step.action.clone()).collect()
     };
     assert_eq!(steps(&by_hand), ["rect"]);
-    let reader = Reader::open(&world.root, world.fs.clone()).unwrap();
-    let limits = whizbang_core::identity::DecodeLimits::default();
-    let rebound = artifact::get(&reader, ArtifactType::Mask, world.moved, &limits)
-        .unwrap()
-        .into_mask()
-        .unwrap();
     assert_eq!(steps(&rebound), ["rect", "rebind"]);
-
-    // A store that holds only the one made by hand: prepare accepts it on the second
-    // photograph, as it accepts the rebound one, and no rebind is recorded anywhere.
-    let dir = Scratch::new("prepare-by-hand");
-    let root = dir.path().join("store");
-    let store = Store::open(&root, world.fs.clone()).unwrap();
-    let mut publication = store.begin().unwrap();
-    artifact::put(
-        &mut publication,
-        &Artifact::from(image_of(other_photo(), ImageRole::Picture)),
-    )
-    .unwrap();
-    artifact::put(&mut publication, &Artifact::from(by_hand)).unwrap();
-    publication.publish().unwrap();
-    drop(store);
-    let engine = Engine::new(
-        registry(),
-        Arc::new(segmenter()),
-        Arc::new(Reader::open(&root, world.fs.clone()).unwrap()),
-        Digest::of_bytes(b"config"),
-    );
-    let on_other = Call::new("remove_prompt")
-        .argument("prompt", Value::text("a dog"))
-        .input("image", world.other)
-        .input("protect", world.moved);
-    engine.prepare(&on_other).unwrap();
 }
 
 #[test]
 fn a_call_has_no_place_for_a_derivation() {
     // What a door can hand the executor: an action's name, values, and artifacts by
-    // identity. A derivation is none of these, so one stated by hand never arrives.
+    // identity. A derivation is none of these, so none arrives through a call.
     let call = Call::new("remove_prompt")
         .argument("prompt", Value::text("a dog"))
         .input("image", ArtifactId(Digest::of_bytes(b"an image")));
@@ -1329,6 +1318,12 @@ fn prepare_sends_no_capability_request() {
     // from what those same fakes declare, as a build makes its roster from its
     // adapters; and preparing calls that are ready, not ready and refused sends none
     // of them a request.
+    //
+    // As it stands this cannot fail. Prepare holds a roster made from copies of the
+    // fakes' declarations and never the fakes, so nothing prepare could do would reach
+    // one. It shows the shape of the claim, and becomes a test of it when the executor
+    // holds the fakes' handles: the row of `docs/carry-over.md` on the executor handing
+    // an action no capability has it rewritten then.
     let segmenter = Arc::new(FakeSegmenter::new());
     let filler = Arc::new(FakeFiller::new(Paint::Inverse));
     let judge = Arc::new(FakeJudge::scripted(Vec::new()));

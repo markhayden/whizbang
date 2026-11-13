@@ -939,6 +939,9 @@ impl ActionDescriptor {
                         "the need for {capability} is chosen by {name}, which {why}"
                     ))
                 };
+                if requirement.when == When::NotGiven(name.clone()) {
+                    return chooses("it is needed only without");
+                }
                 match self.argument(name) {
                     None => return chooses("is no argument"),
                     Some(argument)

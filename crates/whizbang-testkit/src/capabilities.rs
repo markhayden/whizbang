@@ -37,8 +37,11 @@ pub enum Paint {
     Inverse,
     /// The whole image one colour.
     Flat([u8; 3]),
-    /// One colour in the support, and the image's own colours everywhere else: a
-    /// filler that behaves.
+    /// One colour where the request's support plane is 255, and the image's own colours
+    /// everywhere else: a filler that behaves. It reads the support plane and nothing
+    /// of a mask: a support plane holds 0 and 255 only, so a pixel under the faintest
+    /// blend is in it and is painted the whole colour. Mixing by a weight is the
+    /// composite's.
     Support([u8; 3]),
     /// A grey answer of this size, whatever was asked.
     Size(u32, u32),

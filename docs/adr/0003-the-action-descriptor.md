@@ -14,6 +14,9 @@ ADR 0004 for preparing a call, and no longer promises one record for all that re
 Nothing this record decides changed.
 Amended: 2026-11-12, with ADR 0006. Added: a need may name the argument that chooses its
 backend (`chosen_by`), with its rule. The description's version went from 3 to 4.
+Amended: 2026-11-12, with the last part of ADR 0006. Added: a need under `not_given` of
+an argument cannot be chosen by that argument. The rule only refuses, so the
+description's version stays 4.
 Spec: section 3, "The execution contract" and "Primitives, recipes and loops"; section 6,
 "Readiness"; section 14, "Documentation that cannot drift"
 
@@ -133,7 +136,8 @@ that vary with two arguments, and a capability needed when either of two argumen
 
 A need may also name the argument that chooses its backend (`chosen_by`; ADR 0006, "How a
 call names its choice"). That argument is declared, takes a text, and is one a call may
-leave without a value. A need that names none is answered by the default backend.
+leave without a value. A need that names none is answered by the default backend. A need
+that applies only when an argument is not given cannot name that argument as its choice.
 
 **A condition** (`when`) is `always`, `given` an argument, or `not_given` an argument. The
 argument must be one a call may leave without a value. So which capabilities a call needs

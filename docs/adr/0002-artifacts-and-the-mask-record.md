@@ -28,6 +28,11 @@ mask made by hand on a derivation's binding is the same artifact as the rebound 
 Amended: 2026-11-12, a third note, with ADR 0005. Changed: the sentence that said the run
 that made an artifact, and the models it used, "join the origin with the execution
 contract". ADR 0005 decided that they do not: the run record alone holds them.
+Amended: 2026-11-12, a fourth note, with ADR 0006, which makes the composite. Changed:
+"What the rebind checks, and what it trusts". Stating a derivation is no longer open to
+any caller: one is made only by checking the two pictures against a mask, and the
+paragraph that accepted the open boundary says so. And the composite, which "does not
+exist yet", exists.
 Spec: section 3, "Identities" and "Storage"; section 16, checkpoint 1A
 
 ## Context
@@ -298,7 +303,7 @@ To use it on an image derived from its own (the composite a fill made of it), it
 from another, pixel for pixel in place. A derivation holds a binding that places the new
 image onto the one it was made from, and it is a type of its own (`Derivation`): the
 rebind takes nothing else, so a binding that an alignment or a crop returned is not taken
-for one by accident. Stating a derivation checks the binding, and the rebind checks it
+for one by accident. Making a derivation checks its binding, and the rebind checks it
 against the mask:
 
 - the derivation's destination is an image, and for the rebind it is the mask's image;
@@ -316,34 +321,33 @@ whose inputs are the identity of the mask it came from (`mask`) and the identity
 derivation's binding (`derivation`).
 
 **What the rebind checks, and what it trusts.** It checks the four things above, which are
-all about the statement. It trusts that the statement is true: that the new image really
-was made from the mask's image with every pixel in its place. A derivation's binding has
-the same identity as an identity binding between two images of one size that anyone can
-build (ADR 0001 keeps `binding/1` as it is, and to ADR 0001 such a binding is an ordinary
-alignment), and stating a derivation is open to any caller. So a caller who states a false
-derivation can move a mask onto an unrelated image of the same size. The type stops that
-happening by mistake; it does not stop it being done on purpose. This boundary is accepted
-here. ADR 0004 decided who may state a derivation: code, and no caller; a call has no
-place for one. What can still be closed is the stating itself, where derivations are made:
-the fill composite is to state the one for the image it made (task A8, on
-`docs/carry-over.md`). That closes one way of making such a mask and not the artifact: a
+all about the statement. It trusts the derivation it is handed: that the new image really
+was made from the mask's image with every pixel in its place. That trust is now placed in
+one function. A derivation is made only by `Derivation::checked` (ADR 0006, "Who vouches
+for a derivation"), which is given both pictures and a mask on the first, and refuses
+unless every pixel that mask weighs 0 is the same in both; the fill composite makes the
+one for the picture it made. This record first left stating a derivation open to any
+caller, who could so move a mask onto an unrelated image of the same size, and accepted
+that boundary; it is closed. A derivation's binding still has the same identity as an
+identity binding between two images of one size that anyone can build (ADR 0001 keeps
+`binding/1` as it is, and to ADR 0001 such a binding is an ordinary alignment). So
+closing the statement closes one way of making such a mask and not the artifact: a
 rebound mask read from a file is a mask on a binding like any other, the file does not say
 whether its binding was a derivation, and a mask made by hand on the same binding is the
 same artifact, with the same identity (ADR 0004, "Who may state a derivation"). What
 holds is that a mask is used only on the image its binding's source names.
 
-Nothing at this layer can check more. A mask and a binding hold digests of pictures, not
+The rebind itself checks no more. A mask and a binding hold digests of pictures, not
 pictures, and two digests say nothing of how alike two pictures are. Comparing the pixels
-is not the check either, even where both pictures are at hand: a derived image differs
+at every rebind is not the check either, even where both pictures are at hand: a derived image differs
 from its parent by design, inside whatever mask the fill used, and a mask is often used on
 a composite that an earlier mask changed elsewhere, so "unchanged outside this mask" is
 not a rule a rebind could hold; and a comparison would make every rebind decode two
 pictures.
 
 **Protected pixels never change, on the new image as on the old.** That rule does not rest
-on the rebind. It will be held where a composite is made (the fill composite, task A8, which
-does not exist yet), against the mask it is given and the image it is given, whichever
-they are: every protected pixel and every pixel outside the support comes out exactly as
+on the rebind. It is held where a composite is made (ADR 0006, "The composite"), against
+the mask it is given and the image it is given, whichever they are: every protected pixel and every pixel outside the support comes out exactly as
 it went in. A mask rebound onto a
 composite protects the same places of the composite, and the next composite keeps them. A
 false derivation moves the planes onto the wrong picture, where they protect the wrong

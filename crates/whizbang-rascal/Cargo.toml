@@ -1,0 +1,22 @@
+[package]
+name = "whizbang-rascal"
+description = "Rascal's operations and tasks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"
+
+[dependencies]
+whizbang-core.workspace = true
+
+[dev-dependencies]
+whizbang-testkit.workspace = true
+
+[lints]
+workspace = true

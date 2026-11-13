@@ -286,6 +286,7 @@ impl std::fmt::Debug for ToolResult {
 /// a part is its kind and its size, never a text, a body or a pixel: a conversation is
 /// a prompt and a model's answers, and megabytes of them.
 #[derive(Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Part {
     Text(String),
     Image(Picture),
@@ -387,6 +388,9 @@ pub struct ToolDefinition {
     name: String,
     description: String,
     schema: Value,
+    /// What the tool counts toward a conversation's bound: its name, its description
+    /// and its schema as written.
+    bytes: u64,
 }
 
 impl ToolDefinition {
@@ -426,6 +430,7 @@ impl ToolDefinition {
             name: name.to_owned(),
             description: description.to_owned(),
             schema,
+            bytes: (name.len() + description.len() + size) as u64,
         })
     }
 
@@ -492,9 +497,14 @@ impl std::fmt::Debug for JudgeRequest {
 
 impl JudgeRequest {
     /// A request. The system prompt is at most [`TEXT_LIMIT`] bytes and may be empty;
-    /// the conversation is 1 to [`MESSAGE_LIMIT`] messages holding at most
-    /// [`CONVERSATION_LIMIT`] bytes of text in all, the system prompt counted; there
-    /// are at most [`TOOL_LIMIT`] tools, no two of one name.
+    /// the conversation is 1 to [`MESSAGE_LIMIT`] messages; there are at most
+    /// [`TOOL_LIMIT`] tools, no two of one name; and the request holds at most
+    /// [`CONVERSATION_LIMIT`] bytes of text in all, counting the system prompt, every
+    /// message, and each tool's name, description and schema as written.
+    ///
+    /// The shape of the conversation is not checked: the order of roles, whether a
+    /// result answers a call, two calls of one id in a message. That is the harness's
+    /// to keep and the provider's to refuse.
     pub fn new(
         system: &str,
         messages: Vec<Message>,
@@ -515,7 +525,9 @@ impl JudgeRequest {
                 MESSAGE_LIMIT,
             ));
         }
-        let bytes = system.len() as u64 + messages.iter().map(|m| m.bytes).sum::<u64>();
+        let bytes = system.len() as u64
+            + messages.iter().map(|m| m.bytes).sum::<u64>()
+            + tools.iter().map(|tool| tool.bytes).sum::<u64>();
         if bytes > CONVERSATION_LIMIT {
             return Err(Unfit::TooLarge {
                 what: "the conversation, in bytes of text,",
@@ -573,6 +585,7 @@ impl JudgeRequest {
 
 /// Why a turn ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StopReason {
     /// The model finished what it had to say.
     EndTurn,
@@ -587,16 +600,54 @@ pub enum StopReason {
     Other(String),
 }
 
-/// The tokens a turn used, as the backend reported them.
+/// The tokens a turn used, as the backend reported them. It is made through
+/// [`Usage::new`] and can gain a count without breaking whoever makes or reads one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct Usage {
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_write_tokens: u64,
+}
+
+impl Usage {
+    /// The input tokens that were not read from the provider's cache, and the output
+    /// tokens.
+    pub fn new(input_tokens: u64, output_tokens: u64) -> Usage {
+        Usage {
+            input_tokens,
+            output_tokens,
+            ..Usage::default()
+        }
+    }
+
+    /// The same usage, with the input tokens read from the provider's prompt cache and
+    /// those written to it.
+    pub fn cached(mut self, read_tokens: u64, write_tokens: u64) -> Usage {
+        self.cache_read_tokens = read_tokens;
+        self.cache_write_tokens = write_tokens;
+        self
+    }
+
     /// Input tokens that were not read from the provider's cache.
-    pub input_tokens: u64,
-    pub output_tokens: u64,
+    pub fn input_tokens(&self) -> u64 {
+        self.input_tokens
+    }
+
+    pub fn output_tokens(&self) -> u64 {
+        self.output_tokens
+    }
+
     /// Input tokens read from the provider's prompt cache.
-    pub cache_read_tokens: u64,
+    pub fn cache_read_tokens(&self) -> u64 {
+        self.cache_read_tokens
+    }
+
     /// Input tokens written to the provider's prompt cache.
-    pub cache_write_tokens: u64,
+    pub fn cache_write_tokens(&self) -> u64 {
+        self.cache_write_tokens
+    }
 }
 
 /// What a judge answered: ordered content, why it stopped, and what it used.
@@ -674,7 +725,7 @@ impl Turn {
             named => named,
         };
         let request_id = request_id
-            .map(|id| clean(id, ID_LIMIT))
+            .map(|id| clean(id.trim(), ID_LIMIT))
             .filter(|id| !id.is_empty());
         Ok(Turn {
             parts,

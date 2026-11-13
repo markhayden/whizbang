@@ -64,13 +64,12 @@ fn describe(json: bool, pretty: bool) -> Result<String, String> {
 /// Writes a command's output. A reader that has stopped reading, as `head` does once it
 /// has its lines, is not a failure of the command: nothing is said and the exit is 0.
 ///
-/// No test fails when the `flush` below is dropped, and none can without a device that
-/// really fails. The standard output is flushed when the process ends whatever this
-/// does, so the bytes arrive either way; what the flush adds is that a failure to write
-/// the last of them is seen here and becomes exit 3, where the flush at the end of the
-/// process would lose it. Showing that needs a write that fails late (a full disk, a
-/// device that refuses), which the test runners do not have in a form both of them
-/// share: Linux has `/dev/full`, macOS has nothing like it.
+/// A write that fails is exit 3 with the reason, and a test shows it
+/// (`describe::a_write_that_fails_is_exit_3_with_the_reason`). No test can tell the
+/// `flush` below from its absence: every output this writes ends in a new line, and the
+/// standard output is flushed at each new line, so a write that fails has failed inside
+/// `write_all`, and by the time `flush` is called nothing is left for it to write. It
+/// stays for an output that some day does not end in one.
 fn emit(bytes: &[u8]) -> ExitCode {
     use std::io::Write;
     let mut out = std::io::stdout();

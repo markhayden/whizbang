@@ -140,6 +140,9 @@ pub enum ArtifactError {
     /// The rebind was refused: the binding is no derivation, or it does not show the new
     /// image to be derived from the artifact's own.
     Rebind(String),
+    /// No derivation was made: the picture is not shown to be derived, pixel for pixel
+    /// in place, from the image it was checked against.
+    NotDerived(String),
     /// A binding, a space or an image inside the artifact was refused.
     Identity(IdentityError),
     /// The store does not hold the artifact.
@@ -168,6 +171,7 @@ impl std::fmt::Display for ArtifactError {
             ArtifactError::Origin(why) => write!(f, "not an origin: {why}"),
             ArtifactError::WrongImage(why) => write!(f, "wrong image: {why}"),
             ArtifactError::Rebind(why) => write!(f, "rebind refused: {why}"),
+            ArtifactError::NotDerived(why) => write!(f, "no derivation: {why}"),
             ArtifactError::Identity(error) => error.fmt(f),
             ArtifactError::Missing { artifact, id } => {
                 write!(f, "the store holds no {artifact} {id}")

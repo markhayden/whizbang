@@ -127,10 +127,16 @@ fn a_tool_result_answers_a_call_with_text_images_or_both() {
         }
     );
     assert!(ToolResult::new("", "text", false, Vec::new()).is_err());
-    assert!(matches!(
-        ToolResult::new("call_1", "text", false, vec![picture(); 17]),
-        Err(Unfit::TooLarge { limit: 16, .. })
-    ));
+    // Exactly 16 pictures are a result, and 17 are not.
+    ToolResult::new("call_1", "text", false, vec![picture(); 16]).unwrap();
+    assert_eq!(
+        ToolResult::new("call_1", "text", false, vec![picture(); 17]).unwrap_err(),
+        Unfit::TooLarge {
+            what: "a tool result, in images,",
+            size: 17,
+            limit: 16,
+        }
+    );
 }
 
 // --- messages -----------------------------------------------------------------------------------
@@ -365,16 +371,84 @@ fn every_kind_of_text_counts_toward_the_bound_on_a_conversation() {
     ));
 }
 
+#[test]
+fn tool_definitions_count_toward_the_bound_on_a_conversation() {
+    // A tool counts as its name, its description and its schema as written. A request
+    // whose texts and tools come to exactly the bound is taken; one byte more is not.
+    let view = tool("view");
+    let counted = "view".len()
+        + view.description().len()
+        + serde_json::to_string(view.schema()).unwrap().len();
+    let megabyte = Message::new(Role::User, vec![text(&"x".repeat(TEXT_LIMIT))]).unwrap();
+    let request = |last: usize| {
+        let mut messages = vec![megabyte.clone(); 63];
+        messages.push(Message::new(Role::User, vec![text(&"x".repeat(last))]).unwrap());
+        JudgeRequest::new("", messages, vec![view.clone()], controls())
+    };
+    request(TEXT_LIMIT - counted).unwrap();
+    assert_eq!(
+        request(TEXT_LIMIT - counted + 1).unwrap_err(),
+        Unfit::TooLarge {
+            what: "the conversation, in bytes of text,",
+            size: 64 * 1_048_576 + 1,
+            limit: 64 * 1_048_576,
+        }
+    );
+}
+
+#[test]
+fn what_a_conversation_does_not_check_is_known() {
+    // The types hold each part and each bound. They do not hold the shape of a whole
+    // conversation, which is the harness's to keep and the provider's to refuse. Each
+    // of these is made, and is wrong:
+    let result = ToolResult::new("no_such_call", "text", false, Vec::new()).unwrap();
+    let twice = Message::new(
+        Role::Assistant,
+        vec![Part::ToolCall(call("c")), Part::ToolCall(call("c"))],
+    );
+    let messages = vec![
+        // the assistant speaks first, and twice running;
+        Message::new(Role::Assistant, vec![text("hello")]).unwrap(),
+        // two calls with one id in a message, which a turn would refuse;
+        twice.unwrap(),
+        // a result for a call nobody made.
+        Message::new(Role::User, vec![Part::ToolResult(result)]).unwrap(),
+    ];
+    JudgeRequest::new("", messages, Vec::new(), controls()).unwrap();
+    // A turn that says it ended and holds a tool call: the stop reason is the
+    // backend's word, and is not held to the content beyond the two rules above.
+    Turn::new(
+        vec![Part::ToolCall(call("c"))],
+        StopReason::EndTurn,
+        None,
+        None,
+    )
+    .unwrap();
+    // Another stop reason of no words.
+    let turn = Turn::new(
+        vec![text("x")],
+        StopReason::Other(String::new()),
+        None,
+        None,
+    );
+    assert_eq!(turn.unwrap().stop(), &StopReason::Other(String::new()));
+}
+
 // --- the turn ---------------------------------------------------------------------------------------
 
 #[test]
 fn a_turn_is_ordered_content_a_stop_reason_and_usage() {
-    let usage = Usage {
-        input_tokens: 1200,
-        output_tokens: 80,
-        cache_read_tokens: 1000,
-        cache_write_tokens: 0,
-    };
+    let usage = Usage::new(1200, 80).cached(1000, 0);
+    assert_eq!(
+        (
+            usage.input_tokens(),
+            usage.output_tokens(),
+            usage.cache_read_tokens(),
+            usage.cache_write_tokens()
+        ),
+        (1200, 80, 1000, 0)
+    );
+    assert_eq!(Usage::new(0, 0), Usage::default());
     let parts = vec![
         Part::Opaque(opaque("stub")),
         text("I need a closer look."),
@@ -419,10 +493,17 @@ fn a_turn_holds_only_what_an_assistant_says() {
         refused(vec![text("")], StopReason::EndTurn),
         Unfit::Empty { what: "a text" }
     );
-    assert!(matches!(
+    // Exactly 256 parts are a turn, and 257 are not.
+    assert_eq!(PART_LIMIT, 256);
+    Turn::new(vec![text("x"); PART_LIMIT], StopReason::EndTurn, None, None).unwrap();
+    assert_eq!(
         refused(vec![text("x"); PART_LIMIT + 1], StopReason::EndTurn),
-        Unfit::TooLarge { .. }
-    ));
+        Unfit::TooLarge {
+            what: "a turn, in parts,",
+            size: 257,
+            limit: 256,
+        }
+    );
     // Two calls with one id could not be answered apart.
     let twice = vec![Part::ToolCall(call("c")), Part::ToolCall(call("c"))];
     assert_eq!(
@@ -504,9 +585,19 @@ fn what_a_backend_names_is_cleaned_before_it_is_kept() {
     let id = turn.request_id().unwrap();
     assert_eq!(id.len(), 128);
     assert!(id.starts_with("req?1 ?b?iii"));
-    // An empty request id is no request id.
-    let turn = Turn::new(vec![text("x")], StopReason::EndTurn, None, Some("")).unwrap();
-    assert_eq!(turn.request_id(), None);
+    // An empty request id, and one of white space alone, is no request id; and the
+    // white space at the ends of one is dropped before it is cleaned, as a fault's is.
+    for nothing in ["", " ", "\n\t"] {
+        let turn = Turn::new(vec![text("x")], StopReason::EndTurn, None, Some(nothing));
+        assert_eq!(turn.unwrap().request_id(), None, "{nothing:?}");
+    }
+    let turn = Turn::new(
+        vec![text("x")],
+        StopReason::EndTurn,
+        None,
+        Some("\n req_1 \t"),
+    );
+    assert_eq!(turn.unwrap().request_id(), Some("req_1"));
 }
 
 #[test]
@@ -676,6 +767,32 @@ fn an_opaque_part_goes_only_to_the_adapter_that_made_it_and_comes_only_from_it()
         "the conversation holds a part that only the adapter other reads, and the backend is stub"
     );
     assert_eq!(stub.sent(), 0);
+    // Nor one that holds such a part behind one of this backend's own.
+    let mixed = Message::new(
+        Role::Assistant,
+        vec![Part::Opaque(opaque("stub")), Part::Opaque(opaque("other"))],
+    )
+    .unwrap();
+    let request = JudgeRequest::new("", vec![user("x"), mixed], Vec::new(), controls()).unwrap();
+    let stub = Stub::new(&[], Ok(yes()));
+    let fault = JudgeHandle::new(stub.clone(), Cancellation::new())
+        .send(&request)
+        .unwrap_err();
+    assert_eq!(fault.kind(), FaultKind::Unsupported);
+    assert_eq!(stub.sent(), 0);
+    // And a turn that holds one behind the backend's own is malformed, as one that
+    // holds it alone is (below).
+    let mixed = Turn::new(
+        vec![Part::Opaque(opaque("stub")), Part::Opaque(opaque("other"))],
+        StopReason::EndTurn,
+        None,
+        None,
+    )
+    .unwrap();
+    let fault = JudgeHandle::new(Stub::new(&[], Ok(mixed)), Cancellation::new())
+        .send(&plain())
+        .unwrap_err();
+    assert_eq!(fault.kind(), FaultKind::Malformed);
     // And a turn that claims another adapter's part is malformed.
     let claimed = Turn::new(
         vec![Part::Opaque(opaque("other"))],

@@ -239,3 +239,31 @@ fn describe_json_pretty_starts_and_ends_with_these_bytes() {
 "#;
     assert_eq!(pretty, format!("{start}{types}"));
 }
+
+#[test]
+fn a_write_that_fails_is_exit_3_with_the_reason() {
+    // A file may not grow at all (`ulimit -f 0`), and the signal that would kill the
+    // writer is ignored, so the write of the description to a file fails with an error
+    // the command sees. No special device is needed. Every output ends in a new line
+    // and the standard output is flushed at each one, so the failure is the write's.
+    let dir = std::env::temp_dir().join(format!("whizbang-full-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("out.txt");
+    for form in ["describe", "describe --json"] {
+        let script = format!("trap '' XFSZ; ulimit -f 0; exec \"$WHIZBANG\" {form} > \"$OUT\"");
+        let out = Command::new("bash")
+            .args(["-c", &script])
+            .env("WHIZBANG", env!("CARGO_BIN_EXE_whizbang"))
+            .env("OUT", &file)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(3), "{form}: {said}");
+        assert!(
+            said.starts_with("whizbang: could not write: "),
+            "{form}: {said}"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), b"", "{form}");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
