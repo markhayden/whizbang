@@ -380,11 +380,11 @@ with the composite. A box is ticked by the pull request that makes it true.
 
 **Depends on:** A7, A8. **Reads:** rascal `crates/rascal-ops/src/grow.rs` and `refine.rs`.
 
-- [ ] `whizbang-rascal` gains the action `grow`, with both of its arguments, `px` and the
+- [x] `whizbang-rascal` gains the action `grow`, with both of its arguments, `px` and the
       optional `down_px`.
-- [ ] Its behaviour is kept: it clears the blend plane, the profile and the prescriptions, and
+- [x] Its behaviour is kept: it clears the blend plane, the profile and the prescriptions, and
       it keeps the protect plane.
-- [ ] Tests, extracted for `grow` alone with fixtures built directly: growth by a fractional
+- [x] Tests, extracted for `grow` alone with fixtures built directly: growth by a fractional
       radius matches the analytic expectation; downward extension; protect takes precedence;
       the refinement is cleared.
 - [ ] Before porting the pixel code, check whether a library call does the same. If one does,
