@@ -7,7 +7,7 @@ use whizbang_core::artifact::{
     Series, Shape, Source, Step, UseCase, Windows,
 };
 use whizbang_core::identity::{
-    Binding, DecodeLimits, Digest, PixelDigest, Projection, Space, Topology,
+    Binding, CanonicalPixels, DecodeLimits, Digest, PixelDigest, Projection, Space, Topology,
 };
 
 pub const WIDTH: u32 = 8;
@@ -20,6 +20,42 @@ pub fn limits() -> DecodeLimits {
 /// A pixel digest for an image these tests never decode.
 pub fn picture(name: &str) -> PixelDigest {
     PixelDigest(Digest::of_bytes(name.as_bytes()))
+}
+
+/// The pixels of a picture these tests do look at: `WIDTH` by `HEIGHT`, every byte made
+/// from the name, alpha included, so that two names are two unrelated pictures.
+pub fn pixels(name: &str) -> CanonicalPixels {
+    let mut state = name.bytes().fold(7_u32, |state, byte| {
+        state.wrapping_mul(31).wrapping_add(u32::from(byte))
+    });
+    let rgba = (0..WIDTH * HEIGHT * 4)
+        .map(|_| {
+            state = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            (state >> 16) as u8
+        })
+        .collect();
+    CanonicalPixels::from_rgba(WIDTH, HEIGHT, rgba).unwrap()
+}
+
+/// The picture of [`pixels`] in its own space.
+pub fn shown(name: &str) -> Binding {
+    Binding::root(pixels(name).digest(), space())
+}
+
+/// The picture with every pixel the mask weighs over 0 repainted, each colour channel
+/// 255 less what it was, and every other pixel kept: what a composite through the mask
+/// could have made of it.
+pub fn painted_through(picture: &CanonicalPixels, mask: &Mask) -> CanonicalPixels {
+    let mut rgba = picture.rgba().to_vec();
+    for (at, pixel) in rgba.chunks_mut(4).enumerate() {
+        let (x, y) = (at as u32 % WIDTH, at as u32 / WIDTH);
+        if mask.weight(x, y).unwrap() > 0.0 {
+            for channel in &mut pixel[..3] {
+                *channel = 255 - *channel;
+            }
+        }
+    }
+    CanonicalPixels::from_rgba(WIDTH, HEIGHT, rgba).unwrap()
 }
 
 pub fn space() -> Space {
@@ -150,6 +186,30 @@ pub fn full_mask(binding: Binding) -> Mask {
     mask.record(Step::new("feather", "1").argument("sigma", "0.75"))
         .unwrap();
     mask
+}
+
+/// The mask as a rebind onto `binding` leaves it, made by hand: the same planes, use
+/// and sources on that binding, with the profile's band and sigma and the ramp's step
+/// made on it. It is `full_mask` moved; `line` is the line the first one's band follows.
+pub fn full_mask_moved(mask: &Mask, binding: Binding, line: ArtifactId) -> Mask {
+    let mut moved = Mask::from_core(
+        binding.clone(),
+        mask.use_case(),
+        mask.core().to_vec(),
+        mask.source().clone(),
+        made_by("by hand"),
+    )
+    .unwrap();
+    moved.set_blend(mask.blend().to_vec()).unwrap();
+    moved.protect_union(mask.protect()).unwrap();
+    moved
+        .set_profile(
+            band(binding.clone(), line, 1.5),
+            sigma(binding.clone(), 0.75),
+        )
+        .unwrap();
+    moved.push_tone_ramp(step(binding, -2.0), 0.5).unwrap();
+    moved
 }
 
 /// A PNG of `WIDTH` by `HEIGHT` whose pixels come from `colour`.

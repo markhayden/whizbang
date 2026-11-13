@@ -4,8 +4,7 @@
 //! change to the record, and a new version of the kind.
 
 use whizbang_core::artifact::{
-    Artifact, Derivation, Image, ImageRole, Line, Location, Mask, Origin, Shape, Source, Step,
-    UseCase,
+    Artifact, Image, ImageRole, Line, Location, Mask, Origin, Shape, Source, Step, UseCase,
 };
 use whizbang_core::identity::{
     Binding, Destination, Digest, Direction, Mapping, Point, Projection, Space, Topology,
@@ -114,10 +113,11 @@ fn the_identity_of_each_type_is_the_one_the_record_gives() {
             "d15d31c3875e9dab35f4d7b776e6359fb6fc78c573e42cb3dc428b0b5f9d53eb",
         ),
         (
-            "that mask, rebound onto a composite",
-            full.rebind(&Derivation::stated(composite).unwrap())
-                .unwrap()
-                .into(),
+            // A derivation is made only of two real pictures (`rebind.rs`), and these
+            // images are names. The rebound mask is the mask made by hand on the
+            // derivation's binding (ADR 0004), and `rebind.rs` holds a rebind to that.
+            "that mask, as a rebind onto a composite leaves it",
+            full_mask_moved(&full, composite, line.id()).into(),
             "facab84ab7790740f0c0705525a93d9bc0ef5e3168881c688de69fe4fd14b7b0",
         ),
         (
