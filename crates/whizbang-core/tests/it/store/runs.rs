@@ -257,7 +257,7 @@ fn a_publication_that_makes_a_run_is_refused_when_the_store_holds_that_run() {
             .entries()
             .is_empty()
     );
-    // A publication that deletes a run and makes it again is not refused for it.
+    // A run of an id the store does not hold is made as freely after that.
     let mut publication = store.begin().unwrap();
     publication.create_run("fresh").unwrap();
     publication.publish().unwrap();
