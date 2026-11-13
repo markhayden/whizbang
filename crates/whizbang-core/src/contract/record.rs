@@ -4,8 +4,11 @@
 //! A record holds every group the spec lists. A group that nothing can fill yet is there
 //! and empty, and its type has no value: such a list cannot hold anything in `run/2`.
 //! Whatever first fills one writes a new version of the record, except that the fills
-//! made before checkpoint 1A is tagged share `run/2` (ADR 0005). The first of them is
-//! here: `spend` says what was reserved for the run when it was admitted.
+//! made before checkpoint 1A is tagged share `run/2` (ADR 0005). Three of them are
+//! here: `spend` says what was reserved for the run when it was admitted; and, with
+//! nested calls (ADR 0008), `identity.parent` names the run that called this one,
+//! `steps` lists the runs it called, and `outcome.refusals` the calls it made that
+//! were refused.
 //!
 //! A record is written one way: as JSON on one line, its fields in the order of the
 //! types below, followed by a newline. It is read strictly: a field that is not known, a
@@ -19,7 +22,7 @@ use crate::identity::Digest;
 use crate::store::{self, Entry, Generation, Kind};
 
 use super::journal::{JournalLine, journal_bytes};
-use super::{Outcome, PreparedCall, RequestId, Secrets, StoreFailure, Value};
+use super::{Outcome, PreparedCall, RequestId, RunId, Secrets, StoreFailure, Value, text};
 
 /// The record's kind, with its version.
 pub const RUN_RECORD: &str = "run/2";
@@ -91,6 +94,225 @@ pub fn is_diagnostic_name(name: &str) -> bool {
             .all(|c| plain(c) || c == '_' || c == '-' || c == '.')
 }
 
+/// The most calls a run's record lists in `steps`: the most runs one run may call. One
+/// more is refused where it is made ([`super::Refusal::TooManyCalls`]), so the list
+/// is whole. It is as low as it is because a call is two publications, and the cost of
+/// a publication grows with what the store holds (`docs/carry-over.md`).
+pub const STEPS_LIMIT: usize = 256;
+
+/// The most refusals a run's record lists. Those after are counted
+/// (`outcome.refusals_omitted`) and not listed.
+pub const REFUSALS_LIMIT: usize = 256;
+
+/// The most characters a record keeps of the sentence of one refusal.
+pub const REFUSAL_WHY_LIMIT: usize = 512;
+
+/// What kind of refusal a call from inside a run met, as a word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusalKind {
+    UnknownAction,
+    Invalid,
+    Input,
+    NotReady,
+    ReadOnly,
+    NoSuchRun,
+    Conflict,
+    Stale,
+    OverAllowance,
+    NoBound,
+    SecretInRequestId,
+    NotARequestId,
+    Cancelled,
+    DeadlinePassed,
+    TooDeep,
+    CallBack,
+    OverCaller,
+    TooManyCalls,
+    TreeFull,
+    TooManyStarted,
+    TooManyStartedUnder,
+    IdInside,
+}
+
+impl RefusalKind {
+    /// Every kind, in the order above.
+    pub const ALL: [RefusalKind; 22] = [
+        RefusalKind::UnknownAction,
+        RefusalKind::Invalid,
+        RefusalKind::Input,
+        RefusalKind::NotReady,
+        RefusalKind::ReadOnly,
+        RefusalKind::NoSuchRun,
+        RefusalKind::Conflict,
+        RefusalKind::Stale,
+        RefusalKind::OverAllowance,
+        RefusalKind::NoBound,
+        RefusalKind::SecretInRequestId,
+        RefusalKind::NotARequestId,
+        RefusalKind::Cancelled,
+        RefusalKind::DeadlinePassed,
+        RefusalKind::TooDeep,
+        RefusalKind::CallBack,
+        RefusalKind::OverCaller,
+        RefusalKind::TooManyCalls,
+        RefusalKind::TreeFull,
+        RefusalKind::TooManyStarted,
+        RefusalKind::TooManyStartedUnder,
+        RefusalKind::IdInside,
+    ];
+}
+
+/// One call a run made that was refused: no run was made for it (ADR 0008, "Nested
+/// calls"). The action is there when what the call named is an action's name by the
+/// rule, registered or not. The sentence is the refusal's, the secrets taken out and
+/// then cut at [`REFUSAL_WHY_LIMIT`] characters; it can quote what the caller wrote,
+/// so whoever prints it escapes it.
+///
+/// It is written as JSON, and read from JSON only as part of a stored record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Refused {
+    action: Option<String>,
+    kind: RefusalKind,
+    why: String,
+}
+
+impl Refused {
+    /// The refusal of this call, as a record keeps it. Redaction comes first, and
+    /// only then the cut: a secret that straddles the cut is taken out whole, as for
+    /// every text an outcome keeps. A call
+    /// whose own texts hold a secret has a sentence of fixed words instead, since a
+    /// refusal can quote a part of them that was cut before it came here.
+    pub(super) fn of(call: &super::Call, refusal: &super::Refusal, secrets: &Secrets) -> Refused {
+        let texts = std::iter::once(call.action())
+            .chain(call.inputs().keys().map(String::as_str))
+            .chain(call.arguments().iter().flat_map(|(name, value)| {
+                let value = match value {
+                    Value::Text(text) => Some(text.as_str()),
+                    _ => None,
+                };
+                std::iter::once(name.as_str()).chain(value)
+            }));
+        let clean = texts.into_iter().all(|text| secrets.redact(text) == text);
+        let why = if clean {
+            super::engine::said(secrets, &refusal.to_string())
+        } else {
+            "the call held something that must not be written, so its refusal is not \
+             quoted"
+                .to_owned()
+        };
+        let named = clean && text::action_name(call.action()).is_ok();
+        Refused {
+            action: named.then(|| call.action().to_owned()),
+            kind: refusal.kind(),
+            why: why.chars().take(REFUSAL_WHY_LIMIT).collect(),
+        }
+    }
+
+    /// The action the call named, when what it named is an action's name by the rule.
+    pub fn action(&self) -> Option<&str> {
+        self.action.as_deref()
+    }
+
+    pub fn kind(&self) -> RefusalKind {
+        self.kind
+    }
+
+    /// The refusal's sentence. It is not escaped.
+    pub fn why(&self) -> &str {
+        &self.why
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(remote = "Refused", deny_unknown_fields)]
+struct RefusedWire {
+    #[serde(deserialize_with = "present")]
+    action: Option<String>,
+    kind: RefusalKind,
+    why: String,
+}
+
+fn refusals_wire<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<Refused>, D::Error> {
+    #[derive(Deserialize)]
+    struct One(#[serde(with = "RefusedWire")] Refused);
+    let read = Vec::<One>::deserialize(deserializer)?;
+    Ok(read.into_iter().map(|One(refused)| refused).collect())
+}
+
+/// What kind of step this is, as a word. A call of another action is the one kind
+/// there is; recipe steps come with the recipe runner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StepKind {
+    Call,
+}
+
+/// One step of a run: a call it made of another action, which was admitted and so has
+/// a run of its own (ADR 0008, "Nested calls"). The steps are in the order the calls
+/// were admitted. The call's arguments, inputs and outputs are in the record of its
+/// run, which this names: that is the reference to its result. `status` is how that
+/// run had ended when this record was written, and null when it had not: the store
+/// refused its end, and it was abandoned, or it was started and not waited for.
+///
+/// It is written as JSON, and read from JSON only as part of a stored record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Step {
+    step: StepKind,
+    run: String,
+    action: String,
+    status: Option<Status>,
+}
+
+impl Step {
+    pub(super) fn call(run: &RunId, action: &str, status: Option<Status>) -> Step {
+        Step {
+            step: StepKind::Call,
+            run: run.as_str().to_owned(),
+            action: action.to_owned(),
+            status,
+        }
+    }
+
+    pub fn kind(&self) -> StepKind {
+        self.step
+    }
+
+    /// The run the call made.
+    pub fn run(&self) -> &str {
+        &self.run
+    }
+
+    /// The action that was called.
+    pub fn action(&self) -> &str {
+        &self.action
+    }
+
+    /// How the call's run had ended when the record was written, if it had.
+    pub fn status(&self) -> Option<Status> {
+        self.status
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(remote = "Step", deny_unknown_fields)]
+struct StepWire {
+    step: StepKind,
+    run: String,
+    action: String,
+    #[serde(deserialize_with = "present")]
+    status: Option<Status>,
+}
+
+fn steps_wire<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<Step>, D::Error> {
+    #[derive(Deserialize)]
+    struct One(#[serde(with = "StepWire")] Step);
+    let read = Vec::<One>::deserialize(deserializer)?;
+    Ok(read.into_iter().map(|One(step)| step).collect())
+}
+
 /// A list that holds nothing in this version of the record: its element has no value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Nothing {}
@@ -106,7 +328,9 @@ pub struct Identity {
     /// here is refused.
     #[serde(deserialize_with = "present")]
     pub request: Option<String>,
-    /// The run that called this one. None for a run that nothing nested.
+    /// The run that called this one, from inside its action (ADR 0008, "Nested
+    /// calls"). None for a run that nothing nested. One that is there is a run id
+    /// ([`RunId`]), and not this run's.
     #[serde(deserialize_with = "present")]
     pub parent: Option<String>,
     /// The version of whizbang that ran it.
@@ -209,11 +433,13 @@ pub struct Ended {
     /// There exactly when the status is `invalid`.
     #[serde(deserialize_with = "present")]
     pub invalid: Option<String>,
-    /// What was refused inside the run, and why. It holds nothing in this version, and
-    /// not because nothing is refused: a call from inside an action is refused
-    /// ([`super::Refusal::NoNestedCalls`]) and is not recorded here until nested calls
-    /// are built and this list has elements.
-    pub refusals: Vec<Nothing>,
+    /// What was refused inside the run, and why: each call the run's action made, to
+    /// run another action, that was refused, in the order they were refused, the
+    /// first [`REFUSALS_LIMIT`] of them.
+    #[serde(deserialize_with = "refusals_wire")]
+    pub refusals: Vec<Refused>,
+    /// How many more refusals there were than the list holds.
+    pub refusals_omitted: u64,
 }
 
 /// Time: the start and the end, in milliseconds since the Unix epoch.
@@ -354,7 +580,8 @@ struct RunRecordWire {
     models: Vec<Nothing>,
     spend: Spend,
     egress: Vec<Nothing>,
-    steps: Vec<Nothing>,
+    #[serde(deserialize_with = "steps_wire")]
+    steps: Vec<Step>,
     judge: Vec<Nothing>,
     #[serde(deserialize_with = "diagnostics_wire")]
     diagnostics: Vec<Diagnostic>,
@@ -374,7 +601,7 @@ pub struct RunRecord {
     models: Vec<Nothing>,
     spend: Spend,
     egress: Vec<Nothing>,
-    steps: Vec<Nothing>,
+    steps: Vec<Step>,
     judge: Vec<Nothing>,
     diagnostics: Vec<Diagnostic>,
 }
@@ -438,6 +665,20 @@ pub struct Ran<'a> {
     pub end_ms: u64,
     /// The run's diagnostics, as they are stored.
     pub diagnostics: Vec<Diagnostic>,
+    /// What the run did inside itself: the run that called it, the calls it made, and
+    /// those that were refused.
+    pub inside: Inside,
+}
+
+/// What a record holds of nested calls (ADR 0008): the run that called this one, the
+/// calls this one made that were admitted, in order, and those that were refused.
+/// Only the executor fills it; anything else makes the empty one.
+#[derive(Debug, Clone, Default)]
+pub struct Inside {
+    pub(super) parent: Option<RunId>,
+    pub(super) steps: Vec<Step>,
+    pub(super) refusals: Vec<Refused>,
+    pub(super) refusals_omitted: u64,
 }
 
 impl RunRecord {
@@ -499,7 +740,7 @@ impl RunRecord {
             identity: Identity {
                 run: ran.run.to_owned(),
                 request: ran.request.map(|id| id.as_str().to_owned()),
-                parent: None,
+                parent: ran.inside.parent.map(|run| run.as_str().to_owned()),
                 whizbang: ran.whizbang.to_owned(),
             },
             asked: Asked {
@@ -515,7 +756,8 @@ impl RunRecord {
                 status,
                 error,
                 invalid,
-                refusals: Vec::new(),
+                refusals: ran.inside.refusals,
+                refusals_omitted: ran.inside.refusals_omitted,
             },
             time: Time {
                 start_ms: ran.start_ms,
@@ -529,7 +771,7 @@ impl RunRecord {
                 requests: Vec::new(),
             },
             egress: Vec::new(),
-            steps: Vec::new(),
+            steps: ran.inside.steps,
             judge: Vec::new(),
             diagnostics,
         }
@@ -614,6 +856,52 @@ impl RunRecord {
                  _, -, . and :",
             );
         }
+        // The parent is written as it is, and is a run of its own.
+        if let Some(parent) = &self.identity.parent
+            && (RunId::parse(parent).is_err() || *parent == self.identity.run)
+        {
+            return refuse(
+                "the parent is not another run's id: a lower-case letter or a digit, then \
+                 lower-case letters, digits, _ or -, 64 characters at most",
+            );
+        }
+        // A step names a run that this one called: a run id that is neither this run's
+        // nor its parent's, once, with an action's name.
+        if self.steps.len() > STEPS_LIMIT {
+            return refuse("more steps than a run may have");
+        }
+        let mut called = std::collections::BTreeSet::new();
+        for step in &self.steps {
+            let own =
+                step.run == self.identity.run || Some(&step.run) == self.identity.parent.as_ref();
+            if RunId::parse(&step.run).is_err() || own || !called.insert(&step.run) {
+                return refuse(
+                    "a step does not name a run of its own: a run id, neither this run's \
+                     nor its parent's, named once",
+                );
+            }
+            if text::action_name(&step.action).is_err() {
+                return refuse("a step's action is not the name of one");
+            }
+        }
+        let refusals = &self.outcome.refusals;
+        if refusals.len() > REFUSALS_LIMIT
+            || (self.outcome.refusals_omitted > 0 && refusals.len() < REFUSALS_LIMIT)
+        {
+            return refuse(
+                "more refusals than a record lists, or refusals left out of a list that \
+                 is not full",
+            );
+        }
+        for refused in refusals {
+            let named = refused.action.as_ref();
+            if named.is_some_and(|action| text::action_name(action).is_err()) {
+                return refuse("a refusal's action is not the name of one");
+            }
+            if refused.why.is_empty() || refused.why.chars().count() > REFUSAL_WHY_LIMIT {
+                return refuse("a refusal's sentence is empty, or longer than one is kept");
+            }
+        }
         // A diagnostic is the journal, or something the action wrote under a plain name.
         // The record itself is one of the run's names and is not one of its diagnostics.
         let known = |name: &str| {
@@ -675,6 +963,11 @@ impl RunRecord {
 
     pub fn time(&self) -> &Time {
         &self.time
+    }
+
+    /// The calls the run made of other actions that were admitted, in order.
+    pub fn steps(&self) -> &[Step] {
+        &self.steps
     }
 
     /// What was reserved for the run, and its paid requests.

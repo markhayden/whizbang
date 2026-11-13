@@ -20,7 +20,10 @@
 //! its run as an error. And asking after a run by its id: [`Executor::start`],
 //! [`Executor::status`] and [`Executor::wait`]; and cancelling it
 //! ([`Executor::cancel`]), which is accepted before the run's commit step and never
-//! after. The ledger itself and settlement are not here, and neither are nested calls.
+//! after. And nested calls: the executor in an action's [`Context`] admits a call under
+//! the action's run, with an allowance taken from that run's, and refuses a fifth level
+//! and a call back. A cancellation does not reach the runs a run called yet, and a
+//! run does not wait for them. The ledger itself and settlement are not here.
 
 mod call;
 mod context;
@@ -29,6 +32,7 @@ mod engine;
 mod journal;
 pub mod ledger;
 mod live;
+mod nested;
 mod prepare;
 pub mod record;
 mod redact;
@@ -55,13 +59,14 @@ pub use ledger::{
     Declined, LEDGER_NAME_LIMIT, Ledger, RESERVATION_RECORD, RESERVATIONS_PREFIX, Reservation,
     SPEND_PREFIX, Step, reservations,
 };
+pub use nested::{DESCENDANTS_LIMIT, LEVELS_LIMIT, STARTED_LIMIT};
 pub use prepare::{
     Backends, CallError, Estimate, InputFault, Missing, ModelIdentity, Need, NoBackends,
     PreparedCall, Readiness, Refusal, ResolvedInput, Stale, StoreFailure, Unavailable,
 };
 pub use record::{
-    DIAGNOSTIC_NAME_LIMIT, RECORD_MAX_BYTES, RUN_RECORD, RUN_RECORD_SCHEMA, RecordError, RunRecord,
-    is_diagnostic_name,
+    DIAGNOSTIC_NAME_LIMIT, RECORD_MAX_BYTES, REFUSAL_WHY_LIMIT, REFUSALS_LIMIT, RUN_RECORD,
+    RUN_RECORD_SCHEMA, RecordError, RefusalKind, RunRecord, STEPS_LIMIT, is_diagnostic_name,
 };
 pub use redact::{REDACTED, SECRET_MIN_BYTES, SecretRefused, Secrets};
 pub use registry::{Action, Failure, Produced, RegistrationError, Registry};

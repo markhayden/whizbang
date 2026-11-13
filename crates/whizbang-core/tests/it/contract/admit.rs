@@ -368,7 +368,7 @@ fn the_fingerprint_of_a_request_is_of_the_call_as_it_was_given() {
 // --- the two records -----------------------------------------------------------------------------
 
 const ADMISSION: &str = concat!(
-    r#"{"record":"admission/1","run":"7000-1","request":"order-17","#,
+    r#"{"record":"admission/1","run":"7000-1","request":"order-17","parent":null,"#,
     r#""fingerprint":"sha256:f93fc011cfbdeda221670f83fa218719c8133d99d92b95492d70211584063c40","#,
     r#""prepared":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","#,
     r#""reserved_micros":500000,"action":"echo","version":"1.0.0","start_ms":7000}"#,
@@ -1215,8 +1215,10 @@ fn a_run_whose_end_could_not_be_written_is_answered_as_not_ended_here() {
 
 // --- a crash inside the admission step -----------------------------------------------------------
 
-#[test]
-fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it() {
+/// Crashes inside the admission step, at every fourth of its steps from `part`: the
+/// whole takes eight seconds, and more on a busy machine, against a limit of thirty,
+/// so it is four tests, which between them try every step and every mask.
+fn crashes_inside_the_admission_step(part: usize) {
     // An executor with a ledger admits a call that may cost a quarter of a dollar. The
     // calls that change the disk during one admission are found by running one: from
     // the request to the moment the action starts.
@@ -1252,7 +1254,7 @@ fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it() {
     // record, the run and the reservation are there together or none of them is.
     let mut outcomes = std::collections::BTreeSet::new();
     let (mut most_dirs, mut most_names, mut crashes) = (0, 0, 0);
-    for step in 0..=steps {
+    for step in (0..=steps).filter(|step| step % 4 == part) {
         let mut ways = vec![Lost::Unsynced, Lost::ContentOnly, Lost::Subset(0)];
         let mut next = 0;
         while next < ways.len() {
@@ -1332,9 +1334,11 @@ fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it() {
             }
         }
     }
-    assert_eq!(
-        outcomes.into_iter().collect::<Vec<_>>(),
-        ["all of it", "nothing"]
+    // Before the last step there is nothing, and at it there is all of it.
+    assert!(outcomes.contains("nothing"), "{outcomes:?}");
+    assert!(
+        steps % 4 != part || outcomes.contains("all of it"),
+        "{outcomes:?}"
     );
     // The masks were not a formality: some step left several directories and several
     // names undecided, and each of their choices was a crash of its own.
@@ -1343,6 +1347,26 @@ fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it() {
         "{most_dirs} {most_names}"
     );
     assert!(crashes > 200, "{crashes}");
+}
+
+#[test]
+fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_first_steps_of_four() {
+    crashes_inside_the_admission_step(0);
+}
+
+#[test]
+fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_second_steps_of_four() {
+    crashes_inside_the_admission_step(1);
+}
+
+#[test]
+fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_third_steps_of_four() {
+    crashes_inside_the_admission_step(2);
+}
+
+#[test]
+fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_fourth_steps_of_four() {
+    crashes_inside_the_admission_step(3);
 }
 
 // --- what is stored is not trusted ---------------------------------------------------------------

@@ -309,7 +309,7 @@ fn a_failed_echo_writes_the_same_record_with_its_error_and_keeps_its_diagnostics
         r#""config":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"#,
         r#""inputs":[],"outputs":[],"#,
         r#""outcome":{"status":"error","error":{"kind":"echo","message":"boom"},"#,
-        r#""invalid":null,"refusals":[]},"#,
+        r#""invalid":null,"refusals":[],"refusals_omitted":0},"#,
         r#""time":{"start_ms":1000,"end_ms":1002,"durations":[]},"#,
         r#""models":[],"spend":{"reserved_micros":null,"requests":[]},"egress":[],"steps":[],"#,
         r#""judge":[],"#,
@@ -399,7 +399,7 @@ fn a_refused_call_makes_no_run_and_writes_nothing() {
 // --- what an action is handed ---------------------------------------------------------------
 
 #[test]
-fn an_action_is_handed_a_context_and_cannot_yet_call_another_action() {
+fn an_action_is_handed_a_context_and_calls_another_action_through_its_executor() {
     let world = World::new();
     let engine = world.engine_with(vec![scripted("nest", |_, context| {
         assert!(!context.cancellation().is_cancelled());
@@ -409,24 +409,21 @@ fn an_action_is_handed_a_context_and_cannot_yet_call_another_action() {
         // admitted against, which is the one before its own admission (ADR 0008, "The
         // generation a run reads").
         assert_eq!(context.store().snapshot().unwrap().number(), 0);
-        // A call to another action is refused, by name, and prepared no further.
-        let refused = context.executor().submit(&echo("inner")).unwrap_err();
-        assert_eq!(refused, CallError::Refused(Refusal::NoNestedCalls));
+        // A call to another action is prepared, and runs, as a run of its own (ADR
+        // 0008, "Nested calls"; `nested.rs` holds the rest).
         assert_eq!(
-            context.executor().prepare(&echo("inner")).unwrap_err(),
-            CallError::Refused(Refusal::NoNestedCalls)
+            context.executor().prepare(&echo("inner")).unwrap().action(),
+            "echo"
         );
-        Err(Failure::error("nested", &refused.to_string()))
+        let inner = context.executor().submit(&echo("inner")).unwrap();
+        assert_eq!(inner.outcome().name(), "completed");
+        Ok(Produced::nothing())
     })]);
     let finished = engine.submit(&Call::new("nest")).unwrap();
-    let Outcome::Error { kind, message } = finished.outcome() else {
-        panic!("{finished:?}");
-    };
-    assert_eq!(kind, "nested");
-    assert!(message.contains("does not nest calls"), "{message}");
-    // One run: the inner call made none.
+    assert_eq!(finished.outcome().name(), "completed");
+    // Two runs: the call made one of its own.
     let reader = Reader::open(&world.root(), world.fs.clone()).unwrap();
-    assert_eq!(reader.snapshot().unwrap().runs().len(), 1);
+    assert_eq!(reader.snapshot().unwrap().runs().len(), 2);
 }
 
 #[test]

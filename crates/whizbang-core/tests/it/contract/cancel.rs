@@ -791,6 +791,143 @@ fn what_a_cancel_and_a_wait_say_of_an_end_is_what_the_store_holds_after_a_loss_o
 }
 
 #[test]
+fn a_cancel_and_a_wait_begun_after_an_end_that_was_not_confirmed_say_abandoned() {
+    // The end's last sync is refused: the record is visible, and nobody was told it
+    // would survive a loss of power. The executor is done with the run. A cancel and a
+    // wait that begin now, by any executor over the store, still say `Abandoned`, as
+    // those that were waiting did; a status says what the store shows.
+    let dir = Scratch::new("cancel");
+    let root = dir.path().join("store");
+    let fs = Arc::new(ShimFs::new());
+    let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+    let unconfirmed = {
+        let (fs, root) = (fs.clone(), root.clone());
+        work(move |_, _| {
+            let root = root.clone();
+            fs.refuse_matching(
+                0,
+                move |event| matches!(event, Event::SyncDir(dir) if *dir == root),
+            );
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(store.clone(), vec![unconfirmed]);
+    let Err(CallError::Store(failure)) = executor.submit(&Call::new("work")) else {
+        panic!("the end was confirmed");
+    };
+    let run = the_run(&root);
+    let state = RunState::Abandoned {
+        failure: Some(failure),
+    };
+    for asking in [executor.clone(), engine(store.clone(), Vec::new())] {
+        assert_eq!(asking.cancel(&run), Ok(Cancel::NotAccepted(state.clone())));
+        assert_eq!(asking.wait(&run).unwrap().state(), &state);
+        assert_eq!(asking.status(&run).unwrap().state(), &completed());
+    }
+}
+
+/// `work` whose end is stopped before its first call that changes the disk: there a
+/// cancel or a wait of the run is begun, by `ask`, and is waiting; then `then` is done,
+/// and the end goes on. What comes back is what the run's caller and the one who asked
+/// were told.
+fn asked_in_the_commit_step<T: Send + 'static>(
+    root: &Path,
+    fs: &Arc<ShimFs>,
+    store: &Arc<Store>,
+    ask: impl Fn(&Engine, &RunId) -> T + Send + Sync + 'static,
+    then: impl Fn(&ShimFs, &RunId) + Send + Sync + 'static,
+) -> (Result<Finished, CallError>, T, RunId) {
+    let seen = Arc::new(Mutex::new(None));
+    let asking = engine(store.clone(), Vec::new());
+    let (ask, then) = (Arc::new(ask), Arc::new(then));
+    let arming = {
+        let (fs, root, seen) = (fs.clone(), root.to_path_buf(), seen.clone());
+        work(move |_, _| {
+            let (hooked, root, asking, seen, ask, then) = (
+                fs.clone(),
+                root.clone(),
+                asking.clone(),
+                seen.clone(),
+                ask.clone(),
+                then.clone(),
+            );
+            fs.pause_before(fs.events().len(), move || {
+                let run = the_run(&root);
+                let asked = {
+                    let (asking, run) = (asking.clone(), run.clone());
+                    whizbang_testkit::threads::spawn(move || ask(&asking, &run))
+                };
+                let limit = Instant::now() + LIMIT;
+                while asking.waiting_for(&run) == 0 {
+                    assert!(Instant::now() < limit, "it does not wait");
+                    std::thread::yield_now();
+                }
+                then(&hooked, &run);
+                *seen.lock().unwrap() = Some((asked, run));
+            });
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(store.clone(), vec![arming]);
+    let ran = executor.submit(&Call::new("work"));
+    let (asked, run) = seen.lock().unwrap().take().expect("the hook ran");
+    (ran, asked.join().unwrap(), run)
+}
+
+#[test]
+fn a_wait_begun_in_the_commit_step_of_an_end_that_is_then_not_confirmed_says_abandoned() {
+    let dir = Scratch::new("cancel");
+    let root = dir.path().join("store");
+    let fs = Arc::new(ShimFs::new());
+    let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+    let synced = root.clone();
+    let (ran, waited, run) = asked_in_the_commit_step(
+        &root,
+        &fs,
+        &store,
+        |asking, run| asking.wait(run),
+        move |fs, _| {
+            let root = synced.clone();
+            fs.refuse_matching(
+                0,
+                move |event| matches!(event, Event::SyncDir(dir) if *dir == root),
+            );
+        },
+    );
+    let Err(CallError::Store(failure)) = ran else {
+        panic!("the end was confirmed: {ran:?}");
+    };
+    let state = RunState::Abandoned {
+        failure: Some(failure),
+    };
+    assert_eq!(waited.unwrap().state(), &state);
+    // The end is visible all the same, which is what a status says.
+    let asking = engine(store.clone(), Vec::new());
+    assert_eq!(asking.status(&run).unwrap().state(), &completed());
+}
+
+#[test]
+fn a_cancel_that_waits_in_the_commit_step_of_a_run_that_is_then_deleted_is_told_there_is_no_run() {
+    let dir = Scratch::new("cancel");
+    let root = dir.path().join("store");
+    let fs = Arc::new(ShimFs::new());
+    let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+    let deleting = store.clone();
+    let (ran, cancelled, run) = asked_in_the_commit_step(
+        &root,
+        &fs,
+        &store,
+        |asking, run| asking.cancel(run),
+        move |_, run| {
+            deleting.delete(&[run.as_str()]).unwrap();
+        },
+    );
+    assert!(matches!(ran, Err(CallError::Store(_))), "{ran:?}");
+    let no_run = CallError::Refused(Refusal::NoSuchRun { run });
+    assert_eq!(cancelled, Err(no_run));
+}
+
+#[test]
 fn an_executing_run_that_is_deleted_is_told_to_stop() {
     // The run is deleted from the store while its action is busy. Its end will find no
     // run, so nothing it does can be kept: its signal is set by the deletion itself,

@@ -21,8 +21,15 @@ cancel asks the table of open runs before the store, and with a wait says nothin
 end until the executor confirmed it; a run that is deleted while it executes is told to
 stop; a run's capability handles hold its deadline to the executor's clock. Added: what
 a handle kept past its run still does.
-Spec: section 3, "The execution contract", "What a run publishes", "Storage" and "What
-every run records"
+Amended: 2026-11-13, with the fourth pull request of task A7. Added: "Nested calls",
+which is built as far as it says: a call from inside an action, its allowance, the
+refusals, and the record. Changed: the paragraph that says which part builds what;
+"What is not built" in "Cancellation"; what this record does not decide yet.
+And, from the review of the part before: a run whose end was not confirmed is not let
+go of, so a cancel and a wait that begin later say `Abandoned` too ("Visible before
+durable").
+Spec: section 3, "The execution contract", "What a run publishes", "Nested calls",
+"Storage" and "What every run records"; section 6, "Spend"
 
 ## Context
 
@@ -55,9 +62,11 @@ with them. **The first part, which this record came with, builds** the commit st
 what a panic does. **The second builds** a run's status and progress while it executes,
 waiting for a run, and starting one without waiting. **The third builds** the rule for a
 cancellation and the commit step, cancel itself, and what goes with them; rascal's rule
-is restated there. Nested calls with their allowances, a cancellation that reaches
-descendants, and what makes a parent terminal are the last part's: it amends this
-record with the code that builds it, and until then nothing here says how they work.
+is restated there. **The last builds** nested calls, in two pull requests. The first,
+which is here: a call from inside an action, its allowance, the refusals of a fifth
+level and of a call back, and what the record says of them. The second: a cancellation
+that reaches descendants, what makes a parent terminal, and how a parent reads what a
+child committed; until it amends this record, nothing here says how those work.
 
 The code is in `crates/whizbang-core/src/contract/` (`engine.rs`, `registry.rs`),
 `crates/whizbang-core/src/artifact/stored.rs` and
@@ -395,8 +404,8 @@ the machine, down. So `start` is bounded.
   end of a run", above), so a caller that waited for a run can start the next.
 - *What it does not cover.* `submit` and `request` run the action on the caller's own
   thread, take no place and are never refused for this: how many of those run at once
-  is the caller's doing. A call from inside an action has no rule yet; nested calls get
-  their own in the next part.
+  is the caller's doing. A run started from inside an action takes a place from this
+  same count ("Nested calls", "Threads").
 
 The tests hold two or three runs at barriers, never more
 (`started::a_start_over_the_bound_is_refused_and_writes_nothing_and_a_run_that_ends_makes_room`,
@@ -573,7 +582,8 @@ and a repeat of the run's request all say `Abandoned`, and none waits
 (`cancel::a_run_with_nothing_behind_it_is_abandoned_for_whoever_waits_asks_or_cancels`).
 An end that became visible and was not confirmed leaves the phase abandoned too. A
 status and a repeat look at the store once more and say what it shows, `Ended`; a wait
-and a cancel that were in flight say `Abandoned` ("Visible before durable", below).
+and a cancel say `Abandoned`, those in flight and those that begin later ("Visible
+before durable", below).
 Only the process that abandoned a run says so. After it is gone the run is
 `NotEnded { here: false }` to everyone, as before.
 
@@ -581,11 +591,18 @@ Only the process that abandoned a run says so. After it is gone the run is
 and its caller is answered only after that sync. Between the two, a status says
 `Ended`, with the outcome, while the caller that ran it has no answer yet and a `wait`
 and a cancel are still waiting ("A status and a wait at the end of a run", above); and
-if that sync fails, the caller is told of the store's failure, the wait and the cancel
-that were waiting say `Abandoned` with that failure, and every status, then and later,
-says `Ended`, as does a wait or a cancel that begins after the executor let the run go.
+if that sync fails, the caller is told of the store's failure, and the wait and the
+cancel that were waiting say `Abandoned` with that failure. So does a wait or a cancel
+that begins later: the executor lets go of a run only when its end was confirmed, so a
+run whose end was not stays in the table of open runs, abandoned, for as long as this
+process has the store open or until the run is deleted
+(`cancel::a_cancel_and_a_wait_begun_after_an_end_that_was_not_confirmed_say_abandoned`,
+`cancel::a_wait_begun_in_the_commit_step_of_an_end_that_is_then_not_confirmed_says_abandoned`).
 The record is in the store in that case; what is not known is that it would survive a
-loss of power. So `status` alone can run ahead of the disk, and says what is visible.
+loss of power. A status, and a repeat of the run's request, say what the store shows,
+`Ended`: those two can run ahead of the disk, and a cancel and a wait never do. After
+the process is gone the store is all there is, and it says `Ended` to everyone if the
+record survived.
 
 **The table and a run that is named again.** A run can be named up to eight times
 before its admission is published, and an admission can be given up at several
@@ -598,7 +615,7 @@ so there is none to remove or to key again
 (`cancel::a_run_that_was_named_again_is_in_the_table_of_open_runs_under_its_last_id_alone`).
 What the executor attaches is opaque to the store.
 
-**Why the answer is never from a stale look, and never ahead of the disk.** A run this
+**Why a cancel's answer is never from a stale look, and never ahead of the disk.** A run this
 process made is in the table from before it is visible until the executor is done with
 it, which is after its end publication's last sync ("A status and a wait at the end of
 a run", above). So a cancel finds it there for as long as anything about it is
@@ -736,9 +753,172 @@ still: a config that changes in that window is not seen by that admission. That 
 is accepted: the preparation is of the config it read, the record names its digest, and
 the next request sees the change.
 
-**What is not built.** A call from inside an action; a cancellation that reaches a
-run's descendants; a parent that waits for them. Nothing bounds what a run keeps in
-memory, and nothing marks a run that a dead process left.
+**What is not built.** A cancellation that reaches a run's descendants; a parent that
+waits for them. Nothing bounds what a run keeps in memory, and nothing marks a run
+that a dead process left.
+
+### Nested calls
+
+The code is in `crates/whizbang-core/src/contract/` (`nested.rs`, `engine.rs`,
+`context.rs`, `live.rs`, `record.rs`, `request.rs`); the tests are in
+`crates/whizbang-core/tests/it/contract/nested.rs` and
+`crates/whizbang/tests/it/runs.rs`.
+
+**A call from inside an action is a run of its own.** The executor in an action's
+context (`Context::executor`) is no longer one that refuses. `submit`, `request` and
+`start` through it admit the call under the action's run: the call is prepared and
+admitted as any call is, by its own publication, with its own run id, its own hold on
+the generation current at its admission, its own journal, diagnostics and record, and
+its own end publication. `submit` and `request` run it on the calling thread and return
+its outcome; `start` runs it on a thread of its own. `prepare`, `status`, `wait`,
+`cancel` and `request_id` through it are the executor's own. The run that made the
+call is its parent, and the call's deadline is the earlier of its parent's and the one
+its request came with
+(`nested::a_calls_deadline_is_the_earlier_of_its_callers_and_the_one_its_request_came_with`)
+(`nested::a_call_from_inside_an_action_is_a_run_of_its_own_under_the_run_that_made_it`).
+
+**Threads.** A call through `submit` or `request` runs on the thread that made it,
+makes no thread and takes no place. A call through `start` makes one thread, by the
+rule of "How many runs are started at once": before it is admitted it takes a place
+from the same count of the store's writer that a request from outside is held to
+(64 by default), a full count is a refusal (`Refusal::TooManyStarted`, recorded in
+the caller's record) and never a wait, the thread is made where every run's thread is
+made, and a thread that cannot be made ends the run as an error of the type `start`
+and is the caller's answer (`CallError::NotStarted`). So depth and fan-out cannot
+multiply threads past that one count. Inside it a run may have four runs that it
+started executing at once (`STARTED_LIMIT`); a fifth is refused
+(`Refusal::TooManyStartedUnder`), so one tree cannot take every place: at most 4 + 16
++ 64 = 84 by its own arithmetic, and never more than the count. Both the place and
+the run's share of its parent's four come back when the run is over, before whoever
+waits for it is told. Threads an action makes itself are not counted
+(`nested::a_run_started_from_inside_an_action_takes_a_place_among_the_stores_started_runs`,
+`nested::a_run_starts_only_so_many_runs_at_once_and_one_more_is_refused`,
+`nested::a_run_started_from_inside_an_action_that_gets_no_thread_ends_as_an_error_and_its_caller_is_told`).
+
+**No request id.** A call from inside an action that carries one is refused
+(`Refusal::IdInside`), and the id is not looked up or taken. A nested run is known by
+its parent and its place among its parent's calls. An id is scoped to the store: a
+repeat would answer with a run that some other parent, or none, made, and that run is
+not this parent's to wait for, to draw on its allowance, or to list
+(`nested::a_call_from_inside_an_action_carries_no_request_id`).
+
+**Levels, and the stack.** A run that nothing called is at level one, and a run at
+level four makes no call: `Refusal::TooDeep` (`LEVELS_LIMIT`). A call that names an
+action that is already running among the calls that led to it, its caller's or one
+further up, is refused: `Refusal::CallBack`. What is on the stack is compared by the
+action's name, and nothing else: not the arguments, and not the run, so the same action
+called twice in a row by one run is two runs and no call back
+(`nested::a_fifth_level_is_refused_and_the_refusal_is_in_the_record_of_the_run_that_made_the_call`,
+`nested::a_call_back_into_an_action_on_the_stack_is_refused_by_the_actions_name`).
+
+**The order of the refusals.** A call is held, in this order, to: no request id
+(`IdInside`); the levels (`TooDeep`); the stack (`CallBack`); then, under the lock of
+what the caller keeps of its calls, the count of its calls (`TooManyCalls`), the runs
+it has started (`TooManyStartedUnder`, for `start`), and the count of the whole tree
+(`TreeFull`); and then everything admission holds any call to, with the allowance
+after readiness. The first that refuses is the refusal: a call with a request id at a
+fifth level is refused for its id. For `start`, a place among the store's started
+runs is taken before any of these, so a full count (`TooManyStarted`) is said first.
+
+**Allowances.** `Context::allowance` holds an amount now: what was reserved for the
+run at its admission (ADR 0007), or nothing when the executor had no ledger. A nested
+call takes its estimate, the one its own admission prepared, from what its parent's
+allowance has left, and that amount is its own allowance, on which the runs it calls
+draw in turn. The ledger is asked once, for the run nothing called: a nested call asks
+no ledger, makes no reservation (no `spend/reservations/<run>`, no name of a ledger's)
+and adds nothing to what the store says was reserved (`SPEC.md` section 6: "nothing
+is reserved twice"). A call whose estimate is more than is left is refused
+(`Refusal::OverCaller`, with both amounts), and one whose cost has no bound is refused
+as it is for a run nothing called (`Refusal::NoBound`). A parent with no amount counts
+nothing, and its children have none.
+
+*What the allowance does not hold a run to.* Only nested calls draw on it. A run's own
+capability requests take nothing from what is left, and nothing checks them against
+it: a parent can give all of its allowance to its children and still send requests of
+its own. So what a tree really spends can exceed the root's reservation until
+checkpoint 1B debits each request before it is sent (`SPEC.md` section 6;
+`docs/carry-over.md`).
+
+*Where it is decided.* The look at what is left and the taking are one step under the
+allowance's own lock (`Allowance::take`), in memory, in the process that runs the
+parent: not from a snapshot of the store, and not in the publishing step, since the
+store holds nothing of it until the child is admitted. Two calls made at once cannot
+both take the last of it. What was taken is given back only if the admission then
+puts nothing in the store. An admission that became visible and was not confirmed
+("A run with nothing behind it") is in the store, naming its parent and the amount,
+so what was taken for it stays taken, though its action never runs: the admissions
+that name a run never add up to more than that run was given
+(`nested::a_call_whose_admission_is_visible_and_not_confirmed_keeps_what_was_taken_for_it`).
+Nothing is given back when a child ends, however it ended and whatever it used: that
+is settlement, and checkpoint 1B's
+(`nested::a_nested_call_draws_on_the_allowance_of_the_run_that_made_it_and_the_ledger_is_asked_once`,
+`nested::two_calls_at_once_cannot_both_take_the_last_of_the_allowance`).
+
+*How it is recorded.* A child has no reservation record. Its admission
+(`admission/1`, which gains the field `parent`, a run id or null, after `request`)
+names its parent and says the amount in `reserved_micros`; its run record says the
+same in `identity.parent` and `spend.reserved_micros`. So what settlement needs is in
+the store: the one reservation, of the root; and for every run under it, durably from
+its admission on, which run it drew on and how much. A run with a parent and an
+amount drew on its parent; a run without a parent has a reservation of that amount. An
+admission with a parent and a request id, or one that names itself as its parent, is
+refused on reading. The parent's remaining allowance is not written anywhere while the
+parent runs: after a crash it is the reservation less the amounts of the admissions
+that name the parent.
+
+**What is refused inside a run is in its record.** Every call an action makes through
+its context to run another action (`submit`, `request`, `start`) that is refused, for
+any reason (those above and below, an action that is not registered, a call the
+descriptor does not allow, an input that is not there, a call that is not ready), is
+kept for the record of the run that made it: `outcome.refusals`, in order, each with
+the action when what the call named is an action's name by the rule (null otherwise),
+the kind of refusal as a word, and the refusal's sentence. No run exists for any of
+them. `prepare` and the questions after a run are not calls to run something and are
+not recorded. The sentence is redacted and then cut, in that order (the rule of "What
+an action or a panic says is cut", and then 512 characters, `REFUSAL_WHY_LIMIT`). A
+refusal can quote a part of the call that was cut before it reached the record, so a
+call any of whose own texts (the action's name, an argument's name or text, a port's
+name) holds a secret is recorded with a sentence of fixed words and no action. The
+first 256 refusals are listed (`REFUSALS_LIMIT`) and the rest are counted in
+`outcome.refusals_omitted`. A call refused after the record was written, by something
+the action left behind, is recorded nowhere
+(`nested::what_is_refused_inside_a_run_is_recorded_with_the_secrets_taken_out_and_within_a_bound`).
+
+**The record lists the calls.** `steps` holds one element for each call that was
+admitted, in the order of admission: the word `call`, the child's run id, the action,
+and how the child had ended, or null for a child that had not: one that was abandoned
+("A run with nothing behind it"), or one that was started and was still executing.
+The child's arguments, inputs and outputs are in the child's own record, which the
+step names: that is the spec's "reference to its result". A run
+makes at most 256 calls that are admitted (`STEPS_LIMIT`); one more is refused
+(`Refusal::TooManyCalls`), so the list is never cut. And the runs under one run that
+nothing called, at every level together, are at most 1,024 (`DESCENDANTS_LIMIT`): one
+count for the tree, taken when a call is taken and given back if the call puts no run
+in the store, and the next call anywhere in the tree is refused (`Refusal::TreeFull`)
+and recorded where it was made. Without it four levels of 256 calls would be sixteen
+million runs
+(`nested::the_runs_under_one_run_that_nothing_called_are_bounded_at_every_level_together`,
+with a count of five set for the test). The bound is low because a call
+is two publications and the cost of a publication grows with what the store holds:
+256 calls from one run took about three seconds on the test kit's disk, and 1,024
+took fifty (`docs/carry-over.md`). With both lists full a record stays far under
+`RECORD_MAX_BYTES`
+(`nested::a_run_calls_as_many_actions_as_its_record_lists_and_one_more_is_refused`).
+`run/2` is still the version: these fills are among those it shares until the tag (ADR
+0005). The schema and the types refuse the same records, with the differences the
+schema cannot state held by the types alone
+(`nested::what_is_no_parent_no_step_and_no_refusal_is_refused_by_the_types_and_by_the_schema`).
+`whizbang runs show` prints the parent, the steps and the refusals; `runs list` gives
+a run that was called one more field, `called by` and its parent.
+
+**What is not built, and is the next part's.** A cancellation reaches one run: a
+child's signal is the one its request came with, or one of its own, and cancelling its
+parent does not set it. A run does not wait, before it ends, for a run it started or
+for a capability request it left open, so a parent can end while a child executes, and
+its step then says null. A parent does not see what a child committed through its
+context's store ("The generation a run reads"). And beyond that part: a parent's
+record does not list a child whose admission became visible and was not confirmed,
+and what was taken for a child is not given back when it ends.
 
 ## Consequences
 
@@ -791,9 +971,18 @@ memory, and nothing marks a run that a dead process left.
   request's ending, and what its action answered after the cancellation is recorded
   nowhere but in its diagnostics.
 
-What this record does not decide yet: nested calls, their allowances, a cancellation
-that reaches descendants, and when a parent is terminal. They are the last part of the
-same task, and amend this record.
+- An action's context holds an executor that runs calls. `Refusal::NoNestedCalls` is
+  gone; `Refusal` has `TooDeep`, `CallBack`, `OverCaller`, `TooManyCalls`, `TreeFull`,
+  `TooManyStartedUnder` and `IdInside`, and each refusal has a kind as a word (`Refusal::kind`).
+- `Allowance` holds an amount, or none.
+- `admission/1` has the field `parent`, and an admission written before it is not
+  read; `run/2` fills `identity.parent`, `steps` and `outcome.refusals`, and gains
+  `outcome.refusals_omitted`. A store is not kept before the tag of checkpoint 1A
+  (ADR 0005).
+
+What this record does not decide yet: a cancellation that reaches descendants, when a
+parent is terminal, and how a parent reads what a child committed. They are the last
+pull request of the same task, and amend this record.
 
 ## Alternatives
 
@@ -839,6 +1028,15 @@ same task, and amend this record.
   against.** Turned down: what the action reads would then depend on what was
   published while it ran, and a name it was admitted against could be given other
   content under it.
+- **A reservation record for each child.** Turned down: every reader of reservations,
+  the ledger first, would have to tell a child's from a root's to keep from counting
+  the same money twice, and the spec says nothing is reserved twice.
+- **Decide the child's share in the store's publishing step,** by a name the admission
+  makes. Turned down for now: the parent's remaining allowance is not in the store,
+  and all the children of a run are admitted by the one process that runs it.
+- **Let a nested call carry a request id.** Turned down: see "No request id".
+- **Copy a child's arguments into the parent's step.** Turned down: they are in the
+  child's record, and are text without a bound in a record that has one.
 - **Refuse a prune while a run executes** (`docs/carry-over.md` offered it). Turned
   down: the store would need to know of the executor, and a long run would stop every
   prune instead of keeping one generation.
