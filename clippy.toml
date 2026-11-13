@@ -1,2 +1,16 @@
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
+
+# A thread is made in two places only: the executor's spawner, which is bounded (ADR 0008,
+# "How many runs are started at once"), and `whizbang_testkit::threads`, which refuses the
+# 65th live thread of a process before it is made. A test that made threads until the system
+# refused one took a machine down. Each of the two has an `#[allow]` with its reason;
+# `scripts/tests/test-thread-lint.sh` holds the list of places to those two.
+disallowed-methods = [
+    { path = "std::thread::spawn", reason = "make a thread with whizbang_testkit::threads::spawn, which bounds how many are live" },
+    { path = "std::thread::scope", reason = "make a scope with whizbang_testkit::threads::scope, whose threads are counted" },
+    { path = "std::thread::Scope::spawn", reason = "make a scoped thread through whizbang_testkit::threads::scope, whose threads are counted" },
+    { path = "std::thread::Builder::spawn", reason = "make a thread with whizbang_testkit::threads::spawn, which bounds how many are live" },
+    { path = "std::thread::Builder::spawn_scoped", reason = "make a scoped thread through whizbang_testkit::threads::scope, whose threads are counted" },
+    { path = "std::thread::Builder::spawn_unchecked", reason = "make a thread with whizbang_testkit::threads::spawn, which bounds how many are live" },
+]

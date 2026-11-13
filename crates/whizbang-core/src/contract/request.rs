@@ -667,10 +667,13 @@ pub enum Cancel {
     /// does ([`super::Executor::wait`]).
     Accepted,
     /// The cancellation was not accepted, and where the run is says why. `Ended`: the
-    /// run had ended, or was in its commit step, which was waited for; this is how it
-    /// ended. `NotEnded { here: true }`: the run's end could not be written, or other
-    /// code of this process made the run. `NotEnded { here: false }`: nothing in this
-    /// process works on the run, so nothing can be told to stop.
+    /// run had ended, or was in its commit step, which was waited for until the
+    /// executor confirmed it; this is how it ended. `Abandoned`: this process made the
+    /// run and will not end it: its end was refused by the store or not confirmed, its
+    /// admission was not confirmed, or the executor's own code panicked.
+    /// `NotEnded { here: true }`: other code of this process made the run.
+    /// `NotEnded { here: false }`: nothing in this process works on the run, so
+    /// nothing can be told to stop.
     NotAccepted(RunState),
 }
 

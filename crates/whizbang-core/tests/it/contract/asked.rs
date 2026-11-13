@@ -15,7 +15,7 @@ use whizbang_core::capability::{
     Picture, REQUESTS_LIMIT, Role, Roster, StopReason, Support, ToolCall, Turn, Usage,
 };
 use whizbang_core::contract::record::{
-    Decision, Judged, RequestEnded, RunRecord, Status, Stop, Timed,
+    Decision, Judged, MODELS_LIMIT, RequestEnded, RunRecord, Status, Stop, Timed,
 };
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Backends, Call, Capabilities, Capability, Clock, Context,
@@ -341,21 +341,104 @@ fn each_request_a_run_sends_is_in_its_record_with_its_model_how_long_it_took_and
     assert!(child.judge().is_empty());
 }
 
+/// A bound far under the one a run has, so that the test publishes few exchanges.
+const FEW: usize = 24;
+
 #[test]
 fn a_run_sends_only_so_many_requests_and_its_record_lists_each_and_is_read_back() {
     // The judge's script is empty, so each request ends in the fake's fault. The run
-    // sends as many as one may; one more is not sent.
+    // sends as many as it may; one more is not sent. The bound is the executor's,
+    // lowered here through its seam for tests: a run of the real bound publishes
+    // 1,024 exchanges, which took six seconds on the test kit's disk.
     let world = World::new();
     let judge = Arc::new(FakeJudge::scripted(Vec::new()));
     let asks = action("asks", judging(), |_, context| {
         let judge = context.capabilities().judge().unwrap();
-        for _ in 0..REQUESTS_LIMIT {
+        for _ in 0..FEW {
             let fault = judge.send(&asking("again", 64)).unwrap_err();
             assert_eq!(fault.kind(), FaultKind::Malformed);
         }
-        let fault = judge.send(&asking("once more", 64)).unwrap_err();
-        assert_eq!(fault.kind(), FaultKind::TooLarge);
+        for _ in 0..2 {
+            let fault = judge.send(&asking("once more", 64)).unwrap_err();
+            assert_eq!(fault.kind(), FaultKind::TooLarge);
+            let said = "the run has sent 24 requests, which is as many as one run may";
+            assert_eq!(fault.sentence(), said);
+        }
         Ok(Produced::nothing())
+    });
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    )
+    .with_requests_limit(FEW);
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(judge.requests() as usize, FEW);
+    let (record, names) = stored(&world, finished.run());
+    assert_eq!(record.models().len(), FEW);
+    assert_eq!(record.judge().len(), FEW);
+    assert_eq!(record.time().durations.len(), FEW);
+    assert!(names.contains_key("diagnostics/exchange-0024"));
+    assert!(!names.contains_key("diagnostics/exchange-0025"));
+}
+
+#[test]
+fn the_bound_on_a_runs_requests_is_the_one_its_record_and_the_schema_hold() {
+    // The seam only lowers the bound: an executor asked for more keeps the real one,
+    // which is what the record's types and the schema refuse one more than.
+    assert_eq!((REQUESTS_LIMIT, MODELS_LIMIT), (1024, 1024));
+    let limit = schema()["properties"]["models"]["maxItems"].as_u64();
+    assert_eq!(limit, Some(REQUESTS_LIMIT as u64));
+    let world = World::new();
+    let judge = Arc::new(FakeJudge::scripted(Vec::new()));
+    let asks = action("asks", judging(), |_, context| {
+        let judge = context.capabilities().judge().unwrap();
+        for _ in 0..FEW + 1 {
+            let fault = judge.send(&asking("again", 64)).unwrap_err();
+            assert_eq!(fault.kind(), FaultKind::Malformed);
+        }
+        Ok(Produced::nothing())
+    });
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    )
+    .with_requests_limit(REQUESTS_LIMIT + 1);
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(judge.requests() as usize, FEW + 1);
+}
+
+/// A judge whose call panics.
+struct Panics(whizbang_core::capability::Declaration);
+
+impl Judge for Panics {
+    fn declaration(&self) -> &whizbang_core::capability::Declaration {
+        &self.0
+    }
+
+    fn send(&self, _: &JudgeRequest, _: &whizbang_core::capability::Bounds) -> Result<Turn, Fault> {
+        panic!("the backend fell over")
+    }
+}
+
+#[test]
+fn a_request_whose_backend_panicked_is_in_a_record_that_is_read_back() {
+    // The backend's call unwinds through the handle and the action. The request is
+    // accounted for as unwound, no exchange was kept, and the run's record, which
+    // lists the request and a turn for it with nothing in it, is one the reader takes.
+    let world = World::new();
+    let fake = FakeJudge::scripted(Vec::new());
+    let judge = Arc::new(Panics(fake.declaration().clone()));
+    let asks = action("asks", judging(), |_, context| {
+        let judge = context.capabilities().judge().unwrap();
+        judge
+            .send(&asking("well?", 64))
+            .map(|_| Produced::nothing())
+            .map_err(|fault| Failure::error("judge", fault.sentence()))
     });
     let executor = engine(
         &world,
@@ -364,13 +447,25 @@ fn a_run_sends_only_so_many_requests_and_its_record_lists_each_and_is_read_back(
         vec![asks],
     );
     let finished = executor.submit(&Call::new("asks")).unwrap();
-    assert_eq!(judge.requests(), 1024);
+    assert_eq!(finished.outcome().name(), "error");
     let (record, names) = stored(&world, finished.run());
-    assert_eq!(record.models().len(), 1024);
-    assert_eq!(record.judge().len(), 1024);
-    assert_eq!(record.time().durations.len(), 1024);
-    assert!(names.contains_key("diagnostics/exchange-1024"));
-    assert!(!names.contains_key("diagnostics/exchange-1025"));
+    assert_eq!(record.outcome().error.as_ref().unwrap().kind, "panic");
+    assert_eq!(record.models().len(), 1);
+    assert_eq!(record.models()[0].ended, RequestEnded::Unwound);
+    assert_eq!(record.time().durations.len(), 1);
+    let unanswered = Judged::Turn {
+        request: 0,
+        exchange: None,
+        max_output_tokens: 0,
+        messages: 0,
+        stop: None,
+        tool_calls: 0,
+        usage: None,
+        provider_id: None,
+        excluded: None,
+    };
+    assert_eq!(record.judge(), [unanswered]);
+    assert!(!names.keys().any(|name| name.contains("exchange")));
 }
 
 // --- the judge group --------------------------------------------------------------------------

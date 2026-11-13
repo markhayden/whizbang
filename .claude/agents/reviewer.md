@@ -105,8 +105,15 @@ A **follow-up** does not block.
 Name each follow-up plainly;
 the orchestrator records it, by `review-merge`, so that none is left only in your report.
 
-Three things about how you work. Try a mutation only in a scratch clone, never in the
-builder's worktree. The session's scratch folder may hold other work: make a folder of your
+Four things about how you work. Try a mutation only in a scratch clone, never in the
+builder's worktree. A mutant or a probe is run only through `just test-only` (which takes
+`-p <crate>` or `--package <crate>`, `--lib`, `--test <name>`, `-E <filter>`, `--no-capture`,
+`--no-fail-fast` and
+filter words, and refuses anything else), `scripts/heavy.sh` or `scripts/thread-guard.sh`,
+or as one script test alone, never a bare `cargo` command; no probe makes threads or
+processes until something fails, and a probe of the thread guard uses a limit under 10 and
+a child of at most 40 parked threads (`AGENTS.md`, "Gotchas": threads and processes). The
+session's scratch folder may hold other work: make a folder of your
 own in it, and remove only that. And when the one blocking finding is a false claim in the
 title or body, you are asked again once it is corrected: go through the text again and renew
 the verdict for the same head.

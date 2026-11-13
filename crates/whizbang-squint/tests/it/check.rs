@@ -696,7 +696,11 @@ impl Judge for Marking {
 }
 
 #[test]
-fn a_check_whose_end_the_store_refuses_at_any_step_is_not_reported_as_completed() {
+fn a_check_whose_end_is_refused_at_any_step_is_not_reported_as_completed_a_sweep_like_a_crash_at_any_event()
+ {
+    // (The name ends as it does so that this sweep runs one at a time with the crash
+    // sweeps, by the filter of `.config/nextest.toml`: it runs a store once for each
+    // step, and is slow beside them. Nothing here crashes.)
     // The calls of the run's end publication, counted on a run that nothing stops:
     // those from the judge's last answer on. Then the store refuses each in turn. The
     // answer is the store's failure and never a completed run; and what the store

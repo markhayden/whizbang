@@ -9,3 +9,15 @@ slow-timeout = { period = "30s", terminate-after = 1 }
 # One result file per run, read by scripts/timing.sh for the seconds-per-suite table.
 [profile.default.junit]
 path = "junit.xml"
+
+# The tests that crash a store before every step of something, and try every way the
+# disk can lose what was not yet durable, each do thousands of small file operations.
+# Run beside each other inside a full check on a busy machine they took 17 to 19
+# seconds each against the limit of 30, and 2 to 5 alone. They run one at a time, so
+# that they do not compete with each other; every other test still runs beside them.
+[test-groups]
+crash-sweeps = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'test(a_crash_inside_the_admission_step) | test(a_crash_at_any_event) | test(crashed_inside_its) | test(random_runs_of_publications)'
+test-group = 'crash-sweeps'

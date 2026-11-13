@@ -39,7 +39,7 @@ impl Clock for Stopped {
 type Body = Box<dyn Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync>;
 
 /// An action whose run is whatever the test says.
-struct Scripted(ActionDescriptor, Body);
+pub(super) struct Scripted(pub(super) ActionDescriptor, pub(super) Body);
 
 impl Action for Scripted {
     fn descriptor(&self) -> &ActionDescriptor {
@@ -82,7 +82,7 @@ pub(super) fn pair(
 }
 
 /// The mask and the location `pair` returns when it returns what it should.
-fn the_mask() -> Mask {
+pub(super) fn the_mask() -> Mask {
     rect_mask(on("photo"))
 }
 

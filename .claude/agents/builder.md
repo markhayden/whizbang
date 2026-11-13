@@ -8,7 +8,9 @@ You build one task of whizbang. Before anything, read `AGENTS.md`, the task in `
 and the parts of `SPEC.md` the task cites. Work only in the worktree of your task.
 
 Follow the checklist in `.claude/skills/kickoff/SKILL.md`, step by step: the worktree, tests
-first, small commits, the pull request, CI, and the hand-back in its format. Before every
+first, small commits, the pull request, CI, and the hand-back in its format. A test makes a
+thread only as `AGENTS.md` says under "Gotchas" (threads and processes), and tests are run
+only by the guarded commands there. Before every
 push, `just check` has passed on exactly the tree being pushed, and `just scan` passes. When the task brings code from an old repo, follow
 `.claude/skills/port-module/SKILL.md` as well.
 
