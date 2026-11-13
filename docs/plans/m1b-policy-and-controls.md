@@ -1,13 +1,13 @@
 # Plan: checkpoint 1B, policy and controls
 
-Draft 9, 2026-11-13. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the task
-list.
+Draft 11, 2026-11-13. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the
+task list.
 
-**Not yet ready to build from.** The fifth review round found two ways the ledger can
-count too little or cannot count at all (a damaged reservation whose amount is only in
-its content; a charge over its bound lost by the full-amount rule). They are recorded
-under "Review rounds" with a proposed resolution, for the owner to decide, and are not
-applied. S1, S1b, S5b, S6, S7, S7b and S12 wait for that decision.
+**Not yet ready to build from, in one place.** The sixth review round, on money alone,
+found two more structural holes in the ledger's names and arithmetic and two small ones
+that depend on them. They are under "Review rounds" with a proposed resolution and a
+recommendation, for the owner to decide. I2, S1, S1b, S5b, S6, S7 and S12 wait for it.
+Everything else has no open finding.
 
 Checkpoint 1A is nearly built: everything but its two proofs (A9, `grow`; A11, the
 scripted squint run) and its exit check (A12) is merged, and this draft is written from
@@ -186,18 +186,19 @@ the version that ran it is not known and is named as lost. What the run had alre
 published (its admission; nothing else is published before a run ends) stays as it is.
 For a request with an id, the id's ending is made, so a repeat is answered.
 
-**It settles the money, never under.** For every reservation that has no settlement and
-whose run is not open in this process (S6), run or no run:
+**It settles the money, never under.** "The ledger's names and arithmetic", below, is
+the rule. In short, for every reservation that has no settlement and whose run is not
+open in this process (S6), run or no run:
 
 - if every spend record under it can be read, and every request dispatched under it has
-  a settlement, the tree is charged what those settlements say and the rest is released;
-  a tree that dispatched nothing is charged nothing, because a dispatch record is
-  durable before a request leaves;
-- otherwise, whatever the reason (a dispatch with no settlement, a record that cannot be
-  read, anything that does not add up), the tree is charged its full reserved amount, as
-  interrupted;
-- a record under it that cannot be read also freezes that reservation: it stays at its
-  full amount until a person's command, and nothing of it is released by anything else.
+  a settlement, the tree is charged what those settlements say, and what the reservation
+  held beyond that is released; a tree that dispatched nothing is charged nothing,
+  because a dispatch is durable before a request leaves;
+- otherwise it is charged, as interrupted, the larger of its full amount and what is
+  known against it: its readable settlements and the bounds of its dispatches that have
+  none;
+- a record under it that cannot be read also freezes it: nothing of it is released until
+  a person's command.
 
 A child follows its root: the tree has one reservation, at the root, and nothing is
 given back to anyone by recovery. A person can correct a charge afterwards with
@@ -229,6 +230,81 @@ ended in error, interrupted, with what is lost; a repeat of its request, `status
 `NotAccepted(Ended)`. Where the admission itself could not be read, the questions by
 the run's id are answered so, and a request under its request id is answered with the
 error of an unreadable record.
+
+## The ledger's names and arithmetic
+
+Decided by the owner on 2026-11-13, after the fifth review round. I2 owns the names; S1's
+ADR writes the arithmetic; this section is what both are held to.
+
+**What a name says.** A name lives in the generation file, not in content, so it is
+there when content is damaged or pruned. The ledger's own names say what the money
+needs:
+
+| Name | Made | Says |
+|---|---|---|
+| `spend/held/<run>/<micros>` | By the ledger, in the admission's publication, for a run nothing called | That run's reservation and its amount |
+| `spend/dispatched/<run>/<n>/<by>/<micros>` | By the meter, before a request leaves | The reservation it draws on (the root's run), its place `n` under it from 1, the run that sent it, and its bound |
+| `spend/place/<run>/<n>` | By the meter, in the publication of dispatch `n` | Nothing but that place `n` under this reservation is taken: two dispatches that chose one place cannot both be published, whatever their bounds |
+| `spend/settled/<run>/<n>` | By the meter, when the request ends | Which dispatch it settles; the charge is in its content |
+| `spend/closed/<run>` | By the ledger, in the publication that ends the root's run, or by recovery | That the reservation is settled; the totals are in its content |
+| `spend/frozen/<run>`, `spend/adjusted/<run>/<k>` | By recovery; by a person's command, `k` from 1 | That the reservation is frozen; its `k`th correction |
+
+- **A strict grammar, parsed as untrusted.** A run is a `RunId` (ADR 0004); an amount
+  and a count are decimal digits with no leading zero, at most 20 and 10 of them; a name
+  is at most 200 characters (ADR 0007). A name under `spend/` that is not of one of
+  these forms, to the character, is damage, and is shown escaped and cut.
+- **Nothing secret is in a name:** a run's id is made by the executor, and the rest are
+  numbers.
+- **How it sits with ADR 0007.** The executor still makes `spend/reservations/<run>`,
+  whose content is `reservation/1`: the request, the admission's digest, the amount, the
+  start. That record remains the detail. The ledger's `held` name is the name ADR 0007
+  says a ledger makes in the step, now with a fixed form, and it is what the fold counts
+  from. Both are made in the one publication, so a generation has both or neither. The
+  name that keeps two admissions from both taking the last of the allowance is the
+  ledger's as before (`spend/turn/<n>`), and a dispatch's `place` name does the same
+  under one reservation.
+- **A damaged entry is one frozen reservation,** never a failure of the whole reading: a
+  `held` name whose reservation record is missing, unreadable or says another amount (the
+  larger of the two is taken); a dispatch or a settlement whose content cannot be read or
+  does not agree with its name; a name of no known form that names a run. Reading
+  reservations no longer fails as a whole when one cannot be read.
+
+**What a reservation counts for,** in the fold, at any moment:
+
+- *known against it* = the charges of its readable settlements, plus the bounds of its
+  dispatches that have no readable settlement;
+- *open* (no `closed` name): the larger of its amount and what is known against it;
+- *closed by its run's end*: what is known against it, which then is its settlements
+  alone, and unresolved ones at their bounds; what the amount held beyond that is
+  released;
+- *closed by recovery as interrupted*: the larger of its amount and what is known
+  against it, unless every dispatch has a readable settlement, when it is as a run's end;
+- *frozen*: the larger of its amount and what is known against it, whether or not every
+  dispatch has a settlement: damage rules out the release, and nothing lowers it but an
+  adjustment;
+- *adjusted*: what the last adjustment says, which is never less than its readable
+  settlements.
+
+What the store has left is its allowance less the sum of those, and never reads below
+nothing. So it is never more than the truth: every term is at least what was really
+charged.
+
+**A charge over its bound** is a fact, recorded and debited, not refused: the money is
+spent. This holds for a run that ends by itself as for one that is interrupted.
+
+- The settlement records the charge the answer gave, and that it was over.
+- In memory, the excess is taken from the allowance of the run that sent the request and
+  of each run above it, each down to nothing and no further. A run with nothing left
+  sends no further paid request and makes no further paid call.
+- A child gives back to its parent its share less what was charged or is unresolved
+  under it, when that is over nothing; a child whose charges passed its share gives
+  nothing back.
+- In the ledger, an open reservation counts for the larger of its amount and what is
+  known against it, so once the settlement is durable what is known has grown, and an admission made while the run still executes already sees
+  the allowance reduced; and at its end it is closed at its settlements, which may be
+  more than its amount.
+- A later admission is judged against what is left after all of that. Where the overrun
+  took the allowance to nothing, it is refused with `OverAllowance` until a reset.
 
 ## Rules every task's tests follow
 
@@ -279,7 +355,7 @@ task is not done while one that applies to it has no test.
 | Strand | Tasks | Owns | Starts after |
 |---|---|---|---|
 | Base (a line) | B0, B0b, B1, B1b, B2, B3, B4, B4b, I1 to I7 with I4b, and W1 at the end | The executor's files (`crates/whizbang-core/src/contract/`: `engine.rs`, `request.rs`, `prepare.rs`, `context.rs`, `ledger.rs`, `record.rs`, `live.rs`, `nested.rs`), `crates/whizbang-core/src/capability/`, the record's schema, `crates/whizbang-testkit/src/` but for the files named below, `crates/whizbang/src/wiring.rs`, `runs.rs` and `store.rs`, every root file | A12 |
-| Spend | S1 to S12 | `crates/whizbang-core/src/spend/` and `tests/it/spend/`; `crates/whizbang/src/spend.rs`; `crates/whizbang-testkit/src/spend.rs` | S1 and S1b after B1b; the rest after the interface each names |
+| Spend | S1 to S12 | `crates/whizbang-core/src/spend/` and `tests/it/spend/`; `crates/whizbang/src/spend.rs`; `crates/whizbang-testkit/src/spend.rs` | S1 and S1b after I2; the rest after the interface each names |
 | Config and secrets | C1 to C5 | `crates/whizbang-core/src/config/` and `tests/it/config/`; `crates/whizbang-core/src/contract/redact.rs` and its test; `docs/guides/config.md` | B0b; C4 after I6 |
 | Egress | E2, E3, E4, E6 | `crates/whizbang-core/src/egress/` beyond B2's types, and `tests/it/egress/` | I5 |
 | Models | M1 to M6b | `crates/whizbang-backends/`; `crates/whizbang-testkit/src/downloads.rs` | B2; M6 after I7 |
@@ -331,7 +407,7 @@ planned as two pull requests, the proofs second.
 | B4 `run/3` | Base | B3 | medium | 1 |
 | B4b A place for a run's facts | Base | B4 | small | 1 |
 | I1 A part in the admission | Base | B4b | small | 1 |
-| I2 The ledger's token, and its part in the end of a run | Base | I1 | small | 1 |
+| I2 The ledger's token and names, and its part in the end of a run | Base | I1 | medium | 1 |
 | I3 A wrapper around each request | Base | I2 | small | 1 |
 | I4 One way to a writer, with recovery before it | Base | I3 | medium | 2 |
 | I4b The interrupted record, and what readers say of it | Base | I4 | medium | 2 |
@@ -339,7 +415,7 @@ planned as two pull requests, the proofs second.
 | I6 One snapshot of the config | Base | I5 | small | 1 |
 | I7 An inventory, and a lease on an installation | Base | I6 | small | 1 |
 | W1 The binary wired | Base | S3, S8, S10, S7b, S12, E4, E6, C5, M6b | small | 1 |
-| S1 The ledger's records | Spend | B1b | small | 1 |
+| S1 The ledger's records | Spend | B1b, I2 | small | 1 |
 | S1b The fold | Spend | S1 | small | 1 |
 | S2 Reserving at admission | Spend | S1b, I2 | medium | 2 |
 | S3 The per-call cap, and a call's own | Spend | I6 | small | 1 |
@@ -382,7 +458,7 @@ planned as two pull requests, the proofs second.
 **What runs at the same time.** The base line is seventeen tasks, nearly all small, and one
 builder walks it. Beside it:
 
-- From B0b: C1, then C2; C3; X1; X2. From B1b: S1, S1b. From B2: M1 to M5c, the whole
+- From B0b: C1, then C2; C3; X1; X2. From I2: S1, S1b. From B2: M1 to M5c, the whole
   models strand but its last two tasks. From B3: S4.
 - From I1: S8. From I2: S2, then S9. From I6: S3. From I3: S5 and all that follows it in
   spend. From I4b: S6. From I5: the egress strand. From I6: C4. From I7: M6.
@@ -640,13 +716,17 @@ vectors of `request/1` and `prepared/1` are as they were; every test of `admit.r
 unchanged.
 **Size:** small.
 
-### I2. The ledger's token, and its part in the end of a run
+### I2. The ledger's token and names, and its part in the end of a run
 
 **Depends on:** I1. A section of the interfaces' ADR, which changes ADR 0007's interface
 and ADR 0008's allowance. **Reads:** `docs/carry-over.md`, the row on the ledger.
 
 - [ ] `Ledger::reserve` cannot return without having made its name: what it returns can
       only be had from `Step::make`. A name with an empty, `.` or `..` segment is refused.
+- [ ] The grammar of the ledger's names, as "The ledger's names and arithmetic" gives
+      it, as one parser in the core that every reader of a spend name uses, with the
+      `held` name required of every `reserve`. Reading reservations answers each entry
+      by itself, sound or damaged, and no longer fails as a whole.
 - [ ] `Ledger::settle`: called inside the publication that ends a run, for a run nothing
       called, with the run, its reservation and a way to add records made once. A failure
       of it is a failure of that publication: the run is not reported as ended.
@@ -663,10 +743,17 @@ does not compile, or is refused, as the section says which; a name with an empty
 `..` segment is refused; a `settle` that fails leaves the run admitted and its caller told
 of the failure; the pin test `known_a_name_that_was_made_can_still_be_replaced_by_put` is
 turned round, or kept with the reason; an amount given back to an allowance whose run has
-entered its commit step is dropped, not added; every test of `admit.rs`, `nested.rs` and
+entered its commit step is dropped, not added; an allowance debited past what it holds
+reads nothing left and not a negative amount; each form of name parses to its parts and
+back, and a name with a leading zero, a digit too many, a segment too many, a letter in
+an amount, 201 characters, or a run that is no `RunId` is refused, shown escaped and cut;
+a `reserve` that makes no `held` name, or one whose amount is not the reservation's, is
+refused; with one reservation's content damaged, the reading gives the others and that
+one as damaged with the amount its name states; every test of `admit.rs`, `nested.rs` and
 `commit.rs` passes against the fake as changed.
 **Carry-over:** the rows on "never removed" and `put`, and on the ledger (the token, the
-names). **Size:** small.
+names). **Size:** medium; if the branch passes 1,500 lines, the names' grammar and the
+reading are a second pull request.
 
 ### I3. A wrapper around each request
 
@@ -849,25 +936,23 @@ write, and not by one that reads; the shipped description does not change.
 
 ### S1. The ledger's records
 
-**Depends on:** B1b. **Reads:** ADR 0007, "The reservation"; ADR 0008, "Allowances";
+**Depends on:** B1b, I2 (the names). **Reads:** ADR 0007, "The reservation"; ADR 0008, "Allowances";
 squint `crates/squint-core/src/ledger.rs` (`Ledger`, `CapLedger`, `Account`, `Hold`,
 `Closing`) and `crates/squint-eval/src/eval_ledger.rs`; rascal
 `schemas/rascal/ledger-v1.json`.
 
-- [ ] An ADR, the ledger: its own records (an allowance set or reset, a dispatch, a
-      settlement, a release, an interruption, an adjustment) and their names under
-      `spend/`, each made once; that a dispatch names the run that sent it, the
-      reservation of the run at the root of its tree, and its bound; how the balances are folded from them and from the reservations; the name
-      every admission makes so that two cannot both take the last of the allowance; the
-      name every dispatch makes so that two requests under one reservation cannot both
-      take the last of it; what is done with a charge over its bound.
+- [ ] An ADR, the ledger: the content of each record whose name I2 fixed (an allowance
+      set or reset, a dispatch, a settlement, a closing, a freeze, an adjustment), and
+      the arithmetic of "The ledger's names and arithmetic", written out with a worked
+      history for each line of it.
 - [ ] The record types, written one way and read strictly, in
       `crates/whizbang-core/src/spend/`. Nothing uses them yet.
 
 **Done when** these pass: each record round-trips to the same bytes; a record over its
 bound is refused from its entry's length, before it is read; one with an unknown field, a
 missing field or an amount written a second way is refused; a refusal is escaped, cut and
-without a path (rule 3); a record whose name does not agree with what it holds is refused;
+without a path (rule 3); a record whose name does not agree with what it holds is damage to its reservation,
+not a refusal of the reading;
 every claim of the ADR about code that exists names its test (rule 5).
 **Size:** small.
 
@@ -880,11 +965,17 @@ every claim of the ADR about code that exists names its test (rule 5).
       under it.
 
 **Done when** these pass: the fold gives the stated balances for a table of histories that
-includes a reset, a release, an unresolved charge, an interruption at the full amount, a
-frozen reservation, an adjustment after each of those two, a
-charge over its bound and dispatches by a child under its root's reservation; a history
-with a record the fold cannot place (a settlement with no dispatch, two settlements of one
-dispatch) is refused, not summed; the fold reads records through names only, shown with
+has one history for each line of "What a reservation counts for", and these: a reset;
+an adjustment after an interruption and after a freeze; dispatches by a child under its
+root's reservation; reserve 10, dispatch two of 5, one settles at 12, and then each of
+the run ending, the run interrupted, and an admission made in between, which sees 17
+counted while the second is unsettled; a reservation whose content is damaged and whose
+run is deleted and pruned, counted at the amount its name states; an allowance driven
+below nothing by an overrun, which reads nothing left; a history
+with a record the fold cannot place (a settlement with no dispatch, two dispatches at one
+place) freezes the reservation its name gives and stops nothing else; reserve 10, settle
+every dispatch for 3 in all, damage the reservation's content: it counts 10; reserve 10,
+dispatch 5, settle at 6 with the run still open: it counts 10, not 6; the fold reads records through names only, shown with
 content in `objects/` that no name holds.
 **Size:** small.
 
@@ -962,7 +1053,9 @@ refused the same way; a run whose action catches such a refusal and then complet
 the refusal in its record, with what was refused and why; a free request to a local
 backend makes no record. Then: two requests of one run, each within what is left alone and
 not together, stopped after reading what is left and released together, end with one
-dispatch durable and one request at the fake (rule 1); `dispatch::a_crash_at_any_event…`
+dispatch durable and one request at the fake (rule 1); two requests that both fit, of
+different bounds, stopped after each chose its place and released together, end with two
+dispatches at two places, the second chosen again; `dispatch::a_crash_at_any_event…`
 leaves the record whole or absent, and nothing was sent without it (rule 2).
 **Size:** medium.
 
@@ -972,14 +1065,18 @@ leaves the record whole or absent, and nothing was sent without it (rule 2).
 `spent`); squint `crates/squint-core/src/ledger.rs` (`settle_with_unresolved`).
 
 - [ ] When a request ends, the meter settles it by the stage it reached, and gives back to
-      the run's allowance what the bound held beyond the charge. Not sent: nothing is
+      the run's allowance what the bound held beyond the charge; or, where the charge is
+      over the bound, takes the excess from the allowance of its run and of each run
+      above it, each down to nothing. Not sent: nothing is
       charged. Answered: the cost the answer gives, or the bound when it gives none.
       Unresolved, a timeout among them: the bound, counted as unresolved.
 
 **Done when** these pass: a request that succeeds with a charge under its bound is charged
 that, and the run can spend the difference on its next request; one that succeeds with
-none is charged its bound; one whose charge is over its bound is settled as S1's ADR says
-and marked as over; a fault at each of the three stages settles as stated, one test each;
+none is charged its bound; one whose charge is over its bound is settled at the charge and marked as over, its
+run and its parent each have that much less, a run left with nothing is refused its next
+paid request, and an admission by another executor made straight after sees the store's
+allowance reduced by it; a fault at each of the three stages settles as stated, one test each;
 a request that times out is charged its bound; a request whose first hop was handed data
 and whose second was refused is unresolved, not "not sent"; a settlement whose
 publication fails leaves the dispatch unsettled and the run abandoned (I3).
@@ -1007,7 +1104,9 @@ then retries and the race.
 - [ ] A run's own requests draw on its allowance: the meter's debit (S5) is what holds a
       parent that gave its children all it had from sending requests of its own.
 - [ ] When a child ends, what it did not use (its share less what its tree was charged or
-      holds unresolved) goes back to its parent's allowance while the parent runs (I2).
+      holds unresolved, when that is over nothing) goes back to its parent's allowance
+      while the parent runs (I2). A child whose charges passed its share gives nothing
+      back, and the excess was taken from each run above it when it was settled (S5b).
       Nothing is reserved in the ledger for a child, before or after.
 - [ ] A retry is a new attempt, held to what the run has left, with its own dispatch and
       settlement. Whoever issued the request issues the retry.
@@ -1019,7 +1118,9 @@ sent one after the child ended having used nothing; a parent that calls 20 child
 turn, each given half of what is left and using none, still has all of it at the end; a
 child that retries a failed request twice has three attempts, each settled by its own
 stage; a retry that what is left cannot hold is refused before dispatch; a retry asks the
-backend its run was admitted with and no other. Then: two children of one parent, stopped
+backend its run was admitted with and no other; a child given 5 whose one request settles
+at 12 gives nothing back, its parent and its grandparent each have 7 less, down to
+nothing, and the root's reservation is closed at what was charged. Then: two children of one parent, stopped
 after reading what the parent has left and released together, cannot both take the last
 of it, and two requests of two children cannot both take the last of the root's
 reservation (rule 1).
@@ -1033,8 +1134,8 @@ requests not debited). **Size:** medium.
 **Done when** these pass, each with a crash and the next open to write: a crash while a
 child is admitted, while a child's request is dispatched, while it is settled, and after a
 child ended and before its parent did; in each the root's reservation is settled once,
-at the settled total where every dispatch under it has its settlement and at the full
-amount otherwise, and never at less than the settlements that exist; the parent and the
+at its settlements where every dispatch under it has one and otherwise at the larger of
+its amount and what is known against it, a child's overrun before the crash included; the parent and the
 child are both ended as interrupted unless they had ended; a child that completed before
 the crash keeps its outputs and its record; the same with the parent deleted before the
 restart, where the ledger is settled, the child is ended, and no parent is made.
@@ -1099,7 +1200,13 @@ record and the parent's record names the child.
 
 - [ ] The real ledger implements `Ledger::settle` (I2): in the publication that ends a run
       nothing called, what the requests of its tree were charged is spent, what is
-      unresolved stays counted, and the rest is released.
+      unresolved stays counted, and the rest is released; a tree charged more than was
+      reserved is closed at what it was charged and releases nothing. A closing that releases needs a
+      durable settlement for every dispatch under the reservation, an unresolved one
+      charged at its bound among them; where one is missing, as after a child's failed
+      settlement or a backend's panic, the reservation is closed as interrupted in the
+      same publication, at the larger of its amount and what is known, with nothing
+      released.
 
 **Done when** these pass: a run that reserved ten and spent three leaves seven for the next
 call, with one test for each way a run ends: completed, error, invalid, a panic in its
@@ -1115,7 +1222,8 @@ call's end settles nothing in the ledger.
 **Done when** these pass: `end::a_crash_at_any_event…` leaves the run admitted with its
 reservation whole, or ended with its settlement (rule 2); two runs that end at once over
 one store, held at a barrier inside the ledger, are both settled and the balances count
-each once (rule 1); a settled reservation is never settled a second time, shown by ending
+each once (rule 1); a root whose child's settlement failed, and one whose child's backend panicked, each end
+with the reservation closed as interrupted and nothing released; a settled reservation is never settled a second time, shown by ending
 a run whose settlement is already named; a run whose end the store refused, which is
 abandoned, keeps its reservation unsettled and is not counted as released.
 **Size:** small.
@@ -1125,24 +1233,26 @@ abandoned, keeps its reservation unsettled and is not counted as released.
 **Depends on:** S11b, I4b. Two pull requests: the recovery's part; then its crash and
 damage proofs. A recovery's part (I4), in `spend/`.
 
-- [ ] For every reservation with no settlement whose run is not open in this process, the
-      rule of "What a crashed run is recovered to": the settled total when every record
-      under it reads and every dispatch has its settlement; the full reserved amount, as
-      an interruption, in every other case; and a freeze, at the full amount, when a
-      record under it cannot be read.
-- [ ] A frozen or interrupted reservation is counted in the fold at its full amount. No
-      other reservation and no unrelated call is refused because of it.
+- [ ] For every reservation that is not closed and whose run is not open in this process:
+      it is closed as "The ledger's names and arithmetic" says. At its settlements, with
+      the rest released, when every record under it reads and every dispatch has its
+      settlement; otherwise as interrupted, at the larger of its amount and what is known
+      against it; and frozen as well when an entry under it is damaged.
+- [ ] No other reservation and no unrelated call is refused because of a frozen or
+      interrupted one.
 
 **Done when** these pass: a process that died between dispatch and settlement leaves,
-after the next open to write, the reservation charged in full and nothing released; one
+after the next open to write, the reservation charged in full and nothing released; with reserve 10, two dispatches
+of 5 and one settled at 12, it is charged 17; one
 that died after every request was settled and before the run ended is charged the
 settled total and the rest is released; one that dispatched nothing is charged nothing;
 the fake counts no second request in any of them; the same three after the run was
-deleted and the store pruned before the restart; a run abandoned by a process that then
+deleted and the store pruned before the restart, and with the reservation's content
+damaged as well, where the amount is the one its name states; a run abandoned by a process that then
 ended is settled by the same rule. Then: `settle_interrupted::a_crash_at_any_event…`,
 followed by another open, settles each reservation once (rule 2); with a damaged
 dispatch, a damaged settlement and a damaged reservation planted, one at a time, that
-reservation is frozen at its full amount, every other is recovered, and a paid call that
+reservation is frozen at no less than its full amount, every other is recovered, and a paid call that
 the rest of the allowance covers is admitted; no history in a table of twenty, each a
 sequence of dispatches, settlements, damage and crashes, ends with less charged than its
 readable settlements say, or with a reservation both frozen and released.
@@ -1153,8 +1263,8 @@ readable settlements say, or with a reservation both frozen and released.
 **Depends on:** S9, S6.
 
 - [ ] `whizbang spend adjust <run> --charge <usd>`: for a reservation that recovery
-      interrupted or froze, a new record that sets what it is charged, from nothing to
-      its full amount, and releases the rest. It names the reservation by its run, says
+      interrupted or froze, a new record that sets what it is charged, from its readable settlements, as the least, to
+      the larger of its full amount and what is known against it, and releases the rest. It names the reservation by its run, says
       who would be asked nothing (there is no user), and records the time. The records
       it corrects stay. A reservation that is neither interrupted nor frozen is refused.
       A reset closes the books before it: an adjustment of a reservation made before the
@@ -1164,7 +1274,7 @@ readable settlements say, or with a reservation both frozen and released.
 **Done when** these pass: an interrupted reservation adjusted to a lower charge releases
 the difference and the next paid call can use it; a frozen one is unfrozen by its
 adjustment, and the damaged content is still in the store and still named; an adjustment
-over the reserved amount, of a settled reservation and of a run the store does not know
+below the reservation's readable settlements, one over what it counted for, of a settled reservation and of a run the store does not know
 are each refused; a second adjustment of the same reservation makes a second record and
 the fold takes the last; freeze, reset, then adjust to nothing leaves the new allowance
 as the reset set it; adjust, then reset starts from the reset's amount; an adjustment
@@ -1650,6 +1760,7 @@ missing acceptance cases, carry-over rows and tasks too large.
 | 3 | 2026-11-13 | 4 | 1 | 6 | 2 |
 | 4 | 2026-11-13 | 6 | 2 | 4 | 1 |
 | 5 | 2026-11-13 | 8 | 3 | 5 | 0 |
+| 6, money only | 2026-11-13 | 10 | 3 | 4 | 0 |
 
 **Round 1, and what changed in draft 3.**
 
@@ -1789,8 +1900,9 @@ Applied in draft 9, each small:
 - Major: S3 and S8 needed fields of the executor's that no base task added. I1 adds them.
 - Major: the spec was not assigned the recovery decision. B0b makes those edits.
 
-**Not applied: two blockers on money, each called structural, with what is proposed.**
-The owner asked that another structural blocker be handed back.
+**Two blockers on money, each called structural, and the owner's decision.** They were
+handed back with the proposals below; the owner accepted both on 2026-11-13, and draft
+10 applies them as "The ledger's names and arithmetic", owned by I2 and S1.
 
 1. *A damaged reservation may have no readable amount.* The amount of `reservation/1`
    is in its content (ADR 0007), and for a run that was deleted and pruned, with no
@@ -1810,9 +1922,60 @@ The owner asked that another structural blocker be handed back.
    below nothing, and a child whose charges passed its share gives nothing back; S1b
    and S7b gain that sequence and its nested form.
 
-Both are in the ledger's records and arithmetic (S1, S1b, S5b, S6, S7, S7b, S12) and
-change no interface task but I2's naming. They are best applied together, with one more
-round asked only the money question.
+Both are in the ledger's records and arithmetic (S1, S1b, S5b, S6, S7, S7b, S11, S12)
+and change no interface task but I2's naming.
+
+**Round 6, on draft 10, money only, and what changed in draft 11.** It was asked whether
+any path releases or under-counts money and whether the names and arithmetic cohere. It
+found these conservative as written: admission against admission, settlement under, at
+and over the bound before a later refund, cancellation, a refused end, the crash
+boundaries, recovery twice and unconfirmed, and both orders of reset and adjust. Its
+answers were still "yes" and "no".
+
+Applied in draft 11, each small:
+
+- Blocker: a child's failed settlement let its root close and release. A closing that
+  releases needs a durable settlement for every dispatch; otherwise it is closed as
+  interrupted (S11, S11b).
+- Major: two dispatches of different bounds could take one place. A `place` name is the
+  guard (the names' table, S5).
+- Major: three rules were stated two ways. Frozen is never lowered by the all-settled
+  exception; an open reservation counts the larger of its amount and what is known; a
+  history the fold cannot place freezes one reservation (the arithmetic, S1b).
+
+**Not applied: two structural blockers and two majors that hang on them, with what is
+proposed.**
+
+1. *Blocker: an overrun clamped at nothing forgets a debt.* Reserve 10, dispatch two of
+   5, the first settles at 12 and the allowance stays at 0, the second settles at 0 and
+   gives back 5: the run has 5 to spend after spending 12 against 10. Proposed: an
+   allowance holds a signed balance and reports what can be spent as never below
+   nothing; every return (an unused bound, a child's remainder, a share given back
+   after a refused admission) first pays the debt. I2 owns it.
+2. *Blocker: a damaged settlement loses its amount.* The charge is in the settlement's
+   content, so damage makes the fold fall back to the dispatch's bound, which an overrun
+   exceeded. Proposed: the settlement's name carries its charge
+   (`spend/settled/<run>/<n>/<micros>`), with `spend/place` style guard
+   `spend/settling/<run>/<n>` for uniqueness; an adjustment's floor uses those amounts.
+3. *Major: an admission can straddle an overrun settlement.* It judges on a generation
+   in which the settlement is not yet there, and no name of the two collides. Proposed:
+   a settlement over its bound also makes the next `spend/turn/<n>`, so an admission
+   that judged before it is refused by the store and asked again.
+4. *Major: the grammar is not whole.* It leaves out the executor's
+   `spend/reservations/<run>`, the `turn` names and the names of an allowance and a
+   reset, and nothing durable ties a reservation to the reset it falls under. Proposed:
+   I2's grammar lists every name a reader accepts apart from those `Step::make` may
+   make; a reset is `spend/reset/<k>/<micros>`, and a `held` name carries its epoch,
+   `spend/held/<k>/<run>/<micros>`.
+
+**A recommendation with them.** Six rounds have each gone one level deeper into a
+ledger that is being designed inside a plan. The findings are now of the kind a table
+of histories run as tests finds in minutes and prose review finds one at a time. It is
+proposed that the plan stop here on arithmetic: keep the invariants (never under; one
+closing; damage freezes one reservation; names carry every amount the fold needs), make
+I2 and S1 a design task whose ADR is reviewed together with a small executable model of
+the fold and a generated table of histories, the six rounds' sequences among them, and
+let that review, with code in hand, be where the arithmetic is settled.
 
 ## Risks
 
