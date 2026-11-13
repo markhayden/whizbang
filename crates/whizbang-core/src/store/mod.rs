@@ -1140,10 +1140,12 @@ impl Publication<'_> {
                 return Err(Error::NoSuchRun { run: run.clone() });
             }
         }
+        // The runs this publication deletes are gone from `generation` by now, so no
+        // case is left to exempt: a run that is there is a run that exists.
         if let Some(run) = self
             .created
             .iter()
-            .find(|run| !self.deleted.contains(*run) && generation.runs.contains_key(*run))
+            .find(|run| generation.runs.contains_key(*run))
         {
             return Err(Error::RunExists { run: run.clone() });
         }

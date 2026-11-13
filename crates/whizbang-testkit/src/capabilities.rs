@@ -46,7 +46,8 @@ pub enum Paint {
     Fails(Fault),
 }
 
-/// A fake filler. It declares the model `fake-filler` of the backend `fake`, and the
+/// A fake filler. It may be shared across threads: it holds a count and nothing else
+/// that changes. It declares the model `fake-filler` of the backend `fake`, and the
 /// feature `prompt` unless told otherwise.
 pub struct FakeFiller {
     declaration: Declaration,
@@ -113,7 +114,7 @@ impl Filler for FakeFiller {
     }
 }
 
-/// A fake segmenter. It declares the model `fake-segmenter` of the backend `fake`, and
+/// A fake segmenter. It may be shared across threads, as the filler may. It declares the model `fake-segmenter` of the backend `fake`, and
 /// the features `phrase`, `point` and `box` unless told otherwise.
 ///
 /// A phrase is answered with the boxes it was told to find for it, in the order it was
@@ -230,16 +231,27 @@ impl Segmenter for FakeSegmenter {
 }
 
 /// A fake judge: it plays a scripted transcript. Each request is answered with the
-/// next entry of the script, a turn or a fault, whatever the request holds; past the
-/// end it answers with a fault. It keeps every request it was sent.
+/// next entry of the script, a turn or a fault, whatever the request holds: it does not
+/// look at what it is asked, so a request the script's writer did not expect is
+/// answered like any other. Past the end of the script it answers with the fault
+/// `malformed`, and never panics. It keeps every request it was sent.
+///
+/// It may be shared across threads. Taking a request and playing the next entry are
+/// one step, so of many simultaneous requests each gets one entry, and the request
+/// kept in place `n` is the one that was answered with entry `n`.
 ///
 /// It declares the model `fake-judge` of the backend `fake`, and the features `image`
 /// and `tool` unless told otherwise. An opaque part in its script names the adapter
 /// [`FakeJudge::ADAPTER`], or the handle refuses the turn.
 pub struct FakeJudge {
     declaration: Declaration,
-    script: Mutex<VecDeque<Result<Turn, Fault>>>,
-    received: Mutex<Vec<JudgeRequest>>,
+    played: Mutex<Played>,
+}
+
+/// What is left of the script, and what was received, behind one lock.
+struct Played {
+    script: VecDeque<Result<Turn, Fault>>,
+    received: Vec<JudgeRequest>,
 }
 
 impl FakeJudge {
@@ -250,8 +262,10 @@ impl FakeJudge {
     pub fn scripted(script: Vec<Result<Turn, Fault>>) -> FakeJudge {
         FakeJudge {
             declaration: declaration("fake-judge", &[feature::IMAGE, feature::TOOL]),
-            script: Mutex::new(script.into()),
-            received: Mutex::new(Vec::new()),
+            played: Mutex::new(Played {
+                script: script.into(),
+                received: Vec::new(),
+            }),
         }
     }
 
@@ -263,17 +277,17 @@ impl FakeJudge {
 
     /// How many requests it was sent, answered or not.
     pub fn requests(&self) -> u64 {
-        lock(&self.received).len() as u64
+        lock(&self.played).received.len() as u64
     }
 
     /// Every request it was sent, in order.
     pub fn received(&self) -> Vec<JudgeRequest> {
-        lock(&self.received).clone()
+        lock(&self.played).received.clone()
     }
 
     /// How many entries of the script have not been played.
     pub fn remaining(&self) -> usize {
-        lock(&self.script).len()
+        lock(&self.played).script.len()
     }
 }
 
@@ -283,8 +297,9 @@ impl Judge for FakeJudge {
     }
 
     fn send(&self, request: &JudgeRequest, _: &Bounds) -> Result<Turn, Fault> {
-        lock(&self.received).push(request.clone());
-        lock(&self.script).pop_front().unwrap_or_else(|| {
+        let mut played = lock(&self.played);
+        played.received.push(request.clone());
+        played.script.pop_front().unwrap_or_else(|| {
             Err(Fault::new(
                 FaultKind::Malformed,
                 "the scripted transcript has no turn left",

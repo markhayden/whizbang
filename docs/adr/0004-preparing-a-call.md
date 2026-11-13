@@ -32,7 +32,11 @@ fingerprint's kind would change when `Backends` gained the choice, which it does
 Amended: 2026-11-12, with the second part of ADR 0006. Changed: prepare hands
 `Backends` the choice a call names, where the descriptor says which argument that is;
 the handles are the capability interfaces' and can be made; the count of zero requests
-on the capabilities is shown, and the ledger's half of that test still waits.
+on the capabilities is shown, and the ledger's half of that test still waits. The
+fingerprint stays `prepared/1`: no field was added and none changed its encoding, which
+the two fixed vectors show by being as they were; and a choice still changes the
+fingerprint, by the argument that holds it and by the model it resolves to
+(`prepare::the_backend_a_choice_resolves_to_is_part_of_what_a_preparation_saw`).
 Amended: 2026-11-12, with the last part of ADR 0006, which took the decision this record
 left to task A8. Changed: "Who may state a derivation". `Derivation::stated` is closed,
 a derivation is made only by `Derivation::checked`, and the trust boundary for prepare

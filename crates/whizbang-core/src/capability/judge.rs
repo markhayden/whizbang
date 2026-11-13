@@ -78,7 +78,9 @@ pub enum Role {
 }
 
 /// A part that only the adapter that made it reads: thinking, a signature, a reasoning
-/// item. Its body is the bytes the provider sent, as text. Whizbang never parses,
+/// item. Its body is the bytes the provider sent, as text: UTF-8, of 1 to [`TEXT_LIMIT`]
+/// bytes. A part over the limit is refused, never cut: an adapter that is sent one
+/// fails the turn with the fault `too_large`. Whizbang never parses,
 /// orders, trims or prints it again; it gives it back as it is. What `{:?}` prints of
 /// one is its adapter and its length.
 #[derive(Clone, PartialEq, Eq)]
@@ -608,9 +610,10 @@ pub struct Turn {
 
 impl Turn {
     /// A turn. Its parts are what an assistant says, at most [`PART_LIMIT`] of them:
-    /// text, tool calls and opaque parts, in the order the model wrote them. Refused: a
-    /// turn with nothing in it that ended or stopped for a tool; two tool calls with
-    /// one id; a turn that stopped for a tool and calls none.
+    /// text, tool calls and opaque parts, in the order the model wrote them, holding at
+    /// most [`CONVERSATION_LIMIT`] bytes of text in all. Refused: a turn with nothing in
+    /// it that ended or stopped for a tool; two tool calls with one id; a turn that
+    /// stopped for a tool and calls none.
     ///
     /// `usage` is none when the backend reported none, which is not the same as having
     /// used nothing. `request_id` is the provider's name for the exchange; it and
@@ -650,6 +653,15 @@ impl Turn {
                     });
                 }
             }
+        }
+        // A turn is said back as a message, so it holds no more than a conversation may.
+        let bytes: u64 = parts.iter().map(Part::bytes).sum();
+        if bytes > CONVERSATION_LIMIT {
+            return Err(Unfit::TooLarge {
+                what: "a turn, in bytes of text,",
+                size: bytes,
+                limit: CONVERSATION_LIMIT,
+            });
         }
         if stop == StopReason::ToolUse && ids.is_empty() {
             return Err(Unfit::NotAllowed {
