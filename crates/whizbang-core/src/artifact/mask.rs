@@ -334,8 +334,8 @@ impl Mask {
     /// pixel of the planes keeps its place. Anything else is refused: an image derived
     /// from some other image, and an image in another space of as many samples.
     ///
-    /// This checks the statement and trusts that it is true (ADR 0002): it does not see
-    /// either picture.
+    /// This checks the statement, and does not see either picture. Whoever made the
+    /// derivation did: one is made only by checking both ([`Derivation::checked`]).
     ///
     /// The rebound mask belongs to the derivation's binding, so it names both images; it
     /// has a new identity, the same planes, and one more step in its origin, whose inputs

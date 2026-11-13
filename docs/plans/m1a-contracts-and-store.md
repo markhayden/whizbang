@@ -312,7 +312,7 @@ check in `crates/rascal-mask/src/heal.rs`.
 - [x] The interfaces in `whizbang-core`; no implementation.
 - [x] `whizbang-testkit`: a fake segmenter, a fake filler that can repaint the whole image,
       and a fake judge that plays a scripted transcript.
-- [ ] `whizbang-rascal` is created with one pure function: composite a fill onto an image
+- [x] `whizbang-rascal` is created with one pure function: composite a fill onto an image
       under a mask.
 
 **Done when** these vectors pass: the fake filler repaints every pixel, and after compositing

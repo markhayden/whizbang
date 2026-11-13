@@ -7,7 +7,12 @@ would add to it. Added: "Judge"; "How a call names its choice"; "The fakes"; the
 trait and handle among what every capability shares; two consequences and three
 alternatives. Changed: the sentences that said the handles in an action's context were
 still empty, and that prepare handed resolution no choice.
-Spec: section 3, "Crates and their edges"; section 4, "Backends"
+Amended: 2026-11-12, with the third and last pull request of task A8. Added: "The
+composite"; "Who vouches for a derivation"; three consequences and four alternatives.
+Changed: the sentences that left the alpha of a filled picture, and the keeping of
+pixels outside the support, to this part.
+Spec: section 3, "Crates and their edges", "Identities" and "Storage"; section 4,
+"Backends"
 
 ## Context
 
@@ -51,11 +56,10 @@ What was read, at the commits `docs/sources.toml` pins:
 
 No capability runs in checkpoint 1A. Every backend is a fake from the test kit.
 
-**This record is merged in parts, with task A8's code.** The first part decided what
+**This record was merged in three parts, with task A8's code.** The first decided what
 every capability shares, faults, declarations, resolution, fill and segment. The second
-added the judge's interface, how a call names its choice, and the fakes. The composite
-of a fill, and who vouches for the derivation it states, come with the last pull request
-of the task, which adds its sections here with a dated note.
+added the judge's interface, how a call names its choice, and the fakes. The third added
+the composite of a fill, and who vouches for the derivation it states.
 
 ## Decision
 
@@ -277,15 +281,161 @@ whose support has nothing to paint: there is nothing to ask.
 - **Alpha.** There is none. A filler paints colour. A backend whose model returns an
   alpha channel drops it before it answers; a response of four bytes a pixel is refused
   by its length, and so is one of one byte a pixel. The alpha of the picture that comes
-  of a fill is the composite's to decide, in the last part of this record.
+  of a fill is the image's own ("The composite").
 - **Also refused:** a width or a height of 0; more than 50,000,000 pixels.
 
 A filler is not trusted to leave pixels alone (`SPEC.md` section 4). Nothing in this
-interface asks it to: what it returns outside the support is never read. Holding that is
-the composite's, in the last part of this record.
+interface asks it to: what it returns outside the support is never read. The composite
+holds that.
 
 A prompt is sent only to a filler that declares `prompt`. It is not dropped for one that
 does not: the request is refused as `unsupported`.
+
+### The composite
+
+`whizbang_rascal::composite::composite(image, fill, mask)` pastes a fill onto an image
+under a mask, and is the one place a filler's pixels enter a picture. It is a function
+of its three arguments and nothing else. The tests that hold it to this section are in
+`crates/whizbang-rascal/tests/it/composite.rs`.
+
+**What it takes.** The image as a `Picture`; the fill as a `Painted`; a mask. Refused,
+each as a type with a sentence:
+
+- a mask that does not belong to the image, by canonical pixel digest (ADR 0002), or
+  whose space is not the image's size (`WrongImage`);
+- a fill of other dimensions than the image (`FillSize`). Nothing is resized.
+
+It takes no support plane. The support is the mask's (`Support::of`, above), and the
+composite reads the three planes it was made from, which the mask's type keeps valid. A
+support plane with a value outside its range cannot be made, so none reaches a request
+or a composite.
+
+**What each pixel becomes.** The result starts as a copy of the image's bytes. Then for
+each pixel, by the mask's planes there:
+
+| Protect | Core | Blend | Red, green and blue | Alpha |
+|---|---|---|---|---|
+| not 0 | any | any | the image's | the image's |
+| 0 | not 0 | any | the fill's | the image's |
+| 0 | 0 | `b`, 1 to 255 | the mix below, for each channel | the image's |
+| 0 | 0 | 0 | the image's | the image's |
+
+The first and the last row are every pixel whose effective weight is 0: every protected
+pixel, and every pixel outside the support. No arithmetic is done on them. Their four
+bytes are the image's, so they are exactly the original, whatever the filler painted
+there.
+
+**The mix.** For one channel, with `o` the image's byte, `f` the fill's byte and `b` the
+blend's byte, all whole numbers from 0 to 255:
+
+```
+out = ((255 - b) * o + b * f + 127) div 255
+```
+
+where `div` is division of whole numbers that drops the remainder. The sum is at most
+65,152, so it fits in 32 bits without wrapping, and `out` is from 0 to 255.
+
+- This is the nearest whole number to `(1 - w) o + w f` with `w = b / 255`, the mask's
+  rule for a weight (ADR 0002).
+- **There is no tie, so there is no rounding rule to choose.** The exact mix is `N / 255`
+  for the whole number `N = (255 - b) o + b f`. A value half way between two whole
+  numbers, `k + 1/2`, would need `2 N = 255 (2 k + 1)`: an even number equal to an odd
+  one. So the nearest whole number is always one number, and adding 127 before the
+  division finds it: a remainder of 128 or more goes up, one of 127 or less goes down.
+- A blend of 255 gives the fill, as the core does; a blend of 0 would give the image,
+  and such a pixel is not touched at all.
+- **Colour space.** The bytes mixed are the stored ones: sRGB values of eight bits, as
+  canonical pixels hold them (ADR 0001) and as a fill returns them. They are not turned
+  into linear light first.
+- **Alpha.** Straight, as canonical pixels are, and not multiplied in: a colour is mixed
+  the same way whatever the alpha of its pixel.
+
+It gives, for every `o`, `f` and `b`, the byte rascal's `feather` paste gave
+(`crates/rascal-ops/src/paste.rs`: per channel in 32-bit floating point,
+`(1 - w) base + w fill`, rounded and clamped); a test goes through all 16,711,680 cases
+with a blend of 1 to 255.
+
+**One half.** A blend is a count of 255ths, so no blend is exactly one half. The two
+nearest are 128 and 127. Under either, an image's 100 and a fill's 200 give 150; an
+image's 0 and a fill's 255 give 128 at 128 and 127 at 127; an image's 10 and a fill's 21
+give 16 at 128 and 15 at 127.
+
+**A transparent pixel of the image** is treated as any other pixel, and its alpha is
+never changed. In the core, the colour under it becomes the fill's, and it stays as
+transparent as it was; under a blend, the colour under it is mixed as stored; outside the
+support it is untouched, the hidden colour included. A fill has no alpha to give, and a
+composite never makes a pixel more or less transparent: an image with a transparent
+background keeps its outline through a fill.
+
+**What it returns.** The picture, as canonical pixels; how many pixels were read from
+the fill; and the derivation of the picture from the image, below. The composite does
+not encode a file and makes no artifact: the action that calls it does.
+
+**Protected pixels never change** (`SPEC.md` section 3) is held twice. The composite
+copies every pixel whose weight is 0. Then the core compares the result with the image
+under the mask, when it makes the derivation; were a pixel of weight 0 to differ, there
+would be no derivation and the composite would fail with `NotPreserved`. That second
+check is rascal's preservation check (`crates/rascal-mask/src/heal.rs`,
+`preservation_check`), which ended every heal; here it cannot fail unless this code is
+wrong, and no test reaches it through the composite.
+
+### Who vouches for a derivation
+
+ADR 0002 left a boundary open, and ADR 0004 handed this task two questions about it.
+
+**A derivation is made only by looking at the pictures.** `Derivation::checked(parent,
+derived, mask)` is the one way to make one. It is given the image, the picture said to
+be made from it, and a mask that belongs to the image, and it checks that:
+
+- the mask belongs to `parent`, and both pictures are the size of the mask's space;
+- the two are not the same picture, which would derive nothing;
+- every pixel the mask weighs 0, outside its core and its blend or under its protect, is
+  the same four bytes in both. Any that differ are counted, and the refusal says how
+  many and where the first is.
+
+Where the mask's weight is over 0 the pictures may differ in any way. The derivation it
+returns holds the binding that places `derived` onto `parent` by the identity in the
+mask's space, as before; it adds nothing to that binding and has no identity of its own.
+
+`Derivation::stated`, which took a binding at its word, is no longer open: nothing
+outside its module can call it. So the rebind's old boundary, "it trusts that the
+statement is true" (ADR 0002), is closed where it could be: a derivation cannot be
+stated of two unrelated pictures of one size. The test that pinned the old boundary,
+`rebind::a_derivation_is_trusted_to_be_true`, is replaced by its refusal:
+`rebind::a_derivation_is_made_only_of_two_pictures_that_differ_inside_a_mask_alone`.
+
+- **The composite states the derivation of the picture it made,** by that check, against
+  the mask it was given. When the picture is the image unchanged it states none: a mask
+  on the image is already a mask on the picture.
+- **A derivation is about two pictures, not about one mask.** Any mask on `parent`, in
+  the space of the mask it was checked with, may be rebound through it: a protect mask
+  used on the result of a fill made through another mask, which is the ordinary case.
+- **It is a comparison of the pictures after all.** ADR 0002 turned down a rebind that
+  compares the two pictures outside the mask being rebound, because that refuses the
+  ordinary case just named and decodes two pictures at every rebind. This check does
+  neither: it is made once, where a composite is made and both pictures are in memory,
+  against the mask the composite was made through.
+
+**The trust boundary for prepare is the maker's statement.** Of the two decisions ADR
+0004 offered, this record takes the first. Prepare does not ask for a record that the
+executor or the composite wrote; it accepts a mask on the image its binding's source
+names, and a mask is the statement of whoever made it.
+
+- A mask made by hand, with `Mask::from_core` or as a file brought in by `whizbang store
+  import`, on a binding that places one image onto another by the identity, is accepted
+  on the first image. The old pin, rewritten with `Mask::from_core`, holds this, and
+  shows that no derivation of the two pictures can be made:
+  `prepare::a_mask_made_by_hand_on_an_image_placed_onto_another_is_taken_at_its_makers_word`.
+- The other decision was turned down because it would guard nothing. A rebound mask and
+  the mask made by hand on the same binding are one artifact with one identity (ADR
+  0004), so a record kept beside an artifact would be a second statement about it that
+  the artifact does not hold, that does not travel with its file, and that a store
+  which imported the mask would not have.
+- What is guaranteed does not rest on where a mask came from: a mask is used only on the
+  image its binding's source names, and whatever mask a composite is given, on whatever
+  image, every pixel it weighs 0 comes out as it went in. A mask made by hand on the
+  wrong image protects the wrong places; it cannot make a protected pixel of that image
+  change.
 
 ### Segment
 
@@ -457,6 +607,16 @@ asks is built from what the same fakes declare.
   did not change.
 - A call can name a backend only where its action's descriptor names the argument for
   it. An action whose need names none always gets the default.
+- A fill cannot change a pixel outside its mask's support or under its protect, whatever
+  the filler returned, and a picture cannot be called derived from an image it does not
+  match there.
+- Rebinding a mask needs the derivation, and a derivation exists only where a composite
+  was just made. An action that fills and returns its mask on the result rebinds it then
+  (ADR 0003, `rebound_onto`). Nothing can rebind a mask onto a stored composite later;
+  no action of checkpoint 1A needs to.
+- The composite pastes by the mask's weight and in no other way. Rascal's `hard` and
+  `poisson` pastes, and a fill pasted back through a crop or a wrapped cut, are not
+  here (`docs/carry-over.md`).
 - A judge adapter must keep the exact text of each part it will be handed back. An
   adapter that parses a response and writes the part again does not keep it whole.
 - Reversing this costs every backend, every fake and every action that asks a
@@ -489,6 +649,18 @@ asks is built from what the same fakes declare.
   heard of. The core names only those its own requests need.
 - **One request and response shape for all three,** with the capability as a field.
   Turned down by `SPEC.md` section 4.
+- **Mix in linear light.** Turned down: rascal's paste mixed the stored values, its
+  results were judged on that, and the blend zone is a few pixels of feather; a change
+  of the mix is a change to measure, not one to make in passing.
+- **Mix in floating point, as rascal did.** Turned down: the same bytes come of whole
+  numbers, and a sum of whole numbers needs no statement of an order of operations or
+  of a rounding mode to be the same on every machine.
+- **Let the fill decide the alpha where it painted,** making a filled pixel opaque.
+  Turned down: a fill has no alpha, an image with a transparent background would grow
+  an opaque patch, and rascal kept the base's alpha.
+- **Have the composite take a support plane and weights instead of a mask.** Turned
+  down: the planes would have to be checked against each other again, which the mask's
+  type has done, and the derivation is checked against a mask.
 - **Keep an opaque part as a JSON value,** as squint did. Turned down: the bytes that
   come out depend on a JSON library's ordering of keys and printing of numbers, and a
   provider's part may be signed over its bytes.

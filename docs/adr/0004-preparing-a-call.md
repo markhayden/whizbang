@@ -33,6 +33,11 @@ Amended: 2026-11-12, with the second part of ADR 0006. Changed: prepare hands
 `Backends` the choice a call names, where the descriptor says which argument that is;
 the handles are the capability interfaces' and can be made; the count of zero requests
 on the capabilities is shown, and the ledger's half of that test still waits.
+Amended: 2026-11-12, with the last part of ADR 0006, which took the decision this record
+left to task A8. Changed: "Who may state a derivation". `Derivation::stated` is closed,
+a derivation is made only by `Derivation::checked`, and the trust boundary for prepare
+is the maker's statement; the prepare test of a moved mask is rewritten with
+`Mask::from_core` under a new name.
 Spec: section 3, "The execution contract", "Identities" and "Storage"; section 6,
 "Readiness"
 
@@ -234,18 +239,21 @@ the binary gives the digest of no bytes.
 
 ### Who may state a derivation
 
-Code may; no caller can.
+The composite does, by checking the two pictures; no caller can, and since the last
+part of ADR 0006 no other code can either.
 
 - **A call has no place for one.** Nothing that arrives through a door can state a
   derivation or ask for a rebind. A mask given as an input is used on the image at the
   port it belongs to, or refused (step 5).
-- **`Derivation::stated` stays open to code,** for one reason: nothing else makes a
-  derivation yet. The one thing that should is the fill composite (task A8), which sees
-  both pictures and can check that every protected pixel and every pixel outside the
-  support is the original. Until then a mask that code moved with a false statement names
-  the image it was moved onto, and prepare accepts it there; a test pins this
-  (`prepare::a_mask_rebound_by_a_stated_derivation_is_still_taken_at_its_word`), beside
-  the one ADR 0002 names (`rebind::a_derivation_is_trusted_to_be_true`).
+- **`Derivation::stated` is closed.** It stayed open to code while nothing else made a
+  derivation. The fill composite now does (ADR 0006), through `Derivation::checked`,
+  which sees both pictures and refuses unless every protected pixel and every pixel
+  outside the support is the original; nothing outside the derivation's module can
+  state one from a binding alone. A mask can still be made by hand on a binding that
+  places one image onto another, and prepare accepts it on the first; a test pins this
+  (`prepare::a_mask_made_by_hand_on_an_image_placed_onto_another_is_taken_at_its_makers_word`).
+  The test ADR 0002 named, of a derivation taken at its word, is replaced by the refusal
+  (`rebind::a_derivation_is_made_only_of_two_pictures_that_differ_inside_a_mask_alone`).
 - **A mask made by hand is the statement of whoever made it.** A mask made directly on an
   image, by `Mask::from_core` or as a file brought in with `whizbang store import`, is
   accepted on that image, and its origin says how it was made. Whizbang cannot tell a good
@@ -253,21 +261,20 @@ Code may; no caller can.
 - **A rebound mask and a mask made by hand can be one artifact.** A derivation holds a
   binding and adds nothing to it, and an origin is not part of an identity. So a mask made
   with `Mask::from_core` directly on the binding that places a second image onto the first
-  by the identity has the same identity as the first image's mask rebound through
-  `Derivation::stated`, and its origin has no `rebind` step. A test pins the equality
+  by the identity has the same identity as the first image's mask rebound through a
+  derivation of the second from the first, and its origin has no `rebind` step. A test pins the equality
   (`prepare::a_mask_made_by_hand_on_a_derivations_binding_is_the_rebound_mask`), and
   prepare accepts either on the second image.
 
 What holds, then, is this and no more: **a mask is used only on the image its binding's
 source names.** It does not hold that a mask names a second image only through a rebind,
-nor that its origin records one. Closing `Derivation::stated` in task A8 closes one way of
-making such a mask, in the API; it does not make prepare refuse the artifact, and the
-prepare test above cannot be inverted by it. Only the rebind's own test can. What the
-executor could add is a record it wrote itself, of the composite and the derivation it
-checked, which a mask made by hand cannot have. Task A8 decides between the two, and the
-row on `docs/carry-over.md` states them: the trust boundary is the maker's statement, and
-the prepare test is rewritten with `Mask::from_core` and stays accepted; or prepare
-requires that record for a mask whose binding places its image onto another.
+nor that its origin records one. Closing `Derivation::stated` closed one way of making
+such a mask, in the API; it does not make prepare refuse the artifact. Two decisions were
+open to task A8: the trust boundary is the maker's statement, and the prepare test is
+rewritten with `Mask::from_core` and stays accepted; or prepare requires, for a mask
+whose binding places its image onto another, a record the executor wrote itself, of the
+composite and the derivation it checked, which a mask made by hand cannot have. ADR 0006
+took the first ("Who vouches for a derivation"), and says why.
 
 ### The run id
 
@@ -342,9 +349,10 @@ known case that does not, and it goes with rascal's recipes to milestone 3
 - `Context` and `Outcome` are shapes read from section 3. One fake action, `echo`, uses
   them (ADR 0005); the proofs of checkpoint 1A may still change them, and the plan says a
   proof is never bent to fit.
-- Closing `Derivation::stated` later changes every test that states one. The vectors of
-  rebound masks do not change: a derivation holds a binding and adds nothing to it. For
-  the same reason it does not change what prepare accepts (above).
+- Closing `Derivation::stated` changed every test that stated one. The vector of a
+  rebound mask did not change: a derivation holds a binding and adds nothing to it, and
+  the vector is now made by hand on that binding. For the same reason closing it did not
+  change what prepare accepts (above).
 
 What this record does not decide: an estimate; admission, request ids and reservations;
 an action's commit step and cancellation. Executing an action, the run record and how a
