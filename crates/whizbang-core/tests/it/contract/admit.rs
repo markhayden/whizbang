@@ -16,11 +16,12 @@ use whizbang_core::contract::{
     Refusal, Registry, Request, RequestId, RequestRecordError, Requirement, RunState, Secrets,
     Unavailable, Value, ValueType, request_fingerprint,
 };
+use whizbang_core::contract::{ConfigSource, InputFault, InputPort, Readiness, Stale};
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::{Fs, RealFs};
 use whizbang_core::store::{self, Reader, Store};
 use whizbang_testkit::echo::Echo;
-use whizbang_testkit::fs_shim::{Lost, ShimFs};
+use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
 use whizbang_testkit::scratch::Scratch;
 
 use super::redact::made_up_key;
@@ -1307,7 +1308,24 @@ fn a_stored_record_of_a_request_that_is_not_one_is_refused_and_nothing_runs() {
     store.delete(&[finished.run().as_str()]).unwrap();
     plant("requests/order-21/ended", ENDING.as_bytes());
     record_refused("order-21", "another request or another run");
-    assert_eq!(world.ran(), 2);
+    // The same, with an ending that names the id and another run than the id's.
+    let finished = ran(engine.request(&asked("hello", "order-22")));
+    store.delete(&[finished.run().as_str()]).unwrap();
+    let elsewhere = ENDING
+        .replace("order-17", "order-22")
+        .replace("7000-1", "9999-9");
+    assert_ne!(finished.run().as_str(), "9999-9");
+    plant("requests/order-22/ended", elsewhere.as_bytes());
+    record_refused("order-22", "another request or another run");
+    assert_eq!(world.ran(), 3);
+    // An ending under an id that was never admitted: the id is not free, or its
+    // action would run and its end then be refused.
+    plant(
+        "requests/order-30/ended",
+        ENDING.replace("order-17", "order-30").as_bytes(),
+    );
+    record_refused("order-30", "an ending and no admission");
+    assert_eq!(world.ran(), 3);
 }
 
 // --- a secret as an id ---------------------------------------------------------------------------
@@ -1375,4 +1393,627 @@ fn a_request_that_is_refused_or_not_ready_records_no_id() {
     ));
     assert_eq!(held(&world.root(), world.fs.clone()), (0, vec![], vec![]));
     ran(world.engine(store).request(&asked("hello", "order-17")));
+}
+
+// --- the estimate, and a preparation handed to admission -----------------------------------------
+
+/// Backends whose one model, and what it states as its bound, the test can change.
+struct Priced {
+    version: Mutex<Option<String>>,
+    bound: AtomicU64,
+}
+
+impl Priced {
+    fn new(bound: u64) -> Arc<Priced> {
+        Arc::new(Priced {
+            version: Mutex::new(Some("1".to_owned())),
+            bound: AtomicU64::new(bound),
+        })
+    }
+}
+
+impl Backends for Priced {
+    fn resolve(
+        &self,
+        _: Capability,
+        _: Option<&str>,
+        _: &[String],
+    ) -> Result<ModelIdentity, Unavailable> {
+        match self.version.lock().unwrap().as_deref() {
+            Some(version) => Ok(ModelIdentity::new("fake", "fake-filler", version)),
+            None => Err(Unavailable::new("the filler was taken away")),
+        }
+    }
+
+    fn bound(&self, _: Capability, _: &ModelIdentity) -> u64 {
+        self.bound.load(Ordering::SeqCst)
+    }
+}
+
+/// A config that the test can change.
+struct Config(Mutex<Digest>);
+
+impl ConfigSource for Config {
+    fn digest(&self) -> Digest {
+        *self.0.lock().unwrap()
+    }
+}
+
+/// `retouch`: takes an image and a text, and needs a filler and a judge.
+fn retouch(runs: &Arc<AtomicU64>) -> Arc<dyn Action> {
+    let descriptor = ActionDescriptor::draft("retouch", "1.0.0", Kind::Primitive, "A test action.")
+        .argument(Argument::required("text", "A text.", ValueType::Text))
+        .input(InputPort::required(
+            "image",
+            whizbang_core::artifact::ArtifactType::Image,
+            "The image.",
+        ))
+        .needs(Requirement::new(Capability::Fill))
+        .needs(Requirement::new(Capability::Judge))
+        .build()
+        .unwrap();
+    Arc::new(Paint {
+        descriptor,
+        runs: runs.clone(),
+        body: Box::new(|_, _| Ok(Produced::nothing())),
+    })
+}
+
+/// A world with two photographs in its store, and an executor with `retouch` over
+/// backends and a config the test can change.
+struct Shop {
+    world: World,
+    store: Arc<Store>,
+    backends: Arc<Priced>,
+    config: Arc<Config>,
+    engine: Engine,
+    photo: ArtifactId,
+    other: ArtifactId,
+}
+
+fn shop() -> Shop {
+    use crate::artifact::support::{image_of, photo, png};
+    let other_photo = || png(|x, y| [(y * 40) as u8, (x * 30) as u8, 7, 255]);
+    use whizbang_core::artifact::{self, Artifact, ImageRole};
+    let world = World::new();
+    let store = world.store();
+    let first = Artifact::from(image_of(photo(), ImageRole::Picture));
+    let second = Artifact::from(image_of(other_photo(), ImageRole::Picture));
+    let mut publication = store.begin().unwrap();
+    let photo = artifact::put(&mut publication, &first).unwrap();
+    let other = artifact::put(&mut publication, &second).unwrap();
+    publication.publish().unwrap();
+    let backends = Priced::new(250_000);
+    let config = Arc::new(Config(Mutex::new(Digest::of_bytes(b"config"))));
+    let mut registry = Registry::new();
+    registry.register(retouch(&world.runs)).unwrap();
+    let engine = Engine::over(
+        registry,
+        backends.clone(),
+        store.clone(),
+        Digest::of_bytes(b"unused"),
+    )
+    .with_config(config.clone())
+    .with_clock(Arc::new(Stopped(7000)));
+    Shop {
+        world,
+        store,
+        backends,
+        config,
+        engine,
+        photo,
+        other,
+    }
+}
+
+impl Shop {
+    fn call(&self, image: ArtifactId) -> Call {
+        Call::new("retouch")
+            .argument("text", Value::text("hello"))
+            .input("image", image)
+    }
+
+    /// The store's generation and its runs: what an admission would change.
+    fn state(&self) -> (u64, usize, usize) {
+        let generation = self.store.snapshot().unwrap();
+        (
+            generation.number(),
+            generation.entries().len(),
+            generation.runs().len(),
+        )
+    }
+
+    /// The request is refused as stale for this reason, and nothing came of it: no run,
+    /// no name in the store, no action run, and the id it came with still free.
+    #[track_caller]
+    fn refused_as_stale(&self, request: Request, why: Stale) {
+        let before = self.state();
+        let request = request.with_id(id("order-17"));
+        let refused = self.engine.request(&request).unwrap_err();
+        assert_eq!(
+            refused,
+            CallError::Refused(Refusal::Stale {
+                action: "retouch".to_owned(),
+                why,
+            })
+        );
+        assert_eq!(self.state(), before);
+        assert_eq!(self.world.ran(), 0);
+        assert!(
+            self.store
+                .snapshot()
+                .unwrap()
+                .get(&id("order-17").admission_name())
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn prepare_returns_an_estimate_with_readiness_and_it_is_not_in_the_fingerprint() {
+    let shop = shop();
+    let prepared = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    assert_eq!(prepared.readiness(), &Readiness::Ready);
+    // Two needs, each answered by a model that states a bound of a quarter of a dollar.
+    assert_eq!(prepared.estimate().micros(), 500_000);
+    // The same models stating another bound: the same fingerprint, another estimate.
+    shop.backends.bound.store(1, Ordering::SeqCst);
+    let cheaper = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    assert_eq!(cheaper.estimate().micros(), 2);
+    assert_eq!(cheaper.fingerprint(), prepared.fingerprint());
+    // A need that nothing answers adds nothing, and the call is not ready.
+    *shop.backends.version.lock().unwrap() = None;
+    let unready = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    assert!(matches!(unready.readiness(), Readiness::NotReady(_)));
+    assert_eq!(unready.estimate().micros(), 0);
+    // Backends that state no bound cost nothing, and a sum that would overflow is the
+    // largest amount there is, not a small one.
+    let world = World::new();
+    let free = world.engine(world.store()).prepare(&call("hello")).unwrap();
+    assert_eq!(free.estimate().micros(), 0);
+    *shop.backends.version.lock().unwrap() = Some("1".to_owned());
+    shop.backends.bound.store(u64::MAX, Ordering::SeqCst);
+    let most = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    assert_eq!(most.estimate().micros(), u64::MAX);
+    // Preparing wrote nothing.
+    assert_eq!(shop.state(), (1, 2, 0));
+}
+
+#[test]
+fn a_preparation_that_still_holds_is_admitted_and_runs() {
+    let shop = shop();
+    let prepared = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    let request = Request::new(shop.call(shop.photo)).expecting(&prepared);
+    assert_eq!(request.expected(), Some(&prepared));
+    let finished = ran(shop
+        .engine
+        .request(&request.clone().with_id(id("order-17"))));
+    assert_eq!(shop.world.ran(), 1);
+    // The run was admitted with the fingerprint the caller held.
+    let generation = shop.store.snapshot().unwrap();
+    let admission = admitted(&generation, finished.run().as_str(), |e| shop.store.read(e));
+    assert_eq!(
+        admission.unwrap().unwrap().prepared(),
+        prepared.fingerprint()
+    );
+    // The run ended: the store no longer counts it among those it has open.
+    assert!(!shop.store.made_here(finished.run().as_str()));
+    // Without an id, the same.
+    ran(shop.engine.request(&request));
+    assert_eq!(shop.world.ran(), 2);
+}
+
+#[test]
+fn a_preparation_is_refused_at_admission_when_the_input_changed() {
+    // An input is named by the digest of its content, so it cannot change under a
+    // preparation. What can: the preparation the caller holds is of the call with
+    // another input.
+    let shop = shop();
+    let prepared = shop.engine.prepare(&shop.call(shop.other)).unwrap();
+    let request = Request::new(shop.call(shop.photo)).expecting(&prepared);
+    shop.refused_as_stale(request, Stale::Inputs);
+}
+
+#[test]
+fn a_preparation_is_refused_at_admission_when_its_input_is_no_longer_in_the_store() {
+    // Or the input is gone: the store that the call is admitted against does not hold
+    // it. Here the caller prepared against another store, which did.
+    let shop = shop();
+    let prepared = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    let elsewhere = World::new();
+    let mut registry = Registry::new();
+    registry.register(retouch(&elsewhere.runs)).unwrap();
+    let empty = Engine::over(
+        registry,
+        shop.backends.clone(),
+        elsewhere.store(),
+        Digest::of_bytes(b"config"),
+    );
+    let request = Request::new(shop.call(shop.photo))
+        .expecting(&prepared)
+        .with_id(id("order-17"));
+    let refused = empty.request(&request).unwrap_err();
+    let CallError::Refused(Refusal::Stale { action, why }) = &refused else {
+        panic!("{refused:?}");
+    };
+    assert_eq!(action, "retouch");
+    let Stale::Refused(now) = why else {
+        panic!("{why:?}");
+    };
+    assert!(
+        matches!(
+            &**now,
+            Refusal::Input {
+                fault: InputFault::Missing,
+                ..
+            }
+        ),
+        "{now:?}"
+    );
+    assert!(
+        refused.to_string().starts_with(
+            "retouch was not admitted: the preparation it came with is stale: the call is \
+             refused now: retouch: the input image: the store holds no image "
+        ),
+        "{refused}"
+    );
+    assert_eq!(
+        held(&elsewhere.root(), elsewhere.fs.clone()),
+        (0, vec![], vec![])
+    );
+    assert_eq!(elsewhere.ran(), 0);
+}
+
+#[test]
+fn a_preparation_is_refused_at_admission_when_the_config_changed() {
+    // The config is read again at admission, not only when the executor was built.
+    let shop = shop();
+    let prepared = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    *shop.config.0.lock().unwrap() = Digest::of_bytes(b"another config");
+    let request = Request::new(shop.call(shop.photo)).expecting(&prepared);
+    shop.refused_as_stale(request.clone(), Stale::Config);
+    let said = shop.engine.request(&request).unwrap_err().to_string();
+    assert_eq!(
+        said,
+        "retouch was not admitted: the preparation it came with is stale: the config \
+         changed since"
+    );
+    // Prepared again under the config as it is, the same call is admitted, under the
+    // id the stale request did not take.
+    let again = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    assert_ne!(again.fingerprint(), prepared.fingerprint());
+    let request = Request::new(shop.call(shop.photo)).expecting(&again);
+    ran(shop.engine.request(&request.with_id(id("order-17"))));
+    assert_eq!(shop.world.ran(), 1);
+}
+
+#[test]
+fn a_preparation_is_refused_at_admission_when_the_model_identity_changed() {
+    let shop = shop();
+    let prepared = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    // The model that would answer has another version now.
+    *shop.backends.version.lock().unwrap() = Some("2".to_owned());
+    let request = Request::new(shop.call(shop.photo)).expecting(&prepared);
+    let fill = Stale::Model {
+        capability: Capability::Fill,
+    };
+    shop.refused_as_stale(request.clone(), fill.clone());
+    // Or nothing answers any more: that is a stale preparation, said before the call
+    // is said not to be ready.
+    *shop.backends.version.lock().unwrap() = None;
+    shop.refused_as_stale(request, fill);
+    // A preparation that was itself not ready, and still is not, is refused as not
+    // ready: nothing about it is stale.
+    let unready = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    let request = Request::new(shop.call(shop.photo)).expecting(&unready);
+    assert!(matches!(
+        shop.engine.request(&request),
+        Err(CallError::Refused(Refusal::NotReady { .. }))
+    ));
+    assert_eq!(shop.world.ran(), 0);
+}
+
+#[test]
+fn a_preparation_is_refused_at_admission_when_it_is_of_another_call_or_its_bound_changed() {
+    let shop = shop();
+    let prepared = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    let other = shop
+        .call(shop.photo)
+        .argument("text", Value::text("goodbye"));
+    shop.refused_as_stale(Request::new(other).expecting(&prepared), Stale::Call);
+    // The same models under the same config state another bound: what would be
+    // reserved is not what the caller was shown.
+    shop.backends.bound.store(300_000, Ordering::SeqCst);
+    let request = Request::new(shop.call(shop.photo)).expecting(&prepared);
+    shop.refused_as_stale(request.clone(), Stale::Estimate);
+    // A lower bound is another bound too.
+    shop.backends.bound.store(200_000, Ordering::SeqCst);
+    shop.refused_as_stale(request, Stale::Estimate);
+}
+
+#[test]
+fn a_repeat_is_answered_before_its_preparation_is_looked_at() {
+    // The id is looked up first: the same request again is answered with its run even
+    // when the preparation it comes with has gone stale.
+    let shop = shop();
+    let prepared = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
+    let request = Request::new(shop.call(shop.photo))
+        .expecting(&prepared)
+        .with_id(id("order-17"));
+    let finished = ran(shop.engine.request(&request));
+    *shop.config.0.lock().unwrap() = Digest::of_bytes(b"another config");
+    assert_eq!(repeat(shop.engine.request(&request)).run(), finished.run());
+    assert_eq!(shop.world.ran(), 1);
+}
+
+#[test]
+#[ignore = "a measurement, not a check: about a minute, and half a gigabyte"]
+fn measure_what_preparing_and_admitting_one_large_input_costs() {
+    // `docs/carry-over.md` asked for the cost of decoding an image input at prepare
+    // and again at admission, with a figure. One input at the default limit of
+    // 50,000,000 pixels; run with `--ignored --nocapture`, in the profile to be measured.
+    use std::io::Cursor;
+    use std::time::Instant;
+    use whizbang_core::artifact::{self, Artifact, Image, ImageRole, Origin, Step};
+    use whizbang_core::identity::{DecodeLimits, Projection, Topology};
+    let picture = image::RgbaImage::from_fn(8000, 6250, |x, y| {
+        image::Rgba([(x % 251) as u8, (y % 241) as u8, ((x ^ y) % 239) as u8, 255])
+    });
+    let mut file = Vec::new();
+    picture
+        .write_to(&mut Cursor::new(&mut file), image::ImageFormat::Png)
+        .unwrap();
+    drop(picture);
+    let image = Image::new(
+        file,
+        Projection::Flat,
+        Topology::Bounded,
+        ImageRole::Picture,
+        Origin::new(Step::new("import", "1")).unwrap(),
+        &DecodeLimits::default(),
+    )
+    .unwrap();
+    let world = World::new();
+    let store = Arc::new(Store::open(&world.root(), Arc::new(RealFs)).unwrap());
+    let mut publication = store.begin().unwrap();
+    let id = artifact::put(&mut publication, &Artifact::from(image)).unwrap();
+    publication.publish().unwrap();
+    let mut registry = Registry::new();
+    registry.register(retouch(&world.runs)).unwrap();
+    let engine = Engine::over(registry, Arc::new(OneModel), store, Digest::of_bytes(b""));
+    let call = Call::new("retouch")
+        .argument("text", Value::text("hello"))
+        .input("image", id);
+    let start = Instant::now();
+    let prepared = engine.prepare(&call).unwrap();
+    let preparing = start.elapsed();
+    let start = Instant::now();
+    ran(engine.request(&Request::new(call).expecting(&prepared)));
+    let admitting = start.elapsed();
+    println!("prepare: {preparing:?}; request, which prepares again: {admitting:?}");
+}
+
+// --- follow-ups of the first review --------------------------------------------------------------
+
+#[test]
+fn a_repeat_is_not_answered_from_another_run_that_took_the_deleted_runs_id() {
+    // A run's id is free again once the run is deleted, and a later process can give it
+    // to another run. The id's record names the run by its id, so the run that holds
+    // that id now is taken for the request's only when it holds the very admission the
+    // id's record is: otherwise the request's run is gone, and the ending answers.
+    let world = World::new();
+    let store = world.store();
+    let engine = world.engine(store.clone());
+    let failing = Request::new(call("hello").argument("fail", Value::text("no paint left")))
+        .with_id(id("order-17"));
+    let failed = ran(engine.request(&failing));
+    let other = engine.submit(&call("something else")).unwrap();
+    assert_eq!(other.outcome(), &completed());
+    // The other run's admission and record, as a later process would have written them
+    // had it named its run as the first was named.
+    let (old, new) = (other.run().as_str(), failed.run().as_str());
+    assert_eq!(old.len(), new.len());
+    let generation = store.snapshot().unwrap();
+    let theirs = generation.run(old).unwrap();
+    let renamed: Vec<(String, Vec<u8>)> = theirs
+        .entries()
+        .iter()
+        .map(|(name, entry)| {
+            let text = String::from_utf8(store.read(entry).unwrap()).unwrap();
+            let named = format!(r#""run":"{old}""#);
+            (
+                name.clone(),
+                text.replace(&named, &format!(r#""run":"{new}""#))
+                    .into_bytes(),
+            )
+        })
+        .collect();
+    store.delete(&[new]).unwrap();
+    let mut publication = store.begin().unwrap();
+    publication.create_run(new).unwrap();
+    for (name, bytes) in &renamed {
+        publication
+            .put_in(new, name, store::Kind::Diagnostic, bytes)
+            .unwrap();
+    }
+    publication.publish().unwrap();
+    // The store holds a completed run under the id of the failed one.
+    let generation = store.snapshot().unwrap();
+    let record = record::stored(&generation, new, |e| store.read(e))
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.outcome().status, Status::Completed);
+
+    let earlier = repeat(engine.request(&failing));
+    assert_eq!(earlier.run(), failed.run());
+    assert_eq!(
+        earlier.state(),
+        &RunState::Removed {
+            ended: Some(Status::Error)
+        }
+    );
+    // The same when the run that took the id holds no admission at all.
+    store.delete(&[new]).unwrap();
+    let mut publication = store.begin().unwrap();
+    publication
+        .put_in(new, "notes", store::Kind::Diagnostic, b"x")
+        .unwrap();
+    publication.publish().unwrap();
+    assert_eq!(
+        repeat(engine.request(&failing)).state(),
+        &RunState::Removed {
+            ended: Some(Status::Error)
+        }
+    );
+    assert_eq!(world.ran(), 2);
+}
+
+#[test]
+fn an_admission_that_was_visible_and_not_confirmed_takes_the_id_and_never_runs() {
+    // The last sync of the admission's publication is refused: the run is visible, the
+    // caller is told of the store's failure, and the action does not start. The id is
+    // taken all the same: the same request again is answered with that run, not ended,
+    // and another request under the id is a conflict.
+    let world = World::new();
+    let store = world.store();
+    let engine = world.engine(store);
+    let root = world.root();
+    world.fs.refuse_matching(
+        0,
+        move |event| matches!(event, Event::SyncDir(dir) if *dir == root),
+    );
+    let refused = engine.request(&asked("hello", "order-17")).unwrap_err();
+    assert!(
+        refused.to_string().contains("not confirmed durable"),
+        "{refused}"
+    );
+    assert_eq!(world.ran(), 0);
+    let earlier = repeat(engine.request(&asked("hello", "order-17")));
+    assert_eq!(earlier.state(), &RunState::NotEnded { here: true });
+    assert!(matches!(
+        engine.request(&asked("goodbye", "order-17")),
+        Err(CallError::Refused(Refusal::Conflict { .. }))
+    ));
+    assert_eq!(world.ran(), 0);
+}
+
+#[test]
+fn a_request_id_is_made_from_text_through_the_executor_which_shows_no_secret() {
+    // A door hands the executor the text a caller gave. Text that holds a secret is
+    // refused before anything of it is shown, whether or not it would be an id; other
+    // text that is no id is refused with what it was, escaped and cut.
+    let key = made_up_key("");
+    let world = World::new();
+    let engine = world
+        .engine(world.store())
+        .with_secrets(Secrets::new([key.clone()]).unwrap());
+    for held in [key.clone(), format!("not an id {key}"), format!("{key}/..")] {
+        let refused = engine.request_id(&held).unwrap_err();
+        assert_eq!(refused, CallError::Refused(Refusal::SecretInRequestId));
+        assert!(!format!("{refused} {refused:?}").contains(&key));
+    }
+    let refused = engine.request_id("not an id").unwrap_err();
+    let CallError::Refused(Refusal::NotARequestId { why }) = &refused else {
+        panic!("{refused:?}");
+    };
+    assert!(why.contains("\"not an id\" is no request id"), "{why}");
+    assert_eq!(&refused.to_string(), why);
+    assert_eq!(engine.request_id("order-17").unwrap(), id("order-17"));
+}
+
+/// The real file system, which runs a hook once, before the first read of stored
+/// content after it was armed: between a look-up's snapshot and its first record.
+struct Between {
+    inner: RealFs,
+    hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Fs for Between {
+    fn create_dir(&self, path: &Path) -> std::io::Result<()> {
+        self.inner.create_dir(path)
+    }
+    fn write_new(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        self.inner.write_new(path, bytes)
+    }
+    fn sync_dir(&self, path: &Path) -> std::io::Result<()> {
+        self.inner.sync_dir(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        self.inner.rename(from, to)
+    }
+    fn remove_all(&self, path: &Path) -> std::io::Result<()> {
+        self.inner.remove_all(path)
+    }
+    fn read(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+        if path.parent().is_some_and(|dir| dir.ends_with("objects")) {
+            let hook = self.hook.lock().unwrap().take();
+            if let Some(hook) = hook {
+                hook();
+            }
+        }
+        self.inner.read(path)
+    }
+    fn list(&self, path: &Path) -> std::io::Result<Vec<PathBuf>> {
+        self.inner.list(path)
+    }
+    fn exists(&self, path: &Path) -> std::io::Result<bool> {
+        self.inner.exists(path)
+    }
+    fn hold_lock_file(
+        &self,
+        path: &Path,
+        create: bool,
+    ) -> std::io::Result<Option<Box<dyn store::fs::LockFile>>> {
+        self.inner.hold_lock_file(path, create)
+    }
+    fn share(&self, path: &Path) -> std::io::Result<Box<dyn store::fs::Held>> {
+        self.inner.share(path)
+    }
+    fn try_alone(&self, path: &Path) -> std::io::Result<Option<Box<dyn store::fs::Held>>> {
+        self.inner.try_alone(path)
+    }
+}
+
+#[test]
+fn a_repeat_that_races_the_end_of_its_run_is_not_told_the_run_will_never_end() {
+    // The repeat takes its snapshot while the run executes. Before it reads the id's
+    // record, the run ends: its end is published and the store forgets the run. The
+    // snapshot shows a run with no record, and the store no longer says it made it;
+    // the answer must not be that the run's process is gone.
+    let dir = Scratch::new("admit-race");
+    let fs = Arc::new(Between {
+        inner: RealFs,
+        hook: Mutex::new(None),
+    });
+    let store = Arc::new(Store::open(&dir.path().join("store"), fs.clone()).unwrap());
+    let runs = Arc::new(AtomicU64::new(0));
+    let (started, has_started) = mpsc::channel::<()>();
+    let (release, released) = mpsc::channel::<()>();
+    let (started, released) = (Mutex::new(started), Mutex::new(released));
+    let held = paint_with(&runs, move |_, _| {
+        started.lock().unwrap().send(()).unwrap();
+        released.lock().unwrap().recv().unwrap();
+        Ok(Produced::nothing())
+    });
+    let first = engine(store.clone(), vec![held]);
+    let second = engine(store.clone(), vec![paint(&runs)]);
+    let (ended, has_ended) = mpsc::channel::<()>();
+    std::thread::scope(|scope| {
+        let running = scope.spawn(|| {
+            let finished = ran(first.request(&asked("hello", "order-17")));
+            ended.send(()).unwrap();
+            finished
+        });
+        has_started.recv().unwrap();
+        *fs.hook.lock().unwrap() = Some(Box::new(move || {
+            release.send(()).unwrap();
+            has_ended.recv().unwrap();
+        }));
+        let earlier = repeat(second.request(&asked("hello", "order-17")));
+        let finished = running.join().unwrap();
+        assert!(fs.hook.lock().unwrap().is_none(), "the hook never ran");
+        assert_eq!(earlier.run(), finished.run());
+        assert_eq!(earlier.state(), &RunState::Ended(completed()));
+    });
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
 }

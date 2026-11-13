@@ -46,6 +46,10 @@ Amended: 2026-11-12, with ADR 0007, which looks a request id up and admits a run
 Changed: the executor has a third method, `request`, and the look for a request id is
 built; a `CallError` has a third kind, a record of a request that this build does not
 read; a read of the store can also give a record the executor wrote.
+Amended: 2026-11-12, with the second part of ADR 0007. Changed: prepare returns an
+estimate, which is not in the fingerprint; `Backends` has a second question, the bound;
+the config's digest is read each time a call is prepared; and comparing a preparation
+with the call prepared again is done, at admission.
 Spec: section 3, "The execution contract", "Identities" and "Storage"; section 6,
 "Readiness"
 
@@ -179,7 +183,8 @@ Prepare is given two things. Through neither can it make a durable change.
   until it is dropped, so that a prune leaves the generation it last read and what that
   names. Nothing durable changes by it. The empty generation has no file and is not
   shared.
-- **`Backends`**, one question: which model would answer this capability, for a call
+- **`Backends`**, two questions. What would using this capability cost at most with
+  this model (ADR 0007, "The estimate")? And: which model would answer this capability, for a call
   that chose this backend or chose none, with these features? It is meant to be answered
   from what is configured (ADR 0006, "Resolution").
 
@@ -242,11 +247,13 @@ what is bound and what an action is handed do not differ by a sign.
 - A need that nothing answers is hashed as such, so ready and not ready are two
   preparations.
 
-Preparing the same call again and comparing fingerprints is how a stale preparation is
-found. This record does not decide when that is done: admission is task A6.
+Preparing the same call again and comparing is how a stale preparation is found. It is
+done at admission, part by part, so that the refusal says what differs (ADR 0007, "A
+preparation handed to admission").
 
-The config's digest is given to the executor when it is built. There is no config yet, so
-the binary gives the digest of no bytes.
+The config's digest is read each time a call is prepared (`ConfigSource`). An executor
+built with a digest has that one config for as long as it lives. There is no config
+yet, so the binary gives the digest of no bytes.
 
 ### Who may state a derivation
 
@@ -366,7 +373,8 @@ known case that does not, and it goes with rascal's recipes to milestone 3
   the vector is now made by hand on that binding. For the same reason closing it did not
   change what prepare accepts (above).
 
-What this record does not decide: an estimate; admission, request ids and reservations;
+What this record does not decide: an estimate, admission and request ids, which are ADR
+0007's; reservations;
 an action's commit step and cancellation. Executing an action, the run record and how a
 run id is minted are ADR 0005's.
 

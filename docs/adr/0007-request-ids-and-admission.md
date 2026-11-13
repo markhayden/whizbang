@@ -2,6 +2,17 @@
 
 Status: accepted
 Date: 2026-11-12
+Amended: 2026-11-12, with the second pull request of task A6. Added: "The estimate" and
+"A preparation handed to admission", which are built; the paragraph of "Admission" that
+listed the second part now lists only what is still to come, the ledger and the
+reservation. The task is delivered in three pull requests, not two. And from the review
+of the first: a run is the id's only when it holds the id's own admission, so a run id
+used again after a delete does not answer for another request; an ending without an
+admission is a record this build does not read; text is made an id through the
+executor, which looks for a secret before it shows anything; the store forgets a run it
+made once the run is closed or deleted. Corrected: a panicked run stays admitted after
+the process ends too. Added to the consequences: what every publication costs as ids
+accumulate; a repeat answered from a generation not yet confirmed; `.` and `..` as ids.
 Spec: section 3, "The execution contract", "Storage" and "What every run records";
 section 6, "Spend"
 
@@ -30,15 +41,15 @@ What there was to build it on:
   wants the same request answered with its run after the config changed, without
   preparing anything.
 
-Task A6 of the plan for checkpoint 1A is delivered in two parts. This record decides
-both, and says of each sentence below which part builds it. **The first part, which this
+Task A6 of the plan for checkpoint 1A is delivered in parts. This record decides
+all of them, and says of each sentence below which part builds it. **The first part, which this
 record came with, builds:** the id, the fingerprint of a request, the two records, the
 look before prepare, the admission that makes the run and the id's record in one step,
 the end of a run as a second step, and what a repeat is answered with. **The second part
-builds:** the estimate, a prepared call handed to admission and checked again, the
-ledger and the reservation. Until it merges, "Admission" below is true without its
-paragraph on the second part, and the lines that paragraph names are on
-`docs/carry-over.md`.
+builds:** the estimate, and a prepared call handed to admission and checked again.
+**The third part builds:** the ledger and the reservation. Until it merges, "Admission"
+below is true without its paragraph on what is still to come, and the lines that
+paragraph names are on `docs/carry-over.md`.
 
 The code is in `crates/whizbang-core/src/contract/` (`request.rs`, `engine.rs`) and
 `crates/whizbang-core/src/store/mod.rs`; the tests that hold it to this record are in
@@ -58,9 +69,13 @@ two records below, and the run record's `identity.request`. So:
 - it is held to that alphabet where it is made (`RequestId::parse`), and nothing in it
   needs escaping in a name, on a command line or in JSON. A refusal shows what was
   refused escaped, its first 64 characters at most, and its length when it was longer;
-- an id that holds a secret the executor was told of (one that redaction would change)
-  is refused before anything is looked up (`Refusal::SecretInRequestId`), and the refusal
-  does not show it. Redaction is by value (ADR 0005): an id that holds a key the
+- text becomes an id through the executor (`Executor::request_id`), which looks for the
+  secrets it was told of in the text as it was given, before the text is parsed: text
+  that holds one is refused (`Refusal::SecretInRequestId`) and none of it is shown,
+  whether or not it would have been an id. `RequestId::parse` itself knows no secret,
+  and its refusal shows up to 64 characters of what it refused: it is for text that
+  did not come from a caller. An id that reaches `request` is checked again, before
+  anything is looked up. Redaction is by value (ADR 0005): an id that holds a key the
   executor was not told of is stored;
 - a run record whose `request` is a text that is no request id is refused on reading,
   and the record's schema holds it to the two lengths (the alphabet is one more thing
@@ -153,7 +168,12 @@ Without an id it is `Executor::submit`. With one, in order:
 
 1. An id that holds a secret is refused.
 2. The id is looked up in the current generation, by its name. Nothing else has
-   happened: the action has not been found, no input read, no backend asked.
+   happened: the action has not been found, no input read, no backend asked. The
+   generation is the one that is visible, which a publication whose last sync is still
+   to come may have made: a repeat can be answered from an admission that is not yet
+   confirmed durable, and a loss of power then takes the admission and the answer's
+   run with it. The first request was not answered in that case, so no caller was
+   promised that run twice.
 3. Found, with the same fingerprint: the answer is `Answer::Repeat`, the run the first
    request made and where that run is now (below). Nothing is prepared, nothing runs,
    nothing is written.
@@ -172,7 +192,17 @@ strictly, and held to name that id; an ending, to name that id and that run; a r
 record, as ADR 0005 reads it. One that fails is `CallError::Record`, which says which
 record and why, with what it quotes escaped and cut, and no path. It is not a refusal of
 the call and not a failure of the store's files, and nothing runs: the id is neither
-free nor answered until the record is put right.
+free nor answered until the record is put right. An ending under an id that has no
+admission is such a record too: were the id taken as free, its action would run and its
+end then be refused.
+
+**Which run is the id's.** The id's record names its run by the run's id, and a run's
+id is free again once the run is deleted: a later process, whose count starts again,
+can give it to another run. So the run the store holds under that id is taken for the
+request's only when its own `admitted` entry has the digest of the id's record, which
+were published as the same bytes. Any other run under that id is another request's:
+the request's run is gone, and the answer is `Removed`, from the ending
+(`admit::a_repeat_is_not_answered_from_another_run_that_took_the_deleted_runs_id`).
 
 ### Admission
 
@@ -200,11 +230,9 @@ The action runs only after the publication is durable. A refusal, and a call tha
 not ready, happen before it and record no id: the id stays free for the request once it
 can run.
 
-**The second part of the task adds to this step,** and until it merges none of this
-paragraph is built. Prepare returns an estimate with its readiness. Admission is handed
-what was prepared, prepares the call again, and refuses the request as stale, with no
-run and nothing reserved, when the two differ in an input, the config or a model. The
-reservation is a record the ledger writes into the same publication, under a name
+**The third part of the task adds to this step,** and until it merges none of this
+paragraph is built. The reservation, of the estimate below, is a record the ledger
+writes into the same publication, under a name
 outside runs that is made once; the ledger of this checkpoint is a fake that takes part
 in the step and counts, and the real one is checkpoint 1B's. The admission and the run
 record then name what was reserved, which is the shared step to `run/2` (ADR 0005).
@@ -212,11 +240,89 @@ What happens to a reservation when its run fails, or when the process dies betwe
 admission and the end, is settlement, and is checkpoint 1B's (`SPEC.md` section 6:
 after a crash, what was dispatched and not settled is charged at its bound).
 
+### The estimate
+
+Prepare returns, with readiness, an `Estimate`: the most the call may cost, in
+millionths of a US dollar. It is the sum of what the backends state as the bound of each
+capability the call needs and something answers (`Backends::bound`, asked with the
+capability and the model that would answer); a need that nothing answers adds nothing,
+and a sum past the largest amount is the largest amount. It is answered from what is
+configured, like resolution: nothing is sent and nothing is written.
+
+No backend has a price before the ledger of checkpoint 1B, so `Backends::bound` answers
+nothing unless an implementation says otherwise, and every estimate the binary can make
+today is zero. A test's backends state a bound. Which of a backend's numbers is an
+enforceable bound, and the refusal of a paid request that has none (`SPEC.md` section
+6), are checkpoint 1B's.
+
+The estimate is not in the fingerprint `prepared/1`, which stays as ADR 0004 gives it:
+its two fixed vectors are as they were. Admission compares the estimate beside it.
+
+### A preparation handed to admission
+
+A `Request` may come with the preparation its caller was shown
+(`Request::expecting`). It is the `PreparedCall` itself, not its fingerprint alone, so
+that a refusal can say what differs. After the look for the id, the call is prepared
+again, under the config and the backends as they are then, and the request is refused
+with `Refusal::Stale`, before any run exists and with nothing published, when the two
+differ. `Stale` says how, as the first of:
+
+- `Call`: the preparation is of another action, version or arguments;
+- `Inputs`: of other inputs, or the same in another order;
+- `Config`: the config's digest changed;
+- `Model`, with the capability: another model would answer it, or none would;
+- `Estimate`: the same models under the same config state another bound;
+- `Refused`, with the refusal: the call no longer prepares at all, as when an input is
+  not in the store it is admitted against.
+
+Each of the input, the config and the model has a test of its own, which also finds the
+store as it was, no action run, and the request's id still free
+(`admit::a_preparation_is_refused_at_admission_when_the_input_changed` and the three
+beside it).
+
+What follows from the rest of the design, and is stated so that it is not taken for a
+gap:
+
+- **An input cannot change under a preparation.** It is named by the digest of its
+  content (ADR 0004). What can happen is that the caller's preparation is of other
+  inputs, or that the input is no longer readable. Missing from the store, it is
+  `Stale::Refused`. With its content damaged or gone from the disk under a name the
+  store still holds, preparing again fails as the store's failure (`CallError::Store`),
+  which is not a judgement of the preparation; no run is made then either.
+- **Staleness is said before readiness.** A call whose model was taken away since is
+  refused as stale, not as not ready. A preparation that was not ready and still is not
+  is refused as not ready.
+- **The look comes first.** The same request again under its id is answered with its
+  run even when the preparation it comes with has gone stale
+  (`admit::a_repeat_is_answered_before_its_preparation_is_looked_at`).
+- **A request without a preparation is still taken.** `Executor::submit`, and a
+  `Request` that expects nothing, are prepared once, at admission, and run if ready.
+  Nothing can be stale where nothing was shown. Whether a door must always hand over a
+  preparation is the door's decision.
+- **The config is read when a call is prepared,** each time, through `ConfigSource`,
+  and so at admission (`Engine::with_config`). An executor built with a digest alone
+  has a config that never changes, which is what the binary has until there is a config.
+- **The window that is left.** Between the second preparation and the admission's
+  publication nothing holds the config or the backends still. What is recorded with the
+  run is the second preparation: the admission's `prepared` and the run record are of
+  what was seen at admission.
+
+**What it costs.** Admission prepares again, and prepare decodes every image input (ADR
+0004). One input of 50,000,000 pixels, the default limit, measured on the machine this
+was written on, in the release profile: 0.64 seconds to prepare, and 0.70 seconds for a
+request that came with that preparation, which prepares again and publishes twice; in
+the unoptimised profile, 9.8 seconds each
+(`admit::measure_what_preparing_and_admitting_one_large_input_costs`, ignored). The
+cost stays: the check of an input at admission is what makes an input that is gone a
+refusal before a run exists, and keeping decoded pixels from a preparation to its
+admission would hold some 200 MB for every preparation a caller has not yet acted on.
+
 ### The end of a run is a second publication
 
 When the action is over, one publication adds the journal, the diagnostics and the
 record to the run, and, for a request with an id, makes `requests/<id>/ended`. It says
-the run must be there (`Publication::extend_run`): a run that was deleted while it
+the run must be there (`Publication::close_run`, which is `extend_run` for a run's last
+names): a run that was deleted while it
 executed is not made again from its last names; the publication is refused with
 `NoSuchRun` and the caller is told of the store's failure. The run is reported after
 this publication is durable, as before.
@@ -244,16 +350,24 @@ admission, and "whole" is one of the two states.
 
 No run is cancelled yet, so `Ended` with `Cancelled` is read and never written.
 
+An executor that writes the store looks a second time before it says `here: false`: its
+snapshot is older than its question to the store, and a run that ended in between would
+otherwise be said to have no process
+(`admit::a_repeat_that_races_the_end_of_its_run_is_not_told_the_run_will_never_end`).
+
 What `NotEnded` does not tell apart, each pinned by a test or a row:
 
 - `here: true` is also what a run is whose end could not be written (the store failed),
   and whose action panicked: a panic is not caught yet (`docs/carry-over.md`, with
   nested calls, cancellation and publication), it unwinds through `request`, and the run
-  stays admitted until the process ends. Both are answered without running anything.
+  stays admitted, in that process and after it has ended, when only `here` changes.
+  Both are answered without running anything.
 - It is also what a run is whose admission became visible and was not confirmed durable
   (the store's `Unacknowledged`): the caller was told of the store's failure, the action
   never started, and the id is taken all the same. The store cannot take a visible
-  generation back, so the request is answered with that run and is not run under its id.
+  generation back, so the request is answered with that run and is not run under its id
+  (`admit::an_admission_that_was_visible_and_not_confirmed_takes_the_id_and_never_runs`;
+  `docs/carry-over.md`).
 - An executor that only reads a store says `here: false` of every run that has not
   ended, because it cannot know: another process may be executing it.
 - A repeat does not wait for a run that is executing. Status and cancel while a run
@@ -283,6 +397,15 @@ before.
   record: the retry is answered, and the paid work is not repeated. What it does not
   leave is the journal and the diagnostics the action had written: those are still held
   in memory until the end (`docs/carry-over.md`, with the next task).
+- Every publication writes the whole generation again, and the names of ids are in it:
+  the cost of each publication, two for a run, grows with every id the store was ever
+  given. The review of the first part measured a generation file of 2.0 MB at 5,000 ids.
+  It is on `docs/carry-over.md` to decide before ids are used in volume.
+- An id may be `.` or `..`: the alphabet allows both. That is safe because a name lives
+  in the generation's JSON and is never a file's name. Anything that writes names out
+  as paths has to keep it so (`docs/carry-over.md`).
+- The store remembers the runs its writer made and has not closed or deleted
+  (`Store::made_here`, `Publication::close_run`), not every run it ever made.
 - The records of ids grow without bound: two small names for every request that gave an
   id, for the life of the store. Nothing removes one. That is what the spec asks; a
   command to forget ids older than some age would be a change to it.
@@ -292,6 +415,8 @@ before.
   executor's own records. Nothing that reads an artifact uses it, so a diagnostic is
   still never an input (ADR 0004).
 - `Executor` has a third method, `request`. `submit` is unchanged for its callers.
+- `Backends` has a second question, the bound, with an answer of nothing by default, so
+  no implementation had to change.
 - Reversing this costs every stored admission and ending, and every answer a caller
   was promised.
 

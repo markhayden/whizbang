@@ -15,8 +15,8 @@ use super::request::{Found, look_up};
 use super::{
     ADMITTED_NAME, Admission, Allowance, Answer, Backends, Call, CallError, Cancellation,
     Capabilities, Clock, Context, Ending, Failure, Finished, Outcome, PreparedCall, Readiness,
-    Refusal, Registry, Request, RequestId, RunId, Secrets, StoreFailure, SystemClock,
-    request_fingerprint,
+    Refusal, Registry, Request, RequestId, RunId, RunState, Secrets, Stale, StoreFailure,
+    SystemClock, request_fingerprint,
 };
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
@@ -45,8 +45,16 @@ pub trait Executor: Send + Sync {
     /// it made then, wherever that run is now, and nothing is prepared and nothing
     /// runs; another request under the id is refused as a conflict; and an id that was
     /// never admitted is recorded, durably, in the one step that makes the run, before
-    /// the action runs.
+    /// the action runs. A request that comes with a preparation
+    /// ([`Request::expecting`]) is refused as stale, with no run, when its call no
+    /// longer prepares the same.
     fn request(&self, request: &Request) -> Result<Answer, CallError>;
+
+    /// The request id this text is. A door hands over the text a caller gave here, and
+    /// not to [`RequestId::parse`], whose refusal shows the text: this looks first for
+    /// the secrets the executor was told of, in the text as it was given, and refuses
+    /// text that holds one without showing any of it.
+    fn request_id(&self, text: &str) -> Result<RequestId, CallError>;
 }
 
 /// The executor of one build: a registry, the backends, a store and the digest of the
@@ -62,10 +70,23 @@ pub struct Engine {
     contents: Arc<dyn Contents + Send + Sync>,
     /// The store to write runs to, when this executor may.
     store: Option<Arc<Store>>,
-    config: Digest,
+    config: Arc<dyn ConfigSource>,
     limits: DecodeLimits,
     clock: Arc<dyn Clock>,
     secrets: Secrets,
+}
+
+/// Where the executor reads the digest of the config. It is asked every time a call is
+/// prepared, so a config that changed between a preparation and its admission is seen
+/// at admission. A digest is a config that never changes.
+pub trait ConfigSource: Send + Sync {
+    fn digest(&self) -> Digest;
+}
+
+impl ConfigSource for Digest {
+    fn digest(&self) -> Digest {
+        *self
+    }
 }
 
 /// The version of whizbang a record is written with: this crate's, which the workspace
@@ -87,7 +108,7 @@ impl Engine {
             backends,
             contents,
             store: None,
-            config,
+            config: Arc::new(config),
             limits: DecodeLimits::default(),
             clock: Arc::new(SystemClock),
             secrets: Secrets::none(),
@@ -106,6 +127,13 @@ impl Engine {
         let mut engine = Engine::new(registry, backends, store.clone(), config);
         engine.store = Some(store);
         engine
+    }
+
+    /// The same executor, under a config that is read each time a call is prepared, at
+    /// admission too, instead of the one digest it was built with.
+    pub fn with_config(mut self, config: Arc<dyn ConfigSource>) -> Engine {
+        self.config = config;
+        self
     }
 
     /// The same executor, telling the time by this clock.
@@ -168,6 +196,10 @@ impl Executor for NoNesting {
     fn request(&self, _: &Request) -> Result<Answer, CallError> {
         Err(Refusal::NoNestedCalls.into())
     }
+
+    fn request_id(&self, _: &str) -> Result<RequestId, CallError> {
+        Err(Refusal::NoNestedCalls.into())
+    }
 }
 
 impl Executor for Engine {
@@ -182,13 +214,13 @@ impl Executor for Engine {
             call,
             self.contents.as_ref(),
             self.backends.as_ref(),
-            self.config,
+            self.config.digest(),
             &self.limits,
         )
     }
 
     fn submit(&self, call: &Call) -> Result<Finished, CallError> {
-        match self.run(call, None) {
+        match self.run(call, None, None) {
             Ok(finished) => Ok(finished),
             Err(Stopped::Refused(error)) => Err(error),
             // Only a request with an id makes the name that can be taken.
@@ -196,9 +228,22 @@ impl Executor for Engine {
         }
     }
 
+    fn request_id(&self, text: &str) -> Result<RequestId, CallError> {
+        // Before the text is parsed: a refusal of text that is no id shows the text.
+        if self.secrets.redact(text) != text {
+            return Err(Refusal::SecretInRequestId.into());
+        }
+        RequestId::parse(text).map_err(|why| Refusal::NotARequestId { why }.into())
+    }
+
     fn request(&self, request: &Request) -> Result<Answer, CallError> {
         let Some(id) = request.id() else {
-            return self.submit(request.call()).map(Answer::Ran);
+            return match self.run(request.call(), None, request.expected()) {
+                Ok(finished) => Ok(Answer::Ran(finished)),
+                Err(Stopped::Refused(error)) => Err(error),
+                // Only a request with an id makes the name that can be taken.
+                Err(Stopped::Taken(error)) => Err(CallError::Store(StoreFailure::new(error))),
+            };
         };
         // An id is written as it is, in a name of the store and in two records. One
         // that redaction would change holds a secret, and is refused without being
@@ -221,7 +266,7 @@ impl Executor for Engine {
         if let Some(answered) = answer(self.look_up(id, fingerprint)?) {
             return answered;
         }
-        match self.run(request.call(), Some((id, fingerprint))) {
+        match self.run(request.call(), Some((id, fingerprint)), request.expected()) {
             Ok(finished) => Ok(Answer::Ran(finished)),
             Err(Stopped::Refused(error)) => Err(error),
             // Another request was admitted under the id between the look and the
@@ -252,12 +297,53 @@ impl From<CallError> for Stopped {
 impl Engine {
     fn look_up(&self, id: &RequestId, fingerprint: Digest) -> Result<Found, CallError> {
         let made_here = |run: &str| self.store.as_ref().is_some_and(|s| s.made_here(run));
-        look_up(self.contents.as_ref(), id, fingerprint, made_here)
+        let found = look_up(self.contents.as_ref(), id, fingerprint, made_here)?;
+        // The snapshot is taken before the store is asked whether it made the run. A
+        // run that ended or was deleted in between has no record in that snapshot and
+        // is already forgotten by the store, which would read as a run that no process
+        // will end. The store forgets a run only once the generation that closes or
+        // deletes it is visible, so a second look sees it, and is the answer.
+        let unsure = matches!(
+            &found,
+            Found::Same(earlier) if earlier.state() == &RunState::NotEnded { here: false }
+        );
+        if unsure && self.store.is_some() {
+            return look_up(self.contents.as_ref(), id, fingerprint, made_here);
+        }
+        Ok(found)
     }
 
     /// Prepares, admits and runs a call: everything after the look for a request id.
-    fn run(&self, call: &Call, asked: Option<(&RequestId, Digest)>) -> Result<Finished, Stopped> {
-        let prepared = self.prepare(call)?;
+    /// `expected` is the preparation the request came with, when it came with one: the
+    /// call is prepared again here, under the config and the backends as they are now,
+    /// and a request whose preparation no longer holds is refused before anything is
+    /// admitted.
+    fn run(
+        &self,
+        call: &Call,
+        asked: Option<(&RequestId, Digest)>,
+        expected: Option<&PreparedCall>,
+    ) -> Result<Finished, Stopped> {
+        let stale = |action: &str, why: Stale| {
+            Stopped::Refused(CallError::Refused(Refusal::Stale {
+                action: action.to_owned(),
+                why,
+            }))
+        };
+        let prepared = match (self.prepare(call), expected) {
+            (Ok(prepared), _) => prepared,
+            // The call prepared once and is refused now: the preparation is stale. A
+            // failure of the store is not a judgement of the preparation.
+            (Err(CallError::Refused(refusal)), Some(_)) => {
+                return Err(stale(call.action(), Stale::Refused(Box::new(refusal))));
+            }
+            (Err(error), _) => return Err(error.into()),
+        };
+        // Staleness is said before readiness: a call whose model was taken away is not
+        // ready, and what the caller needs to hear is that what it was shown is gone.
+        if let Some(why) = expected.and_then(|expected| expected.stale_against(&prepared)) {
+            return Err(stale(prepared.action(), why));
+        }
         if let Readiness::NotReady(missing) = prepared.readiness() {
             return Err(CallError::Refused(Refusal::NotReady {
                 action: prepared.action().to_owned(),
@@ -374,7 +460,7 @@ impl Engine {
             &self.secrets,
         );
         let mut publication = store.begin().map_err(failed)?;
-        publication.extend_run(run.as_str()).map_err(failed)?;
+        publication.close_run(run.as_str()).map_err(failed)?;
         for (diagnostic, bytes) in &kept {
             publication
                 .put_in(run.as_str(), diagnostic.name(), RECORD_KIND, bytes)

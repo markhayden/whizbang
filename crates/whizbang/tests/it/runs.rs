@@ -524,3 +524,40 @@ fn a_run_shows_the_request_id_it_was_made_for() {
         serde_json::from_slice(&whizbang(&["show", &run, "--json"], &root).out).unwrap();
     assert_eq!(json["identity"]["request"], "order-17");
 }
+
+#[test]
+fn a_run_whose_admission_is_not_one_is_listed_and_shown_with_the_reason() {
+    // A run that holds something under `admitted` that this build does not read, and no
+    // record: it is not said to have no record and nothing else.
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    {
+        let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+        let mut publication = store.begin().unwrap();
+        publication
+            .put_in(
+                "odd",
+                "admitted",
+                Kind::Diagnostic,
+                b"{\"record\":\"admission/9\"}\n",
+            )
+            .unwrap();
+        publication.publish().unwrap();
+    }
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(
+        listed.text().lines().nth(1).unwrap(),
+        "odd\tno record; admission not read: not an admission: a record of another kind or \
+         version: admission/9"
+    );
+    let shown = whizbang(&["show", "odd"], &root);
+    assert_eq!(shown.code, Some(1));
+    assert!(
+        shown.err.contains(
+            "the run has no record, and its admission is not read: not an admission: a \
+             record of another kind or version: admission/9"
+        ),
+        "{}",
+        shown.err
+    );
+}
