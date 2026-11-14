@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use crate::artifact::{self, Artifact, Contents};
 use crate::capability::{EXCHANGES_MAX_BYTES, REQUESTS_LIMIT, Shown};
+use crate::egress::Ways;
 use crate::identity::{DecodeLimits, Digest};
 use crate::store::{self, Store};
 
@@ -129,6 +130,8 @@ pub struct Engine {
     parts: Vec<Arc<dyn AdmissionPart>>,
     /// The backends each run's capability handles are made over.
     capabilities: Capabilities,
+    /// The ways out: what each handle's checked sender is made of (ADR 0015).
+    ways: Ways,
     /// How many runs may be admitted under one run that nothing called.
     descendants: usize,
     /// How many capability requests one run may send.
@@ -229,6 +232,7 @@ impl Engine {
             ledger: None,
             parts: Vec::new(),
             capabilities: Capabilities::none(),
+            ways: Ways::none(),
             descendants: DESCENDANTS_LIMIT,
             requests: REQUESTS_LIMIT,
             exchanges: EXCHANGES_MAX_BYTES,
@@ -291,6 +295,17 @@ impl Engine {
     /// backends, bound to that run's cancellation and deadline.
     pub fn with_capabilities(mut self, capabilities: Capabilities) -> Engine {
         self.capabilities = capabilities;
+        self
+    }
+
+    /// The same executor, whose backends send through these ways out and no other
+    /// (ADR 0015, "A policy before a send, and a checked send"): each backend of each
+    /// run is handed a sender that holds every address to the recipient the backend
+    /// declared, to this policy and to this check, before anything is handed over.
+    /// Without this nothing is sent: there is no sender, and the policy and the
+    /// check approve nothing.
+    pub fn with_ways(mut self, ways: Ways) -> Engine {
+        self.ways = ways;
         self
     }
 
@@ -1296,7 +1311,10 @@ impl Engine {
             // executor's clock for their deadline.
             self.capabilities
                 .resolved_for(&prepared)
-                .timed_by(self.clock.clone()),
+                .timed_by(self.clock.clone())
+                // And a way out for each, checked, which notes what it hands over in
+                // the run's place for facts (ADR 0015).
+                .sending_through(self.ways.clone(), facts.clone()),
             Arc::new(Nested::new(self.clone(), under, self.secrets.clone())),
         )
         .with_diagnostics(kept.clone())

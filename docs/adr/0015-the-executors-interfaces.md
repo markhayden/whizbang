@@ -9,7 +9,13 @@ Amended: 2026-11-14, after the review of task I1. Changed under "A part in the
 admission": what a part's failure may hold (`NotJudged`: a failure of the store, a
 record that was not read, or a sentence), that it is returned without a second look
 for the id, and that the ledger's failure holds the same; and a part that panics.
-Spec: section 3, "The execution contract"; section 6, "Spend"
+Amended: 2026-11-14, with task I5. Added: "A policy before a send, and a checked send",
+which settles three of the points ADR 0012 left under "For later tasks" (who knows a
+piece's class at a send, where a credential lives, and who knows a backend's recipient
+when `Sender::send` is given none). Changed, as the review of task I1 asked: the
+sentence on how a failure's sentence is cleaned, one more limit of it, and a third
+test of a part that panics.
+Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
 
@@ -103,7 +109,7 @@ A part then does one of three things.
   into one: the store's stays the store's, a record's stays `CallError::Record`, and
   any other, a refusal among them, is only what it says, returned as `CallError::Part`
   under the name of the part that was asked. Every sentence has the executor's
-  secrets taken out, is cut at 512 characters and is looked through once more
+  secrets taken out while it is whole and is then cut at 512 characters
   (`part::whatever_a_part_fails_with_reaches_the_caller_as_the_parts_failure_with_no_secret_in_it`,
   `part::a_store_failure_inside_a_part_reaches_the_caller_as_the_stores`). The
   ledger's `Declined::Failed` holds the same type and is treated the same way, as
@@ -117,6 +123,10 @@ A part then does one of three things.
   and the same request is admitted afterwards
   (`part::a_part_that_panics_leaves_the_store_as_it_was_and_the_same_request_is_admitted_after`,
   `part::a_part_that_panics_at_a_call_from_inside_an_action_ends_that_run_and_leaves_no_other`).
+  An action that catches the panic of a call it made goes on as if the call had not
+  been made: what the call took from its allowance is given back whole, and a second
+  call, which needs all of it, is admitted and runs
+  (`part::an_action_that_catches_a_parts_panic_at_a_nested_call_keeps_its_full_allowance_and_a_second_call_runs`).
 
 **A refusal of its own kind.** A part names itself, and its refusal carries that name:
 a caller tells the cap's refusal from another part's by `part`. It also carries a
@@ -221,6 +231,151 @@ asked.
   ledger's asking is: by the caller's signal and deadline, looked at before each
   attempt.
 - **The time is not read again for a later attempt** ("The time is the admission's").
+- **A sentence is cleaned by itself:** a secret that is completed only by the words
+  the executor puts before it is not found.
+
+### A policy before a send, and a checked send
+
+Task I5. The code is `crates/whizbang-core/src/egress/policy.rs` and `checked.rs`, with
+the executor's side in `capability/mod.rs` (`Bounds::sender`), `contract/context.rs`
+(`Capabilities`) and `contract/engine.rs` (`Engine::with_ways`); the fakes are
+`FakeCheck` in `crates/whizbang-testkit/src/sending.rs` and `FakeFiller::posting`. The
+tests are in `crates/whizbang-core/tests/it/contract/send.rs`, named below as
+`send::…`.
+
+ADR 0012 decided the types a send is made of and enforced nothing. This section is the
+executor's part of the enforcement: **what is asked before a request is handed to a
+sender, in which order, and what is noted.** Who may receive what is not decided here:
+the policy is a value the executor is given, and the check of an address is the egress
+strand's (tasks E2 and E3). The default of each approves nothing, and so nothing the
+executor is not told to send is sent.
+
+**The policy** (`DispatchPolicy`) is a value that holds, for at most 64 recipients
+(`APPROVED_LIMIT`), the classes of data each may receive and whether each may be
+probed. It answers two questions and holds no credential.
+
+- `may_receive(recipient, classes)`: yes when that recipient was approved for every
+  one of those classes. A request that holds no data is still a request to the
+  recipient, and is approved only for a recipient that may receive some class.
+- `may_probe(recipient)`: approved apart from any class of data (ADR 0012). A
+  recipient that may be probed and nothing else may receive nothing.
+- **A recipient is the one that was approved only when its origin, its account and
+  its upstreams are all the same** (ADR 0012, "A recipient"): the same endpoint under
+  another account, or one that forwards to one origin more, is approved for nothing.
+- **The default, `DispatchPolicy::none()`, approves nothing,** and is what an executor
+  has until it is given another.
+- What `{:?}` prints is each recipient as a recipient is always printed, its origin
+  and its account cut, with its classes.
+
+(`send::the_default_policy_approves_nothing`,
+`send::a_policy_approves_a_recipient_for_the_classes_it_was_given_and_no_other`,
+`send::a_recipient_is_the_one_approved_only_with_its_origin_its_account_and_its_upstreams`,
+`send::probing_is_approved_apart_from_any_class_of_data`,
+`send::a_policy_names_a_bounded_number_of_recipients`,
+`send::the_policys_debug_shows_recipients_cut_and_no_credential`.)
+
+**The ways out** (`Ways`) are what the executor holds (`Engine::with_ways`): the sender
+behind every send, the check (`HopCheck`), the policy, and the credentials of its
+recipients, at most 256 (`CREDENTIALS_LIMIT`). A credential is held for one recipient
+and is bound to one origin, which is the recipient's own or one of its upstreams; a
+second for the same recipient and origin is refused
+(`send::a_credential_is_held_for_an_origin_its_recipient_reaches_once_and_within_a_bound`).
+With nothing given, there is no sender, the check approves no address and the policy
+approves no recipient.
+
+**The sender a backend is handed.** `Sender::send` is given no recipient (ADR 0012,
+"For later tasks"), so the executor makes a sender **for each backend of each run**,
+where the run's handles are made (`Context::new`, ADR 0006): it knows the recipient
+that backend declared, holds that recipient's credentials and no other's, and notes
+into that run's place for facts. A backend reaches it through the bounds of its
+request, `Bounds::sender()`, and is handed no sender and no credential of its own. A
+handle that no executor made hands its backend a sender that sends nothing
+(`send::a_handle_that_no_executor_made_has_no_way_out`).
+
+**What is asked before anything is handed over,** for every request the backend makes
+of it, the first address and each address an answer pointed to alike, in this order.
+The first that says no is the answer, and the sender behind is handed nothing:
+
+1. **The backend declared a recipient.** One that declared itself local sends nothing
+   (`send::a_backend_that_names_no_recipient_and_sends_all_the_same_hands_nothing_over`).
+2. **The request brings no credential.** `Credential::expose` is public (ADR 0012), so
+   a credential lives only inside this sender: a backend is given none, and a request
+   that comes with one is not sent.
+3. **The address's origin is the recipient's own or one of its upstreams**
+   (`Recipient::reaches`). A redirect comes back to the backend as an address, as ADR
+   0012 has it, and the request the backend then makes of that address is held to
+   this like any other
+   (`send::an_origin_that_is_not_the_recipients_or_an_upstream_is_refused_before_the_check_is_asked`).
+4. **The policy approves the recipient for the classes the request holds**
+   (`Outgoing::needs`). **A piece's class is what whoever built the piece stated,**
+   which is ADR 0012's rule and is not second-guessed here: nothing at a send knows a
+   source image from a derived one, so a piece that states no class needs all four
+   approved (`send::a_piece_with_no_class_needs_every_class_approved`).
+5. **The check approves the address** (`HopCheck::look`). It is shown a `Hop`: the
+   recipient, the address, the classes, the policy, and how many answers in a row
+   just before pointed elsewhere (`Hop::moves`), which is what a limit on a chain of
+   redirects is held with. The default, `NoHop`, approves no address
+   (`send::a_sender_with_the_default_check_hands_nothing_to_any_origin`); a check that
+   approves is shown each origin before the sender behind is handed its request
+   (`send::a_check_that_approves_sees_each_origin_before_the_sending_fake_does`).
+
+Then the credential held for that recipient and bound to that origin is attached, or
+none: a request to an upstream goes without the recipient's own, and a backend of
+another recipient at the same origin is handed none of it
+(`send::a_credential_is_attached_by_the_executor_for_its_own_origin_and_a_backend_brings_none`).
+An executor with no sender answers a fault here, and sends nothing
+(`send::an_executor_with_no_sender_sends_nothing_whatever_approves`).
+
+**With the default policy a backend that names a recipient hands nothing over,** even
+behind a check and a sender that would let everything through; and a backend that
+names none is asked as before
+(`send::with_the_default_policy_a_backend_that_names_a_recipient_hands_nothing_over_and_one_that_names_none_is_asked`).
+
+**What a refusal is.** A refusal at 1 to 5 answers the backend with a fault of the kind
+`rejected` that states the stage `not_sent`, in fixed words that quote nothing of the
+address. It is noted in the run's place for facts (ADR 0013) twice: among the run's
+refusals, as the kind `request_not_approved`, which `run/3` has, with a sentence that
+names the origin and the classes; and in where the run's data went, as `refused`. The
+sentence is cleaned where it is noted, the executor's secrets taken out while it is
+whole and then cut (`send::a_secret_the_executor_knows_is_in_no_refusal_of_a_send`). A
+check's reason is a `Denied`, which takes fixed words and no made text
+(`send::a_check_that_refuses_hands_nothing_over_and_its_sentence_is_the_refusal`).
+
+**What is noted of a send.** Once a request is handed to the sender behind, the origin
+is noted as `sent`, with the recipient's account, cut, and the classes
+(`RunFacts::went`), whatever came back: an answer, an address to go on to, a fault, or
+a panic of the sender. **Only a fault that states the stage `not_sent` takes the note
+back.** So a request that failed at its second hop lists the first, which had the
+data (`send::a_send_that_says_nothing_left_is_not_listed_as_sent_and_any_other_fault_is`).
+
+**A check that panics** unwinds through the backend and its handle into the action, as
+a backend's panic does: nothing was handed over, the request is accounted for, the run
+ends as an error, and the next run sends
+(`send::a_check_that_panics_hands_nothing_over_and_the_next_run_goes`).
+
+**The fakes.** `FakeCheck` approves or refuses every address as a test tells it to,
+keeps what it was shown, and can run a test's hook while it is asked. `FakeFiller`
+can be told to send pieces to an address through its bounds' sender before it paints,
+following an answer that points elsewhere 8 times at most.
+
+**Limits, each stated.**
+
+- **The gate's place is not built.** The plan gives the policy to "the gate's place in
+  I3's order", which refuses a request before its backend is called and before the
+  meter sees it. Task I3 is not built yet, so a backend that names a recipient is
+  still called under the default policy: what it cannot do is send. Task I3 gives its
+  gate this policy (`docs/carry-over.md`), and with it decides what classes a
+  capability's request holds before any piece is made.
+- **Nothing here probes or downloads.** The policy answers whether a recipient may be
+  probed and nothing in the executor asks it yet: the checked probe and the checked
+  download are task E3's.
+- **`Hop::moves` is counted for one backend of one run, not for one request:** a run
+  that sends through one handle from two threads at once has one count for both.
+- **A backend that opens a socket of its own is not stopped,** as ADR 0012 says:
+  adapters are trusted code.
+- **The fault a backend is answered with is the backend's to hand on.** A backend that
+  swallows it and answers all the same has still sent nothing.
+- **Until the wiring (task W1) the binary's executor has no ways out.**
 
 ## Consequences
 
@@ -234,6 +389,9 @@ asked.
 - A run may hold names under `admission/` beside `admitted`. A reader of a run's names
   that knew four kinds of name now meets a fifth.
 - A strand adds a refusal at admission without editing the executor: tasks S3 and S8.
+- `Bounds` hands a backend its sender, and `Engine` holds the ways out. The egress
+  strand implements `HopCheck` and builds a `DispatchPolicy` from a config, and edits
+  neither the executor nor a handle. Nothing stored changes.
 - Reversing it costs the parts that were written against it.
 
 ## Alternatives
@@ -257,3 +415,11 @@ asked.
   Turned down by the plan: they are among the run's names, and go with the run.
 - **The cap as a number in the call's arguments.** Turned down: an argument is in the
   fingerprint of a request, and a cap is not what was asked.
+- **A sender given to a backend when it is built.** Turned down: a sender that notes
+  where a run's data went belongs to one run, and a backend is shared by all of them.
+- **The check alone, with the policy and the recipient's origins left to it.** Turned
+  down: a check that a strand or a test plugs in could then approve an origin the
+  recipient does not reach, or a recipient the policy never named. The two questions
+  the executor can ask itself it asks itself, before the check.
+- **The checked sender follows a redirect itself.** Turned down for now: ADR 0012 hands
+  a redirect back as an address, and a backend that goes on to it is checked there.
