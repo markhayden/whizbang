@@ -1,17 +1,15 @@
 # Plan: checkpoint 1B, policy and controls
 
-Draft 12, 2026-11-13. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the
+Draft 13, 2026-11-14, the final revision. From `SPEC.md` sections 3, 4, 6, 10, 11 and 16. This file is the
 task list.
 
 Reviewed in six rounds. Scope, order and every area but one are settled; the ledger's
 arithmetic is deliberately settled in task I2, with code in hand ("Decisions", the last
-item). The plan waits only for 1A's exit check and task B0.
+item). Checkpoint 1A is closed and tagged `m1a`; building starts with task B0.
 
-Checkpoint 1A is nearly built: everything but its two proofs (A9, `grow`; A11, the
-scripted squint run) and its exit check (A12) is merged, and this draft is written from
-that code and from ADRs 0001 to 0008 as they stand on `main`. Nothing here is built before
-A12. Task B0 reads what A9, A11 and A12 changed and corrects this plan before any other
-task starts.
+Checkpoint 1A closed on 2026-11-14 (`docs/plans/m1a-note.md`). This revision is written
+from `main` at that tag: the code, ADRs 0001 to 0009, and the carry-over list as the exit
+check left it.
 
 ## What this checkpoint delivers
 
@@ -36,8 +34,7 @@ kit.
 
 ## What this plan builds on from 1A
 
-**Decided, and what 1B does with each** (ADR 0007 and ADR 0008 as amended to the end of
-task A7; ADR 0005 for `run/2`).
+**Decided, and what 1B does with each** (ADRs 0005, 0007, 0008 and 0009 as they stand at the tag `m1a`).
 
 | What 1A decided | What 1B does |
 |---|---|
@@ -52,7 +49,11 @@ task A7; ADR 0005 for `run/2`).
 | `RunState::Abandoned`: a run whose admission or end the store did not confirm, in the process that made it. To any other process it is admitted and not ended | I4b and S6 end and settle such a run at the next open to write. Ending one at once, in the process that made it, is moved to milestone 2 |
 | A run reads the generation it was admitted against (`Store::hold`) | Recovery and the ledger read the current generation, never a held one |
 | `start` runs an action on a thread of its own; an executor starts 64 runs at once by default and never more than 256 for one store value, a run starts four at once, and at most 1,024 runs are under one run that nothing called | "Rules every task's tests follow", 7 to 10 |
-| `run/2` at the end of A7: `identity.parent`, `steps` (calls) and `outcome.refusals` (the action or null, a kind, a sentence; calls to run an action only) are filled. Empty: `asked.settings`, `time.durations`, `models`, `egress`, `judge`, `spend.requests` | `run/3` (B4) defines the elements of `asked.settings`, `spend.requests` and `egress`, and adds kinds of refusal for a request that was not sent |
+| `run/2`, frozen at the tag: `identity.parent`, `steps`, `outcome.refusals`, `models`, `time.durations` and `judge` are filled (ADR 0008, ADR 0009). A model's `device` and `cached` are null until 1C. Empty: `asked.settings`, `egress`, `spend.requests` | `run/3` (B4) defines the elements of `asked.settings`, `spend.requests` and `egress`, and adds kinds of refusal for a request that was not sent. It leaves alone what 1A filled |
+| A run is handed the backend its call resolved and no other (`Capabilities::resolved_for`); its handles are made in `Context::new` and share one `Tally`, which counts each request and records it (ADR 0009). The roster a call is resolved against and the backends an executor holds are given apart, and nothing holds one to the other | I3's wrappers go inside that tally. I6's snapshot makes the roster and the held backends from one thing, and C4 builds it |
+| A record is read back only under 4 MiB, and every list in it is bounded where it comes in (ADR 0008, "What a call and a run may hold"; `Engine::with_record_limit` lowers the limit for a test) | B4 gives each new list its bound, and the sum stays under the limit by the same test |
+| A generation file is 64 MiB at most (`Store::limit_generations_to` lowers it for a test). At the limit a publication that adds names is refused and a deletion is still published; a run that cannot publish its end is abandoned | Every publication 1B adds (a dispatch, a settlement, a closing, recovery) has a case at the limit: I4, S5, S5b, S11b |
+| The binary has one door (`crates/whizbang/src/door.rs`; ADR 0008, "The first door"): one entry point, a quiet panic hook, everything printed escaped | I4's entry to a writer is behind that door; `whizbang spend` goes through it |
 | An admitted run keeps `admission/1` and nothing else of its call until it ends: the run, its parent, its request id, the action and its version, what was reserved or taken, and its start | Recovery builds an interrupted run's record from that alone, and keeps nothing more for its sake |
 
 **The open points of the earlier drafts, settled.**
@@ -66,14 +67,13 @@ task A7; ADR 0005 for `run/2`).
 | D11 | Whether an admitted run keeps its call | It does not, and 1B does not add it: recovery is lossy by decision |
 | D12 | Scheduling, and a child's admission | A thread for each started run, bounded; a child has an admission that names its parent and its share, and no reservation |
 
-**Still open, for B0.** Only what A9, A11 and A12 can change. B0 writes the answer here
-and stops if it is neither outcome.
+**The three points that waited for the end of 1A, as the tag leaves them.**
 
-| # | From | What is open | Assumed here | If it is otherwise |
-|---|---|---|---|---|
-| D8 | A9 | The one source of a store's location that every command shares | Still `--store <dir>` on every call; `whizbang spend` takes it the same way | A setting or a default exists: `spend` and the config's location follow it |
-| D9 | A11, and ADR 0009 (what a run asks of a judge), which is in review and not on `main` | Where a run's handles are made, how a call's choice picks among backends, and what a run records of each request (`models`, `time.durations`) | Handles are made in `Context::new` from the backends the executor holds, and A11 records each request there, in `run/2` | They are made elsewhere, or recording is a wrapper of its own: I3 puts its wrapper where A11 put that, and B4 leaves alone whatever A11 filled |
-| D13 | A12 | What `store delete` removes of a run's outputs, and how `CURRENT` and the generation files are bounded | Neither touches spend records or the names under `requests/` and `spend/` | B0 checks S6's deleted-run cases against it |
+| # | Was | Is |
+|---|---|---|
+| D8 | The one source of a store's location | `--store <dir>` is required on every command that touches a store. There is no default and no setting. `whizbang spend` takes it the same way, and the config's location is given the same way, by a flag |
+| D9 | Where handles are made, and what a run records of a request | In `Context::new`, from the backend the call resolved. Requests are counted and recorded by the handles' tally, as ADR 0009 says |
+| D13 | What `store delete` removes, and how the store's own files are bounded | A deletion removes a run's names and leaves the names under `requests/` and `spend/` untouched. Removing the artifacts a deleted run committed is decided and is milestone 2's. `CURRENT` is 21 bytes at most, a generation file 64 MiB |
 
 Each ADR of this plan takes the next free number when its pull request opens. The ADRs of
 checkpoint 1A close with it and cannot be amended in place after its tag
@@ -295,16 +295,19 @@ task is not done while one that applies to it has no test.
    names, for each thing it claims the code does, the test that shows it.
 6. **No sleeps.** A test waits on a barrier or an event. Time comes from the injected
    clock (`Clock`), which a test moves by hand.
-7. **Threads only through the test kit.** A test makes a thread through
-   `whizbang_testkit::threads` and no other way: the build refuses any other, and the
-   helper refuses a 65th live thread.
+7. **Threads only through the test kit** (`AGENTS.md`, "Threads and processes"). A test
+   makes a thread through `whizbang_testkit::threads` and no other way: `just check`
+   refuses any other, and the helper holds a process to 64. No test, probe or script
+   holds more than 200 live threads in one process. A thread that cannot be made is shown
+   with `Engine::with_spawn`, never by using them up.
 8. **Every loop that starts something is bounded.** A loop that starts a thread, a run or
    a process has a literal bound written in it and waits for each child it started. Two
    show a race; a test that needs more says why beside it.
 9. **Nothing is run to find a limit.** No test and no probe written during a task asks a
    system how many threads, processes, files or bytes it will give before it refuses.
-10. **Tests are run one way.** Through `just check`, `just test-only <args>` or
-    `scripts/heavy.sh`, and never by calling the test runner directly.
+10. **Tests are run one way.** Through `just check`, `just test-only <args>`, which takes
+    a closed set of arguments, or either of them under `scripts/heavy.sh`; never by
+    calling the test runner directly.
 11. **A crash sweep is named as one.** A test that crashes before every step has
     `a_crash_at_any_event` in its name, so the `crash-sweeps` group of
     `.config/nextest.toml` takes it and runs it alone, and it takes under about 5 seconds
@@ -314,12 +317,12 @@ task is not done while one that applies to it has no test.
 
 | Strand | Tasks | Owns | Starts after |
 |---|---|---|---|
-| Base (a line) | B0, B0b, B1, B1b, B2, B3, B4, B4b, I1 to I7 with I4b, and W1 at the end | The executor's files (`crates/whizbang-core/src/contract/`: `engine.rs`, `request.rs`, `prepare.rs`, `context.rs`, `ledger.rs`, `record.rs`, `live.rs`, `nested.rs`), `crates/whizbang-core/src/capability/`, the record's schema, `crates/whizbang-testkit/src/` but for the files named below, `crates/whizbang/src/wiring.rs`, `runs.rs` and `store.rs`, every root file | A12 |
+| Base (a line) | B0, B0b, B1, B1b, B2, B3, B4, B4b, I1 to I7 with I4b, and W1 at the end | The executor's files (`crates/whizbang-core/src/contract/`: `engine.rs`, `request.rs`, `prepare.rs`, `context.rs`, `ledger.rs`, `record.rs`, `live.rs`, `nested.rs`), `crates/whizbang-core/src/capability/`, the record's schema, `crates/whizbang-testkit/src/` but for the files named below, `crates/whizbang/src/wiring.rs`, `door.rs`, `runs.rs`, `store.rs` and `import.rs`, every root file | The tag `m1a` |
 | Spend | S1b to S12 | `crates/whizbang-core/src/spend/` and `tests/it/spend/`; `crates/whizbang/src/spend.rs`; `crates/whizbang-testkit/src/spend.rs` (the model and the table of histories, which I2 makes and each ledger task adds to) | S1b after I2; the rest after the interface each names |
 | Config and secrets | C1 to C5 | `crates/whizbang-core/src/config/` and `tests/it/config/`; `crates/whizbang-core/src/contract/redact.rs` and its test; `docs/guides/config.md` | B0b; C4 after I6 |
 | Egress | E2, E3, E4, E6 | `crates/whizbang-core/src/egress/` beyond B2's types, and `tests/it/egress/` | I5 |
 | Models | M1 to M6b | `crates/whizbang-backends/`; `crates/whizbang-testkit/src/downloads.rs` | B2; M6 after I7 |
-| Scripts | X1, X2 | `scripts/scan.sh`, `scripts/tests/scan/`, `scripts/tests/test-deny.sh`, `deny.toml` | A12 |
+| Scripts (a line of its own) | X1 to X6 | `scripts/` and `scripts/tests/` but for root files, `deny.toml`, and the two lines of the `kickoff` and `review-merge` skills that X3 changes | B0 |
 
 **The table of histories** is one file of the test kit that I2 makes. S1b, S5b, S6, S7,
 S7b, S11 and S12 each add the histories their task names to it, one at a time in the
@@ -363,7 +366,7 @@ planned as two pull requests, the proofs second.
 
 | Task | Strand | Needs | Size | PRs |
 |---|---|---|---|---|
-| B0 Entry check | Base | A12 | small | 1 |
+| B0 Entry check | Base | the tag `m1a` | small | 1 |
 | B0b Roots | Base | B0 | small | 1 |
 | B1 What a backend says of cost | Base | B0b | small | 1 |
 | B1b What a request cost, and how far it got | Base | B1 | small | 1 |
@@ -415,14 +418,19 @@ planned as two pull requests, the proofs second.
 | M5c Removal on disk | Models | M5d | small | 1 |
 | M6 Readiness from what is installed | Models | M5c, I7 | small | 1 |
 | M6b The hold on the admitted installation | Models | M6 | small | 1 |
-| X1 A key directly after a word character | Scripts | A12 | small | 1 |
-| X2 A planted registry fails `just deny` | Scripts | A12 | small | 1 |
+| X1 A key directly after a word character | Scripts | B0 | small | 1 |
+| X2 A planted registry fails `just deny` | Scripts | B0 | small | 1 |
+| X3 A pull request's title and body, scanned | Scripts | X1 | small | 1 |
+| X4 A push made around the hooks | Scripts | X3 | small | 1 |
+| X5 A script edited while it runs | Scripts | X4 | small | 1 |
+| X6 No `grep -q` after a pipe | Scripts | X5 | small | 1 |
 | Z1 Exit check | | all | small | 1 |
 
 **What runs at the same time.** The base line is seventeen tasks, nearly all small, and one
 builder walks it. Beside it:
 
-- From B0b: C1, then C2; C3; X1; X2. From I2: S1b. From B2: M1 to M5c, the whole
+- From B0: X2, and X1 then X3 to X6 one after another, since they share the scan's
+  script. From B0b: C1, then C2; C3. From I2: S1b. From B2: M1 to M5c, the whole
   models strand but its last two tasks. From B3: S4.
 - From I1: S8. From I2: S2, then S9. From I6: S3. From I3: S5 and all that follows it in
   spend. From I4b: S6. From I5: the egress strand. From I6: C4. From I7: M6.
@@ -473,20 +481,17 @@ temporary folder: no task below is run against a store or a models directory tha
 
 ### B0. Entry check
 
-**Depends on:** A12. **Reads:** every ADR merged since 0008, with its amendments, and the
-amendments to 0005 to 0008 made since this draft; the note `docs/plans/m1a-note.md`; every
-row of `docs/carry-over.md` that names 1B.
+**Depends on:** the tag `m1a`. **Reads:** `docs/plans/m1a-note.md`; `docs/carry-over.md`.
+Nothing is left for it to decide: D8, D9 and D13 are settled above.
 
-- [ ] D8, D9 and D13 are answered from the merged code, in this file, and the table of
-      what 1A decided is read against the ADRs as they then stand.
-- [ ] Each task below whose text no longer fits is corrected here. A correction that
-      changes what is built, not how it is worded, gets the review rounds first.
-- [ ] Every carry-over row whose owner is 1B is matched against "Carry-over rows and their
-      tasks"; the rows that table gives a new owner are edited; a row added since this
-      draft is given a task or a new owner, with the reason.
+- [ ] The carry-over rows that "Carry-over rows and their tasks" gives a new owner are
+      edited to say so, and the new rows it asks for are added.
+- [ ] If `main` has moved past the tag, each task's "Reads" and "Depends on" lines are
+      read against what moved, and a line that no longer fits is corrected here. A
+      correction that changes what is built gets the review rounds first.
 
-**Done when** the table has no assumption left unchecked, the carry-over rows match the
-table at the head, and `just check` passes.
+**Done when** every row of `docs/carry-over.md` that names 1B has the task or the owner
+that table gives it, and `just check` passes.
 **Size:** small. Documents only.
 
 ### B0b. Roots
@@ -621,6 +626,8 @@ record".
       empty when `outcome.lost` names their group, as "What a crashed run is recovered
       to" says. What reading does with a `run/2` record: it is read, as frozen
       at `m1a`.
+- [ ] A bound on each new list where it comes in, so that a record stays readable under
+      its limit (ADR 0008, "What a call and a run may hold").
 - [ ] The types, the schema `run-3.json` and fixed vectors. The executor writes `run/3`
       with the new lists empty.
 
@@ -635,7 +642,9 @@ absent (a root's parent, a run with no request id) is as before; three fixed vec
 ordinary root, an interrupted root with its admission, and an interrupted run whose
 admission could not be read; a
 recipient's account and a setting's value pass through redaction before they are written
-(rule 4); what A11 filled of `models` and `time.durations` is as A11 left it.
+(rule 4); what 1A filled of `models`, `time.durations` and `judge` is as it was; a run that fills
+every list of `run/3` to its bound has a record under the limit, with
+`Engine::with_record_limit` set low to show the refusal of one more.
 **Size:** medium.
 
 ### B4b. A place for a run's facts
@@ -797,7 +806,8 @@ units for reading.
 
 ### I3. A wrapper around each request
 
-**Depends on:** I2. Needs D9. A section of the interfaces' ADR, which changes ADR 0006.
+**Depends on:** I2. A section of the interfaces' ADR, which changes ADR 0006 and names
+ADR 0009, whose tally records each request.
 
 - [ ] `Around`, in the core: what stands between a handle and its backend. For each
       request it is told the run, the run at the root of its tree, the backend's
@@ -846,6 +856,9 @@ recovery is lossy and pessimistic by intent.
       generation it finds before it is ready.
 - [ ] The executor, `store delete`, `store prune`, `store import` and the `spend`
       commands that write all open through it. A test holds the binary to no other way.
+- [ ] A store at its generation limit refuses a publication that adds names, recovery's
+      among them. Then the writer is handed out for deleting and pruning alone, which
+      make the file smaller, and every other writing command is refused and told why.
 - [ ] With no part, recovery publishes nothing and the store opens as before.
 
 **Done when** these pass: a fake part's records are published before the writer is
@@ -854,7 +867,10 @@ publication; each writing command, run on a store a killed process left, recover
 it changes anything, one test for each command; two executors built at once over one
 store value are both answered after one recovery, and a third built while it runs waits;
 after a failed recovery every writing command is refused with the reason and a reading
-one works; recovery run twice changes nothing the second time; a recovery whose last sync fails
+one works; recovery run twice changes nothing the second time; with the limit set low by
+`Store::limit_generations_to`, a recovery that cannot be published leaves `store delete`
+and `prune` working and an admission refused, and after a deletion made room the next open
+recovers; a recovery whose last sync fails
 leaves no writer, and the next open confirms what is there, publishes nothing more, and
 settles and ends nothing twice. Then:
 `recover::a_crash_at_any_event…`, with a fake part, followed by another open, leaves the
@@ -917,7 +933,8 @@ sending fake does; the policy's `{:?}` shows recipients cut and no credential (r
 `ConfigSource`.
 
 - [ ] `ConfigSource` answers a snapshot or a refusal. A snapshot is the digest together
-      with what it is the digest of: the roster, the per-call cap, the dispatch policy,
+      with what it is the digest of: the roster and the backends it is of, made from one thing so
+      that a model a call resolved is always held, the per-call cap, the dispatch policy,
       the secrets, and the settings a run records. A call is prepared under one snapshot;
       admission prepares again under the snapshot current then (ADR 0007); the run then
       executes under that one, whatever the file becomes.
@@ -934,7 +951,9 @@ sending fake does; the policy's `{:?}` shows recipients cut and no credential (r
 call after it is put right is admitted; a run admitted under one snapshot resolves a
 backend, and is held to a cap and a policy, of that snapshot though the source was swapped
 while it ran; a secret of an earlier snapshot is still redacted from a later run's record
-(rule 4).
+(rule 4); a call cannot resolve a model the snapshot holds no backend for, and the pin
+`asked::known_a_call_that_resolved_a_model_the_executor_does_not_hold_is_handed_no_handle`
+is turned round.
 **Size:** small.
 
 ### I7. An inventory, and a lease on an installation
@@ -1073,7 +1092,8 @@ an estimate, from inside a run, is refused without being sent and without a disp
 record, counted by the fake; a request whose quote is over what the run has left is
 refused the same way; a run whose action catches such a refusal and then completes has
 the refusal in its record, with what was refused and why; a free request to a local
-backend makes no record. Then: two requests of one run, each within what is left alone and
+backend makes no record; a dispatch the store refuses at its generation limit sends
+nothing. Then: two requests of one run, each within what is left alone and
 not together, stopped after reading what is left and released together, end with one
 dispatch durable and one request at the fake (rule 1); two requests that both fit, of
 different bounds, stopped after each chose its place and released together, end with two
@@ -1101,7 +1121,8 @@ paid request, and an admission by another executor made straight after sees the 
 allowance reduced by it; a fault at each of the three stages settles as stated, one test each;
 a request that times out is charged its bound; a request whose first hop was handed data
 and whose second was refused is unresolved, not "not sent"; a settlement whose
-publication fails leaves the dispatch unsettled and the run abandoned (I3).
+publication fails, or is refused at the store's generation limit, leaves the dispatch
+unsettled and the run abandoned (I3).
 **Carry-over:** the row on whether a failed call may have been charged (its ledger half).
 **Size:** small.
 
@@ -1186,7 +1207,7 @@ is admitted; a request that came with no preparation is not checked for age.
 
 ### S9. `whizbang spend status` and `reset`
 
-**Depends on:** S2. Needs D8.
+**Depends on:** S2. The store is named by `--store <dir>` (D8).
 
 - [ ] `whizbang spend status`: the allowance, what is reserved, what is spent, what is
       unresolved, and the last reset. It reads only.
@@ -1308,7 +1329,7 @@ executor accepts can write an adjustment, shown as S9 shows it for a reset.
 
 ### C1. The config: its file, its shape, its digest
 
-**Depends on:** B0b. Needs D8. **Reads:** squint `crates/squint-core/src/config.rs`,
+**Depends on:** B0b. The config's file is named by a flag, as the store is (D8). **Reads:** squint `crates/squint-core/src/config.rs`,
 `docs/adr/0004-toml-config.md` and `schemas/config-v1.json`; rascal
 `crates/rascal-core/src/config.rs` and `schemas/rascal/config-v1.json`.
 
@@ -1681,7 +1702,7 @@ four clauses of the checkpoint's exit line.
 
 ### X1. A key directly after a word character
 
-**Depends on:** A12. Scripts only.
+**Depends on:** B0. Scripts only.
 
 - [ ] `sk_shape` in `scripts/scan.sh` finds a key of its family wherever it starts, with
       what follows the prefix narrowed so that an ordinary hyphenated word is not a match.
@@ -1699,7 +1720,7 @@ small.
 
 ### X2. A planted registry fails `just deny`
 
-**Depends on:** A12. Scripts only.
+**Depends on:** B0. Scripts only.
 
 - [ ] `scripts/tests/test-deny.sh`: in a throwaway copy of the workspace's manifests, a
       dependency from an unknown registry and one from a git source each fail
@@ -1708,6 +1729,58 @@ small.
 **Done when** the test passes for both, passes on the tree as it is, needs no network,
 ends with `finished`, and is run by `just test-scripts`.
 **Carry-over:** the row on `cargo deny` (deferred from milestone 0). **Size:** small.
+
+### X3. A pull request's title and body, scanned
+
+**Depends on:** X1. Scripts and two skills.
+
+- [ ] One script scans the two files of a pull request's text for what is found today
+      only by reading: a bare agent or model name in a sentence, a value of the repo's
+      local `.env`, a path that starts with `~`, and an attribution line behind a
+      leading mark. `kickoff` and `review-merge` use it in place of their own commands.
+
+**Done when** its test passes: each of the four is refused, the fourth behind each mark
+the carry-over row lists; a text with none passes; a refusal says where and never shows
+the value; the test file ends with `finished`; the tests on the skills' exact lines pass
+with the two changed lines.
+**Carry-over:** the row on a pull request's title and body. **Size:** small.
+
+### X4. A push made around the hooks
+
+**Depends on:** X3. Scripts only.
+
+- [ ] A push made with `GIT_DIR` and `GIT_WORK_TREE` set from another folder is refused,
+      or what it published is scanned before a merge: `review-merge`'s range scan takes
+      every branch the pull request's commits are on and the branch's name. Which of the
+      two is the builder's finding, written in the row.
+
+**Done when** a test makes such a push to a throwaway remote and it is refused or its
+material is found by the scan that follows; or the builder shows neither can be done from
+a script, stops, and the gap goes to the owner to accept in a line of the row.
+**Carry-over:** the row on a push around the hooks. **Size:** small.
+
+### X5. A script edited while it runs
+
+**Depends on:** X4. Scripts only.
+
+- [ ] `scripts/scan.sh` and the other long scripts run from a function read whole before
+      it starts, or from a copy.
+
+**Done when** a test edits the file during a run, at a barrier the test holds and not by
+a sleep, and the run finishes as the program it started as; `scripts/tests/test-syntax.sh`
+holds each long script to the form.
+**Carry-over:** the row on a script edited while it runs. **Size:** small.
+
+### X6. No `grep -q` after a pipe
+
+**Depends on:** X5. Scripts only.
+
+- [ ] The sixteen lines under `scripts/` that end a pipe with `grep -q` send the output
+      to `/dev/null` instead, and `scripts/tests/test-syntax.sh` refuses a new one.
+
+**Done when** no script under `scripts/` has the pattern, a planted one fails the test,
+and every script test passes on both runners.
+**Carry-over:** the row on `grep -q` after a pipe. **Size:** small.
 
 ### Z1. Exit check
 
@@ -1729,19 +1802,25 @@ ends with `finished`, and is run by `just test-scripts`.
 
 ## Carry-over rows and their tasks
 
-Every row of `docs/carry-over.md` whose owner names 1B, read again from `main` at
-5ae110b, nineteen rows.
+Every row of `docs/carry-over.md` whose owner names 1B, read again from `main` at the
+tag `m1a`: twenty-five rows.
 
 | Row | Task, or new owner |
 |---|---|
+| A pull request's title and body: four things found only by reading | X3 |
+| A push made around the hooks | X4, or the owner's acceptance if no script can close it |
+| A script edited while it runs | X5 |
+| `grep -q` after a pipe, sixteen lines | X6 |
+| The roster a call is resolved against and the backends an executor holds are given apart | I6 (one snapshot makes both), C4 (built from the config), W1 (the binary). The half that waits for a real backend stays with 1C |
+| A run calls at most 256 actions: the cost of a publication is 1B's | Follows the row on what every publication costs, to milestone 2 |
 | The secrets pattern misses a key directly after a hyphen, an underscore, a letter or a digit | X1 |
 | "Never removed" has one limit left: `put` replaces a made name | I2 |
 | The executor is built with no backends and the digest of no bytes | C4 (the shape and digest: C1; the binary: W1) |
-| The run record's empty lists: `asked.settings`; `spend.requests` and settled spend; `egress` | B4 defines the elements; C5, S10 and E4 fill them. `egress` was owned by "the first backend that sends data": the gate is where a send is known, so 1B takes it, filled by fakes. `models`, `time.durations` and `judge` stay with A11 |
+| The run record's empty lists: `asked.settings`; `spend.requests` and settled spend; `egress` | B4 defines the elements; C5, S10 and E4 fill them. `egress` was owned by "the first backend that sends data": the gate is where a send is known, so 1B takes it, filled by fakes. `device` and `cached` stay with 1C |
 | The ledger: the real one, the binary built with it, the token, a damaged reservation, the names' segments, a paid request with no bound | I2 (the token, the names), S2 (the real ledger), S4 (no bound), S6 and S12 (a damaged reservation: frozen, then corrected), W1 (the binary) |
 | Settlement: a run that ends; one that did not; a child's share not given back; a run's own requests not debited | S11; S6, at the full amount unless every dispatch was settled, with I4b ending the run; S7; S5 and S7 |
 | An admission that was visible and not confirmed takes its id | I4b ends it at the next open to write. Ending it at once in the process that made it: **milestone 2**, with the first door that keeps a process alive across runs; until then the limit stays, and the row says so |
-| What every publication costs as ids and reservations accumulate | **Milestone 2, before request ids are used in volume** (the measurement at 100,000 ids, S13 of draft 5). 1B adds a ledger record to each admission and two to each paid request; the row gains that |
+| What every publication costs as ids and reservations accumulate | **Milestone 2, before request ids are used in volume** (the measurement at 100,000 ids, S13 of draft 5). 1B adds a ledger record to each admission and two to each paid request, and each of its publications has a case at the 64 MiB limit, where it is refused and nothing is released (I4, S5, S5b); the row gains that |
 | Whether a failed call may have been charged | B1b (the stage on a fault), S5b (the settlement) |
 | What a provider adapter said of itself: `pricing`, `recipient` | B1 and S4 (`pricing`); B2 and E2 (`recipient`). Image preparation stays with milestone 2 |
 | What redaction does not find; quotes around a value; the variable named | C3 (the forms, UTF-16 among them, and JSON as JSON); C2 (quotes, the variable, the least length) |
@@ -2011,11 +2090,25 @@ executable model and a table of histories, the 38 sequences these rounds produce
 them. The four findings left open by round 6 are in the appendix and are histories 8, 12,
 13, 19, 20, 30 and 31 of that table. No round was run on draft 12, by that decision.
 
+**The final revision, draft 13, after the tag `m1a` (2026-11-14).** No round was run on
+it: it changes no scope. What changed:
+
+- D8, D9 and D13 are stated as fact, from `docs/plans/m1a-note.md` and ADR 0009, and B0
+  is a short check of the carry-over rows.
+- The carry-over rows were read again at the tag. Six are new to 1B: four tooling rows
+  the exit check re-owned (X3 to X6, small tasks of the scripts strand), the roster and
+  the held backends given apart (I6, C4, W1), and the publication cost under the limit of
+  256 calls (with its row, to milestone 2).
+- What 1A decided late is taken in: a run is handed the backend its call resolved and its
+  tally records each request (I3); every list of a record is bounded (B4); a generation
+  file has a limit, so each publication 1B adds has a case at it (I4, S5, S5b); the
+  binary has one door (I4). The test rules follow `AGENTS.md`, "Threads and processes".
+
 ## Risks
 
 | Risk | Effect | What we do |
 |---|---|---|
-| A9, A11 or ADR 0009 changes where handles are made or what a run records of a request | I3 and B4 are wrong as written | B0 is first, checks D9, and stops on an answer that is neither outcome |
+| A store fills while 1B's publications add names | A settlement or a recovery is refused | Each has its case at the limit: nothing is released, the run is abandoned, and deleting still works (I4, S5, S5b) |
 | An interface fixed early does not fit the strand that implements it | A base task is reopened and a strand waits | Each interface is the outline a review gave after three rounds of the tasks it serves; its task ships a fake that the strand's tests are first written against; a misfit is changed by a base task, never worked around in a strand |
 | The ledger under-counts money on some path | The allowance is overspent without an error | Six rounds of prose review each found one; so I2 settles the arithmetic against an executable model, 38 named histories and 4,096 generated ones, each asserted against the invariants, and every later ledger task is held to the same table |
 | Recovery's losses are felt | Someone needs to know what an interrupted run did | It is in no record, by decision; the carry-over line says who reopens it |
