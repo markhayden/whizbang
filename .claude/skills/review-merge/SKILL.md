@@ -47,7 +47,8 @@ If the verdict names no commit, or a short one, ask the reviewer for the full co
 - [ ] 7. The title and body. No scan sees them on the pull request, so save them to a file
       and scan it (the commands below), then read them yourself: no attribution line, no
       agent or model name, no private path or address, and every claim true of the final
-      diff. The scan refuses an agent's or a model's name that it knows, a path that
+      diff. The scan refuses an agent's or a model's name that it knows (but for the
+      folder `.claude` and the file `CLAUDE.md` of this repo, named as paths), a path that
       starts with `~`, a value from the repo's local `.env`, and a credit line with
       nothing before it but marks that are not letters (a number, a sign, a table bar, a
       quote, a backtick, a box); a name it does not know is found only by reading, and so
