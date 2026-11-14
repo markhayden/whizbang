@@ -3,7 +3,7 @@
 //! is read, and a block fenced as `toml refused` is refused with exactly the sentence
 //! in the `text` block that follows it.
 
-use whizbang_core::config::Config;
+use whizbang_core::config::{Config, EnvFile};
 use whizbang_core::contract::Secrets;
 
 /// The fenced blocks of a Markdown page, each as the word after its fence and its lines.
@@ -72,4 +72,19 @@ fn the_guides_first_example_is_the_specs() {
     let first = &blocks(guide)[0];
     assert_eq!(first.0, "toml");
     assert_eq!(first.1, super::the_specs_example());
+}
+
+#[test]
+fn the_guides_env_file_is_read_with_its_config() {
+    // The guide's one env file sets the two variables its first config names, and the
+    // keys in it are made up.
+    let guide = include_str!("../../../../../docs/guides/config.md");
+    let blocks = blocks(guide);
+    let files: Vec<_> = blocks.iter().filter(|(info, _)| info == "env").collect();
+    assert_eq!(files.len(), 1);
+    let env = EnvFile::parse(files[0].1.as_bytes()).unwrap();
+    let config = Config::parse(blocks[0].1.as_bytes(), &env.secrets()).unwrap();
+    let credentials = env.credentials(&config).unwrap();
+    assert_eq!(credentials.missing().count(), 0);
+    assert_eq!(format!("{:?}", credentials.secrets()), "Secrets(2)");
 }

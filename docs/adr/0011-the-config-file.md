@@ -8,6 +8,10 @@ Date: 2026-11-13
 Amended: 2026-11-13, inside checkpoint 1B, with the second part of task C1. Added: "The
 digest", with its consequences and the two alternatives it turned down. Changed: the
 paragraph that said a config had no digest yet.
+Amended: 2026-11-13, a second note, with task C2. Added: "The env file", which also
+settles what ADR 0005 ("Redaction") left to the config: the quotes around a value, the
+variable named in a refusal, and the least length. Changed: the sentence that said
+reading a value was still to come.
 Spec: section 4, "Backends" (config, resolution, credentials); section 6, "Spend";
 section 10, "Egress"
 
@@ -39,8 +43,8 @@ a key pasted where it does not belong.
 ## Decision
 
 The code is `crates/whizbang-core/src/config/`; its tests are
-`crates/whizbang-core/tests/it/config/` (`file`, `digest`, `examples`), and a test named
-below is in that folder. Nothing is built from a config at this head: no command takes one, and
+`crates/whizbang-core/tests/it/config/` (`file`, `digest`, `env`, `examples`), and a test
+named below is in that folder. Nothing is built from a config at this head: no command takes one, and
 the roster, the cap, the policy and the settings of a run are made from it by tasks C4
 and C5 of the plan.
 
@@ -178,8 +182,8 @@ recipients, 16 upstreams (`file::more_than_the_bound_of_a_list_is_refused`).
 ### A credential is named, never held
 
 A backend says which variable its credential is in. The config type holds that name and
-has no place for the value; reading the value from an env file is task C2's. Three
-rules keep a key out of the file and out of what is said about the file:
+has no place for the value, which is read from an env file ("The env file", below).
+Three rules keep a key out of the file and out of what is said about the file:
 
 - **What stands where a variable's name belongs is never shown.** If it is not a
   variable's name it is refused, and the refusal names the key and says that what was
@@ -243,6 +247,80 @@ file and the reason.
   escaped (`char::escape_default`), so that what is shown is one line of ASCII, and its
   first 64 characters of that, with three dots when there were more
   (`KEY_SHOWN_LIMIT`; `file::a_key_in_a_refusal_is_escaped_and_cut`).
+
+### The env file
+
+The values are in one env file, which git ignores and nothing here writes. It is named
+on the command line as the config is; that flag comes with the binary's wiring too. The
+code is `config/env.rs`, and its tests are `env::`.
+
+**The order.** The env file is read first, whole, by its own strict reader
+(`EnvFile::read`, `EnvFile::parse`). Every value in it of 8 bytes or more is then a
+secret the config's reader is told of (`EnvFile::secrets`), whether or not the config
+names its variable; the config is read once with that set; and the variables the config
+names are resolved from the same parsed file (`EnvFile::credentials`). So a value that
+sits in the env file is never said back from a config, also when it was pasted under a
+name nothing uses
+(`env::the_env_file_is_read_first_and_a_config_that_holds_any_of_its_values_is_refused`).
+A file that sets a variable to something that is not a secret, and is 8 bytes or longer,
+makes a config that holds the same text unreadable; an env file is for keys.
+
+**A line** is empty, a comment that starts with `#`, or `NAME=value`, with `export` and
+a space before it if it likes. A name is a variable's name, as in the config. The value
+loses the white space at its ends, a carriage return among it, and then one pair of
+single or double quotes around it: ADR 0005 left the quotes to whoever reads the file, and here
+they are taken off, so the bare key is what is handed over and what is taken out of
+what is written
+(`env::a_quoted_value_a_line_break_and_an_export_prefix_each_give_the_bare_key`). A
+variable set to nothing is as one not set.
+
+**What is refused,** each with the number of its line and nothing of the line, since a
+line may be a key pasted where it does not belong: a line that is not an assignment; a
+name given twice; a value that cannot be taken for one thing (a space outside quotes, a
+quote that is not closed or not at the ends, a backslash inside double quotes, more than
+4,096 bytes). And of the file: more than 64 KiB, refused from its length before it is
+opened, with no more than the bound and one byte read; bytes that are not UTF-8, or an
+ASCII control character; more than 256 variables. No refusal has a path
+(`env::a_line_that_is_not_an_assignment_and_a_name_given_twice_are_refused`,
+`env::a_malformed_line_whose_name_holds_a_value_of_another_line_is_refused_without_showing_it`,
+`env::a_file_over_its_bound_is_refused_from_its_length_and_no_refusal_has_a_path`).
+
+**Credentials.** `EnvFile::credentials` answers, for a config, what each backend is
+handed: the value of the variable its own `key_env` names and of the one its
+`token_env` names, where the file sets them.
+
+- **Only the backend whose table names a credential is handed it.** `Credentials::of`
+  takes a capability and a backend's name. There is no question by a variable's name and
+  none that answers every credential
+  (`env::a_backend_is_handed_its_own_credential_and_cannot_ask_for_anothers`).
+- **The executor's secrets** are every credential the config names that has a value
+  (`Credentials::secrets`), and not the rest of the file.
+- **A variable the file does not set** is listed by its name (`Credentials::missing`)
+  and is no refusal: whether a backend can do without is the backend's, when one exists.
+- **A value shorter than 8 bytes,** for a variable the config names, is refused, and
+  then no credentials are made. The refusal names the variable and gives neither the
+  value nor its length, which is less than ADR 0005's `SecretRefused` gives
+  (`env::a_short_value_is_refused_with_the_variables_name_and_nothing_of_the_value`).
+  A short value of a variable no backend names is not a credential and is not refused.
+- **A name that holds a value.** A variable's name is said in a refusal and in the list
+  of what is missing. A config read with the file's secrets cannot name a variable that
+  holds one; for a config read without them, `credentials` refuses such a name and does
+  not say it
+  (`env::a_malformed_line_whose_name_holds_a_value_of_another_line_is_refused_without_showing_it`).
+- **Nothing prints a value.** An `EnvFile` shows how many variables it holds, a
+  `Credentials` its counts, what a backend is handed which of the two it has, and a
+  `Credential` that it is one; the value is reached by `Credential::expose` alone. A
+  marker key read this way is in no refusal, no `{:?}`, and no file of the store of a
+  run that was given it as an argument and failed with it in its message
+  (`env::a_marker_key_is_in_no_error_no_debug_no_record_and_no_journal_of_a_run_that_used_it`).
+
+**What the env reader does not do,** each pinned by
+`env::what_the_env_reader_does_not_do_is_known`: it expands nothing (`$NAME` in a value
+is those letters) and reads no escape; a `#` with no space before it is part of the
+value, and one after a space makes the value two things, which is refused; it does not
+read the process's environment, so a variable set there and not in the file is missing;
+and a value shorter than 8 bytes is a secret to nobody, neither looked for in a config
+nor taken out of what is written.
 
 ### The digest
 
@@ -343,7 +421,9 @@ config's digest in `asked.config` stands for the rest.
   value that cannot be made unchecked.
 - The spec's example stands as written; `SPEC.md` is not changed.
 - A config cannot carry a credential by any documented way. A person who wants a key in
-  a file puts it in the env file (task C2).
+  a file puts it in the env file.
+- Keys come from the env file alone, never from the environment of the process: what a
+  run could use does not depend on the shell it was started from.
 - Text in a config is ASCII. A model or an account with a letter outside it cannot be
   written; that is a limit, taken so that every sentence and every record that quotes a
   config is one line of ASCII.
