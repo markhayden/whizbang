@@ -70,6 +70,13 @@ pr_scan_alone() {
     echo "skill: $1 must scan a pull request's text with the one line, not without the clean-room scan and not with the commands it replaced"
     return 1
   fi
+  # The scan comes before every command that puts the text on a pull request.
+  local at put
+  at=$(grep -n -x -F -e "$pr_scan" "$1" | cut -d: -f1)
+  put=$(grep -n -E -e '^gh[[:space:]]+pr[[:space:]]+(create|edit)([[:space:]]|$)' "$1" | head -n 1 | cut -d: -f1) || true
+  [ -n "$put" ] || { echo "skill: $1 has no command that puts the text on a pull request"; return 1; }
+  [ "$at" -lt "$put" ] ||
+    { echo "skill: $1 must scan the title and body before the first command that puts them on a pull request (gh pr create, gh pr edit)"; return 1; }
 }
 
 merge_line='gh[[:space:]]+pr[[:space:]]+merge'
@@ -156,7 +163,11 @@ check_kickoff() {
     'merge `origin/main` into your' 'with a merge commit (this asks first), never with a rebase' \
     '`<commit>:<path>:<line>`' 'Never retry around the hook, and never use `--no-verify`.' \
     'the system temp folder may be used for this' 'After any edit to either file, read' \
-    'a name it does' 'not know is found only by reading' 'and is not refused: go through those' \
+    'a name it does' 'not know is found only by reading, and so is a credit behind a mark made of letters' \
+    'which it only lists' 'and is not refused: go through those. Then' \
+    'So first go through the two files against "Secrets and private data"' \
+    'address. Then scan them (the commands below).' \
+    'After any edit to either file, read and scan again.' \
     '`check (macos-15)` and `check (ubuntu-22.04)`' 'says "no checks reported"' \
     'a run whose commit is the head lists all three' \
     'go back to step 4' 'hand back again with the new commit'; do
@@ -202,7 +213,8 @@ check_review_merge() {
     '- [ ] 6. With `WHIZBANG_WORDLIST` set, `just scan-range <base> <head>` passes: secrets,' \
     '- [ ] 7. The title and body. No scan sees them on the pull request, so save them to a file' \
     'and scan it (the commands below), then read them yourself' \
-    'a name it does not know is found only by reading' 'lists each line that says "co-authored-by" or "generated with" and is not refused:' \
+    'a name it does not know is found only by reading, and so' 'lists. It lists each line that says "co-authored-by" or "generated with" and is not' \
+    'refused: go through those.' 'lines it lists, and are gone through again,' \
     'The corrected files get every check of this step again, the scan and the' \
     '- [ ] 8. Files that grant permissions or check the pull request. List the changed files.' \
     'any file under `.github/`' 'any file under a folder named `.claude`, at' '`.mcp.json`, at any depth' \
@@ -264,6 +276,7 @@ check_reviewer() {
     'While it is still running, wait for it. A red job is a finding that blocks' \
     'that is step 4 of `.claude/skills/review-merge/SKILL.md`' \
     'step 7 of `review-merge`' 'settles it without moving the head' \
+    'the one scan of the two files, and each line it' 'lists to read' \
     'what the branch adds' 'a tripwire, not a proof' \
     'is not a false claim' "The pull request's title and body" \
     'the decision behind it is recorded in the pull request body' \
@@ -426,6 +439,14 @@ changed check_kickoff "$f" '$s/$/\
 scripts\/scan.sh --message "$text\/body.md"/' "not with the commands it replaced"
 changed check_kickoff "$f" 's/^# Exit 0 is the pass\. A line it prints that starts "to read:" is not refused: go through it\.$/# Exit 0 is the pass./' 'must say: A line it prints that starts "to read:"'
 changed check_kickoff "$f" 's/a name it does$/no name is left/' "must say: a name it does"
+# The scan moved to after the command that opens the pull request, or the one that edits it.
+awk '$0 == "scripts/scan.sh --pr-text \"$text/title.txt\" \"$text/body.md\"" { held = $0; next } { print } /^gh pr create / { print held }' "$f" >"$tmp/moved.md"
+cmp -s "$f" "$tmp/moved.md" && fail "moving the scan after gh pr create changed nothing"
+expect_fail "kickoff with the scan after gh pr create" "before the first command that puts them on a pull request" check_kickoff "$tmp/moved.md"
+changed check_kickoff "$f" 's/After any edit to either file, read and scan again\./After any edit to either file, read it again./' "must say: After any edit to either file, read and scan again."
+changed check_kickoff "$f" 's/address\. Then scan them (the commands below)\./address./' "must say: address. Then scan them"
+changed check_kickoff "$f" 's/So first go through the two files against/So look at the two files for/' "must say: So first go through the two files"
+changed check_kickoff "$f" 's/and is not refused: go through those\. Then$/and is not refused. Then/' "must say: and is not refused: go through those"
 changed check_kickoff "$f" 's/^gh pr edit <number> /gh pr comment <number> /' "must say: gh pr edit <number>"
 changed check_kickoff "$f" 's/Never retry around the hook, and never use `--no-verify`\.//' "must say: Never retry around the hook"
 changed check_kickoff "$f" '/^until run=/d' "must say: until run="
@@ -467,6 +488,11 @@ changed check_review_merge "$f" 's/^scripts\/scan.sh --pr-text /(cd "$text" \&\&
 changed check_review_merge "$f" '$s/$/\
 scripts\/scan.sh --pr-text "$text\/title.txt" "$text\/body.md"/' "as one whole line and once"
 changed check_review_merge "$f" 's/a name it does not know is found only by reading/it finds every name/' "must say: a name it does not know"
+awk '$0 == "scripts/scan.sh --pr-text \"$text/title.txt\" \"$text/body.md\"" { held = $0; next } { print } /^gh pr edit / { print held }' "$f" >"$tmp/moved.md"
+cmp -s "$f" "$tmp/moved.md" && fail "moving the scan after gh pr edit changed nothing"
+expect_fail "review-merge with the scan after gh pr edit" "before the first command that puts them on a pull request" check_review_merge "$tmp/moved.md"
+changed check_review_merge "$f" 's/^      refused: go through those\.$/      refused./' "must say: refused: go through those."
+changed check_review_merge "$f" 's/lines it lists, and are gone through again,$/lines it lists,/' "must say: lines it lists, and are gone through again,"
 changed check_review_merge "$f" 's/Nothing is left only in a verdict\.//' "must say: Nothing is left only in a verdict."
 changed check_review_merge "$f" '/^gh run list --commit <head> /d' "must say: gh run list --commit <head>"
 changed check_review_merge "$f" 's/does not review its own build: if/does not review its own build unless it must: if/' "own build"

@@ -48,10 +48,12 @@ If the verdict names no commit, or a short one, ask the reviewer for the full co
       and scan it (the commands below), then read them yourself: no attribution line, no
       agent or model name, no private path or address, and every claim true of the final
       diff. The scan refuses an agent's or a model's name that it knows, a path that
-      starts with `~`, a value from the repo's local `.env`, and a credit line behind any
-      mark that starts a line; a name it does not know is found only by reading. It also
-      lists each line that says "co-authored-by" or "generated with" and is not refused:
-      go through those.
+      starts with `~`, a value from the repo's local `.env`, and a credit line with
+      nothing before it but marks that are not letters (a number, a sign, a table bar, a
+      quote, a backtick, a box); a name it does not know is found only by reading, and so
+      is a credit behind a mark made of letters (`a. `, `Note: `, `<p>`), which it only
+      lists. It lists each line that says "co-authored-by" or "generated with" and is not
+      refused: go through those.
       You may correct the title or body yourself: a change to the text does not move the
       head. The corrected files get every check of this step again, the scan and the
       lines it lists, and are gone through again,
@@ -125,7 +127,7 @@ gh pr view <pr> --json body --jq .body >"$text/body.md"
 cat "$text/title.txt" "$text/body.md"          # read first
 # The check. After a correction to either file, it runs again on the two files.
 # One scan of the two files, run from inside the repo: secrets, the values of the local
-# .env among them; the clean-room scan; a credit line behind any mark that starts a line;
+# .env among them; the clean-room scan; a credit line with nothing but marks before it;
 # an agent's or a model's name; a path that starts with ~. It says where, never what.
 # Exit 0 is the pass. A line it prints that starts "to read:" is not refused: go through it.
 scripts/scan.sh --pr-text "$text/title.txt" "$text/body.md"
