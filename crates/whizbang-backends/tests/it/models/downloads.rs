@@ -58,6 +58,30 @@ fn the_fake_serves_a_file_from_memory_in_pieces_in_order() {
     assert_eq!(ended.unwrap(), Downloaded::Bytes(2500));
     assert_eq!(got, content());
     assert_eq!(pieces, [1000, 1000, 500]);
+    // A piece is one byte at least, whatever it is told.
+    let fake = FakeDownloader::new()
+        .in_pieces_of(0)
+        .serving(&from, b"abc".to_vec());
+    let (ended, got, pieces) = all(&fake, &request(&from, 4096));
+    assert_eq!(
+        (ended.unwrap(), got),
+        (Downloaded::Bytes(3), b"abc".to_vec())
+    );
+    assert_eq!(pieces, [1, 1, 1]);
+}
+
+#[test]
+fn told_twice_of_one_address_the_fake_does_what_it_was_told_last() {
+    let from = address("https://weights.example.org/f");
+    let fake = FakeDownloader::new()
+        .serving(&from, b"first".to_vec())
+        .serving(&from, b"second".to_vec());
+    let (ended, got, _) = all(&fake, &request(&from, 4096));
+    assert_eq!(
+        (ended.unwrap(), got),
+        (Downloaded::Bytes(6), b"second".to_vec())
+    );
+    assert!(format!("{fake:?}").contains("1 addresses"));
 }
 
 #[test]
@@ -74,6 +98,9 @@ fn the_fake_hands_over_no_more_than_the_most_it_was_asked_for() {
     assert_eq!((ended.unwrap(), got.len()), (Downloaded::Bytes(2500), 2500));
     let (ended, got, _) = all(&fake, &request(&from, 1));
     assert_eq!((ended.unwrap(), got), (Downloaded::Bytes(1), vec![0]));
+    // And for one byte fewer than there is.
+    let (ended, got, _) = all(&fake, &request(&from, 2499));
+    assert_eq!((ended.unwrap(), got.len()), (Downloaded::Bytes(2499), 2499));
 }
 
 #[test]
@@ -142,6 +169,13 @@ fn the_fake_fails_at_once_or_after_a_stated_count_of_bytes() {
     // A request for less than that is answered: it never came to the fault.
     let (ended, got, _) = all(&fake, &request(&from, 1000));
     assert_eq!((ended.unwrap(), got.len()), (Downloaded::Bytes(1000), 1000));
+    // And so is one that ends exactly there: the fault is for a request that would
+    // have gone on.
+    let (ended, got, _) = all(&fake, &request(&from, 1500));
+    assert_eq!((ended.unwrap(), got.len()), (Downloaded::Bytes(1500), 1500));
+    let fake = FakeDownloader::new().failing_after(&from, content(), 2500, fault);
+    let (ended, got, _) = all(&fake, &request(&from, 4096));
+    assert_eq!((ended.unwrap(), got.len()), (Downloaded::Bytes(2500), 2500));
 }
 
 #[test]

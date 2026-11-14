@@ -197,8 +197,8 @@ impl FakeDownloader {
     }
 
     /// Serves these bytes at this address until exactly `after` of them were handed
-    /// over, and then fails with this fault. A request that ends before that many is
-    /// answered.
+    /// over, and then fails with this fault. A request that ends before that many, or
+    /// exactly there, is answered: the fault is for one that would have gone on.
     pub fn failing_after(
         self,
         at: &Address,
@@ -211,7 +211,8 @@ impl FakeDownloader {
 
     /// Serves these bytes at this address, and once exactly `after` of them were
     /// handed over stops at the barrier `name` until a test releases it. A request
-    /// cancelled by then ends there as cancelled.
+    /// cancelled by then ends there as cancelled; one that ends before that many, or
+    /// exactly there, does not stop.
     pub fn stopping_after(
         self,
         at: &Address,
