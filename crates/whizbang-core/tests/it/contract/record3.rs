@@ -641,3 +641,33 @@ fn a_refusal_of_a_capability_request_names_no_action() {
         d["outcome"]["refusals"][0]["kind"] = json!("request_refused")
     });
 }
+
+#[test]
+fn reading_looks_at_the_shape_and_the_meaning_before_how_a_record_is_written() {
+    // The tests above put a document together and write it with its fields in another
+    // order than a record's. They take `NotCanonical` to mean that the types took the
+    // document, and anything else to mean that they refused it for what was changed.
+    // That holds only while reading checks in this order: the shape, then what the
+    // record says, and last how it is written. This pins the order.
+    let reordered = |change: &dyn Fn(&mut Json)| {
+        let mut document = as_json(&ordinary());
+        change(&mut document);
+        let bytes = written(&document);
+        // The fields are not in a record's order: the bytes are not the vector's.
+        assert_ne!(bytes, ordinary().as_bytes());
+        RunRecord::from_bytes(&bytes)
+    };
+    // Nothing wrong but the order of its fields: refused last, for how it is written.
+    assert_eq!(reordered(&|_| {}), Err(RecordError::NotCanonical));
+    // Wrong in shape as well: refused for the shape.
+    let shape = reordered(&|d| d["egress"][0]["outcome"] = json!("lost"));
+    assert!(matches!(shape, Err(RecordError::Malformed(_))), "{shape:?}");
+    // Right in shape and wrong in what it says: refused for what it says.
+    let meaning = reordered(&|d| d["spend"]["requests"][0]["over_bound"] = json!(true));
+    assert!(
+        matches!(meaning, Err(RecordError::Inconsistent(_))),
+        "{meaning:?}"
+    );
+    // And the same record in a record's order, with nothing changed, is read.
+    assert!(RunRecord::from_bytes(ordinary().as_bytes()).is_ok());
+}
