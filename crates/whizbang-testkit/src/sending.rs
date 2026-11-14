@@ -133,6 +133,8 @@ pub struct Looked {
     pub needs: Classes,
     /// How many answers in a row, just before, pointed elsewhere.
     pub moves: u32,
+    /// How many answers pointed elsewhere, up to now, for this backend of this run.
+    pub total: u32,
 }
 
 /// What a test has a fake check do while it is asked.
@@ -204,6 +206,7 @@ impl HopCheck for FakeCheck {
                 origin: hop.origin().clone(),
                 needs: hop.needs(),
                 moves: hop.moves(),
+                total: hop.total_moves(),
             });
         }
         // The hook is run with no lock of the fake held but its own.

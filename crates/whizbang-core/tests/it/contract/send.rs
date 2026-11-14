@@ -4,15 +4,18 @@
 
 use std::sync::{Arc, Mutex};
 
-use whizbang_core::capability::{Fault, FaultKind, FillHandle, Stage};
+use whizbang_core::capability::{
+    Bounds, Declaration, Fault, FaultKind, FillHandle, FillRequest, Filler, Painted, Stage,
+};
 use whizbang_core::contract::record::{Handed, RunRecord, Status};
 use whizbang_core::contract::{
-    Answer, Call, Cancellation, Capabilities, Capability, Executor, Produced, RefusalKind, Request,
-    Requirement, Secrets,
+    Answer, Call, Cancellation, Capabilities, Capability, Executor, ModelIdentity, Produced,
+    RefusalKind, Request, Requirement, Secrets,
 };
 use whizbang_core::egress::{
     APPROVED_LIMIT, Account, Address, CREDENTIALS_LIMIT, Classes, Credential, DataClass, Denied,
-    DispatchPolicy, HopCheck, NoHop, NotAllowed, Origin, Outgoing, Piece, Recipient, Reply, Ways,
+    DispatchPolicy, HopCheck, NoHop, NotAllowed, Origin, Outgoing, Piece, Recipient, Reply, Sender,
+    Ways,
 };
 use whizbang_testkit::capabilities::{FakeFiller, Paint, roster};
 use whizbang_testkit::sending::{FakeCheck, FakeSender};
@@ -81,6 +84,25 @@ struct Ran {
     record: RunRecord,
     bytes: Vec<u8>,
     fault: Option<Fault>,
+    /// Every byte of every file under the store, after the run.
+    store: Vec<u8>,
+}
+
+/// Every byte of every file under a folder, one file after another.
+fn every_byte_under(folder: &std::path::Path, into: &mut Vec<u8>) {
+    let mut entries: Vec<_> = std::fs::read_dir(folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            every_byte_under(&path, into);
+        } else {
+            into.extend(std::fs::read(&path).unwrap());
+            into.push(b'\n');
+        }
+    }
 }
 
 impl Ran {
@@ -138,10 +160,13 @@ fn run_one(filler: &Arc<FakeFiller>, ways: Ways, secrets: Secrets) -> Ran {
     let (record, names) = stored(&world, finished.run());
     assert_eq!(record.outcome().status, Status::Completed);
     let fault = answered.lock().unwrap().take();
+    let mut store = Vec::new();
+    every_byte_under(&world.root(), &mut store);
     Ran {
         record,
         bytes: names["record"].clone(),
         fault,
+        store,
     }
 }
 
@@ -812,6 +837,41 @@ fn a_secret_the_executor_knows_is_in_no_refusal_of_a_send() {
     assert_eq!(refused.len(), 1);
     assert!(!refused[0].1.contains(host), "{}", refused[0].1);
     assert!(!ran.fault.clone().unwrap().sentence().contains("keyhost"));
+    // Nor is it in the list of where data went, which writes an origin as it is: an
+    // origin that holds a secret is not listed, and the refusal stands for it. No
+    // file of the store holds the host.
+    assert_eq!(ran.went(), []);
+    assert!(!holds(&ran.store, "keyhost"));
+    assert!(holds(&ran.store, "request_not_approved"));
+}
+
+#[test]
+fn an_origin_that_holds_a_secret_cannot_be_listed_so_nothing_is_sent_to_it() {
+    // Everything approves: the recipient is at the host, the policy approves it and
+    // the check lets every address through. The destination is itself a secret the
+    // executor knows, which a record cannot list; so nothing is handed over.
+    let host = "keyhost-0123456789abcdef.example.com";
+    let secrets = Secrets::new([host.to_owned()]).unwrap();
+    let there = Recipient::new(origin(&format!("https://{host}")));
+    let filler = FakeFiller::new(Paint::Inverse).sending_to(there.clone());
+    let filler = Arc::new(filler.posting(address(&format!("https://{host}/v1")), a_prompt()));
+    let sender = Arc::new(FakeSender::scripted(vec![ok()]));
+    let policy = DispatchPolicy::none().approving(there, prompts()).unwrap();
+    let ways = Ways::through(sender.clone())
+        .checked_by(Arc::new(FakeCheck::approving()))
+        .under(policy);
+    let ran = run_one(&filler, ways, secrets);
+    assert_eq!(sender.requests(), 0, "nothing was handed over");
+    let fault = ran.fault.clone().unwrap();
+    assert_eq!(
+        (fault.kind(), fault.stage()),
+        (FaultKind::Rejected, Stage::NotSent)
+    );
+    assert_eq!(ran.went(), []);
+    let refused = ran.refused();
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0].0, RefusalKind::RequestNotApproved);
+    assert!(!holds(&ran.store, "keyhost"));
 }
 
 #[test]
@@ -851,4 +911,469 @@ fn a_check_that_panics_hands_nothing_over_and_the_next_run_goes() {
     let (record, _) = stored(&world, finished.run());
     assert_eq!(record.outcome().status, Status::Completed);
     assert_eq!((sender.requests(), record.egress().len()), (1, 1));
+}
+
+// --- what the record says of a send, and a sender that outlives its run ------------------------
+
+/// A filler that does what a test tells it with the bounds of each request, and then
+/// answers with a fault. It names the recipient.
+struct Custom {
+    declaration: Declaration,
+    with: Box<dyn Fn(&Bounds) + Send + Sync>,
+}
+
+fn custom(with: impl Fn(&Bounds) + Send + Sync + 'static) -> Arc<Custom> {
+    let model = ModelIdentity::new("fake", "fake-filler", "1");
+    let declaration = Declaration::new(model, &[]).unwrap();
+    Arc::new(Custom {
+        declaration: declaration.sending_to(recipient()),
+        with: Box::new(with),
+    })
+}
+
+impl Filler for Custom {
+    fn declaration(&self) -> &Declaration {
+        &self.declaration
+    }
+
+    fn fill(&self, _: &FillRequest, bounds: &Bounds) -> Result<Painted, Fault> {
+        (self.with)(bounds);
+        Err(Fault::new(FaultKind::Unsupported, "the test's filler paints nothing").not_sent())
+    }
+}
+
+fn a_prompt_to(to: &str) -> Outgoing {
+    Outgoing::new(address(to), a_prompt()).unwrap()
+}
+
+/// An executor with one action, `asks`, that asks this filler once and then does
+/// what the test gives it, over these ways out.
+fn asking(
+    world: &World,
+    filler: Arc<Custom>,
+    ways: Ways,
+    then: impl Fn(&whizbang_core::contract::Context) + Send + Sync + 'static,
+) -> whizbang_core::contract::Engine {
+    let asks = action(
+        "asks",
+        vec![Requirement::new(Capability::Fill)],
+        move |_, context| {
+            let fill = context.capabilities().fill().unwrap();
+            fill.fill(&fill_request()).unwrap_err();
+            then(context);
+            Ok(Produced::nothing())
+        },
+    );
+    let held = Capabilities::none().with_fill(filler.clone());
+    engine(
+        world,
+        roster(None, Some(filler.as_ref()), None),
+        held,
+        vec![asks],
+    )
+    .with_ways(ways)
+}
+
+fn open_ways(sender: Arc<dyn Sender>) -> Ways {
+    Ways::through(sender)
+        .checked_by(Arc::new(FakeCheck::approving()))
+        .under(approving(prompts()))
+}
+
+fn sent_to(record: &RunRecord) -> Vec<String> {
+    let sent = record.egress().iter();
+    sent.filter(|went| went.outcome() == Handed::Sent)
+        .map(|went| went.origin().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_send_whose_entry_cannot_be_listed_is_refused_and_nothing_is_handed_over() {
+    // The list of where the run's data went is filled first, by the run's own notes.
+    // A send that everything approves has then no entry to be listed in: it is
+    // refused, and nothing reaches the sender behind.
+    let world = World::new();
+    let sender = Arc::new(FakeSender::scripted(vec![ok()]));
+    let fault = Arc::new(Mutex::new(None));
+    let filler = custom({
+        let fault = fault.clone();
+        move |bounds| {
+            let sent = bounds
+                .sender()
+                .send(&a_prompt_to(&format!("{API}/v1")), bounds);
+            *fault.lock().unwrap() = sent.err();
+        }
+    });
+    let asks = action(
+        "asks",
+        vec![Requirement::new(Capability::Fill)],
+        |_, context| {
+            for at in 0..128 {
+                let to = origin(&format!("https://host-{at}.example.org"));
+                assert!(
+                    context.facts().went(&to, None, prompts(), Handed::Sent),
+                    "{at}"
+                );
+            }
+            let fill = context.capabilities().fill().unwrap();
+            fill.fill(&fill_request()).unwrap_err();
+            Ok(Produced::nothing())
+        },
+    );
+    let held = Capabilities::none().with_fill(filler.clone());
+    let executor = engine(
+        &world,
+        roster(None, Some(filler.as_ref()), None),
+        held,
+        vec![asks],
+    )
+    .with_ways(open_ways(sender.clone()));
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    let (record, _) = stored(&world, finished.run());
+    assert_eq!(sender.requests(), 0, "nothing was handed over");
+    let fault = fault.lock().unwrap().clone().unwrap();
+    assert_eq!(
+        (fault.kind(), fault.stage()),
+        (FaultKind::Rejected, Stage::NotSent)
+    );
+    assert_eq!(record.egress().len(), 128);
+    assert!(!sent_to(&record).contains(&API.to_owned()));
+    // The refusal is in the record.
+    let refusals = &record.outcome().refusals;
+    assert_eq!(refusals.len(), 1);
+    assert_eq!(refusals[0].kind(), RefusalKind::RequestNotApproved);
+}
+
+#[test]
+fn refused_sends_cannot_use_up_the_room_of_a_send() {
+    // 128 sends are refused, each for another origin. Half the list is all that
+    // refusals may take: an approved send after them is handed over, and listed.
+    let world = World::new();
+    let sender = Arc::new(FakeSender::scripted(vec![ok()]));
+    let answers = Arc::new(Mutex::new(Vec::new()));
+    let filler = custom({
+        let answers = answers.clone();
+        move |bounds| {
+            for at in 0..128 {
+                let to = a_prompt_to(&format!("https://host-{at}.example.org/v1"));
+                let fault = bounds.sender().send(&to, bounds).unwrap_err();
+                assert_eq!(fault.stage(), Stage::NotSent, "{at}");
+            }
+            let sent = bounds
+                .sender()
+                .send(&a_prompt_to(&format!("{API}/v1")), bounds);
+            answers.lock().unwrap().push(sent.is_ok());
+        }
+    });
+    let executor = asking(&world, filler, open_ways(sender.clone()), |_| {});
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    let (record, names) = stored(&world, finished.run());
+    assert_eq!(*answers.lock().unwrap(), [true]);
+    assert_eq!(sender.requests(), 1);
+    assert_eq!(sent_to(&record), [API.to_owned()]);
+    let refused = record.egress().iter();
+    assert_eq!(
+        refused.filter(|w| w.outcome() == Handed::Refused).count(),
+        64
+    );
+    // Every refused send is among the run's refusals, listed or counted.
+    let refusals = &record.outcome().refusals;
+    assert!(!refusals.is_empty());
+    assert!(holds(&names["record"], "request_not_approved"));
+}
+
+#[test]
+fn a_sender_kept_past_its_run_hands_nothing_over_after_the_run_or_in_a_later_one() {
+    // A backend lives across runs and can keep the bounds of a request, which carry
+    // the checked sender. That sender is good for its run only.
+    let world = World::new();
+    let sender = Arc::new(FakeSender::scripted(vec![ok(), ok(), ok()]));
+    let kept: Arc<Mutex<Option<Bounds>>> = Arc::new(Mutex::new(None));
+    let to = format!("{API}/v1");
+    let filler = custom({
+        let (kept, to) = (kept.clone(), to.clone());
+        move |bounds| {
+            let mut kept = kept.lock().unwrap();
+            match kept.as_ref() {
+                // The first run: the request is sent, and its bounds are kept.
+                None => {
+                    bounds.sender().send(&a_prompt_to(&to), bounds).unwrap();
+                    *kept = Some(bounds.clone());
+                }
+                // A later run: the backend sends through what it kept.
+                Some(old) => {
+                    let fault = old.sender().send(&a_prompt_to(&to), old).unwrap_err();
+                    assert_eq!(
+                        (fault.kind(), fault.stage()),
+                        (FaultKind::Rejected, Stage::NotSent)
+                    );
+                }
+            }
+        }
+    });
+    let executor = asking(&world, filler, open_ways(sender.clone()), |_| {});
+    let first = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(sender.requests(), 1);
+    let (record, names) = stored(&world, first.run());
+    assert_eq!(sent_to(&record), [API.to_owned()]);
+
+    // After the run has ended.
+    let old = kept.lock().unwrap().clone().unwrap();
+    let fault = old.sender().send(&a_prompt_to(&to), &old).unwrap_err();
+    assert_eq!(
+        (fault.kind(), fault.stage()),
+        (FaultKind::Rejected, Stage::NotSent)
+    );
+    assert_eq!(
+        fault.sentence(),
+        "the run this sender was made for is over, and nothing is sent for it"
+    );
+    assert_eq!(
+        sender.requests(),
+        1,
+        "nothing was handed over after the run"
+    );
+
+    // In a later run: nothing is handed over, the later run's record lists nothing,
+    // and the first run's record is as it was.
+    let second = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(
+        sender.requests(),
+        1,
+        "nothing was handed over in a later run"
+    );
+    let (later, _) = stored(&world, second.run());
+    assert_eq!(later.egress().len(), 0);
+    let (_, again) = stored(&world, first.run());
+    assert_eq!(names["record"], again["record"]);
+}
+
+#[test]
+fn a_send_that_races_its_runs_end_is_in_the_record_or_was_refused() {
+    // A thread the backend left behind sends through kept bounds, to one origin
+    // after another, while the run ends. Whatever the order, each request the
+    // sender behind was handed is in the record, and each that is not was refused.
+    let upstreams: Vec<String> = (0..16)
+        .map(|at| format!("https://up-{at}.example.net"))
+        .collect();
+    let there = Recipient::new(origin(API))
+        .forwarding_to(upstreams.iter().map(|up| origin(up)).collect())
+        .unwrap();
+    let world = World::new();
+    let sender = Arc::new(FakeSender::scripted((0..16).map(|_| ok()).collect()));
+    let policy = DispatchPolicy::none()
+        .approving(there.clone(), prompts())
+        .unwrap();
+    let ways = Ways::through(sender.clone())
+        .checked_by(Arc::new(FakeCheck::approving()))
+        .under(policy);
+    let (started, begun) = std::sync::mpsc::channel::<()>();
+    let begun = Mutex::new(begun);
+    let left = Arc::new(Mutex::new(None));
+    let model = ModelIdentity::new("fake", "fake-filler", "1");
+    let filler = Arc::new(Custom {
+        declaration: Declaration::new(model, &[]).unwrap().sending_to(there),
+        with: Box::new({
+            let (left, upstreams) = (left.clone(), upstreams.clone());
+            let started = Mutex::new(started);
+            move |bounds| {
+                let (bounds, upstreams) = (bounds.clone(), upstreams.clone());
+                let started = started.lock().unwrap().clone();
+                let thread = whizbang_testkit::threads::spawn(move || {
+                    let mut refused = 0;
+                    for (at, up) in upstreams.iter().enumerate() {
+                        if at == 1 {
+                            started.send(()).unwrap();
+                        }
+                        let to = a_prompt_to(&format!("{up}/put"));
+                        if bounds.sender().send(&to, &bounds).is_err() {
+                            refused += 1;
+                        }
+                    }
+                    refused
+                });
+                *left.lock().unwrap() = Some(thread);
+            }
+        }),
+    });
+    // The action comes back once the thread has sent its first request, and the
+    // run's end begins while the thread goes on.
+    let executor = asking(&world, filler, ways, move |_| {
+        begun.lock().unwrap().recv().unwrap();
+    });
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    let thread = left.lock().unwrap().take().unwrap();
+    let refused: usize = thread.join().unwrap();
+    let (record, _) = stored(&world, finished.run());
+    let hops = sender.hops();
+    let mut handed: Vec<String> = hops
+        .iter()
+        .map(|hop| hop.to().origin().to_string())
+        .collect();
+    handed.sort();
+    let mut listed = sent_to(&record);
+    listed.sort();
+    assert_eq!(handed, listed);
+    assert_eq!(handed.len() + refused, 16);
+    assert!(!handed.is_empty());
+}
+
+#[test]
+fn a_refusal_between_two_hops_does_not_set_the_moves_back_and_the_total_never_goes_back() {
+    let world = World::new();
+    let up = format!("{UPSTREAM}/put");
+    let sender = Arc::new(FakeSender::scripted(vec![
+        moved(&up),
+        ok(),
+        moved(&up),
+        ok(),
+    ]));
+    let check = Arc::new(FakeCheck::approving());
+    let ways = Ways::through(sender.clone())
+        .checked_by(check.clone())
+        .under(approving(prompts()));
+    let filler = custom({
+        let up = up.clone();
+        move |bounds| {
+            let send = |to: &str| bounds.sender().send(&a_prompt_to(to), bounds);
+            // An answer that points elsewhere; then a request that is refused, for
+            // an origin the recipient does not reach; then the address pointed to.
+            assert!(send(&format!("{API}/v1")).unwrap().moved_to().is_some());
+            assert_eq!(
+                send(&format!("{ELSEWHERE}/x")).unwrap_err().stage(),
+                Stage::NotSent
+            );
+            assert!(send(&up).unwrap().moved_to().is_none());
+            // The answer set the count in a row back; the total stays.
+            assert!(send(&format!("{API}/v1")).unwrap().moved_to().is_some());
+            assert!(send(&up).unwrap().moved_to().is_none());
+        }
+    });
+    let executor = asking(&world, filler, ways, |_| {});
+    executor.submit(&Call::new("asks")).unwrap();
+    let looked = check.looked();
+    let seen: Vec<_> = looked
+        .iter()
+        .map(|l| (l.origin.clone(), l.moves, l.total))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (origin(API), 0, 0),
+            (origin(UPSTREAM), 1, 1),
+            (origin(API), 0, 1),
+            (origin(UPSTREAM), 1, 2),
+        ]
+    );
+}
+
+/// A sender that panics when it is handed a request, and counts each.
+struct Panics(std::sync::atomic::AtomicU64);
+
+impl Sender for Panics {
+    fn send(&self, _: &Outgoing, _: &Bounds) -> Result<Reply, Fault> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        panic!("the sender went wrong");
+    }
+}
+
+#[test]
+fn a_sender_that_panics_is_listed_as_sent_its_run_ends_as_an_error_and_the_next_run_goes() {
+    let world = World::new();
+    let panics = Arc::new(Panics(std::sync::atomic::AtomicU64::new(0)));
+    let filler = remote(&format!("{API}/v1"), a_prompt());
+    let asks = action(
+        "asks",
+        vec![Requirement::new(Capability::Fill)],
+        |_, context| {
+            let fill = context.capabilities().fill().unwrap();
+            fill.fill(&fill_request()).unwrap();
+            Ok(Produced::nothing())
+        },
+    );
+    let build = |ways: Ways| {
+        engine(
+            &world,
+            roster(None, Some(filler.as_ref()), None),
+            Capabilities::none().with_fill(filler.clone()),
+            vec![asks.clone()],
+        )
+        .with_ways(ways)
+    };
+    let finished = build(open_ways(panics.clone()))
+        .submit(&Call::new("asks"))
+        .unwrap();
+    let (record, _) = stored(&world, finished.run());
+    assert_eq!(record.outcome().status, Status::Error);
+    assert_eq!(panics.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // What a sender that unwound did with the request is not known: it is listed.
+    assert_eq!(sent_to(&record), [API.to_owned()]);
+    // The next run, over the same store, sends and ends as any other.
+    let sender = Arc::new(FakeSender::scripted(vec![ok()]));
+    let finished = build(open_ways(sender.clone()))
+        .submit(&Call::new("asks"))
+        .unwrap();
+    let (record, _) = stored(&world, finished.run());
+    assert_eq!(record.outcome().status, Status::Completed);
+    assert_eq!((sender.requests(), sent_to(&record).len()), (1, 1));
+}
+
+#[test]
+fn a_fault_that_states_no_stage_is_listed_as_sent_and_a_cancellation_only_when_it_says_nothing_left()
+ {
+    let plain = |kind| Fault::new(kind, "the test failed it");
+    for (fault, listed) in [
+        (plain(FaultKind::Unavailable), true),
+        (plain(FaultKind::Cancelled), true),
+        (plain(FaultKind::Cancelled).not_sent(), false),
+    ] {
+        let sender = Arc::new(FakeSender::scripted(vec![Err(fault.clone())]));
+        let ran = run_one(
+            &remote(&format!("{API}/v1"), a_prompt()),
+            open_ways(sender.clone()),
+            Secrets::none(),
+        );
+        assert_eq!(sender.requests(), 1);
+        assert_eq!(ran.fault.clone().unwrap().kind(), fault.kind());
+        let sent: Vec<_> = ran.went().into_iter().map(|went| went.3).collect();
+        let expected = if listed { vec![Handed::Sent] } else { vec![] };
+        assert_eq!(sent, expected, "{fault:?}");
+        assert_eq!(ran.refused(), []);
+    }
+}
+
+#[test]
+fn a_note_that_is_taken_back_leaves_what_the_other_sends_to_the_origin_hold() {
+    // Two requests to one origin: a prompt, which is answered, and evidence, of
+    // which the sender says nothing left. The entry stays, with the prompt alone.
+    let world = World::new();
+    let nothing_left = Fault::new(FaultKind::Unavailable, "the test failed it").not_sent();
+    let sender = Arc::new(FakeSender::scripted(vec![ok(), Err(nothing_left), ok()]));
+    let both = Classes::of(&[DataClass::Prompts, DataClass::Evidence]);
+    let ways = Ways::through(sender.clone())
+        .checked_by(Arc::new(FakeCheck::approving()))
+        .under(approving(both));
+    let filler = custom(|bounds| {
+        let to = address(&format!("{API}/v1"));
+        let evidence = vec![Piece::of(DataClass::Evidence, b"a log".to_vec())];
+        let evidence = Outgoing::new(to.clone(), evidence).unwrap();
+        bounds
+            .sender()
+            .send(&a_prompt_to(&format!("{API}/v1")), bounds)
+            .unwrap();
+        bounds.sender().send(&evidence, bounds).unwrap_err();
+        // And to the upstream, evidence alone, which is answered.
+        let up = address(&format!("{UPSTREAM}/put"));
+        let evidence = vec![Piece::of(DataClass::Evidence, b"a log".to_vec())];
+        let evidence = Outgoing::new(up, evidence).unwrap();
+        bounds.sender().send(&evidence, bounds).unwrap();
+    });
+    let executor = asking(&world, filler, ways, |_| {});
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    let (record, _) = stored(&world, finished.run());
+    assert_eq!(sender.requests(), 3);
+    let went: Vec<_> = record.egress().iter().collect();
+    let listed: Vec<_> = went.iter().map(|w| (w.origin(), w.classes())).collect();
+    let evidence = Classes::of(&[DataClass::Evidence]);
+    assert_eq!(listed, [(API, prompts()), (UPSTREAM, evidence)]);
 }

@@ -36,6 +36,7 @@ pub struct Hop<'a> {
     needs: Classes,
     policy: &'a DispatchPolicy,
     moves: u32,
+    total: u32,
 }
 
 impl<'a> Hop<'a> {
@@ -67,11 +68,19 @@ impl<'a> Hop<'a> {
     }
 
     /// How many answers in a row, just before this request, pointed elsewhere: 0 for
-    /// a first address, 1 for the address its answer pointed to, and so on. It is
-    /// counted for one backend of one run, and not for one request: a run that sends
-    /// through one handle from two threads at once has one count for both.
+    /// a first address, 1 for the address its answer pointed to, and so on. An
+    /// answered request of the same backend sets it back to nothing; a request that
+    /// was refused, or that failed, does not. It is counted for one backend of one
+    /// run, and not for one request: a run that sends through one handle from two
+    /// threads at once has one count for both.
     pub fn moves(&self) -> u32 {
         self.moves
+    }
+
+    /// How many answers pointed elsewhere, up to this request, for this backend of
+    /// this run. It never goes back.
+    pub fn total_moves(&self) -> u32 {
+        self.total
     }
 }
 
@@ -233,6 +242,7 @@ impl Ways {
             policy: self.policy.clone(),
             facts,
             moves: AtomicU32::new(0),
+            total: AtomicU32::new(0),
         })
     }
 }
@@ -273,51 +283,52 @@ struct Checked {
     facts: RunFacts,
     /// How many answers in a row, up to now, pointed elsewhere.
     moves: AtomicU32,
+    /// How many answers pointed elsewhere, up to now. It never goes back.
+    total: AtomicU32,
 }
 
-/// Notes, when it is dropped, that a request was handed to an origin: by a return or
-/// by a panic of the sender, since what a sender that unwound did with the request is
-/// not known. Only a fault that says nothing left takes the note back.
-struct Handing<'a> {
-    checked: &'a Checked,
-    to: &'a Origin,
-    needs: Classes,
-    left: bool,
-}
+/// What a send that cannot be listed is refused with.
+const NOT_LISTED: &str = "what is handed over is listed in the run's record, and this could \
+                          not be: the run is over, the list is full, or the origin holds a \
+                          secret; so nothing was sent";
 
-impl Drop for Handing<'_> {
-    fn drop(&mut self) {
-        if self.left {
-            let account = self.checked.recipient.as_ref().and_then(|r| r.account());
-            self.checked
-                .facts
-                .went(self.to, account, self.needs, Handed::Sent);
-        }
-    }
-}
+/// What a sender answers once its run is over.
+const RUN_OVER: &str = "the run this sender was made for is over, and nothing is sent for it";
 
 impl Checked {
     /// Refuses a request before anything is handed over: the refusal is among the
     /// run's refusals and in its list of where data went, and the backend is answered
     /// with a fault that says nothing was sent.
+    ///
+    /// The refusal among the run's refusals is the note that counts: that list
+    /// lists it or counts it. The entry in where data went is listed when it can
+    /// be, and the sentence says so when it could not: the list keeps half its room
+    /// for what was sent, and writes no origin that holds a secret. Once the run's
+    /// end has begun nothing is noted, and the answer says that the run is over.
     fn refuse(&self, to: &Origin, needs: Classes, why: &'static str) -> Fault {
-        self.moves.store(0, Ordering::SeqCst);
         let account = self.recipient.as_ref().and_then(|r| r.account());
-        self.facts.went(to, account, needs, Handed::Refused);
+        let listed = self.facts.went(to, account, needs, Handed::Refused);
         // The sentence is cleaned where it is noted: the executor's secrets are taken
         // out of it while it is whole, and it is then cut.
         let classes: Vec<&str> = needs.iter().map(|class| class.name()).collect();
-        self.facts.refused(
+        let noted = self.facts.refused(
             RefusalKind::RequestNotApproved,
             &format!(
-                "nothing was sent to {to}: {why} (the classes of data the request holds: {})",
+                "nothing was sent to {to}: {why} (the classes of data the request holds: \
+                 {}{})",
                 if classes.is_empty() {
                     "none".to_owned()
                 } else {
                     classes.join(", ")
+                },
+                if listed {
+                    ""
+                } else {
+                    "; not listed in where the run's data went"
                 }
             ),
         );
+        let why = if noted { why } else { RUN_OVER };
         Fault::new(FaultKind::Rejected, why).not_sent()
     }
 }
@@ -362,12 +373,13 @@ impl Sender for Checked {
             needs,
             policy: &self.policy,
             moves: self.moves.load(Ordering::SeqCst),
+            total: self.total.load(Ordering::SeqCst),
         };
         if let Err(denied) = self.check.look(&hop) {
             return Err(self.refuse(origin, needs, denied.why()));
         }
         let Some(sender) = &self.sender else {
-            self.moves.store(0, Ordering::SeqCst);
+            // Noted nowhere: nothing was refused, and nothing left.
             return Err(Fault::new(
                 FaultKind::Unavailable,
                 "the executor was given no sender, and sends nothing",
@@ -390,26 +402,38 @@ impl Sender for Checked {
                 })?)
             }
         };
-        let mut handing = Handing {
-            checked: self,
-            to: origin,
-            needs,
-            left: true,
+        // The entry is in the run's record before anything is handed over: the look
+        // at whether the run still takes notes and the note are one step. A send
+        // that cannot be listed is not made, which is also what stops a sender that
+        // outlived its run. From here on the entry stays whatever comes back, an
+        // answer, a fault or a panic of the sender, since what a sender that unwound
+        // did with the request is not known; only a fault that says nothing left
+        // takes it back.
+        let account = recipient.account();
+        let Some(note) = self.facts.sending(origin, account, needs) else {
+            return Err(self.refuse(origin, needs, NOT_LISTED));
         };
         let reply = sender.send(outgoing.as_ref(), bounds);
-        let moved = match &reply {
-            Ok(reply) => reply.moved_to().is_some(),
-            Err(fault) => {
-                handing.left = fault.stage() != Stage::NotSent;
-                false
+        match &reply {
+            // An answer that points elsewhere is one more move, in a row and in all.
+            Ok(reply) if reply.moved_to().is_some() => {
+                for count in [&self.moves, &self.total] {
+                    let more = |now: u32| Some(now.saturating_add(1));
+                    // The closure always answers, so the update is always made.
+                    if count
+                        .try_update(Ordering::SeqCst, Ordering::SeqCst, more)
+                        .is_err()
+                    {
+                        count.store(u32::MAX, Ordering::SeqCst);
+                    }
+                }
             }
-        };
-        let moves = if moved {
-            hop.moves.saturating_add(1)
-        } else {
-            0
-        };
-        self.moves.store(moves, Ordering::SeqCst);
+            // An answer sets the moves in a row back to nothing.
+            Ok(_) => self.moves.store(0, Ordering::SeqCst),
+            // A fault does not; one that says nothing left takes the note back.
+            Err(fault) if fault.stage() == Stage::NotSent => note.take_back(),
+            Err(_) => {}
+        }
         reply
     }
 }

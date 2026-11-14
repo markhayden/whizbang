@@ -15,6 +15,13 @@ piece's class at a send, where a credential lives, and who knows a backend's rec
 when `Sender::send` is given none). Changed, as the review of task I1 asked: the
 sentence on how a failure's sentence is cleaned, one more limit of it, and a third
 test of a part that panics.
+Amended: 2026-11-14, after the review of task I5, before it merged. Changed under "A
+policy before a send, and a checked send": the entry of a send is taken before
+anything is handed over, and a send that cannot be listed is not made; a sender is
+good for its run only; an origin that holds a secret is not sent to; refused sends
+take half the list at most; a refusal does not set the count of moves back, and the
+check is shown a total; an upstream's credential; and what an executor with no sender
+notes. ADR 0013 is amended with it ("Where data went").
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -321,10 +328,13 @@ The first that says no is the answer, and the sender behind is handed nothing:
 
 Then the credential held for that recipient and bound to that origin is attached, or
 none: a request to an upstream goes without the recipient's own, and a backend of
-another recipient at the same origin is handed none of it
+another recipient at the same origin is handed none of it. **An upstream is handed a
+credential only when the executor was given one bound to that upstream; the
+recipient's own is never handed to an upstream**
 (`send::a_credential_is_attached_by_the_executor_for_its_own_origin_and_a_backend_brings_none`).
-An executor with no sender answers a fault here, and sends nothing
-(`send::an_executor_with_no_sender_sends_nothing_whatever_approves`).
+An executor with no sender answers a fault here, of the kind `unavailable` that states
+the stage `not_sent`, and sends nothing. It is noted nowhere: nothing was refused and
+nothing left (`send::an_executor_with_no_sender_sends_nothing_whatever_approves`).
 
 **With the default policy a backend that names a recipient hands nothing over,** even
 behind a check and a sender that would let everything through; and a backend that
@@ -340,13 +350,56 @@ sentence is cleaned where it is noted, the executor's secrets taken out while it
 whole and then cut (`send::a_secret_the_executor_knows_is_in_no_refusal_of_a_send`). A
 check's reason is a `Denied`, which takes fixed words and no made text
 (`send::a_check_that_refuses_hands_nothing_over_and_its_sentence_is_the_refusal`).
+**The refusal among the run's refusals is the note that counts:** that list lists a
+refusal or counts it (ADR 0008). The entry in where data went is listed when it can
+be, and the refusal's sentence says so when it could not.
 
-**What is noted of a send.** Once a request is handed to the sender behind, the origin
-is noted as `sent`, with the recipient's account, cut, and the classes
-(`RunFacts::went`), whatever came back: an answer, an address to go on to, a fault, or
-a panic of the sender. **Only a fault that states the stage `not_sent` takes the note
-back.** So a request that failed at its second hop lists the first, which had the
-data (`send::a_send_that_says_nothing_left_is_not_listed_as_sent_and_any_other_fault_is`).
+**Nothing is handed over without its entry in the record.** After the five questions,
+and before the request is handed to the sender behind, the origin is noted as `sent`,
+with the recipient's account, cut, and the classes (`RunFacts::sending`). The look at
+whether the run still takes notes, the look for room and the note are one step under
+the place's lock. **A send whose entry cannot be taken is not made:** it is refused as
+any other, `rejected` and `not_sent`, in fixed words, and nothing reaches the sender
+behind. Three things make it so:
+
+- **The run is over.** A backend lives across runs, and `Bounds` is a value a backend
+  can keep, with the sender in it. **A sender is good for its run only:** once the
+  run's end has begun its place takes no note, so every send through a sender that
+  was kept is refused, after the run and from inside a later run alike, and the later
+  run's record and the first run's are as they were
+  (`send::a_sender_kept_past_its_run_hands_nothing_over_after_the_run_or_in_a_later_one`).
+  A send that races the end of its run is in the run's record or was refused, never
+  handed over and not listed
+  (`send::a_send_that_races_its_runs_end_is_in_the_record_or_was_refused`).
+- **The list is full** (`send::a_send_whose_entry_cannot_be_listed_is_refused_and_nothing_is_handed_over`).
+  Refused sends cannot bring that about: they take half the list at most (ADR 0013,
+  `EGRESS_REFUSED_LIMIT`), and the other half is kept for what was sent
+  (`send::refused_sends_cannot_use_up_the_room_of_a_send`). A refused send past that
+  half is among the run's refusals all the same.
+- **The origin, as it is written, holds a secret the executor knows.** A record
+  writes an origin whole, so a destination that is itself a secret cannot be
+  recorded, and is not sent to
+  (`send::an_origin_that_holds_a_secret_cannot_be_listed_so_nothing_is_sent_to_it`).
+  A refused send to such an origin has no entry in where data went; its refusal,
+  with the origin taken out of its sentence, stands for it, and no file of the store
+  holds the origin (`send::a_secret_the_executor_knows_is_in_no_refusal_of_a_send`).
+
+**The entry stays whatever came back:** an answer, an address to go on to, a fault,
+or a panic of the sender, since what a sender that unwound did with the request is
+not known
+(`send::a_sender_that_panics_is_listed_as_sent_its_run_ends_as_an_error_and_the_next_run_goes`).
+**Only a fault that states the stage `not_sent` takes the note back,** a cancellation
+that states it among them; a fault that states no stage is unresolved, and stays
+listed
+(`send::a_fault_that_states_no_stage_is_listed_as_sent_and_a_cancellation_only_when_it_says_nothing_left`).
+So a request that failed at its second hop lists the first, which had the data
+(`send::a_send_that_says_nothing_left_is_not_listed_as_sent_and_any_other_fault_is`).
+A note that is taken back leaves the entry what the other sends to that origin hold,
+and takes the entry out only when it was the only one
+(`send::a_note_that_is_taken_back_leaves_what_the_other_sends_to_the_origin_hold`).
+Once the run's end has begun a note is not taken back: the record is made, and an
+entry may then say `sent` of a request of which nothing left. That over-states, and
+never under-states.
 
 **A check that panics** unwinds through the backend and its handle into the action, as
 a backend's panic does: nothing was handed over, the request is accounted for, the run
@@ -354,7 +407,7 @@ ends as an error, and the next run sends
 (`send::a_check_that_panics_hands_nothing_over_and_the_next_run_goes`).
 
 **The fakes.** `FakeCheck` approves or refuses every address as a test tells it to,
-keeps what it was shown, and can run a test's hook while it is asked. `FakeFiller`
+keeps what it was shown, the moves in a row and in all among it, and can run a test's hook while it is asked. `FakeFiller`
 can be told to send pieces to an address through its bounds' sender before it paints,
 following an answer that points elsewhere 8 times at most.
 
@@ -369,8 +422,16 @@ following an answer that points elsewhere 8 times at most.
 - **Nothing here probes or downloads.** The policy answers whether a recipient may be
   probed and nothing in the executor asks it yet: the checked probe and the checked
   download are task E3's.
-- **`Hop::moves` is counted for one backend of one run, not for one request:** a run
-  that sends through one handle from two threads at once has one count for both.
+- **`Hop::moves` counts answers in a row that pointed elsewhere; an answered request
+  of the same backend between two of them sets it back to nothing; the total for the
+  run does not go back** (`Hop::total_moves`). A request that was refused or that
+  failed sets neither back
+  (`send::a_refusal_between_two_hops_does_not_set_the_moves_back_and_the_total_never_goes_back`).
+  Both are counted for one backend of one run, not for one request: a run that sends
+  through one handle from two threads at once has one count for both.
+- **A send to an origin that holds a secret of a later config is refused only once
+  the executor knows that secret.** The executor's secrets are those it was built
+  with until task I6 gives it those of each snapshot of the config.
 - **A backend that opens a socket of its own is not stopped,** as ADR 0012 says:
   adapters are trusted code.
 - **The fault a backend is answered with is the backend's to hand on.** A backend that
