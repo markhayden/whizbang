@@ -1266,6 +1266,12 @@ fn two_requests_at_once_cannot_both_take_the_last_of_what_a_run_may_store() {
     // exchange is taken in one step with the look at what is left, so one of the two
     // is kept whole and the other as its sizes, whatever the order: together they are
     // never over what the run may store. Both actions' threads are handed their turn.
+    //
+    // What this catches is room that is not taken before an exchange is stored. It
+    // does not catch a look and a taking that were split into two steps under two
+    // holds of the lock: the two are a few instructions in one function
+    // (`Sent::reserve`), nothing can be stopped between them without a seam inside
+    // the lock, and none was added. That they are one step is read in the code.
     let world = World::new();
     let barriers = Barriers::new();
     let answer = "a".repeat(300_000);
@@ -1304,6 +1310,106 @@ fn two_requests_at_once_cannot_both_take_the_last_of_what_a_run_may_store() {
     assert_eq!(sizes.len(), 2);
     assert!(sizes.iter().sum::<usize>() <= 500_000, "{sizes:?}");
     assert!(sizes[0] < 1000 && sizes[1] > 300_000, "{sizes:?}");
+}
+
+/// A judge whose first call panics, and that answers after that.
+struct PanicsOnce(Declaration, AtomicU64);
+
+impl Judge for PanicsOnce {
+    fn declaration(&self) -> &Declaration {
+        &self.0
+    }
+
+    fn send(&self, _: &JudgeRequest, _: &whizbang_core::capability::Bounds) -> Result<Turn, Fault> {
+        if self.1.fetch_add(1, Ordering::SeqCst) == 0 {
+            panic!("the backend fell over");
+        }
+        Ok(said("ok"))
+    }
+}
+
+#[test]
+fn a_request_that_unwound_gives_back_the_room_it_took() {
+    // A request takes room for what it sends before it sends. The backend panics, and
+    // the action catches the panic and asks again. The run may store 2,000 bytes and
+    // each request takes about 1,300 before it is sent: the second is sent only
+    // because the first, which stored nothing, gave its room back.
+    let world = World::new();
+    let fake = FakeJudge::scripted(Vec::new());
+    let judge = Arc::new(PanicsOnce(fake.declaration().clone(), AtomicU64::new(0)));
+    let asks = action("asks", judging(), |_, context| {
+        let judge = context.capabilities().judge().unwrap();
+        let send = || judge.send(&asking("well?", 64));
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(send));
+        assert!(unwound.is_err());
+        send().unwrap();
+        Ok(Produced::nothing())
+    });
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    )
+    .with_exchanges_budget(2000);
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let (record, names) = stored(&world, finished.run());
+    let ended: Vec<_> = record.models().iter().map(|model| model.ended).collect();
+    assert_eq!(ended, [RequestEnded::Unwound, RequestEnded::Answered]);
+    assert!(names.contains_key("diagnostics/exchange-0002"));
+    assert!(!names.contains_key("diagnostics/exchange-0001"));
+}
+
+#[test]
+fn a_request_whose_exchange_could_not_be_stored_gives_back_the_room_it_took() {
+    // What is sent holds a key of eight bytes a thousand times. As it is written it
+    // fits what the run may store, so it is sent; with each key replaced by a marker
+    // of ten it is two thousand bytes longer and fits neither whole nor with its turn
+    // not written, so nothing of it is stored. Its room is given back: a small
+    // request after it is sent, which it would not be were the room still held.
+    let key = format!("{}{}", "zq7K", "m2Xw");
+    let question = key.repeat(1000);
+    let ask = |budget: u64| {
+        let world = World::new();
+        let judge = Arc::new(FakeJudge::scripted(vec![Ok(said("ok")), Ok(said("ok"))]));
+        let asks = {
+            let question = question.clone();
+            action("asks", judging(), move |_, context| {
+                let judge = context.capabilities().judge().unwrap();
+                judge.send(&asking(&question, 64)).unwrap();
+                let second = judge.send(&asking("well?", 64));
+                Ok(Produced::nothing().with_verdict(Verdict::new(
+                    Decision::Pass,
+                    if second.is_ok() { "sent" } else { "not sent" },
+                )))
+            })
+        };
+        let executor = engine(
+            &world,
+            roster(None, None, Some(judge.as_ref())),
+            Capabilities::none().with_judge(judge.clone()),
+            vec![asks],
+        )
+        .with_exchanges_budget(budget)
+        .with_secrets(Secrets::new([key.clone()]).unwrap());
+        let finished = executor.submit(&Call::new("asks")).unwrap();
+        let (record, names) = stored(&world, finished.run());
+        let first = names.get("diagnostics/exchange-0001").map(Vec::len);
+        (
+            record.verdict().unwrap().1.to_owned(),
+            first,
+            judge.requests(),
+        )
+    };
+    // With room to spare the first exchange is stored: that is how long it is.
+    let (said, stored_whole, sent) = ask(1 << 20);
+    assert_eq!((said.as_str(), sent), ("sent", 2));
+    let stored_whole = stored_whole.unwrap() as u64;
+    // Room for what is written, and not for what would be stored.
+    let (said, first, sent) = ask(stored_whole - 620);
+    assert_eq!(first, None, "nothing of the first exchange was stored");
+    assert_eq!((said.as_str(), sent), ("sent", 2));
 }
 
 #[test]
