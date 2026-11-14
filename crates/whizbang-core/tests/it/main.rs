@@ -6,6 +6,7 @@ mod capability;
 mod config;
 mod contract;
 mod egress;
+mod fs;
 mod identity;
 mod spend;
 mod store;

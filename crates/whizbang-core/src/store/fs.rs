@@ -76,8 +76,153 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// The most bytes one piece of a streamed file holds: what [`NewFile::append`] takes at
+/// once, and the longest buffer [`OpenFile::read`] fills.
+pub const PIECE_MAX_BYTES: usize = 1024 * 1024;
+
 /// A lock that is held until this value is dropped.
 pub trait Held: Send + Sync {}
+
+/// A new file that is being written piece by piece ([`Fs::begin_new`]).
+///
+/// A call that fails breaks the handle: every call after it fails too, so a handle that
+/// once answered with an error never says that its file is whole.
+pub trait NewFile: Send {
+    /// Adds a piece to the end of the file. A piece holds [`PIECE_MAX_BYTES`] at most,
+    /// and the file never grows past the most its opening stated: a piece that would
+    /// take it further is refused with [`io::ErrorKind::FileTooLarge`] before any of it
+    /// is written. After any other failure the file may hold any part of the piece.
+    /// Nothing appended is durable until [`NewFile::sync`] returns.
+    fn append(&mut self, piece: &[u8]) -> io::Result<()>;
+    /// Makes durable every byte appended so far, through the handle that wrote them.
+    fn sync(&mut self) -> io::Result<()>;
+    /// Closes the file and says how many bytes it holds. It answers only for a file
+    /// whose every byte was synced through this handle: with bytes appended since the
+    /// last sync it fails, and writes nothing either way. Only a file that this
+    /// answered for is whole; the name is not durable until its directory is synced.
+    fn finish(self: Box<Self>) -> io::Result<u64>;
+}
+
+/// A file open to be read piece by piece ([`Fs::open_file`]).
+///
+/// A call that fails breaks the handle, as a [`NewFile`]'s does: a read that failed
+/// part-way has moved on in the file, and the next would skip what was lost.
+pub trait OpenFile: Send {
+    /// Reads the next bytes of the file into `buffer` and says how many. The buffer
+    /// is filled unless the file ends first, so fewer than it holds means the end,
+    /// and none means nothing was left. A buffer that holds nothing, or more than
+    /// [`PIECE_MAX_BYTES`], is refused.
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize>;
+}
+
+/// The count of a file being streamed, and the rules of [`NewFile`] that need no
+/// disk: one copy of them, for the real file system and for a test's.
+#[derive(Debug)]
+pub struct Streamed {
+    most: u64,
+    written: u64,
+    durable: u64,
+    broken: bool,
+}
+
+impl Streamed {
+    /// An empty file that may grow to `most` bytes.
+    pub fn new(most: u64) -> Streamed {
+        Streamed {
+            most,
+            written: 0,
+            durable: 0,
+            broken: false,
+        }
+    }
+
+    /// Whether a piece of this many bytes may be appended now: the handle is usable,
+    /// the piece holds [`PIECE_MAX_BYTES`] at most, and the file stays within its most.
+    /// A refusal breaks the handle.
+    pub fn admit(&mut self, piece: usize) -> io::Result<()> {
+        self.usable()?;
+        if piece > PIECE_MAX_BYTES {
+            return self.refuse(
+                io::ErrorKind::InvalidInput,
+                "a piece of a streamed file holds more than a piece may",
+            );
+        }
+        let within = u64::try_from(piece)
+            .ok()
+            .and_then(|piece| self.written.checked_add(piece))
+            .is_some_and(|after| after <= self.most);
+        if !within {
+            return self.refuse(
+                io::ErrorKind::FileTooLarge,
+                "a streamed file would grow past the most it may hold",
+            );
+        }
+        Ok(())
+    }
+
+    /// A piece of this many bytes, which was admitted, was appended.
+    pub fn appended(&mut self, piece: usize) {
+        self.written = self
+            .written
+            .saturating_add(u64::try_from(piece).unwrap_or(u64::MAX));
+    }
+
+    /// Whether the handle may still be used: not after a call of it failed.
+    pub fn usable(&self) -> io::Result<()> {
+        if self.broken {
+            return Err(io::Error::other(
+                "a call on this streamed file failed before, and it answers nothing more",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Everything appended so far was made durable.
+    pub fn synced(&mut self) {
+        self.durable = self.written;
+    }
+
+    /// A call failed: the handle is broken.
+    pub fn fail(&mut self) {
+        self.broken = true;
+    }
+
+    /// The bytes appended so far.
+    pub fn written(&self) -> u64 {
+        self.written
+    }
+
+    /// How many of them a sync made durable.
+    pub fn durable(&self) -> u64 {
+        self.durable
+    }
+
+    /// The length of the file, when it is whole: usable, with every byte synced. A
+    /// refusal breaks the handle.
+    pub fn whole(&mut self) -> io::Result<u64> {
+        self.usable()?;
+        if self.durable != self.written {
+            return self.refuse(
+                io::ErrorKind::InvalidInput,
+                "a streamed file was finished with bytes that no sync made durable",
+            );
+        }
+        Ok(self.written)
+    }
+
+    fn refuse<T>(&mut self, kind: io::ErrorKind, why: &'static str) -> io::Result<T> {
+        self.broken = true;
+        Err(io::Error::new(kind, why))
+    }
+}
+
+/// What a file system that streams nothing answers.
+fn streams_nothing<T>() -> io::Result<T> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "this file system streams no file and tries no share",
+    ))
+}
 
 /// A lock file, held until this value is dropped.
 pub trait LockFile: Send + Sync {
@@ -123,6 +268,36 @@ pub trait Fs: Send + Sync {
     /// Takes the file at `path` alone, without waiting: `None` when anyone shares it.
     /// Writes and creates nothing.
     fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>>;
+    /// Creates an empty file to be written piece by piece, which may grow to `most`
+    /// bytes and no further. The name is taken as [`Fs::write_new`] takes one: it fails
+    /// when the name is taken, by a file, a directory or a link, and follows no link
+    /// there. The file is under that name from this moment, with whatever was appended
+    /// so far, so the name is one that nothing reads as a whole file: it is written
+    /// where work in progress is kept and brought to its place by [`Fs::rename`], with
+    /// [`Fs::sync_dir`], once [`NewFile::finish`] has answered.
+    ///
+    /// The three calls below were added after the store's own; a file system that
+    /// does not give them answers [`io::ErrorKind::Unsupported`] to each.
+    fn begin_new(&self, path: &Path, most: u64) -> io::Result<Box<dyn NewFile>> {
+        let _ = (path, most);
+        streams_nothing()
+    }
+    /// Opens a file to be read piece by piece, however long it is. What the name
+    /// leads to is a regular file and the name itself is no link, or the call fails
+    /// with [`io::ErrorKind::InvalidData`]: a link, a directory and anything else that
+    /// is not a file are refused, not followed. A missing file fails with
+    /// [`io::ErrorKind::NotFound`]. How long the file may be is the caller's to hold:
+    /// it counts what it reads and stops one byte past what it expects.
+    fn open_file(&self, path: &Path) -> io::Result<Box<dyn OpenFile>> {
+        let _ = path;
+        streams_nothing()
+    }
+    /// As [`Fs::share`], without waiting: `None` when one has the file alone
+    /// ([`Fs::try_alone`], or a lock file held on it). It returns at once either way.
+    fn try_share(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
+        let _ = path;
+        streams_nothing()
+    }
 }
 
 /// An open file with a lock on it, which ends when this value is dropped, and the id of
@@ -248,6 +423,148 @@ fn taken(
     }
 }
 
+/// [`Fs::try_share`] for the real file system.
+fn try_share(path: &Path) -> io::Result<Option<LockedFile>> {
+    let file = std::fs::File::open(path)?;
+    let lock = file.try_lock_shared();
+    taken(file, lock)
+}
+
+/// A new file, open to be written: the name was free, and no link was followed to it.
+fn new_file(path: &Path) -> io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
+/// [`NewFile`] for the real file system.
+struct NewRealFile {
+    file: std::fs::File,
+    count: Streamed,
+}
+
+impl NewFile for NewRealFile {
+    fn append(&mut self, piece: &[u8]) -> io::Result<()> {
+        use std::io::Write;
+        self.count.admit(piece.len())?;
+        if let Err(error) = self.file.write_all(piece) {
+            self.count.fail();
+            return Err(error);
+        }
+        self.count.appended(piece.len());
+        Ok(())
+    }
+
+    fn sync(&mut self) -> io::Result<()> {
+        self.count.usable()?;
+        // Through the handle that wrote, as `write_new` does and for its reason.
+        if let Err(error) = self.file.sync_all() {
+            self.count.fail();
+            return Err(error);
+        }
+        self.count.synced();
+        Ok(())
+    }
+
+    fn finish(mut self: Box<Self>) -> io::Result<u64> {
+        // Nothing is left to write: every byte was synced, or this fails. The file is
+        // closed when the handle is dropped, here or by one who never finished.
+        self.count.whole()
+    }
+}
+
+/// What [`Fs::open_file`] answers for a name that is not a regular file's own.
+fn not_a_file() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        "what was to be read piece by piece is not a regular file under its own name",
+    )
+}
+
+/// Whether two files are one. Without a way to tell, they are taken to be.
+#[cfg(unix)]
+fn same_file(one: &std::fs::Metadata, other: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    (one.dev(), one.ino()) == (other.dev(), other.ino())
+}
+
+#[cfg(not(unix))]
+fn same_file(_one: &std::fs::Metadata, _other: &std::fs::Metadata) -> bool {
+    true
+}
+
+/// [`Fs::open_file`] for the real file system. `looked` runs after the name was looked
+/// at and before it is opened: the moment a test needs.
+///
+/// The name is looked at without following a link, and refused unless a regular file
+/// has it; then it is opened, and the open file must be a regular file and the very
+/// one the look found. So what is read is a file that had this name itself, as no link,
+/// at one moment of this call: a link put there after the look is followed by the open
+/// to another file, which is not the one that was found, and is refused. The look
+/// comes first for another reason too: opening a pipe would wait for its writer.
+fn open_file(path: &Path, looked: &dyn Fn()) -> io::Result<OpenRealFile> {
+    let named = std::fs::symlink_metadata(path)?;
+    if !named.is_file() {
+        return Err(not_a_file());
+    }
+    looked();
+    let file = std::fs::File::open(path)?;
+    let open = file.metadata()?;
+    if !open.is_file() || !same_file(&named, &open) {
+        return Err(not_a_file());
+    }
+    Ok(OpenRealFile {
+        file,
+        broken: false,
+    })
+}
+
+/// [`OpenFile`] for the real file system.
+struct OpenRealFile {
+    file: std::fs::File,
+    broken: bool,
+}
+
+impl OpenRealFile {
+    fn fill(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        use std::io::Read;
+        if self.broken {
+            return Err(io::Error::other(
+                "a read of this file failed before, and it answers nothing more",
+            ));
+        }
+        if buffer.is_empty() || buffer.len() > PIECE_MAX_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a buffer for a piece of a file holds nothing, or more than a piece may",
+            ));
+        }
+        let mut filled = 0;
+        while filled < buffer.len() {
+            match self.file.read(&mut buffer[filled..]) {
+                Ok(0) => break,
+                Ok(read) => filled += read,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(filled)
+    }
+}
+
+impl OpenFile for OpenRealFile {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let filled = self.fill(buffer);
+        self.broken |= filled.is_err();
+        filled
+    }
+}
+
 /// The real file system. What it creates is readable by its owner only.
 ///
 /// On Linux a sync is `fsync`. On macOS the standard library's `sync_all` asks for
@@ -268,14 +585,7 @@ impl Fs for RealFs {
 
     fn write_new(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
         use std::io::Write;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(path)?;
+        let mut file = new_file(path)?;
         file.write_all(bytes)?;
         // Through the handle that wrote: a sync on a handle opened afterwards can miss a
         // write error the system already reported, or dropped, before that handle existed.
@@ -330,6 +640,21 @@ impl Fs for RealFs {
 
     fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
         Ok(try_alone(path)?.map(|file| Box::new(file) as Box<dyn Held>))
+    }
+
+    fn begin_new(&self, path: &Path, most: u64) -> io::Result<Box<dyn NewFile>> {
+        Ok(Box::new(NewRealFile {
+            file: new_file(path)?,
+            count: Streamed::new(most),
+        }))
+    }
+
+    fn open_file(&self, path: &Path) -> io::Result<Box<dyn OpenFile>> {
+        Ok(Box::new(open_file(path, &|| {})?))
+    }
+
+    fn try_share(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
+        Ok(try_share(path)?.map(|file| Box::new(file) as Box<dyn Held>))
     }
 }
 
@@ -457,6 +782,88 @@ mod tests {
         let alone = try_alone(&path).unwrap();
         assert!(alone.is_some(), "the copy kept the share its holder let go");
         drop(copy);
+    }
+
+    #[test]
+    fn a_share_given_by_a_try_and_let_go_is_gone_though_a_copy_of_the_open_file_is_still_held() {
+        let dir = Scratch::new("core-fs-copy-try-share");
+        let path = dir.path().join("1.json");
+        std::fs::write(&path, b"{}").unwrap();
+        let shared = try_share(&path).unwrap().unwrap();
+        let copy = shared.0.try_clone().unwrap();
+        assert!(try_alone(&path).unwrap().is_none());
+        drop(shared);
+        let alone = try_alone(&path).unwrap();
+        assert!(alone.is_some(), "the copy kept the share its holder let go");
+        // And while that one has the file alone, a try is refused: the copy shares
+        // nothing.
+        assert!(try_share(&path).unwrap().is_none());
+        drop(copy);
+    }
+
+    /// The name is looked at, and then opened: what is put there between the two is
+    /// not read. Each file that takes the name was there before, beside the first, so
+    /// no two of them can be one file to the system.
+    #[cfg(unix)]
+    #[test]
+    fn a_name_that_leads_elsewhere_between_the_look_and_the_opening_is_refused() {
+        use std::io::Read;
+        let dir = Scratch::new("core-fs-open-swapped");
+        let path = dir.path().join("f");
+        let other = dir.path().join("other");
+        std::fs::write(&other, b"another file").unwrap();
+
+        // A link to another file.
+        std::fs::write(&path, b"the file").unwrap();
+        let swap = || {
+            std::fs::remove_file(&path).unwrap();
+            std::os::unix::fs::symlink(&other, &path).unwrap();
+        };
+        let error = open_file(&path, &swap).err().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        std::fs::remove_file(&path).unwrap();
+
+        // Another regular file, by a rename over the name.
+        std::fs::write(&path, b"the file").unwrap();
+        let spare = dir.path().join("spare");
+        std::fs::write(&spare, b"a spare file").unwrap();
+        let swap = || std::fs::rename(&spare, &path).unwrap();
+        let error = open_file(&path, &swap).err().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+
+        // A folder.
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, b"the file").unwrap();
+        let swap = || {
+            std::fs::remove_file(&path).unwrap();
+            std::fs::create_dir(&path).unwrap();
+        };
+        let error = open_file(&path, &swap).err().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        std::fs::remove_dir(&path).unwrap();
+
+        // Gone.
+        std::fs::write(&path, b"the file").unwrap();
+        let swap = || std::fs::remove_file(&path).unwrap();
+        let error = open_file(&path, &swap).err().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+
+        // Left alone, it is opened; and a link to the very file that was found, put
+        // in its place, reads that file: the one that had the name itself.
+        std::fs::write(&path, b"the file").unwrap();
+        let mut content = Vec::new();
+        let mut open = open_file(&path, &|| {}).unwrap();
+        open.file.read_to_end(&mut content).unwrap();
+        assert_eq!(content, b"the file");
+        let kept = dir.path().join("kept");
+        let swap = || {
+            std::fs::rename(&path, &kept).unwrap();
+            std::os::unix::fs::symlink(&kept, &path).unwrap();
+        };
+        let mut content = Vec::new();
+        let mut open = open_file(&path, &swap).unwrap();
+        open.file.read_to_end(&mut content).unwrap();
+        assert_eq!(content, b"the file");
     }
 
     #[test]
