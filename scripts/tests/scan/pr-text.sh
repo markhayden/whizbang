@@ -68,6 +68,37 @@ expect_fail "a folder that is not the one this repo has" "pull-request/body:3: $
 text "\`.claude/skills\` were read by $N"
 expect_fail "a name beside the folder's" "pull-request/body:3: $names_agent" check
 
+# The folder is exempt only as the folder: not directly after a letter or a digit, and
+# followed by a slash, a backtick, white space, the end of the line, or closing
+# punctuation other than a dot and a hyphen. A host's name and a model's name are neither.
+n=$(printf '%s' "$N" | tr 'A-Z' 'a-z')
+lines=("see https://docs.$n.com/en/overview" "and https://www.$n.ai/code" "code.$n.com has it" \
+  "x.$n-opus-4 wrote it" "model: .$n-sonnet" "from .$n.md and .${n}s" "a.$n/skills is no folder of this repo" \
+  "(.$n-code)" ".${n}_x and .$n.")
+text "${lines[@]}"
+expect_fail "a name after a dot that is not the folder" "pull-request/body:3: $names_agent" check
+i=0
+while [ "$i" -lt "${#lines[@]}" ]; do
+  says "pull-request/body:$((i + 3)): $names_agent"
+  i=$((i + 1))
+done
+quiet "$n"
+# The folder itself, in each place it is exempt, twice in a line and at its end.
+text "in \`.$n/skills\` and .$n/agents/x.md; a folder named \`.$n\`, (.$n) and \".$n\"," ".$n/a .$n/b" "under .$n"
+expect_pass "the folder, as a folder" check
+# The root file is exempt as a whole word in its exact case, and in no other.
+big=$(printf '%s' "$N" | tr 'a-z' 'A-Z')
+text "\`$big.md\` stays, and $big.md, too. ($big.md)"
+expect_pass "the root file, by its name" check
+lines=("see $n.md" "see $N.md" "see $big.MD" "_$big.md" "$big.mdx" "${big}.md5 and $big.md_old")
+text "${lines[@]}"
+expect_fail "the root file's name in another case, or inside a word" "pull-request/body:3: $names_agent" check
+i=0
+while [ "$i" -lt "${#lines[@]}" ]; do
+  says "pull-request/body:$((i + 3)): $names_agent"
+  i=$((i + 1))
+done
+
 # --- 2. A value of the repo's local .env: the variable is named, the value never printed.
 secret_value="value-$(printf '%s' 0918273645)-of-env"
 printf 'SOME_TOKEN="%s"\n' "$secret_value" >.env
@@ -132,6 +163,16 @@ text "nothing"
 printf '%s\n' "$mark_credit" >"$title"
 expect_fail "a credit as the title" "pull-request/title:1: $has_credit" check
 
+# A title with no line break at its end could join the body's first line to make a credit
+# on the pull request, half in each file: such a title is refused.
+printf '%s' "Co""-Autho" >"$title"
+printf '%s\n' "red-By: A Person <person@example.com>" "words" >"$body"
+expect_fail "a credit split between the title and the body" "the title of the pull request does not end in a line break" check
+printf '%s' "docs: a title" >"$title"
+text_body() { printf '%s\n' "What changed." >"$body"; }
+text_body
+expect_fail "a sound title with no line break at its end" "does not end in a line break" check
+
 # --- What is not refused but listed for reading: a line that says either phrase anywhere.
 text "words" "+ GENERATED ""WITH a tool" "the hook refuses a co""-authored-by line" "plain"
 expect_pass "phrases that are not credits" check
@@ -139,6 +180,11 @@ says "to read: pull-request/body:4"
 says "to read: pull-request/body:5"
 grep -a -q -F -e "to read: pull-request/body:3" -e "to read: pull-request/body:6" "$tmp/out" &&
   { cat "$tmp/out" >&2; fail "only the lines with a phrase are listed"; }
+# A credit behind a mark made of letters is not told from a sentence: it is listed to be
+# read, not refused. The skills say so.
+text "a. $mark_credit" "Note: $mark_credit" "<p>$mark_credit</p>"
+expect_pass "a credit behind a mark made of letters" check
+for i in 3 4 5; do says "to read: pull-request/body:$i"; done
 
 # --- Both scans, as over any text: a key (directly after a word character too), a home
 # path, an address, a listed word; and the clean-room scan fails closed.
@@ -181,12 +227,40 @@ text "nothing"
 expect_fail "a body that is not there" "cannot read" "$scan" --pr-text "$title" "$pr/absent.md"
 expect_fail "a title that is a folder" "cannot read" "$scan" --pr-text "$pr" "$body"
 expect_fail "one file alone" "usage" "$scan" --pr-text "$title"
+# One thing to scan at a time: a second mode does not take the place of the first.
+text "by $N"
+echo "feat: a sound message" >"$tmp/message"
+expect_fail "the text and then a message" "usage" "$scan" --pr-text "$title" "$body" --message "$tmp/message"
+expect_fail "a message and then the text" "usage" "$scan" --message "$tmp/message" --pr-text "$title" "$body"
+expect_fail "the text and then a range" "usage" "$scan" --pr-text "$title" "$body" --range "$first" HEAD
+expect_fail "a range and then the text" "usage" "$scan" --range "$first" HEAD --pr-text "$title" "$body"
+expect_fail "the text twice" "usage" "$scan" --pr-text "$title" "$body" --pr-text "$title" "$body"
+expect_fail "two ranges" "usage" "$scan" --range "$first" HEAD --range "$first" HEAD
+expect_fail "a range and a message" "usage" "$scan" --range "$first" HEAD --message "$tmp/message"
+# A local .env that cannot be read is not a .env with nothing in it.
+printf 'SOME_TOKEN="%s"\n' "$secret_value" >.env
+chmod 000 .env
+text "set it to $secret_value and run"
+if [ -r .env ]; then
+  echo "skip: an unreadable .env; this user can read a file with mode 000"
+else
+  expect_fail "a .env that cannot be read" "the local .env cannot be read" check
+  grep -a -q -e "secrets scan: clean" "$tmp/out" && { cat "$tmp/out" >&2; fail "with a .env that cannot be read, nothing is reported clean"; }
+fi
+chmod 600 .env
+rm .env
+# Outside any repository there is no repo whose .env and rules these are: refused.
+mkdir "$tmp/nowhere"
+text "nothing"
+(cd "$tmp/nowhere" && printf 'SOME_TOKEN="%s"\n' "$secret_value" >.env &&
+  expect_fail "outside any repository" "not inside a repository" env GIT_CEILING_DIRECTORIES="$tmp" "$scan" --pr-text "$title" "$body")
+grep -a -q -e "clean" "$tmp/out" && { cat "$tmp/out" >&2; fail "outside any repository nothing is reported clean"; }
 printf 'by %s\n' "$N" | iconv -f UTF-8 -t UTF-16 >"$body"
 expect_fail "a body in UTF-16" "holds a NUL byte" check
 printf 'words\0more\n' >"$body"
 expect_fail "a body with a NUL byte" "holds a NUL byte" check
-# A last line with no line break after it is a line.
-printf 'docs: a title' >"$title"
+# A last line of the body with no line break after it is a line.
+printf 'docs: a title\n' >"$title"
 printf 'What changed.\n\nby %s' "$N" >"$body"
 expect_fail "a last line with no line break" "pull-request/body:3: $names_agent" check
 printf 'What changed.\n\n1. %s' "$mark_credit" >"$body"

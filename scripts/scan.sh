@@ -43,13 +43,20 @@
 # The title and body of a pull request are two files of plain text, outside the repo. Run
 # from the repo, so the values of its local .env are searched for too, they get both
 # scans, and an attribution check made for text that is not a commit message: a line counts
-# from its first letter, whatever marks stand before it (a list's number or sign, a table
-# bar, a quote, a heading, a backtick, a box, a comment's opening), and so does each cell
-# of a table row; an agent's or a model's name counts wherever it starts a word, but for
-# the folder `.claude` and the file `CLAUDE.md`, which this repo has; and a path that
-# starts with `~` is refused. Each refusal names the file and the line, never the text. A
-# line that says "co-authored-by" or "generated with" and is not refused is listed to be
-# read. A file with a NUL byte is refused: it is not plain text.
+# from its first letter, whatever stands before it that is not a letter (a list's number
+# or sign, a table bar, a quote, a heading, a backtick, a box, a comment's opening), and so
+# does each cell of a table row; an agent's or a model's name counts wherever it starts a
+# word, but for the folder `.claude` and the file `CLAUDE.md`, which this repo has, named
+# as a folder and as a file; and a path that starts with `~` is refused. Each refusal
+# names the file and the line, never the text. A line that says "co-authored-by" or
+# "generated with" and is not refused is listed to be read: that is all the scan does
+# with a credit behind a mark made of letters (`a. `, `Note: `, `<p>`). A file with a NUL
+# byte is refused: it is not plain text; so is a title with no line break at its end.
+# What it does not see: a phrase with a zero-width or a non-breaking character inside it;
+# a path written with a plus or a minus sign between the tilde and the slash, or with the
+# shell's variable for the home folder; and, run from a linked worktree, the .env of
+# any other working tree (the .env read is the one at the top it is run from, and none
+# there means none is searched for).
 #
 # Clean-room scan: reads a private word list from the path in WHIZBANG_WORDLIST. It fails
 # closed when the variable is unset, or the list is unreadable or empty. It prints counts
@@ -154,8 +161,8 @@ sk_body='sk-(ant|proj|or|svcacct|admin)-|sk-[a-z_-]*[0-9A-Z]'
 # characters or more, with a digit in it (a model's weights, written with underscores
 # after the hyphen). None can be told from a key by its shape. When a real name trips
 # the scan, write the name another way: an underscore or a space in place of the hyphen
-# after the word, a hyphen inside the long part, or the word spelled so that it does not
-# end the part. There is no list of exceptions, and the rule is not loosened for a name.
+# after the word, or a hyphen inside the long part. There is no list of exceptions, and
+# the rule is not loosened for a name.
 # What this leaves: a key written directly after a word character whose every part
 # between hyphens is under 20 characters, or has no digit and no capital. It is on
 # docs/carry-over.md. A key that starts a word is held to the rule above, as before.
@@ -186,7 +193,12 @@ tilde='(^|[^A-Za-z0-9_~])~([A-Za-z_][A-Za-z0-9._-]*)?/'
 
 secrets_only=0
 mode=tree
+# One thing is scanned in a run: a second mode would take the place of the first, and
+# what was asked for first would not be scanned.
+modes=0
 while [ $# -gt 0 ]; do
+  case "$1" in --range | --pre-push | --message | --pr-text) modes=$((modes + 1)) ;; esac
+  [ "$modes" -le 1 ] || usage
   case "$1" in
     --secrets-only)
       secrets_only=1
@@ -275,7 +287,11 @@ if [ "$mode" = text ]; then
   case "$pr_title" in /*) ;; *) pr_title="$PWD/$pr_title" ;; esac
   case "$pr_body" in /*) ;; *) pr_body="$PWD/$pr_body" ;; esac
 fi
-cd "$(git rev-parse --show-toplevel)"
+# Outside a repository there is nothing to scan and no repo whose .env this would be: the
+# scan does not carry on in whatever folder it was started in.
+top=$(git rev-parse --show-toplevel 2>/dev/null) && [ -n "$top" ] ||
+  die "not inside a repository (git cannot say where its top is); refusing to pass"
+cd "$top"
 text="$work/text"
 mkdir "$text" "$work/env" "$work/strip"
 : >"$work/hits"
@@ -285,6 +301,9 @@ S=$'\001'
 
 # The values of a local .env, one file per value, so a hit can name its variable.
 env_count=0
+# A .env that is there and cannot be read is not a .env with nothing in it.
+[ ! -f .env ] || [ -r .env ] ||
+  die "the local .env cannot be read, so its values cannot be searched for; refusing to pass"
 if [ -f .env ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     line=${line%$'\r'}
@@ -963,8 +982,14 @@ pr_lines() {
   : >"$work/refused-lines"
   pr_rule "$work/candidates" "$work/candidate-lines" "$credit_line" "$what" "$has_credit" -i
   pr_rule "$work/candidates" "$work/candidate-lines" "$agent_line" "$what" "$credits_agent" -i
-  # A name, wherever it starts a word; the folder and the file this repo has are paths.
-  sed -e 's/\.claude\([^A-Za-z0-9]\)/.\1/g' -e 's/\.claude$/./' -e 's/CLAUDE\.md//g' "$file" >"$work/unnamed"
+  # A name, wherever it starts a word. The folder and the file this repo has are paths,
+  # and only as those: the folder where it does not directly follow a letter or a digit
+  # and is followed by a slash, a backtick, white space, the end of the line, or closing
+  # punctuation other than a dot and a hyphen (so a host's name and a model's name stay
+  # names); the file as a whole word in its exact case. The folder is taken out twice,
+  # because one that ends where the next begins shares a character with it.
+  folder='s/(^|[^A-Za-z0-9])\.claude([]/`[:space:])},;:!?>'"'"'"]|$)/\1.\2/g'
+  sed -E -e "$folder" -e "$folder" -e 's/(^|[^A-Za-z0-9_])CLAUDE\.md([^A-Za-z0-9_]|$)/\1\2/g' "$file" >"$work/unnamed"
   [ "$(awk 'END { print NR }' "$work/unnamed")" = "$(awk 'END { print NR }' "$file")" ] ||
     die "the lines of the $what could not be read; refusing to pass"
   pr_rule "$work/unnamed" "" "$agent" "$what" "names an agent or a model" -i
@@ -1006,6 +1031,11 @@ case "$mode" in
       if [ "$what" = title ]; then f=$pr_title; else f=$pr_body; fi
       [ -f "$f" ] && [ -r "$f" ] || die "cannot read the $what of the pull request (a file is expected); refusing to pass"
       cp -- "$f" "$text/pull-request/$what" || die "cannot read the $what of the pull request; refusing to pass"
+      # A title with no line break at its end could join the first line of the body on the
+      # pull request, and a credit could be made of the two halves: each file is whole.
+      if [ "$what" = title ] && [ -s "$text/pull-request/title" ] && [ -n "$(tail -c 1 "$text/pull-request/title")" ]; then
+        die "the title of the pull request does not end in a line break, so its last line could join the first of the body; end it with one; refusing to pass"
+      fi
       # Plain text only: a NUL byte hides the rest of its line from a search.
       [ "$(tr -d '\0' <"$text/pull-request/$what" | wc -c | tr -d ' ')" = "$(wc -c <"$text/pull-request/$what" | tr -d ' ')" ] ||
         die "the $what of the pull request holds a NUL byte, so it is not plain text and cannot be scanned; refusing to pass"

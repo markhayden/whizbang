@@ -24,6 +24,9 @@ message; work put off belongs on `docs/carry-over.md`.
   status line. One exception: until the milestone or checkpoint that introduced it closes,
   an accepted ADR may be amended in place, with a dated `Amended:` line in its header that
   says what changed. After that, only a new ADR changes it.
+- A later ADR that changes part of an accepted one, and does not replace it, says so in its
+  own status line, and the earlier one gains `Changed by NNNN:` and what changed in its
+  status line. Nothing else in the earlier one is edited.
 - An ADR goes through the same pull request, review and scans as any change. It names no
   agent or model, and holds nothing private.
 
@@ -32,7 +35,7 @@ message; work put off belongs on `docs/carry-over.md`.
 ```markdown
 # NNNN. Title, as the decision in a few words
 
-Status: proposed | accepted | superseded by NNNN
+Status: proposed | accepted | accepted, changed by NNNN: what | superseded by NNNN
 Date: YYYY-MM-DD
 Spec: the sections of SPEC.md this touches
 

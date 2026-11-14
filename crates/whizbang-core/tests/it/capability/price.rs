@@ -81,15 +81,19 @@ fn a_quote_made_from_a_fraction_of_the_unit_is_rounded_up() {
         (1_000_000.25, 1_000_001),
     ];
     for (number, micros) in cases {
-        assert_eq!(Quote::bound(number).unwrap().micros(), micros, "{number}");
         assert_eq!(
-            Quote::estimate_only(number).unwrap().micros(),
-            micros,
+            Quote::bound(number).unwrap().bound_micros(),
+            Some(micros),
+            "{number}"
+        );
+        assert_eq!(
+            Quote::estimate_only(number).unwrap().estimated_micros(),
+            Some(micros),
             "{number}"
         );
     }
     // Nothing less than nothing: a zero with a sign is nothing.
-    assert_eq!(Quote::bound(-0.0).unwrap().micros(), 0);
+    assert_eq!(Quote::bound(-0.0).unwrap().bound_micros(), Some(0));
 }
 
 #[test]
@@ -100,20 +104,22 @@ fn a_quote_is_under_the_largest_amount_which_is_no_amount() {
     // The largest number under it that the machine can write.
     let largest = 18_446_744_073_709_549_568.0;
     let quote = Quote::bound(largest).unwrap();
-    assert_eq!(quote.micros(), u64::MAX - 2047);
+    assert_eq!(quote.bound_micros(), Some(u64::MAX - 2047));
     assert!(!quote.most().is_unbounded());
 }
 
 #[test]
 fn a_quote_says_its_kind_and_its_amount() {
+    let amounts = |quote: Quote| (quote.kind(), quote.bound_micros(), quote.estimated_micros());
     let free = Quote::free();
-    assert_eq!((free.kind(), free.micros()), (QuoteKind::Free, 0));
+    assert_eq!(amounts(free), (QuoteKind::Free, None, None));
     let bound = Quote::bound(250_000.0).unwrap();
-    assert_eq!((bound.kind(), bound.micros()), (QuoteKind::Bound, 250_000));
+    assert_eq!(amounts(bound), (QuoteKind::Bound, Some(250_000), None));
+    // An estimate's figure is not read as a bound by any accessor.
     let estimate = Quote::estimate_only(250_000.0).unwrap();
     assert_eq!(
-        (estimate.kind(), estimate.micros()),
-        (QuoteKind::EstimateOnly, 250_000)
+        amounts(estimate),
+        (QuoteKind::EstimateOnly, None, Some(250_000))
     );
     // A bound of nothing is a bound, said so, and is not the word "free".
     let nothing = Quote::bound(0.0).unwrap();
@@ -209,7 +215,8 @@ fn a_price_by_time_with_only_a_timeout_of_whizbangs_own_gives_an_estimate() {
     let price = Price::by_time(300.0, timeout).unwrap();
     let quote = price.quote();
     assert_eq!(quote.kind(), QuoteKind::EstimateOnly);
-    assert_eq!(quote.micros(), 27_000);
+    assert_eq!(quote.estimated_micros(), Some(27_000));
+    assert_eq!(quote.bound_micros(), None);
     assert!(quote.most().is_unbounded());
     let roster = offering(declared("m").priced(price));
     assert!(bound_of(&roster).is_unbounded());
@@ -224,7 +231,7 @@ fn a_price_by_time_with_a_hosts_limit_gives_the_bound_of_price_times_limit() {
     assert_eq!(price.micros_per_second(), Some(300));
     let quote = price.quote();
     assert_eq!(quote.kind(), QuoteKind::Bound);
-    assert_eq!(quote.micros(), 27_000);
+    assert_eq!(quote.bound_micros(), Some(27_000));
     let roster = offering(declared("m").priced(price));
     assert_eq!(bound_of(&roster), Estimate::of_micros(27_000));
 }
@@ -235,16 +242,21 @@ fn a_price_by_time_is_rounded_up_where_the_rate_enters_and_where_the_product_is_
     let limit = TimeLimit::of_host(1000).unwrap();
     let price = Price::by_time(0.25, limit).unwrap();
     assert_eq!(price.micros_per_second(), Some(1));
-    assert_eq!(price.quote().micros(), 1);
+    assert_eq!(price.quote().bound_micros(), Some(1));
     // 3 a second for 1.5 seconds is 4.5, so 5; for a millisecond it is 0.003, so 1.
     let limit = TimeLimit::of_host(1500).unwrap();
-    assert_eq!(Price::by_time(3.0, limit).unwrap().quote().micros(), 5);
+    let quote = Price::by_time(3.0, limit).unwrap().quote();
+    assert_eq!(quote.bound_micros(), Some(5));
     let limit = TimeLimit::of_host(1).unwrap();
-    assert_eq!(Price::by_time(3.0, limit).unwrap().quote().micros(), 1);
+    let quote = Price::by_time(3.0, limit).unwrap().quote();
+    assert_eq!(quote.bound_micros(), Some(1));
     // A rate of nothing costs nothing, and is still a bound, not the word "free".
     let limit = TimeLimit::of_host(1000).unwrap();
     let nothing = Price::by_time(0.0, limit).unwrap().quote();
-    assert_eq!((nothing.kind(), nothing.micros()), (QuoteKind::Bound, 0));
+    assert_eq!(
+        (nothing.kind(), nothing.bound_micros()),
+        (QuoteKind::Bound, Some(0))
+    );
 }
 
 #[test]
@@ -301,7 +313,7 @@ fn a_price_by_time_that_reaches_the_largest_amount_is_refused_when_it_is_stated(
     let second = TimeLimit::of_host(1000).unwrap();
     let largest = 18_446_744_073_709_549_568.0;
     let price = Price::by_time(largest, second).unwrap();
-    assert_eq!(price.quote().micros(), u64::MAX - 2047);
+    assert_eq!(price.quote().bound_micros(), Some(u64::MAX - 2047));
     // For two seconds it is over, as a bound and as an estimate.
     let two = TimeLimit::of_host(2000).unwrap();
     assert!(matches!(
@@ -404,5 +416,21 @@ fn known_a_fraction_that_floating_point_arithmetic_made_is_rounded_up_a_whole_un
     // over, never under. A caller that holds dollars converts in whole numbers.
     let product = 0.0079_f64 * 1e6;
     assert!(product > 7900.0);
-    assert_eq!(Quote::bound(product).unwrap().micros(), 7901);
+    assert_eq!(Quote::bound(product).unwrap().bound_micros(), Some(7901));
+}
+
+#[test]
+fn known_the_bound_a_roster_answers_is_of_one_request_however_many_a_call_sends() {
+    // `Backends::bound` is asked for "the most one call's use of this capability can
+    // cost". A roster answers the quote of one request: it does not know how many
+    // requests a call sends its backend. A call that sends three requests at 5 each
+    // may be charged 15, and its estimate from a roster alone is 5. The per-call part
+    // is task S4's, in a wrapper around the roster.
+    let roster = offering(declared("m").priced(Price::at_most(5.0).unwrap()));
+    let one_request = declared("m").priced(Price::at_most(5.0).unwrap()).quote();
+    assert_eq!(
+        Some(bound_of(&roster)),
+        one_request.map(|quote| quote.most())
+    );
+    assert_eq!(bound_of(&roster), Estimate::of_micros(5));
 }

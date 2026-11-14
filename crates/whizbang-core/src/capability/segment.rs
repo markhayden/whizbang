@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use crate::contract::Cancellation;
 
-use super::{Bounds, Declaration, Fault, Picture, Unfit, feature, pixel_count};
+use super::{Bounds, Charge, Declaration, Fault, Picture, Unfit, feature, pixel_count};
 
 /// The most requests one batch holds.
 pub const QUERY_LIMIT: usize = 64;
@@ -333,13 +333,31 @@ impl std::fmt::Debug for Instance {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SegmentResponse {
     answers: Vec<Vec<Instance>>,
+    /// What the request cost, when the backend's answer said.
+    charge: Option<Charge>,
 }
 
 impl SegmentResponse {
     /// An answer. Whether it fits a request is checked by the handle that sent the
     /// request.
     pub fn new(answers: Vec<Vec<Instance>>) -> SegmentResponse {
-        SegmentResponse { answers }
+        SegmentResponse {
+            answers,
+            charge: None,
+        }
+    }
+
+    /// The same answer, with what the request cost: the charge the backend's answer
+    /// reports, or the one its adapter works out from the usage the answer reports at
+    /// the prices it quoted from (ADR 0010). An answer without one cost its bound.
+    pub fn charged(mut self, charge: Charge) -> SegmentResponse {
+        self.charge = Some(charge);
+        self
+    }
+
+    /// What the request cost, when the answer said.
+    pub fn charge(&self) -> Option<Charge> {
+        self.charge
     }
 
     /// The instances of each request, in the batch's order.
@@ -420,7 +438,11 @@ impl SegmentHandle {
         )?;
         let capability = crate::contract::Capability::Segment;
         self.bounds.send(capability, self.declaration(), || {
-            self.held(request, self.backend.segment(request, &self.bounds)?)
+            let response = self.backend.segment(request, &self.bounds)?;
+            // An answer came: when it is not taken, what it said it cost stands.
+            let charge = response.charge;
+            self.held(request, response)
+                .map_err(|fault| fault.answered(charge))
         })
     }
 
