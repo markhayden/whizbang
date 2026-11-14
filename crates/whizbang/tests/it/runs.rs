@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 use whizbang_core::artifact::{ArtifactType, Location, Origin, Shape, Step};
 use whizbang_core::contract::OutputPort;
+use whizbang_core::contract::RunRecord;
+use whizbang_core::contract::record::{Admitted, Left};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Admission, Answer, Call, CallError, Cancel, Context, Executor,
     Failure, Outcome, PreparedCall, Produced, RUN_RECORD_SCHEMA, Request, RequestId, RunId,
@@ -574,7 +576,7 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
                 "broken",
                 "record",
                 Kind::Diagnostic,
-                b"{\"record\":\"run/2\",\"\\u001b[2J\":1}\n",
+                b"{\"record\":\"run/3\",\"\\u001b[2J\":1}\n",
             )
             .unwrap();
         publication.publish().unwrap();
@@ -613,7 +615,7 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
     assert!(
         shown
             .err
-            .contains("a record of another version: run/1, and this build reads run/2"),
+            .contains("a record of another version: run/1, and this build reads run/3"),
         "{}",
         shown.err
     );
@@ -621,7 +623,7 @@ fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
     let listed = whizbang(&["list"], &root);
     assert_eq!(listed.code, Some(0), "{}", listed.err);
     let expected = "older\trecord not read: a record of another version: run/1, and this build \
-                    reads run/2";
+                    reads run/3";
     assert!(
         listed.text().lines().any(|line| line == expected),
         "{}",
@@ -930,4 +932,193 @@ fn a_run_another_run_called_is_marked_in_the_list_and_each_is_shown_with_the_oth
                    registered\n";
     assert!(text.contains(refusal), "{text}");
     assert!(!shown.out.contains(&0x1b));
+}
+
+// --- run/3: what a record lists, and what it has lost (ADR 0013) ------------------------------
+
+const EMPTY: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+/// A `run/3` record of a run that ended by itself, with two settings, a paid request,
+/// a refusal of a request and two entries of where data went.
+fn ordinary_record() -> String {
+    [
+        r#"{"record":"run/3","#,
+        r#""identity":{"run":"1000-1","request":"req-7","parent":null,"whizbang":"0.0.1"},"#,
+        r#""asked":{"action":"heal","version":"1.0.0","#,
+        r#""arguments":[{"name":"text","value":{"text":"hello"}}],"#,
+        r#""settings":[{"name":"backends.fill.model","value":{"text":"bria-erase"}},"#,
+        r#"{"name":"backends.fill.steps","value":{"integer":20}}],"#,
+        r#""config":""#,
+        EMPTY,
+        r#""},"inputs":[],"outputs":[],"#,
+        r#""outcome":{"status":"completed","error":null,"invalid":null,"#,
+        r#""refusals":[{"action":null,"kind":"request_not_approved","#,
+        r#""why":"the recipient is not approved for source images"}],"#,
+        r#""refusals_omitted":0,"lost":[]},"#,
+        r#""time":{"start_ms":1000,"end_ms":1003,"#,
+        r#""durations":[{"of":"request","index":0,"start_ms":1001,"ms":1}]},"#,
+        r#""models":[{"capability":"fill","backend":"fake","model":"m","version":"1","#,
+        r#""device":null,"cached":null,"ended":"answered"}],"#,
+        r#""spend":{"reserved_micros":500,"requests":[{"request":0,"reserved_micros":500,"#,
+        r#""settled_micros":900,"unresolved_micros":0,"stage":"answered","over_bound":true}]},"#,
+        r#""egress":[{"origin":"https://api.example.com","account":"acct...","#,
+        r#""classes":["source_images","prompts"],"outcome":"sent"},"#,
+        r#"{"origin":"https://eu.example.net:8443","account":null,"#,
+        r#""classes":["derived_images"],"outcome":"refused"}],"#,
+        r#""steps":[],"judge":[],"diagnostics":[]}"#,
+        "\n",
+    ]
+    .concat()
+}
+
+/// What `runs show` prints of this record, held by a store as the record of the run
+/// `1000-1` and nothing else.
+fn shown_of(record: &[u8]) -> String {
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let mut publication = store.begin().unwrap();
+    publication
+        .put_in("1000-1", "record", Kind::Diagnostic, record)
+        .unwrap();
+    publication.publish().unwrap();
+    drop(store);
+    let shown = whizbang(&["show", "1000-1"], &root);
+    assert_eq!(shown.code, Some(0), "{}", shown.err);
+    shown.text().to_owned()
+}
+
+fn has_line(text: &str, line: &str) {
+    assert!(
+        text.lines().any(|shown| shown == line),
+        "{line:?} in:\n{text}"
+    );
+}
+
+#[test]
+fn runs_show_prints_the_settings_the_paid_requests_and_where_data_went() {
+    let text = shown_of(ordinary_record().as_bytes());
+    for line in [
+        "settings: 2",
+        "  backends.fill.model = \"bria-erase\"",
+        "  backends.fill.steps = 20",
+        "spend: 500 millionths of a US dollar reserved; paid requests: 1",
+        "  request 0\tanswered\theld 500\tsettled 900\tunresolved 0\tover its bound",
+        "egress: 2",
+        "  https://api.example.com\tacct...\tsource_images, prompts\tsent",
+        "  https://eu.example.net:8443\tnone\tderived_images\trefused",
+        "refusals: 1",
+        "  none\trequest_not_approved\tthe recipient is not approved for source images",
+    ] {
+        has_line(&text, line);
+    }
+    // Nothing of this run is lost, and nothing is said to be.
+    assert!(
+        !text.contains("unknown") && !text.contains("lost"),
+        "{text}"
+    );
+}
+
+#[test]
+fn runs_show_says_unknown_for_every_group_a_record_has_lost_and_never_none() {
+    let run = RunId::parse("1000-1").unwrap();
+    let request = RequestId::parse("req-7").unwrap();
+    let admitted = Admitted {
+        request: Some(&request),
+        parent: None,
+        action: "heal",
+        version: "1.0.0",
+        reserved_micros: Some(250_000),
+        start_ms: 1000,
+    };
+    let left = |admitted| Left {
+        run: &run,
+        whizbang: "0.0.1",
+        admitted,
+        end_ms: 5000,
+    };
+    let lost = [
+        "arguments: unknown",
+        "settings: unknown",
+        "inputs: unknown",
+        "refusals: unknown",
+        "models: unknown",
+        "egress: unknown",
+        "steps: unknown",
+        "judge: unknown",
+        "diagnostics: unknown",
+        "config: unknown",
+        "whizbang: 0.0.1 (the version that ended it; the version that ran it is unknown)",
+    ];
+    // A run a dead process left, its admission read: what the admission gives is
+    // shown, and an interrupted run never reads as one that spent nothing.
+    let interrupted = RunRecord::interrupted(left(Some(admitted))).unwrap();
+    let text = shown_of(&interrupted.to_bytes());
+    let known = [
+        "action: heal 1.0.0",
+        "request: req-7",
+        "parent: none",
+        "status: error",
+        "spend: 250000 millionths of a US dollar reserved; paid requests: unknown",
+        "lost: arguments, settings, inputs, refusals, durations, models, requests, egress, \
+         steps, judge, diagnostics, version",
+    ];
+    for line in lost.iter().chain(&known) {
+        has_line(&text, line);
+    }
+    assert!(!text.contains("nothing reserved"), "{text}");
+    let none: Vec<&str> = text.lines().filter(|l| l.ends_with(": none")).collect();
+    // A root has no parent, which the admission says; and no run that did not
+    // complete has an output, which is known and not lost.
+    assert_eq!(none, ["parent: none", "outputs: none"], "{text}");
+
+    // The same, its admission not readable: the action, the start and what was
+    // reserved are unknown too, and so are the request's id and the parent.
+    let unread = RunRecord::interrupted(left(None)).unwrap();
+    let text = shown_of(&unread.to_bytes());
+    let known = [
+        "action: unknown unknown",
+        "request: unknown",
+        "parent: unknown",
+        "started: unknown",
+        "spend: unknown; paid requests: unknown",
+        "lost: arguments, settings, inputs, refusals, durations, models, requests, egress, \
+         steps, judge, diagnostics, version, admission",
+    ];
+    for line in lost.iter().chain(&known) {
+        has_line(&text, line);
+    }
+    let none: Vec<&str> = text.lines().filter(|l| l.ends_with(": none")).collect();
+    assert_eq!(none, ["outputs: none"], "{text}");
+    assert!(!text.contains("nothing reserved"), "{text}");
+}
+
+#[test]
+fn runs_show_prints_a_run_2_record_as_it_did() {
+    // A record the tag `m1a` wrote: every line as that build printed it.
+    let record = [
+        r#"{"record":"run/2","#,
+        r#""identity":{"run":"1000-1","request":null,"parent":null,"whizbang":"0.0.1"},"#,
+        r#""asked":{"action":"echo","version":"1.0.0","#,
+        r#""arguments":[{"name":"text","value":{"text":"hello"}}],"settings":[],"#,
+        r#""config":""#,
+        EMPTY,
+        r#""},"inputs":[],"outputs":[],"#,
+        r#""outcome":{"status":"completed","error":null,"invalid":null,"refusals":[],"refusals_omitted":0},"#,
+        r#""time":{"start_ms":1000,"end_ms":1003,"durations":[]},"#,
+        r#""models":[],"spend":{"reserved_micros":null,"requests":[]},"egress":[],"steps":[],"#,
+        r#""judge":[],"diagnostics":[]}"#,
+        "\n",
+    ]
+    .concat();
+    let text = shown_of(record.as_bytes());
+    let expected = format!(
+        "run: 1000-1\nrequest: none\nparent: none\nwhizbang: 0.0.1\naction: echo 1.0.0\n\
+         status: completed\nrefusals: none\nstarted: 1970-01-01T00:00:01.000Z\n\
+         ended: 1970-01-01T00:00:01.003Z (3 ms)\nconfig: {EMPTY}\nsettings: none\n\
+         arguments: 1\n  text = \"hello\"\ninputs: none\noutputs: none\nmodels: none\n\
+         spend: nothing reserved; paid requests: none\negress: none\nsteps: none\n\
+         judge: none\ndiagnostics: none\n"
+    );
+    assert_eq!(text, expected);
 }

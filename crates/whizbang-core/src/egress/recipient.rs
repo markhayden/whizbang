@@ -269,6 +269,16 @@ impl Account {
     }
 }
 
+impl Account {
+    /// The account as it is shown ([`Account::shown`]), for something that is written
+    /// and kept: none when the whole account holds a secret, which may have come to be
+    /// known after the account was made. A cut account is too short to hold a secret
+    /// itself, so it is the whole that is looked at.
+    pub fn shown_without(&self, secrets: &Secrets) -> Option<String> {
+        (!holds_secret(&self.name, secrets)).then(|| self.shown())
+    }
+}
+
 impl fmt::Debug for Account {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Account({})", self.shown())

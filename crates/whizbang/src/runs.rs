@@ -14,7 +14,9 @@ use std::sync::Arc;
 
 use clap::Subcommand;
 use whizbang_core::contract::Admission;
-use whizbang_core::contract::record::{self, ArgumentValue, Judged, RunRecord, StoredRecordError};
+use whizbang_core::contract::record::{
+    self, ArgumentValue, Handed, Judged, Lost, RunRecord, StoredRecordError,
+};
 use whizbang_core::contract::request::{StoredAdmissionError, admitted};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Generation, Kind, Reader, Run};
@@ -117,16 +119,23 @@ fn list(root: &Path) -> Result<String, String> {
     let mut text = format!("runs: {}\n", generation.runs().len());
     for id in generation.runs().keys() {
         let line = match record_of(&reader, &generation, id) {
-            Some(Ok(record)) => format!(
-                "{}\t{}\t{} {}\t{}\t{} ms{}",
-                shown(id),
-                record.outcome().status.name(),
-                shown(&record.asked().action),
-                shown(&record.asked().version),
-                utc(record.time().start_ms),
-                record.time().end_ms - record.time().start_ms,
-                called_by(record.identity().parent.as_deref())
-            ),
+            // What the record of a run a dead process left does not know is shown as
+            // unknown: its action, when its admission could not be read, and its start.
+            Some(Ok(record)) => {
+                let unknown = || "unknown".to_owned();
+                let (asked, time) = (record.asked(), record.time());
+                format!(
+                    "{}\t{}\t{} {}\t{}\t{}{}",
+                    shown(id),
+                    record.outcome().status.name(),
+                    asked.action.as_deref().map_or_else(unknown, shown),
+                    asked.version.as_deref().map_or_else(unknown, shown),
+                    time.start_ms.map_or_else(unknown, utc),
+                    time.start_ms
+                        .map_or_else(unknown, |start| format!("{} ms", time.end_ms - start)),
+                    called_by(record.identity().parent.as_deref())
+                )
+            }
             // A run is in the store from its admission, and has its record from its
             // end: one with an admission and no record was admitted and has not ended.
             Some(Err(StoredRecordError::NoRecord)) | None => {
@@ -315,8 +324,17 @@ fn text_of(record: &RunRecord) -> String {
     let asked = record.asked();
     let outcome = record.outcome();
     let time = record.time();
+    // What the record does not know (ADR 0013): a group that `outcome.lost` names is
+    // shown as unknown, and never as none or as nothing. An interrupted run reads as
+    // one whose spend, requests and recipients are not known, not as one that had none.
+    let lost = |group: Lost| outcome.lost.contains(&group);
+    let unknown = || "unknown".to_owned();
+    let counted = |group: Lost, items: usize| {
+        if lost(group) { unknown() } else { count(items) }
+    };
     let or_none = |value: &Option<String>| match value {
         Some(value) => shown(value),
+        None if lost(Lost::Admission) => unknown(),
         None => "none".to_owned(),
     };
     let mut text = String::new();
@@ -327,11 +345,18 @@ fn text_of(record: &RunRecord) -> String {
     line(format!("run: {}", shown(&identity.run)));
     line(format!("request: {}", or_none(&identity.request)));
     line(format!("parent: {}", or_none(&identity.parent)));
-    line(format!("whizbang: {}", shown(&identity.whizbang)));
+    line(if lost(Lost::Version) {
+        format!(
+            "whizbang: {} (the version that ended it; the version that ran it is unknown)",
+            shown(&identity.whizbang)
+        )
+    } else {
+        format!("whizbang: {}", shown(&identity.whizbang))
+    });
     line(format!(
         "action: {} {}",
-        shown(&asked.action),
-        shown(&asked.version)
+        asked.action.as_deref().map_or_else(unknown, shown),
+        asked.version.as_deref().map_or_else(unknown, shown)
     ));
     line(format!("status: {}", outcome.status.name()));
     if let Some(error) = &outcome.error {
@@ -345,7 +370,21 @@ fn text_of(record: &RunRecord) -> String {
         line(format!("invalid: {}", why.escape_debug()));
     }
     // What the run's action called and was refused: no run was made for these.
-    line(format!("refusals: {}", count(outcome.refusals.len())));
+    if !outcome.lost.is_empty() {
+        let names: Vec<String> = outcome
+            .lost
+            .iter()
+            .map(|group| {
+                let name = serde_json::to_value(group).unwrap_or_default();
+                name.as_str().unwrap_or_default().to_owned()
+            })
+            .collect();
+        line(format!("lost: {}", names.join(", ")));
+    }
+    line(format!(
+        "refusals: {}",
+        counted(Lost::Refusals, outcome.refusals.len())
+    ));
     for refused in &outcome.refusals {
         let kind = serde_json::to_value(refused.kind()).unwrap_or_default();
         line(format!(
@@ -361,25 +400,53 @@ fn text_of(record: &RunRecord) -> String {
             outcome.refusals_omitted
         ));
     }
-    line(format!("started: {}", utc(time.start_ms)));
     line(format!(
-        "ended: {} ({} ms)",
-        utc(time.end_ms),
-        time.end_ms - time.start_ms
+        "started: {}",
+        time.start_ms.map_or_else(unknown, utc)
     ));
-    line(format!("config: {}", asked.config));
-    line("settings: none".to_owned());
-    line(format!("arguments: {}", count(asked.arguments.len())));
-    for argument in &asked.arguments {
-        let value = match &argument.value {
-            ArgumentValue::Number(number) => format!("{number:?}"),
-            ArgumentValue::Integer(number) => number.to_string(),
-            ArgumentValue::Boolean(boolean) => boolean.to_string(),
-            ArgumentValue::Text(text) => format!("\"{}\"", text.escape_debug()),
-        };
-        line(format!("  {} = {value}", shown(&argument.name)));
+    line(match time.start_ms {
+        Some(start) => format!("ended: {} ({} ms)", utc(time.end_ms), time.end_ms - start),
+        None => format!("ended: {}", utc(time.end_ms)),
+    });
+    line(format!(
+        "config: {}",
+        asked
+            .config
+            .map_or_else(unknown, |config| config.to_string())
+    ));
+    let valued = |value: &ArgumentValue| match value {
+        ArgumentValue::Number(number) => format!("{number:?}"),
+        ArgumentValue::Integer(number) => number.to_string(),
+        ArgumentValue::Boolean(boolean) => boolean.to_string(),
+        ArgumentValue::Text(text) => format!("\"{}\"", text.escape_debug()),
+    };
+    // The resolved settings, in the order of their names.
+    line(format!(
+        "settings: {}",
+        counted(Lost::Settings, asked.settings.len())
+    ));
+    for setting in &asked.settings {
+        line(format!(
+            "  {} = {}",
+            shown(setting.name()),
+            valued(setting.value())
+        ));
     }
-    line(format!("inputs: {}", count(record.inputs().len())));
+    line(format!(
+        "arguments: {}",
+        counted(Lost::Arguments, asked.arguments.len())
+    ));
+    for argument in &asked.arguments {
+        line(format!(
+            "  {} = {}",
+            shown(&argument.name),
+            valued(&argument.value)
+        ));
+    }
+    line(format!(
+        "inputs: {}",
+        counted(Lost::Inputs, record.inputs().len())
+    ));
     for input in record.inputs() {
         line(format!(
             "  {}\t{} {}\tbinding {}",
@@ -399,7 +466,10 @@ fn text_of(record: &RunRecord) -> String {
         ));
     }
     // Each capability request, in the order they were sent, with how long it took.
-    line(format!("models: {}", count(record.models().len())));
+    line(format!(
+        "models: {}",
+        counted(Lost::Models, record.models().len())
+    ));
     for (at, model) in record.models().iter().enumerate() {
         let ended = serde_json::to_value(model.ended).unwrap_or_default();
         let took = record
@@ -416,13 +486,56 @@ fn text_of(record: &RunRecord) -> String {
             ended.as_str().unwrap_or_default()
         ));
     }
+    // What was reserved, and each paid request with what it was settled at. With the
+    // admission lost, what was reserved is not known either.
+    let spend = record.spend();
     line(format!(
-        "spend: {}; paid requests: none",
-        reserved(record.spend().reserved_micros)
+        "spend: {}; paid requests: {}",
+        match spend.reserved_micros {
+            None if lost(Lost::Admission) => unknown(),
+            micros => reserved(micros),
+        },
+        counted(Lost::Requests, spend.requests.len())
     ));
-    line("egress: none".to_owned());
+    for paid in &spend.requests {
+        line(format!(
+            "  request {}\t{}\theld {}\tsettled {}\tunresolved {}{}",
+            paid.request(),
+            paid.stage().name(),
+            paid.reserved_micros(),
+            paid.settled_micros(),
+            paid.unresolved_micros(),
+            if paid.is_over_bound() {
+                "\tover its bound"
+            } else {
+                ""
+            }
+        ));
+    }
+    // Where the run's data went: an origin, the account cut, the classes, and
+    // whether it was sent or refused.
+    line(format!(
+        "egress: {}",
+        counted(Lost::Egress, record.egress().len())
+    ));
+    for went in record.egress() {
+        let classes: Vec<&str> = went.classes().iter().map(|class| class.name()).collect();
+        line(format!(
+            "  {}\t{}\t{}\t{}",
+            shown(went.origin()),
+            went.account().map_or_else(|| "none".to_owned(), shown),
+            classes.join(", "),
+            match went.outcome() {
+                Handed::Sent => "sent",
+                Handed::Refused => "refused",
+            }
+        ));
+    }
     // The runs this one called, in order: each is shown by its own id.
-    line(format!("steps: {}", count(record.steps().len())));
+    line(format!(
+        "steps: {}",
+        counted(Lost::Steps, record.steps().len())
+    ));
     for step in record.steps() {
         line(format!(
             "  call\t{}\t{}\t{}",
@@ -433,7 +546,10 @@ fn text_of(record: &RunRecord) -> String {
     }
     // The judge's turns, and the verdict when the run concluded one. The whole of
     // each exchange is the diagnostic the turn names.
-    line(format!("judge: {}", count(record.judge().len())));
+    line(format!(
+        "judge: {}",
+        counted(Lost::Judge, record.judge().len())
+    ));
     for entry in record.judge() {
         let word = |value: serde_json::Value| value.as_str().unwrap_or("none").to_owned();
         match entry {
@@ -461,7 +577,7 @@ fn text_of(record: &RunRecord) -> String {
     }
     line(format!(
         "diagnostics: {}",
-        count(record.diagnostics().len())
+        counted(Lost::Diagnostics, record.diagnostics().len())
     ));
     for diagnostic in record.diagnostics() {
         line(format!(

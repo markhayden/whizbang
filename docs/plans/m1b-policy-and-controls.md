@@ -643,7 +643,7 @@ records each hop in order with the headers it would have carried.
 **Depends on:** B3. **Reads:** ADR 0005; ADR 0008, "What is refused inside a run is in its
 record".
 
-- [ ] An ADR, which changes ADR 0005: `run/3`. The element of `asked.settings` (a name and
+- [x] An ADR, which changes ADR 0005: `run/3`. The element of `asked.settings` (a name and
       a value, as an argument is written, in a stated order); of `spend.requests`, one
       paid request (reserved, settled, unresolved, the stage it reached, and whether its
       charge was over its bound); of `egress` (the recipient, the classes of data, and whether
@@ -653,9 +653,9 @@ record".
       empty when `outcome.lost` names their group, as "What a crashed run is recovered
       to" says. What reading does with a `run/2` record: it is read, as frozen
       at `m1a`.
-- [ ] A bound on each new list where it comes in, so that a record stays readable under
+- [x] A bound on each new list where it comes in, so that a record stays readable under
       its limit (ADR 0008, "What a call and a run may hold").
-- [ ] The types, the schema `run-3.json` and fixed vectors. The executor writes `run/3`
+- [x] The types, the schema `run-3.json` and fixed vectors. The executor writes `run/3`
       with the new lists empty.
 
 **Done when** these pass: a `run/3` record with each new element round-trips and validates,

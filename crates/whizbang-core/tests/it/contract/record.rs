@@ -28,13 +28,13 @@ use crate::artifact::support::{image_of, photo};
 /// A record as the executor writes one for a completed `echo`, by hand.
 pub fn completed() -> String {
     concat!(
-        r#"{"record":"run/2","#,
+        r#"{"record":"run/3","#,
         r#""identity":{"run":"1000-1","request":null,"parent":null,"whizbang":"0.0.1"},"#,
         r#""asked":{"action":"echo","version":"1.0.0","#,
         r#""arguments":[{"name":"text","value":{"text":"hello"}}],"settings":[],"#,
         r#""config":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"#,
         r#""inputs":[],"outputs":[],"#,
-        r#""outcome":{"status":"completed","error":null,"invalid":null,"refusals":[],"refusals_omitted":0},"#,
+        r#""outcome":{"status":"completed","error":null,"invalid":null,"refusals":[],"refusals_omitted":0,"lost":[]},"#,
         r#""time":{"start_ms":1000,"end_ms":1003,"durations":[]},"#,
         r#""models":[],"spend":{"reserved_micros":null,"requests":[]},"egress":[],"steps":[],"#,
         r#""judge":[],"#,
@@ -70,7 +70,7 @@ fn a_record_is_read_and_written_back_as_the_same_bytes() {
     let bytes = completed();
     let record = RunRecord::from_bytes(bytes.as_bytes()).unwrap();
     assert_eq!(record.to_bytes(), bytes.as_bytes());
-    assert_eq!(RUN_RECORD, "run/2");
+    assert_eq!(RUN_RECORD, "run/3");
     assert_eq!(record.spend().reserved_micros, None);
     // The same run with half a dollar reserved for it when it was admitted.
     let reserved = completed().replace(r#""reserved_micros":null"#, r#""reserved_micros":500000"#);
@@ -79,10 +79,13 @@ fn a_record_is_read_and_written_back_as_the_same_bytes() {
     assert_eq!(record.to_bytes(), reserved.as_bytes());
     validate(&schema(), &as_json(&reserved)).unwrap();
     assert_eq!(record.identity().run, "1000-1");
-    assert_eq!(record.asked().action, "echo");
+    assert_eq!(record.asked().action.as_deref(), Some("echo"));
     assert_eq!(record.outcome().status, Status::Completed);
     assert_eq!(record.outcome().status.name(), "completed");
-    assert_eq!((record.time().start_ms, record.time().end_ms), (1000, 1003));
+    assert_eq!(
+        (record.time().start_ms, record.time().end_ms),
+        (Some(1000), 1003)
+    );
     let names: Vec<&str> = record.diagnostics().iter().map(Diagnostic::name).collect();
     assert_eq!(names, ["diagnostics/echo.txt", "journal"]);
 }
@@ -97,7 +100,15 @@ fn every_group_of_the_spec_is_in_the_schema_and_required() {
     // `SPEC.md` section 3, "What every run records": eleven groups. Inputs and outputs
     // are two fields; the judge runs are `judge`.
     let schema = schema();
-    let required: Vec<&str> = schema["required"]
+    // The schema is one of three shapes (ADR 0013), and each has the same groups.
+    let shapes = schema["oneOf"].as_array().unwrap();
+    assert_eq!(shapes.len(), 3);
+    assert!(
+        shapes
+            .iter()
+            .all(|shape| shape["required"] == shapes[0]["required"])
+    );
+    let required: Vec<&str> = shapes[0]["required"]
         .as_array()
         .unwrap()
         .iter()
@@ -134,11 +145,11 @@ fn every_group_of_the_spec_is_in_the_schema_and_required() {
 }
 
 #[test]
-fn a_group_that_nothing_fills_yet_cannot_hold_anything() {
-    // By the type, on reading, and by the schema: a record of this version with a
-    // paid request, an egress or a setting in it is not a record of this version.
-    // Steps and refusals are filled (`nested.rs`), and so are the models, the
-    // durations and the judge group (`asked.rs`).
+fn an_element_of_no_known_shape_is_refused_in_each_list_that_run_3_filled() {
+    // By the type, on reading, and by the schema: a paid request, an entry of where
+    // data went and a setting each have their shape (ADR 0013; `record3.rs`), and
+    // what is not of it is not a record. Steps and refusals are held in `nested.rs`,
+    // and the models, the durations and the judge group in `asked.rs`.
     for path in ["/spend/requests", "/egress", "/asked/settings"] {
         let bytes = changed(|document| {
             *document.pointer_mut(path).unwrap() = json!([{ "anything": 1 }]);
@@ -155,8 +166,9 @@ fn a_group_that_nothing_fills_yet_cannot_hold_anything() {
 
 #[test]
 fn a_record_of_another_version_is_another_version_not_damage() {
-    // A `run/1` record, which the code of this checkpoint wrote until the reservation,
-    // is another version: a store is not kept before the checkpoint's tag (ADR 0005).
+    // A `run/1` record, which checkpoint 1A wrote until the reservation, is another
+    // version (ADR 0005). `run/2` is not: it is read, as the tag froze it
+    // (`record3.rs`).
     let bytes = changed(|document| document["record"] = json!("run/1"));
     assert_eq!(
         RunRecord::from_bytes(&bytes).unwrap_err(),
@@ -174,7 +186,7 @@ fn a_record_of_another_version_is_another_version_not_damage() {
     ));
     let said = RunRecord::from_bytes(other).unwrap_err().to_string();
     assert!(
-        said.contains("run/9") && said.contains("this build reads run/2"),
+        said.contains("run/9") && said.contains("this build reads run/3"),
         "{said}"
     );
 }
@@ -374,7 +386,7 @@ fn what_is_not_a_record_is_refused_by_the_types_and_by_the_schema() {
         d["time"].as_object_mut().unwrap().remove("start_ms");
     });
     // Another version is refused by both too, the types as another version.
-    let other = changed(|d| d["record"] = json!("run/3"));
+    let other = changed(|d| d["record"] = json!("run/4"));
     assert!(validate(&schema(), &serde_json::from_slice(&other).unwrap()).is_err());
 }
 
@@ -864,6 +876,7 @@ fn a_record_made_from_a_prepared_call_and_an_outcome_is_these_bytes() {
             end_ms: 1003,
             // Given out of order: a record lists them by name.
             inside: record::Inside::default(),
+            facts: record::Facts::none(),
             diagnostics: vec![
                 Diagnostic::journal(&read_journal(JOURNAL.as_bytes()).unwrap()).0,
                 Diagnostic::written("echo.txt", b"hello", &Secrets::none())
@@ -893,6 +906,7 @@ fn ran<'a>(prepared: &'a PreparedCall, outcome: &'a Outcome) -> Ran<'a> {
         end_ms: 75,
         diagnostics: Vec::new(),
         inside: record::Inside::default(),
+        facts: record::Facts::none(),
     }
 }
 
@@ -908,7 +922,7 @@ fn a_failed_run_has_the_same_record_with_its_error_and_no_output() {
     let written = String::from_utf8(record.to_bytes()).unwrap();
     assert!(written.contains(concat!(
         r#""outputs":[],"outcome":{"status":"error","#,
-        r#""error":{"kind":"echo","message":"it broke"},"invalid":null,"refusals":[],"refusals_omitted":0}"#
+        r#""error":{"kind":"echo","message":"it broke"},"invalid":null,"refusals":[],"refusals_omitted":0,"lost":[]}"#
     )));
     assert!(!written.contains("completed"));
     // The same thirteen fields as a completed run's.
@@ -951,8 +965,8 @@ fn the_inputs_and_the_committed_outputs_of_a_run_are_in_its_record() {
         outputs: vec![Committed::new("mask", ArtifactType::Mask, made)],
     };
     let record = RunRecord::of(ran(&prepared, &outcome), &Secrets::none());
-    assert_eq!(record.asked().action, "look");
-    assert_eq!(record.asked().version, "2.1.0");
+    assert_eq!(record.asked().action.as_deref(), Some("look"));
+    assert_eq!(record.asked().version.as_deref(), Some("2.1.0"));
     assert!(record.asked().arguments.is_empty());
     // An input is recorded with the identity of the binding it belongs to.
     assert_eq!(record.inputs().len(), 1);
@@ -1018,7 +1032,10 @@ fn a_clock_that_went_back_does_not_make_a_run_end_before_it_started() {
     let mut ran = ran(&prepared, &outcome);
     (ran.start_ms, ran.end_ms) = (90, 40);
     let record = RunRecord::of(ran, &Secrets::none());
-    assert_eq!((record.time().start_ms, record.time().end_ms), (90, 90));
+    assert_eq!(
+        (record.time().start_ms, record.time().end_ms),
+        (Some(90), 90)
+    );
     RunRecord::from_bytes(&record.to_bytes()).unwrap();
 }
 
@@ -1287,4 +1304,458 @@ fn a_journal_is_read_strictly() {
         "line 1 is not an event",
     );
     refused(&[0xff, b'\n'], "UTF-8");
+}
+
+/// What `run/3` takes from outside the executor (ADR 0013): a setting, a paid request,
+/// where data went, a refusal of a request, and the record of a run a dead process
+/// left, each made by its constructor.
+mod facts {
+    use whizbang_core::capability::Stage;
+    use whizbang_core::contract::record::{
+        Admitted, EGRESS_LIMIT, Facts, Handed, Left, Lost, PAID_LIMIT, Paid, Refused,
+        SETTING_TEXT_LIMIT, SETTINGS_LIMIT, Setting, Went,
+    };
+    use whizbang_core::contract::{RECORD_MAX_BYTES, RefusalKind, RequestId};
+    use whizbang_core::egress::{Account, Classes, DataClass, Origin, Recipient};
+
+    use super::super::record3;
+    use super::*;
+
+    fn key() -> (String, Secrets) {
+        let key = made_up_key("Z");
+        let secrets = Secrets::new([key.clone()]).unwrap();
+        (key, secrets)
+    }
+
+    /// The record of a completed `echo` that was handed these facts.
+    fn with(facts: Facts) -> RunRecord {
+        let world = world();
+        let prepared = echo(&world, "hello");
+        let outcome = Outcome::Completed {
+            outputs: Vec::new(),
+        };
+        let mut ran = ran(&prepared, &outcome);
+        ran.facts = facts;
+        let record = RunRecord::of(ran, &Secrets::none());
+        // Whatever was noted, the record is one the reader takes.
+        assert_eq!(
+            RunRecord::from_bytes(&record.to_bytes()).as_ref(),
+            Ok(&record)
+        );
+        validate(&schema(), &serde_json::to_value(&record).unwrap()).unwrap();
+        record
+    }
+
+    #[test]
+    fn a_settings_value_is_redacted_whole_and_then_cut_and_a_name_with_a_secret_makes_none() {
+        let (key, secrets) = key();
+        // A text whose cut would go through the key: the key is taken out whole first.
+        let text = format!("{}{key}", "x".repeat(SETTING_TEXT_LIMIT - 4));
+        let setting = Setting::new("backends.fill.note", &Value::text(&text), &secrets).unwrap();
+        let ArgumentValue::Text(kept) = setting.value() else {
+            panic!("a text stays a text");
+        };
+        assert_eq!(kept.chars().count(), SETTING_TEXT_LIMIT);
+        assert!(
+            kept.ends_with("x[red") && !kept.contains(&key[..6]),
+            "{kept}"
+        );
+        // A name is written as it is, so one that holds a secret makes no setting; nor
+        // does one that is not a name.
+        assert!(Setting::new(&format!("a.{key}"), &Value::Integer(1), &secrets).is_none());
+        for name in ["", "two words", "quo\"te", &"a".repeat(129)] {
+            assert!(
+                Setting::new(name, &Value::Integer(1), &secrets).is_none(),
+                "{name}"
+            );
+        }
+        // A number that is not one cannot be written: it makes no setting.
+        for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(Setting::new("n", &Value::Number(number), &secrets).is_none());
+        }
+        assert!(Setting::new("n", &Value::Number(0.5), &secrets).is_some());
+        // A number is written as it is, so one whose digits are a secret the executor
+        // was told of makes no setting either.
+        let digits = Secrets::new(["12345678".to_owned(), "1234.5678".to_owned()]).unwrap();
+        assert!(Setting::new("n", &Value::Integer(12_345_678), &digits).is_none());
+        assert!(Setting::new("n", &Value::Integer(-12_345_678), &digits).is_none());
+        assert!(Setting::new("n", &Value::Number(1234.5678), &digits).is_none());
+        assert!(Setting::new("n", &Value::Integer(1_234_567), &digits).is_some());
+        // The other kinds of value are kept as they are.
+        let steps = Setting::new("backends.fill.steps", &Value::Integer(20), &secrets).unwrap();
+        assert_eq!(
+            (steps.name(), steps.value()),
+            ("backends.fill.steps", &ArgumentValue::Integer(20))
+        );
+        // In a record they are in the order of their names, whatever order they were
+        // noted in, and a name noted twice is noted once.
+        let mut facts = Facts::none();
+        assert!(facts.setting(steps.clone()));
+        assert!(facts.setting(setting));
+        assert!(!facts.setting(steps));
+        let record = with(facts);
+        let names: Vec<&str> = record.asked().settings.iter().map(Setting::name).collect();
+        assert_eq!(names, ["backends.fill.note", "backends.fill.steps"]);
+        assert!(!holds(&record.to_bytes(), key.as_bytes()));
+    }
+
+    fn holds(bytes: &[u8], what: &[u8]) -> bool {
+        bytes.windows(what.len()).any(|window| window == what)
+    }
+
+    #[test]
+    fn a_paid_request_is_made_for_each_stage_and_never_one_the_reader_refuses() {
+        let not_sent = Paid::not_sent(0, 500).unwrap();
+        assert_eq!(
+            (
+                not_sent.stage(),
+                not_sent.settled_micros(),
+                not_sent.unresolved_micros()
+            ),
+            (Stage::NotSent, 0, 0)
+        );
+        let under = Paid::answered(1, 500, 120).unwrap();
+        assert_eq!(
+            (under.stage(), under.settled_micros(), under.is_over_bound()),
+            (Stage::Answered, 120, false)
+        );
+        let over = Paid::answered(2, 500, 900).unwrap();
+        assert!(over.is_over_bound());
+        assert_eq!((over.reserved_micros(), over.unresolved_micros()), (500, 0));
+        let unresolved = Paid::unresolved(3, 500).unwrap();
+        assert_eq!(
+            (
+                unresolved.stage(),
+                unresolved.settled_micros(),
+                unresolved.unresolved_micros(),
+                unresolved.is_over_bound(),
+                unresolved.request()
+            ),
+            (Stage::Unresolved, 500, 500, false, 3)
+        );
+        // The largest amount is no amount, and a place past the last is no place.
+        assert!(Paid::answered(0, u64::MAX, 0).is_none());
+        assert!(Paid::answered(0, 0, u64::MAX).is_none());
+        assert!(Paid::unresolved(0, u64::MAX).is_none());
+        assert!(Paid::not_sent(PAID_LIMIT, 1).is_none());
+        assert!(Paid::not_sent(PAID_LIMIT - 1, 1).is_some());
+        // They are noted in the order the requests were sent, each once.
+        let mut facts = Facts::none();
+        assert!(facts.paid(under));
+        assert!(!facts.paid(not_sent));
+        assert!(!facts.paid(under));
+        assert!(facts.paid(over));
+        // A record lists a paid request only for a request it lists: this run sent
+        // none, so its record is written without them, and is one the reader takes.
+        assert!(with(facts).spend().requests.is_empty());
+    }
+
+    fn origin(address: &str) -> Origin {
+        Origin::of(address, &Secrets::none()).unwrap()
+    }
+
+    #[test]
+    fn where_data_went_is_noted_once_for_each_recipient_and_outcome_with_a_cut_account() {
+        let (key, secrets) = key();
+        let account = Account::new("acct_4f8a1c9e77", &Secrets::none()).unwrap();
+        let recipient = Recipient::new(origin("https://api.example.com/v1")).with_account(account);
+        let prompts = Classes::of(&[DataClass::Prompts]);
+        let pictures = Classes::of(&[DataClass::DerivedImages]);
+        let mut facts = Facts::none();
+        assert!(facts.went(Went::to(&recipient, prompts, Handed::Sent, &secrets)));
+        // The same recipient again, with another class: one entry, with both.
+        assert!(facts.went(Went::to(&recipient, pictures, Handed::Sent, &secrets)));
+        // A refusal for the same recipient is another entry; an upstream is another.
+        assert!(facts.went(Went::to(&recipient, pictures, Handed::Refused, &secrets)));
+        let upstream = origin("https://eu.example.net:8443");
+        assert!(facts.went(Went::new(&upstream, None, prompts, Handed::Sent, &secrets)));
+        let record = with(facts);
+        let went: Vec<_> = record
+            .egress()
+            .iter()
+            .map(|went| {
+                (
+                    went.origin(),
+                    went.account(),
+                    went.classes(),
+                    went.outcome(),
+                )
+            })
+            .collect();
+        let both = Classes::of(&[DataClass::DerivedImages, DataClass::Prompts]);
+        assert_eq!(
+            went,
+            [
+                (
+                    "https://api.example.com",
+                    Some("acct..."),
+                    both,
+                    Handed::Sent
+                ),
+                (
+                    "https://api.example.com",
+                    Some("acct..."),
+                    pictures,
+                    Handed::Refused
+                ),
+                ("https://eu.example.net:8443", None, prompts, Handed::Sent),
+            ]
+        );
+        let written = String::from_utf8(record.to_bytes()).unwrap();
+        assert!(!written.contains("4f8a1c9e77"), "{written}");
+        assert!(written.contains(r#""classes":["derived_images","prompts"]"#));
+        // An account of four characters or fewer is shown whole.
+        let short = Account::new("abcd", &Secrets::none()).unwrap();
+        let whole = Went::new(&upstream, Some(&short), prompts, Handed::Sent, &secrets);
+        assert_eq!(whole.account(), Some("abcd"));
+        // An account of one to four characters is written whole, whatever its
+        // characters: three dots, or one that only ends in them, is such an account
+        // and not a cut one, and the record that holds it is read back.
+        let mut dotted = Facts::none();
+        for (at, name) in ["...", "a...", "....", "a..", "."].into_iter().enumerate() {
+            let short = Account::new(name, &Secrets::none()).unwrap();
+            let to = origin(&format!("https://h{at}.example.com"));
+            let went = Went::new(&to, Some(&short), prompts, Handed::Sent, &secrets);
+            assert_eq!(went.account(), Some(name));
+            assert!(dotted.went(went));
+        }
+        assert_eq!(with(dotted).egress().len(), 5);
+        // An account that holds a secret the executor was told of is not written at
+        // all, not even cut: the entry says where the data went and names no account.
+        let holding = Account::new(&format!("acct_{key}"), &Secrets::none()).unwrap();
+        let hidden = Went::new(&upstream, Some(&holding), prompts, Handed::Sent, &secrets);
+        assert_eq!(hidden.account(), None);
+        let starting = Account::new(&format!("{key}_acct"), &Secrets::none()).unwrap();
+        let hidden = Went::new(&upstream, Some(&starting), prompts, Handed::Sent, &secrets);
+        assert_eq!(hidden.account(), None);
+    }
+
+    #[test]
+    fn a_refusal_of_a_request_is_made_only_of_a_kind_that_is_one() {
+        let (key, secrets) = key();
+        let of_requests: Vec<RefusalKind> = RefusalKind::ALL
+            .into_iter()
+            .filter(|kind| kind.is_of_a_request())
+            .collect();
+        assert_eq!(
+            of_requests,
+            [
+                RefusalKind::RequestNoBound,
+                RefusalKind::RequestOverAllowance,
+                RefusalKind::RequestNotApproved,
+                RefusalKind::RequestNotReady,
+            ]
+        );
+        assert_eq!(RefusalKind::ALL.len(), 31);
+        for kind in RefusalKind::ALL {
+            let why = format!("the key {key} was in the way");
+            let made = Refused::of_a_request(kind, &why, &secrets);
+            assert_eq!(made.is_some(), kind.is_of_a_request(), "{kind:?}");
+            if let Some(refused) = made {
+                assert_eq!((refused.action(), refused.kind()), (None, kind));
+                assert_eq!(refused.why(), "the key [redacted] was in the way");
+            }
+        }
+        // A sentence of nothing is no refusal, and a long one is cut.
+        let kind = RefusalKind::RequestNoBound;
+        assert!(Refused::of_a_request(kind, "", &secrets).is_none());
+        let long = Refused::of_a_request(kind, &"w".repeat(4000), &secrets).unwrap();
+        assert_eq!(long.why().chars().count(), 512);
+    }
+
+    #[test]
+    fn the_record_of_a_run_a_dead_process_left_is_the_fixed_vectors() {
+        let run = RunId::parse("1000-1").unwrap();
+        let request = RequestId::parse("req-7").unwrap();
+        let admitted = Admitted {
+            request: Some(&request),
+            parent: None,
+            action: "heal",
+            version: "1.0.0",
+            reserved_micros: Some(250_000),
+            start_ms: 1000,
+        };
+        let left = |admitted| Left {
+            run: &run,
+            whizbang: "0.0.1",
+            admitted,
+            end_ms: 5000,
+        };
+        let interrupted = RunRecord::interrupted(left(Some(admitted))).unwrap();
+        assert_eq!(interrupted.to_bytes(), record3::interrupted().as_bytes());
+        assert_eq!(interrupted.outcome().lost, Lost::but_the_admission());
+        let unread = RunRecord::interrupted(left(None)).unwrap();
+        assert_eq!(unread.to_bytes(), record3::unread().as_bytes());
+        assert_eq!(unread.outcome().lost, Lost::ALL);
+        assert_eq!(Lost::ALL.len(), 13);
+        // A clock that went back does not make such a run end before it started.
+        let early = RunRecord::interrupted(Left {
+            end_ms: 10,
+            ..left(Some(Admitted {
+                request: None,
+                parent: Some(&RunId::parse("999-1").unwrap()),
+                action: "heal",
+                version: "1.0.0",
+                reserved_micros: None,
+                start_ms: 1000,
+            }))
+        })
+        .unwrap();
+        assert_eq!(
+            (early.time().start_ms, early.time().end_ms),
+            (Some(1000), 1000)
+        );
+        assert_eq!(early.identity().parent.as_deref(), Some("999-1"));
+        for record in [interrupted, unread, early] {
+            assert_eq!(
+                RunRecord::from_bytes(&record.to_bytes()).as_ref(),
+                Ok(&record)
+            );
+            assert_eq!(record.version(), "run/3");
+        }
+    }
+
+    #[test]
+    fn a_record_of_a_run_a_dead_process_left_that_its_reader_would_refuse_is_not_made() {
+        // What an admission said was read from a store, and is not trusted to be
+        // what a record may hold: a record is made of it only when it is one.
+        let run = RunId::parse("1000-1").unwrap();
+        let admitted = |action: &'static str, version: &'static str, reserved| Admitted {
+            request: None,
+            parent: None,
+            action,
+            version,
+            reserved_micros: reserved,
+            start_ms: 1000,
+        };
+        let left = |whizbang: &'static str, admitted| Left {
+            run: &run,
+            whizbang,
+            admitted,
+            end_ms: 5000,
+        };
+        let made = |left| RunRecord::interrupted(left).is_some();
+        assert!(made(left(
+            "0.0.1",
+            Some(admitted("heal", "1.0.0", Some(5)))
+        )));
+        assert!(made(left("0.0.1", None)));
+        assert!(!made(left("", None)));
+        assert!(!made(left("", Some(admitted("heal", "1.0.0", None)))));
+        assert!(!made(left("0.0.1", Some(admitted("", "1.0.0", None)))));
+        assert!(!made(left("0.0.1", Some(admitted("heal", "", None)))));
+        assert!(!made(left(
+            "0.0.1",
+            Some(admitted("heal", "1.0.0", Some(u64::MAX)))
+        )));
+        // A parent that is the run itself is no parent.
+        let own = Admitted {
+            parent: Some(&run),
+            ..admitted("heal", "1.0.0", None)
+        };
+        assert!(!made(left("0.0.1", Some(own))));
+    }
+
+    #[test]
+    fn each_new_list_takes_no_more_than_a_record_lists() {
+        let none = Secrets::none();
+        let mut facts = Facts::none();
+        for at in 0..SETTINGS_LIMIT {
+            let setting = Setting::new(&format!("s{at:03}"), &Value::Integer(1), &none).unwrap();
+            assert!(facts.setting(setting), "{at}");
+        }
+        let more = Setting::new("one-more", &Value::Integer(1), &none).unwrap();
+        assert!(!facts.setting(more));
+        for at in 0..PAID_LIMIT {
+            assert!(facts.paid(Paid::not_sent(at, 1).unwrap()), "{at}");
+        }
+        assert!(Paid::not_sent(PAID_LIMIT, 1).is_none());
+        let sent = |at: usize| {
+            let origin = origin(&format!("https://h{at}.example.com"));
+            Went::new(&origin, None, Classes::none(), Handed::Sent, &none)
+        };
+        for at in 0..EGRESS_LIMIT {
+            assert!(facts.went(sent(at)), "{at}");
+        }
+        assert!(!facts.went(sent(EGRESS_LIMIT)));
+        // One that is listed already is still taken: it adds no entry.
+        assert!(facts.went(sent(0)));
+        let record = with(facts);
+        assert_eq!(record.asked().settings.len(), SETTINGS_LIMIT);
+        assert_eq!(record.egress().len(), EGRESS_LIMIT);
+    }
+
+    #[test]
+    fn a_record_with_every_new_list_full_is_under_the_limit_with_the_rest_at_its_worst() {
+        // The ordinary vector, with each new list full and each field at the longest
+        // the schema lets it be: a setting's text of 256 characters that are six bytes
+        // each as they are written, amounts of twenty digits, a host of 253 characters.
+        // The lists are written here as a record writes them, field by field.
+        let text = "\\u0001".repeat(SETTING_TEXT_LIMIT);
+        let settings: Vec<String> = (0..SETTINGS_LIMIT)
+            .map(|at| {
+                let name = format!("{at:03}{}", "n".repeat(125));
+                format!(r#"{{"name":"{name}","value":{{"text":"{text}"}}}}"#)
+            })
+            .collect();
+        let most = u64::MAX - 1;
+        let model = concat!(
+            r#"{"capability":"fill","backend":"fake","model":"m","version":"1","#,
+            r#""device":null,"cached":null,"ended":"answered"}"#
+        );
+        let models: Vec<String> = (0..PAID_LIMIT).map(|_| model.to_owned()).collect();
+        let durations: Vec<String> = (0..PAID_LIMIT)
+            .map(|at| format!(r#"{{"of":"request","index":{at},"start_ms":1001,"ms":1}}"#))
+            .collect();
+        let requests: Vec<String> = (0..PAID_LIMIT)
+            .map(|at| {
+                format!(
+                    r#"{{"request":{at},"reserved_micros":{most},"settled_micros":{most},"unresolved_micros":{most},"stage":"unresolved","over_bound":false}}"#
+                )
+            })
+            .collect();
+        let label = "a".repeat(63);
+        let classes = r#"["source_images","derived_images","prompts","evidence"]"#;
+        let egress: Vec<String> = (0..EGRESS_LIMIT)
+            .map(|at| {
+                let host = format!("{label}.{label}.{label}.{at:03}{}", "b".repeat(58));
+                format!(
+                    r#"{{"origin":"https://{host}:65535","account":"acct...","classes":{classes},"outcome":"refused"}}"#
+                )
+            })
+            .collect();
+        // Each list goes where the vector has its own, between what stands before and
+        // after it in a record.
+        let mut written = record3::ordinary();
+        let before = written.len();
+        let mut put = |start: &str, end: &str, items: &[String]| {
+            let from = written.find(start).unwrap() + start.len();
+            let to = from + written[from..].find(end).unwrap();
+            written.replace_range(from..to, &items.join(","));
+        };
+        put(r#""settings":["#, r#"],"config""#, &settings);
+        put(r#""durations":["#, r#"]},"models""#, &durations);
+        put(r#""models":["#, r#"],"spend""#, &models);
+        put(r#""requests":["#, r#"]},"egress""#, &requests);
+        put(r#""egress":["#, r#"],"steps""#, &egress);
+        // Both take it: it is a record, and it is written back as it was.
+        let record = RunRecord::from_bytes(written.as_bytes()).unwrap();
+        assert_eq!(record.to_bytes(), written.as_bytes());
+        validate(&schema(), &as_json(&written)).unwrap();
+        assert_eq!(record.asked().settings.len(), SETTINGS_LIMIT);
+        assert_eq!(record.spend().requests.len(), PAID_LIMIT);
+        assert_eq!(record.egress().len(), EGRESS_LIMIT);
+        // The three lists, full, are under 420,000 bytes. ADR 0008's sum of everything
+        // else at its worst is 3.26 megabytes, and left 900,000 of the limit: the
+        // models and their durations are in that sum already.
+        let lists = [&settings, &requests, &egress];
+        let added: usize = lists.iter().map(|list| list.join(",").len()).sum();
+        assert!((380_000..420_000).contains(&added), "{added}");
+        assert!(written.len() > before + added);
+        let rest = 6 * 65_536 + 480_000 + 2_364_470 + 2_000;
+        assert!(
+            (rest + added) as u64 + 400_000 < RECORD_MAX_BYTES,
+            "{added}"
+        );
+    }
 }
