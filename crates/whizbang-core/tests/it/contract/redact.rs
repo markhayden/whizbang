@@ -1,5 +1,5 @@
 //! Redaction (`SPEC.md` section 3: "Secrets are redacted before anything is written";
-//! ADR 0005, "Redaction"; ADR 0013, which changes what is found). The pass began as squint's
+//! ADR 0005, "Redaction"; ADR 0014, which changes what is found). The pass began as squint's
 //! (`crates/squint-core/src/artifacts.rs`), and its two tests of bodies are the first two
 //! here. The secrets are made up, in the shape the scan's own tests plant, and are put
 //! together at run time so that no file of the repository holds one whole.
@@ -273,7 +273,7 @@ fn base64(plain: &[u8], url: bool) -> String {
 
 #[test]
 fn a_secret_is_found_percent_encoded_in_any_mixture() {
-    // ADR 0013: percent-encoding is read, not matched against one written form. The
+    // ADR 0014: percent-encoding is read, not matched against one written form. The
     // five forms that ADR 0005 listed as getting through are found: the two cases of
     // hex mixed in one value, a reserved byte left plain beside encoded ones, a space
     // written `+`, a byte encoded that need not be, and a value encoded twice.
@@ -446,7 +446,7 @@ fn the_forms_are_found_inside_one_another() {
 
 #[test]
 fn what_redaction_does_not_find_is_known() {
-    // ADR 0013, "What is accepted". Each of these gets through, with its reason in the
+    // ADR 0014, "What is accepted". Each of these gets through, with its reason in the
     // record, and is pinned so that the list there stays true.
     let key = made_up_key("");
     let secrets = secrets(&[&key]);
@@ -491,7 +491,7 @@ fn many_secrets_that_share_their_start_cost_no_more_than_one() {
     // The case ADR 0005 measured at about 3 seconds: 1 MiB of JSON against 2,000 keys
     // that share their first letters, where the text is full of those letters. The
     // search follows the text once, whatever the number of secrets, so it is asked to
-    // finish inside a bound far under that; what it took is in ADR 0013.
+    // finish inside a bound far under that; what it took is in ADR 0014.
     let keys: Vec<String> = (0..2000)
         .map(|n| made_up_key(&format!("-{n:04}")))
         .collect();
@@ -514,7 +514,7 @@ fn many_secrets_that_share_their_start_cost_no_more_than_one() {
 fn a_mebibyte_with_ten_secrets_is_searched_inside_a_stated_time() {
     // Plan 1B, task C3: the pass over 1 MiB with ten secrets, in a body that makes
     // every reading run (it holds `%`, `\` and `+`). The bound is loose, for a busy
-    // machine and an unoptimised build; what it took on a quiet one is in ADR 0013.
+    // machine and an unoptimised build; what it took on a quiet one is in ADR 0014.
     let keys: Vec<String> = (0..10).map(|n| made_up_key(&format!("-{n}"))).collect();
     let secrets = Secrets::new(keys.clone()).unwrap();
     let mut body = String::new();

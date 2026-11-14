@@ -1,4 +1,4 @@
-# 0013. What redaction finds: a secret is read out of its encodings, not matched against a list of them
+# 0014. What redaction finds: a secret is read out of its encodings, not matched against a list of them
 
 Status: accepted. Changes ADR 0005 ("Redaction": the four forms, and that it is one
 pass; "What redaction does not find": the list)

@@ -1,5 +1,5 @@
 //! Redaction: secrets are taken out of everything before it is written (`SPEC.md`
-//! section 3, "What every run records"; ADR 0005, "Redaction"; ADR 0013, which changes
+//! section 3, "What every run records"; ADR 0005, "Redaction"; ADR 0014, which changes
 //! what is found).
 //!
 //! The pass began as squint's (`crates/squint-core/src/artifacts.rs`, `redact`): a secret
