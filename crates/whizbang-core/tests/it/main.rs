@@ -3,6 +3,9 @@
 
 mod artifact;
 mod capability;
+mod config;
 mod contract;
+mod egress;
 mod identity;
+mod spend;
 mod store;
