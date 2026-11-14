@@ -1766,7 +1766,7 @@ ends with `finished`, and is run by `just test-scripts`.
 
 **Depends on:** X1. Scripts and two skills.
 
-- [ ] One script scans the two files of a pull request's text for what is found today
+- [x] One script scans the two files of a pull request's text for what is found today
       only by reading: a bare agent or model name in a sentence, a value of the repo's
       local `.env`, a path that starts with `~`, and an attribution line behind a
       leading mark. `kickoff` and `review-merge` use it in place of their own commands.

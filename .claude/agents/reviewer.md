@@ -79,8 +79,8 @@ Check, in this order:
    diff, in a commit message, or on the pull request.
    The pull request's title and body are yours to check as well, in two ways. Go through
    them yourself: every claim in them is true of the final diff. And run the checks of
-   step 7 of `review-merge` on them (the scan of the two files, the attribution check on
-   the stripped copy, the `grep`), without the command that puts the text on the pull
+   step 7 of `review-merge` on them (the one scan of the two files, and each line it
+   lists to read), without the command that puts the text on the pull
    request. A false claim there is a finding that blocks the merge; the builder, or the
    orchestrator by that step 7, settles it without moving the head.
 5. Tests wait on events, not sleeps. No work is done twice: what the branch adds does not
