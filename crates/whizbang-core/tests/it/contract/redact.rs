@@ -1368,7 +1368,7 @@ fn a_body_that_is_not_json_is_redacted_as_bytes_and_not_refused() {
         secrets.redact_json(&bytes),
         [&[0xff, b'{'][..], b"[redacted]"].concat()
     );
-    // Nested deeper than the reader of JSON goes: searched as bytes, and the key is out.
+    // Nesting is no reason: `a_body_nested_however_deep_is_read_as_json`. The key is out.
     let deep = format!("{}\"{key}\"{}", "[".repeat(200), "]".repeat(200));
     let stored = String::from_utf8(secrets.redact_json(deep.as_bytes())).unwrap();
     assert_eq!(
@@ -1421,4 +1421,206 @@ fn a_mebibyte_of_json_with_ten_secrets_is_redacted_as_json_inside_a_stated_time(
     assert_eq!(stored.matches(REDACTED).count(), 10);
     json(&stored);
     assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+}
+
+// --- what the review of that part asked for (ADR 0014, the third note) --------------------
+
+#[test]
+fn a_body_that_is_one_bare_number_that_holds_a_secret_becomes_the_marker() {
+    // A number that is the whole body ends where the body does: nothing that stands
+    // between values follows it. Cut anywhere short of that, the secret is in no piece.
+    let secrets = secrets(&["1234567890"]);
+    for body in ["991234567890", "-1234567890.25e3", "1234567890"] {
+        let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
+        assert_eq!(stored, "\"[redacted]\"", "{body}");
+        json(&stored);
+    }
+    assert_eq!(secrets.redact_json(b"123456789"), b"123456789");
+}
+
+/// Percent-encoded, every byte, with the case of the hex digits changing from one byte
+/// to the next.
+fn pct_mixed(text: &str) -> String {
+    text.bytes()
+        .enumerate()
+        .map(|(at, byte)| {
+            if at % 2 == 0 {
+                format!("%{byte:02X}")
+            } else {
+                format!("%{byte:02x}")
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn a_secret_found_only_by_decoding_a_string_is_taken_out_of_a_json_body() {
+    // Percent-encoded twice in mixed case, and then written as `\u` escapes. Searched as
+    // bytes, the escapes are one level and the two encodings two more, which is one
+    // more than the readings go: nothing is found. Read as JSON the escapes are the
+    // body's own and are decoded first; the text the string means is two levels deep.
+    let secret = "jklmnopq/z+o";
+    let secrets = secrets(&[secret]);
+    let once = pct_mixed(secret);
+    assert!(
+        once.contains("%6A") && once.contains("%6b"),
+        "both cases of hex"
+    );
+    let twice = pct_mixed(&once);
+    assert_eq!(secrets.redact(&twice), "[redacted]");
+    let body = format!("{{\"t\":\"{}\",\"n\":1}}", u_all(&twice));
+    assert_eq!(
+        secrets.redact_bytes(body.as_bytes()),
+        body.as_bytes(),
+        "searched as bytes it is not found: the case is one only decoding finds"
+    );
+    let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
+    assert_eq!(stored, "{\"t\":\"[redacted]\",\"n\":1}");
+}
+
+#[test]
+fn a_string_of_a_json_body_that_is_not_utf_8_is_searched_as_it_is_written() {
+    // The body is taken as JSON: the reader that is asked does not look inside a
+    // string for text. The string is no text, so it is searched as it is written and
+    // replaced whole when it holds a secret. What comes back is UTF-8 only when what
+    // was given was.
+    let key = made_up_key("");
+    let secrets = secrets(&[&key]);
+    let body = [
+        b"{\"a\":\"\xff ",
+        key.as_bytes(),
+        b"\",\"b\":\"\xff plain\",\"c\":\"",
+    ]
+    .concat();
+    let body = [&body[..], key.as_bytes(), b"\"}"].concat();
+    assert!(std::str::from_utf8(&body).is_err());
+    let stored = secrets.redact_json(&body);
+    assert_eq!(
+        stored,
+        b"{\"a\":\"[redacted]\",\"b\":\"\xff plain\",\"c\":\"[redacted]\"}"
+    );
+    assert!(std::str::from_utf8(&stored).is_err());
+    // Searched as bytes, the first string would have kept what stood before the key.
+    assert_ne!(stored, secrets.redact_bytes(&body));
+}
+
+#[test]
+fn a_byte_order_mark_and_a_control_character_in_a_string_make_a_body_that_is_not_json() {
+    // Neither is JSON to the reader that is asked, so each body is searched as bytes:
+    // the secret that stands across two strings is found, as no reading as JSON finds
+    // it (`what_redaction_of_a_json_body_does_not_find_is_known`).
+    let secrets = secrets(&["abcd\",\"efgh"]);
+    let body = "[\"abcd\",\"efgh\"]";
+    assert_eq!(secrets.redact_json(body.as_bytes()), body.as_bytes());
+    for not_json in [
+        format!("\u{feff}{body}"),
+        format!("[\"\u{1}\",{}", &body[1..]),
+        format!("[\"a\tb\",{}", &body[1..]),
+    ] {
+        let stored = secrets.redact_json(not_json.as_bytes());
+        assert_eq!(stored, secrets.redact_bytes(not_json.as_bytes()));
+        assert!(!holds(&stored, b"efgh"), "{not_json:?}");
+    }
+}
+
+#[test]
+fn a_body_nested_however_deep_is_read_as_json() {
+    // A secret that stands across two strings is found by a search of bytes and not by
+    // a reading as JSON (`what_redaction_of_a_json_body_does_not_find_is_known`): so
+    // what comes back says which of the two a body got. At 200 levels and at 5,000 it
+    // is read as JSON, and a key inside it is taken out of its string.
+    let key = made_up_key("");
+    let secrets = Secrets::new(["abcd\",\"efgh".to_owned(), key.clone()]).unwrap();
+    for depth in [1, 127, 128, 129, 200, 5000] {
+        let (open, close) = ("[".repeat(depth), "]".repeat(depth));
+        let body = format!("{open}\"abcd\",\"efgh\",\"x {key}\"{close}");
+        let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
+        assert_eq!(
+            stored,
+            format!("{open}\"abcd\",\"efgh\",\"x [redacted]\"{close}"),
+            "{depth}"
+        );
+    }
+}
+
+#[test]
+fn the_text_a_string_of_a_json_body_means_is_searched_with_the_readings_as_any_text_is() {
+    // A backslash that is the body's own escape is decoded before the search. What the
+    // string then means is a text like any other, and the readings are made of it.
+    // A second encoding after a lone backslash of the text is as ADR 0014 accepts it:
+    // in mixed escapes, beginning with a letter an escape ends in, it is missed.
+    let letter = secrets(&["nabcdefgh12"]);
+    let mixed = format!("\\n{}", u_all("abcdefgh12"));
+    let found = serde_json::json!({ "t": &mixed[1..] }).to_string();
+    let stored = String::from_utf8(letter.redact_json(found.as_bytes())).unwrap();
+    assert_eq!(stored, "{\"t\":\"[redacted]\"}");
+    let missed = serde_json::json!({ "t": mixed }).to_string();
+    assert_eq!(letter.redact_json(missed.as_bytes()), missed.as_bytes());
+    // A backslash of the text straight after a secret that ends in one goes with it:
+    // the two are the secret as a JSON string writes it.
+    let ends = secrets(&["abcdefgh\\"]);
+    let body = serde_json::json!({ "t": "x abcdefgh\\\\ y", "u": "x abcdefgh\\ y" }).to_string();
+    let stored = String::from_utf8(ends.redact_json(body.as_bytes())).unwrap();
+    assert_eq!(
+        json(&stored),
+        serde_json::json!({ "t": "x [redacted] y", "u": "x [redacted] y" })
+    );
+}
+
+#[test]
+fn two_keys_that_each_held_a_secret_can_come_back_as_the_same_key() {
+    let (one, two) = (made_up_key("-1"), made_up_key("-2"));
+    let secrets = secrets(&[&one, &two]);
+    let body = format!("{{\"{one}\":1,\"{two}\":2,\"k {one}\":3}}");
+    let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
+    assert_eq!(
+        stored,
+        "{\"[redacted]\":1,\"[redacted]\":2,\"k [redacted]\":3}"
+    );
+    // Still JSON, to a reader that takes a key given twice.
+    json(&stored);
+}
+
+#[test]
+fn a_mebibyte_of_tiny_strings_against_one_long_value_is_redacted_inside_a_stated_time() {
+    // A string of a few letters is searched in the room of a few letters, however long
+    // the longest secret is. The value is of marks, so its longest form is three times
+    // its length. The bound is loose, as the others are; what it took on a quiet
+    // machine, before and after, is in ADR 0014.
+    let long: String = (0..4096)
+        .map(|n| char::from(b"!@#$^&*(){}[]<>?"[n % 15 + n / 1024 % 2]))
+        .collect();
+    let secrets = Secrets::new([long.clone()]).unwrap();
+    let body_of = |piece: &str| {
+        let mut body = String::from("[");
+        while body.len() < 1024 * 1024 {
+            body.push_str(piece);
+        }
+        body + &format!("\"{long}\"]")
+    };
+    let timed = |secrets: &Secrets, body: &str| {
+        let started = std::time::Instant::now();
+        let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
+        (started.elapsed(), stored)
+    };
+    // Each string holds every mark a reading is made for, so each is followed twelve
+    // times.
+    let marked = body_of("\"\\\\%+\\n\",");
+    let (took, stored) = timed(&secrets, &marked);
+    assert_eq!(stored.len(), marked.len() - long.len() + REDACTED.len());
+    assert!(stored.ends_with("\\n\",\"[redacted]\"]"));
+    assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+    // And it costs what the same body costs against a value of eight bytes: here in
+    // strings of one letter, each followed once. Each is timed five times and its best
+    // taken, so that a pause of a busy machine decides nothing. Room for the longest
+    // form at each following made the first from one and a half times to twice the
+    // second; it is held to under 1.3 times.
+    let plain = body_of("\"a\",");
+    let short = Secrets::new([long[..8].to_owned()]).unwrap();
+    let best = |secrets: &Secrets| (0..5).map(|_| timed(secrets, &plain).0).min().unwrap();
+    let (against_long, against_short) = (best(&secrets), best(&short));
+    assert!(
+        against_long * 10 < against_short * 13,
+        "{against_long:?} against the long value, {against_short:?} against the short one"
+    );
 }

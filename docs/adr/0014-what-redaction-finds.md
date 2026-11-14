@@ -13,6 +13,12 @@ breaks is found. Added: what the machine holds; that bytes can come back as no t
 secret that is the marker's word; the generated test that holds the search.
 Amended: 2026-11-14, a second note, with the second part of task C3. Added: "A JSON
 body". Changed: the last line of "What is accepted", which said that part was to come.
+Amended: 2026-11-14, a third note, after the review of that second part. Changed, in "A
+JSON body": a body is read as JSON however deep it is nested; what is said of a
+backslash; a text shorter than the longest form is followed in its own room. Added
+there: a string whose bytes are not UTF-8; what a string of tiny strings costs. Added,
+under "Consequences": two keys that come back as one, and a number that comes back as
+a string.
 Spec: section 3, "What every run records" ("Secrets are redacted before anything is
 written"); section 10, "Egress" ("Credentials and tokens are redacted from logs, events,
 journals, results and errors")
@@ -223,27 +229,58 @@ with the secrets taken out:
 - **A number, `true`, `false` or `null` that holds a secret becomes the string
   `"[redacted]"`,** whole, so that the body is still JSON
   (`redact::a_number_that_holds_a_secret_becomes_a_string_and_the_body_is_still_json`).
-- **A string that is JSON and no text,** as half of a pair of `\u` escapes is, is not
-  decoded: it is searched as it is written and replaced whole when it holds a secret
-  (`redact::a_string_that_is_json_and_no_text_is_searched_as_it_is_written`).
+- **A string that is JSON and no text,** as half of a pair of `\u` escapes is, or one
+  that holds bytes that are not UTF-8, is not decoded: it is searched as it is written
+  and replaced whole when it holds a secret
+  (`redact::a_string_that_is_json_and_no_text_is_searched_as_it_is_written`). A body
+  with such bytes inside a string is taken as JSON, and what comes back is UTF-8 only
+  when what was given was
+  (`redact::a_string_of_a_json_body_that_is_not_utf_8_is_searched_as_it_is_written`).
 - **A body that is not JSON is not refused.** It is searched as bytes, as
-  `redact_bytes` searches: a body cut short, text after the value, bytes that are no
-  text, and a body nested deeper than the reader of JSON goes, which is 128 levels
-  (`redact::a_body_that_is_not_json_is_redacted_as_bytes_and_not_refused`).
+  `redact_bytes` searches: a body cut short, text after the value, a byte-order mark, a
+  control character inside a string
+  (`redact::a_body_that_is_not_json_is_redacted_as_bytes_and_not_refused`,
+  `redact::a_byte_order_mark_and_a_control_character_in_a_string_make_a_body_that_is_not_json`).
+  However deep a body is nested it is read as JSON: the reader that is asked keeps
+  nothing and does not recurse (`redact::a_body_nested_however_deep_is_read_as_json`,
+  at 5,000 levels).
 
 Whether a body is JSON is asked of `serde_json`, which reads it once and keeps nothing;
-the strings are then found by their quotes, which in a body that is JSON is exact. The
+the strings are then found by their quotes, which in a body that is JSON is exact. A
+number or a word ends at the next byte that stands between values, or where the body
+ends
+(`redact::a_body_that_is_one_bare_number_that_holds_a_secret_becomes_the_marker`). The
 whole costs the body's length: 1 MiB of JSON with ten secrets took 0.5 s in the
 unoptimised build
 (`redact::a_mebibyte_of_json_with_ten_secrets_is_redacted_as_json_inside_a_stated_time`).
 
-**A backslash in a body that is JSON is the writer's own.** A string is decoded before
-it is searched, so a backslash the text holds is a character of the text and not the
-start of something to be read: the cases above in which a lone backslash throws a
-reading off do not arise for a string of a JSON body
+**A string costs its own length, not the longest secret's.** Following a text keeps
+the last units it read, as many as the longest form is long; for a text shorter than
+that it keeps as many as the text is long. Before this, each following of each string
+made room for the longest form, so a body of many tiny strings cost with the longest
+secret. Against one value of 4,096 marks, in the unoptimised build: 1 MiB of strings of
+four characters that hold every mark a reading is made for, each followed twelve
+times, took 3.0 s and takes 1.2 s; 1 MiB of strings of one letter took 0.33 s and takes
+0.16 s. Each is now what the same body takes against a value of eight bytes
+(`redact::a_mebibyte_of_tiny_strings_against_one_long_value_is_redacted_inside_a_stated_time`,
+which asks for the first inside 10 seconds, and holds the second to under 1.3 times
+what the short value costs, where it was from 1.6 times to twice). What is found is
+unchanged: the generated test above and every other test of this file pass as they
+were.
+
+**A backslash in a body that is JSON.** A backslash that is the body's own escape is
+decoded before the search, so it throws no reading off
 (`redact::a_backslash_before_a_secret_in_a_json_body_is_a_character_and_stays`). The
-function takes the secrets by reference and makes no machine; and each string goes
-through `redact`, as a text, so what is written back is a text.
+text a string means is then searched as any text is, readings included: a text that
+holds a second encoding after a lone backslash is as in "What is accepted", and a
+backslash straight after a secret that ends in one goes with it
+(`redact::the_text_a_string_of_a_json_body_means_is_searched_with_the_readings_as_any_text_is`).
+A secret that only decoding finds is found: one percent-encoded twice in mixed case
+and then written as `\u` escapes is a level deeper than the readings of bytes go, and
+is two levels deep in the text its string means
+(`redact::a_secret_found_only_by_decoding_a_string_is_taken_out_of_a_json_body`). The
+function takes the secrets by reference and makes no machine; and each string that is
+a text goes through `redact`, as a text, so what is written back for it is a text.
 
 **What it does not find,** pinned by
 `redact::what_redaction_of_a_json_body_does_not_find_is_known`: a secret that stands
@@ -306,6 +343,11 @@ Two things that are not misses, pinned in the same test:
   forms it replaces was a few times the secrets' own length.
 - A `Secrets` keeps its values as text beside the machine, to be compared with another
   `Secrets`; it still prints only how many it holds.
+- Two keys that each held a secret can come back as the same key
+  (`redact::two_keys_that_each_held_a_secret_can_come_back_as_the_same_key`).
+- A stored body in which a number became a string may not be read back by a reader
+  that expects the number; that is taken over leaving the digits
+  (`redact::a_number_that_holds_a_secret_becomes_a_string_and_the_body_is_still_json`).
 - `docs/carry-over.md`: the row on what redaction does not find is cut down to the one
   thing left, that nothing hands a JSON body to `redact_json` yet.
 
