@@ -3309,8 +3309,8 @@ fn every_generated_history_of_amounts_near_the_largest_keeps_every_invariant() {
 
 #[test]
 fn known_an_admission_judged_before_a_settlement_that_other_hands_took_away_whole_is_published() {
-    // Found by the hunt over other seeds that followed the fourth review round, and
-    // not ruled on. An admission of 9 is judged with 10 left. A request is then
+    // Found by the hunt over other seeds that followed the fourth review round. An
+    // admission of 9 is judged with 10 left. A request is then
     // settled at 12 over its bound of 5, which takes the turn the admission chose.
     // Other hands take that settlement away whole: itself, its guard, the place it
     // took and its turn. The turn is free again, so the store takes the admission;
@@ -3345,15 +3345,55 @@ fn known_an_admission_judged_before_a_settlement_that_other_hands_took_away_whol
     now.extend([admit(2, 9), admit(3, 1)]);
     let (judged_now, _) = run_checked(&now).unwrap();
     assert_eq!(judged_now.names(), books.names());
-    // The late one is not: "Limits", (e), has a late admission stand only where
-    // nothing more is then admitted, and the checker holds it to that.
-    let broke = run_checked(&events).unwrap_err();
-    assert!(broke.contains("admitted on a stale balance"), "{broke}");
-    // With one more admitted than is left afterwards, nothing more can be, and
-    // the checker lets the late one by.
+    // So is the late one: it is no worse than one judged on the names as other
+    // hands left them ("Limits", (e)), and the checker holds it as it holds that
+    // one, to what is really left.
+    let (judged_late, _) = run_checked(&events).unwrap();
+    assert_eq!(judged_late.names(), books.names());
+    // With one more admitted than is left afterwards, nothing more can be.
     let mut all = before;
     all.push(late(3, admit(2, 10)));
     let (books, outcomes) = run_checked(&all).unwrap();
     assert_eq!(outcomes[8], Outcome::Done);
     assert_eq!(books.balance().left, 0);
+}
+
+#[test]
+fn known_a_late_admission_whose_turn_fills_the_place_of_one_that_was_lost_is_published() {
+    // Found by the hunt once limit (e) was restated, and not ruled on. An admission
+    // is judged on an empty epoch and chooses its first turn. A call is admitted,
+    // which takes that turn, and its request is settled, which takes the second.
+    // Other hands take away the settlement and its guard, and the first turn: the
+    // epoch has one turn, the second, for one hold, and needs its owner. An
+    // admission judged now is refused. The late one is published, and its turn is
+    // the one that was missing: the epoch's turns are 1 and 2 for two holds, and it
+    // needs nobody any more.
+    let run = Run(1);
+    let lost = [
+        Name::Settled {
+            run,
+            place: 1,
+            stage: Stage::Answered,
+            micros: 6,
+        },
+        Name::Settling { run, place: 1 },
+        Name::Turn { epoch: 1, turn: 1 },
+    ];
+    let mut events = vec![reset(20), admit(1, 6), dispatch(1, 6), settle(1, 1, 6)];
+    events.extend(lost.map(Event::Remove));
+    let mut now = events.clone();
+    now.push(admit(2, 2));
+    let (books, outcomes) = run_checked(&now).unwrap();
+    assert_eq!(outcomes[7], Outcome::Refused(Why::NeedsOwner));
+    assert!(books.balance().needs_owner);
+    events.push(late(1, admit(2, 2)));
+    let (books, outcomes) = Books::after(&events);
+    assert_eq!(outcomes[7], Outcome::Done);
+    let balance = books.balance();
+    assert_eq!((balance.counted, balance.left), (8, 12));
+    assert!(!balance.needs_owner);
+    // It is worse than one judged now, which "Limits", (e), says it never is, and
+    // the checker does not let it by.
+    let broke = run_checked(&events).unwrap_err();
+    assert!(broke.contains("admitted on a stale balance"), "{broke}");
 }

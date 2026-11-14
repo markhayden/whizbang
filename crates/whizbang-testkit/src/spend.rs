@@ -1156,7 +1156,8 @@ struct Request {
 
 /// What a process holds of the reservation of one tree it runs: the amount, and
 /// what the requests sent under it took of it, each at its bound until it is
-/// settled and at its charge from then on, a charge over its bound among them. It
+/// settled and at its charge from then on, a charge over its bound among them, and
+/// that from the moment the process holds the answer that says so. It
 /// is kept as each request is sent and settled, and is never read from a name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Tree {
@@ -1802,7 +1803,10 @@ impl Books {
                 }
                 let (by, bound) = (request.by, request.bound);
                 if let Some(tree) = self.trees.get_mut(&request.root) {
-                    let rest = tree.taken.saturating_sub(u128::from(bound));
+                    // It was held at its bound, or at the answer's charge where
+                    // the process held one over it.
+                    let held = request.answer.map_or(bound, |answer| answer.max(bound));
+                    let rest = tree.taken.saturating_sub(u128::from(held));
                     tree.taken = rest.saturating_add(u128::from(*charge));
                 }
                 if *charge <= bound {
@@ -1933,6 +1937,12 @@ impl Books {
                     return refused(Why::AlreadySettled);
                 }
                 last.answer = Some(*micros);
+                // What the process knows was charged over the bound is taken from
+                // what is left of the tree at once, before any name says it.
+                let over = micros.saturating_sub(last.bound);
+                if let Some(tree) = self.trees.get_mut(root) {
+                    tree.taken = tree.taken.saturating_add(u128::from(over));
+                }
                 Outcome::Done
             }
             Event::End { run } => {
@@ -2662,6 +2672,12 @@ impl Books {
             Event::Remove(name) => name.of().is_some_and(|run| !books.meddled.contains(&run)),
             _ => false,
         };
+        // Whether an admission judged now, on the names as they are, would be
+        // published.
+        let fresh = matches!(plain, Event::Admit { .. }) && {
+            let plan = books.plan(plain, &books.names, &books.damaged);
+            !matches!(plan.outcome, Outcome::Refused(_))
+        };
         let outcome = books.apply(event);
         let after = books.fold();
         let broke = |what: String| format!("event {at}, {event:?}: {what}");
@@ -2769,7 +2785,11 @@ impl Books {
         // turn in its epoch since.
         // Limit (e): an admission judged before other hands acted is published all
         // the same; after it nothing more is admitted in the epoch it fell under,
-        // which has nothing left or is no longer the newest.
+        // which has nothing left or is no longer the newest. Or it is no worse
+        // than one judged now: where an admission of the same amount on the names
+        // as other hands left them would be published, the late one is held as
+        // that one would be, to what is really left, and not to the turns the
+        // ledger took since.
         let fell = |run: &Run| {
             let under = after.reservations.get(run).and_then(|one| one.epoch);
             after.balance_of(under.unwrap_or(before.epoch()))
@@ -2786,7 +2806,8 @@ impl Books {
             let since = |(when, of): &(usize, u64)| {
                 judged.is_some_and(|judged| *when >= judged && *when < at) && *of == epoch
             };
-            if landed && books.turned.iter().any(since) {
+            let as_now = unseen && fresh;
+            if landed && !as_now && books.turned.iter().any(since) {
                 return Err(broke("admitted on a stale balance".into()));
             }
         }
@@ -4751,6 +4772,28 @@ pub fn histories() -> Vec<History> {
             Must::NeedsOwner,
         ],
         vec![],
+    );
+    add(
+        "75 the provider's answer says 12 over a bound of 5 and is not settled yet: \
+         what the process knows was charged is taken from the tree at once, and a \
+         child's dispatch is refused before any name says so",
+        with(
+            overran()[..4].to_vec(),
+            vec![
+                charge(1, 12),
+                dispatch(2, 5),
+                settle(1, 1, How::NotSent),
+                dispatch(2, 0),
+            ],
+        ),
+        vec![
+            came(5, refused(Why::OverTree { left: 0 })),
+            came(6, Outcome::Done),
+            came(7, Outcome::Placed(3)),
+            Counts(r(1), 12),
+            Spendable(r(2), 5),
+        ],
+        vec![(4, Counts(r(1), 10)), (5, SameNamesAsAfter(3))],
     );
     table
 }
