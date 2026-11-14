@@ -15,7 +15,7 @@ use whizbang_core::contract::Cancellation;
 use whizbang_core::egress::{Address, DownloadRequest, Downloaded, Downloader};
 use whizbang_core::store::fs::{Fs, RealFs};
 use whizbang_testkit::downloads::{Ended, FakeDownloader};
-use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
+use whizbang_testkit::fs_shim::{Event, Lost, ShimFs, Tail};
 use whizbang_testkit::scratch::Scratch;
 
 use super::{MARKER, file_name, hash, none, origin, parts, secrets};
@@ -286,6 +286,10 @@ fn refusal_of_graph(served: Vec<u8>, too_many: bool) -> (StageRefused, FakeDownl
             "models/tiny/staging"
         ]
     );
+    // And gone durably: the removal's name was synced, so a crash that undoes every
+    // name that was not brings nothing of the staging folder back.
+    fs.crash(Lost::Unsynced);
+    assert!(!incoming(scratch.path()).exists());
     (refused, fake)
 }
 
@@ -644,9 +648,9 @@ fn staging_is_under_the_models_lock_and_the_next_cleans_what_the_last_left() {
 #[cfg(unix)]
 #[test]
 fn a_link_where_staging_belongs_is_removed_and_never_followed() {
-    // On the real file system: the shim keeps a copy of what it removes, and cannot
-    // copy a link to a folder.
-    for to_a_folder in [true, false] {
+    // A link to a folder and a link to a file, on the real file system and on the
+    // shim.
+    for (to_a_folder, on_the_shim) in [(true, false), (false, false), (true, true), (false, true)] {
         let scratch = Scratch::new("stage-link");
         let outside = Scratch::new("stage-link-outside");
         std::fs::write(outside.path().join("kept"), b"not whizbang's").unwrap();
@@ -657,7 +661,12 @@ fn a_link_where_staging_belongs_is_removed_and_never_followed() {
             outside.path().join("kept")
         };
         std::os::unix::fs::symlink(&target, incoming(scratch.path())).unwrap();
-        let dir = ModelsDir::at(Arc::new(RealFs), scratch.path());
+        let fs: Arc<dyn Fs> = if on_the_shim {
+            Arc::new(ShimFs::new())
+        } else {
+            Arc::new(RealFs)
+        };
+        let dir = ModelsDir::at(fs, scratch.path());
         stage(
             &dir,
             &entry(),
@@ -803,13 +812,16 @@ fn a_crash_at_any_event_of_staging_leaves_what_the_next_staging_removes_and_stag
         Lost::Names(0b0101),
         Lost::Names(0b1010),
     ];
-    for event in 0..events {
+    // What a crash leaves of a streamed file's unsynced bytes, each way the shim can
+    // leave them: half, the full length zeroed, all, none.
+    let tails = [Tail::Half, Tail::Zeroed, Tail::All, Tail::None];
+    for (event, tail) in (0..events).flat_map(|event| tails.map(|tail| (event, tail))) {
         for lost in losses {
             let scratch = Scratch::new("stage-crash");
-            let fs = Arc::new(ShimFs::new().crash_before(event, lost));
+            let fs = Arc::new(ShimFs::new().with_tail(tail).crash_before(event, lost));
             assert!(
                 staging(&fs, scratch.path(), &entry(), &serving_both()).is_err(),
-                "event {event}, {lost:?}"
+                "event {event}, {lost:?}, {tail:?}"
             );
             assert!(fs.crashed());
             // The process is gone, and its lock with it. The next opens the same
@@ -818,7 +830,7 @@ fn a_crash_at_any_event_of_staging_leaves_what_the_next_staging_removes_and_stag
             let fs = Arc::new(ShimFs::new());
             let fake = serving_both();
             staging(&fs, scratch.path(), &entry(), &fake)
-                .unwrap_or_else(|refused| panic!("event {event}, {lost:?}: {refused:?}"));
+                .unwrap_or_else(|refused| panic!("event {event}, {lost:?}, {tail:?}: {refused:?}"));
             assert_eq!(
                 (
                     fake.handed(&at("graph.onnx")),

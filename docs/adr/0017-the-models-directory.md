@@ -519,13 +519,14 @@ staged and the model's lock still held, for the publication to take (task M2b)
   times for one file (`MOVES_LIMIT`)
   (`staging::a_file_that_moved_is_asked_for_only_at_an_origin_the_entry_names`,
   `staging::a_file_that_moves_more_than_five_times_is_refused`).
-- **A refused staging removes the staging folder,** whatever refused it: a
+- **A refused staging removes the staging folder,** durably, whatever refused it: a
   file, a fault, a cancellation, the file system. No staged file that passed is left
   behind; which files passed is known only inside the staging that staged them
   (`staging::a_download_that_fails_or_is_cancelled_fails_the_staging_and_leaves_nothing_staged`,
   `staging::a_download_that_ends_as_cancelled_ends_the_staging_as_cancelled`).
 - **Each step of the file system refused, and a crash before each,** with what was not
-  durable lost each way the shim can lose it: the staging fails, and the next staging
+  durable lost each way the shim can lose it, and what was appended to a file and not
+  synced left each way the shim can leave it: the staging fails, and the next staging
   of the model removes what was left and stages every file again, whole
   (`staging::each_step_of_the_file_system_refused_fails_the_staging_without_a_path_and_the_next_stages`,
   `staging::a_crash_at_any_event_of_staging_leaves_what_the_next_staging_removes_and_stages_whole`).
@@ -717,12 +718,26 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   installed". A record whose `identity().hex()` is not the name of its folder is
   damaged: that comparison is the installer's and the inventory's, and no reader of a
   record makes it.
+- **M2b reads a staged file back before it trusts it,** through the store's streamed
+  read (ADR 0018, `open_file`): it counts the bytes and stops one past the size, and
+  holds the file to its length and its hash, both, never to its length alone. A
+  crash can leave a file of the right length with bytes that were never written, so
+  a test damages a staged file by hand, keeping its length, and the verifier refuses
+  it by its hash; no crash test shows that. A link at the file's own name is refused
+  by the read; a hard link is read as the file.
+- **M2b's crash sweeps run under every choice of what a crash leaves of unsynced
+  bytes:** half, the full length zeroed, all, none. Nothing a crash left of a file is
+  ever a place to go on from: what is found in staging is removed.
 - **M2b: the adapter's revision comes from the adapter.** `InstallationRecord::of`
   takes it from its caller, who gets it from the adapter the entry names, and from
   nowhere else.
 - **M6 compares two revisions by equality only.** Nothing is newer or older.
 - **M3 and M5d:** the status record says whether the holder of the model's lock is an
   installer or a remover, so that one who attaches knows what it is waiting for.
+- **M5: the store's try for a share** (ADR 0018, `try_share`) is refused by the
+  process's own lock on the file alone, and given beside its own shares as a second
+  lock. A file system that answers that it cannot try is an error, never "held
+  alone".
 - **M5:** the count inside a process does not stand in for the check: every hold reads
   the pointer and the mark under the directory's lock, whatever the count. Letting the
   last hold go and taking a new one in another thread go through one guard inside the
