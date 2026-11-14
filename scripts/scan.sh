@@ -147,6 +147,15 @@ sk_body='sk-(ant|proj|or|svcacct|admin)-|sk-[a-z_-]*[0-9A-Z]'
 # what follows is narrowed: one part of it, between hyphens, is 20 characters or more and
 # holds a digit or a capital (`sk_anywhere_is_key`). Words joined by hyphens have no such
 # part; the keys of this family do, since their random part is long and has few hyphens.
+# What it still takes for a key, each directly after a word that ends in s and k and a
+# hyphen (task-, mask-, disk-, risk-, ask-): a hex digest; a file name of 20 letters and
+# digits or more, as base64 gives; a name in capitals and small letters of 20 characters
+# or more with no hyphen in it (a long class name); and a name joined by underscores, 20
+# characters or more, with a digit in it (a model's weights, written with underscores
+# after the hyphen). None can be told from a key by its shape. When a real name trips
+# the scan, write the name another way: an underscore or a space in place of the hyphen
+# after the word, a hyphen inside the long part, or the word spelled so that it does not
+# end the part. There is no list of exceptions, and the rule is not loosened for a name.
 # What this leaves: a key written directly after a word character whose every part
 # between hyphens is under 20 characters, or has no digit and no capital. It is on
 # docs/carry-over.md. A key that starts a word is held to the rule above, as before.
