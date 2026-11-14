@@ -3,8 +3,8 @@
 Checkpoint 1A, "contracts and store", is complete as of 2026-11-14. Its plan is
 `m1a-contracts-and-store.md`; this note says what shipped, what the two proofs changed
 about the contract, how long things take, what the reviews found, what moved to the
-carry-over list, and what checkpoint 1B starts from. The tag `m1a` is meant for the merge
-of the pull request that brings this note.
+carry-over list, and what checkpoint 1B starts from. The tag `m1a` is on the merge of
+pull request #54, which brought this note: commit 6be4fb3.
 
 ## What whizbang can do at this tag
 
@@ -97,6 +97,14 @@ secret is replaced. Four things are there and say nothing yet: `asked.settings`,
 `egress` and `spend.requests` are empty lists, and a model's `device` and `cached` are
 null, each with its row and its checkpoint.
 
+The final review found two things missing from that list. Section 3 also lists repairs
+and the checklist in the judge group, and the record has no field for either: `judge` has
+a verdict that is a decision and a reason. And `steps` holds calls, and `time.durations`
+calls and capability requests, and nothing else: no recipe runs yet, so neither has an
+element for a recipe step. Both are in the row of `docs/carry-over.md` on the run record
+(`run/2`), the same row as the four above: repairs and the checklist for milestone 2,
+with squint's judge loop; recipe steps for milestone 3, with the recipe runner.
+
 ## What the two proofs changed about the contract
 
 The plan said a proof is never bent to fit, and that the contract is fixed in its own
@@ -160,8 +168,8 @@ Measured on 2026-11-14.
 |---|---|---|
 | `just check`, warm build | The owner's Mac | 2 min 44 s, with another build at work on the machine; most of it is the script tests |
 | The fast tests alone, compilation not counted | The owner's Mac | 28.5 s, against a limit of 180 s |
-| CI, `check (macos-15)` | GitHub, five recent runs | 5 min 38 s to 6 min 41 s |
-| CI, `check (ubuntu-22.04)` | GitHub, five recent runs | 2 min 31 s to 3 min 57 s |
+| CI, `check (macos-15)` | GitHub, recent runs | 4 min 17 s to 7 min 16 s |
+| CI, `check (ubuntu-22.04)` | GitHub, recent runs | 2 min 17 s to 3 min 57 s |
 | 256 calls from one run, alone | The owner's Mac, the test kit's disk | 3.4 s; 514 generations, the last file 147,480 bytes |
 
 Seconds by suite, summed over tests that run side by side, so the rows add up to more

@@ -513,8 +513,7 @@ completed status, and every diagnostic written before it ended is readable.
       the timing table, what moved to the carry-over list.
 - [x] `port-module` is corrected from its uses in A9 and A10, and now includes writing the
       tool record.
-- [ ] Tag `m1a`. (The orchestrator's, on the merge of the pull request that ticks the
-      boxes above; a later pull request ticks this one.)
+- [x] Tag `m1a`. (Tagged at 6be4fb3, the merge of pull request #54.)
 
 **Built in two pull requests:** first the leftovers that change code, each from a row of
 `docs/carry-over.md` or a reviewer's note, built with a test or given a new owner with
