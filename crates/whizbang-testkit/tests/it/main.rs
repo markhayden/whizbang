@@ -7,3 +7,4 @@ mod fs_shim;
 mod priced;
 mod schema;
 mod sending;
+mod streams;
