@@ -441,8 +441,11 @@ impl Backends for Roster {
         }
     }
 
-    /// The most one request may cost when this model answers the capability: what the
-    /// price its backend declares comes to ([`Quote::most`]; ADR 0010). An estimate
+    /// The most **one request** may cost when this model answers the capability: what
+    /// the price its backend declares comes to ([`Quote::most`]; ADR 0010). The trait
+    /// asks for the most one call's use can cost, and a roster does not know how many
+    /// requests a call sends: for a call that sends several, this answer is under,
+    /// and whoever reserves from it adds the per-call part. An estimate
     /// only is the amount that is no bound. A backend that states no price, and a
     /// model that nothing offered for the capability declares, answer nothing, as
     /// before a declaration could state a price.

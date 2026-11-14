@@ -86,9 +86,13 @@ pub trait Backends: Send + Sync {
     /// The most one call's use of this capability can cost when this model answers it:
     /// a bound the backend states, not a guess. It is answered from what is configured,
     /// as [`Backends::resolve`] is. The answer is nothing unless an implementation
-    /// says otherwise: a [`Roster`](crate::capability::Roster) answers from the price
-    /// a backend declares, and an estimate only is the amount that is no bound
-    /// (ADR 0010).
+    /// says otherwise.
+    ///
+    /// A [`Roster`](crate::capability::Roster) alone does not answer the whole of
+    /// this: it answers the quote of one request from the price a backend declares,
+    /// with an estimate only as the amount that is no bound, and does not know how
+    /// many requests a call sends (ADR 0010, "Limits"). An implementation that an
+    /// executor with a ledger reserves from covers every request the call sends.
     fn bound(&self, capability: Capability, model: &ModelIdentity) -> Estimate {
         let _ = (capability, model);
         Estimate::default()

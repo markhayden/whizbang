@@ -10,7 +10,7 @@ use std::time::Instant;
 use crate::artifact::Mask;
 use crate::contract::Cancellation;
 
-use super::{Bounds, Declaration, Fault, Picture, Unfit, feature, pixel_count};
+use super::{Bounds, Charge, Declaration, Fault, Picture, Unfit, feature, pixel_count};
 
 /// The most bytes a prompt holds.
 pub const PROMPT_LIMIT: usize = 4096;
@@ -201,12 +201,14 @@ impl std::fmt::Debug for FillRequest {
 /// The pixels a filler returned: three bytes a pixel, red, green and blue, sRGB, eight
 /// bits a channel, row by row from the top left. There is no alpha: a filler paints
 /// colour, and the composite keeps the alpha of the image it paints onto. What `{:?}`
-/// prints of one is its size.
+/// prints of one is its size and its charge.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Painted {
     width: u32,
     height: u32,
     rgb: Vec<u8>,
+    /// What the request cost, when the backend's answer said.
+    charge: Option<Charge>,
 }
 
 impl Painted {
@@ -224,7 +226,25 @@ impl Painted {
                 found: rgb.len() as u64,
             });
         }
-        Ok(Painted { width, height, rgb })
+        Ok(Painted {
+            width,
+            height,
+            rgb,
+            charge: None,
+        })
+    }
+
+    /// The same fill, with what the request cost: the charge the backend's answer
+    /// reports, or the one its adapter works out from the usage the answer reports at
+    /// the prices it quoted from (ADR 0010). A fill without one cost its bound.
+    pub fn charged(mut self, charge: Charge) -> Painted {
+        self.charge = Some(charge);
+        self
+    }
+
+    /// What the request cost, when the answer said.
+    pub fn charge(&self) -> Option<Charge> {
+        self.charge
     }
 
     pub fn width(&self) -> u32 {
@@ -243,7 +263,11 @@ impl Painted {
 
 impl std::fmt::Debug for Painted {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Painted({} by {})", self.width, self.height)
+        write!(f, "Painted({} by {}", self.width, self.height)?;
+        match self.charge {
+            Some(charge) => write!(f, ", charged {})", charge.micros()),
+            None => write!(f, ", no charge)"),
+        }
     }
 }
 
@@ -328,12 +352,13 @@ impl FillHandle {
                     (painted.width, painted.height),
                 );
                 if found != expected {
-                    return Err(Unfit::WrongSize {
+                    // An answer came, and it is not taken: what it said it cost stands.
+                    let unfit = Unfit::WrongSize {
                         what: "the fill",
                         expected,
                         found,
-                    }
-                    .into());
+                    };
+                    return Err(Fault::from(unfit).answered(painted.charge));
                 }
                 Ok(painted)
             },
