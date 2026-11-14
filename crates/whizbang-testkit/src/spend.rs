@@ -12,7 +12,9 @@
 //!
 //! Beside the names the model keeps two things that are not in a store. What each of
 //! two processes holds in memory: the runs it has open, each with a signed allowance,
-//! and the requests it sent; a crash loses it. And the truth: what was really
+//! the requests it sent, and what is left of the reservation of each tree it runs,
+//! which every dispatch is held to whatever the names say; a crash loses it. And the
+//! truth: what was really
 //! reserved and in which epoch, what each run really dispatched, what the provider
 //! really charged and what was settled, written down as it happens and never read by
 //! the fold, so that [`Books::check`] can hold what the fold answers to it and to
@@ -312,26 +314,51 @@ pub struct Standing {
     pub reachable: bool,
     /// What it counts for against the allowance of each epoch it counts in.
     pub counts: u128,
+    /// It is frozen and its holds are not exactly one: the ledger's own hold may be
+    /// the one that is lost, and then no name states its amount. What it counts for
+    /// is unknown, and at least `counts`.
+    pub unknown: bool,
     pub state: State,
     pub closed: bool,
 }
 
+/// What a reservation counts for, as far as the books can say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Counted {
+    Exactly(u128),
+    /// The books cannot say how much: no less than this.
+    AtLeast(u128),
+}
+
 impl Standing {
+    /// What it counts for: a number, or "unknown, at least" one.
+    pub fn counted(&self) -> Counted {
+        match self.unknown {
+            true => Counted::AtLeast(self.counts),
+            false => Counted::Exactly(self.counts),
+        }
+    }
+
     /// What is known against it: its charges, and what its places count for beyond.
     pub fn known(&self) -> u128 {
-        self.charged + self.outstanding
+        self.charged.saturating_add(self.outstanding)
     }
 
     /// The most its names can mean. Of a reachable reservation: its amount, what is
     /// known, or what a correction says, whichever is most. Of any other, with no
     /// name trusted to explain another: its amount, and every bound and every charge
     /// named under it, and its amount once more for each place that holds no
-    /// dispatch; or what a correction says, when that is more.
+    /// dispatch; or what a correction says, when that is more. A name can state any
+    /// amount and name any place, so the sum stops at the largest number there is,
+    /// which is over any allowance.
     pub fn most(&self) -> u128 {
         let amount = u128::from(self.amount);
         let named = match self.reachable {
             true => self.known(),
-            false => amount + self.known() + u128::from(self.unexplained) * amount,
+            false => {
+                let places = u128::from(self.unexplained).saturating_mul(amount);
+                amount.saturating_add(self.known()).saturating_add(places)
+            }
         };
         u128::from(self.amount.max(self.corrections)).max(named)
     }
@@ -362,6 +389,9 @@ pub struct Balance {
     pub allowed: u64,
     /// What its reservations count for, together.
     pub counted: u128,
+    /// The books cannot say how much is counted: a reservation that counts here has
+    /// an amount no name can be trusted for, and `counted` is the least it can be.
+    pub unknown: bool,
     /// What was charged under them.
     pub charged: u128,
     /// What is held beyond what was charged.
@@ -385,6 +415,13 @@ pub struct RunSpend {
     pub unresolved: u128,
 }
 
+impl RunSpend {
+    /// What it sent that is charged or outstanding.
+    pub fn known(&self) -> u128 {
+        self.charged.saturating_add(self.outstanding)
+    }
+}
+
 /// What the books can say of one run's spend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sent {
@@ -393,6 +430,9 @@ pub enum Sent {
     /// Its reservation is frozen: which run sent what cannot be read, and no run
     /// under it sent more than this.
     Unknown { at_most: u128 },
+    /// Its reservation is frozen and its amount cannot be read either: no most can
+    /// be said.
+    Unbounded,
 }
 
 /// The books folded: every reservation the names give, by its run.
@@ -445,6 +485,7 @@ impl Folded {
         let counted = sum(|one| one.counts);
         let charged = sum(|one| one.charged);
         let unresolved = sum(|one| one.unresolved);
+        let unknown = of_epoch().any(|one| one.unknown);
         let needs_owner = self.needs_owner(epoch);
         let left = match needs_owner {
             true => 0,
@@ -454,6 +495,7 @@ impl Folded {
             epoch,
             allowed,
             counted,
+            unknown,
             charged,
             held: counted.saturating_sub(charged),
             unresolved,
@@ -472,6 +514,9 @@ impl Folded {
     pub fn sent_by(&self, run: Run, root: Run) -> Sent {
         let known = Sent::Known(self.runs.get(&run).copied().unwrap_or_default());
         match self.reservations.get(&root) {
+            // With no hold, or more than one, no name is trusted for the amount,
+            // and the most rests on the amount.
+            Some(one) if !one.reachable && one.epoch.is_none() => Sent::Unbounded,
             Some(one) if !one.reachable => Sent::Unknown {
                 at_most: one.most(),
             },
@@ -495,10 +540,15 @@ fn lowest_free(taken: &BTreeSet<u64>) -> u64 {
     let mut free = 1;
     for one in taken {
         if *one == free {
-            free += 1;
+            free = free.saturating_add(1);
         }
     }
     free
+}
+
+/// A sum of amounts that stops at the largest number there is.
+fn total(amounts: impl Iterator<Item = u64>) -> u128 {
+    amounts.fold(0, |all, one| all.saturating_add(u128::from(one)))
 }
 
 /// The next place under a reservation: the lowest that no name of it names.
@@ -620,6 +670,48 @@ fn reachable(of: &Found) -> bool {
             return false;
         }
     }
+    // What the ledger checked, replayed in the order of the places: each dispatch
+    // fit what the reservation had left when it took its place. A place below a
+    // dispatch that holds none was taken by a charge over its bound, of a request
+    // sent before it: nothing is dispatched after a closing. What the names do not
+    // say is when a request was settled under
+    // its bound, and which charge over its bound took which place: there the
+    // replay takes what leaves the most, a request at the least of its bound and
+    // its charge from the start, and the smallest excess first.
+    let amount = of
+        .holds
+        .first()
+        .map_or(0, |(_, micros)| u128::from(*micros));
+    let last = of.dispatched.keys().next_back().copied().unwrap_or(0);
+    let mut known = 0u128;
+    let mut excesses: BTreeSet<(u64, u64)> = BTreeSet::new();
+    for place in of.places.range(..=last) {
+        let Some([(_, bound)]) = of.dispatched.get(place).map(Vec::as_slice) else {
+            let Some((excess, _)) = excesses.pop_first() else {
+                return false;
+            };
+            known = known.saturating_add(u128::from(excess));
+            continue;
+        };
+        if u128::from(*bound) > amount.saturating_sub(known) {
+            return false;
+        }
+        let charge = of.settled.get(place).and_then(|ended| ended.first());
+        let charge = charge.map_or(*bound, |(_, charge)| *charge);
+        known = known.saturating_add(u128::from(charge.min(*bound)));
+        if charge > *bound {
+            excesses.insert((charge - *bound, *place));
+        }
+    }
+    // A correction follows the closing, which follows every dispatch: the closing's
+    // place lies between the last dispatch and the lowest place a correction names,
+    // so that no correction's place is below a dispatch either.
+    if taken
+        .first()
+        .is_some_and(|lowest| *lowest <= last.saturating_add(1))
+    {
+        return false;
+    }
     // Every place that is not a dispatch's was taken by a charge over its bound, by
     // the closing or by a correction.
     let bare = count - of.dispatched.len() as u64;
@@ -726,8 +818,12 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
     // What each epoch's turns are due: one for the reset that closed it, one for
     // each hold in it, and below, one for each settlement, closing and correction
     // of a reservation that counts in it.
+    let owe = |due: &mut BTreeMap<u64, u64>, epoch: u64, turns: u64| {
+        let due = due.entry(epoch).or_default();
+        *due = due.saturating_add(turns);
+    };
     for epoch in folded.resets.keys().filter(|epoch| **epoch > 0) {
-        *folded.due.entry(*epoch - 1).or_default() += 1;
+        owe(&mut folded.due, *epoch - 1, 1);
     }
     for (run, of) in found {
         // The amount and the epochs: the holds'.
@@ -735,11 +831,11 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
         let amount = amount.unwrap_or(0);
         let epochs: BTreeSet<u64> = of.holds.iter().map(|(epoch, _)| *epoch).collect();
         for (epoch, _) in &of.holds {
-            *folded.due.entry(*epoch).or_default() += 1;
+            owe(&mut folded.due, *epoch, 1);
         }
         let turns = (of.settling.len() + of.closed.len() + of.adjusted.len()) as u64;
         for epoch in &epochs {
-            *folded.due.entry(*epoch).or_default() += turns;
+            owe(&mut folded.due, *epoch, turns);
         }
         let base = reachable(&of);
         let (mut charged, mut settled) = (0u128, 0u128);
@@ -754,12 +850,12 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
         for place in &at {
             let sent = of.dispatched.get(place).map_or(&[][..], Vec::as_slice);
             let ended = of.settled.get(place).map_or(&[][..], Vec::as_slice);
-            let bounds: u128 = sent.iter().map(|(_, micros)| u128::from(*micros)).sum();
-            let charge: u128 = ended.iter().map(|(_, micros)| u128::from(*micros)).sum();
+            let bounds = total(sent.iter().map(|(_, micros)| *micros));
+            let charge = total(ended.iter().map(|(_, micros)| *micros));
             let open = ended
                 .iter()
                 .filter(|(stage, _)| *stage == Stage::Unresolved);
-            let open: u128 = open.map(|(_, micros)| u128::from(*micros)).sum();
+            let open = total(open.map(|(_, micros)| *micros));
             // A settlement's whole chain: one dispatch with its place, one
             // settlement with its guard at a charge its stage allows, none of the
             // four damaged.
@@ -782,20 +878,21 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
                 false => bounds,
             };
             if whole {
-                settled += charge;
+                settled = settled.saturating_add(charge);
             } else {
-                unsettled += 1;
+                unsettled = unsettled.saturating_add(1);
             }
-            charged += charge;
-            outstanding += rest;
-            unresolved += open + rest;
+            let open = open.saturating_add(rest);
+            charged = charged.saturating_add(charge);
+            outstanding = outstanding.saturating_add(rest);
+            unresolved = unresolved.saturating_add(open);
             // Every run a dispatch at this place names is named for all of it.
             let by: BTreeSet<Run> = sent.iter().map(|(by, _)| *by).collect();
             for by in by {
                 let spend = folded.runs.entry(by).or_default();
-                spend.charged += charge;
-                spend.outstanding += rest;
-                spend.unresolved += open + rest;
+                spend.charged = spend.charged.saturating_add(charge);
+                spend.outstanding = spend.outstanding.saturating_add(rest);
+                spend.unresolved = spend.unresolved.saturating_add(open);
             }
         }
         // Where the names are not reachable, no name is trusted to account for a
@@ -815,7 +912,7 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
             // Every place a dispatch is at is one of the numbers up to the highest:
             // the rest of them hold none. Counted, never walked: a name can name
             // any place a number can say.
-            highest - of.dispatched.len() as u64
+            highest.saturating_sub(of.dispatched.len() as u64)
         };
         let closed = !of.closed.is_empty();
         // A correction stands when it is not damaged, its reservation has a closing,
@@ -859,6 +956,7 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
             corrections: corrections.unwrap_or(0),
             reachable: base,
             counts: 0,
+            unknown: false,
             state: State::Open,
             closed,
         };
@@ -871,6 +969,10 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
             None if closed => (State::Interrupted, one.most()),
             None => (State::Open, one.most()),
         };
+        // The ledger's own hold may be the one that is lost, whatever holds are
+        // there in its place: a frozen reservation that has not exactly one says
+        // that its amount is unknown.
+        one.unknown = one.state == State::Frozen && one.epoch.is_none();
         folded.reservations.insert(run, one);
     }
     folded
@@ -963,7 +1065,8 @@ pub enum Why {
     OverAllowance {
         left: u64,
     },
-    /// The epoch's turns are not those its publications took: the owner resets.
+    /// The epoch's turns are not those its publications took, or a reservation is
+    /// frozen: nothing is admitted, and nothing dispatched, until the owner acts.
     NeedsOwner,
     /// What the run can spend does not cover it.
     OverRun {
@@ -975,6 +1078,11 @@ pub enum Why {
     },
     /// The reservation is frozen: nothing is dispatched under it.
     Frozen,
+    /// What is left of the tree's reservation, as the process that runs it holds it
+    /// in memory, does not cover it, whatever the names say.
+    OverTree {
+        left: u64,
+    },
     /// The run is not executing in this process.
     NotExecuting,
     /// The run's id, or its reservation's name, is taken.
@@ -1046,11 +1154,30 @@ struct Request {
     truth: usize,
 }
 
+/// What a process holds of the reservation of one tree it runs: the amount, and
+/// what the requests sent under it took of it, each at its bound until it is
+/// settled and at its charge from then on, a charge over its bound among them. It
+/// is kept as each request is sent and settled, and is never read from a name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Tree {
+    amount: u64,
+    taken: u128,
+}
+
+impl Tree {
+    /// What a dispatch under it may still take: never below nothing.
+    fn left(&self) -> u64 {
+        let left = u128::from(self.amount).saturating_sub(self.taken);
+        u64::try_from(left).unwrap_or(u64::MAX)
+    }
+}
+
 /// What one process holds in memory: a crash loses it.
 #[derive(Debug, Clone, Default)]
 struct Memory {
     live: BTreeMap<Run, Live>,
     sent: Vec<Request>,
+    trees: BTreeMap<Run, Tree>,
 }
 
 /// What really became of one request, whatever the names say.
@@ -1170,6 +1297,8 @@ pub struct Books {
     /// The requests the acting process dispatched and has not settled. A meter
     /// settles what it sent, from what it holds, and never from a name it reads.
     sent: Vec<Request>,
+    /// The reservation of each tree the acting process runs, as it holds it.
+    trees: BTreeMap<Run, Tree>,
     /// The memory of the process that is not acting.
     other: Memory,
     /// Every run id that was given, with the run at the root of its tree.
@@ -1294,7 +1423,7 @@ impl Books {
 
     fn give(&mut self, run: Run, micros: i128) {
         if let Some(live) = self.live.get_mut(&run) {
-            live.balance += micros;
+            live.balance = live.balance.saturating_add(micros);
         }
     }
 
@@ -1302,6 +1431,7 @@ impl Books {
     fn switch(&mut self) {
         std::mem::swap(&mut self.live, &mut self.other.live);
         std::mem::swap(&mut self.sent, &mut self.other.sent);
+        std::mem::swap(&mut self.trees, &mut self.other.trees);
     }
 
     /// What the event would publish, judged on these names.
@@ -1388,6 +1518,13 @@ impl Books {
                 }
                 if standing.state != State::Open {
                     return refused(Why::Frozen);
+                }
+                // Nor under a reservation of an epoch that needs its owner: where
+                // the books are not what the ledger wrote, no new paid work starts
+                // until a person has looked. A frozen reservation anywhere makes
+                // every epoch need its owner.
+                if standing.epoch.is_none_or(|epoch| folded.needs_owner(epoch)) {
+                    return refused(Why::NeedsOwner);
                 }
                 let left = standing.left();
                 if *micros > left {
@@ -1622,6 +1759,11 @@ impl Books {
                     },
                 );
                 self.ids.insert(*run, *run);
+                let tree = Tree {
+                    amount: *micros,
+                    taken: 0,
+                };
+                self.trees.insert(*run, tree);
                 let truth = self.truth.entry(*run).or_default();
                 (truth.epoch, truth.amount) = (*epoch, *micros);
             }
@@ -1632,6 +1774,9 @@ impl Books {
                 micros,
             } => {
                 self.give(*by, -i128::from(*micros));
+                if let Some(tree) = self.trees.get_mut(root) {
+                    tree.taken = tree.taken.saturating_add(u128::from(*micros));
+                }
                 let truth = self.truth.entry(*root).or_default();
                 truth.asked.push(Asked {
                     place: *place,
@@ -1656,6 +1801,10 @@ impl Books {
                     (asked.settled, asked.recorded) = (Some(*charge), true);
                 }
                 let (by, bound) = (request.by, request.bound);
+                if let Some(tree) = self.trees.get_mut(&request.root) {
+                    let rest = tree.taken.saturating_sub(u128::from(bound));
+                    tree.taken = rest.saturating_add(u128::from(*charge));
+                }
                 if *charge <= bound {
                     // What the bound held beyond the charge goes back to the run
                     // that sent the request, and pays its debt first.
@@ -1672,6 +1821,7 @@ impl Books {
             }
             Then::Closed { run } => {
                 self.live.retain(|_, live| live.root != *run);
+                self.trees.remove(run);
             }
             Then::Corrected { run } => {
                 let own = self.own(*run);
@@ -1822,6 +1972,7 @@ impl Books {
             Event::Crash => {
                 self.live.clear();
                 self.sent.clear();
+                self.trees.clear();
                 Outcome::Done
             }
             Event::Damage(name) => {
@@ -1915,24 +2066,46 @@ impl Books {
         }
     }
 
-    /// What memory says of an event at the moment it is published, whenever it was
-    /// judged: a run that is no longer executing sends nothing, a run spends only
-    /// what it has, and a run does not end while a request it sent is outstanding.
-    fn memory_allows(&self, event: &Event) -> bool {
+    /// What memory says against an event at the moment it is published, whenever
+    /// it was judged and whatever the names say: a run that is no longer executing
+    /// sends nothing; a run spends only what it has; a dispatch takes no more than
+    /// is left of its tree's reservation as the process holds it, which is the
+    /// amount less everything charged and everything outstanding under it, a
+    /// charge over its bound of any run of the tree among them; and a run does
+    /// not end while a request it sent is outstanding. Memory is as it is now, also
+    /// where the reading of the names is old.
+    fn memory_refuses(&self, event: &Event) -> Option<Why> {
         match event {
             Event::Dispatch { by, micros } => {
-                self.executing(*by).is_some() && self.spendable(*by).unwrap_or(0) >= *micros
+                let Some(live) = self.executing(*by) else {
+                    return Some(Why::NotExecuting);
+                };
+                let spendable = self.spendable(*by).unwrap_or(0);
+                if *micros > spendable {
+                    return Some(Why::OverRun { left: spendable });
+                }
+                let left = self.trees.get(&live.root).map_or(0, Tree::left);
+                (*micros > left).then_some(Why::OverTree { left })
             }
-            Event::Admit { run, .. } => !self.ids.contains_key(run),
-            Event::End { run } => self.executing(*run).is_some() && !self.waits(*run),
-            _ => true,
+            Event::Admit { run, .. } => self.ids.contains_key(run).then_some(Why::Taken),
+            Event::End { run } if self.executing(*run).is_none() => Some(Why::NotExecuting),
+            Event::End { run } => self.waits(*run).then_some(Why::RequestsOutstanding),
+            _ => None,
         }
+    }
+
+    fn memory_allows(&self, event: &Event) -> bool {
+        self.memory_refuses(event).is_none()
     }
 
     fn judged_now(&mut self, event: &Event) -> Outcome {
         let plan = self.plan(event, &self.names, &self.damaged);
         if matches!(plan.outcome, Outcome::Refused(_)) {
             return plan.outcome;
+        }
+        // The names allow it: memory is asked too.
+        if let Some(why) = self.memory_refuses(event) {
+            return Outcome::Refused(why);
         }
         // Judged on the books as they are, a publication makes no name they hold.
         if self.publish(&plan) {
@@ -1998,7 +2171,18 @@ impl Books {
                 }
                 Name::Adjusted { place: here, .. } => {
                     let same = |other: &Name| matches!(other, Name::Adjusted { place, .. } if place == here);
+                    // A correction is of a reservation closed with nothing released.
+                    let held = |name: &Name| {
+                        matches!(
+                            name,
+                            Name::Closed {
+                                released: false,
+                                ..
+                            }
+                        )
+                    };
                     count(&closing) == 1
+                        && count(&held) == 1
                         && at(*here, &place) == 1
                         && at(*here, &dispatch) == 0
                         && count(&same) == 1
@@ -2015,19 +2199,93 @@ impl Books {
             .filter(|name| place(name))
             .filter_map(Name::place)
             .collect();
-        damaged.is_empty()
+        let counted = damaged.is_empty()
             && count(&|name| matches!(name, Name::Reservation(_))) == 1
             && count(&|name| matches!(name, Name::Held { .. })) == 1
             && places.iter().copied().eq(1..=places.len() as u64)
-            && places.len() == count(&dispatch) + overruns + count(&closing) + count(&correction)
+            && places.len() == count(&dispatch) + overruns + count(&closing) + count(&correction);
+        counted && Books::fitted(&own)
     }
 
-    /// Whether no name states an amount for this request: every hold of its
-    /// reservation is lost, and its dispatch is lost too (ADR 0016, limit (c)).
-    fn unnamed(&self, root: Run, asked: &Asked) -> bool {
-        let hold = |name: &Name| matches!(name, Name::Held { run, .. } if *run == root);
+    /// Whether each dispatch among these names of one reservation, which has one
+    /// hold and whose places are 1 to their count, fit what the reservation had
+    /// left when it was published: the second reading's own replay of what the
+    /// ledger checked, written apart from the recogniser's. Before a dispatch the
+    /// amount is less by every request sent before it, each at its bound, or at its
+    /// charge where it was settled under it; and by the excess of one charge over
+    /// its bound for each place below it that holds no dispatch, the smallest that
+    /// had been sent by then, since the names do not say which. A place below a
+    /// dispatch that holds none and has no such charge to account for it is a
+    /// closing's, and nothing is dispatched after one. And a correction follows the
+    /// closing: the first place a correction names is above the one after the last
+    /// dispatch.
+    fn fitted(own: &BTreeSet<Name>) -> bool {
+        let hold = own.iter().find_map(|name| match name {
+            Name::Held { micros, .. } => Some(i128::from(*micros)),
+            _ => None,
+        });
+        let mut requests: Vec<(u64, u64, Option<u64>)> = Vec::new();
+        for name in own {
+            if let Name::Dispatched { place, micros, .. } = name {
+                let charge = own.iter().find_map(|other| match other {
+                    Name::Settled {
+                        place: at, micros, ..
+                    } if at == place => Some(*micros),
+                    _ => None,
+                });
+                requests.push((*place, *micros, charge));
+            }
+        }
+        requests.sort_unstable();
+        let mut left = hold.unwrap_or(0);
+        let mut owed: Vec<u64> = Vec::new();
+        let mut next = 1;
+        for (place, bound, charge) in requests {
+            // The places between the last dispatch and this one hold none.
+            while next < place {
+                owed.sort_unstable_by(|one, other| other.cmp(one));
+                match owed.pop() {
+                    Some(excess) => left = left.saturating_sub(i128::from(excess)),
+                    None => return false,
+                }
+                next += 1;
+            }
+            next = place.saturating_add(1);
+            if i128::from(bound) > left.max(0) {
+                return false;
+            }
+            let charge = charge.unwrap_or(bound);
+            left = left.saturating_sub(i128::from(charge.min(bound)));
+            if charge > bound {
+                owed.push(charge - bound);
+            }
+        }
+        // The closing took a place after the last dispatch and before the first
+        // correction.
+        let first = own.iter().filter_map(|name| match name {
+            Name::Adjusted { place, .. } => Some(*place),
+            _ => None,
+        });
+        first.min().is_none_or(|first| first > next)
+    }
+
+    /// Whether the hold the ledger made for this reservation is lost: the amount
+    /// was in that name alone, whatever holds other hands leave in its place (ADR
+    /// 0016, limit (c)).
+    fn amount_lost(&self, root: Run, truth: &Truth) -> bool {
+        let own = Name::Held {
+            epoch: truth.epoch,
+            run: root,
+            micros: truth.amount,
+        };
+        self.removed.contains_key(&own)
+    }
+
+    /// Whether no name states an amount for this request: the ledger's own hold of
+    /// its reservation is lost, and its dispatch is lost too (ADR 0016, limit (c)).
+    fn unnamed(&self, root: Run, truth: &Truth, asked: &Asked) -> bool {
         let dispatch = |name: &Name| matches!(name, Name::Dispatched { run, place, .. } if *run == root && *place == asked.place);
-        !self.names.iter().any(hold) && self.removed.keys().any(dispatch)
+        self.amount_lost(root, truth) && self.removed.keys().any(dispatch)
     }
 
     /// Whether a correction that other hands made is whole: the name, the place and
@@ -2083,14 +2341,14 @@ impl Books {
             // counts here as the fold has it, which is not at all when a hold other
             // hands made in the place of the ledger's names another epoch.
             let here = |one: &&Standing| one.counts_in(newest);
-            counted += match self.held_to(*root, truth, folded) {
+            counted = counted.saturating_add(match self.held_to(*root, truth, folded) {
                 Ok(Some(floor)) => floor,
                 _ => folded
                     .reservations
                     .get(root)
                     .filter(here)
                     .map_or(0, |one| one.counts),
-            };
+            });
         }
         // The allowance the owner really set, while the name of that reset is there.
         // Where it is lost, the allowance is what the names say: nothing, or what a
@@ -2124,9 +2382,9 @@ impl Books {
             let touched = self.planted.keys().chain(self.removed.keys()).any(here);
             touched || self.damaged.iter().any(here)
         };
-        // With every hold lost, a request whose dispatch is lost too has no name
-        // that states an amount.
-        let lost = |asked: &Asked| self.unnamed(root, asked);
+        // With the ledger's own hold lost, a request whose dispatch is lost too has
+        // no name that states an amount.
+        let lost = |asked: &Asked| self.unnamed(root, truth, asked);
         let whole = |asked: &Asked| asked.settled.is_some() && asked.recorded && !hurt(asked.place);
         let counted = |asked: &&Asked| {
             if corrected {
@@ -2135,7 +2393,8 @@ impl Books {
                 !lost(asked)
             }
         };
-        let floor: u128 = truth.asked.iter().filter(counted).map(Asked::floor).sum();
+        let floor = truth.asked.iter().filter(counted).map(Asked::floor);
+        let floor = floor.fold(0u128, u128::saturating_add);
         if corrected {
             return Ok(Some(floor));
         }
@@ -2183,7 +2442,9 @@ impl Books {
     /// of two states is held where an event is done ([`Books::checked`]).
     ///
     /// What it leaves out is what ADR 0016 lists against its limits (a) to (e), and
-    /// nothing else.
+    /// nothing else. Under limit (c) it also holds the books to saying what they
+    /// cannot say: a reservation whose own hold is lost, frozen with no hold or
+    /// with several, counts "unknown, at least".
     pub fn check(&mut self) -> Result<(), String> {
         let folded = self.fold();
         for (root, truth) in &self.truth {
@@ -2220,6 +2481,29 @@ impl Books {
                     one.counts
                 ));
             }
+            // Limit (c), said by the books: where the ledger's own hold is lost and
+            // the reservation is frozen with no hold or several, its count is
+            // "unknown, at least", and so is the store's in every epoch. Where the
+            // books say so and the ledger's own hold is there among several, the
+            // amount is at least its own, and nothing is lost: the floor above was
+            // held, and so is the amount.
+            let lost = self.amount_lost(*root, truth);
+            if lost && one.state == State::Frozen && one.epoch.is_none() && !one.unknown {
+                return Err(format!(
+                    "{root}: its hold is lost, and the books say what it counts for"
+                ));
+            }
+            if one.unknown && !folded.balance().unknown {
+                return Err(format!(
+                    "{root}: its amount is unknown, and the store says what is counted"
+                ));
+            }
+            if one.unknown && !lost && one.counts < u128::from(truth.amount) {
+                return Err(format!(
+                    "{root}: its hold is there, and it counts {} under its amount",
+                    one.counts
+                ));
+            }
             // It counts in the epoch it was really reserved in. The epoch is in the
             // hold alone: one hold that other hands made in the place of the
             // ledger's is believed for it (limit (a)). With the ledger's hold there,
@@ -2252,14 +2536,16 @@ impl Books {
             for asked in truth
                 .asked
                 .iter()
-                .filter(|asked| !self.unnamed(*root, asked))
+                .filter(|asked| !self.unnamed(*root, truth, asked))
             {
-                *sent.entry(asked.by).or_default() += asked.floor();
+                let sent: &mut u128 = sent.entry(asked.by).or_default();
+                *sent = sent.saturating_add(asked.floor());
             }
             for (run, really) in sent {
                 let found = match folded.sent_by(run, *root) {
-                    Sent::Known(spend) => spend.charged + spend.outstanding,
+                    Sent::Known(spend) => spend.known(),
                     Sent::Unknown { at_most } => at_most,
+                    Sent::Unbounded => continue,
                 };
                 if found < really {
                     return Err(format!(
@@ -2287,7 +2573,8 @@ impl Books {
         // 2. What can be reserved is the allowance less what is counted, or nothing;
         // and never more than is really left of the allowance the owner really set.
         let balance = folded.balance();
-        let over = u128::from(balance.left) + balance.counted > u128::from(balance.allowed);
+        let over = u128::from(balance.left).saturating_add(balance.counted);
+        let over = over > u128::from(balance.allowed);
         if over && balance.left > 0 {
             return Err(format!("{balance:?}: more is left than the allowance has"));
         }
@@ -2539,6 +2826,24 @@ impl Books {
         Some((truth.epoch, truth.amount, took))
     }
 
+    /// Whether the names of this reservation are a set the ledger could have
+    /// written, as the fold's recogniser reads them and as the checker's second
+    /// reading does: for a test that holds the two to one answer.
+    pub fn read_twice(&self, run: Run) -> Option<(bool, bool)> {
+        let first = self.fold().reservations.get(&run)?.reachable;
+        Some((first, self.believable(run)))
+    }
+
+    /// The reservations of which the two readings give two answers: none, while
+    /// the two are one rule.
+    pub fn read_apart(&self) -> Vec<Run> {
+        let folded = self.fold();
+        let apart = |(run, one): (&Run, &Standing)| {
+            (one.reachable != self.believable(*run)).then_some(*run)
+        };
+        folded.reservations.iter().filter_map(apart).collect()
+    }
+
     /// The run at the root of this run's tree, when the run was given an id.
     pub fn root_of(&self, run: Run) -> Option<Run> {
         self.ids.get(&run).copied()
@@ -2578,11 +2883,18 @@ impl Books {
 pub enum Must {
     Epoch(u64),
     Allowed(u64),
+    /// What is counted in the newest epoch, where the books can say it.
     Counted(u64),
     Left(u64),
     Debt(u64),
-    /// What the reservation of this run counts for.
+    /// What the reservation of this run counts for, where the books can say it.
     Counts(Run, u64),
+    /// What the reservation of this run counts for is unknown, and at least this.
+    CountsAtLeast(Run, u64),
+    /// The reservation of this run counts for the largest number there is.
+    Saturated(Run),
+    /// What is counted in the newest epoch is unknown, and at least this.
+    CountedAtLeast(u64),
     State(Run, State),
     EpochOf(Run, u64),
     Charged(Run, u64),
@@ -2597,6 +2909,8 @@ pub enum Must {
     Sent(Run, u64),
     /// What this run sent is unknown, and at most this.
     SentAtMost(Run, u64),
+    /// What this run sent is unknown, and no most can be said.
+    SentUnbounded(Run),
     /// The newest epoch's turns are not those its publications took.
     NeedsOwner,
     /// What became of the event at this place in the history, from 0.
@@ -2635,10 +2949,28 @@ impl Must {
         match self {
             Must::Epoch(epoch) => same("the epoch", balance.epoch.into(), *epoch),
             Must::Allowed(micros) => same("allowed", balance.allowed.into(), *micros),
-            Must::Counted(micros) => same("counted", balance.counted, *micros),
+            Must::Counted(micros) => match balance.unknown {
+                false => same("counted", balance.counted, *micros),
+                true => Err("the books cannot say how much is counted".to_owned()),
+            },
             Must::Left(micros) => same("left", balance.left.into(), *micros),
             Must::Debt(micros) => same("the debt", balance.debt, *micros),
-            Must::Counts(run, micros) => same(&format!("{run} counts"), of(run)?.counts, *micros),
+            Must::Counts(run, micros) => match of(run)?.counted() {
+                Counted::Exactly(found) => same(&format!("{run} counts"), found, *micros),
+                found => Err(format!("{run} counts {found:?}, and it must be known")),
+            },
+            Must::CountsAtLeast(run, micros) => match of(run)?.counted() {
+                Counted::AtLeast(found) => same(&format!("{run} counts at least"), found, *micros),
+                found => Err(format!("{run} counts {found:?}, and it must be unknown")),
+            },
+            Must::Saturated(run) => match of(run)?.counts {
+                u128::MAX => Ok(()),
+                found => Err(format!("{run} counts {found}, and not the largest number")),
+            },
+            Must::CountedAtLeast(micros) => match balance.unknown {
+                true => same("counted, at least", balance.counted, *micros),
+                false => Err("the books say how much is counted".to_owned()),
+            },
             Must::EpochOf(run, epoch) => match of(run)?.epoch {
                 Some(found) => same(&format!("the epoch of {run}"), found.into(), *epoch),
                 None => Err(format!("{run} falls under no one epoch")),
@@ -2669,15 +3001,16 @@ impl Must {
                 same(&format!("{run} owes"), found.into(), *micros)
             }
             Must::Sent(run, micros) => match books.run(*run) {
-                Sent::Known(spend) => {
-                    let found = spend.charged + spend.outstanding;
-                    same(&format!("{run} sent"), found, *micros)
-                }
+                Sent::Known(spend) => same(&format!("{run} sent"), spend.known(), *micros),
                 found => Err(format!("{run} sent {found:?}, and it must be known")),
             },
             Must::SentAtMost(run, micros) => match books.run(*run) {
                 Sent::Unknown { at_most } => same(&format!("{run} sent at most"), at_most, *micros),
                 found => Err(format!("{run} sent {found:?}, and it must be unknown")),
+            },
+            Must::SentUnbounded(run) => match books.run(*run) {
+                Sent::Unbounded => Ok(()),
+                found => Err(format!("{run} sent {found:?}, and no most can be said")),
             },
             Must::NeedsOwner => match balance.needs_owner {
                 true => Ok(()),
@@ -3605,12 +3938,13 @@ pub fn histories() -> Vec<History> {
         vec![
             state(r(1), State::Frozen),
             Epoch(2),
-            Counted(15),
+            // Two holds: the books cannot tell which is the ledger's.
+            Must::CountedAtLeast(15),
             // The hold other hands made in the new epoch took no turn there.
             Must::NeedsOwner,
             Left(0),
         ],
-        vec![(3, Epoch(1)), (3, Counted(15)), (3, Left(0))],
+        vec![(3, Epoch(1)), (3, Must::CountedAtLeast(15)), (3, Left(0))],
     );
     add(
         "46 a second hold of more: counted at the larger, and nothing more is dispatched",
@@ -3630,7 +3964,7 @@ pub fn histories() -> Vec<History> {
         vec![
             came(6, refused(Why::Frozen)),
             state(r(1), State::Frozen),
-            Counts(r(1), 57),
+            Must::CountsAtLeast(r(1), 57),
             Left(0),
         ],
         vec![],
@@ -4168,7 +4502,7 @@ pub fn histories() -> Vec<History> {
             Epoch(1),
             Allowed(10),
             state(r(1), State::Frozen),
-            Counted(20),
+            Must::CountedAtLeast(20),
             Left(0),
             Absent(r(2)),
         ],
@@ -4222,9 +4556,201 @@ pub fn histories() -> Vec<History> {
         vec![
             (7, state(r(1), State::Frozen)),
             // The amount, the bound, and the amount for the closing's place.
-            (7, Counts(r(1), 30)),
+            (7, Must::CountsAtLeast(r(1), 30)),
             (9, Must::NeedsOwner),
         ],
+    );
+    // What the fourth review round found: each of its traces, as it was given.
+    let held = |epoch, micros| Name::Held {
+        epoch,
+        run: r(1),
+        micros,
+    };
+    let sent = |place, micros| Name::Dispatched {
+        run: r(1),
+        place,
+        by: r(1),
+        micros,
+    };
+    add(
+        "69 two holds of nothing made, then the ledger's hold and its dispatch lost: \
+         the amount is unknown and the books say so, and nothing is admitted or \
+         dispatched anywhere",
+        vec![
+            reset(30),
+            admit(1, 10),
+            admit(2, 5),
+            dispatch(1, 10),
+            Event::Plant(held(1, 0)),
+            Event::Plant(held(2, 0)),
+            Event::Remove(held(1, 10)),
+            Event::Remove(sent(1, 10)),
+            admit(3, 1),
+            dispatch(1, 0),
+            dispatch(2, 1),
+        ],
+        vec![
+            came(8, refused(Why::NeedsOwner)),
+            came(9, refused(Why::Frozen)),
+            came(10, refused(Why::NeedsOwner)),
+            state(r(1), State::Frozen),
+            // No hold states more than nothing, and no dispatch is named: the
+            // names say nothing of the 10 that are outstanding.
+            Must::CountsAtLeast(r(1), 0),
+            Must::SentUnbounded(r(1)),
+            // The other reservation's 5, and nothing that a name says of this one.
+            Must::CountedAtLeast(5),
+            Must::NeedsOwner,
+            Absent(r(3)),
+            Outstanding(r(2), 0),
+        ],
+        vec![
+            (3, Counts(r(1), 10)),
+            // With the ledger's hold still among them the amount is at least its
+            // own: nothing is lost, though the books cannot tell.
+            (5, state(r(1), State::Frozen)),
+            (5, Must::CountsAtLeast(r(1), 20)),
+            (5, Must::CountedAtLeast(25)),
+            (5, Must::NeedsOwner),
+            (6, Must::CountsAtLeast(r(1), 10)),
+        ],
+    );
+    let overran = || {
+        vec![
+            reset(30),
+            admit(1, 10),
+            child(1, 2, 5),
+            dispatch(1, 5),
+            settle(1, 1, charged(12)),
+        ]
+    };
+    let lost = |events: Vec<Event>| {
+        with(
+            events,
+            vec![
+                Event::Remove(answered(1, 12)),
+                Event::Remove(Name::Settling {
+                    run: r(1),
+                    place: 1,
+                }),
+                Event::Remove(Name::Place {
+                    run: r(1),
+                    place: 2,
+                }),
+            ],
+        )
+    };
+    add(
+        "70 a parent's settlement over its bound lost with its guard and its place: \
+         the reservation reads open with 5 left, its epoch needs its owner, and the \
+         child's dispatch is refused",
+        with(lost(overran()), vec![dispatch(2, 5)]),
+        vec![
+            came(8, refused(Why::NeedsOwner)),
+            SameNamesAsAfter(7),
+            state(r(1), State::Open),
+            Counts(r(1), 10),
+            Outstanding(r(1), 5),
+            Must::NeedsOwner,
+            Spendable(r(2), 5),
+            Owes(r(1), 7),
+        ],
+        vec![(4, Counts(r(1), 12)), (5, state(r(1), State::Frozen))],
+    );
+    add(
+        "71 a parent's settlement over its bound, the record damaged and the \
+         overrun's place lost, then a child's dispatch that judged before the \
+         overrun: the process's memory of the tree refuses it",
+        with(
+            overran(),
+            vec![
+                Event::Damage(Name::Reservation(r(1))),
+                Event::Remove(Name::Place {
+                    run: r(1),
+                    place: 2,
+                }),
+                stale(4, dispatch(2, 5)),
+            ],
+        ),
+        vec![
+            came(7, again(refused(Why::Frozen))),
+            SameNamesAsAfter(6),
+            state(r(1), State::Frozen),
+            // The amount, the bound and the charge.
+            Counts(r(1), 27),
+            Spendable(r(2), 5),
+        ],
+        vec![(5, Counts(r(1), 37))],
+    );
+    let most = u64::MAX - 1;
+    add(
+        "72 amounts and a place near the largest number: the frozen sum stops at the \
+         largest number and is over any allowance",
+        vec![
+            reset(most),
+            admit(1, most),
+            dispatch(1, 0),
+            dispatch(1, 0),
+            settle(1, 1, charged(most)),
+            settle(1, 2, charged(most)),
+            Event::Plant(Name::Place {
+                run: r(1),
+                place: u64::MAX,
+            }),
+            Event::Plant(answered(5, most)),
+            Event::Plant(answered(6, most)),
+            Event::Plant(answered(7, most)),
+            admit(2, 0),
+        ],
+        vec![
+            came(10, refused(Why::NeedsOwner)),
+            state(r(1), State::Frozen),
+            Must::Saturated(r(1)),
+            Allowed(most),
+            Left(0),
+            Must::NeedsOwner,
+        ],
+        vec![(5, state(r(1), State::Open)), (5, Left(0))],
+    );
+    // What was found while these were built.
+    add(
+        "73 the same loss with the turn the settlement took lost too: the names are a \
+         set the ledger could have written with 5 left and no epoch needs its owner, \
+         and the process's memory of the tree refuses the child's dispatch",
+        with(
+            lost(overran()),
+            vec![
+                Event::Remove(Name::Turn { epoch: 1, turn: 2 }),
+                dispatch(2, 5),
+                dispatch(2, 0),
+            ],
+        ),
+        vec![
+            came(9, refused(Why::OverTree { left: 0 })),
+            came(10, Outcome::Placed(2)),
+            state(r(1), State::Open),
+            Counts(r(1), 10),
+            Left(20),
+            Spendable(r(2), 5),
+        ],
+        vec![(8, Left(20)), (9, SameNamesAsAfter(8))],
+    );
+    add(
+        "74 a hold of nothing made in the place of the ledger's, over a dispatch of 1: \
+         no reservation of nothing dispatched 1, and it is frozen",
+        vec![
+            reset(10),
+            admit(1, 1),
+            dispatch(1, 1),
+            Event::Plant(held(1, 0)),
+            Event::Remove(held(1, 1)),
+        ],
+        vec![
+            state(r(1), State::Frozen),
+            Counts(r(1), 1),
+            Must::NeedsOwner,
+        ],
+        vec![],
     );
     table
 }
@@ -4269,6 +4795,9 @@ struct Generating {
     /// The shares taken and not handed back: the process, the run, the amount.
     taken: Vec<(bool, Run, u64)>,
     made: u32,
+    /// What every amount chosen is multiplied by: 1, or a number that puts amounts
+    /// near the largest a name can state.
+    scale: u64,
 }
 
 impl Generating {
@@ -4279,6 +4808,29 @@ impl Generating {
             events: Vec::new(),
             taken: Vec::new(),
             made: 0,
+            scale: 1,
+        }
+    }
+
+    /// An amount: a number under `bound`, by the scale, and never the largest
+    /// number there is, which is no amount.
+    fn some(&mut self, bound: u64) -> u64 {
+        let chosen = self.seeded.below(bound);
+        chosen.saturating_mul(self.scale).min(u64::MAX - 1)
+    }
+
+    /// An amount from nothing to this one.
+    fn up_to(&mut self, most: u64) -> u64 {
+        self.seeded.below(most.saturating_add(1))
+    }
+
+    /// A place: a low one; and, where amounts are large, one time in four one of
+    /// the last a name can name.
+    fn a_place(&mut self) -> u64 {
+        let low = 1 + self.seeded.below(4);
+        match self.scale > 1 && self.seeded.below(4) == 0 {
+            true => u64::MAX - (low - 1),
+            false => low,
         }
     }
 
@@ -4307,18 +4859,18 @@ impl Generating {
         let folded = self.books.fold();
         let roots: Vec<Run> = folded.reservations.keys().copied().collect();
         let event = match self.seeded.below(24) {
-            0 => Some(reset(self.seeded.below(40))),
+            0 => Some(reset(self.some(40))),
             1..=3 => None,
             4 | 5 => self.seeded.pick(&live).map(|parent| Event::Child {
                 parent,
                 child: self.new_run(),
                 micros: self
                     .seeded
-                    .below(self.books.spendable(parent).unwrap_or(0) + 2),
+                    .below(self.books.spendable(parent).unwrap_or(0).saturating_add(2)),
             }),
             6..=9 => self.seeded.pick(&live).map(|by| Event::Dispatch {
                 by,
-                micros: self.seeded.below(8),
+                micros: self.some(8),
             }),
             10..=13 => {
                 // Mostly a request this process has not settled; at times any place.
@@ -4336,7 +4888,7 @@ impl Generating {
                         0 => How::NotSent,
                         1 => How::Answered(None),
                         2 => How::Unresolved,
-                        _ => How::Answered(Some(self.seeded.below(15))),
+                        _ => How::Answered(Some(self.some(15))),
                     },
                 })
             }
@@ -4354,15 +4906,13 @@ impl Generating {
                 };
                 self.seeded.pick(of).map(|run| Event::Adjust {
                     run,
-                    micros: self.seeded.below(15) / (1 + self.seeded.below(2) * 5),
+                    micros: self.some(15) / (1 + self.seeded.below(2) * 5),
                 })
             }
             20 => match self.seeded.below(2) {
                 0 => self.seeded.pick(&live).map(|run| Event::Take {
                     run,
-                    micros: self
-                        .seeded
-                        .below(self.books.spendable(run).unwrap_or(0) + 1),
+                    micros: self.up_to(self.books.spendable(run).unwrap_or(0)),
                 }),
                 _ => self
                     .taken
@@ -4377,7 +4927,7 @@ impl Generating {
                 .map(|(root, place)| Event::Charge {
                     root,
                     place,
-                    micros: self.seeded.below(15),
+                    micros: self.some(15),
                 }),
             _ => self
                 .seeded
@@ -4389,7 +4939,7 @@ impl Generating {
             Some(event) => event,
             None => Event::Admit {
                 run: self.new_run(),
-                micros: self.seeded.below(13),
+                micros: self.some(13),
             },
         };
         let late = wrapped && self.seeded.below(5) == 0;
@@ -4409,12 +4959,15 @@ impl Generating {
     /// dispatched, or a correction with its place, sealed over the names as they are
     /// and naming a turn that is there.
     fn hands(&mut self, room: usize) {
+        if self.scale > 1 && room >= 4 && self.seeded.below(6) == 0 {
+            return self.flood();
+        }
         let names: Vec<Name> = self.books.names().iter().cloned().collect();
         let folded = self.books.fold();
         let roots: Vec<Run> = folded.reservations.keys().copied().collect();
         let run = Run(1 + self.seeded.below(8) as u32);
-        let place = 1 + self.seeded.below(4);
-        let micros = self.seeded.below(15);
+        let place = self.a_place();
+        let micros = self.some(15);
         let epoch = self.seeded.below(3);
         let stage = Stage::ALL[self.seeded.below(3) as usize];
         let sent = names.iter().filter_map(|name| match name {
@@ -4444,7 +4997,7 @@ impl Generating {
                 let micros = match (self.seeded.below(2), stage) {
                     (0, Stage::NotSent) => 0,
                     (0, Stage::Unresolved) => bound,
-                    _ => self.seeded.below(6),
+                    _ => self.some(6),
                 };
                 Event::Plant(Name::Settled {
                     run,
@@ -4496,7 +5049,7 @@ impl Generating {
                 8 => Name::Epoch(1 + epoch),
                 9 => Name::Reset {
                     epoch: 1 + epoch,
-                    micros: self.seeded.below(60),
+                    micros: self.some(60),
                 },
                 // A correction with the seal the command would give it and no
                 // place; and one of any seal.
@@ -4524,6 +5077,132 @@ impl Generating {
         };
         self.push(event.unwrap_or(Event::Plant(Name::Stray { run, count: place })));
     }
+
+    /// Where amounts are large, other hands make the last place a name can name
+    /// under one reservation, and three settlements at the largest amount: four
+    /// events, which bring what a reservation of the largest amount counts for to
+    /// the largest number there is.
+    fn flood(&mut self) {
+        let roots: Vec<Run> = self.books.fold().reservations.keys().copied().collect();
+        let run = self.seeded.pick(&roots).unwrap_or(Run(1));
+        let place = u64::MAX;
+        self.push(Event::Plant(Name::Place { run, place }));
+        for place in 5..8 {
+            self.push(Event::Plant(Name::Settled {
+                run,
+                place,
+                stage: Stage::Answered,
+                micros: u64::MAX - 1,
+            }));
+        }
+    }
+
+    /// A tree whose parent's request is settled over its bound while its child
+    /// holds a share: five events, all the ledger's, in the first process or in
+    /// the second.
+    fn overrun(&mut self, other: bool) {
+        let wrap = |event: Event| if other { second(event) } else { event };
+        let allowance = 10 + self.seeded.below(30);
+        let allowance = allowance.saturating_mul(self.scale).min(u64::MAX - 1);
+        self.push(wrap(reset(allowance)));
+        let amount = (4 + self.seeded.below(7)).saturating_mul(self.scale);
+        let (root, amount) = (self.new_run(), amount.min(u64::MAX - 1));
+        self.push(wrap(Event::Admit {
+            run: root,
+            micros: amount,
+        }));
+        let share = self.scale + self.up_to(amount / 2 - self.scale);
+        let child = self.new_run();
+        self.push(wrap(Event::Child {
+            parent: root,
+            child,
+            micros: share,
+        }));
+        let bound = self.up_to(amount - share);
+        self.push(wrap(Event::Dispatch {
+            by: root,
+            micros: bound,
+        }));
+        // Over the bound: by a little, or by more than the whole reservation.
+        let over = bound.saturating_add(self.scale.saturating_add(self.up_to(amount)));
+        let over = charged(over.min(u64::MAX - 1));
+        self.push(wrap(settle(root.0, 1, over)));
+    }
+
+    /// Other hands take away a whole settlement: itself and its guard; where it
+    /// was over its bound, the last place of its reservation when that holds no
+    /// dispatch; and half the time the last turn of the newest epoch. As many of
+    /// them as there is room for, in that order. Where nothing is settled, one
+    /// other thing other hands do.
+    fn strip(&mut self, room: usize) {
+        let names = self.books.names().clone();
+        let settled = names.iter().filter_map(|name| match name {
+            Name::Settled {
+                run, place, micros, ..
+            } => Some((*run, *place, *micros, name.clone())),
+            _ => None,
+        });
+        let settled: Vec<(Run, u64, u64, Name)> = settled.collect();
+        let Some((run, place, charge, name)) = self.seeded.pick(&settled) else {
+            return self.hands(room);
+        };
+        let mut lost = vec![name, Name::Settling { run, place }];
+        let bound = names.iter().find_map(|name| match name {
+            Name::Dispatched {
+                run: of,
+                place: at,
+                micros,
+                ..
+            } if *of == run && *at == place => Some(*micros),
+            _ => None,
+        });
+        let last = self.books.next_place(run).saturating_sub(1);
+        let holds = |name: &Name| matches!(name, Name::Dispatched { run: of, place: at, .. } if *of == run && *at == last);
+        if bound.is_some_and(|bound| charge > bound) && last >= 1 && !names.iter().any(holds) {
+            lost.push(Name::Place { run, place: last });
+        }
+        let folded = self.books.fold();
+        let epoch = folded.epoch();
+        let turn = folded.next_turn(epoch).saturating_sub(1);
+        if self.seeded.below(2) == 0 && turn >= 1 {
+            lost.push(Name::Turn { epoch, turn });
+        }
+        for name in lost.into_iter().take(room) {
+            self.push(Event::Remove(name));
+        }
+    }
+
+    /// A run that another run called, in the first process or in the second, sends
+    /// a request of anything up to its share, half the time judged late. Where no
+    /// such run executes, one other thing the ledger does.
+    fn child_dispatch(&mut self, other: bool) {
+        let live = self.books.executing_in(other);
+        let called = |run: &Run| self.books.root_of(*run) != Some(*run);
+        let called: Vec<Run> = live.into_iter().filter(called).collect();
+        let Some(by) = self.seeded.pick(&called) else {
+            return self.ledger(true);
+        };
+        let micros = self.up_to(self.books.spendable(by).unwrap_or(0));
+        let event = Event::Dispatch { by, micros };
+        let event = match self.seeded.below(2) {
+            0 => stale(self.up_to(self.events.len() as u64) as usize, event),
+            _ => event,
+        };
+        self.push(if other { second(event) } else { event });
+    }
+
+    /// The events of the first shape, up to `length` of them: about one in four is
+    /// other hands'. With `tree`, about one in four is a request of a run that
+    /// another run called.
+    fn mixed(&mut self, length: usize, tree: Option<bool>) {
+        while self.events.len() < length {
+            match (self.seeded.below(4), tree) {
+                (0, _) => self.hands(length - self.events.len()),
+                (1, Some(other)) => self.child_dispatch(other),
+                _ => self.ledger(true),
+            }
+        }
+    }
 }
 
 /// A generated history: at most [`GENERATED_EVENTS`] events, the same for the same
@@ -4531,16 +5210,21 @@ impl Generating {
 /// made, lost and damaged, whole chains among them, and holds in any epoch up to
 /// three past the newest, for runs that have a reservation and runs that have none. Of the rest, about one
 /// publication in five is judged late, and about one event in four happens in a
-/// second process over the same store.
+/// second process over the same store. One in four, by its number, begins with a
+/// tree whose parent's request is settled over its bound while its child holds a
+/// share, half of those in the second process; in those about one event in four
+/// is a request of a run that another run called.
 pub fn generated(seed: u64, number: u64) -> Vec<Event> {
-    let mut history = Generating::new(seed, number);
+    first_shape(Generating::new(seed, number), number)
+}
+
+fn first_shape(mut history: Generating, number: u64) -> Vec<Event> {
     let length = 1 + history.seeded.below(GENERATED_EVENTS as u64) as usize;
-    while history.events.len() < length {
-        match history.seeded.below(4) {
-            0 => history.hands(length - history.events.len()),
-            _ => history.ledger(true),
-        }
+    let tree = (number % 4 == 3 && length > 5).then_some(number % 8 == 7);
+    if let Some(other) = tree {
+        history.overrun(other);
     }
+    history.mixed(length, tree);
     history.events
 }
 
@@ -4548,23 +5232,60 @@ pub fn generated(seed: u64, number: u64) -> Vec<Event> {
 /// the ledger alone does, in one process and in order, so that the books are ones
 /// it could have written; then one to six things that other hands do; then one
 /// to four things the ledger and its processes do, late ones and a second
-/// process's among them.
+/// process's among them. One in three begins with a tree whose parent's request is
+/// settled over its bound while its child holds a share; about one time in four
+/// what other hands do is to take away a whole settlement, as many of its names
+/// as there is room for; and about one time in three what follows is a request of
+/// a run that another run called, half of those judged late.
 pub fn generated_tampered(seed: u64, number: u64) -> Vec<Event> {
-    let mut history = Generating::new(seed ^ 0x5EED_0F7A_3BE2, number);
+    tampered(Generating::new(seed ^ 0x5EED_0F7A_3BE2, number))
+}
+
+fn tampered(mut history: Generating) -> Vec<Event> {
     // 14 at most, then 6 at most, then 4 at most: 24.
     let first = 3 + history.seeded.below(12) as usize;
+    if history.seeded.below(3) == 0 {
+        history.overrun(false);
+    }
+    let first = first.max(history.events.len());
     while history.events.len() < first {
         history.ledger(false);
     }
     let hands = first + 1 + history.seeded.below(6) as usize;
     while history.events.len() < hands {
-        history.hands(hands - history.events.len());
+        let room = hands - history.events.len();
+        match room >= 2 && history.seeded.below(4) == 0 {
+            true => history.strip(room),
+            false => history.hands(room),
+        }
     }
     let length = hands + 1 + history.seeded.below(4) as usize;
     while history.events.len() < length {
-        history.ledger(true);
+        match history.seeded.below(3) {
+            0 => history.child_dispatch(false),
+            _ => history.ledger(true),
+        }
     }
     history.events
+}
+
+/// What every amount of [`generated_large`] is multiplied by: a sixth of the
+/// largest amount a name can state. An amount chosen from six up is the largest
+/// there is, so that many are, one reservation can be of all an allowance has, and
+/// two are over what a number of 64 bits holds.
+pub const LARGE: u64 = (u64::MAX - 1) / 6;
+
+/// A generated history with amounts near the largest a name can state, and places
+/// other hands make near the largest a name can name: of the first shape for an
+/// even number and of the second for an odd one, the same for the same seed and
+/// number. At most [`GENERATED_EVENTS`] events.
+pub fn generated_large(seed: u64, number: u64) -> Vec<Event> {
+    let mut history = Generating::new(seed ^ 0x1A56_E0F7_11AD, number);
+    history.scale = LARGE;
+    match number % 2 {
+        0 => first_shape(history, number / 2),
+        _ => tampered(history),
+    }
 }
 
 /// The most events a history of [`generated_whole`] has.
