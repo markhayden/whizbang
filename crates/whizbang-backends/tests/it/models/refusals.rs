@@ -1,7 +1,7 @@
 //! What a refusal says (ADR 0017, "What a refusal says"): fixed words, a place in a
 //! record and numbers. Every sentence there is, is here.
 
-use whizbang_backends::models::{Catalogue, Refused, Rule, What};
+use whizbang_backends::models::{Catalogue, InstallationRecord, Refused, Rule, What};
 use whizbang_core::egress::NotAllowed;
 
 use super::{none, shows_nothing_of};
@@ -152,6 +152,13 @@ fn values_nested_past_what_the_reader_follows_are_refused_and_not_followed() {
         Catalogue::parse(deep.as_bytes(), &none()).unwrap_err(),
         Refused::NotJson {
             what: What::Catalogue,
+            line: 1
+        }
+    );
+    assert_eq!(
+        InstallationRecord::parse(deep.as_bytes(), &none()).unwrap_err(),
+        Refused::NotJson {
+            what: What::Installation,
             line: 1
         }
     );
