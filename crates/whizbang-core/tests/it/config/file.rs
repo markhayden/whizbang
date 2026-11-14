@@ -1004,6 +1004,10 @@ fn what_the_reader_does_not_find_or_tell_apart_is_known() {
         Config::parse(text.as_bytes(), &none).unwrap()
     };
     assert_ne!(origin("https://h.example"), origin("https://h.example:443"));
+    assert_ne!(
+        origin("https://h.example").digest(),
+        origin("https://h.example:443").digest()
+    );
     // A secret the reader was told of, written in a form redaction does not search
     // for, is not found: here, with its letters in the other case.
     let secret = "zqxjkvwpyh0123456789".to_owned();

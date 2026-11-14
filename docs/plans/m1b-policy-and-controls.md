@@ -1362,14 +1362,14 @@ executor accepts can write an adjustment, shown as S9 shows it for a reset.
 `docs/adr/0004-toml-config.md` and `schemas/config-v1.json`; rascal
 `crates/rascal-core/src/config.rs` and `schemas/rascal/config-v1.json`.
 
-- [ ] An ADR: one TOML file; where it is found; its tables (`backends`, `spend`, `egress`,
+- [x] An ADR: one TOML file; where it is found; its tables (`backends`, `spend`, `egress`,
       `models`, and `tools`, which is refused until milestone 2 gives it a shape); how
       several named backends of one capability and a default are written, with the example
       of `SPEC.md` section 4 either read as it stands or corrected in this pull request;
       that a credential is named by its variable and never held; the digest, of the
       settings and not of the file's bytes, and exactly what enters it; which settings a
       run records.
-- [ ] The type and its strict reader in `crates/whizbang-core/src/config/`, and
+- [x] The type and its strict reader in `crates/whizbang-core/src/config/`, and
       `docs/guides/config.md`. Nothing is built from a config yet.
 
 **Done when** these pass: the spec's example is read to the backends it shows; an unknown
