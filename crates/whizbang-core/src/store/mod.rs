@@ -684,6 +684,9 @@ pub struct Store {
     /// threads of their own ([`Store::start_place`]). It is kept here, beside the table
     /// of open runs, because it is this writer's count, whoever starts the runs.
     started: Arc<AtomicUsize>,
+    /// The most bytes a generation file this value writes may be:
+    /// [`GENERATION_MAX_BYTES`], unless a test lowered it.
+    generation_max: std::sync::atomic::AtomicU64,
     /// Whether the open that gave this value made the store.
     created: bool,
     /// The writer lock, held for as long as this value lives.
@@ -803,6 +806,15 @@ impl Store {
     /// another process does between two looks can make it wrong.
     pub fn created(&self) -> bool {
         self.created
+    }
+
+    /// For tests: from here on this value writes no generation file of more than this
+    /// many bytes, in place of [`GENERATION_MAX_BYTES`]. It is never more than that,
+    /// and it changes nothing of what is read: a file up to the real limit is read.
+    #[doc(hidden)]
+    pub fn limit_generations_to(&self, bytes: u64) {
+        let bytes = bytes.min(GENERATION_MAX_BYTES);
+        self.generation_max.store(bytes, Ordering::SeqCst);
     }
 
     /// For tests: how many publications of this value have come to the step that one
@@ -959,6 +971,7 @@ impl Store {
             waiting: AtomicUsize::new(0),
             made_runs: Mutex::new(BTreeMap::new()),
             started: Arc::new(AtomicUsize::new(0)),
+            generation_max: std::sync::atomic::AtomicU64::new(GENERATION_MAX_BYTES),
             created,
             lock,
         })
@@ -1492,10 +1505,11 @@ impl Publication<'_> {
             .map_err(|e| Error::corrupt(&layout.generation(number), e.to_string()))?;
         text.push(b'\n');
         // What a reader would refuse is not written: nothing of this is visible yet.
-        if text.len() as u64 > GENERATION_MAX_BYTES {
+        let limit = self.store.generation_max.load(Ordering::SeqCst);
+        if text.len() as u64 > limit {
             return Err(Error::GenerationTooLarge {
                 bytes: text.len() as u64,
-                limit: GENERATION_MAX_BYTES,
+                limit,
             });
         }
         let staged = self.dir.join("generation.json");

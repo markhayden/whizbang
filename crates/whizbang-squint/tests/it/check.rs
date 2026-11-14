@@ -1080,3 +1080,253 @@ fn a_secret_in_a_judges_turn_a_tool_argument_and_a_tool_error_is_in_nothing_unde
     );
     assert!(refused.why().contains("is not quoted"), "{}", refused.why());
 }
+
+// --- the record, against the spec's list ------------------------------------------------------
+
+/// Runs `check` on the photograph against the look-closer script, through an executor
+/// with a ledger whose judge states a bound of 250, under the request id `exit-1`; the
+/// run ends as `how` says: it completes, its judge fails on the second turn, or it is
+/// cancelled while the judge holds its second request.
+fn ended(world: &World, how: &str, ledger: Arc<whizbang_testkit::ledger::FakeLedger>) -> RunId {
+    let crop = crop_of(&world.photo, HALF);
+    let script = if how == "error" {
+        FAILS_ON_TURN_TWO
+    } else {
+        LOOK_CLOSER
+    };
+    let script = script
+        .replace("$photo", &world.photo.id().to_string())
+        .replace("$crop", &crop.id().to_string());
+    let barriers = Barriers::new();
+    let judge = FakeJudge::from_script(script.as_bytes()).unwrap();
+    let judge: Arc<dyn Judge> = match how {
+        "cancelled" => Arc::new(judge.stopping_at(&barriers, "judge")),
+        _ => Arc::new(judge),
+    };
+    let priced = world.engine_priced(judge, Secrets::none(), |action| action, 250);
+    let executor = priced.with_ledger(ledger);
+    let id = whizbang_core::contract::RequestId::parse("exit-1").unwrap();
+    let request = Request::new(world.check()).with_id(id);
+    if how != "cancelled" {
+        let Ok(Answer::Ran(finished)) = executor.request(&request) else {
+            panic!("{how}: the request did not run");
+        };
+        assert_eq!(finished.outcome().name(), how);
+        return finished.run().clone();
+    }
+    let Ok(Answer::Started(run)) = executor.start(&request) else {
+        panic!("the run was not started");
+    };
+    barriers.release("judge");
+    barriers.arrived("judge", 2);
+    assert_eq!(executor.cancel(&run), Ok(Cancel::Accepted));
+    barriers.open("judge");
+    let waited = executor.wait(&run).unwrap();
+    assert_eq!(waited.state(), &RunState::Ended(Outcome::Cancelled));
+    run
+}
+
+#[test]
+fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists() {
+    // `SPEC.md` section 3, "What every run records", group by group, for a run of
+    // `check` that completed, one whose judge failed on its second turn and one
+    // that was cancelled, each through an executor with a ledger and a judge that
+    // states a bound. Egress is there and empty: nothing in this checkpoint sends
+    // data anywhere. A model's device and whether a cache answered are null: no
+    // response says either yet.
+    for (how, turns, calls) in [("completed", 3, 2), ("error", 2, 1), ("cancelled", 2, 1)] {
+        let world = World::new();
+        let ledger = Arc::new(whizbang_testkit::ledger::FakeLedger::new());
+        let run = ended(&world, how, ledger.clone());
+        let left = left(&world.root(), world.fs.clone(), &run);
+        let record: Json = serde_json::from_slice(&left.names["record"].1).unwrap();
+
+        // Identity.
+        assert_eq!(
+            record["identity"],
+            json!({"run": run.as_str(), "request": "exit-1", "parent": null,
+                   "whizbang": env!("CARGO_PKG_VERSION")}),
+            "{how}"
+        );
+        // What was asked: the action, and its exact arguments, the two that have a
+        // value by default among them; no settings yet; the config's digest.
+        assert_eq!(
+            record["asked"],
+            json!({"action": "check", "version": "1.0.0", "settings": [],
+                   "arguments": [{"name": "tools", "value": {"text": "view"}},
+                                 {"name": "max_output_tokens", "value": {"integer": 1024}}],
+                   "config": Digest::of_bytes(b"").to_string()}),
+            "{how}"
+        );
+        // Inputs and outputs: the photograph with its binding. `check` commits no
+        // output, whatever it comes to: its result is its verdict.
+        assert_eq!(
+            record["inputs"],
+            json!([{"port": "images", "type": "image",
+                    "artifact": world.photo.id().to_string(),
+                    "binding": world.photo.binding().id().to_string()}]),
+            "{how}"
+        );
+        assert_eq!(record["outputs"], json!([]), "{how}");
+        // Outcome: the status, and for the error its type and message.
+        let error = match how {
+            "error" => json!({"kind": "judge_fault", "message": "unavailable: overloaded"}),
+            _ => Json::Null,
+        };
+        assert_eq!(
+            record["outcome"],
+            json!({"status": how, "error": error, "invalid": null, "refusals": [],
+                   "refusals_omitted": 0}),
+            "{how}"
+        );
+
+        // Models: one for every request to the judge, with the fake's identity.
+        let models = record["models"].as_array().unwrap();
+        assert_eq!(models.len(), turns, "{how}");
+        for (at, model) in models.iter().enumerate() {
+            let ended = match (how, at) {
+                ("error", 1) => "unavailable",
+                ("cancelled", 1) => "cancelled",
+                _ => "answered",
+            };
+            assert_eq!(
+                model,
+                &json!({"capability": "judge", "backend": "fake", "model": "fake-judge",
+                        "version": "1", "device": null, "cached": null, "ended": ended}),
+                "{how}: request {at}"
+            );
+        }
+        // Steps: every tool call, in order, with the run it made; and each of those
+        // runs has a record of its own, under this run, with the call's arguments.
+        let steps = record["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), calls, "{how}");
+        for step in steps {
+            assert_eq!(step["step"], "call");
+            assert_eq!(
+                (&step["action"], &step["status"]),
+                (&json!("view"), &json!("completed"))
+            );
+            let child = RunId::parse(step["run"].as_str().unwrap()).unwrap();
+            let child = super::world::left(&world.root(), world.fs.clone(), &child);
+            let child: Json = serde_json::from_slice(&child.names["record"].1).unwrap();
+            assert_eq!(child["identity"]["parent"], run.as_str());
+            assert_eq!(child["asked"]["arguments"].as_array().unwrap().len(), 4);
+            assert_eq!(child["outputs"].as_array().unwrap().len(), 1);
+            // What it drew from this run's allowance: `view` costs nothing.
+            assert_eq!(child["spend"]["reserved_micros"], 0);
+        }
+        // Time: start and end, and a duration for each request and each call.
+        let time = &record["time"];
+        assert!(time["start_ms"].as_u64() < time["end_ms"].as_u64(), "{how}");
+        let durations = time["durations"].as_array().unwrap();
+        let of = |what: &str| durations.iter().filter(|d| d["of"] == what).count();
+        assert_eq!((of("request"), of("call")), (turns, calls), "{how}");
+        assert_eq!(durations.len(), turns + calls);
+        // Spend: what the ledger reserved for the run, the judge's bound, and no
+        // paid request, since no fake charges. The reservation is in the store.
+        assert_eq!(
+            record["spend"],
+            json!({"reserved_micros": 250, "requests": []}),
+            "{how}"
+        );
+        let reader = whizbang_core::store::Reader::open(&world.root(), world.fs.clone());
+        let reserved = ledger.reservations(&reader.unwrap()).unwrap();
+        let [reservation] = reserved.as_slice() else {
+            panic!("{how}: {} reservations", reserved.len());
+        };
+        assert_eq!((reservation.run(), reservation.micros()), (&run, 250));
+        assert_eq!(record["egress"], json!([]), "{how}");
+
+        // Judge: every turn, with what was sent and received kept whole in the
+        // exchange it names; token usage; and the verdict, of the run that
+        // completed and of no other.
+        let judged = record["judge"].as_array().unwrap();
+        let verdict = json!({"judge": "verdict", "decision": "pass",
+                             "why": "The corner is clean."});
+        match how {
+            "completed" => assert_eq!(judged.last(), Some(&verdict)),
+            _ => assert!(judged.iter().all(|entry| entry["judge"] == "turn"), "{how}"),
+        }
+        let turned: Vec<&Json> = judged.iter().filter(|e| e["judge"] == "turn").collect();
+        assert_eq!(turned.len(), turns, "{how}");
+        let usage = json!({"input_tokens": 900, "output_tokens": 40,
+                           "cache_read_tokens": 0, "cache_write_tokens": 0});
+        // The script of the failing judge states no usage and no id of its own.
+        if how != "error" {
+            assert_eq!(turned[0]["usage"], usage, "{how}");
+            assert_eq!(turned[0]["provider_id"], "r-1");
+        }
+        for (at, turn) in turned.iter().enumerate() {
+            assert_eq!(turn["request"], at);
+            assert_eq!(turn["excluded"], Json::Null);
+            let exchange = left.exchange(at + 1);
+            assert_eq!(
+                turn["exchange"],
+                format!("diagnostics/exchange-{:04}", at + 1)
+            );
+            // What was sent: the system prompt, every message so far, the tools and
+            // the limit. A picture is its size and its pixel digest.
+            assert!(
+                exchange["system"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("You check images.")
+            );
+            let sent = exchange["messages"].as_array().unwrap();
+            assert_eq!(turn["messages"], sent.len());
+            assert_eq!(sent.len(), 1 + 2 * at, "{how}: turn {at}");
+            let pixels = world.photo.identity().pixels.to_string();
+            let shown = json!({"image": {"width": 96, "height": 64, "pixels": pixels}});
+            assert_eq!(sent[0]["parts"][1], shown);
+            assert_eq!(exchange["tools"][0]["name"], "view");
+            assert_eq!(exchange["max_output_tokens"], 1024);
+            // What was received: the turn as the judge gave it, or its fault.
+            let answer = &exchange["answer"];
+            match (how, at) {
+                ("error", 1) => assert_eq!(answer["fault"]["kind"], "unavailable"),
+                ("cancelled", 1) => assert_eq!(answer["fault"]["kind"], "cancelled"),
+                _ => {
+                    assert_eq!(turn["stop"], answer["turn"]["stop"]);
+                    let calls = answer["turn"]["parts"].as_array().unwrap();
+                    let calls = calls.iter().filter(|p| p.get("tool_call").is_some());
+                    assert_eq!(turn["tool_calls"], calls.count());
+                }
+            }
+            // A turn that was answered is said back whole in the next request.
+            if at > 0 {
+                let before = left.exchange(at);
+                assert_eq!(sent[2 * at - 1]["parts"], before["answer"]["turn"]["parts"]);
+                assert_eq!(sent[2 * at - 1]["role"], "assistant");
+                assert_eq!(
+                    sent[..2 * at - 1],
+                    before["messages"].as_array().unwrap()[..]
+                );
+            }
+        }
+        let first = left.exchange(1);
+        let said = &first["answer"]["turn"]["parts"];
+        if how != "error" {
+            assert_eq!(said[0], json!({"text": "I will look at the middle."}));
+        }
+        let looked = json!({"image": world.photo.id().to_string(),
+                            "bbox": [0.25, 0.25, 0.75, 0.75]});
+        let call = said.as_array().unwrap().last().unwrap();
+        assert_eq!(call["tool_call"]["arguments"], looked);
+
+        // Diagnostics: the journal, each exchange and each crop kept as evidence,
+        // every one listed with the digest and length of what the store holds.
+        let listed = record["diagnostics"].as_array().unwrap();
+        assert_eq!(listed.len(), 1 + turns + calls, "{how}");
+        for diagnostic in listed {
+            let name = diagnostic["name"].as_str().unwrap();
+            let (kind, bytes) = &left.names[name];
+            assert_eq!(*kind, Stored::Diagnostic);
+            assert_eq!(diagnostic["bytes"].as_u64(), Some(bytes.len() as u64));
+            let digest = whizbang_core::store::Digest::of_bytes(bytes);
+            assert_eq!(diagnostic["digest"], format!("sha256:{}", digest.hex()));
+        }
+        assert!(left.has("evidence-001") && left.names.contains_key("journal"));
+        assert_eq!(record["record"], "run/2");
+        assert_eq!(record.as_object().unwrap().len(), 13, "{how}");
+    }
+}

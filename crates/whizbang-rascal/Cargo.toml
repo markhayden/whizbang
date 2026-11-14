@@ -17,6 +17,7 @@ whizbang-core.workspace = true
 
 [dev-dependencies]
 whizbang-testkit.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

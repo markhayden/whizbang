@@ -645,6 +645,11 @@ impl Executor for Nested {
         Asked(self).submit(call).map_err(CallError::pathless)
     }
 
+    // No test reaches `Answer::pathless` here or in `start`, because no route does:
+    // only a repeat holds a run's state, a repeat is the answer to a request with an
+    // id, and a call from inside an action that carries one is refused before
+    // anything is looked up (`Refusal::IdInside`). The mapping stays, so that the day
+    // a nested call may carry an id its answer is already fit for an action.
     fn request(&self, request: &Request) -> Result<Answer, CallError> {
         let answer = Asked(self).request(request);
         answer.map(Answer::pathless).map_err(CallError::pathless)

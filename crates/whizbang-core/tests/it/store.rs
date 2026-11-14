@@ -496,49 +496,51 @@ fn the_pointer_a_generation_file_and_the_lock_file_are_each_read_up_to_a_limit()
 
 #[test]
 fn a_publication_that_would_write_a_generation_file_over_the_limit_is_refused_unseen() {
-    // What the store will not read it does not write. Names of a mebibyte each fill
-    // a generation file to within two of the limit; a publication that adds two more is
-    // refused before anything of it is visible, and the store goes on.
+    // What the store will not read it does not write. The limit is 64 MiB; it is
+    // lowered here, through the store's seam for tests, to a little over what the
+    // store's generation file is with one run more. A publication that adds names
+    // is refused before anything of it is visible, and the store goes on.
+    assert_eq!(GENERATION_MAX_BYTES, 64 << 20);
     let dir = Scratch::new("store");
     let root = with_old(&dir);
     let store = Store::open(&root, Arc::new(RealFs)).unwrap();
-    let name = |at: usize| format!("{at:02}{}", "n".repeat(1 << 20));
     let mut publication = store.begin().unwrap();
-    for at in 0..61 {
-        publication.put(&name(at), B).unwrap();
-    }
-    publication
-        .put_in("big", &name(61), whizbang_core::store::Kind::Output, B)
-        .unwrap();
+    let output = whizbang_core::store::Kind::Output;
+    publication.put_in("big", "mask", output, B).unwrap();
     assert_eq!(publication.publish().unwrap().generation, 2);
     let full = std::fs::metadata(root.join("generations/2.json")).unwrap();
-    assert!(
-        full.len() > GENERATION_MAX_BYTES - (2 << 20),
-        "{}",
-        full.len()
-    );
-    // Sixty-two names are in it; two more would be sixty-four mebibytes and over.
+    store.limit_generations_to(full.len() + 100);
     let more = || {
         let mut publication = store.begin().unwrap();
-        publication.put(&name(70), B).unwrap();
-        publication.put(&name(71), B).unwrap();
+        publication.put(&"n".repeat(200), B).unwrap();
         publication.publish()
     };
     let refused = more().unwrap_err();
     let Error::GenerationTooLarge { bytes, limit } = refused else {
         panic!("{refused:?}");
     };
-    assert!(bytes > limit && limit == GENERATION_MAX_BYTES, "{bytes}");
+    assert!(bytes > limit && limit == full.len() + 100, "{bytes}");
     assert_eq!(store.snapshot().unwrap().number(), 2);
     assert!(!root.join("generations/3.json").exists());
+    // A file of exactly the limit is written.
+    store.limit_generations_to(bytes);
+    assert_eq!(more().unwrap().generation, 3);
 
-    // A full store is not stuck: a deletion makes the file smaller, so it is
-    // published, and there is room again for what was refused.
-    assert_eq!(store.delete(&["big"]).unwrap().generation, 3);
-    assert_eq!(more().unwrap().generation, 4);
+    // The store is now full to the byte. It is not stuck: a deletion makes the file
+    // smaller, so it is published, and there is room again for what was refused.
+    let refused = {
+        let mut publication = store.begin().unwrap();
+        publication.put("one-more", B).unwrap();
+        publication.publish().unwrap_err()
+    };
+    assert!(matches!(refused, Error::GenerationTooLarge { .. }));
+    assert_eq!(store.delete(&["big"]).unwrap().generation, 4);
+    let mut publication = store.begin().unwrap();
+    publication.put("c", C).unwrap();
+    assert_eq!(publication.publish().unwrap().generation, 5);
     let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
     let generation = reader.snapshot().unwrap();
-    assert_eq!((generation.number(), generation.entries().len()), (4, 65));
+    assert_eq!((generation.number(), generation.entries().len()), (5, 4));
     assert!(generation.runs().is_empty());
 }
 

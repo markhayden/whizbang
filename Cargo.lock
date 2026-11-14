@@ -483,6 +483,7 @@ dependencies = [
 name = "whizbang-rascal"
 version = "0.0.1"
 dependencies = [
+ "serde_json",
  "whizbang-core",
  "whizbang-testkit",
 ]

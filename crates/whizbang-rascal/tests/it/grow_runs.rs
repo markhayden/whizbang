@@ -426,3 +426,132 @@ fn a_commit_of_grow_that_the_store_refuses_publishes_no_mask_and_no_status_or_bo
     }
     assert_eq!(seen.into_iter().collect::<Vec<_>>(), [false, true]);
 }
+
+// --- the record, against the spec's list ------------------------------------------------------
+
+/// The record of the one run of `grow` a world holds, as the JSON that is stored, with
+/// what the store holds of the run beside it.
+fn record_of(world: &World) -> (serde_json::Value, Held) {
+    let after = reopened(world);
+    let [run] = after.runs.as_slice() else {
+        panic!("{} runs", after.runs.len());
+    };
+    let stored = run.names.iter().find(|(name, _)| name == "record");
+    let document = serde_json::from_slice(&stored.expect("a record").1).unwrap();
+    (document, after)
+}
+
+#[test]
+fn the_records_of_grow_completed_failed_and_cancelled_hold_what_the_spec_lists() {
+    // `SPEC.md` section 3, "What every run records", group by group, for a run of
+    // `grow` that completed, one that failed and one that was cancelled, each through
+    // an executor with a ledger. A group that `grow` has nothing for is there and
+    // empty: it asks no capability, so it has no model, no paid request and no
+    // egress; it calls no action, so it has no step; and it asks no judge.
+    use serde_json::{Value as Json, json};
+    use whizbang_testkit::ledger::FakeLedger;
+    let failing = || Around::after(|_, _| Err(Failure::error("made", "the test failed it")));
+    let cancelling = || Around::before(|context| context.cancellation().cancel());
+    let cases: [(&str, Arc<dyn whizbang_core::contract::Action>); 3] = [
+        ("completed", Arc::new(Grow::new())),
+        ("error", Arc::new(failing())),
+        ("cancelled", Arc::new(cancelling())),
+    ];
+    for (status, action) in cases {
+        let world = World::new();
+        let input = world.import(&fixture());
+        let ledger = Arc::new(FakeLedger::new());
+        let engine = engine_over(world.store(), action).with_ledger(ledger.clone());
+        let Ok(Answer::Ran(finished)) = engine.request(&request(input, "exit-1")) else {
+            panic!("{status}: the request did not run");
+        };
+        assert_eq!(finished.outcome().name(), status);
+        drop(engine);
+        let (record, after) = record_of(&world);
+        let run = &after.runs[0];
+
+        // Identity: the run, the request, no parent, the version.
+        assert_eq!(
+            record["identity"],
+            json!({"run": finished.run().as_str(), "request": "exit-1", "parent": null,
+                   "whizbang": env!("CARGO_PKG_VERSION")}),
+            "{status}"
+        );
+        // What was asked: the action, its exact arguments, no settings yet, and the
+        // digest of the config, which is of no bytes.
+        assert_eq!(
+            record["asked"],
+            json!({"action": "grow", "version": "1.0.0", "settings": [],
+                   "arguments": [{"name": "px", "value": {"number": 2.5}},
+                                 {"name": "down_px", "value": {"number": 3.0}}],
+                   "config": whizbang_core::identity::Digest::of_bytes(b"").to_string()}),
+            "{status}"
+        );
+        // Inputs and outputs: the input with its binding; a reference to the output
+        // of the run that completed, and none of the others.
+        assert_eq!(
+            record["inputs"],
+            json!([{"port": "mask", "type": "mask", "artifact": input.to_string(),
+                    "binding": fixture().binding().id().to_string()}]),
+            "{status}"
+        );
+        let outputs = match status {
+            "completed" => json!([{"port": "mask", "type": "mask",
+                                   "artifact": expected().id().to_string()}]),
+            _ => json!([]),
+        };
+        assert_eq!(record["outputs"], outputs, "{status}");
+        // Outcome: the status; for the error its type and message; no refusal.
+        let error = match status {
+            "error" => json!({"kind": "made", "message": "the test failed it"}),
+            _ => Json::Null,
+        };
+        assert_eq!(
+            record["outcome"],
+            json!({"status": status, "error": error, "invalid": null, "refusals": [],
+                   "refusals_omitted": 0}),
+            "{status}"
+        );
+        // Time: start and end; no step, call or request to give a duration.
+        let (start, end) = (&record["time"]["start_ms"], &record["time"]["end_ms"]);
+        assert!(start.as_u64().unwrap() > 0 && start.as_u64() <= end.as_u64());
+        assert_eq!(record["time"]["durations"], json!([]), "{status}");
+        // Spend: the ledger took part, so an amount was reserved for the run: none,
+        // since `grow` asks nothing that costs. It is in the store under the run.
+        assert_eq!(
+            record["spend"],
+            json!({"reserved_micros": 0, "requests": []}),
+            "{status}"
+        );
+        let reader = Reader::open(&world.root(), Arc::new(ShimFs::new())).unwrap();
+        let reserved = ledger.reservations(&reader).unwrap();
+        let [reservation] = reserved.as_slice() else {
+            panic!("{status}: {} reservations", reserved.len());
+        };
+        assert_eq!(
+            (reservation.run(), reservation.micros()),
+            (finished.run(), 0)
+        );
+        // Models, egress, steps and judge: there, and empty.
+        for group in ["models", "egress", "steps", "judge"] {
+            assert_eq!(record[group], json!([]), "{status}: {group}");
+        }
+        // Diagnostics: the journal and what the action wrote, each listed with the
+        // digest and length of what the store holds under its name, whatever the
+        // outcome.
+        let listed = record["diagnostics"].as_array().unwrap();
+        let names: Vec<&str> = listed.iter().map(|d| d["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["diagnostics/grow.json", "journal"], "{status}");
+        for diagnostic in listed {
+            let name = diagnostic["name"].as_str().unwrap();
+            let (_, bytes) = run.names.iter().find(|(held, _)| held == name).unwrap();
+            assert_eq!(diagnostic["bytes"].as_u64(), Some(bytes.len() as u64));
+            let digest = whizbang_core::store::Digest::of_bytes(bytes);
+            assert_eq!(diagnostic["digest"], format!("sha256:{}", digest.hex()));
+        }
+        // And nothing else: the eleven groups of the list, of which inputs and
+        // outputs are two fields, and the record's kind.
+        assert_eq!(record["record"], "run/2");
+        assert_eq!(record.as_object().unwrap().len(), 13, "{status}");
+    }
+}
