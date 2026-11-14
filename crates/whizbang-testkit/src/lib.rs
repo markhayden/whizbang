@@ -3,6 +3,7 @@
 
 pub mod barrier;
 pub mod capabilities;
+pub mod downloads;
 pub mod echo;
 pub mod fs_shim;
 pub mod ledger;

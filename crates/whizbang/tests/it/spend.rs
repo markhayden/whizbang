@@ -48,6 +48,9 @@ fn the_help_lists_spend_and_says_that_it_is_not_built() {
     let help = text(&out.stdout);
     assert!(help.contains("Not built"), "{help}");
     assert!(help.contains("exits 1"), "{help}");
+    // Where its commands are: not here yet.
+    assert!(help.contains("status") && help.contains("reset"), "{help}");
+    assert!(help.contains("arrive with later tasks"), "{help}");
     assert_eq!(text(&out.stderr), "");
 }
 

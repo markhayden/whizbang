@@ -359,6 +359,14 @@ reading of it needs one, which C1 then asks a base task for) and Z1, and by no s
 by no other, but for the interfaces' ADR, which each of I1 to I7 adds its section to, one
 at a time. `docs/carry-over.md` is changed by every task in its own rows.
 
+Two things a side task needs of a root file, and where each is made. B0b also makes the
+empty module root `downloads` of the test kit, so that M2 fills
+`crates/whizbang-testkit/src/downloads.rs` and leaves the test kit's `lib.rs` alone. And
+a side task may change `Cargo.lock` in one way: by adding a dependency to the manifest
+of its own strand's crate, as M1 will to `whizbang-backends`. A crate that is new to the
+lock file is justified in that pull request as B0b's TOML reader was, and `just deny`
+passes on it. Any other change to a root file is a base task's.
+
 ## Order
 
 Each task needs every task listed for it to be merged first. "PRs" is 2 where the task is
@@ -610,7 +618,7 @@ or an origin that holds a secret the constructor was told of is refused whole, b
 is cut, and not shown (rule 4).
 **Carry-over:** the row on squint's `recipient`. **Size:** small.
 
-### B3. Fakes that quote, fail at a stage and name a recipient
+### B3. Fakes that quote, charge, fail at a stage and name a recipient
 
 **Depends on:** B2.
 
@@ -926,7 +934,9 @@ recovery wrote or said (rule 4). Then: a repeat of the request is `Ended` with t
 (rule 2).
 **Carry-over:** the row on an admission that was visible and not confirmed, as far as the
 next open; the new row on a fuller record of interrupted runs (owner: none; reopen on
-need). **Size:** medium.
+need); the row on what running an action does not do yet (milestone 2), which says that
+nothing marks a run a dead process left: this task marks it, and corrects the row.
+**Size:** medium.
 
 ### I5. A policy before a send, and a checked send
 
@@ -1544,9 +1554,10 @@ and 5.3 and `schemas/core/installable.json`.
       and hashes, the origins they may be downloaded from, licence, features, and a
       revision); an installation and its record, which holds the catalogue's and the
       adapter's revisions; the installation's identity; the pointer that names the one in
-      use; holds as file locks. And the two sentences of `SPEC.md` named under "Decisions".
-- [ ] `whizbang-backends` is created, with the catalogue and the installation record as
-      types read strictly. Nothing installs yet.
+      use; holds as file locks. It edits nothing in `SPEC.md`: the two sentences named
+      under "Decisions" are B0b's.
+- [ ] The catalogue and the installation record are added to `whizbang-backends`, the
+      crate B0b made, as types read strictly. Nothing installs yet.
 
 **Done when** these pass: a catalogue and an installation record each round-trip; each is
 refused over its bound before it is read, and with an unknown field, a hash of the wrong
@@ -1856,6 +1867,8 @@ New rows this plan asks for, added by B0, each with the task that brings it in l
 with what was built: a fuller record of what an interrupted run did, owner "none; reopen
 on need" (I4b); `whizbang models list|get|remove` and their guide, 1C (M6b); `whizbang
 backends status`, 1C (Z1); the real network client and the shipped catalogue, 1C (Z1).
+And one that B0b added, which Z1's list asks for: what the worker's queue owes to
+removal, 1C (M5b).
 The row on what running an action does not do yet (milestone 2) keeps the bound on a
 ledger being asked again; 1B adds none.
 

@@ -50,6 +50,9 @@ enum Command {
         command: rascal::Command,
     },
     /// Spend: a store's allowance. Not built yet: it says so and exits 1.
+    ///
+    /// It takes no argument. Its commands, status and reset, arrive with later tasks
+    /// of checkpoint 1B.
     Spend,
 }
 
