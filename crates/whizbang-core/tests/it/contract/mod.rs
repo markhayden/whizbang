@@ -16,6 +16,7 @@ mod execute;
 mod facts;
 mod fixtures;
 mod nested;
+mod part;
 mod prepare;
 mod record;
 mod record3;

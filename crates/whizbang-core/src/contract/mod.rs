@@ -23,7 +23,9 @@
 //! after. And nested calls: the executor in an action's [`Context`] admits a call under
 //! the action's run, with an allowance taken from that run's, and refuses a fifth level
 //! and a call back; a cancellation reaches every run under the one it cancels. The
-//! ledger itself and settlement are not here.
+//! ledger itself and settlement are not here. And the executor's parts (ADR 0015): an
+//! [`AdmissionPart`] is asked before each attempt at an admission's publication, may
+//! refuse the call, and may add records among the run's names.
 
 mod call;
 mod context;
@@ -34,6 +36,7 @@ mod journal;
 pub mod ledger;
 mod live;
 mod nested;
+mod part;
 mod prepare;
 pub mod record;
 mod redact;
@@ -64,6 +67,10 @@ pub use ledger::{
 #[doc(hidden)]
 pub use nested::HeldOpen;
 pub use nested::{DESCENDANTS_LIMIT, LEVELS_LIMIT, STARTED_LIMIT};
+pub use part::{
+    AdmissionPart, Asking, PART_RECORD_MAX_BYTES, PART_RECORDS_LIMIT, PART_RECORDS_PREFIX,
+    PartDeclined, PartRefusal, PartStep, part_record_name,
+};
 pub use prepare::{
     ARGUMENTS_TEXT_MAX_BYTES, Backends, CallError, Estimate, INPUTS_LIMIT, InputFault, Missing,
     ModelIdentity, Need, NoBackends, PreparedCall, Readiness, Refusal, ResolvedInput, Stale,
