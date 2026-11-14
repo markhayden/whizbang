@@ -24,6 +24,8 @@ come through redaction, and through a wait stated after them; what no charge on 
 answered fault means. Named here, which an earlier line left out: the heading "Limits,
 each pinned" became "Limits of the quote and the price, each pinned" when task B1b
 added its own limits.
+Amended: 2026-11-14, with task B3. Added: a charge made of a whole number
+(`Charge::whole`).
 Spec: section 4, "Backends"; section 6, "Spend"
 
 ## Context
@@ -238,7 +240,11 @@ number is not finite, is less than nothing, or is 2 to the power 64 or more, so 
 charge is the largest amount; and a fraction of the unit is rounded up, so that what is
 counted is never under what was charged
 (`charge::a_charge_cannot_be_made_negative_or_over_the_largest_amount`,
-`charge::a_charge_is_a_whole_count_of_the_unit_rounded_up`). A charge may be over the
+`charge::a_charge_is_a_whole_count_of_the_unit_rounded_up`). Whoever counts in whole
+millionths makes a charge of the whole number (`Charge::whole`), exactly: a float holds
+every whole number only up to 2 to the power 53, and `Charge::of_micros` rounds one
+past that as the float does
+(`charge::a_charge_of_a_whole_number_is_that_number_exactly`). A charge may be over the
 bound that was quoted: it is a fact about money already spent, and nothing here compares
 the two.
 

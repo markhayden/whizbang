@@ -1,7 +1,7 @@
-//! The examples of the config's record are read by the reader they describe (plan 1B,
-//! "Rules every task's tests follow", 5): a block fenced as `toml` is read, and a block
-//! fenced as `toml refused` is refused with exactly the sentence in the `text` block
-//! that follows it.
+//! The examples of the config's guide and of its record are read by the reader they
+//! describe (plan 1B, "Rules every task's tests follow", 5): a block fenced as `toml`
+//! is read, and a block fenced as `toml refused` is refused with exactly the sentence
+//! in the `text` block that follows it.
 
 use whizbang_core::config::Config;
 use whizbang_core::contract::Secrets;
@@ -56,9 +56,20 @@ fn read_the_examples_of(page: &str) -> (usize, usize) {
 }
 
 #[test]
-fn every_example_in_the_record_is_read() {
+fn every_example_in_the_guide_and_in_the_record_is_read() {
+    let guide = include_str!("../../../../../docs/guides/config.md");
     let record = include_str!("../../../../../docs/adr/0011-the-config-file.md");
-    // The count is held, so that an example whose fence was mistyped, and which this
+    // The counts are held, so that an example whose fence was mistyped, and which this
     // test would then pass over, is missed here.
+    assert_eq!(read_the_examples_of(guide), (4, 5));
     assert_eq!(read_the_examples_of(record), (3, 0));
+}
+
+#[test]
+fn the_guides_first_example_is_the_specs() {
+    // The guide opens with the example of `SPEC.md` section 4, as the spec has it.
+    let guide = include_str!("../../../../../docs/guides/config.md");
+    let first = &blocks(guide)[0];
+    assert_eq!(first.0, "toml");
+    assert_eq!(first.1, super::the_specs_example());
 }

@@ -65,6 +65,11 @@ impl Config {
     /// Reads a config from what this gives, as [`Config::read`] reads an opened file:
     /// no more than [`CONFIG_BYTES_LIMIT`] and one byte is asked of it, however much it
     /// has, and more than the limit is refused.
+    ///
+    /// It makes no check of what it reads from. That a path names a file, and the
+    /// file's length before it is opened, are [`Config::read`]'s to look at; a pipe or
+    /// a terminal handed here is read until it ends or the bound is reached, and can
+    /// block.
     pub fn read_from(from: impl std::io::Read, secrets: &Secrets) -> Result<Config, ConfigRefused> {
         let mut bytes = Vec::new();
         from.take(CONFIG_BYTES_LIMIT + 1)
