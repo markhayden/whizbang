@@ -287,3 +287,28 @@ fn known_a_turn_and_a_fault_read_back_from_data_carry_no_charge_and_no_stated_st
     let fault = read[2].as_ref().unwrap_err();
     assert_eq!(fault.stage(), Stage::Unresolved);
 }
+
+#[test]
+fn a_charge_of_a_whole_number_is_that_number_exactly() {
+    // A float holds every whole number up to 2 to the power 53 and not all of them
+    // after: one more than that, as a float, is not itself. A charge counted in whole
+    // millionths is made of the whole number, and is that number.
+    let past = (1_u64 << 53) + 1;
+    assert_ne!(past as f64 as u64, past);
+    assert_eq!(Charge::whole(past).unwrap().micros(), past);
+    for micros in [0, 1, 450, u64::MAX - 1] {
+        assert_eq!(Charge::whole(micros).unwrap().micros(), micros);
+    }
+    assert_eq!(
+        Charge::whole(450).unwrap(),
+        Charge::of_micros(450.0).unwrap()
+    );
+    // The largest whole number is no amount (ADR 0007), and is no charge.
+    let refused = Charge::whole(u64::MAX).unwrap_err();
+    assert!(matches!(refused, Unfit::OutOfRange { .. }), "{refused:?}");
+    assert_eq!(
+        refused.to_string(),
+        "a charge is 18446744073709551615: a value is a whole number of millionths of a US \
+         dollar, under the largest there is"
+    );
+}

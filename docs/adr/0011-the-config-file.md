@@ -1,15 +1,22 @@
 # 0011. The config file: one TOML file, named by a flag and read strictly
 
-Status: accepted. Names ADR 0005 ("Redaction": the secrets a reader is told of), ADR
-0006 ("Resolution": what a capability's default is) and ADR 0012 (an origin, an address,
-an account, a recipient and the classes of data, which the reader makes by that record's
-rules)
+Status: accepted. Names ADR 0001 (the encoding its digest uses), ADR 0005 ("Redaction":
+the secrets a reader is told of), ADR 0006 ("Resolution": what a capability's default
+is), ADR 0007 (`ConfigSource`, which answers this digest once task C4 builds a source
+over the file) and ADR 0012 (an origin, an address, an account, a recipient and the
+classes of data, which the reader makes by that record's rules)
 Date: 2026-11-13
-Amended: 2026-11-14, inside checkpoint 1B, after ADR 0012 gave the egress types. Changed:
-an origin, a backend's address, an account, a recipient and its classes are made by those
-types and held to their rules, where this record had rules of its own for each; an
-origin written in capitals or with its scheme's own port is the same origin; one
-recipient is approved once. The two rules that stay the file's own are marked as such.
+Amended: 2026-11-13, inside checkpoint 1B, with the second part of task C1. Added: "The
+digest", with its consequences and the two alternatives it turned down. Changed: the
+paragraph that said a config had no digest yet.
+Amended: 2026-11-14, a second note, after ADR 0012 gave the egress types. Changed: an
+origin, a backend's address, an account, a recipient and its classes are made by those
+types and held to their rules, where this record had rules of its own for each; one
+recipient is approved once; the two rules that stay the file's own are marked as such.
+And in "The digest": an origin and a backend's address are hashed as an origin writes
+itself, so the digest of a config with an origin in capitals, or with its scheme's own
+port written, is not what it was for one day; no digest had been stored, since nothing
+makes one of a config yet.
 Spec: section 4, "Backends" (config, resolution, credentials); section 6, "Spend";
 section 10, "Egress"
 
@@ -41,16 +48,15 @@ a key pasted where it does not belong.
 ## Decision
 
 The code is `crates/whizbang-core/src/config/`; its tests are
-`crates/whizbang-core/tests/it/config/` (`file`, `examples`), and a test named below is
-in that folder. Nothing is built from a config at this head: no command takes one, and
+`crates/whizbang-core/tests/it/config/` (`file`, `digest`, `examples`), and a test named
+below is in that folder. Nothing is built from a config at this head: no command takes one, and
 the roster, the cap, the policy and the settings of a run are made from it by tasks C4
 and C5 of the plan.
 
-This record is brought in two parts, because the task came to more than one pull
-request's worth. This is the first: the file, its shape and how it is read. **The digest
-of a config is the second part,** a section this record gains with the code and the
-fixed digests that hold it; at this head a config has no digest, and the executor is
-still built with the digest of no bytes.
+This record was brought in two parts, because the task came to more than one pull
+request's worth: first the file, its shape and how it is read; then "The digest". The
+executor is still built with the digest of no bytes until task C4 gives it a source over
+the file.
 
 ### Where the file is
 
@@ -290,6 +296,82 @@ file and the reason.
   first 64 characters of that, with three dots when there were more
   (`KEY_SHOWN_LIMIT`; `file::a_key_in_a_refusal_is_escaped_and_cut`).
 
+### The digest
+
+The digest of a config is of what the file says and not of its bytes: kind `config/1`,
+hashed as ADR 0001 hashes every identity ("How an identity is hashed": the bytes
+`whizbang:config/1` and a zero byte, then the fields; `u` is an unsigned integer as
+eight bytes, big-endian; `b` is a length as eight bytes, big-endian, and that many
+bytes). A text is its UTF-8 bytes. "Sorted" is by the bytes of a name. A field that may
+be absent is `u` 0, or `u` 1 and then the field. The fields, in order:
+
+1. `u`, how many capabilities are given at least one backend. Then for each of those,
+   sorted by its name (`fill`, `judge`, `segment`):
+   1. `b`, the capability's name;
+   2. the default's name, `b`, which may be absent;
+   3. `u`, how many backends. Then for each, sorted by its name:
+      1. `b`, its name; `b`, its kind;
+      2. its model, its provider, its address (its origin as an origin writes itself,
+         then its path as given), the name of its key's variable and the
+         name of its token's variable, in that order, each `b` and each of which may be
+         absent;
+      3. `u`, how many settings. Then for each, sorted by its key: `b`, the key; then
+         `u` 1 and `u` the whole number, as the 64 bits of its two's complement; or `u`
+         2 and `u` 0 for false or 1 for true; or `u` 3 and `b` the text.
+2. The cap of one call: `u` millionths of a dollar, which may be absent.
+3. `u`, how many recipients. Then for each, sorted by its name:
+   1. `b`, its name; `b`, its origin, as an origin writes itself; its account, `b`,
+      whole, which may be absent;
+   2. `u`, how many upstreams, and each as `b`, sorted;
+   3. `u`, how many classes, and each as `b` its name, sorted;
+   4. `u` 1 if it may be probed, else 0.
+
+The short form enters as what it is: a backend named `default`, with the default
+`default`. The empty config hashes 45 bytes: the 17 of `whizbang:config/1`, a zero byte,
+and three fields of `u` 0, nine bytes each. Three digests are fixed
+(`digest::the_digests_of_three_fixed_configs_are_the_records`; they were worked out from
+this section alone with a few lines of a scripting language's standard library, not
+from the code):
+
+| Config | Digest |
+|---|---|
+| The empty one | `sha256:9d60a543ea39be1ca1bc2c4e1a90094a59ded6bdcfdf1c21436f4026f207c4a6` |
+| The example of `SPEC.md` section 4 | `sha256:e0f7ca76571f20c077084f4dcb18a57c0adf857b37d59928546508937fa31c7f` |
+| The config `FULL` of the digest's tests, with something in every place | `sha256:c151bf69e75bfec361a2018365535e49731847d0dbf6d13f4bb71b06356d6399` |
+
+What follows from hashing what was read:
+
+- **Two files that say the same have one digest:** comments, spacing, line endings, the
+  order of tables and of keys, the order of a list of classes or upstreams, and every
+  way TOML has of writing one value (the kinds of string, an escape, an inline table,
+  dotted keys, the ways of writing a number). A cap of `2`, `2.0` and `2.50` are one
+  amount (`digest::two_files_that_differ_in_comments_spacing_and_order_have_one_digest`,
+  `digest::the_ways_toml_writes_one_value_have_one_digest`).
+- **A table with nothing in it is as no table,** and saying what is so unless said
+  otherwise (`probe = false`, `upstreams = []`) is as not saying it
+  (`digest::a_table_with_nothing_in_it_is_as_no_table`).
+- **A change to any setting changes it:** every key of every table is in the fields
+  above, with its place marked by a count or a length, so no two configs run together
+  to the same bytes (`digest::a_change_to_any_setting_changes_the_digest`,
+  `digest::where_one_text_ends_and_the_next_begins_is_in_the_digest`).
+- **No secret is in it.** A variable is in the digest by its name. Its value is in no
+  config, so a key that is rotated under the same variable changes no digest; what a
+  changed key does to a call is task C5's
+  (`digest::a_variable_is_in_the_digest_by_its_name_and_a_value_by_nothing`). A key the
+  reader was not told of, written as a model or into a setting's text, is read like any
+  text and hashed with the rest; the digest does not show it.
+- **An origin is hashed as an origin writes itself** (ADR 0012): the scheme and the
+  host in lower case, and the port only when it is not the scheme's own. A backend's
+  address is its origin so written and then its path as the file gave it. So
+  `https://h.example`, `https://h.example:443` and `HTTPS://H.Example` are one digest,
+  and a path's own letters are not folded
+  (`digest::the_ways_of_writing_one_origin_have_one_digest`). Until this was so, for one
+  day, the three were refused or were two digests; no digest of a config had been
+  stored.
+
+A key added to the file later that is absent from older files must hash as absent, or it
+is a new kind, `config/2`, and every digest changes with it.
+
 ### Which settings a run records
 
 `asked.settings` of a run record (ADR 0005) is decided here and filled by task C5; no
@@ -343,13 +425,21 @@ config's digest in `asked.config` stands for the rest.
   the key from where the error points. A version of the crate that words it otherwise
   would turn that refusal into "not TOML" with its line, and
   `file::a_key_given_twice_is_refused_naming_the_key` would fail.
+- Reversing the digest's form, or the meaning of a key, changes every digest: each
+  prepared call goes stale once, and records written before keep the old digest. Adding
+  an optional key does not.
 - Not ported from the old tools, each with its line under "Not ported" in
   `docs/carry-over.md`: `${VAR}` expansion, `--set` overrides, a default place for the
-  file, a version key, and the JSON schema of the config. Rascal's identity of a config
-  is the second part's.
+  file, a version key, and the JSON schema of the config. So is rascal's identity of a config,
+  hashed from canonical JSON.
 
 ## Alternatives
 
+- **The digest of the file's bytes.** A comment or a reordered table would make every
+  prepared call stale, and two machines with the same settings would record two
+  digests.
+- **Hash a canonical JSON of the config,** as rascal did. Turned down for every identity
+  in ADR 0001: the bytes depend on how a library orders keys and prints numbers.
 - **Expand `${VAR}` into the config,** as squint did. The value would be inside the
   type that is hashed, printed and recorded, and every one of those would have to take
   it out again.

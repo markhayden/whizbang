@@ -4,20 +4,21 @@
 //!
 //! A [`Config`] is made by reading a file strictly ([`Config::read`], [`Config::parse`])
 //! or is the empty one ([`Config::empty`]); there is no other way to one, its fields are
-//! private, and it cannot be read from JSON or TOML by other code. Nothing is built
-//! from a config yet, and it has no digest yet: the digest, the roster, the cap, the
-//! policy and the settings a run records come with the later tasks of checkpoint 1B.
-//! The file is TOML, read with the `toml` crate, which this crate depends on for that
-//! and for nothing else.
+//! private, and it cannot be read from JSON or TOML by other code. Its digest
+//! ([`Config::digest`]) is of the settings and not of the file's bytes. Nothing is built
+//! from a config yet: the roster, the cap, the policy and the settings a run records are
+//! made from it by the later tasks of checkpoint 1B. The file is TOML, read with the
+//! `toml` crate, which this crate depends on for that and for nothing else.
 
 mod read;
 mod refused;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::egress::{Account, Address, Classes, Origin, Recipient};
+use crate::egress::{Account, Address, Classes, DataClass, Origin, Recipient};
 
 use crate::contract::Capability;
+use crate::identity::{Digest, Encoder, Fields};
 
 pub use refused::{ConfigRefused, KEY_SHOWN_LIMIT};
 
@@ -46,10 +47,11 @@ pub const VARIABLE_LIMIT: usize = 64;
 /// The largest cap of one call: a million US dollars, in millionths.
 pub const CALL_CAP_LIMIT_MICROS: u64 = 1_000_000 * 1_000_000;
 
-/// The capabilities a config may give a backend, in the order of their names' bytes.
+/// The capabilities, in the order of their names' bytes: the order a config's digest
+/// takes them in.
 const CAPABILITIES: [Capability; 3] = [Capability::Fill, Capability::Judge, Capability::Segment];
 
-/// What one config file says. Two files that say the same are equal.
+/// What one config file says. Two files that say the same are equal and have one digest.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct Config {
     /// By the capability's name. A capability that is given no backend is not here.
@@ -91,6 +93,8 @@ pub enum Setting {
 #[derive(Clone, PartialEq, Eq)]
 pub struct Approval {
     recipient: Recipient,
+    /// The account's whole text, for the digest: an `Account` shows only its start.
+    account: Option<String>,
     classes: Classes,
     probe: bool,
 }
@@ -138,6 +142,104 @@ impl Config {
             .flat_map(Backend::credentials)
             .map(|(_, variable)| variable)
             .collect()
+    }
+
+    /// The digest of what the file says, kind `config/1`, in the encoding ADR 0001 gives
+    /// every identity. ADR 0011 states the fields in full; in short, each list below is
+    /// its count and then its entries in the order of their names' bytes, and a thing
+    /// that may be absent is 0, or 1 and the thing:
+    ///
+    /// 1. the capabilities that are given a backend, each as its name, its default
+    ///    (may be absent), and its backends, each as its name, its kind, its model,
+    ///    provider, address, key variable and token variable (each may be absent), and
+    ///    its settings, each as its key and its value: 1 and a whole number, 2 and a
+    ///    boolean, or 3 and a text;
+    /// 2. the cap of one call in millionths (may be absent);
+    /// 3. the recipients, each as its name, its origin, its account (may be absent),
+    ///    its upstreams, its classes, and whether it may be probed.
+    ///
+    /// No value of a credential is in it: a config holds none.
+    pub fn digest(&self) -> Digest {
+        let mut fields = Encoder::new("config/1");
+        fields.unsigned(self.backends.len() as u64);
+        for capability in CAPABILITIES {
+            let Some(offered) = self.backends.get(capability.name()) else {
+                continue;
+            };
+            fields.bytes(capability.name().as_bytes());
+            optional(&mut fields, offered.default.as_deref());
+            fields.unsigned(offered.backends.len() as u64);
+            for (name, backend) in &offered.backends {
+                fields.bytes(name.as_bytes());
+                fields.bytes(backend.kind.as_bytes());
+                // The address as its origin writes itself, and then its path as given.
+                let url = backend.url();
+                for text in [
+                    &backend.model,
+                    &backend.provider,
+                    &url,
+                    &backend.key_env,
+                    &backend.token_env,
+                ] {
+                    optional(&mut fields, text.as_deref());
+                }
+                fields.unsigned(backend.settings.len() as u64);
+                for (key, setting) in &backend.settings {
+                    fields.bytes(key.as_bytes());
+                    match setting {
+                        Setting::Integer(number) => {
+                            fields.unsigned(1);
+                            fields.unsigned(u64::from_be_bytes(number.to_be_bytes()));
+                        }
+                        Setting::Boolean(boolean) => {
+                            fields.unsigned(2);
+                            fields.unsigned(u64::from(*boolean));
+                        }
+                        Setting::Text(text) => {
+                            fields.unsigned(3);
+                            fields.bytes(text.as_bytes());
+                        }
+                    }
+                }
+            }
+        }
+        match self.call_cap_micros {
+            Some(micros) => {
+                fields.unsigned(1);
+                fields.unsigned(micros);
+            }
+            None => fields.unsigned(0),
+        }
+        fields.unsigned(self.recipients.len() as u64);
+        for (name, recipient) in &self.recipients {
+            fields.bytes(name.as_bytes());
+            // An origin as an origin writes itself: lower case, and no port when it is
+            // the scheme's own. The upstreams are kept in the order of that text.
+            fields.bytes(recipient.origin().to_string().as_bytes());
+            optional(&mut fields, recipient.account.as_deref());
+            fields.unsigned(recipient.upstreams().len() as u64);
+            for upstream in recipient.upstreams() {
+                fields.bytes(upstream.to_string().as_bytes());
+            }
+            let classes: BTreeSet<&str> = recipient.classes.iter().map(DataClass::name).collect();
+            fields.unsigned(classes.len() as u64);
+            for class in classes {
+                fields.bytes(class.as_bytes());
+            }
+            fields.unsigned(u64::from(recipient.probe));
+        }
+        fields.finish()
+    }
+}
+
+/// A text that may be absent: 0, or 1 and the text.
+fn optional(fields: &mut Encoder, text: Option<&str>) {
+    match text {
+        Some(text) => {
+            fields.unsigned(1);
+            fields.bytes(text.as_bytes());
+        }
+        None => fields.unsigned(0),
     }
 }
 

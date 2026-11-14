@@ -1150,6 +1150,25 @@ fn an_address_that_could_hold_a_credential_is_refused_and_not_shown() {
             url.split(':').next().unwrap()
         );
     }
+    // A host written in numbers any way but the plain one is refused, in an origin
+    // and in a backend's address: the rule is the origin's own (ADR 0012).
+    for host in [
+        "0x7f.1",
+        "127.1",
+        "2130706433",
+        "017700000001",
+        "127.0.0.01",
+    ] {
+        let origin = format!("[egress.recipients.one]\norigin = \"http://{host}\"\nclasses = []\n");
+        assert_eq!(
+            key_of(&refusal(&origin)),
+            "egress.recipients.one.origin",
+            "{host}"
+        );
+        let url = format!("[backends.fill]\nkind = \"a\"\nurl = \"http://{host}/v1\"\n");
+        assert_eq!(key_of(&refusal(&url)), "backends.fill.url", "{host}");
+    }
+    read("[backends.fill]\nkind = \"a\"\nurl = \"http://127.0.0.1/v1\"\n");
     // An account is one word: no space, no quote and no backslash in it.
     for account in ["team 1234", "team\\\"1234", "team\\\\1234", ""] {
         let text = format!(
