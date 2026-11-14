@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use whizbang_core::config::{
     Config, ConfigRefused, Credentials, ENV_BYTES_LIMIT, ENV_VALUE_LIMIT, ENV_VARIABLES_LIMIT,
-    EnvFile, EnvRefused,
+    EnvFile, EnvRefused, LoadRefused, Loaded,
 };
 use whizbang_core::contract::{
     Call, Capability, Engine, Executor, NoBackends, Outcome, Registry, SECRET_MIN_BYTES, Secrets,
@@ -218,7 +218,7 @@ fn a_line_that_is_not_an_assignment_and_a_name_given_twice_are_refused() {
     assert_eq!(
         EnvRefused::NotAssignment { line: 3 }.to_string(),
         "line 3 of the env file is not an assignment: NAME=value, with a name of capital \
-         letters, digits and _; the line is not shown"
+         letters, digits and _, not a digit first, 64 characters at most; the line is not shown"
     );
     assert_eq!(
         EnvRefused::Twice { line: 4 }.to_string(),
@@ -385,6 +385,24 @@ fn the_env_file_is_read_first_and_a_config_that_holds_any_of_its_values_is_refus
             );
         }
     }
+    // A key of the shape of a host and a path. A backend's address that only folding
+    // turns into it, by lowering its host or dropping its scheme's own port, is
+    // refused like any other place the key stands.
+    let shaped = format!("zqxjkvwpyh{}Path9-0123", "/");
+    let env_shaped = read_env(&format!("FAL_KEY='{shaped}'\n"));
+    for url in [
+        format!("https://{shaped}"),
+        "https://ZQXJKVWPYH/Path9-0123".to_owned(),
+        "https://zqxjkvwpyh:443/Path9-0123".to_owned(),
+    ] {
+        let text =
+            format!("[backends.fill]\nkind = \"a\"\nkey_env = \"FAL_KEY\"\nurl = \"{url}\"\n");
+        assert_eq!(
+            Config::parse(text.as_bytes(), &env_shaped.secrets()).unwrap_err(),
+            ConfigRefused::HoldsSecret,
+            "{url}"
+        );
+    }
     // A value too short to be a secret is not looked for: `8080` may stand in a config.
     let text = "[backends.fill]\nkind = \"a\"\nurl = \"http://127.0.0.1:8080\"\n";
     Config::parse(text.as_bytes(), &env.secrets()).unwrap();
@@ -537,6 +555,225 @@ fn a_marker_key_is_in_no_error_no_debug_no_record_and_no_journal_of_a_run_that_u
     assert!(files >= 4, "the store's files were looked at: {files}");
 }
 
+/// Env files in which one value has white space at an end inside its quotes. Such a
+/// value is 8 bytes as it stands and fewer once trimmed, which is how a set of secrets
+/// counts it; the set was then refused whole, and the refusal was swallowed.
+fn files_with_a_padded_value(key: &str) -> Vec<String> {
+    vec![
+        format!("FAL_KEY={key}\nNOTE=' abcdefg'\n"),
+        format!("FAL_KEY={key}\nNOTE=\"abcdefg \"\n"),
+        format!("NOTE=\"\tabcdefg\"\nFAL_KEY={key}\n"),
+        format!("NOTE=' abcdefgh '\nFAL_KEY={key}\n"),
+    ]
+}
+
+#[test]
+fn a_padded_value_does_not_empty_the_secrets_a_config_is_read_with() {
+    // The first face: with the set emptied, a config that held another key of the
+    // file word for word was read. Whatever the reader makes of such a file, that
+    // must not be: it refuses the file, or the key is still a secret.
+    let key = made_up_key("");
+    for text in files_with_a_padded_value(&key) {
+        let Ok(env) = EnvFile::parse(text.as_bytes()) else {
+            continue;
+        };
+        assert_ne!(env.secrets(), Secrets::none(), "the set is empty");
+        let config = format!("[backends.fill]\nkind = \"a\"\nmodel = \"{key}\"\n");
+        assert_eq!(
+            Config::parse(config.as_bytes(), &env.secrets()).unwrap_err(),
+            ConfigRefused::HoldsSecret
+        );
+    }
+}
+
+#[test]
+fn a_padded_value_does_not_empty_the_secrets_the_executor_takes_out() {
+    // The second face: `credentials` succeeded with an empty set, so a backend was
+    // handed its key and nothing would take that key out of what is written.
+    let key = made_up_key("");
+    let text = "[backends.fill]\nkind = \"a\"\nkey_env = \"FAL_KEY\"\n\
+        [backends.judge]\nkind = \"b\"\nkey_env = \"NOTE\"\n";
+    let config = Config::parse(text.as_bytes(), &Secrets::none()).unwrap();
+    for text in files_with_a_padded_value(&key) {
+        let Ok(env) = EnvFile::parse(text.as_bytes()) else {
+            continue;
+        };
+        let Ok(credentials) = env.credentials(&config) else {
+            continue;
+        };
+        let handed = credentials.of(Capability::Fill, "default");
+        let exposed = handed.key().expect("the key is handed over").expose();
+        assert_eq!(
+            credentials.secrets().redact(exposed),
+            "[redacted]",
+            "a key that was handed over is not taken out of what is written"
+        );
+    }
+}
+
+#[test]
+fn a_padded_value_does_not_let_a_pasted_key_be_said_as_a_variables_name() {
+    // The third face: with the set emptied, a key of capitals pasted where a
+    // variable's name belongs was read by the config, and listed by name as missing.
+    let key = made_up_key("");
+    let capitals = format!("ZQXJ{}", "ABCDEFGHIJ012345");
+    for text in files_with_a_padded_value(&key) {
+        let text = format!("{text}OTHER={capitals}\n");
+        let Ok(env) = EnvFile::parse(text.as_bytes()) else {
+            continue;
+        };
+        let config = format!("[backends.fill]\nkind = \"a\"\nkey_env = \"{capitals}\"\n");
+        match Config::parse(config.as_bytes(), &env.secrets()) {
+            Err(refused) => assert_eq!(refused, ConfigRefused::HoldsSecret),
+            Ok(config) => {
+                let said = match env.credentials(&config) {
+                    Ok(credentials) => credentials.missing().collect::<Vec<_>>().join(" "),
+                    Err(refused) => format!("{refused} {refused:?}"),
+                };
+                assert!(!said.contains("ZQXJ"), "the pasted key is said: {said}");
+            }
+        }
+    }
+}
+
+#[test]
+fn white_space_at_an_end_inside_quotes_and_quotes_around_nothing_are_refused() {
+    // A key never has white space at an end, and taking it off would hand over
+    // something other than what was written. So it is refused, with the line's number
+    // and nothing of the line; and so are quotes around nothing, or around white space
+    // alone. White space outside the quotes is spacing, as before.
+    let marker = "zqxjkvalue";
+    for (text, line) in [
+        (format!("A_KEY=' {marker}'\n"), 1),
+        (format!("A_KEY='{marker} '\n"), 1),
+        (format!("B_KEY=x\nA_KEY=\"{marker}\t\"\n"), 2),
+        (format!("A_KEY=\"\t{marker}\"\n"), 1),
+        (format!("export A_KEY='  {marker}  '\n"), 1),
+        ("A_KEY=''\n".to_owned(), 1),
+        ("A_KEY=\"\"\n".to_owned(), 1),
+        ("A_KEY=' '\n".to_owned(), 1),
+        ("A_KEY=\" \t \"\n".to_owned(), 1),
+    ] {
+        let refused = refusal(&text);
+        assert_eq!(refused, EnvRefused::Value { line }, "{text:?}");
+        assert!(!format!("{refused}\n{refused:?}").contains(marker));
+    }
+    let env = read_env(&format!("A_KEY=   '{marker} {marker}'   \nB_KEY=\n"));
+    assert_eq!(
+        env.secrets(),
+        Secrets::new([format!("{marker} {marker}")]).unwrap()
+    );
+}
+
+#[test]
+fn no_more_than_the_bound_and_one_byte_is_asked_of_what_an_env_file_is_read_from() {
+    // It gives without end as far as the reader under test may ask, and fails once it
+    // has given a mebibyte: a reader that asked without a bound would otherwise fill
+    // the machine's memory before anything stopped it.
+    struct Endless(usize);
+    impl std::io::Read for Endless {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.0 > 1024 * 1024 {
+                return Err(std::io::Error::other("asked for more than a mebibyte"));
+            }
+            buffer.fill(b'#');
+            self.0 += buffer.len();
+            Ok(buffer.len())
+        }
+    }
+    let mut endless = Endless(0);
+    assert_eq!(
+        EnvFile::read_from(&mut endless).unwrap_err(),
+        EnvRefused::TooLarge {
+            limit: ENV_BYTES_LIMIT
+        }
+    );
+    assert_eq!(endless.0, usize::try_from(ENV_BYTES_LIMIT).unwrap() + 1);
+    struct Broken;
+    impl std::io::Read for Broken {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("zqxjk"))
+        }
+    }
+    let refused = EnvFile::read_from(Broken).unwrap_err();
+    assert_eq!(refused, EnvRefused::Unreadable(std::io::ErrorKind::Other));
+    assert!(!format!("{refused} {refused:?}").contains("zqxjk"));
+    assert_eq!(
+        format!(
+            "{:?}",
+            EnvFile::read_from(&b"A_KEY=abcdefgh\n"[..]).unwrap()
+        ),
+        "EnvFile(1)"
+    );
+}
+
+#[test]
+fn one_call_reads_the_env_file_first_and_then_the_config_with_its_secrets() {
+    // The way in: both paths to one function, which keeps the order. A config that
+    // holds a value of the env file is refused though nothing told its reader of one
+    // by hand; and what comes back is the config, each backend's credentials and the
+    // executor's secrets, of one reading.
+    let key = made_up_key("");
+    let scratch = Scratch::new("env-loaded");
+    let env_path = scratch.path().join("keys.env");
+    let config_path = scratch.path().join("whizbang.toml");
+    std::fs::write(
+        &env_path,
+        format!("FAL_KEY='{key}'\nOTHER={}\n", made_up_key("-other")),
+    )
+    .unwrap();
+    std::fs::write(
+        &config_path,
+        "[backends.fill]\nkind = \"a\"\nkey_env = \"FAL_KEY\"\n",
+    )
+    .unwrap();
+    let loaded = Loaded::read(&config_path, Some(&env_path)).unwrap();
+    assert_eq!(loaded.config().backends(Capability::Fill).count(), 1);
+    let handed = loaded.credentials().of(Capability::Fill, "default");
+    assert_eq!(handed.key().map(|key| key.expose()), Some(key.as_str()));
+    assert_eq!(loaded.secrets(), &Secrets::new([key.clone()]).unwrap());
+    assert_eq!(
+        format!("{loaded:?}"),
+        format!(
+            "Loaded {{ config: {:?}, credentials: {:?} }}",
+            loaded.config(),
+            loaded.credentials()
+        )
+    );
+    // A config that holds either value of the env file, the one no backend names too.
+    for held in [key.clone(), made_up_key("-other")] {
+        std::fs::write(&config_path, format!("# {held}\n")).unwrap();
+        assert_eq!(
+            Loaded::read(&config_path, Some(&env_path)).unwrap_err(),
+            LoadRefused::Config(ConfigRefused::HoldsSecret)
+        );
+    }
+    // An env file that is refused is the refusal, and the config is not read: here it
+    // is not there at all.
+    std::fs::write(&env_path, "not an assignment\n").unwrap();
+    assert_eq!(
+        Loaded::read(&scratch.path().join("missing.toml"), Some(&env_path)).unwrap_err(),
+        LoadRefused::Env(EnvRefused::NotAssignment { line: 1 })
+    );
+    let said = Loaded::read(&config_path, Some(&env_path))
+        .unwrap_err()
+        .to_string();
+    assert!(said.starts_with("line 1 of the env file"), "{said}");
+    // With no env file there is no credential, and a variable the config names is
+    // missing.
+    std::fs::write(
+        &config_path,
+        "[backends.fill]\nkind = \"a\"\nkey_env = \"FAL_KEY\"\n",
+    )
+    .unwrap();
+    let loaded = Loaded::read(&config_path, None).unwrap();
+    assert_eq!(
+        loaded.credentials().missing().collect::<Vec<_>>(),
+        ["FAL_KEY"]
+    );
+    assert_eq!(loaded.secrets(), &Secrets::none());
+}
+
 #[test]
 fn what_the_env_reader_does_not_do_is_known() {
     // ADR 0011, "What the env reader does not do". Each is so, and is pinned.
@@ -564,6 +801,22 @@ fn what_the_env_reader_does_not_do_is_known() {
     let config = Config::parse(text.as_bytes(), &Secrets::none()).unwrap();
     let credentials = EnvFile::empty().credentials(&config).unwrap();
     assert_eq!(credentials.missing().collect::<Vec<_>>(), ["PATH"]);
+    // A byte-order mark at the head of the file is no part of a name, and is refused
+    // with the first line.
+    assert_eq!(
+        EnvFile::parse("\u{feff}A_KEY=abcdefgh\n".as_bytes()).unwrap_err(),
+        EnvRefused::NotAssignment { line: 1 }
+    );
+    // A link to a file is followed: what it leads to is read.
+    #[cfg(unix)]
+    {
+        let scratch = Scratch::new("env-link");
+        let file = scratch.path().join("keys.env");
+        let link = scratch.path().join("link.env");
+        std::fs::write(&file, "A_KEY=abcdefgh\n").unwrap();
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        assert_eq!(format!("{:?}", EnvFile::read(&link).unwrap()), "EnvFile(1)");
+    }
     // A value of the file shorter than 8 bytes is not a secret to anyone: it is not
     // looked for in a config, and not taken out of what is written.
     let env = read_env("PIN=1234567\n");

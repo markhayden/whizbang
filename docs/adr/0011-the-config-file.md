@@ -21,6 +21,9 @@ Amended: 2026-11-14, a third note, with task C2. Added: "The env file", which al
 settles what ADR 0005 ("Redaction") left to the config: the quotes around a value, the
 variable named in a refusal, and the least length. Changed: the sentence that said
 reading a value was still to come.
+Amended: 2026-11-14, a fourth note, after the review of task C2. Changed in "The env
+file": white space at an end inside quotes, and quotes around nothing, are refused; no
+set of secrets is made by leaving a refusal out; `Loaded::read` is the way in.
 Spec: section 4, "Backends" (config, resolution, credentials); section 6, "Spend";
 section 10, "Egress"
 
@@ -306,7 +309,15 @@ The values are in one env file, which git ignores and nothing here writes. It is
 on the command line as the config is; that flag comes with the binary's wiring too. The
 code is `config/env.rs`, and its tests are `env::`.
 
-**The order.** The env file is read first, whole, by its own strict reader
+**The order, and the way in.** `Loaded::read` takes both paths, the config's and the
+env file's, and is the way in: it keeps the order below, so that no caller can read a
+config without the secrets of its env file, and it answers the config, each backend's
+credentials and the executor's secrets of one reading
+(`env::one_call_reads_the_env_file_first_and_then_the_config_with_its_secrets`). The
+three steps it takes are public too, for a test and for a reader that has its bytes
+from elsewhere, and a caller of them keeps the order itself.
+
+The env file is read first, whole, by its own strict reader
 (`EnvFile::read`, `EnvFile::parse`). Every value in it of 8 bytes or more is then a
 secret the config's reader is told of (`EnvFile::secrets`), whether or not the config
 names its variable; the config is read once with that set; and the variables the config
@@ -315,24 +326,51 @@ sits in the env file is never said back from a config, also when it was pasted u
 name nothing uses
 (`env::the_env_file_is_read_first_and_a_config_that_holds_any_of_its_values_is_refused`).
 A file that sets a variable to something that is not a secret, and is 8 bytes or longer,
-makes a config that holds the same text unreadable; an env file is for keys.
+makes a config that holds the same text unreadable; an env file is for keys. A value of
+the env file is found in a config in the forms redaction searches for (ADR 0005, "What
+redaction does not find"): written there in base64, or in another form not searched
+for, it is not found until those forms are (the row on redaction in
+`docs/carry-over.md`).
+
+**No set of secrets is made by leaving a refusal out.** The secrets a config is read
+with are made when the env file is read, and the executor's when the credentials are;
+if either set cannot be made, that is a refusal of the file (`EnvRefused::Unprotected`)
+and never an empty set, which would read a config that holds a key and hand a key out
+with nothing to take it out of what is written. A value's length is counted once, on
+the value as it is kept, which has no white space at its ends, so it is the length a
+set of secrets counts too, and no value the reader keeps is one the set refuses
+(`env::a_padded_value_does_not_empty_the_secrets_a_config_is_read_with`,
+`env::a_padded_value_does_not_empty_the_secrets_the_executor_takes_out`,
+`env::a_padded_value_does_not_let_a_pasted_key_be_said_as_a_variables_name`). Nothing
+the reader keeps makes a set refuse, so the refusal is tested at the one place a set is
+made (`protected`, by a test inside `config/env.rs`,
+`tests::a_set_of_secrets_that_cannot_be_made_is_a_refusal_and_never_an_empty_set`),
+with a value the reader would not have kept. And the least length in
+`EnvFile::secrets`, lowered by one, keeps such a value and is refused by that place,
+which fails `env::a_short_value_is_refused_with_the_variables_name_and_nothing_of_the_value`.
 
 **A line** is empty, a comment that starts with `#`, or `NAME=value`, with `export` and
 a space before it if it likes. A name is a variable's name, as in the config. The value
-loses the white space at its ends, a carriage return among it, and then one pair of
-single or double quotes around it: ADR 0005 left the quotes to whoever reads the file, and here
+loses the white space around it, a carriage return among it, and then one pair of
+single or double quotes: ADR 0005 left the quotes to whoever reads the file, and here
 they are taken off, so the bare key is what is handed over and what is taken out of
 what is written
-(`env::a_quoted_value_a_line_break_and_an_export_prefix_each_give_the_bare_key`). A
-variable set to nothing is as one not set.
+(`env::a_quoted_value_a_line_break_and_an_export_prefix_each_give_the_bare_key`). What
+is inside quotes is the value, all of it: white space at an end inside the quotes is
+not taken off, since that would hand over something other than what was written, and is
+refused; so are quotes around nothing
+(`env::white_space_at_an_end_inside_quotes_and_quotes_around_nothing_are_refused`). A
+variable set to nothing, with no quotes, is as one not set.
 
 **What is refused,** each with the number of its line and nothing of the line, since a
 line may be a key pasted where it does not belong: a line that is not an assignment; a
 name given twice; a value that cannot be taken for one thing (a space outside quotes, a
-quote that is not closed or not at the ends, a backslash inside double quotes, more than
-4,096 bytes). And of the file, as of the config: what is not a file, and more than
+quote that is not closed or not at the ends, a backslash inside double quotes, white
+space at an end inside quotes, quotes around nothing, more than 4,096 bytes). And of the file, as of the config: what is not a file, and more than
 64 KiB, each refused before anything is opened, with no more than the bound and one byte
-read after; bytes that are not UTF-8, or an ASCII control character; more than 256
+asked of what was opened
+(`env::no_more_than_the_bound_and_one_byte_is_asked_of_what_an_env_file_is_read_from`);
+bytes that are not UTF-8, or an ASCII control character; more than 256
 variables. No refusal has a path
 (`env::a_line_that_is_not_an_assignment_and_a_name_given_twice_are_refused`,
 `env::a_malformed_line_whose_name_holds_a_value_of_another_line_is_refused_without_showing_it`,
@@ -374,6 +412,8 @@ handed: the value of the variable its own `key_env` names and of the one its
 is those letters) and reads no escape; a `#` with no space before it is part of the
 value, and one after a space makes the value two things, which is refused; it does not
 read the process's environment, so a variable set there and not in the file is missing;
+it does not take a byte-order mark off the head of the file, whose first line is then no
+assignment and is refused; it follows a link to a file and reads what the link leads to;
 and a value shorter than 8 bytes is a secret to nobody, neither looked for in a config
 nor taken out of what is written.
 
@@ -445,8 +485,9 @@ What follows from hashing what was read:
   host in lower case, and the port only when it is not the scheme's own. A backend's
   address is its origin so written and then its path as the file gave it. So
   `https://h.example`, `https://h.example:443` and `HTTPS://H.Example` are one digest,
-  and a path's own letters are not folded
-  (`digest::the_ways_of_writing_one_origin_have_one_digest`). Until this was so, for one
+  and a path's own letters are not folded. A slash at the end of a backend's address is
+  part of its path: `https://h.example` and `https://h.example/` are two addresses and
+  two digests (`digest::the_ways_of_writing_one_origin_have_one_digest`). Until this was so, for one
   day, the three were refused or were two digests; no digest of a config had been
   stored.
 

@@ -9,6 +9,10 @@
 # the `finished` of lib.sh prints as the last line of the file. Exiting 0 is not enough: the
 # bash that ships with macOS (3.2) exits 0 from a file that stopped at a syntax error.
 # This script sets no `EXIT` trap, so its own syntax error is a failure.
+# The whole script is one function, read before any of it runs, so a change to this file
+# during a run does not change the run: see `main` in scripts/scan.sh. Its last lines are
+# reached only after every test has run.
+main() {
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
 
@@ -44,3 +48,5 @@ for t in "$dir"/test-*.sh; do
 done
 [ "$ran" -gt 0 ] || { echo "FAIL  no test under $dir"; exit 1; }
 exit "$failed"
+}
+main "$@"; exit
