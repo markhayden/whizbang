@@ -1781,7 +1781,7 @@ with the two changed lines.
 
 **Depends on:** X3. Scripts only.
 
-- [ ] A push made with `GIT_DIR` and `GIT_WORK_TREE` set from another folder is refused,
+- [x] A push made with `GIT_DIR` and `GIT_WORK_TREE` set from another folder is refused,
       or what it published is scanned before a merge: `review-merge`'s range scan takes
       every branch the pull request's commits are on and the branch's name. Which of the
       two is the builder's finding, written in the row.
@@ -1795,7 +1795,7 @@ a script, stops, and the gap goes to the owner to accept in a line of the row.
 
 **Depends on:** X4. Scripts only.
 
-- [ ] `scripts/scan.sh` and the other long scripts run from a function read whole before
+- [x] `scripts/scan.sh` and the other long scripts run from a function read whole before
       it starts, or from a copy.
 
 **Done when** a test edits the file during a run, at a barrier the test holds and not by

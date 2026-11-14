@@ -28,6 +28,7 @@ git -C "$w/origin.git" symbolic-ref HEAD refs/heads/main
 new_clone "$repo"
 mkdir -p "$repo/scripts/hooks"
 cp scripts/worktree.sh "$repo/scripts/worktree.sh"
+cp scripts/hook-dispatch.sh "$repo/scripts/hook-dispatch.sh"
 for hook in pre-commit commit-msg pre-push; do
   printf '%s\n' '#!/bin/sh' 'exit 0' >"$repo/scripts/hooks/$hook"
   chmod +x "$repo/scripts/hooks/$hook"
@@ -76,7 +77,51 @@ expect_fail "list with an argument" "usage: worktree.sh" wt list s1
 before=$(state)
 expect_fail "add before the hooks are installed" "the hooks are not installed" wt add s1
 unchanged "$before" "add before the hooks are installed"
+# The setting an earlier setup made is not an installation: a push from another folder ran
+# no hook with it.
 git -C "$repo" config core.hooksPath scripts/hooks
+expect_fail "add with the hooks path of an earlier setup" "the hooks are not installed" wt add s1
+unchanged "$before" "add with the hooks path of an earlier setup"
+git -C "$repo" config --unset core.hooksPath
+# Installed as `just setup` installs them.
+install_hooks() {
+  local hook
+  for hook in pre-commit commit-msg pre-push; do
+    cp "$repo/scripts/hook-dispatch.sh" "$repo/.git/hooks/$hook"
+    chmod +x "$repo/.git/hooks/$hook"
+  done
+}
+install_hooks
+# One that is missing, cannot be run, or is not this repo's: not installed.
+rm "$repo/.git/hooks/pre-push"
+expect_fail "add with an installed hook missing" "the hooks are not installed" wt add s1
+install_hooks
+chmod -x "$repo/.git/hooks/commit-msg"
+expect_fail "add with an installed hook that cannot be run" "the hooks are not installed" wt add s1
+install_hooks
+printf '%s\n' '#!/bin/sh' 'exit 0' >"$repo/.git/hooks/pre-push"
+expect_fail "add with an installed hook that is another script" "the hooks are not installed" wt add s1
+install_hooks
+# Each of the three is required, the first as much as the last.
+for hook in pre-commit commit-msg pre-push; do
+  rm "$repo/.git/hooks/$hook"
+  expect_fail "add with the installed $hook missing" "the hooks are not installed" wt add s1
+  install_hooks
+done
+# With them installed, the setting of an earlier setup still sends git to a folder it reads
+# from wherever it is run: refused.
+git -C "$repo" config core.hooksPath scripts/hooks
+expect_fail "add with the hooks installed and the old setting back" "core.hooksPath is set" wt add s1
+git -C "$repo" config --unset core.hooksPath
+# The same setting in the user's own configuration.
+printf '[core]\n\thooksPath = %s\n' "$w/other-hooks" >"$w/user-config"
+expect_fail "add with core.hooksPath set by the user" "core.hooksPath is set" env GIT_CONFIG_GLOBAL="$w/user-config" bash -c 'cd "$1" && scripts/worktree.sh add s1' - "$repo"
+rm "$w/user-config"
+# With them installed, a setting that sends git elsewhere for its hooks switches them off.
+git -C "$repo" config core.hooksPath "$w/other-hooks"
+expect_fail "add with core.hooksPath set" "core.hooksPath is set" wt add s1
+git -C "$repo" config --unset core.hooksPath
+unchanged "$before" "add while the hooks are not installed"
 
 # --- A bad slug changes nothing ----------------------------------------------------------
 

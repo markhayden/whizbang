@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Format check before every commit.
+# The whole script is one function, read before any of it runs, so a change to this file
+# during a run does not change the run: see `main` in scripts/scan.sh.
+main() {
 set -euo pipefail
 # First, parse the scan and the hooks: the bash that ships with macOS (3.2) exits 0 from a
 # script that stopped at a syntax error after setting an `EXIT` trap, as the scan does.
@@ -12,3 +15,5 @@ for f in "$root/scripts/scan.sh" "$root"/scripts/hooks/*; do
   "$BASH" -n "$f" || { echo "pre-commit: ${f#"$root/"} has a syntax error; refusing the commit" >&2; exit 1; }
 done
 cargo fmt --all -- --check
+}
+main "$@"; exit

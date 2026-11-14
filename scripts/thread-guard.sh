@@ -64,6 +64,9 @@
 # now. The command is waited for after the kill for five seconds at most.
 # Parse the whole file first: see the top of scripts/scan.sh.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "thread-guard: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
+# The whole script is one function, read before any of it runs, so a change to this file
+# during a run does not change the run: see `main` in scripts/scan.sh.
+main() {
 set -euo pipefail
 
 # A guard runs under its whole path, whatever name it was started by: a guard under it
@@ -274,3 +277,5 @@ done
 status=0
 wait "$child" || status=$?
 exit "$status"
+}
+main "$@"; exit
