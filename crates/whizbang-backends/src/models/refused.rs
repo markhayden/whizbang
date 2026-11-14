@@ -156,6 +156,24 @@ impl Refused {
             rule,
         }
     }
+
+    /// The same refusal, of a value at this place.
+    pub(super) fn at(at: &str, rule: Rule) -> Refused {
+        Refused::Value {
+            at: at.to_owned(),
+            rule,
+        }
+    }
+
+    /// The same refusal, with its place under this one: `files[0]` under `models[2]`
+    /// is `models[2].files[0]`.
+    pub(super) fn under(self, outer: &str) -> Refused {
+        match self {
+            Refused::Value { at, rule } if at.is_empty() => Refused::at(outer, rule),
+            Refused::Value { at, rule } => Refused::at(&format!("{outer}.{at}"), rule),
+            other => other,
+        }
+    }
 }
 
 impl std::fmt::Display for Refused {

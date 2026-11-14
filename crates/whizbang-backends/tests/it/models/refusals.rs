@@ -1,10 +1,10 @@
 //! What a refusal says (ADR 0017, "What a refusal says"): fixed words, a place in a
 //! record and numbers. Every sentence there is, is here.
 
-use whizbang_backends::models::{Refused, Rule, What};
+use whizbang_backends::models::{Catalogue, Refused, Rule, What};
 use whizbang_core::egress::NotAllowed;
 
-use super::shows_nothing_of;
+use super::{none, shows_nothing_of};
 
 #[test]
 fn every_refusal_says_one_sentence_of_fixed_words() {
@@ -134,4 +134,38 @@ fn every_refusal_says_one_sentence_of_fixed_words() {
             format!("the value {sentence}")
         );
     }
+}
+
+#[test]
+fn a_refusal_is_an_error_a_caller_can_pass_on() {
+    let refused: Box<dyn std::error::Error + Send + Sync> =
+        Box::new(Catalogue::parse(b"oops", &none()).unwrap_err());
+    assert_eq!(refused.to_string(), "the catalogue is not JSON at line 1");
+}
+
+#[test]
+fn values_nested_past_what_the_reader_follows_are_refused_and_not_followed() {
+    // Ten thousand lists, each inside the last: the reader stops at its depth and
+    // says so; it does not go down them.
+    let deep = format!("{}{}", "[".repeat(10_000), "]".repeat(10_000));
+    assert_eq!(
+        Catalogue::parse(deep.as_bytes(), &none()).unwrap_err(),
+        Refused::NotJson {
+            what: What::Catalogue,
+            line: 1
+        }
+    );
+    // A list of many small values in an unknown field is read and refused as the
+    // unknown field it is.
+    let wide = format!(
+        "{{\"format\":\"catalogue/1\",\"models\":[],\"more\":[{}0]}}",
+        "0,".repeat(100_000)
+    );
+    assert_eq!(
+        Catalogue::parse(wide.as_bytes(), &none()).unwrap_err(),
+        Refused::Value {
+            at: String::new(),
+            rule: Rule::Unknown
+        }
+    );
 }

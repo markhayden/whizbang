@@ -137,3 +137,26 @@ name!(
             && !text.ends_with(' ')
     }
 );
+
+/// The rules a list of files keeps, in a catalogue's entry and in an installation
+/// record alike: one file at least, `most` at most, and no two of one name. Two names
+/// that differ only in the case of their letters are one name, as they are one file on
+/// a disk that does not tell the cases apart.
+pub(super) fn files_named<'a>(
+    names: impl ExactSizeIterator<Item = &'a FileName>,
+    most: usize,
+) -> Result<(), Refused> {
+    if names.len() == 0 {
+        return Err(Refused::at("files", Rule::NoFiles));
+    }
+    if names.len() > most {
+        return Err(Refused::at("files", Rule::Count { most }));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for name in names {
+        if !seen.insert(name.as_str().to_ascii_lowercase()) {
+            return Err(Refused::at("files", Rule::NamedTwice));
+        }
+    }
+    Ok(())
+}

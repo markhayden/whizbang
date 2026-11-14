@@ -2,6 +2,14 @@
 
 Status: accepted
 Date: 2026-11-14
+Amended: 2026-11-14, after the second review of its first pull request, with the second
+pull request of task M1. Words only. Changed: the order of the locks gains the holder
+of a hold file alone, and says that a lock taken alone is tried and only a shared one
+waits; a hold's share of its hold file is a try; removal tries for the model's lock
+until its deadline and sets its mark again; on the busy path the pointer is put back
+before the mark is taken off. Added under "For later tasks": what tasks M2b, M3 and M5
+to M6 must hold to, and the crashes their tests cover. Changed with the catalogue: the
+parts it builds are marked as code and name their tests.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -48,20 +56,20 @@ a process id read from a file (R3).
 
 ## Decision
 
-The code of this record that exists is `crates/whizbang-backends/src/models/`: `name.rs`
-and `refused.rs`. Its tests are in `crates/whizbang-backends/tests/it/models/`, named
-below as `names::…` and `refusals::…`.
+The code of this record that exists is `crates/whizbang-backends/src/models/`: `name.rs`,
+`catalogue.rs`, `json.rs` and `refused.rs`. Its tests are in
+`crates/whizbang-backends/tests/it/models/`, named below as `names::…`, `catalogue::…`
+and `refusals::…`.
 
 **What is code now, and what is decided for later.** Each part below says which it is. A
 part marked *decided, not built* has no code and no test yet, and names no test; what
 builds it adds its tests' names here, and this record is what it is held to. Task M1
 came to more lines than one pull request may hold (the plan, "Order"), so it is three
-pull requests, and this record arrives with the first.
+pull requests; this record arrived with the first, and the second brought the catalogue.
 
 | Part | State |
 |---|---|
-| Names; what a refusal says | Code, with the tests named |
-| The catalogue; how a record is read | Decided, not built: the second pull request of task M1 |
+| Names; the catalogue; how a record is read; what a refusal says | Code, with the tests named |
 | An installation's record; its identity | Decided, not built: the third pull request of task M1 |
 | The directory's layout and its three kinds of lock; publishing; the pointer; holds; removal | Decided, not built: tasks M2, M2b, M5 to M5c, M6 |
 
@@ -134,18 +142,20 @@ of `docs/carry-over.md` on those locks names the models directory too.
 
 | Holding | May wait for | Never |
 |---|---|---|
-| Nothing | The directory's lock; a model's lock, alone or shared | |
+| Nothing | The directory's lock; a model's lock, to share it | A lock taken alone is tried and never waited for: the model's lock by an install or a removal, a hold file by whoever deletes |
 | The directory's lock | Nothing | Takes no model's lock. Takes a hold file only to share it, as below, which does not wait. Waits for no hold |
 | A model's lock, alone | The directory's lock | Waits for no hold file: it takes one alone by a try that does not wait, or not at all |
 | A model's lock, shared (attached) | Nothing but the lock it shares | Takes no other lock |
+| A hold file, alone | Nothing | Takes no lock and waits for none: it deletes the folder, syncs, and lets the hold file go before it takes the directory's lock or sets a pointer |
 | A hold | The directory's lock, to take another hold | Never waits for that model's lock, alone or shared: a run that holds a model neither installs it, removes it nor attaches to its install |
 
 - **A hold is taken only under the directory's lock,** after the pointer was read and
-  names that installation and no draining mark is set. Its share of the hold file does
-  not wait there: a hold file is held alone only while its installation's folder is
+  names that installation and no draining mark is set. Its share of the hold file is a
+  try that does not wait, and is not refused there: a hold file is held alone only while its installation's folder is
   being deleted, by a holder of the model's lock, after the pointer stopped naming
   that installation; and the pointer cannot name it again until that holder has let
-  the hold file go, which it does before it lets the model's lock go.
+  the hold file go, which it does as soon as the folder is deleted, before it takes the
+  directory's lock again and before any pointer is set.
 - **A hold file is taken alone only by a try that does not wait,** by a holder of the
   model's lock, and only for an installation the pointer does not name.
 - So the directory's lock is last in every chain, and its holder waits for nothing;
@@ -172,7 +182,8 @@ read back. Each has a type with a private field, made by a constructor that chec
 - A model's name is in lower case only, so that two models are two folders on a disk that
   does not tell the cases apart. A file's name may hold upper case, as `LICENSE.txt`
   does; two files of one model whose names differ only in the case of their letters are
-  refused as one name twice (the catalogue's check, in the second pull request).
+  refused as one name twice
+  (`catalogue::an_entry_holds_one_to_a_bounded_count_of_files_each_named_once_in_either_case`).
 - (`names::a_revision_is_letters_digits_and_three_marks`,
   `names::a_licence_is_one_line_of_printable_ascii`.)
 - **Each constructor is told the executor's secrets and looks at the whole text for one
@@ -190,8 +201,10 @@ read back. Each has a type with a private field, made by a constructor that chec
 
 ### The catalogue
 
-*Decided, not built.* A `Catalogue` is the models that can be installed: at most 256
-(`MODELS_LIMIT`), no two of one name, kept in the order of their names. An `Entry` is one model:
+Code. A `Catalogue` is the models that can be installed: at most 256 (`MODELS_LIMIT`), no
+two of one name, kept in the order of their names
+(`catalogue::a_catalogue_holds_a_bounded_count_of_models_each_named_once`). An `Entry` is
+one model:
 
 | Field | What it is |
 |---|---|
@@ -203,12 +216,16 @@ read back. Each has a type with a private field, made by a constructor that chec
 | `origins` | The origins a download of the files may reach: at most 8 (`ORIGINS_LIMIT`), each named once |
 | `files` | 1 to 64 files (`FILES_LIMIT`), each with its `name`, its `size` in bytes, its `sha256`, and `from`, the address it is first asked for at |
 
+(`catalogue::a_catalogue_is_read_as_its_models_and_their_files`,
+  `catalogue::an_entry_holds_a_bounded_count_of_features_each_a_name_declared_once`,
+  `catalogue::every_other_field_of_an_entry_keeps_its_rule`.)
 
 - **A file's size** is 1 byte to 1 TiB (`FILE_MAX_BYTES`). It is what a download is
   stopped at, so a size of zero is refused: it would stop a download before its first
-  byte and prove nothing.
+  byte and prove nothing
+  (`catalogue::a_size_of_zero_is_refused_and_so_is_one_past_the_most_a_file_may_be`).
 - **A file's hash** is written as every digest is (ADR 0001): `sha256:` and 64 lower-case
-  hex digits.
+  hex digits (`catalogue::a_hash_of_the_wrong_length_is_refused`).
 - **Where a file may be downloaded from is two things.** `from` is an `Address` (ADR
   0012): where the first request for the file goes. `origins` is every origin a download
   of this model's files may reach, the first address's and any it is moved to, since a
@@ -216,7 +233,8 @@ read back. Each has a type with a private field, made by a constructor that chec
   0012, "Three interfaces"). A file whose `from` is at an origin the entry does not name
   is refused, and `Entry::may_download_from` is the question the installer asks of each
   address it is moved to (task M2). An origin is written as an origin, with no path
-  after it.
+  after it
+  (`catalogue::an_entry_names_a_bounded_count_of_origins_once_each_and_every_file_comes_from_one_of_them`).
 - **Features, origins, files and models are kept in the order of their texts,** whatever
   order they were written in. Every such text is ASCII, so the order of its bytes and
   the order of its characters are one order; "the order of their names" and "the order
@@ -252,44 +270,59 @@ read back. Each has a type with a private field, made by a constructor that chec
 It is at most 1 MiB (`CATALOGUE_MAX_BYTES`). A person may write it in any way JSON
 allows of saying the one thing: with any white space, the fields in any order, a
 character spelled as an escape; and an address's host in either case, its port written
-or not. What
+or not (`catalogue::a_person_may_write_a_catalogue_in_any_way_json_allows`). What
 whizbang writes of one (`Catalogue::to_bytes`) is written one way: compact, the fields
 in the order above, and an address as its origin and the rest of it; a catalogue reads
-back from that as itself.
+back from that as itself (`catalogue::a_catalogue_round_trips`).
 
 **A catalogue that could not be read back is not made.** `Catalogue::new` refuses one
-whose written form is over the bound, and one whose written form holds a secret. The written form is looked at whole, because it puts side by side
+whose written form is over the bound
+(`catalogue::a_catalogue_too_long_to_be_read_back_is_not_made`), and one whose written
+form holds a secret. The written form is looked at whole, because it puts side by side
 what a person wrote apart, and writes an address without a port that is its scheme's
-own, which brings its host and its path together.
+own, which brings its host and its path together
+(`catalogue::a_secret_that_writing_the_catalogue_would_spell_is_refused_where_the_catalogue_is_made`).
 A part that holds a secret is refused where the part is made, a file's address and a
 feature among them, and a secret that only the lowering of a host makes (ADR 0012) is
-refused as a secret.
+refused as a secret
+(`catalogue::a_part_that_holds_a_secret_is_refused_where_the_part_is_made`).
 
 ### How a record is read
 
-*Decided, not built.* Stored bytes are not trusted, a catalogue's and an installation
+Code (`json.rs`). Stored bytes are not trusted, a catalogue's and an installation
 record's alike. In this order:
 
 1. **The length.** Bytes over the bound are refused as `Refused::TooLarge` before
    anything of them is looked at. Read from a source (`read_from`), no more than the
    bound and one byte is asked of it, however much it has; a source that fails is
-   refused by the kind of its failure, with no path.
+   refused by the kind of its failure, with no path
+   (`catalogue::a_catalogue_over_its_bound_is_refused_before_it_is_read`,
+  `catalogue::reading_a_catalogue_asks_its_source_for_no_more_than_the_bound_and_one_byte`,
+  `catalogue::a_catalogue_that_cannot_be_read_is_refused_by_the_kind_of_failure_and_no_path`).
 2. **A secret, in the bytes as they are.** Bytes that hold a secret the reader was told
    of, anywhere, are refused whole.
 3. **JSON.** Bytes that are not JSON, that have anything after the one value, or that
-   nest deeper than the format's reader follows (128 levels) are refused by their line.
+   nest deeper than the format's reader follows (128 levels) are refused by their line
+   (`catalogue::a_catalogue_that_is_not_json_is_refused_by_its_line`,
+  `refusals::values_nested_past_what_the_reader_follows_are_refused_and_not_followed`).
 4. **A field given twice** in one object, at any depth, is refused by its line. The usual
-   reader keeps the last and says nothing.
+   reader keeps the last and says nothing
+   (`catalogue::a_catalogue_with_a_field_given_twice_is_refused_by_its_line`).
 5. **A secret, in every key and every text as JSON decoded it:** an escape can spell
-   what the bytes do not hold.
+   what the bytes do not hold
+   (`catalogue::a_catalogue_that_holds_a_secret_anywhere_is_refused_whole_and_not_shown`).
 6. **The fields, by hand.** Every object is an object with its fields by name; a field
    that is not one of its fields, a field that is missing, and a value of another kind
-   than its field's are each refused, with the place.
+   than its field's are each refused, with the place
+   (`catalogue::a_catalogue_with_an_unknown_field_or_a_missing_one_is_refused`,
+  `catalogue::a_catalogue_with_a_value_of_another_kind_is_refused`).
    A size is a whole number from 0 to what 64 bits hold, written as one: a fraction, a
    negative number and a text are another kind. Every list's count is looked at before
-   any of its items is. The format is the one the reader reads, or the record is refused.
+   any of its items is. The format is the one the reader reads, or the record is refused
+   (`catalogue::a_catalogue_of_another_format_is_refused`).
 7. **Every value by its rule,** through the same constructors that make a value in
-   memory, so nothing is read that could not have been made.
+   memory, so nothing is read that could not have been made
+   (`catalogue::a_file_name_that_is_not_one_plain_name_is_refused`).
 
 ### An installation and its record
 
@@ -441,8 +474,10 @@ not name is not an installation in use, and is cleaned as below.
 *Decided, not built* (task M5). **A hold is a file lock, not a process id.** A hold on
 one installation is a shared lock on its hold file, `holds/<64 hex digits>`, taken
 under the directory's lock after the pointer was read and found to name that
-installation with no draining mark set. **A hold is given or refused at once:** nothing
-waits for one, so where the plan speaks of a waiting hold, here there is a hold that
+installation with no draining mark set. **A hold is given or refused at once:** its share
+of the hold file is a try that does not wait, and a hold file found held alone is a
+hold refused. The store's interface gains that try with task M5: its shared call waits
+today, and a holder waiting under the directory's lock would stall every model. So where the plan speaks of a waiting hold, here there is a hold that
 was refused and may be asked for again. The operating system lets a lock go when its
 process ends, however it ends, so a hold of a dead process is no hold; nothing reads a
 process id from a file, and nothing is signalled by one (rascal's R3 and R5).
@@ -461,7 +496,10 @@ and a count of its holds on it, and lets the share go when the count is nothing.
    install of it publishes: an installer that holds the model's lock for a download
    reads the mark, between files and inside one, and stops, which lets the model's
    lock go.
-2. The removal takes the model's lock alone.
+2. The removal takes the model's lock alone, by trying until the same deadline as step
+   4. Past it the removal answers busy and takes the mark off under the directory's
+   lock. Having the lock, it sets the mark again if it is gone: whoever takes the
+   model's lock cannot tell a dead remover's mark from a live one's, and takes it off.
 3. Under the directory's lock, the pointer is cleared.
 4. **The holds are waited for by trying, not by waiting:** the hold file is tried
    alone, without waiting, again and again until a deadline of the injected clock.
@@ -470,7 +508,8 @@ and a count of its holds on it, and lets the share go when the count is nothing.
 5. With the hold file alone, the installation's folder is deleted and
    `installations/` synced; the hold file is let go, and stays. The mark is taken off
    under the directory's lock. Past the deadline the removal answers busy: under the
-   directory's lock the pointer is put back and the mark taken off.
+   directory's lock the pointer is put back first, and then the mark is taken off, so
+   that no reader and no crash finds the model with neither a pointer nor a mark.
 
 A mark left by a process that died is taken off by the next to take the model's lock,
 which also finishes a removal that had cleared the pointer (tasks M5d and M5c).
@@ -496,7 +535,8 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   field, and what either held is not looked at for a secret as decoded (step 5 comes
   after step 4). They are refused either way, and a refusal shows nothing.
 - **A megabyte of JSON may take some tens of megabytes while it is read:** a list of
-  many small values in a field nobody knows is read before it is refused.
+  many small values in a field nobody knows is read before it is refused
+  (`refusals::values_nested_past_what_the_reader_follows_are_refused_and_not_followed`).
 - **Names are ASCII.** A file whose maker named it with other letters is renamed in its
   catalogue entry.
 - **A name that is one plain name on macOS and Linux may be none elsewhere.** A name
@@ -520,6 +560,35 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   `InstallationRecord::to_bytes` and reads it back with `InstallationRecord::parse`. A
   record whose identity is not the name of its folder, or not what the pointer says, is
   damaged.
+- **M2b: the folder is already there.** The rename of step 1 fails when
+  `installations/<id>` exists: the same identity, superseded earlier and still held, or
+  left by a crash. The installer verifies the folder that is there against the record,
+  and with it whole points to it and drops its staging; with it damaged and its hold
+  file free it deletes it and renames; with it damaged and held it answers busy. Under
+  the directory's lock a publication does the reading of the mark, the making of the
+  hold file and the replacing of the pointer, with their two syncs, and nothing else:
+  no verifying and no deleting.
+- **M3 and M5d:** the status record says whether the holder of the model's lock is an
+  installer or a remover, so that one who attaches knows what it is waiting for.
+- **M5:** the count inside a process does not stand in for the check: every hold reads
+  the pointer and the mark under the directory's lock, whatever the count. Letting the
+  last hold go and taking a new one in another thread go through one guard inside the
+  process, so that the share is not let go under a hold just counted. A hold on an
+  installation whose hold file is missing is refused as damage; a hold never makes one.
+- **M5b and M6:** a reader that holds no lock reads the mark as well as the pointer, and
+  says "draining", not "not installed", of a model whose pointer a removal has cleared.
+- **M5c:** a folder under `installations/` that the pointer does not name and that has
+  no hold file was never published: it is deleted, and no hold file is made for it.
+- **The crashes the tests of M2b and M5c hold,** each reopened by the next to take the
+  model's lock:
+
+  | A crash | What is on the disk | What the next does | The model is |
+  |---|---|---|---|
+  | Publishing, after step 1 | A folder the pointer does not name, with no hold file, or with one from an earlier publication of that identity | Deletes it, taking the hold file alone when there is one | As it was |
+  | Publishing, inside step 2, before the pointer's rename is durable | The same, with the hold file made | Takes the hold file alone and deletes it | As it was |
+  | Removal, after step 1 | The mark; the pointer as it was | Takes the mark off | Installed |
+  | Removal, after step 3 | The mark; no pointer; the folder | Finishes the removal: deletes the folder, takes the mark off | Not installed |
+  | Cleaning a superseded folder, or a repair, part-way through deleting | Part of a folder the pointer does not name | Deletes the rest | As the pointer says: for a repair, not installed |
 - **M2 and M2b** make every name on a disk from a `ModelName`, a `FileName` or an
   `InstallationId`, and each plants a secret and searches every name and byte it wrote.
   A catalogue made by a constructor that was told of other secrets than the installer's
