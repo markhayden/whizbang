@@ -1413,7 +1413,7 @@ variable named, the least length). **Size:** small.
 
 **Depends on:** B0b. **Reads:** squint `crates/squint-core/src/artifacts.rs` (`redact`).
 
-- [ ] An ADR, which changes ADR 0005's "What redaction does not find": for each form the
+- [x] An ADR, which changes ADR 0005's "What redaction does not find": for each form the
       pin test lists (base64; a `\u00XX` escape; UTF-16 in either byte order; each of the
       five other forms of percent-encoding), found, or accepted with the reason.
 - [ ] The forms that are found, in `crates/whizbang-core/src/contract/redact.rs`, each with

@@ -21,6 +21,8 @@ Amended: 2026-11-14, a third note, with task C2. Added: "The env file", which al
 settles what ADR 0005 ("Redaction") left to the config: the quotes around a value, the
 variable named in a refusal, and the least length. Changed: the sentence that said
 reading a value was still to come.
+Amended: 2026-11-14, a fifth note, with ADR 0014. Changed in "The env file": the forms
+in which a value of the env file is found in a config are those of ADR 0014.
 Amended: 2026-11-14, a fourth note, after the review of task C2. Changed in "The env
 file": white space at an end inside quotes, and quotes around nothing, are refused; no
 set of secrets is made by leaving a refusal out; `Loaded::read` is the way in.
@@ -315,7 +317,9 @@ config without the secrets of its env file, and it answers the config, each back
 credentials and the executor's secrets of one reading
 (`env::one_call_reads_the_env_file_first_and_then_the_config_with_its_secrets`). The
 three steps it takes are public too, for a test and for a reader that has its bytes
-from elsewhere, and a caller of them keeps the order itself.
+from elsewhere, and a caller of them keeps the order itself. With no env file the config
+is read with no secrets: nothing is known to look for, and every variable it names is
+missing.
 
 The env file is read first, whole, by its own strict reader
 (`EnvFile::read`, `EnvFile::parse`). Every value in it of 8 bytes or more is then a
@@ -327,10 +331,10 @@ name nothing uses
 (`env::the_env_file_is_read_first_and_a_config_that_holds_any_of_its_values_is_refused`).
 A file that sets a variable to something that is not a secret, and is 8 bytes or longer,
 makes a config that holds the same text unreadable; an env file is for keys. A value of
-the env file is found in a config in the forms redaction searches for (ADR 0005, "What
-redaction does not find"): written there in base64, or in another form not searched
-for, it is not found until those forms are (the row on redaction in
-`docs/carry-over.md`).
+the env file is found in a config in the forms redaction searches for, which since ADR
+0014 are the value as it is, in UTF-16, inside base64, percent-encoded and behind the
+escapes of a JSON string; written there in a form that record accepts as not found (its
+letters in the other case, hex), it is not found.
 
 **No set of secrets is made by leaving a refusal out.** The secrets a config is read
 with are made when the env file is read, and the executor's when the credentials are;
