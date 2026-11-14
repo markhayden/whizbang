@@ -36,6 +36,10 @@
 # more; a hit names the variable, never the value). It prints where a match is, never the
 # matching text, and not the path either when the path itself holds a match.
 #
+# Every mode but --message refuses when a local .env is there and cannot be read (its
+# values could not be searched for), when it is run outside a repository, and when a
+# second mode is given.
+#
 # Attribution check: no commit or tag message has a Co-Authored-By line, for a person or
 # an agent, or a line that credits an agent or a model; no commit or tag is authored by
 # one (SPEC.md section 15).
