@@ -10,9 +10,9 @@
 
 use std::collections::BTreeSet;
 
-use crate::contract::{Backends, Capability, ModelIdentity, Unavailable, text};
+use crate::contract::{Backends, Capability, Estimate, ModelIdentity, Unavailable, text};
 
-use super::Shown;
+use super::{Price, Quote, Shown};
 
 /// The rule of a name, as a refusal says it.
 const NAME_RULE: &str = "a name is a lower-case letter, then lower-case letters, digits, _ or -, \
@@ -41,6 +41,7 @@ pub mod feature {
 pub struct Declaration {
     model: ModelIdentity,
     features: BTreeSet<String>,
+    price: Option<Price>,
 }
 
 impl Declaration {
@@ -76,7 +77,25 @@ impl Declaration {
         Ok(Declaration {
             model,
             features: declared,
+            price: None,
         })
+    }
+
+    /// The same declaration, stating this price (ADR 0010). Stated again, the later
+    /// price is the price.
+    pub fn priced(mut self, price: Price) -> Declaration {
+        self.price = Some(price);
+        self
+    }
+
+    /// The price the backend states, when it states one.
+    pub fn price(&self) -> Option<&Price> {
+        self.price.as_ref()
+    }
+
+    /// What one request may cost under the price stated, when one is.
+    pub fn quote(&self) -> Option<Quote> {
+        self.price.as_ref().map(Price::quote)
     }
 
     /// The backend, the model and its version.
@@ -420,5 +439,26 @@ impl Backends for Roster {
             Ok(resolved) => Ok(resolved.declaration.model().clone()),
             Err(unresolved) => Err(Unavailable::new(&unresolved.to_string())),
         }
+    }
+
+    /// The most one request may cost when this model answers the capability: what the
+    /// price its backend declares comes to ([`Quote::most`]; ADR 0010). An estimate
+    /// only is the amount that is no bound. A backend that states no price, and a
+    /// model that nothing offered for the capability declares, answer nothing, as
+    /// before a declaration could state a price.
+    ///
+    /// The question names a model and not the backend a call chose, so two backends
+    /// offered for one capability that declare one model are not told apart: the
+    /// answer is the largest of theirs, and no bound when either has none.
+    fn bound(&self, capability: Capability, model: &ModelIdentity) -> Estimate {
+        self.offers
+            .iter()
+            .filter(|(offered, _, declaration)| {
+                *offered == capability && declaration.model() == model
+            })
+            .filter_map(|(_, _, declaration)| declaration.quote())
+            .map(|quote| quote.most().micros())
+            .max()
+            .map_or_else(Estimate::default, Estimate::of_micros)
     }
 }

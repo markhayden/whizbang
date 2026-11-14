@@ -5,6 +5,7 @@
 mod fault;
 pub mod fill;
 mod judge;
+mod price;
 mod resolve;
 mod segment;
 pub mod written;
