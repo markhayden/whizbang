@@ -449,9 +449,20 @@ impl StoreFailure {
     }
 
     /// The store's own error, with the paths it names: for whoever runs the store, and
-    /// never for a caller elsewhere.
+    /// never for a caller elsewhere. Of a failure that an action was handed, by the
+    /// executor in its context, it names none: that failure was made without them
+    /// ([`StoreFailure::pathless`]).
     pub fn cause(&self) -> &store::Error {
         &self.cause
+    }
+
+    /// The same failure with nothing behind it that holds a path: what the executor
+    /// in a context hands an action, whose messages are kept in its run's record.
+    pub(super) fn pathless(&self) -> StoreFailure {
+        StoreFailure {
+            what: self.what.clone(),
+            cause: Arc::new(self.cause.pathless()),
+        }
     }
 }
 
@@ -502,6 +513,15 @@ pub enum CallError {
 }
 
 impl CallError {
+    /// The same error, a failure of the store in it made without paths
+    /// ([`StoreFailure::pathless`]). No other kind holds the store's own error.
+    pub(super) fn pathless(self) -> CallError {
+        match self {
+            CallError::Store(failure) => CallError::Store(failure.pathless()),
+            other => other,
+        }
+    }
+
     /// The refusal, when the call was refused.
     pub fn refusal(&self) -> Option<&Refusal> {
         match self {

@@ -58,6 +58,10 @@ is built. Changed: the last paragraph of "What an action or a panic says is cut"
 said two things were not bounded; the order in which the executor lets go of a run is
 held by two tests, where one half of it was held by none; in "The first door", the
 parser's usage errors are printed through the door's escape.
+Amended: 2026-11-14, after the review of that pull request. Changed: the sum is done
+with the schema's longest values; what a store does at the limit on a generation file
+is stated. Added, in "Nested calls": the executor in a context answers without the
+store's paths.
 Spec: section 3, "The execution contract", "What a run publishes", "Nested calls",
 "Storage" and "What every run records"; section 6, "Spend"
 
@@ -323,15 +327,22 @@ afterwards.
   (`execute::a_run_writes_only_so_many_diagnostics_and_one_more_is_refused`,
   `asked::the_exchanges_the_executor_keeps_are_not_counted_among_a_runs_diagnostics`).
 
-**The sum.** A test runs one call at all three bounds, with texts whose every byte JSON
+**The sum.** With every value at the longest the schema allows: the texts, 393,216;
+1,024 inputs and 1,024 diagnostics, about 480,000 together (a port's name of 64
+characters, a diagnostic's name of 64, a length of twenty digits); and the lists the
+executor fills itself, 2,364,470 at most (ADR 0009, "The sum"). Together about 3.26
+megabytes, with an empty record's few hundred bytes: about 0.9 megabytes under the
+limit. A test runs one call at all three bounds, with texts whose every byte JSON
 writes as six and diagnostics under the longest names, and measures what they add to a
-record: about 785,000 bytes. The lists the executor fills itself come to 2,364,470 at
-most (ADR 0009, "The sum"). Together about 3,150,000, with an empty record's few
-hundred bytes: a megabyte under the limit
+record, about 785,000 bytes, of which the two lists are 392,000, under the figure the
+sum is done with
 (`asked::everything_a_record_lists_but_outputs_is_bounded_and_the_sum_is_under_the_limit`).
-What is left without a bound of its own is what a build declares, the arguments and
-ports of its descriptors, which no caller chooses, and the outputs a run hands back,
-which the paragraph above this section answers: such a run commits none.
+What is left without a bound of its own is what a build declares, which no caller
+chooses: the arguments and ports of its descriptors, and a text default that a
+descriptor declares, which is recorded for a call that leaves the argument out and is
+outside the 64 KiB because it is the build's and not the caller's (it is one plain
+line of 200 characters at most, ADR 0003). And the outputs a run hands back, which the
+paragraph above this section answers: such a run commits none.
 
 **So a record over the limit is never published.** By the sum, the only run whose
 record would be over it is one that handed back outputs, and that run ends as an error
@@ -359,6 +370,21 @@ built on has no way left to read a file whole (`Fs::read_at_most` is its one rea
   request id, so the limit is about 160,000 request ids; what a store does long before
   that, when each publication writes tens of megabytes, is on `docs/carry-over.md` for
   checkpoint 1B.
+  **A store at that limit is full, and not stuck.** A publication that adds names is
+  refused with `GenerationTooLarge`: an admission, so no run is made and the caller is
+  told of the store's failure; an import; and, when checkpoint 1B builds it, a
+  settlement, which adds names too (`docs/carry-over.md`). A run that was admitted
+  before the store filled and cannot publish its end is abandoned, as a run is whose
+  end the store refuses for any reason ("A run with nothing behind it"). A deletion
+  is still published, because it makes the file smaller, and after it there is room
+  again
+  (`store::a_publication_that_would_write_a_generation_file_over_the_limit_is_refused_unseen`,
+  which fills a store to within two mebibytes of the limit with long names; the limit
+  has no seam for tests). What a deletion cannot give back is what was never a run's:
+  the names of request ids and of spend are never removed, so a store that request
+  ids filled shrinks only by the runs that are deleted from it, and is otherwise full
+  for good. That is the cost the row on what every publication writes has to settle
+  long before 160,000 ids.
 - **`LOCK`: its first 1,024 bytes** (`LOCK_MAX_BYTES`) are read, to show a refused
   writer who holds the store. Nothing is refused for a longer file: the holder's line
   is one short line, and is cut at 200 characters as it always was.
@@ -1195,6 +1221,21 @@ visible and was not confirmed: that child is abandoned, never ran, and names its
 parent in its own admission. What was taken for a child is not given back when it
 ends. The store in a context takes a snapshot of the current generation at every look
 once a child has committed (`docs/carry-over.md`).
+
+**What the executor in a context answers holds no path.** An action's messages are
+kept in its run's record, and a `StoreFailure` has the store's own error behind it,
+by name (`StoreFailure::cause`), with the paths it names. So every answer of the
+executor an action is offered is made without them before it leaves: a failure of the
+store from `prepare`, `submit`, `request`, `start`, `status`, `wait`, `cancel` and
+`request_id`, and the failure inside `RunState::Abandoned` wherever a state is
+answered (`Watched`, `Cancel::NotAccepted`, `Answer::Repeat`). What is behind such a
+failure is `store::Error::WithoutPaths`, the same words and nothing else. With the
+store in a context (ADR 0005, "Redaction"), that is every way an action is handed
+anything of the store's: nothing else a context holds, its events, its diagnostics,
+its allowance, its capability handles and its signal, has a store's error in it
+(`nested::the_executor_in_a_context_answers_a_failure_of_the_store_without_a_path_in_every_method`,
+`nested::an_abandoned_run_is_shown_to_an_action_with_a_failure_that_holds_no_path`).
+A caller outside an action, a door, is handed the failure with its cause as before.
 
 **A run may freeze the actions its calls are held to** (`Context::freeze_calls`, ADR
 0009): a call of any other action is then refused (`Refusal::NotOffered`), and so is a

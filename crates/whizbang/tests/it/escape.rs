@@ -193,6 +193,12 @@ fn a_usage_error_shows_what_was_typed_with_no_control_character() {
         assert!(err.starts_with("error: "), "{err:?}");
         assert!(err.contains("--help"), "{err:?}");
         assert!(err.ends_with('\n'), "{err:?}");
+        // The parser's own line breaks are line breaks still: the error, an empty
+        // line, and where to read more, and no line break written out as text.
+        let lines: Vec<&str> = err.lines().collect();
+        assert!(lines.len() >= 3 && lines.contains(&""), "{err:?}");
+        assert!(lines.last().unwrap().contains("--help"), "{err:?}");
+        assert!(!err.contains("\\n"), "{err:?}");
     }
     // Help and the version are the parser's too, and are printed as they were.
     let (code, out, err) = ran(&["--help"]);

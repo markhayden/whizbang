@@ -487,29 +487,58 @@ fn every_listed_run_can_be_shown_from_its_listed_line() {
             );
             continue;
         }
+        if id == escaped {
+            // This line is of the run whose id holds the escape character, and its
+            // text is also, letter for letter, the id of another run: `show` refuses
+            // to choose, and the last part of this test says what it says.
+            assert_eq!(shown.code, Some(1), "{id}");
+            continue;
+        }
         assert_eq!(shown.code, Some(0), "{id}: {}", shown.err);
         // The run that was shown is the one of that line.
         let first = shown.text().lines().next().unwrap();
         assert_eq!(first, format!("run: {id}"), "{id}");
     }
     assert_eq!(twice, 2);
-    // An id that is spelt as another run is listed: what is listed comes first, so
-    // each of the two is shown from its own line, as the loop above found. The run
-    // whose id holds the escape character is also shown by the id itself.
-    let by_line = whizbang(&["show", escaped, "--json"], &root);
+    // A text that is the id of one run and how another run is listed is not taken
+    // for either: an id always means its own run, and here that would show a run
+    // other than the one whose line was copied. Both are named, escaped. The run
+    // with the escape character is shown by its id itself, and the other by what
+    // `list` prints of it, which is no run's id.
+    let both = whizbang(&["show", escaped, "--json"], &root);
+    assert_eq!(both.code, Some(1));
+    assert!(both.out.is_empty());
+    assert_eq!(
+        both.err,
+        "whizbang: Loose \\u{1b}[2J Run is the id of one run and is how `runs list` prints \
+         another run. `runs list` prints the first as Loose \\\\u{1b}[2J Run: give that for \
+         it. Give the second by its id, which holds a character that is printed escaped, or \
+         is longer than is printed; `whizbang store list` prints ids whole, with their \
+         escapes\n"
+    );
     let raw = whizbang(&["show", "Loose \u{1b}[2J Run", "--json"], &root);
-    for shown in [&by_line, &raw] {
-        assert!(
-            shown.text().contains(r#""run":"Loose \u001b[2J Run""#),
-            "{}",
-            shown.text()
-        );
-    }
+    assert!(
+        raw.text().contains(r#""run":"Loose \u001b[2J Run""#),
+        "{}",
+        raw.text()
+    );
     let spelt_so = whizbang(&["show", "Loose \\\\u{1b}[2J Run", "--json"], &root);
     assert!(
         spelt_so.text().contains(r#""run":"Loose \\u{1b}[2J Run""#),
         "{}",
         spelt_so.text()
+    );
+    // An id comes before what is listed: with the run of the escape character gone,
+    // the text means the run of that id and no other.
+    {
+        let store = Store::open_existing(&root, Arc::new(RealFs)).unwrap();
+        store.delete(&["Loose \u{1b}[2J Run"]).unwrap();
+    }
+    let exact = whizbang(&["show", escaped, "--json"], &root);
+    assert!(
+        exact.text().contains(r#""run":"Loose \\u{1b}[2J Run""#),
+        "{}",
+        exact.err
     );
     // An id that `list` cut is taken whole as well.
     for twin in &twins {

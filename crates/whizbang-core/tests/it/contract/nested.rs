@@ -2107,3 +2107,162 @@ fn a_run_calls_as_many_actions_as_its_record_lists_and_one_more_is_refused() {
     assert_eq!(stored.steps().len(), STEPS_LIMIT);
     assert!((stored.to_bytes().len() as u64) < RECORD_MAX_BYTES / 8);
 }
+
+// --- what an action can reach of a failure of the store ---------------------------------------
+
+/// Everything that can be said of a failure the executor in a context answered with:
+/// its text, its `{:?}`, and the store's own error behind it, both ways.
+fn all_of(error: &CallError) -> String {
+    let cause = match error {
+        CallError::Store(failure) => format!("{} / {:?}", failure.cause(), failure.cause()),
+        _ => "no store failure".to_owned(),
+    };
+    format!("{error} / {error:?} / {cause}")
+}
+
+/// The same of a run's state, when it is an abandoned run's with the store's failure.
+fn all_of_state(state: &RunState) -> String {
+    match state {
+        RunState::Abandoned {
+            failure: Some(failure),
+        } => format!(
+            "{failure} / {failure:?} / {} / {:?}",
+            failure.cause(),
+            failure.cause()
+        ),
+        other => format!("not abandoned with a failure: {other:?}"),
+    }
+}
+
+/// No part of where the store is stands in this text.
+fn holds_no_path(world: &World, text: &str) {
+    let root = world.root();
+    let folder = root.parent().unwrap().file_name().unwrap();
+    for private in [root.to_str().unwrap(), folder.to_str().unwrap()] {
+        assert!(!text.contains(private), "{text}");
+    }
+    assert!(!text.contains(std::env::temp_dir().to_str().unwrap()));
+}
+
+#[test]
+fn the_executor_in_a_context_answers_a_failure_of_the_store_without_a_path_in_every_method() {
+    // The pointer is damaged while an action runs, so each thing the action asks of
+    // the executor in its context is answered with the store's failure. Whatever the
+    // action takes from that answer, the store's own error behind it too, names the
+    // pointer by its last part and says nothing of where the store is.
+    let world = World::new();
+    let said: Noted<String> = noted();
+    let outer = {
+        let (pointer, said) = (world.root().join("CURRENT"), said.clone());
+        act("outer", move |_, context| {
+            let ran = context.executor().submit(&Call::new("inner")).unwrap();
+            let kept = std::fs::read(&pointer).unwrap();
+            std::fs::write(&pointer, b"not a pointer").unwrap();
+            let (executor, call) = (context.executor(), Call::new("inner"));
+            let request = Request::new(call.clone());
+            // A call that gives an input is prepared by reading the store.
+            let takes = Call::new("takes").input("mask", rect_mask(on("photo")).id());
+            let answers = [
+                executor.prepare(&takes).map(|_| ()),
+                executor.submit(&call).map(|_| ()),
+                executor.request(&request).map(|_| ()),
+                executor.start(&request).map(|_| ()),
+                executor.status(ran.run()).map(|_| ()),
+                executor.wait(ran.run()).map(|_| ()),
+                executor.cancel(ran.run()).map(|_| ()),
+            ];
+            std::fs::write(&pointer, kept).unwrap();
+            let mut all = String::new();
+            for (at, answer) in answers.into_iter().enumerate() {
+                let Err(error) = answer else {
+                    panic!("answer {at} was no failure");
+                };
+                assert!(matches!(error, CallError::Store(_)), "{error:?}");
+                all.push_str(&all_of(&error));
+                said.lock().unwrap().push(all_of(&error));
+            }
+            Err(Failure::error("store", &all))
+        })
+    };
+    let inner = act("inner", |_, _| Ok(Produced::nothing()));
+    let draft = ActionDescriptor::draft("takes", "1.0.0", Kind::Primitive, "Takes a mask.")
+        .input(InputPort::required("mask", ArtifactType::Mask, "A mask."));
+    let body: Body = Box::new(|_, _| Ok(Produced::nothing()));
+    let takes: Arc<dyn Action> = Arc::new(Scripted(draft.build().unwrap(), body));
+    let executor = engine(world.store(), vec![outer, inner, takes]);
+    let finished = executor.submit(&Call::new("outer")).unwrap();
+    let said = said.lock().unwrap().clone();
+    assert_eq!(said.len(), 7);
+    let pointer = "the store's file CURRENT is missing or damaged";
+    for one in &said {
+        holds_no_path(&world, one);
+        assert_eq!(
+            one,
+            &format!(
+                "the store failed: {pointer} / Store(StoreFailure(\"{pointer}\")) / {pointer} / \
+                 WithoutPaths {{ said: \"{pointer}\" }}"
+            )
+        );
+    }
+    // And so the record of the run that copied all of it holds none.
+    let stored = record(&world, finished.run());
+    holds_no_path(&world, &String::from_utf8(stored.to_bytes()).unwrap());
+    assert!(
+        stored
+            .outcome()
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .contains(pointer)
+    );
+}
+
+#[test]
+fn an_abandoned_run_is_shown_to_an_action_with_a_failure_that_holds_no_path() {
+    // A run that an action started cannot write its end: the store refuses it, and
+    // the run is abandoned with the store's failure, which names a file by its path.
+    // The action that started it asks after it three ways. Each answer holds the
+    // failure, and no path.
+    let world = World::new();
+    let said: Noted<String> = noted();
+    let outer = {
+        let said = said.clone();
+        act("outer", move |_, context| {
+            let executor = context.executor();
+            let Ok(Answer::Started(run)) = executor.start(&Request::new(Call::new("inner"))) else {
+                panic!("the run was not started");
+            };
+            let waited = executor.wait(&run).unwrap();
+            let asked = executor.status(&run).unwrap();
+            let Ok(Cancel::NotAccepted(told)) = executor.cancel(&run) else {
+                panic!("a cancel of an abandoned run was accepted");
+            };
+            let mut all = String::new();
+            for state in [waited.state(), asked.state(), &told] {
+                all.push_str(&all_of_state(state));
+                said.lock().unwrap().push(all_of_state(state));
+            }
+            Err(Failure::error("store", &all))
+        })
+    };
+    let inner = {
+        let fs = world.fs.clone();
+        act("inner", move |_, _| {
+            // The next call that changes the disk is the first of this run's end.
+            fs.refuse_before(fs.events().len());
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(world.store(), vec![outer, inner]);
+    let finished = executor.submit(&Call::new("outer")).unwrap();
+    let said = said.lock().unwrap().clone();
+    assert_eq!(said.len(), 3);
+    for one in &said {
+        assert!(one.starts_with("the store cannot "), "{one}");
+        assert!(one.contains("WithoutPaths"), "{one}");
+        holds_no_path(&world, one);
+    }
+    let stored = record(&world, finished.run());
+    holds_no_path(&world, &String::from_utf8(stored.to_bytes()).unwrap());
+}

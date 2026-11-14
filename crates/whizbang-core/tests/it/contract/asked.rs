@@ -1284,8 +1284,13 @@ fn everything_a_record_lists_but_outputs_is_bounded_and_the_sum_is_under_the_lim
     let added = bytes(call) - empty;
     // 393,216 for the texts, and about 383 for an input and a diagnostic together.
     assert!((780_000..=800_000).contains(&added), "{added}");
-    let executors_own = 2_364_470;
-    assert!((added + empty + executors_own) as u64 + 900_000 < RECORD_MAX_BYTES);
+    // The sum of ADR 0008 is done with the longest an input and a diagnostic can be
+    // by the schema, not with these: a port's name of 64 characters, and a length of
+    // twenty digits. That is about 480,000 for the two lists, where 392,000 was
+    // measured here; with the texts and the executor's own lists, 3.26 megabytes.
+    let (texts, lists, executors_own) = (6 * ARGUMENTS_TEXT_MAX_BYTES, 480_000, 2_364_470);
+    assert!(added - texts < lists);
+    assert!((texts + lists + executors_own + empty) as u64 + 900_000 < RECORD_MAX_BYTES);
 }
 
 #[test]

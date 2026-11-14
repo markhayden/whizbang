@@ -56,6 +56,9 @@ is handed the store's failures in words that hold no path, where one action chos
 right call and nothing held the next to it; a run writes 1,024 diagnostics at most; a
 diagnostic that is a file of its own format is written exactly or not at all; `runs
 show` takes a run as `runs list` prints it.
+Amended: 2026-11-14, after the review of that pull request. Changed: an id comes
+before what is listed, a text that could mean two runs is refused, and `store delete`
+finds a run as `runs show` does.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
 
@@ -378,7 +381,9 @@ part, a digest or a fixed name, and the reason a file was found damaged is left 
 An artifact's error that holds such a failure prints it so, as its text, as `{:?}` and
 as its source. Whatever an action then copies into a message, a progress event or a
 diagnostic, it writes nothing of where the store is; it is held by what the action is
-given, and no action has to choose the right call
+given, and no action has to choose the right call. The executor in a context is the
+other thing that hands an action a failure of the store, and it answers the same way
+(ADR 0008, "Nested calls")
 (`execute::an_action_is_handed_the_stores_failures_without_a_path_however_it_quotes_them`,
 `execute::a_snapshot_that_fails_inside_an_action_is_said_without_a_path_as_well`,
 and through each of the three actions:
@@ -531,10 +536,16 @@ stored: they are not escaped, and the help says so. A reader that stops reading,
 run is looked up under whatever the store has it under, and everything read from a store
 is printed escaped, except the bytes asked for with `--json` and `--diagnostic`. `list`
 prints an id with a control character escaped, in a form no shell gives back, and cuts
-one over 64 characters, so `show` takes a run as `list` prints it as well as by its id:
-the run listed so comes first, then the run of that id, and when several runs are
-listed so and none has that id, none is shown and the complaint says how many
-(`runs::every_listed_run_can_be_shown_from_its_listed_line`). A run
+one over 64 characters, so `show` takes a run as `list` prints it as well as by its id.
+An id always means its own run; a text that is no run's id is taken as `list` prints a
+run, when it prints exactly one so. Two cases are refused, with exit code 1, and
+nothing is chosen: a text that is one run's id and also how `list` prints another run,
+where the complaint names both; and a text that is no id and is how `list` prints
+several. `store delete` finds each run through the same function, so the run that was
+shown is the run that is deleted, and one text that could mean two deletes nothing
+(`runs::every_listed_run_can_be_shown_from_its_listed_line`,
+`store::delete_means_the_run_that_show_means_and_refuses_a_text_that_could_mean_two`).
+A run
 that was admitted and has not ended is listed and shown as such, from its admission (ADR
 0007); one with no record and no admission, or with a record this build does not read,
 is listed with the reason. No

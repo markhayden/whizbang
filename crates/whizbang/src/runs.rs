@@ -4,8 +4,8 @@
 //!
 //! What a store holds is not trusted to be what this build would have written. A run's
 //! id is whatever the store has it under, and is not held to the rule for the ids the
-//! executor makes, or a run that `list` shows could not be shown. `show` takes a run as
-//! `list` prints it, escaped or cut, and by its id as it is ([`meant`]). Everything read from the store
+//! executor makes, or a run that `list` shows could not be shown. `show` takes a run by
+//! its id, and as `list` prints it, escaped or cut, when that is no run's id ([`meant`]). Everything read from the store
 //! is printed escaped, so nothing in it reaches a terminal as a control character,
 //! except where the caller asks for bytes as they are stored (`--json`, `--diagnostic`).
 
@@ -156,30 +156,40 @@ fn list(root: &Path) -> Result<String, String> {
     Ok(text)
 }
 
-/// The run a caller means by `given`: the run that `list` prints so, or the run of that
-/// id. What is listed comes first, so that every line of `list` leads to its run: an id
-/// with a control character is listed escaped, in a form no shell gives back, and one
-/// over 64 characters is listed cut. An id that is listed as it is, is both. Only when
-/// no run is listed so, or several are, is `given` taken as an id; and when several
-/// runs are listed so and none has that id, none is shown.
-fn meant<'a>(generation: &'a Generation, given: &str) -> Result<(&'a str, &'a Run), String> {
+/// The run a caller means by `given`, for every command that takes a run: `runs show`
+/// and `store delete` both ask here, so that the run that was looked at is the run
+/// that is deleted.
+///
+/// A run's id always means that run. `list` prints an id with a control character
+/// escaped, in a form no shell gives back, and cuts one over 64 characters, so a text
+/// that is no run's id is taken as `list` prints a run, when it prints exactly one so.
+/// Two cases are refused, and nothing is chosen: a text that is one run's id and also
+/// how `list` prints another run, since whoever copied it from a line of `list` meant
+/// the other; and a text that is no id and is how `list` prints several.
+pub fn meant<'a>(generation: &'a Generation, given: &str) -> Result<(&'a str, &'a Run), String> {
     let runs = generation.runs();
-    let listed: Vec<_> = runs.iter().filter(|(id, _)| shown(id) == given).collect();
-    if let [(id, run)] = listed.as_slice() {
-        return Ok((id.as_str(), run));
+    let listed_so = |(id, _): &(&String, &Run)| id.as_str() != given && shown(id) == given;
+    let listed: Vec<_> = runs.iter().filter(listed_so).collect();
+    match (runs.get_key_value(given), listed.as_slice()) {
+        (Some((id, run)), []) => Ok((id.as_str(), run)),
+        (None, [(id, run)]) => Ok((id.as_str(), run)),
+        (None, []) => Err(format!("the store holds no run {}", shown(given))),
+        // What `list` prints is printable as it is, and `given` is that, letter for
+        // letter: it is said back unescaped, so that it reads as it was typed.
+        (Some((id, _)), _) => Err(format!(
+            "{given} is the id of one run and is how `runs list` prints another run. \
+             `runs list` prints the first as {}: give that for it. Give the second by \
+             its id, which holds a character that is printed escaped, or is longer than \
+             is printed; `whizbang store list` prints ids whole, with their escapes",
+            shown(id)
+        )),
+        (None, several) => Err(format!(
+            "{} runs are listed as {}: an id over 64 characters is listed cut, and these \
+             differ after that. Give the whole id, which `whizbang store list` prints",
+            several.len(),
+            shown(given)
+        )),
     }
-    if let Some((id, run)) = runs.get_key_value(given) {
-        return Ok((id.as_str(), run));
-    }
-    if listed.is_empty() {
-        return Err(format!("the store holds no run {}", shown(given)));
-    }
-    Err(format!(
-        "{} runs are listed as {}: an id over 64 characters is listed cut, and these \
-         differ after that. Give the whole id, which `whizbang store list` prints",
-        listed.len(),
-        shown(given)
-    ))
 }
 
 fn show(root: &Path, given: &str, json: bool, diagnostic: Option<&str>) -> Result<Vec<u8>, String> {
