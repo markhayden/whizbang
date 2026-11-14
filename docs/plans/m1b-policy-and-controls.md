@@ -1586,7 +1586,8 @@ installation records. **Size:** medium.
 
 **Done when** these pass: two files are staged and verified; a wrong hash, a short file
 and a file one byte too long each fail the download and leave no staged file that passed;
-a download reads no more than the stated size, counted by the fake; a refusal names the
+a download keeps no more than the stated size, and for a file as stated is handed
+exactly its size, counted by the fake; a refusal names the
 file by its catalogue name, escaped and cut, with no path (rule 3).
 **Size:** small.
 
@@ -1595,7 +1596,7 @@ file by its catalogue name, escaped and cut, with no path (rule 3).
 **Depends on:** M2. **Reads:** rascal `tools/python/src/rascal_tools/installs.py`
 (`publish`).
 
-- [ ] Staged files become an installation and the pointer is replaced, through the same
+- [x] Staged files become an installation and the pointer is replaced, through the same
       file-system interface the store uses, so the shim can crash it. The installer
       publishes a status record as it goes: installing, how far, and how it last ended.
 

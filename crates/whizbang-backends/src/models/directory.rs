@@ -9,9 +9,22 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use whizbang_core::store::fs::Fs;
+use whizbang_core::store::fs::{Fs, LockFile};
 
 use super::ModelName;
+
+/// How many times the directory's lock is tried before it is said to be busy.
+const LOCK_TRIES: usize = 20_000;
+
+/// What reading a small file of the directory found.
+pub(super) enum Read {
+    /// The file's bytes: all of them, or the most asked for and one more.
+    Bytes(Vec<u8>),
+    /// Nothing has the name, or a folder on the way to it is not there.
+    Missing,
+    /// What has the name is not a regular file under its own name: a link, a folder.
+    NotAFile,
+}
 
 /// One models directory. What `{:?}` prints holds no path.
 #[derive(Clone)]
@@ -48,6 +61,67 @@ impl ModelsDir {
     /// `models/<model>/`: one model's folder.
     pub(super) fn model(&self, model: &ModelName) -> PathBuf {
         self.models().join(model.as_str())
+    }
+
+    /// `models/<model>/staging/`: where an install of the model keeps its work.
+    pub(super) fn staging(&self, model: &ModelName) -> PathBuf {
+        self.model(model).join("staging")
+    }
+
+    /// `models/<model>/staging/incoming/`: the one staging folder of the model.
+    pub(super) fn incoming(&self, model: &ModelName) -> PathBuf {
+        self.staging(model).join("incoming")
+    }
+
+    /// Removes the model's staging folder and syncs the removal, for one who holds
+    /// the model's lock. What cannot be removed now is removed by the next to stage.
+    pub(super) fn unstage(&self, model: &ModelName) {
+        let _ = self.remove(&self.incoming(model));
+        let _ = self.fs.sync_dir(&self.staging(model));
+    }
+
+    /// The directory's lock (`LOCK`), taken alone for a moment: around every change
+    /// of a pointer and the making of a hold file, and around the reading of the
+    /// mark that a publication decides from. `None` when another did not let it go.
+    ///
+    /// The store's interface has no lock taken alone that waits, so this tries, a
+    /// bounded count of times, giving way to other threads between tries, and
+    /// sleeps nowhere. Whoever has the lock waits for nothing while it has it, so it
+    /// is let go after a few calls of the file system.
+    pub(super) fn lock(&self) -> io::Result<Option<Box<dyn LockFile>>> {
+        let path = self.root.join("LOCK");
+        for _ in 0..LOCK_TRIES {
+            if let Some(lock) = self.fs.hold_lock_file(&path, true)? {
+                return Ok(Some(lock));
+            }
+            std::thread::yield_now();
+        }
+        Ok(None)
+    }
+
+    /// Reads a small file whizbang wrote: at most `limit` bytes and one more, so
+    /// that one that is too long is seen to be. Only a regular file under its own
+    /// name is read: a link is not followed.
+    pub(super) fn read(&self, path: &Path, limit: u64) -> io::Result<Read> {
+        let mut file = match self.fs.open_file(path) {
+            Ok(file) => file,
+            Err(error) => {
+                return match error.kind() {
+                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => Ok(Read::Missing),
+                    io::ErrorKind::InvalidData => Ok(Read::NotAFile),
+                    _ => Err(error),
+                };
+            }
+        };
+        let mut bytes = vec![
+            0;
+            usize::try_from(limit)
+                .unwrap_or(usize::MAX)
+                .saturating_add(1)
+        ];
+        let filled = file.read(&mut bytes)?;
+        bytes.truncate(filled);
+        Ok(Read::Bytes(bytes))
     }
 
     /// Makes a folder that may be there already, and makes its name durable when it
