@@ -227,27 +227,33 @@ fn a_key_given_twice_is_refused_naming_the_key() {
     for (text, key, line) in [
         (
             "[spend]\ncall_cap_usd = 1\ncall_cap_usd = 2\n",
-            "spend.call_cap_usd",
+            "call_cap_usd",
             3,
         ),
         (
             "[backends.fill]\nkind = \"a\"\n\n[backends.fill]\nmodel = \"m\"\n",
-            "backends.fill",
+            "fill",
             4,
         ),
         (
             "# twice\n[backends.fill.one]\nkind = \"a\"\n\"kind\" = \"b\"\n",
-            "backends.fill.one.kind",
+            "kind",
             4,
         ),
         // Under a heading that is some lines above, with a list between that begins
-        // a line as a heading does; and at the top, under none.
+        // a line as a heading does; and at the top, under none. A dotted key is named
+        // by its last key, which is where the format's reader points.
         (
             "[egress.recipients.one]\norigin = \"https://h\"\nupstreams = [\n[\"x\"],\n]\norigin = \"https://i\"\n",
-            "egress.recipients.one.origin",
+            "origin",
             6,
         ),
         ("a = 1\nb = 2\na = 3\n[spend]\n", "a", 3),
+        (
+            "spend.call_cap_usd = 1\nspend.call_cap_usd = 2\n",
+            "call_cap_usd",
+            2,
+        ),
     ] {
         match refusal(text) {
             ConfigRefused::Twice {
@@ -259,6 +265,28 @@ fn a_key_given_twice_is_refused_naming_the_key() {
             }
             other => panic!("{other:?} for {text}"),
         }
+    }
+    // The key is named by its own keys alone, never by a line above it: a line that
+    // begins as a heading does may be a value's text, inside a list written over lines
+    // or a string of several lines. (The address is put together here from its parts.)
+    let marker = "VALUEMARK9";
+    let address = format!("https://user{}{marker}{}h", ":", "@");
+    for above in [
+        format!("upstreams = [\n[\"{address}\"]\n]\n"),
+        format!("upstreams = [\n  [[\"{address}\"]]   # a comment\n]\n"),
+        format!("account = \"\"\"\n[{marker}]\n\"\"\"\n"),
+        format!("account = \'\'\'\n  [{marker}.{marker}]  \n\'\'\'\n"),
+        format!("account = \"\"\"\r\n[{marker}]\r\n\"\"\"\r\n"),
+    ] {
+        let text = format!(
+            "[egress.recipients.one]\n{above}origin = \"https://h\"\norigin = \"https://i\"\n"
+        );
+        let refused = refusal(&text);
+        assert!(
+            matches!(&refused, ConfigRefused::Twice { key, .. } if key == "origin"),
+            "{refused:?}"
+        );
+        assert!(!said(&refused).contains(marker), "{refused:?}");
     }
     let sentence = refusal("a = 1\na = 2\n").to_string();
     assert_eq!(
@@ -585,6 +613,48 @@ fn a_file_over_the_bound_is_refused_before_it_is_opened_to_read() {
 }
 
 #[test]
+fn no_more_than_the_bound_and_one_byte_is_asked_of_what_is_read() {
+    // What an opened file is read through, given something that never ends and counts
+    // what was asked of it: a file that grew after its length was looked at.
+    struct Endless(usize);
+    impl std::io::Read for Endless {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            buffer.fill(b'#');
+            self.0 += buffer.len();
+            Ok(buffer.len())
+        }
+    }
+    let mut endless = Endless(0);
+    assert_eq!(
+        Config::read_from(&mut endless, &Secrets::none()).unwrap_err(),
+        ConfigRefused::TooLarge {
+            limit: CONFIG_BYTES_LIMIT
+        }
+    );
+    assert_eq!(endless.0, usize::try_from(CONFIG_BYTES_LIMIT).unwrap() + 1);
+    // What fails while it is read is unreadable, with the kind of failure.
+    struct Broken;
+    impl std::io::Read for Broken {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("zqxjk"))
+        }
+    }
+    let refused = Config::read_from(Broken, &Secrets::none()).unwrap_err();
+    assert_eq!(
+        refused,
+        ConfigRefused::Unreadable(std::io::ErrorKind::Other)
+    );
+    assert!(!said(&refused).contains("zqxjk"));
+    // And what is short is read.
+    assert_eq!(
+        Config::read_from(&b"[spend]\ncall_cap_usd = 1\n"[..], &Secrets::none())
+            .unwrap()
+            .call_cap_micros(),
+        Some(1_000_000)
+    );
+}
+
+#[test]
 fn what_is_not_a_file_is_refused_before_it_is_opened() {
     // A folder, and on a system that has it the device of endless zeros, which says
     // its length is nothing and would never end: what a path names is asked first,
@@ -748,10 +818,6 @@ fn a_name_or_a_key_that_holds_a_secret_is_refused_whole_and_not_shown() {
         (
             "recipients.zqxjkvwpyh.origin",
             "[egress.recipients.zqxjkvwpyh]\nclasses = []\n",
-        ),
-        (
-            "abc12345.XYZsecret99",
-            "[backends.fill.abc12345]\nkind = \"k\"\nXYZsecret99 = 1\nXYZsecret99 = 2\n",
         ),
         (
             "abc12345.settings.xyzsecret99",
@@ -1144,6 +1210,18 @@ fn what_the_reader_does_not_find_or_tell_apart_is_known() {
             .unwrap()
             .call_cap_micros(),
         Some(2_500_000)
+    );
+    // A key given twice is named without its table. A secret that stands across the
+    // table's name and the key is not whole in what is shown, and its last part is
+    // shown: the format's reader does not say which table the key is in.
+    let across = Secrets::new(["abc12345.XYZsecret99".to_owned()]).unwrap();
+    let text = "[backends.fill.abc12345]\nkind = \"k\"\nXYZsecret99 = 1\nXYZsecret99 = 2\n";
+    assert_eq!(
+        Config::parse(text.as_bytes(), &across).unwrap_err(),
+        ConfigRefused::Twice {
+            key: "XYZsecret99".to_owned(),
+            line: 4
+        }
     );
     // A secret the reader was told of, written in a form redaction does not search
     // for, is not found: here, with its letters in the other case.

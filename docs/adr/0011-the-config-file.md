@@ -200,8 +200,9 @@ rules keep a key out of the file and out of what is said about the file:
   key and a word the reader adds (`.kind`, `.origin`), where no key alone holds it and
   the two halves are on different lines of the file. So the path is looked at whole, as
   it was read and before it is escaped or cut, in the one place a refusal that names a
-  key is made (`At::refuse`, and the same for a key given twice); a path that holds a
-  secret is `HoldsSecret`
+  key is made (`At::refuse`); a path that holds a secret is `HoldsSecret`. A key given
+  twice is named by its last part alone ("What a refusal says"), which is looked at
+  whole in the same way
   (`file::a_name_or_a_key_that_holds_a_secret_is_refused_whole_and_not_shown`, for all
   three looks).
 
@@ -214,8 +215,9 @@ rules keep a key out of the file and out of what is said about the file:
   (`file::what_is_not_a_file_is_refused_before_it_is_opened`,
   `file::a_file_over_the_bound_is_refused_from_its_length`,
   `file::a_file_over_the_bound_is_refused_before_it_is_opened_to_read`). No more than
-  the bound and one byte is then read, for a file that grew between the two; no test
-  shows that last guard, since it needs a file to change under the reader.
+  the bound and one byte is then asked of what was opened, for a file that grew between
+  the two (`Config::read_from`, which a file is read through;
+  `file::no_more_than_the_bound_and_one_byte_is_asked_of_what_is_read`).
 - **Text.** The bytes are UTF-8, with no ASCII control character but a tab, a line feed
   and a carriage return, anywhere, a comment included
   (`file::bytes_that_are_not_text_and_control_characters_are_refused`).
@@ -239,7 +241,7 @@ known to be harmless (`file::a_config_prints_its_shape_and_none_of_its_values`).
 
 A refusal is one of eight (`ConfigRefused`): the file could not be read, with the kind
 of failure; what the path names is not a file; it is too large; it is not text, with the line; it holds a secret; it is not
-TOML, with the line; a key is given twice, with the key's path and the line; or a key is not
+TOML, with the line; a key is given twice, with the key and the line; or a key is not
 known, is missing, or has a value that does not belong, with the key from the top of the
 file and the reason.
 
@@ -247,12 +249,13 @@ file and the reason.
 - **No value.** Every sentence is written in the reader: it says what kind of thing
   belongs at a key and what kind was found, and never quotes what was found. The
   sentence of the `toml` crate is not passed on, since it is not written here.
-- **A key given twice is named by its path as far as the text tells it:** the keys of
-  the nearest heading above it and then its own, or the heading's alone when the key is
-  in a heading. The format's reader says only where the second key stands, so the
-  heading is found by looking up the lines; a line inside a string of several lines
-  that looks like a heading would be taken for one, and the path would be wrong, though
-  never unchecked for a secret (`file::a_key_given_twice_is_refused_naming_the_key`).
+- **A key given twice is named by its last part:** the one key the format's reader
+  points at where it is given the second time, without the table it is in and without
+  the keys before it in a dotted key. The
+  format's reader says where the second key stands and not which table holds it, and
+  nothing is taken from another line of the file to make up the rest: a line above that
+  looks like a heading may be the text of a value
+  (`file::a_key_given_twice_is_refused_naming_the_key`).
 - **A key, escaped and cut.** A key that came from the file is shown with each character
   escaped (`char::escape_default`), so that what is shown is one line of ASCII, and its
   first 64 characters of that, with three dots when there were more
@@ -284,6 +287,9 @@ config's digest in `asked.config` stands for the rest.
 - **It looks for a secret in the bytes, the keys and the texts, and not in a number.**
   A secret of digits written as a number with a mark between its digits (`1234_5678`)
   is in none of the three, and is read as that number.
+- **A key given twice is shown without its table.** A secret that stands across the
+  table's name and the key is not whole in what is shown, and the key, its last part,
+  is shown.
 - **An amount is a double before it is millionths.** Digits past what a double holds
   are not seen: `2.5000000000000000001` is 2.5, and is not refused as finer than a
   millionth.
