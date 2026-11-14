@@ -296,8 +296,8 @@ is ticked by the pull request that makes it true.
   publication. Of "Done when": the fake action with two outputs, crashed inside its
   commit. With it, from `docs/carry-over.md`: the store reads no more of a stored file
   than its entry says. That covers the files under `objects/` only: `CURRENT`, the
-  generation files and the lock file are still read whole (`docs/carry-over.md`, task
-  A12).
+  generation files and the lock file were still read whole, and each was given a limit
+  at the exit check (task A12; ADR 0008, "What the store reads of its own files").
 - **Part 2, in two pull requests,** because the first half alone came to about a
   thousand lines. First, status and progress: `start`, `status` and `wait` on the
   executor, one table of open runs, and of "Done when" the caller that disconnects and
@@ -387,11 +387,13 @@ with the composite. A box is ticked by the pull request that makes it true.
 - [x] Tests, extracted for `grow` alone with fixtures built directly: growth by a fractional
       radius matches the analytic expectation; downward extension; protect takes precedence;
       the refinement is cleared.
-- [ ] Before porting the pixel code, check whether a library call does the same. If one does,
+- [x] Before porting the pixel code, check whether a library call does the same. If one does,
       both are run through the record's script on the same masks and the faster one that is
       still exact becomes the method; the comparison goes in the record's "Alternatives".
-- [ ] `whizbang rascal grow --mask <artifact> --px 8 [--down-px 4]`.
-- [ ] The first tool record, `docs/reference/tools/grow.md`, as `SPEC.md` section 8 describes:
+      (Ticked on a comparison run once, with the library as a temporary development
+      dependency that was not kept: the note under "Done when" says how.)
+- [x] `whizbang rascal grow --mask <artifact> --px 8 [--down-px 4]`.
+- [x] The first tool record, `docs/reference/tools/grow.md`, as `SPEC.md` section 8 describes:
       two worked examples with their images; exactness against the analytic expectation;
       time at three mask sizes; known limits. Its examples run as tests, and a script
       regenerates its numbers.
@@ -406,6 +408,15 @@ or an accepted cancellation, including a failure once output bytes are staged, t
 closed and reopened: the run has its terminal status, no committed output and no completed
 status, and every diagnostic written before it ended is readable.
 **Size:** medium.
+
+**Built in two pull requests,** because the task came to over three thousand lines: first
+the action and its tests, the first three boxes; then the command, the publication tests
+of "Done when" and the tool record, the last two. The fourth box is ticked with the second, on this basis: no crate
+whizbang depends on does the same job; `imageproc` 0.27.0 does, and was run once, as a
+temporary development dependency, through the record's script on the same masks. It
+gave the rule's pixels and took about three times as long, so the hand-written method
+stays. The dependency was then removed, and the result is in the record's
+"Alternatives" as recorded numbers, marked as not verified again by `just check`.
 
 ### A10. `view`, extracted
 
@@ -426,18 +437,36 @@ status, and every diagnostic written before it ended is readable.
 source image within one pixel, and the record's examples run as tests.
 **Size:** small.
 
+**As built** (amended at the exit check, task A12). "Within one pixel" is true of the
+mapping and is not the whole of what was measured (`docs/reference/tools/view.md`, "Rung
+2 results" and "Limits"; ADR 0001 for the mapping). The mapping itself is exact at a
+crop's corners and within 1e-9 of a pixel inside it. What a judge sees in a reduced crop
+is only as fine as the crop: a thing seen in one crop pixel is found again within half
+a crop pixel, which is more than one source pixel once the crop is reduced more than
+twice. The sentence above is read as the first of these.
+
 ### A11. Proof two: the scripted squint run
 
 **Depends on:** A7, A8, A10. **Reads:** squint `crates/squint-core/src/run.rs`, for the shape
 of the loop and how returned crops become readable in later turns.
 
-- [ ] `whizbang-squint` gains the action `check`: a judge loop against the fake judge. A run
+- [x] `whizbang-squint` gains the action `check`: a judge loop against the fake judge. A run
       freezes its list of tools and the images it may read. A crop returned by a tool in this
       run becomes readable in later turns of this run.
-- [ ] Evidence a tool returns is kept as a diagnostic and can be read back by the same run. It
+- [x] Evidence a tool returns is kept as a diagnostic and can be read back by the same run. It
       cannot become an output of the action or be read by another run.
-- [ ] The loop is the smallest that proves the contract. Squint's rules, checklist and
+- [x] The loop is the smallest that proves the contract. Squint's rules, checklist and
       submission format are not ported here.
+
+**As built** (ADR 0009). Of the second box: a tool is called through the executor, so
+its crop is the committed output of the tool's own run as well as a diagnostic of the
+`check` run. Another run's judge cannot read it; a caller of the executor that is no
+judge takes it by its identity, as any artifact (`docs/carry-over.md`). The task came to
+about twice the size of one and is **two pull requests**: first what the contract
+gained, in the core and the test kit (a run is handed the backend its call resolved;
+each request and each exchange with a judge is recorded; a turn and an exchange as data;
+a verdict; the calls a run froze); then `view` as an action, `check`, and the
+transcripts. The boxes are ticked by the second.
 
 **Done when** these scripted transcripts behave as stated:
 
@@ -454,8 +483,16 @@ of the loop and how returned crops become readable in later turns.
 | `view` on a guessed artifact id | Refused |
 | A failure on turn two | A failed run whose turn-one evidence is still readable |
 
-And: changing the tool list after admission has no effect on the run. And the publication
-tests of A7, named for this action: a cancelled `check` has no verdict and keeps its
+And: changing the tool list after admission has no effect on the run. (As built, and
+amended at the exit check, task A12: the list is frozen at the action's first step, not
+at admission. The names a run asks for are an argument, so they are fixed at admission
+and are in its record; the tools on offer are read once, when the action starts, and a
+tool withdrawn after that does not leave a run that has started. A tool withdrawn
+between a run's admission and its action's first step makes the run invalid: it is
+never run with a tool that was not on offer when it started. ADR 0009, "`check`, and
+what a judge may do";
+`check::changing_the_tool_list_after_admission_has_no_effect_on_the_run`.) And the
+publication tests of A7, named for this action: a cancelled `check` has no verdict and keeps its
 evidence; a completed `check` returns only after its verdict and status are durable, and
 both are present after a reopen. After a failure or an accepted cancellation, the store is
 closed and reopened: the run has its terminal status, no verdict, no committed output and no
@@ -464,19 +501,24 @@ completed status, and every diagnostic written before it ended is readable.
 
 ### A12. Exit check
 
-- [ ] Each clause of the checkpoint 1A row in `SPEC.md` section 16 is matched to a named test
+- [x] Each clause of the checkpoint 1A row in `SPEC.md` section 16 is matched to a named test
       in the note.
-- [ ] The run records written by `grow` and by `check` (completed, failed and cancelled) are
+- [x] The run records written by `grow` and by `check` (completed, failed and cancelled) are
       each checked against the list in `SPEC.md` section 3: steps, timings, the fake
       capabilities' identities, the fake ledger's amounts, and for `check` every turn kept
       whole.
-- [ ] `just check` is inside its budget; the timing table is in the note.
-- [ ] The generated reference lists `grow` and `check` and is current.
-- [ ] `docs/plans/m1a-note.md`: what shipped, what the two proofs changed about the contract,
+- [x] `just check` is inside its budget; the timing table is in the note.
+- [x] The generated reference lists `grow` and `check` and is current.
+- [x] `docs/plans/m1a-note.md`: what shipped, what the two proofs changed about the contract,
       the timing table, what moved to the carry-over list.
-- [ ] `port-module` is corrected from its uses in A9 and A10, and now includes writing the
+- [x] `port-module` is corrected from its uses in A9 and A10, and now includes writing the
       tool record.
-- [ ] Tag `m1a`.
+- [ ] Tag `m1a`. (The orchestrator's, on the merge of the pull request that ticks the
+      boxes above; a later pull request ticks this one.)
+
+**Built in two pull requests:** first the leftovers that change code, each from a row of
+`docs/carry-over.md` or a reviewer's note, built with a test or given a new owner with
+its reason; then the exit check itself, with the note.
 
 ## Review rounds
 

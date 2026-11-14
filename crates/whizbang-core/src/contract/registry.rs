@@ -8,6 +8,7 @@ use std::sync::Arc;
 use crate::artifact::Artifact;
 use crate::capability::Shown;
 
+use super::record::Decision;
 use super::{ActionDescriptor, Context, PreparedCall};
 
 /// What an action hands back when it finished: the artifacts it made, each at the
@@ -22,6 +23,47 @@ use super::{ActionDescriptor, Context, PreparedCall};
 #[derive(Clone, PartialEq, Default)]
 pub struct Produced {
     outputs: Vec<(String, Artifact)>,
+    verdict: Option<Verdict>,
+}
+
+/// What a judging action concluded: a decision and the reason for it (ADR 0009). It is
+/// no artifact: it is handed back beside them, and the executor writes it in the run's
+/// record, in the step that commits the run, when the run completed. What `{:?}`
+/// prints of one is the decision and how long the reason is.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Verdict {
+    decision: Decision,
+    why: String,
+}
+
+impl Verdict {
+    pub fn new(decision: Decision, why: &str) -> Verdict {
+        Verdict {
+            decision,
+            why: why.to_owned(),
+        }
+    }
+
+    pub fn decision(&self) -> Decision {
+        self.decision
+    }
+
+    /// The reason, as the action gave it. A record keeps it with the secrets taken
+    /// out, and cut as an error's message is.
+    pub fn why(&self) -> &str {
+        &self.why
+    }
+}
+
+impl std::fmt::Debug for Verdict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Verdict({:?}, a reason of {} bytes)",
+            self.decision,
+            self.why.len()
+        )
+    }
 }
 
 impl Produced {
@@ -35,6 +77,18 @@ impl Produced {
     pub fn with(mut self, port: &str, artifact: impl Into<Artifact>) -> Produced {
         self.outputs.push((port.to_owned(), artifact.into()));
         self
+    }
+
+    /// The same, with this verdict: what the action concluded. A second replaces
+    /// the first.
+    pub fn with_verdict(mut self, verdict: Verdict) -> Produced {
+        self.verdict = Some(verdict);
+        self
+    }
+
+    /// The verdict handed back, when there is one.
+    pub fn verdict(&self) -> Option<&Verdict> {
+        self.verdict.as_ref()
     }
 
     /// What was handed back, to be committed.
@@ -60,6 +114,9 @@ impl std::fmt::Debug for Produced {
                 Shown(port),
                 artifact.id()
             ));
+        }
+        if let Some(verdict) = &self.verdict {
+            list.entry(verdict);
         }
         list.finish()
     }

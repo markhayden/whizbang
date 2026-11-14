@@ -82,12 +82,89 @@ impl FaultKind {
     }
 }
 
-/// The typed error of a capability's request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The most bytes that are kept of a provider's words as they were given, until the
+/// handle has looked for secrets in them ([`Raw`]).
+pub(super) const RAW_LIMIT: usize = 1 << 20;
+
+/// A provider's words as they were given, before anything was cleaned or cut: what a
+/// handle looks for secrets in (ADR 0009, "A provider's words are redacted whole").
+/// Words over [`RAW_LIMIT`] bytes are not kept: they cannot be searched whole, so
+/// what is shown of them, once a handle has looked, is fixed words.
+#[derive(Clone)]
+pub(super) enum Raw {
+    Whole(String),
+    TooLong,
+}
+
+impl Raw {
+    pub(super) fn of(text: &str) -> Raw {
+        if text.len() > RAW_LIMIT {
+            Raw::TooLong
+        } else {
+            Raw::Whole(text.to_owned())
+        }
+    }
+
+    /// The words as they are shown once the secrets are out: redacted while whole,
+    /// then cleaned and cut by `shape`. When what was shaped still holds something
+    /// redaction finds, as cleaning can make it, or the words were too long to search,
+    /// nothing of them is shown: `otherwise` is.
+    pub(super) fn shown(
+        &self,
+        redact: &dyn Fn(&str) -> String,
+        shape: impl Fn(&str) -> String,
+        otherwise: &str,
+    ) -> String {
+        let Raw::Whole(text) = self else {
+            return otherwise.to_owned();
+        };
+        let shaped = shape(&redact(text));
+        if redact(&shaped) == shaped {
+            shaped
+        } else {
+            otherwise.to_owned()
+        }
+    }
+}
+
+/// The typed error of a capability's request. Two faults are equal when their kind,
+/// their sentence and their wait are; what `{:?}` prints is those three.
+#[derive(Clone)]
 pub struct Fault {
     kind: FaultKind,
     sentence: String,
     retry_after_ms: Option<u64>,
+    /// The text the fault was made of, until a handle has looked for secrets in it.
+    raw: Option<Raw>,
+}
+
+impl PartialEq for Fault {
+    fn eq(&self, other: &Fault) -> bool {
+        (self.kind, &self.sentence, self.retry_after_ms)
+            == (other.kind, &other.sentence, other.retry_after_ms)
+    }
+}
+
+impl Eq for Fault {}
+
+impl std::fmt::Debug for Fault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Fault")
+            .field("kind", &self.kind)
+            .field("sentence", &self.sentence)
+            .field("retry_after_ms", &self.retry_after_ms)
+            .finish()
+    }
+}
+
+/// A fault's sentence, from its text: trimmed, cleaned and cut.
+fn sentence_of(text: &str) -> String {
+    let sentence = clean(text.trim(), FAULT_LIMIT);
+    if sentence.trim().is_empty() {
+        "no reason was given".to_owned()
+    } else {
+        sentence
+    }
 }
 
 impl Fault {
@@ -97,16 +174,23 @@ impl Fault {
     /// the text is dropped first, so a text of nothing, or of white space alone of any
     /// kind, becomes `no reason was given`.
     pub fn new(kind: FaultKind, text: &str) -> Fault {
-        let sentence = clean(text.trim(), FAULT_LIMIT);
         Fault {
             kind,
-            sentence: if sentence.trim().is_empty() {
-                "no reason was given".to_owned()
-            } else {
-                sentence
-            },
+            sentence: sentence_of(text),
             retry_after_ms: None,
+            raw: Some(Raw::of(text)),
         }
+    }
+
+    /// The same fault as a run may be told of it and may store it: its sentence made
+    /// again from the text it was given, with the secrets taken out while the text was
+    /// whole, and only then cleaned and cut. A handle that knows its run's secrets does
+    /// this to every fault before it hands it on. A second time changes nothing.
+    pub(crate) fn redacted(mut self, redact: &dyn Fn(&str) -> String) -> Fault {
+        if let Some(raw) = self.raw.take() {
+            self.sentence = raw.shown(redact, sentence_of, "the reason is not kept");
+        }
+        self
     }
 
     /// The same fault, with how long the backend said to wait before asking again.

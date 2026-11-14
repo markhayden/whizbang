@@ -603,6 +603,50 @@ pub enum RunState {
     Removed { ended: Option<Status> },
 }
 
+impl RunState {
+    /// The same state, the store's failure in it made without paths
+    /// ([`StoreFailure::pathless`]): what an action is told of a run.
+    pub(super) fn pathless(self) -> RunState {
+        match self {
+            RunState::Abandoned { failure } => RunState::Abandoned {
+                failure: failure.map(|failure| failure.pathless()),
+            },
+            other => other,
+        }
+    }
+}
+
+impl Answer {
+    /// The same answer, as an action is given it ([`RunState::pathless`]).
+    pub(super) fn pathless(self) -> Answer {
+        match self {
+            Answer::Repeat(earlier) => {
+                let state = earlier.state.clone().pathless();
+                Answer::Repeat(earlier.in_state(state))
+            }
+            other => other,
+        }
+    }
+}
+
+impl Cancel {
+    /// The same answer, as an action is given it ([`RunState::pathless`]).
+    pub(super) fn pathless(self) -> Cancel {
+        match self {
+            Cancel::NotAccepted(state) => Cancel::NotAccepted(state.pathless()),
+            Cancel::Accepted => Cancel::Accepted,
+        }
+    }
+}
+
+impl Watched {
+    /// The same answer, as an action is given it ([`RunState::pathless`]).
+    pub(super) fn pathless(mut self) -> Watched {
+        self.state = self.state.pathless();
+        self
+    }
+}
+
 /// The answer to a request that was sent before under the same id: the run that the
 /// first one made, and where that run is now. Nothing was prepared and nothing ran to
 /// give it.

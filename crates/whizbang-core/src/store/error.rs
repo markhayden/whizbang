@@ -60,6 +60,16 @@ pub enum Error {
     NotAnOutput { digest: Digest },
     /// A file of the store does not hold what it must.
     Corrupt { path: PathBuf, reason: String },
+    /// A failure of the store, in the words that hold no path
+    /// ([`Error::without_paths`]) and with nothing else of it: what the store in an
+    /// action's context answers with ([`Error::pathless`]). Whatever an action does
+    /// with such a failure, as its text, as `{:?}` or as the source of another error,
+    /// it writes nothing of where the store is into its run's record.
+    WithoutPaths { said: String },
+    /// A publication's generation file would be `bytes` long, and one is at most `limit`
+    /// ([`super::GENERATION_MAX_BYTES`]): the store does not write what it will not
+    /// read. Nothing was published.
+    GenerationTooLarge { bytes: u64, limit: u64 },
     /// Staging is not on the store's file system, so nothing can be renamed into place.
     /// Nothing was published.
     OtherFileSystem { staging: PathBuf, source: io::Error },
@@ -82,6 +92,16 @@ impl Error {
         Error::Corrupt {
             path: path.to_path_buf(),
             reason: reason.into(),
+        }
+    }
+}
+
+impl Error {
+    /// The same failure with every path taken out of it: its words without paths, and
+    /// nothing else. It is what an action is handed.
+    pub fn pathless(&self) -> Error {
+        Error::WithoutPaths {
+            said: self.without_paths(),
         }
     }
 }
@@ -132,6 +152,8 @@ impl Error {
             Error::Corrupt { path, .. } => {
                 format!("the store's file {} is missing or damaged", file(path))
             }
+            Error::WithoutPaths { said } => said.clone(),
+            Error::GenerationTooLarge { .. } => self.to_string(),
             Error::OtherFileSystem { .. } => {
                 "the store's staging is not on the store's file system".to_owned()
             }
@@ -210,6 +232,12 @@ impl fmt::Display for Error {
             Error::Corrupt { path, reason } => {
                 write!(f, "{} is damaged: {reason}", path.display())
             }
+            Error::WithoutPaths { said } => f.write_str(said),
+            Error::GenerationTooLarge { bytes, limit } => write!(
+                f,
+                "the store holds too many names for one generation: its file would be \
+                 {bytes} bytes, and one is at most {limit}; nothing was published"
+            ),
             Error::OtherFileSystem { staging, source } => write!(
                 f,
                 "{} is not on the store's file system: {source}",
@@ -237,6 +265,8 @@ impl std::error::Error for Error {
             | Error::NameExists { .. }
             | Error::InvalidRun { .. }
             | Error::OtherFormat { .. }
+            | Error::WithoutPaths { .. }
+            | Error::GenerationTooLarge { .. }
             | Error::NotAnOutput { .. }
             | Error::Corrupt { .. } => None,
         }

@@ -14,9 +14,13 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use crate::artifact::Contents;
-use crate::capability::{FillHandle, Filler, Judge, JudgeHandle, SegmentHandle, Segmenter, Tally};
+use crate::capability::{
+    Declaration, FillHandle, Filler, Judge, JudgeHandle, Recorder, SegmentHandle, Segmenter, Tally,
+};
+use crate::store;
 
-use super::{Clock, Executor};
+use super::nested::Offer;
+use super::{Capability, Clock, Executor, PreparedCall, Refusal};
 
 /// A cancellation signal. Every clone is the same signal: once one is cancelled, all are,
 /// and none is ever uncancelled.
@@ -152,6 +156,14 @@ pub trait Diagnostics: Send + Sync {
     /// at most, and is written once in a run. Text has the secrets taken out before it
     /// is kept; bytes that are not UTF-8 are kept as they are.
     fn write(&self, name: &str, bytes: &[u8]) -> Result<(), String>;
+
+    /// Keeps `bytes` under `name` as [`Diagnostics::write`] does, for bytes that are a
+    /// file of a format of its own: a picture, an artifact's canonical file. Taking a
+    /// secret out of such a file would leave another file under its name, and one that
+    /// may no longer be read. So the bytes are kept exactly as they were given, or not
+    /// at all: when they hold a secret the write is refused, in words that do not show
+    /// it, and nothing is kept (ADR 0009, "Evidence").
+    fn write_exact(&self, name: &str, bytes: &[u8]) -> Result<(), String>;
 }
 
 /// Nowhere to write: what a context has until it is given a place.
@@ -161,6 +173,10 @@ pub struct NoDiagnostics;
 impl Diagnostics for NoDiagnostics {
     fn write(&self, _: &str, _: &[u8]) -> Result<(), String> {
         Err("this context keeps no diagnostics".to_owned())
+    }
+
+    fn write_exact(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        self.write(name, bytes)
     }
 }
 
@@ -272,17 +288,21 @@ impl Drop for Taken {
 }
 
 /// The backends a context's capability handles are made over: for each of the three
-/// capabilities, a backend, or none. It holds no handle. A handle is bound to one run,
-/// and only a context makes the handles an action is offered, with its own signal and
-/// its own deadline ([`Context::new`]): so an action is never handed a handle bound to
-/// another run's signal (ADR 0006, ADR 0008).
+/// capabilities, the backends there are, in the order they were given. It holds no
+/// handle. A handle is bound to one run, and only a context makes the handles an action
+/// is offered, with its own signal and its own deadline ([`Context::new`]): so an
+/// action is never handed a handle bound to another run's signal (ADR 0006, ADR 0008).
+///
+/// An executor holds every backend of its build, and hands a run those its call
+/// resolved ([`Capabilities::resolved_for`], ADR 0009). A context is handed at most one
+/// backend of each capability: it makes its handle over the first.
 ///
 /// What `{:?}` prints is which of the three there are.
 #[derive(Clone, Default)]
 pub struct Capabilities {
-    segment: Option<Arc<dyn Segmenter>>,
-    fill: Option<Arc<dyn Filler>>,
-    judge: Option<Arc<dyn Judge>>,
+    segment: Vec<Arc<dyn Segmenter>>,
+    fill: Vec<Arc<dyn Filler>>,
+    judge: Vec<Arc<dyn Judge>>,
     /// The clock the handles hold a deadline to, when it is not the machine's.
     clock: Option<Arc<dyn Clock>>,
 }
@@ -300,26 +320,60 @@ impl Capabilities {
         Capabilities::default()
     }
 
-    /// The same set, with this segmenter.
+    /// The same set, with this segmenter after those it holds.
     pub fn with_segment(mut self, backend: Arc<dyn Segmenter>) -> Capabilities {
-        self.segment = Some(backend);
+        self.segment.push(backend);
         self
     }
 
-    /// The same set, with this filler.
+    /// The same set, with this filler after those it holds.
     pub fn with_fill(mut self, backend: Arc<dyn Filler>) -> Capabilities {
-        self.fill = Some(backend);
+        self.fill.push(backend);
         self
     }
 
-    /// The same set, with this judge.
+    /// The same set, with this judge after those it holds.
     pub fn with_judge(mut self, backend: Arc<dyn Judge>) -> Capabilities {
-        self.judge = Some(backend);
+        self.judge.push(backend);
         self
     }
 
-    /// A handle on each backend, bound to this signal and held to this deadline, each
-    /// counting the requests it sends in this tally.
+    /// Of these backends, the ones this call resolved (ADR 0009): for each capability
+    /// the call needs and a model answers, the first backend here that declares that
+    /// model, by its backend, its model and its version; and none for a capability the
+    /// call does not need, or whose model no backend here declares. A call with two
+    /// needs of one capability is handed the backend of the first.
+    pub(super) fn resolved_for(&self, prepared: &PreparedCall) -> Capabilities {
+        let model_of = |capability: Capability| {
+            let mut needs = prepared.needs().iter();
+            let need = needs.find(|need| need.capability() == capability)?;
+            need.model()
+        };
+        fn pick<B: ?Sized>(
+            backends: &[Arc<B>],
+            model: Option<&super::ModelIdentity>,
+            declared: impl Fn(&B) -> &Declaration,
+        ) -> Vec<Arc<B>> {
+            let found = model.and_then(|model| {
+                let mut backends = backends.iter();
+                backends.find(|backend| declared(backend.as_ref()).model() == model)
+            });
+            found.cloned().into_iter().collect()
+        }
+        Capabilities {
+            segment: pick(&self.segment, model_of(Capability::Segment), |b| {
+                b.declaration()
+            }),
+            fill: pick(&self.fill, model_of(Capability::Fill), |b| b.declaration()),
+            judge: pick(&self.judge, model_of(Capability::Judge), |b| {
+                b.declaration()
+            }), // The clock the handles hold a deadline to goes with them.
+            clock: self.clock.clone(),
+        }
+    }
+
+    /// A handle on the first backend of each capability, bound to this signal and held
+    /// to this deadline, each counting the requests it sends in this tally.
     fn bound(
         &self,
         cancellation: &Cancellation,
@@ -329,15 +383,18 @@ impl Capabilities {
         let run = || cancellation.clone();
         let segment = self
             .segment
-            .clone()
+            .first()
+            .cloned()
             .map(|b| SegmentHandle::new(b, run()).counted(tally.clone()));
         let fill = self
             .fill
-            .clone()
+            .first()
+            .cloned()
             .map(|b| FillHandle::new(b, run()).counted(tally.clone()));
         let judge = self
             .judge
-            .clone()
+            .first()
+            .cloned()
             .map(|b| JudgeHandle::new(b, run()).counted(tally.clone()));
         let mut handles = Handles {
             segment,
@@ -365,9 +422,9 @@ impl Capabilities {
 impl std::fmt::Debug for Capabilities {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Capabilities")
-            .field("segment", &self.segment.is_some())
-            .field("fill", &self.fill.is_some())
-            .field("judge", &self.judge.is_some())
+            .field("segment", &!self.segment.is_empty())
+            .field("fill", &!self.fill.is_empty())
+            .field("judge", &!self.judge.is_empty())
             .finish()
     }
 }
@@ -397,11 +454,35 @@ impl Handles {
     }
 }
 
+/// The store as an action reads it: the same content, and every failure in the words
+/// that hold no path ([`store::Error::pathless`]). An action's messages are kept in its
+/// run's record and handed to callers who are not on this machine, and the store's own
+/// error names files by where they are. So no action is handed one: whatever it does
+/// with a failure of the store, or with an artifact's error that holds one, it writes
+/// no path (ADR 0005, "Redaction").
+struct NoPaths(Arc<dyn Contents + Send + Sync>);
+
+impl Contents for NoPaths {
+    fn snapshot(&self) -> store::Result<store::Generation> {
+        self.0.snapshot().map_err(|error| error.pathless())
+    }
+
+    fn read(&self, entry: &store::Entry) -> store::Result<Vec<u8>> {
+        self.0.read(entry).map_err(|error| error.pathless())
+    }
+
+    fn read_record(&self, entry: &store::Entry) -> store::Result<Vec<u8>> {
+        self.0.read_record(entry).map_err(|error| error.pathless())
+    }
+}
+
 /// What one execution of an action is handed.
 #[derive(Clone)]
 pub struct Context {
     cancellation: Cancellation,
     deadline: Option<Instant>,
+    /// The clock the deadline is held to, when it is not the machine's.
+    clock: Option<Arc<dyn Clock>>,
     events: Arc<dyn Events>,
     allowance: Allowance,
     store: Arc<dyn Contents + Send + Sync>,
@@ -410,6 +491,8 @@ pub struct Context {
     requests: Arc<Tally>,
     executor: Arc<dyn Executor>,
     diagnostics: Arc<dyn Diagnostics>,
+    /// The actions the run's calls are held to, once it froze them.
+    offer: Arc<Offer>,
 }
 
 impl Context {
@@ -426,18 +509,64 @@ impl Context {
         executor: Arc<dyn Executor>,
     ) -> Context {
         let requests = Arc::new(Tally::default());
+        let clock = capabilities.clock.clone();
         let capabilities = capabilities.bound(&cancellation, deadline, &requests);
         Context {
             cancellation,
             deadline,
+            clock,
             events,
             allowance,
-            store,
+            store: Arc::new(NoPaths(store)),
             capabilities,
             requests,
             executor,
             diagnostics: Arc::new(NoDiagnostics),
+            offer: Arc::new(Offer::default()),
         }
+    }
+
+    /// The same context, whose executor holds its calls to what is frozen here.
+    pub(super) fn offering(mut self, offer: Arc<Offer>) -> Context {
+        self.offer = offer;
+        self
+    }
+
+    /// Freezes the actions this run may call, by name (ADR 0009): from here on a call
+    /// through [`Context::executor`] of any other action is refused, and so is a call
+    /// that gives as an input an artifact that is neither an input of this run's own
+    /// call nor an output that a run it called committed. Each refusal is in the
+    /// run's record. It is said once: false when the run froze them before, and then
+    /// nothing changes. A context that no executor made freezes nothing its executor
+    /// reads.
+    pub fn freeze_calls<'a>(&self, actions: impl IntoIterator<Item = &'a str>) -> bool {
+        let actions = actions.into_iter().map(str::to_owned).collect();
+        self.offer.freeze(actions)
+    }
+
+    /// Holds the name of an action to what this run froze, before any call is made
+    /// of it (ADR 0009): refused when the run froze its calls and this is none of
+    /// them, with the refusal the executor would give such a call
+    /// ([`Refusal::NotOffered`]), which is kept in the run's record as that one is.
+    /// Nothing is prepared, admitted or run. A loop that dispatches what a model
+    /// names asks this first, and makes no call of a name that is refused; the
+    /// executor's own refusal of such a call stands behind it. A run that froze
+    /// nothing is refused nothing.
+    pub fn offered(&self, action: &str) -> Result<(), Refusal> {
+        self.offer.held(action)
+    }
+
+    /// The same context, whose handles keep what they send with this recorder: each
+    /// request timed by its clock, and each exchange with a judge kept by it.
+    /// They send `limit` requests at most, and store `budget` bytes of exchanges.
+    pub(super) fn recording(
+        self,
+        recorder: Arc<dyn Recorder>,
+        limit: usize,
+        budget: u64,
+    ) -> Context {
+        self.requests.record_with(recorder, limit, budget);
+        self
     }
 
     /// The same context, writing its diagnostics here.
@@ -461,6 +590,15 @@ impl Context {
         self.deadline
     }
 
+    /// Whether the run's deadline has passed, by the clock its capability handles are
+    /// held to: the executor's (ADR 0008, "A deadline in a run"). An action that works
+    /// for long asks this from time to time, and not the machine's clock, so that it
+    /// and its handles stop at the same moment. Never true of a run with no deadline.
+    pub fn deadline_passed(&self) -> bool {
+        let now = || self.clock.as_ref().map_or_else(Instant::now, |c| c.now());
+        self.deadline.is_some_and(|deadline| now() >= deadline)
+    }
+
     /// Where progress is reported.
     pub fn events(&self) -> &dyn Events {
         self.events.as_ref()
@@ -472,7 +610,9 @@ impl Context {
     }
 
     /// The store, to read from. An action's outputs do not go in through this: they are
-    /// committed together when it completes.
+    /// committed together when it completes. A failure it answers with holds no path,
+    /// as its text and as `{:?}`: what an action copies into a message is kept in its
+    /// run's record.
     pub fn store(&self) -> &(dyn Contents + Send + Sync) {
         self.store.as_ref()
     }
@@ -491,5 +631,49 @@ impl Context {
     /// The executor: the one way an action reaches another action.
     pub fn executor(&self) -> &dyn Executor {
         self.executor.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::{Cancellation, PoisonError, Waker};
+
+    fn registered(signal: &Cancellation) -> usize {
+        let told = signal.0.told.lock().unwrap_or_else(PoisonError::into_inner);
+        told.len()
+    }
+
+    #[test]
+    fn a_waiters_registration_is_taken_out_of_every_signal_when_it_is_dropped() {
+        // A signal under another. A waiter registers with the lower one, which
+        // registers it with both. While the registration lives, either tells it;
+        // once it is dropped neither holds it, and neither tells it again.
+        let above = Cancellation::new();
+        let signal = Cancellation::under([above.clone()]);
+        let told = Arc::new(AtomicUsize::new(0));
+        let waker: Waker = {
+            let told = told.clone();
+            Arc::new(move || {
+                told.fetch_add(1, Ordering::SeqCst);
+            })
+        };
+        let other: Waker = Arc::new(|| {});
+        let kept = signal.telling(other);
+        let telling = signal.telling(waker);
+        assert_eq!((registered(&signal), registered(&above)), (2, 2));
+        above.tell();
+        signal.tell();
+        assert_eq!(told.load(Ordering::SeqCst), 2);
+        drop(telling);
+        // The other registration stays: only the one that was dropped is taken out.
+        assert_eq!((registered(&signal), registered(&above)), (1, 1));
+        above.tell();
+        signal.tell();
+        assert_eq!(told.load(Ordering::SeqCst), 2);
+        drop(kept);
+        assert_eq!((registered(&signal), registered(&above)), (0, 0));
     }
 }

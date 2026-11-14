@@ -123,8 +123,10 @@ operation and one scripted multi-turn squint run before either tool is ported. T
 descriptor is decided in ADR 0003 (`docs/adr/0003-the-action-descriptor.md`), preparing
 a call in ADR 0004 (`docs/adr/0004-preparing-a-call.md`), the run record in ADR 0005
 (`docs/adr/0005-the-run-record.md`), request ids and admission in ADR 0007
-(`docs/adr/0007-request-ids-and-admission.md`), and executing a call, with its commit
-step, in ADR 0008 (`docs/adr/0008-executing-a-call.md`).
+(`docs/adr/0007-request-ids-and-admission.md`), executing a call, with its commit
+step, in ADR 0008 (`docs/adr/0008-executing-a-call.md`), and what a run asks of its
+capabilities, with a judge held where its calls are dispatched, in ADR 0009
+(`docs/adr/0009-what-a-run-asks-of-a-judge.md`).
 
 - **Action descriptor.** Static and deterministic: name, kind, typed arguments, typed artifact
   ports (required, optional, variadic), outputs with their bounds, the capabilities and
@@ -771,6 +773,10 @@ Proposed; exact verbs are settled as each milestone builds them.
 
 ```
 whizbang rascal <task|operation> …
+whizbang rascal grow --mask <identity> --px <n> [--down-px <n>] --store <dir>
+                    [--request-id <id>]
+                                       # the first operation, and the first command that
+                                       # runs an action (docs/reference/tools/grow.md)
 whizbang squint check <use-case> …
 whizbang try <tool> …                  # one tool on one image or pair, no judge
 whizbang eval tool <tool> --set <set>  # rung 2

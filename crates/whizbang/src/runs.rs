@@ -3,9 +3,9 @@
 //! writes the store.
 //!
 //! What a store holds is not trusted to be what this build would have written. A run's
-//! id is whatever the store has it under, and is taken as given: `show` looks its
-//! argument up as it is, and does not hold it to the rule for the ids the executor
-//! makes, or a run that `list` shows could not be shown. Everything read from the store
+//! id is whatever the store has it under, and is not held to the rule for the ids the
+//! executor makes, or a run that `list` shows could not be shown. `show` takes a run by
+//! its id, and as `list` prints it, escaped or cut, when that is no run's id ([`meant`]). Everything read from the store
 //! is printed escaped, so nothing in it reaches a terminal as a control character,
 //! except where the caller asks for bytes as they are stored (`--json`, `--diagnostic`).
 
@@ -14,10 +14,10 @@ use std::sync::Arc;
 
 use clap::Subcommand;
 use whizbang_core::contract::Admission;
-use whizbang_core::contract::record::{self, ArgumentValue, RunRecord, StoredRecordError};
+use whizbang_core::contract::record::{self, ArgumentValue, Judged, RunRecord, StoredRecordError};
 use whizbang_core::contract::request::{StoredAdmissionError, admitted};
 use whizbang_core::store::fs::RealFs;
-use whizbang_core::store::{Generation, Kind, Reader};
+use whizbang_core::store::{Generation, Kind, Reader, Run};
 
 use crate::store::Where;
 
@@ -34,7 +34,8 @@ pub enum Command {
     /// Show one run's record: what was asked, how it ended, and what it kept. A run
     /// that was admitted and has not ended is shown from its admission.
     Show {
-        /// The run, by its id, as `runs list` shows it.
+        /// The run, by its id or as `runs list` prints it: a line's first field can be
+        /// copied here, though it was escaped or cut.
         run: String,
         #[command(flatten)]
         at: Where,
@@ -155,11 +156,45 @@ fn list(root: &Path) -> Result<String, String> {
     Ok(text)
 }
 
-fn show(root: &Path, id: &str, json: bool, diagnostic: Option<&str>) -> Result<Vec<u8>, String> {
+/// The run a caller means by `given`, for every command that takes a run: `runs show`
+/// and `store delete` both ask here, so that the run that was looked at is the run
+/// that is deleted.
+///
+/// A run's id always means that run. `list` prints an id with a control character
+/// escaped, in a form no shell gives back, and cuts one over 64 characters, so a text
+/// that is no run's id is taken as `list` prints a run, when it prints exactly one so.
+/// Two cases are refused, and nothing is chosen: a text that is one run's id and also
+/// how `list` prints another run, since whoever copied it from a line of `list` meant
+/// the other; and a text that is no id and is how `list` prints several.
+pub fn meant<'a>(generation: &'a Generation, given: &str) -> Result<(&'a str, &'a Run), String> {
+    let runs = generation.runs();
+    let listed_so = |(id, _): &(&String, &Run)| id.as_str() != given && shown(id) == given;
+    let listed: Vec<_> = runs.iter().filter(listed_so).collect();
+    match (runs.get_key_value(given), listed.as_slice()) {
+        (Some((id, run)), []) => Ok((id.as_str(), run)),
+        (None, [(id, run)]) => Ok((id.as_str(), run)),
+        (None, []) => Err(format!("the store holds no run {}", shown(given))),
+        // What `list` prints is printable as it is, and `given` is that, letter for
+        // letter: it is said back unescaped, so that it reads as it was typed.
+        (Some((id, _)), _) => Err(format!(
+            "{given} is the id of one run and is how `runs list` prints another run. \
+             `runs list` prints the first as {}: give that for it. Give the second by \
+             its id, which holds a character that is printed escaped, or is longer than \
+             is printed; `whizbang store list` prints ids whole, with their escapes",
+            shown(id)
+        )),
+        (None, several) => Err(format!(
+            "{} runs are listed as {}: an id over 64 characters is listed cut, and these \
+             differ after that. Give the whole id, which `whizbang store list` prints",
+            several.len(),
+            shown(given)
+        )),
+    }
+}
+
+fn show(root: &Path, given: &str, json: bool, diagnostic: Option<&str>) -> Result<Vec<u8>, String> {
     let (reader, generation) = open(root)?;
-    let Some(run) = generation.run(id) else {
-        return Err(format!("the store holds no run {}", shown(id)));
-    };
+    let (id, run) = meant(&generation, given)?;
     if let Some(name) = diagnostic {
         let Some(entry) = run.get(name) else {
             return Err(format!(
@@ -363,7 +398,24 @@ fn text_of(record: &RunRecord) -> String {
             output.artifact
         ));
     }
-    line("models: none".to_owned());
+    // Each capability request, in the order they were sent, with how long it took.
+    line(format!("models: {}", count(record.models().len())));
+    for (at, model) in record.models().iter().enumerate() {
+        let ended = serde_json::to_value(model.ended).unwrap_or_default();
+        let took = record
+            .time()
+            .durations
+            .get(at)
+            .map_or(0, |duration| duration.ms);
+        line(format!(
+            "  {}\t{} {} {}\t{}\t{took} ms",
+            model.capability.name(),
+            shown(&model.backend),
+            shown(&model.model),
+            shown(&model.version),
+            ended.as_str().unwrap_or_default()
+        ));
+    }
     line(format!(
         "spend: {}; paid requests: none",
         reserved(record.spend().reserved_micros)
@@ -379,7 +431,34 @@ fn text_of(record: &RunRecord) -> String {
             step.status().map_or("not ended", |status| status.name())
         ));
     }
-    line("judge: none".to_owned());
+    // The judge's turns, and the verdict when the run concluded one. The whole of
+    // each exchange is the diagnostic the turn names.
+    line(format!("judge: {}", count(record.judge().len())));
+    for entry in record.judge() {
+        let word = |value: serde_json::Value| value.as_str().unwrap_or("none").to_owned();
+        match entry {
+            Judged::Turn {
+                exchange,
+                stop,
+                tool_calls,
+                excluded,
+                ..
+            } => line(format!(
+                "  turn\t{}\t{} tool calls\tleft out: {}\t{}",
+                word(serde_json::to_value(stop).unwrap_or_default()),
+                tool_calls,
+                word(serde_json::to_value(excluded).unwrap_or_default()),
+                exchange
+                    .as_deref()
+                    .map_or_else(|| "not kept".to_owned(), shown)
+            )),
+            Judged::Verdict { decision, why } => line(format!(
+                "  verdict\t{}\t{}",
+                word(serde_json::to_value(decision).unwrap_or_default()),
+                why.escape_debug()
+            )),
+        }
+    }
     line(format!(
         "diagnostics: {}",
         count(record.diagnostics().len())

@@ -14,6 +14,8 @@ path = "tests/it/main.rs"
 
 [dependencies]
 whizbang-core.workspace = true
+# The arguments of a judge's tool call, and a tool's schema, are JSON values.
+serde_json.workspace = true
 # Encoding a crop as a PNG. The file's bytes are part of the image artifact's identity
 # (ADR 0002), so what writes them is pinned exactly: `image`, at the version the core
 # decodes with, is what the code calls; the bytes come from `png`, and from the compressor
@@ -28,6 +30,9 @@ image = { version = "=0.25.10", default-features = false, features = ["png"] }
 png = "=0.18.1"
 flate2 = "=1.1.11"
 miniz_oxide = "=0.9.1"
+
+[dev-dependencies]
+whizbang-testkit.workspace = true
 
 [lints]
 workspace = true

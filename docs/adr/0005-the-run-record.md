@@ -48,6 +48,17 @@ action is handed, and the sentence that said nothing can cancel a run.
 Amended: 2026-11-13, with the last pull request of task A7 (ADR 0008, "Nested calls").
 Changed: `identity.parent`, `steps` and `outcome.refusals` are filled, in `run/2`, and
 `outcome` gains `refusals_omitted`; five lists hold nothing, and a sixth inside `spend`.
+Amended: 2026-11-13, with ADR 0009 (task A11). Changed: `models`, `time.durations` and
+`judge` are filled, in `run/2`; three lists hold nothing, where six did; a diagnostic
+whose name starts with `exchange-` is the executor's.
+Amended: 2026-11-13, at the exit check of checkpoint 1A (task A12). Changed: an action
+is handed the store's failures in words that hold no path, where one action chose the
+right call and nothing held the next to it; a run writes 1,024 diagnostics at most; a
+diagnostic that is a file of its own format is written exactly or not at all; `runs
+show` takes a run as `runs list` prints it.
+Amended: 2026-11-14, after the review of that pull request. Changed: an id comes
+before what is listed, a text that could mean two runs is refused, and `store delete`
+finds a run as `runs show` does.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
 
@@ -102,12 +113,12 @@ A record is one JSON object with thirteen fields, always all of them, in this or
 | `inputs` | Inputs and outputs | Each input as its `port`, its `type`, the identity of the `artifact` and the identity of the `binding` the artifact belongs to |
 | `outputs` | Inputs and outputs | Each committed output as its `port`, its `type` and the identity of the `artifact` |
 | `outcome` | Outcome | `status`: `completed`, `cancelled`, `error` or `invalid`; `error`, its `kind` and `message`, or null; `invalid`, the reason, or null; `refusals`, each call from inside the run that was refused, as its `action` or null, its `kind` and `why`, at most 256; `refusals_omitted`, how many more there were (ADR 0008, "Nested calls") |
-| `time` | Time | `start_ms` and `end_ms`, in milliseconds since the Unix epoch; `durations` |
-| `models` | Models | |
+| `time` | Time | `start_ms` and `end_ms`, in milliseconds since the Unix epoch; `durations`, one for each capability request and each call that ended (ADR 0009) |
+| `models` | Models | Each capability request the run sent, in order, at most 1,024: `capability`, `backend`, `model`, `version`, `device` and `cached` (both null: not known), and `ended` (ADR 0009) |
 | `spend` | Spend | `reserved_micros`, what was reserved for the run when it was admitted, in millionths of a US dollar, or null when nothing was; `requests` |
 | `egress` | Egress | |
 | `steps` | Steps | Each call the run made of another action that was admitted, in order, at most 256: `step`, the word `call`; `run`, the run the call made; `action`; `status`, how that run had ended, or null (ADR 0008, "Nested calls") |
-| `judge` | Judge runs | |
+| `judge` | Judge runs | Each request to a judge as a `turn`, in order, a summary that names the diagnostic holding the whole exchange; then the `verdict`, when the run concluded one (ADR 0009) |
 | `diagnostics` | Diagnostics | Each diagnostic of the run as its `name` among the run's names in the store, the `digest` of what is stored under it, and its length in `bytes`; in the order of their names |
 
 An argument's value is an object with one field, named for its kind: `number`, `integer`,
@@ -124,10 +135,11 @@ as a clock that went back gives, is written as the start.
 
 ### What is empty in `run/2`, and how it stops being empty
 
-Five lists hold nothing in this version, and cannot: `asked.settings`,
-`time.durations`, `models`, `egress` and `judge`; and a sixth inside `spend`,
-`spend.requests`. (`outcome.refusals` and `steps` were two more until nested calls
-filled them: ADR 0008.) Each is there, as an empty list, in every record. In the code the
+Two lists hold nothing in this version, and cannot: `asked.settings` and `egress`; and
+a third inside `spend`, `spend.requests`. (`outcome.refusals` and `steps` were two more
+until nested calls filled them: ADR 0008. `time.durations`, `models` and `judge` were
+three more until the first action asked a capability through the executor: ADR 0009.)
+Each is there, as an empty list, in every record. In the code the
 element of each is a type that has no value; in the schema each has at most zero items. A
 record with anything in one of them is not a `run/2` record.
 
@@ -140,8 +152,9 @@ settled before the ledger of checkpoint 1B, so that list is the empty one. The a
 of the run and not of a request, which is why it is not an element of the list. It is
 written when the run ends, from what admission reserved; a run that never ends has no
 record, and its admission and its reservation say the same amount. The largest amount
-there is is no amount (ADR 0007): the types refuse it, and the schema, which has no
-maximum in the vocabulary the validator knows, does not.
+there is is no amount (ADR 0007): the types refuse it, and the schema does not: the
+validator holds a number to a maximum as a double, which cannot tell that amount from
+the ones beside it.
 
 **What reading does with a `run/1` record.** It is refused as another version, like any
 other. A store is not kept before the tag of checkpoint 1A, so nothing is migrated
@@ -360,9 +373,24 @@ not find a key by its shape. What keeps other private things out of a record is 
 it has no field for a path, a host name, a user or an environment variable. A free text
 is the one place the shape does not reach: an action that writes a path into its error's
 message has written it into the record. A `CallError` shows no path,
-as its text or as `{:?}`; the store's own error does, and an action that quotes one in a
-message quotes it without (`store::Error::without_paths`). Nothing holds an action to
-that (`docs/carry-over.md`).
+as its text or as `{:?}`; the store's own error does. So an action is never handed the
+store's own error. The store in a context answers every failure as
+`store::Error::WithoutPaths`, which holds the failure's words without paths
+(`store::Error::without_paths`) and nothing else of it: a file is named by its last
+part, a digest or a fixed name, and the reason a file was found damaged is left out.
+An artifact's error that holds such a failure prints it so, as its text, as `{:?}` and
+as its source. Whatever an action then copies into a message, a progress event or a
+diagnostic, it writes nothing of where the store is; it is held by what the action is
+given, and no action has to choose the right call. The executor in a context is the
+other thing that hands an action a failure of the store, and it answers the same way
+(ADR 0008, "Nested calls")
+(`execute::an_action_is_handed_the_stores_failures_without_a_path_however_it_quotes_them`,
+`execute::a_snapshot_that_fails_inside_an_action_is_said_without_a_path_as_well`,
+and through each of the three actions:
+`grow_action::a_failure_of_the_store_inside_a_running_grow_leaves_no_path_in_its_record`,
+`check::a_failure_of_the_store_inside_a_running_view_or_check_leaves_no_path_in_its_record`).
+A path an action builds for itself, from something that is not the store, is still the
+action's to keep out.
 
 ### Where a record is, in a store
 
@@ -482,8 +510,13 @@ place for diagnostics.
 
 **Diagnostics.** `Context::diagnostics` takes bytes under a name: a lower-case letter or a
 digit, then lower-case letters, digits, `_`, `-` or `.`, 64 characters at most, written
-once in a run. The content has the secrets taken out before it is kept, whatever its
-encoding. The name is a key in the store, written as it is in the generation file and in
+once in a run, and not starting with `exchange-`: those names are the executor's, for
+the exchanges with a judge (ADR 0009). A run's action writes 1,024 at most
+(`DIAGNOSTICS_LIMIT`; ADR 0008, "What a call and a run may hold"). The content has the
+secrets taken out before it is kept, whatever its encoding; bytes that are a file of a
+format of their own, a picture or an artifact's canonical file, are written with
+`write_exact` instead, which keeps them as they were given or, when they hold a
+secret, refuses and keeps nothing (ADR 0009, "Evidence"). The name is a key in the store, written as it is in the generation file and in
 the record: a name that redaction would change, because it is or holds a secret, is
 refused, and the refusal does not show it. No other name of a run comes from outside the
 build: a port and an argument are named by the action's descriptor, a call that names
@@ -501,7 +534,18 @@ name, which is any diagnostic name of the run and also `record`, as the bytes th
 stored: they are not escaped, and the help says so. A reader that stops reading, as
 `head` does, is not an error: the command says nothing and exits 0. Both read only. Neither holds a run's id to the rule of a `RunId`: a
 run is looked up under whatever the store has it under, and everything read from a store
-is printed escaped, except the bytes asked for with `--json` and `--diagnostic`. A run
+is printed escaped, except the bytes asked for with `--json` and `--diagnostic`. `list`
+prints an id with a control character escaped, in a form no shell gives back, and cuts
+one over 64 characters, so `show` takes a run as `list` prints it as well as by its id.
+An id always means its own run; a text that is no run's id is taken as `list` prints a
+run, when it prints exactly one so. Two cases are refused, with exit code 1, and
+nothing is chosen: a text that is one run's id and also how `list` prints another run,
+where the complaint names both; and a text that is no id and is how `list` prints
+several. `store delete` finds each run through the same function, so the run that was
+shown is the run that is deleted, and one text that could mean two deletes nothing
+(`runs::every_listed_run_can_be_shown_from_its_listed_line`,
+`store::delete_means_the_run_that_show_means_and_refuses_a_text_that_could_mean_two`).
+A run
 that was admitted and has not ended is listed and shown as such, from its admission (ADR
 0007); one with no record and no admission, or with a record this build does not read,
 is listed with the reason. No

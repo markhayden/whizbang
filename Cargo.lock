@@ -451,6 +451,8 @@ dependencies = [
  "clap",
  "serde_json",
  "whizbang-core",
+ "whizbang-rascal",
+ "whizbang-squint",
  "whizbang-testkit",
 ]
 
@@ -481,6 +483,7 @@ dependencies = [
 name = "whizbang-rascal"
 version = "0.0.1"
 dependencies = [
+ "serde_json",
  "whizbang-core",
  "whizbang-testkit",
 ]
@@ -493,7 +496,9 @@ dependencies = [
  "image",
  "miniz_oxide 0.9.1",
  "png",
+ "serde_json",
  "whizbang-core",
+ "whizbang-testkit",
 ]
 
 [[package]]

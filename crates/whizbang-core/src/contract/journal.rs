@@ -13,7 +13,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use super::record::{Diagnostic, quoted};
+use crate::capability::Recorder;
+
+use super::record::{DIAGNOSTICS_LIMIT, DIAGNOSTICS_PREFIX, Diagnostic, quoted};
 use super::{Diagnostics, Events, Secrets};
 
 /// What tells a run the time: milliseconds since the Unix epoch.
@@ -93,17 +95,79 @@ impl Events for Kept {
     }
 }
 
-impl Diagnostics for Kept {
-    fn write(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+/// What the name of every exchange with a judge starts with, among the diagnostics of
+/// a run: `exchange-`, then the exchange's number among the run's requests, from 1, in
+/// four digits. The executor's handles write these, and an action cannot (ADR 0009).
+pub const EXCHANGE_PREFIX: &str = "exchange-";
+
+impl Recorder for Kept {
+    fn now_ms(&self) -> u64 {
+        self.clock.now_ms()
+    }
+
+    fn redact(&self, text: &str) -> String {
+        self.secrets.redact(text)
+    }
+
+    fn exchange(&self, place: usize, written: &[u8], room: &dyn Fn(u64) -> bool) -> Option<String> {
+        // A name is refused only when it holds a secret: the exchange is then not
+        // kept, and the record says so. Nor is one kept that would take, with the
+        // secrets taken out, more than there is room for: redaction can lengthen it.
+        let name = format!("{EXCHANGE_PREFIX}{:04}", place + 1);
+        let made = Diagnostic::written(&name, written, &self.secrets).ok()?;
+        if !room(made.1.len() as u64) {
+            return None;
+        }
+        let mut diagnostics = self.diagnostics.lock().unwrap_or_else(|e| e.into_inner());
+        diagnostics.insert(name.clone(), made);
+        Some(format!("{DIAGNOSTICS_PREFIX}{name}"))
+    }
+}
+
+impl Kept {
+    /// Keeps what an action wrote under a name of its own: `exact` when the bytes are
+    /// kept only if taking the secrets out leaves them as they were given.
+    fn keep(&self, name: &str, bytes: &[u8], exact: bool) -> Result<(), String> {
+        if name.starts_with(EXCHANGE_PREFIX) {
+            return Err(format!(
+                "a diagnostic whose name starts with {EXCHANGE_PREFIX} is an exchange with a \
+                 judge, which the executor writes"
+            ));
+        }
         let made = Diagnostic::written(name, bytes, &self.secrets)?;
+        if exact && made.1 != bytes {
+            return Err(
+                "the bytes hold something that must not be written, and they are a file \
+                 that cannot be changed: nothing was kept"
+                    .to_owned(),
+            );
+        }
         let mut diagnostics = self.diagnostics.lock().unwrap_or_else(|e| e.into_inner());
         if diagnostics.contains_key(name) {
             return Err(format!(
                 "the run already wrote a diagnostic named {name}: a name is written once"
             ));
         }
+        // The exchanges are the executor's, and are bounded with the run's requests.
+        let own = |name: &&String| !name.starts_with(EXCHANGE_PREFIX);
+        if diagnostics.keys().filter(own).count() >= DIAGNOSTICS_LIMIT {
+            return Err(format!(
+                "the run has written {DIAGNOSTICS_LIMIT} diagnostics, which is as many as \
+                 one run may"
+            ));
+        }
         diagnostics.insert(name.to_owned(), made);
         Ok(())
+    }
+}
+
+impl Diagnostics for Kept {
+    fn write(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        self.keep(name, bytes, false)
+    }
+
+    fn write_exact(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        self.keep(name, bytes, true)
     }
 }
 

@@ -43,6 +43,25 @@ Amended: 2026-11-13, with a fix after the task. Changed, in "A wait from inside 
 action": a wait by a run whose signal is set says `WaitCancelled` whatever became of
 the run it waited for. Added: a deletion tells those who wait; what a store's count of
 1 means for a started run.
+Amended: 2026-11-13, with `grow` through the executor (task A9), the first command that
+runs an action. Added: "The first door". Changed, in "A panic in an action": a door now
+installs the hook; in "Cancellation", under a deadline in a run: a context says whether
+its deadline has passed, by the executor's clock.
+Amended: 2026-11-13, with ADR 0009 (task A11). Changed: a run is handed the backend its
+call resolved; capability requests are recorded; a run may freeze the actions its calls
+are held to, with two more refusals.
+Amended: 2026-11-13, at the exit check of checkpoint 1A (task A12). Added: "What a call
+and a run may hold", which bounds a call's texts and inputs and a run's diagnostics
+where they come in, so that no record is written that is not read back; "What the store
+reads of its own files"; "What deleting a run removes", which decides it and says what
+is built. Changed: the last paragraph of "What an action or a panic says is cut", which
+said two things were not bounded; the order in which the executor lets go of a run is
+held by two tests, where one half of it was held by none; in "The first door", the
+parser's usage errors are printed through the door's escape.
+Amended: 2026-11-14, after the review of that pull request. Changed: the sum is done
+with the schema's longest values; what a store does at the limit on a generation file
+is stated. Added, in "Nested calls": the executor in a context answers without the
+store's paths.
 Spec: section 3, "The execution contract", "What a run publishes", "Nested calls",
 "Storage" and "What every run records"; section 6, "Spend"
 
@@ -194,6 +213,42 @@ in the store, and no command removes it
 (`commit::deleting_a_run_removes_its_references_and_known_leaves_the_artifacts_it_committed`;
 `docs/carry-over.md`).
 
+### What deleting a run removes
+
+Decided at the exit check of checkpoint 1A, which `docs/carry-over.md` asked to decide
+it or give it a milestone. It does both.
+
+**The rule is the spec's, and it stands:** `store delete` and `store prune` remove runs
+and what only they reference (`SPEC.md` section 3, "Storage"). An artifact that only a
+deleted run accounts for goes with the run. "Nothing, with the spec saying so" was
+turned down: a store would then keep every image a deleted run made for as long as the
+store lives, with no command that removes one, and a person who deletes a run means
+its pictures as well.
+
+**What is built at the tag `m1a` is short of the rule, and says so.** Deleting a run
+removes the run's names: its record, its journal, its diagnostics with any evidence,
+and its own references to its outputs. It leaves each output's name under `artifacts/`,
+so the prune that follows keeps the file
+(`commit::deleting_a_run_removes_its_references_and_known_leaves_the_artifacts_it_committed`).
+The records of request ids and of spend are outside runs and are never removed, which
+is unchanged and is what checkpoint 1B builds on.
+
+**Why it is not built here.** A deletion can remove an artifact's name only when it
+knows that nothing else accounts for it, and the store cannot say that today. Three
+things can account for an artifact beside the run that committed it: another run that
+committed the same identity, which holds a reference of its own, so the generation
+shows it; a run that took it as an input, which is in that run's record and in no name
+of the store; and `whizbang store import`, which leaves no mark at all. So the rule
+needs two more kinds of name before a deletion can be decided from the generation
+alone, without reading every other run's record: a run's reference to each input it
+took, as it has one to each output, and a mark of an import. That changes what
+admission and import publish, each with its crash sweep, and it meets the reference
+"that only its parent reads" which the tools a judge may call are owed
+(`docs/carry-over.md`). It is milestone 2's, with those tools, and is on the list with
+this as its "done when": a deletion removes the name of an artifact that no remaining
+run holds a reference to and no import marked, with a test through a deletion and a
+prune.
+
 **A failure of the store in the commit step** is answered as ADR 0005 says of the end of
 a run: with the store's failure, not with a finished run. The run stays as it was
 admitted, and no output is committed; where the publication became visible and its last
@@ -230,7 +285,8 @@ an executor that wrote a larger one would report a run whose repeat is then answ
 type, its message, a panic's message and the reason a run was invalid are each kept to
 their first 4,096 characters (`MESSAGE_LIMIT`), with three dots after them when there
 were more. The secrets are taken out first, from the whole text, and looked for once
-more after the cut. The outcome that is returned and the record hold the same cut text
+more after the cut. When the three dots themselves complete a secret they are left
+off, so that what is kept is never longer than the limit and three dots (ADR 0009). The outcome that is returned and the record hold the same cut text
 (`commit::what_an_action_or_a_panic_says_is_cut_and_its_record_is_read_back`,
 `commit::a_secret_across_the_place_a_message_is_cut_is_taken_out_before_the_cut`).
 
@@ -240,9 +296,102 @@ of the type `output` that says how many there were and how large the record woul
 been; none is committed, and the record that is written lists none
 (`commit::a_run_whose_outputs_make_a_record_too_large_to_read_commits_none_of_them`).
 
-What can still make a record too large to read back: an argument's text, which is
-recorded as it was given, and the list of a run's diagnostics, when there are tens of
-thousands of them. Neither is bounded yet (`docs/carry-over.md`).
+An argument's text, a call's inputs and a run's diagnostics were not bounded when this
+was written. They are now, where they come in ("What a call and a run may hold",
+below).
+
+### What a call and a run may hold
+
+A record lists what a call gave and what its run wrote, as they were. Three of those
+had no bound, and each alone could make a record over 4 MiB, which the executor
+published and no reader took: the run was reported one way, and a repeat of its request
+was answered "not a run record". Each is bounded where it comes in, so that the refusal
+is the caller's or the action's to see, and nothing has to be left out of a record
+afterwards.
+
+- **A call's texts: 64 KiB together** (`ARGUMENTS_TEXT_MAX_BYTES`, 65,536 bytes of
+  UTF-8, over all the text arguments of one call). Prepare refuses a call over it as
+  `Invalid`, in a sentence that gives the length and shows none of the text; admission
+  prepares again, so no run is made. A record writes a text as JSON, which can take six
+  bytes for one; a secret taken out is ten bytes written for eight or more, which is
+  less. So the texts of one call are at most 393,216 bytes of a record
+  (`asked::a_calls_text_arguments_are_bounded_where_the_call_comes_in`).
+- **A call's inputs: 1,024** (`INPUTS_LIMIT`, over all its ports). A port may take any
+  number (`Count::at_least`), and a record lists each input with its binding. Prepare
+  refuses a call that gives more, before it reads any of them
+  (`execute::a_call_gives_only_so_many_inputs_and_one_more_is_refused_before_any_is_read`).
+- **A run's diagnostics: 1,024** (`DIAGNOSTICS_LIMIT`) that its action writes. One more
+  is refused where it is written, as a name written twice is, and the action decides
+  what that means for its run. The journal is not among them, nor are the exchanges
+  the executor keeps, which are bounded with the run's requests (ADR 0009)
+  (`execute::a_run_writes_only_so_many_diagnostics_and_one_more_is_refused`,
+  `asked::the_exchanges_the_executor_keeps_are_not_counted_among_a_runs_diagnostics`).
+
+**The sum.** With every value at the longest the schema allows: the texts, 393,216;
+1,024 inputs and 1,024 diagnostics, about 480,000 together (a port's name of 64
+characters, a diagnostic's name of 64, a length of twenty digits); and the lists the
+executor fills itself, 2,364,470 at most (ADR 0009, "The sum"). Together about 3.26
+megabytes, with an empty record's few hundred bytes: about 0.9 megabytes under the
+limit. A test runs one call at all three bounds, with texts whose every byte JSON
+writes as six and diagnostics under the longest names, and measures what they add to a
+record, about 785,000 bytes, of which the two lists are 392,000, under the figure the
+sum is done with
+(`asked::everything_a_record_lists_but_outputs_is_bounded_and_the_sum_is_under_the_limit`).
+What is left without a bound of its own is what a build declares, which no caller
+chooses: the arguments and ports of its descriptors, and a text default that a
+descriptor declares, which is recorded for a call that leaves the argument out and is
+outside the 64 KiB because it is the build's and not the caller's (it is one plain
+line of 200 characters at most, ADR 0003). And the outputs a run hands back, which the
+paragraph above this section answers: such a run commits none.
+
+**So a record over the limit is never published.** By the sum, the only run whose
+record would be over it is one that handed back outputs, and that run ends as an error
+of the type `output` with a record that lists none. The executor's other answer, for a
+record over the limit with no outputs (ADR 0009: the type `record`, with the lists of
+requests left out), can no longer be reached at the real limit; it is kept as the
+backstop behind the sum, and its test lowers the limit through a seam for tests
+(`Engine::with_record_limit`,
+`asked::a_record_that_would_be_over_the_limit_is_not_published_as_it_is`).
+
+### What the store reads of its own files
+
+A file under `objects/` is read up to the length its entry gives and one byte (above,
+with the commit step's first pull request). Three files have no entry, and were read
+whole before they were judged. Each has a limit now, and the file system the store is
+built on has no way left to read a file whole (`Fs::read_at_most` is its one read):
+
+- **`CURRENT`: 21 bytes** (`POINTER_MAX_BYTES`): twenty digits and a newline. A longer
+  file is no pointer, and is refused as damage, as before, with 22 bytes read.
+- **A generation file: 64 MiB** (`GENERATION_MAX_BYTES`). One byte more is refused as
+  damage, by a reader and by a writer alike. And the store does not write what it will
+  not read: a publication whose generation file would be over the limit is refused
+  before anything of it is visible (`store::Error::GenerationTooLarge`). A generation
+  file grows with the names a store holds, about 400 bytes for the two names of a
+  request id, so the limit is about 160,000 request ids; what a store does long before
+  that, when each publication writes tens of megabytes, is on `docs/carry-over.md` for
+  checkpoint 1B.
+  **A store at that limit is full, and not stuck.** A publication that adds names is
+  refused with `GenerationTooLarge`: an admission, so no run is made and the caller is
+  told of the store's failure; an import; and, when checkpoint 1B builds it, a
+  settlement, which adds names too (`docs/carry-over.md`). A run that was admitted
+  before the store filled and cannot publish its end is abandoned, as a run is whose
+  end the store refuses for any reason ("A run with nothing behind it"). A deletion
+  is still published, because it makes the file smaller, and after it there is room
+  again
+  (`store::a_publication_that_would_write_a_generation_file_over_the_limit_is_refused_unseen`,
+  which lowers the limit on what a store writes through a seam for tests,
+  `Store::limit_generations_to`, to the size its generation file then has; the seam
+  only lowers, and changes nothing of what is read). What a deletion cannot give back is what was never a run's:
+  the names of request ids and of spend are never removed, so a store that request
+  ids filled shrinks only by the runs that are deleted from it, and is otherwise full
+  for good. That is the cost the row on what every publication writes has to settle
+  long before 160,000 ids.
+- **`LOCK`: its first 1,024 bytes** (`LOCK_MAX_BYTES`) are read, to show a refused
+  writer who holds the store. Nothing is refused for a longer file: the holder's line
+  is one short line, and is cut at 200 characters as it always was.
+
+(`store::the_pointer_a_generation_file_and_the_lock_file_are_each_read_up_to_a_limit`,
+`store::a_publication_that_would_write_a_generation_file_over_the_limit_is_refused_unseen`.)
 
 ### A panic in an action
 
@@ -266,7 +415,7 @@ executor catches anything, and the default hook prints the panic's text and the 
 the source it came from to stderr: the whole text, with no secret taken out and nothing
 cut. None of that is written to the store, and the executor does not change the hook,
 which belongs to the process. A door that runs actions must install its own hook, one
-that prints nothing an action said (`docs/carry-over.md`).
+that prints nothing an action said: the command line does ("The first door").
 
 ### Status, waiting, and a run that was started
 
@@ -368,9 +517,14 @@ One test stops a run at its end publication's last sync, with a bound of one: a 
 says `Ended`, a `start` is refused, a caller that waits is still waiting, and once the
 run goes on the wait answers and the `start` after it is admitted
 (`started::a_wait_for_a_started_run_answers_only_when_its_place_is_free`). The order of
-letting go is held by a test of its own, which holds the lock a waiter is told under
-while the executor lets go
+letting go is held by two tests of its own. One holds the lock a waiter is told under
+while the executor lets go, and finds the place free
 (`contract::engine::tests::a_runs_place_is_free_before_whoever_waits_for_the_run_is_told`).
+The other attaches to a run something that looks for a free place at the moment the
+table lets the run go, and finds one: the place before the table, which nothing held
+until the exit check, and which is what keeps a wait that finds the run gone from the
+table from answering while its place is still taken
+(`contract::engine::tests::a_runs_place_is_free_before_the_run_leaves_the_table_of_open_runs`).
 For a run that `submit` or `request` ran there is no place, and a `wait` by another
 caller answers when that call has all but returned.
 
@@ -718,10 +872,8 @@ nothing, and a backend that holds a request open sees the signal in its bounds: 
 plan's test is built on that, with a fake filler that holds a request at a barrier
 (`cancel::while_an_action_is_in_blocking_work_a_second_caller_reads_its_status_and_cancels_it`,
 `cancel::each_runs_handles_are_bound_to_its_own_signal_and_deadline`). The executor
-hands every run a handle on every backend it was given, whatever the run's call
-resolved: choosing among several backends by the call's choice, and recording each
-request, come with the first action that asks a capability (task A11,
-`docs/carry-over.md`).
+hands a run a handle on the backend its call resolved for each capability it needs, and
+on no other, and each request is in the run's record (ADR 0009).
 
 A handle can be cloned, and nothing closes it when its run ends as it should: an
 action that keeps a handle, or a clone, past its run can still send through it, with
@@ -756,7 +908,11 @@ from its context, and its capability handles send nothing once it has passed (AD
 for it: the handles the executor makes hold the deadline to the executor's clock, the
 one admission goes by (`Capabilities::timed_by`;
 `cancel::a_handle_holds_its_runs_deadline_to_the_executors_clock`). A handle made by
-other code goes by the machine's.
+other code goes by the machine's. An action that works for long without a handle asks
+its context whether the deadline has passed (`Context::deadline_passed`), which goes by
+the same clock, and does not compare the deadline with the machine's: `grow` does, every
+64 rows
+(`grow_action::grow_stops_when_its_deadline_passes_by_the_executors_clock_and_commits_nothing`).
 
 **The generation a run reads.** A run is admitted against one generation of the store,
 and reads that generation until it ends. Before it prepares the call, admission takes
@@ -988,9 +1144,8 @@ descendant. And it waits until every request its handles sent is accounted for.
 no change to a trait. A context's handles share one count (`Tally`). A handle counts a
 request just before it calls its backend, after every check that sends nothing, and
 accounts for it when the backend's call is over: answered, failed, or unwound by a
-panic. A request a backend still holds is outstanding. Nothing of a request is written
-to a record yet: that, with `models` and `time.durations`, comes with the first action
-that asks a capability (task A11).
+panic. A request a backend still holds is outstanding. Each request is kept for the
+run's record, in `models` and `time.durations` (ADR 0009).
 
 While it waits, the run is executing: `status` says `NotEnded { here: true }`, `wait`
 does not return, the store holds no record of it, and a `cancel` is accepted and
@@ -1065,9 +1220,74 @@ writer of its store).
 **What is not built.** A parent's record does not list a child whose admission became
 visible and was not confirmed: that child is abandoned, never ran, and names its
 parent in its own admission. What was taken for a child is not given back when it
-ends. Capability requests are counted and not recorded. The store in a context
-takes a snapshot of the current generation at every look once a child has committed
-(`docs/carry-over.md`).
+ends. The store in a context takes a snapshot of the current generation at every look
+once a child has committed (`docs/carry-over.md`).
+
+**What the executor in a context answers holds no path.** An action's messages are
+kept in its run's record, and a `StoreFailure` has the store's own error behind it,
+by name (`StoreFailure::cause`), with the paths it names. So every answer of the
+executor an action is offered is made without them before it leaves: a failure of the
+store from `prepare`, `submit`, `request`, `start`, `status`, `wait`, `cancel` and
+`request_id`, and the failure inside `RunState::Abandoned` wherever a state is
+answered (`Watched`, `Cancel::NotAccepted`, `Answer::Repeat`). What is behind such a
+failure is `store::Error::WithoutPaths`, the same words and nothing else. With the
+store in a context (ADR 0005, "Redaction"), that is every way an action is handed
+anything of the store's: nothing else a context holds, its events, its diagnostics,
+its allowance, its capability handles and its signal, has a store's error in it
+(`nested::the_executor_in_a_context_answers_a_failure_of_the_store_without_a_path_in_every_method`,
+`nested::an_abandoned_run_is_shown_to_an_action_with_a_failure_that_holds_no_path`).
+A caller outside an action, a door, is handed the failure with its cause as before.
+
+**A run may freeze the actions its calls are held to** (`Context::freeze_calls`, ADR
+0009): a call of any other action is then refused (`Refusal::NotOffered`), and so is a
+call that gives an input the run was not given and no run it called committed
+(`Refusal::NotReadable`). Each is recorded as any refusal inside a run is.
+
+### The first door
+
+`whizbang rascal grow` is the first command that runs an action
+(`crates/whizbang/src/door.rs`). What it does around the executor is what each door
+after it does.
+
+- **One entry point.** It makes a `Request` and hands it to `Executor::request`, and waits.
+  It prepares nothing itself: a call the action cannot take is refused by the executor,
+  in the executor's sentence, before any run exists.
+- **A request id goes through the executor.** The text a caller gave as an id is handed
+  to `Executor::request_id`, which refuses text that holds a secret without showing it
+  (ADR 0007), and never to `RequestId::parse`
+  (`rascal::a_request_id_that_holds_a_secret_is_refused_without_being_shown`).
+- **The panic hook.** The binary replaces the process's hook, first of all, with one that
+  prints one fixed line and nothing of the panic: not its text, and not its place in the
+  source. A panic in an action still ends its run as an error, and the door then says so
+  from the run's outcome, which has the secrets taken out
+  (`rascal::a_panic_leaves_nothing_it_said_and_no_place_in_the_source_on_stderr`). A
+  panic outside an action ends the process with the exit code 101 and that one line.
+- **What is printed.** What the executor says of a run has had the secrets taken out and
+  been cut already; the door escapes it, so that no control character reaches a
+  terminal, and cuts nothing shorter. A refusal is the executor's sentence as it is,
+  which quotes what it quotes escaped. The binary then passes every complaint, of
+  every command, through the same escape where it prints it: a store's failure names a
+  path, which is whatever a caller typed or a folder held (`escape.rs`, a test for
+  each command). The escape leaves a backslash as it is, so doing it twice is doing it
+  once. Text the executor never saw, such as
+  something given as an artifact's identity that is none, is not said back: a door holds
+  no list of secrets to take out of it. The parser of the command line does say back
+  what was typed, in its own usage errors, and printed them itself, a carriage return
+  and all: the binary now takes the parser's error and prints it line by line through
+  the same escape, with exit code 2 as before. The line breaks are the parser's, and
+  one typed inside an argument stays a line break; help and the version hold nothing a
+  caller typed and are printed as the parser prints them
+  (`escape::a_usage_error_shows_what_was_typed_with_no_control_character`,
+  `escape::printable_escapes_every_control_character_and_leaves_nothing_a_terminal_obeys`).
+- **One process owns every run it makes.** The command runs the action in its own
+  process and waits for it. The table of open runs is that process's ("Cancellation"),
+  so no other process can cancel the run or wait for it: a second process sees it as
+  admitted and not ended. That is stated, and not solved: a door that is not the process
+  that runs the action, such as the server, has to route a cancel, a status and a wait
+  to the process that owns the run (`docs/carry-over.md`).
+- **Exit codes.** 0 when the run completed; 1 when nothing ran or the run did not
+  complete; 2 for a command line that was not understood; 3 when the output could not be
+  written. They are those of the store and runs commands.
 
 ## Consequences
 

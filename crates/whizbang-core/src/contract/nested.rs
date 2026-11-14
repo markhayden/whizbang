@@ -9,10 +9,10 @@
 //! view of the store gains when a run it called commits outputs ([`Added`]).
 
 use std::collections::BTreeSet;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Instant;
 
-use crate::artifact;
+use crate::artifact::{self, ArtifactId};
 use crate::capability::Tally;
 use crate::store::{self, Generation, Store};
 
@@ -74,6 +74,93 @@ impl Added {
     }
 }
 
+/// The actions the calls of one run are held to, once the run has said which (ADR
+/// 0009). It is said once: what is frozen stays as it was frozen for as long as the
+/// run lives. A run that says nothing calls any action, as before.
+///
+/// From the moment it is frozen, a call the run makes is also held to what the run
+/// may read: each input it gives is an input of the run's own call, or an output that
+/// a run it called committed.
+#[derive(Default)]
+pub(super) struct Offer {
+    actions: OnceLock<BTreeSet<String>>,
+    /// The run whose calls these are, and the secrets its record is written without:
+    /// where a name the action itself held to the list, and refused, is recorded.
+    run: Option<(Arc<LiveRun>, Secrets)>,
+    /// What the run that called this one is held to. A run is held to all of it as
+    /// well: what a run froze binds every run under it.
+    above: Option<Arc<Offer>>,
+}
+
+impl Offer {
+    /// The offer of this run, under the one of the run that called it: nothing of
+    /// its own is frozen yet.
+    pub(super) fn of(run: Arc<LiveRun>, secrets: Secrets, above: Option<Arc<Offer>>) -> Offer {
+        Offer {
+            actions: OnceLock::new(),
+            run: Some((run, secrets)),
+            above,
+        }
+    }
+
+    /// Freezes the actions. False when they were frozen before: nothing changes.
+    pub(super) fn freeze(&self, actions: BTreeSet<String>) -> bool {
+        self.actions.set(actions).is_ok()
+    }
+
+    /// Each list that binds the run: its own, when it froze one, and that of every
+    /// run above it that did.
+    fn lists(&self) -> impl Iterator<Item = &BTreeSet<String>> {
+        let mut next = Some(self);
+        std::iter::from_fn(move || {
+            let offer = next?;
+            next = offer.above.as_deref();
+            Some(offer.actions.get())
+        })
+        .flatten()
+    }
+
+    /// Why the run may not make this call, when it may not: the run, or a run above
+    /// it, froze its calls, and the action is not on every such list, or an input is
+    /// neither one of `inputs`, the inputs of the run's own call, nor an output that a
+    /// run it called committed. The store is not looked at.
+    fn refuses(&self, call: &Call, inputs: &BTreeSet<ArtifactId>, nest: &Nest) -> Option<Refusal> {
+        self.lists().next()?;
+        let action = call.action().to_owned();
+        if !self.lists().all(|offered| offered.contains(call.action())) {
+            return Some(Refusal::NotOffered { action });
+        }
+        for (port, ids) in call.inputs() {
+            let unread = |id: &&ArtifactId| !inputs.contains(*id) && !nest.committed(**id);
+            if let Some(id) = ids.iter().find(unread) {
+                return Some(Refusal::NotReadable {
+                    action,
+                    port: port.clone(),
+                    id: *id,
+                });
+            }
+        }
+        None
+    }
+
+    /// Holds a name to the frozen actions without making a call: refused when the
+    /// run is bound by a list and this is not on every one, and the refusal is kept
+    /// for the run's record as the executor keeps one of a call it refused.
+    pub(super) fn held(&self, action: &str) -> Result<(), Refusal> {
+        if self.lists().all(|offered| offered.contains(action)) {
+            return Ok(());
+        }
+        let refusal = Refusal::NotOffered {
+            action: action.to_owned(),
+        };
+        if let Some((run, secrets)) = &self.run {
+            let refused = Refused::of(&Call::new(action), &refusal, secrets);
+            run.nest().refused(refused);
+        }
+        Err(refusal)
+    }
+}
+
 /// The runs admitted under one run that nothing called, at every level together: one
 /// count, shared by every run of the tree.
 pub(super) struct Tree {
@@ -111,6 +198,8 @@ struct Child {
     live: Arc<LiveRun>,
     /// How it ended, once its end was published.
     status: Option<Status>,
+    /// When it started and when it ended, once its end was published.
+    times: Option<(u64, u64)>,
 }
 
 #[derive(Default)]
@@ -128,6 +217,8 @@ struct Calls {
     refusals_omitted: u64,
     /// The requests the run's own capability handles were sent.
     requests: Option<Arc<Tally>>,
+    /// The identity of every output that a run this run called committed.
+    committed: BTreeSet<ArtifactId>,
 }
 
 /// What a run keeps of the calls its action makes. It has a lock of its own, which is
@@ -233,16 +324,29 @@ impl Nest {
 
     /// A run this run called has ended, and its end is published: how, and with which
     /// outputs. From here on this run's view of the store has them.
-    pub(super) fn ended(&self, run: &RunId, status: Status, outputs: &[Committed]) {
+    pub(super) fn ended(
+        &self,
+        run: &RunId,
+        status: Status,
+        outputs: &[Committed],
+        times: (u64, u64),
+    ) {
         let mut names = self.added.names();
         for output in outputs {
             names.insert(artifact::name(output.artifact(), output.id()));
         }
         drop(names);
         let mut calls = self.calls();
+        calls.committed.extend(outputs.iter().map(Committed::id));
         if let Some(child) = calls.children.iter_mut().find(|child| child.run == *run) {
             child.status = Some(status);
+            child.times = Some(times);
         }
+    }
+
+    /// Whether a run this run called committed an output of this identity.
+    fn committed(&self, id: ArtifactId) -> bool {
+        self.calls().committed.contains(&id)
     }
 
     /// The run's action has come back. From here on no call is taken and no request
@@ -274,10 +378,17 @@ impl Nest {
         }
     }
 
-    /// What the run's record says of its calls, for a run with this parent.
+    /// What the run's record says of its calls and of the requests its capability
+    /// handles sent, for a run with this parent.
     pub(super) fn inside(&self, parent: Option<RunId>) -> Inside {
         let calls = self.calls();
+        let timed = calls.children.iter().enumerate();
         Inside {
+            asked: calls.requests.as_ref().map_or_else(Vec::new, |r| r.asked()),
+            timed: timed
+                .filter_map(|(at, child)| child.times.map(|(start, end)| (at, start, end)))
+                .collect(),
+            verdict: None,
             parent,
             steps: calls
                 .children
@@ -354,6 +465,10 @@ pub(super) struct Under {
     /// What this run may spend: each call it makes takes its estimate from it.
     pub(super) allowance: Allowance,
     pub(super) deadline: Option<Instant>,
+    /// The identity of every input of this run's own call.
+    pub(super) inputs: Arc<BTreeSet<ArtifactId>>,
+    /// The actions this run's calls are held to, once it froze them.
+    pub(super) offer: Arc<Offer>,
 }
 
 /// Where a run is among the calls that led to it, from its admission on.
@@ -365,6 +480,8 @@ pub(super) struct Family {
     above: Arc<Vec<RunId>>,
     pub(super) tree: Arc<Tree>,
     pub(super) allowance: Allowance,
+    /// What the run that called this one is held to in its calls.
+    pub(super) offer: Option<Arc<Offer>>,
 }
 
 impl Family {
@@ -392,6 +509,7 @@ impl Family {
             above: under.map_or_else(Arc::default, |under| under.above.clone()),
             tree: under.map_or_else(|| Arc::new(Tree::new(descendants)), |u| u.tree.clone()),
             allowance: reserved.map_or_else(Allowance::none, Allowance::of),
+            offer: under.map(|under| under.offer.clone()),
         }
     }
 }
@@ -428,11 +546,23 @@ impl Nested {
         admitted
     }
 
+    /// Why the run's frozen calls refuse this call, when they do.
+    fn frozen(&self, call: &Call) -> Option<Refusal> {
+        let under = &self.under;
+        under.offer.refuses(call, &under.inputs, under.live.nest())
+    }
+
     fn open(&self, request: &Request, start: bool) -> Result<Admitted, CallError> {
         let (under, call) = (&self.under, request.call());
         let action = || call.action().to_owned();
         if request.id().is_some() {
             return Err(Refusal::IdInside { action: action() }.into());
+        }
+        // A run that froze the actions it calls calls no other, and gives a call
+        // nothing but what it may read: decided here, where the call is dispatched,
+        // from what the run was admitted with and what its own calls came to.
+        if let Some(refusal) = self.frozen(call) {
+            return Err(refusal.into());
         }
         if under.stack.len() >= LEVELS_LIMIT {
             return Err(Refusal::TooDeep {
@@ -494,24 +624,86 @@ impl Nested {
             action: action(),
             live: admitted.live.clone(),
             status: None,
+            times: None,
         });
         Ok(admitted)
     }
 }
 
+/// What the executor in a context answers with is what an action is handed, and an
+/// action's messages are kept in its run's record. So every answer of the methods
+/// below, a failure and a run's state alike, is made without the store's paths before
+/// it leaves ([`CallError::pathless`], [`RunState::pathless`]): behind a failure of
+/// the store there is nothing an action could quote that says where the store is.
+/// Each method is the one beside it in [`Asked`], with that done to its answer.
 impl Executor for Nested {
     fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError> {
-        self.engine.prepare(call)
+        Asked(self).prepare(call).map_err(CallError::pathless)
     }
 
     fn submit(&self, call: &Call) -> Result<Finished, CallError> {
-        let admitted = self.admit(&Request::new(call.clone()), false)?;
-        self.engine.execute(admitted)
+        Asked(self).submit(call).map_err(CallError::pathless)
+    }
+
+    // No test reaches `Answer::pathless` here or in `start`, because no route does:
+    // only a repeat holds a run's state, a repeat is the answer to a request with an
+    // id, and a call from inside an action that carries one is refused before
+    // anything is looked up (`Refusal::IdInside`). The mapping stays, so that the day
+    // a nested call may carry an id its answer is already fit for an action.
+    fn request(&self, request: &Request) -> Result<Answer, CallError> {
+        let answer = Asked(self).request(request);
+        answer.map(Answer::pathless).map_err(CallError::pathless)
+    }
+
+    fn start(&self, request: &Request) -> Result<Answer, CallError> {
+        let answer = Asked(self).start(request);
+        answer.map(Answer::pathless).map_err(CallError::pathless)
+    }
+
+    fn status(&self, run: &RunId) -> Result<Watched, CallError> {
+        let answer = Asked(self).status(run);
+        answer.map(Watched::pathless).map_err(CallError::pathless)
+    }
+
+    fn wait(&self, run: &RunId) -> Result<Watched, CallError> {
+        let answer = Asked(self).wait(run);
+        answer.map(Watched::pathless).map_err(CallError::pathless)
+    }
+
+    fn cancel(&self, run: &RunId) -> Result<Cancel, CallError> {
+        let answer = Asked(self).cancel(run);
+        answer.map(Cancel::pathless).map_err(CallError::pathless)
+    }
+
+    fn request_id(&self, text: &str) -> Result<RequestId, CallError> {
+        let id = self.engine.request_id(text);
+        id.map_err(CallError::pathless)
+    }
+}
+
+/// The executor in a context, before its answers are made fit for an action.
+struct Asked<'a>(&'a Nested);
+
+impl Asked<'_> {
+    fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError> {
+        // A run that froze its calls is told of a call it may not make what it would
+        // be told if it made it, and nothing more: not whether the action is one of
+        // the build, and not whether the store holds the artifact. As any
+        // preparation, it is not a call, and is not recorded.
+        match self.0.frozen(call) {
+            Some(refusal) => Err(refusal.into()),
+            None => self.0.engine.prepare(call),
+        }
+    }
+
+    fn submit(&self, call: &Call) -> Result<Finished, CallError> {
+        let admitted = self.0.admit(&Request::new(call.clone()), false)?;
+        self.0.engine.execute(admitted)
     }
 
     fn request(&self, request: &Request) -> Result<Answer, CallError> {
-        let admitted = self.admit(request, false)?;
-        Ok(Answer::Ran(self.engine.execute(admitted)?))
+        let admitted = self.0.admit(request, false)?;
+        Ok(Answer::Ran(self.0.engine.execute(admitted)?))
     }
 
     fn start(&self, request: &Request) -> Result<Answer, CallError> {
@@ -520,23 +712,30 @@ impl Executor for Nested {
         // admitted; and a run may have only so many of its own at once. A full count
         // is a refusal, never a wait. Both come back when the run is over, before
         // whoever waits for it is told.
-        let place = match self.engine.start_place() {
+        // What the run froze is held first: a call the run may not make takes no
+        // place, and is told so whatever the count of started runs is.
+        if let Some(refusal) = self.0.frozen(request.call()) {
+            let refused = Refused::of(request.call(), &refusal, &self.0.secrets);
+            self.0.under.live.nest().refused(refused);
+            return Err(refusal.into());
+        }
+        let place = match self.0.engine.start_place() {
             Ok(place) => place,
             Err(refusal) => {
-                let refused = Refused::of(request.call(), &refusal, &self.secrets);
-                self.under.live.nest().refused(refused);
+                let refused = Refused::of(request.call(), &refusal, &self.0.secrets);
+                self.0.under.live.nest().refused(refused);
                 return Err(refusal.into());
             }
         };
-        let mut admitted = self.admit(request, true)?;
-        admitted.started_under(self.under.live.clone());
+        let mut admitted = self.0.admit(request, true)?;
+        admitted.started_under(self.0.under.live.clone());
         // The thread is made where every run's thread is made; a thread that cannot
         // be made ends the run as an error, and the caller is told.
-        self.engine.launch(admitted, place)
+        self.0.engine.launch(admitted, place)
     }
 
     fn status(&self, run: &RunId) -> Result<Watched, CallError> {
-        self.engine.status(run)
+        self.0.engine.status(run)
     }
 
     fn wait(&self, run: &RunId) -> Result<Watched, CallError> {
@@ -544,27 +743,23 @@ impl Executor for Nested {
         // one above it, would never end, and is refused. Any other wait is given up
         // when this run is cancelled, so two runs that wait for each other are freed
         // by cancelling either, or a run above them. Both are kept for the record.
-        let under = &self.under;
+        let under = &self.0.under;
         let waited = if under.above.contains(run) {
             Err(Refusal::WaitAbove { run: run.clone() }.into())
         } else {
-            self.engine.wait_unless(run, under.live.signal())
+            self.0.engine.wait_unless(run, under.live.signal())
         };
         if let Err(CallError::Refused(
             refusal @ (Refusal::WaitAbove { .. } | Refusal::WaitCancelled { .. }),
         )) = &waited
         {
-            let refused = Refused::of_a_question(refusal, &self.secrets);
+            let refused = Refused::of_a_question(refusal, &self.0.secrets);
             under.live.nest().refused(refused);
         }
         waited
     }
 
     fn cancel(&self, run: &RunId) -> Result<Cancel, CallError> {
-        self.engine.cancel(run)
-    }
-
-    fn request_id(&self, text: &str) -> Result<RequestId, CallError> {
-        self.engine.request_id(text)
+        self.0.engine.cancel(run)
     }
 }

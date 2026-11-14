@@ -18,11 +18,15 @@
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::ArtifactType;
+use crate::capability::{Excluded, FaultKind, HowEnded, Logged, MODEL_NAME_LIMIT};
 use crate::identity::Digest;
 use crate::store::{self, Entry, Generation, Kind};
 
 use super::journal::{JournalLine, journal_bytes};
-use super::{Outcome, PreparedCall, RequestId, RunId, Secrets, StoreFailure, Value, text};
+use super::{
+    Capability, Outcome, PreparedCall, RequestId, RunId, Secrets, StoreFailure, Value, Verdict,
+    text,
+};
 
 /// The record's kind, with its version.
 pub const RUN_RECORD: &str = "run/2";
@@ -82,6 +86,12 @@ pub(super) fn quoted(reason: &str) -> String {
 /// The longest name of a diagnostic an action wrote, in characters.
 pub const DIAGNOSTIC_NAME_LIMIT: usize = 64;
 
+/// The most diagnostics the action of one run may write. A record lists each, so one
+/// more is refused where it is written ([`super::Diagnostics::write`]). The run's
+/// journal and the exchanges the executor keeps are not among them: there is one
+/// journal, and a run sends a bounded number of requests.
+pub const DIAGNOSTICS_LIMIT: usize = 1024;
+
 /// Whether this can be the name an action gives a diagnostic: a lower-case letter or a
 /// digit, then lower-case letters, digits, `_`, `-` or `.`; 64 characters at most. So it
 /// is one path segment and one word on a command line, as a run's id is.
@@ -136,11 +146,13 @@ pub enum RefusalKind {
     IdInside,
     WaitAbove,
     WaitCancelled,
+    NotOffered,
+    NotReadable,
 }
 
 impl RefusalKind {
     /// Every kind, in the order above.
-    pub const ALL: [RefusalKind; 25] = [
+    pub const ALL: [RefusalKind; 27] = [
         RefusalKind::UnknownAction,
         RefusalKind::Invalid,
         RefusalKind::Input,
@@ -166,6 +178,8 @@ impl RefusalKind {
         RefusalKind::IdInside,
         RefusalKind::WaitAbove,
         RefusalKind::WaitCancelled,
+        RefusalKind::NotOffered,
+        RefusalKind::NotReadable,
     ];
 }
 
@@ -331,6 +345,172 @@ fn steps_wire<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<S
     Ok(read.into_iter().map(|One(step)| step).collect())
 }
 
+/// The most capability requests a run's record lists in `models`: the most one run
+/// sends. One more is not sent ([`crate::capability::REQUESTS_LIMIT`]), so the list is
+/// whole.
+pub const MODELS_LIMIT: usize = crate::capability::REQUESTS_LIMIT;
+
+/// The most characters a record keeps of a provider's id for an exchange.
+pub const PROVIDER_ID_LIMIT: usize = 128;
+
+/// How a capability request ended, as a word: `answered`, the kind of its fault (ADR
+/// 0006), or `unwound` for a backend whose call panicked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestEnded {
+    Answered,
+    Cancelled,
+    Unsupported,
+    Credential,
+    Rejected,
+    Unavailable,
+    TimedOut,
+    Malformed,
+    TooLarge,
+    Unwound,
+}
+
+impl RequestEnded {
+    /// Every way, in the order above.
+    pub const ALL: [RequestEnded; 10] = [
+        RequestEnded::Answered,
+        RequestEnded::Cancelled,
+        RequestEnded::Unsupported,
+        RequestEnded::Credential,
+        RequestEnded::Rejected,
+        RequestEnded::Unavailable,
+        RequestEnded::TimedOut,
+        RequestEnded::Malformed,
+        RequestEnded::TooLarge,
+        RequestEnded::Unwound,
+    ];
+
+    pub(super) fn of(ended: HowEnded) -> RequestEnded {
+        match ended {
+            HowEnded::Answered => RequestEnded::Answered,
+            HowEnded::Unwound => RequestEnded::Unwound,
+            HowEnded::Fault(kind) => match kind {
+                FaultKind::Cancelled => RequestEnded::Cancelled,
+                FaultKind::Unsupported => RequestEnded::Unsupported,
+                FaultKind::Credential => RequestEnded::Credential,
+                FaultKind::Rejected => RequestEnded::Rejected,
+                FaultKind::Unavailable => RequestEnded::Unavailable,
+                FaultKind::TimedOut => RequestEnded::TimedOut,
+                FaultKind::Malformed => RequestEnded::Malformed,
+                FaultKind::TooLarge => RequestEnded::TooLarge,
+            },
+        }
+    }
+}
+
+/// One capability request the run sent (ADR 0009): which capability, and the backend,
+/// the model and the version that answered, as the backend declares them. The requests
+/// are in the order they were sent. `device` and `cached` are null: no response says
+/// which device answered or whether a cache did (ADR 0006), so neither is known.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Model {
+    pub capability: Capability,
+    pub backend: String,
+    pub model: String,
+    pub version: String,
+    #[serde(deserialize_with = "present")]
+    pub device: Option<Nothing>,
+    #[serde(deserialize_with = "present")]
+    pub cached: Option<Nothing>,
+    pub ended: RequestEnded,
+}
+
+/// What a duration is of, as a word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Timed {
+    /// A capability request: `index` is its place in `models`.
+    Request,
+    /// A call of another action: `index` is its place in `steps`.
+    Call,
+}
+
+/// How long one capability request, or one call of another action, took (ADR 0009):
+/// when it began, in milliseconds since the Unix epoch, and how many milliseconds
+/// later it was over, by the executor's clock. The requests come first, then the
+/// calls, each in the order of its list. A call whose run was abandoned has none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Duration {
+    pub of: Timed,
+    pub index: u64,
+    pub start_ms: u64,
+    pub ms: u64,
+}
+
+/// The tokens a judge's turn used, as the backend reported them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tokens {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+}
+
+/// Why a judge's turn ended, as a word. For `other`, the provider's own word is in
+/// the exchange.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Stop {
+    EndTurn,
+    ToolUse,
+    MaxTokens,
+    Refusal,
+    Other,
+}
+
+/// What a judging action concluded, as a word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Decision {
+    Pass,
+    Fail,
+    Unsure,
+}
+
+/// One entry of the `judge` group (ADR 0009), under the word that says which it is.
+///
+/// A `turn` is one request to a judge, in the order they were sent: a summary within a
+/// bound. `request` is its place in `models`; `exchange` names the diagnostic of the
+/// run that holds the whole of what was sent and what came back, or is null when it
+/// could not be kept; `stop` is null when no turn came back, and the request's fault
+/// is then in `models`; `excluded` says why the harness left the turn out of the
+/// conversation that went on, or is null when it did not.
+///
+/// A `verdict` is what the action concluded: at most one, the last entry, of a run
+/// that completed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "judge", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Judged {
+    Turn {
+        request: u64,
+        #[serde(deserialize_with = "present")]
+        exchange: Option<String>,
+        max_output_tokens: u32,
+        messages: u64,
+        #[serde(deserialize_with = "present")]
+        stop: Option<Stop>,
+        tool_calls: u64,
+        #[serde(deserialize_with = "present")]
+        usage: Option<Tokens>,
+        #[serde(deserialize_with = "present")]
+        provider_id: Option<String>,
+        #[serde(deserialize_with = "present")]
+        excluded: Option<Excluded>,
+    },
+    Verdict {
+        decision: Decision,
+        why: String,
+    },
+}
+
 /// A list that holds nothing in this version of the record: its element has no value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Nothing {}
@@ -466,8 +646,8 @@ pub struct Ended {
 pub struct Time {
     pub start_ms: u64,
     pub end_ms: u64,
-    /// The duration of each step, tool call and capability request. A run has none yet.
-    pub durations: Vec<Nothing>,
+    /// The duration of each capability request and of each call of another action.
+    pub durations: Vec<Duration>,
 }
 
 /// Spend: what was reserved for the run, and its paid requests.
@@ -595,12 +775,12 @@ struct RunRecordWire {
     outputs: Vec<Output>,
     outcome: Ended,
     time: Time,
-    models: Vec<Nothing>,
+    models: Vec<Model>,
     spend: Spend,
     egress: Vec<Nothing>,
     #[serde(deserialize_with = "steps_wire")]
     steps: Vec<Step>,
-    judge: Vec<Nothing>,
+    judge: Vec<Judged>,
     #[serde(deserialize_with = "diagnostics_wire")]
     diagnostics: Vec<Diagnostic>,
 }
@@ -616,11 +796,11 @@ pub struct RunRecord {
     outputs: Vec<Output>,
     outcome: Ended,
     time: Time,
-    models: Vec<Nothing>,
+    models: Vec<Model>,
     spend: Spend,
     egress: Vec<Nothing>,
     steps: Vec<Step>,
-    judge: Vec<Nothing>,
+    judge: Vec<Judged>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -697,6 +877,13 @@ pub struct Inside {
     pub(super) steps: Vec<Step>,
     pub(super) refusals: Vec<Refused>,
     pub(super) refusals_omitted: u64,
+    /// Every request the run's capability handles sent, in order.
+    pub(super) asked: Vec<Logged>,
+    /// When each step began and was over, for those whose run ended: the step's
+    /// place, the start and the end.
+    pub(super) timed: Vec<(usize, u64, u64)>,
+    /// What the action concluded, when it handed back a verdict and completed.
+    pub(super) verdict: Option<Verdict>,
 }
 
 impl RunRecord {
@@ -753,6 +940,79 @@ impl RunRecord {
         };
         let mut diagnostics = ran.diagnostics;
         diagnostics.sort_by(|a, b| a.name.cmp(&b.name));
+        // What the run asked of its capabilities: each request with its model and how
+        // long it took, and for a judge what the exchange came to. A text that came
+        // from a backend (a model's names, a provider's id) has the secrets taken out.
+        let asked = &ran.inside.asked;
+        // Redacted while whole, and only then cut to what the reader takes: a name
+        // that redaction lengthened is still within the bound.
+        let named = |name: &str| super::engine::cut_to(secrets, name, MODEL_NAME_LIMIT, "");
+        let models = asked.iter().map(|asked| Model {
+            capability: asked.capability,
+            backend: named(asked.model.backend()),
+            model: named(asked.model.model()),
+            version: named(asked.model.version()),
+            device: None,
+            cached: None,
+            ended: RequestEnded::of(asked.ended),
+        });
+        let lasted = |of, index: usize, start: u64, end: u64| Duration {
+            of,
+            index: index as u64,
+            start_ms: start,
+            ms: end.saturating_sub(start),
+        };
+        let requests = asked.iter().enumerate();
+        let requests = requests.map(|(at, a)| lasted(Timed::Request, at, a.start_ms, a.end_ms));
+        let calls = ran.inside.timed.iter();
+        let calls = calls.map(|(at, start, end)| lasted(Timed::Call, *at, *start, *end));
+        let durations = requests.chain(calls).collect();
+        // A request to a judge whose backend's call unwound kept nothing of its
+        // exchange. It has its turn all the same, with nothing in it: the record lists
+        // one turn for each request to a judge.
+        let unanswered = crate::capability::Judged::unanswered();
+        let turns = asked.iter().enumerate().filter_map(|(at, asked)| {
+            if asked.capability != Capability::Judge {
+                return None;
+            }
+            let judged = asked.judged.as_ref().unwrap_or(&unanswered);
+            Some(Judged::Turn {
+                request: at as u64,
+                exchange: judged.exchange.clone(),
+                max_output_tokens: judged.max_output_tokens,
+                messages: judged.messages as u64,
+                stop: judged.stop.map(|stop| match stop {
+                    "end_turn" => Stop::EndTurn,
+                    "tool_use" => Stop::ToolUse,
+                    "max_tokens" => Stop::MaxTokens,
+                    "refusal" => Stop::Refusal,
+                    _ => Stop::Other,
+                }),
+                tool_calls: judged.tool_calls as u64,
+                usage: judged.usage.map(|usage| Tokens {
+                    input_tokens: usage.input_tokens(),
+                    output_tokens: usage.output_tokens(),
+                    cache_read_tokens: usage.cache_read_tokens(),
+                    cache_write_tokens: usage.cache_write_tokens(),
+                }),
+                // Redacted, cleaned and cut by the handle that took the turn (ADR
+                // 0009); and here once more, cut after the redaction.
+                provider_id: judged
+                    .provider_id
+                    .as_deref()
+                    .map(|id| super::engine::cut_to(secrets, id, PROVIDER_ID_LIMIT, "")),
+                excluded: judged.excluded,
+            })
+        });
+        // A verdict is of a run that completed, and of no other.
+        let verdict = ran.inside.verdict.as_ref();
+        let verdict = verdict.filter(|_| status == Status::Completed);
+        let verdict = verdict.map(|verdict| Judged::Verdict {
+            decision: verdict.decision(),
+            why: super::engine::said(secrets, verdict.why()),
+        });
+        let judge = turns.chain(verdict).collect();
+        let models = models.collect();
         RunRecord {
             record: RUN_RECORD.to_owned(),
             identity: Identity {
@@ -781,16 +1041,16 @@ impl RunRecord {
                 start_ms: ran.start_ms,
                 // A clock that went back does not make a run end before it started.
                 end_ms: ran.end_ms.max(ran.start_ms),
-                durations: Vec::new(),
+                durations,
             },
-            models: Vec::new(),
+            models,
             spend: Spend {
                 reserved_micros: ran.reserved_micros,
                 requests: Vec::new(),
             },
             egress: Vec::new(),
             steps: ran.inside.steps,
-            judge: Vec::new(),
+            judge,
             diagnostics,
         }
     }
@@ -920,6 +1180,79 @@ impl RunRecord {
                 return refuse("a refusal's sentence is empty, or longer than one is kept");
             }
         }
+        // The requests: no more than a run sends, each with a duration, and the
+        // durations in their one order, each of something the record lists.
+        if self.models.len() > MODELS_LIMIT {
+            return refuse("more capability requests than a run may send");
+        }
+        let names = self.models.iter();
+        let mut names = names.flat_map(|model| [&model.backend, &model.model, &model.version]);
+        if names.any(|name| name.len() > MODEL_NAME_LIMIT || !name.is_ascii()) {
+            return refuse("a model's name is longer than one is kept, or is not ASCII");
+        }
+        let durations = &self.time.durations;
+        let of_requests = durations.iter().filter(|d| d.of == Timed::Request);
+        if !of_requests.map(|d| d.index).eq(0..self.models.len() as u64)
+            || !durations.is_sorted_by(|a, b| (a.of, a.index) < (b.of, b.index))
+            || durations
+                .iter()
+                .any(|d| d.of == Timed::Call && d.index >= self.steps.len() as u64)
+        {
+            return refuse(
+                "the durations are not one for each capability request, in order, and \
+                 then at most one for each step, in order",
+            );
+        }
+        // The judge group: one turn for each request that was sent to a judge, in
+        // order, each naming a diagnostic the record lists or none; then at most one
+        // verdict, of a run that completed.
+        let to_judges = self.models.iter().enumerate();
+        let to_judges = to_judges.filter(|(_, model)| model.capability == Capability::Judge);
+        let mut to_judges = to_judges.map(|(at, _)| at as u64);
+        let mut verdicts = 0;
+        for (at, entry) in self.judge.iter().enumerate() {
+            match entry {
+                Judged::Turn {
+                    request,
+                    exchange,
+                    provider_id,
+                    ..
+                } => {
+                    if verdicts > 0 || to_judges.next() != Some(*request) {
+                        return refuse(
+                            "the judge's turns are not one for each request to a judge, in \
+                             order, before the verdict",
+                        );
+                    }
+                    let kept = |name: &String| self.diagnostics.iter().any(|d| d.name == *name);
+                    if exchange.as_ref().is_some_and(|name| !kept(name)) {
+                        return refuse("a judge's turn names an exchange the run does not hold");
+                    }
+                    if provider_id
+                        .as_ref()
+                        .is_some_and(|id| id.chars().count() > PROVIDER_ID_LIMIT)
+                    {
+                        return refuse("a provider's id is longer than one is kept");
+                    }
+                }
+                Judged::Verdict { why, .. } => {
+                    verdicts += 1;
+                    let last = at + 1 == self.judge.len();
+                    if !last || self.outcome.status != Status::Completed {
+                        return refuse(
+                            "a verdict is the last entry of the judge group, of a run that \
+                             completed",
+                        );
+                    }
+                    if why.chars().count() > super::MESSAGE_LIMIT + 3 {
+                        return refuse("a verdict's reason is longer than one is kept");
+                    }
+                }
+            }
+        }
+        if to_judges.next().is_some() {
+            return refuse("a request to a judge has no turn in the judge group");
+        }
         // A diagnostic is the journal, or something the action wrote under a plain name.
         // The record itself is one of the run's names and is not one of its diagnostics.
         let known = |name: &str| {
@@ -986,6 +1319,24 @@ impl RunRecord {
     /// The calls the run made of other actions that were admitted, in order.
     pub fn steps(&self) -> &[Step] {
         &self.steps
+    }
+
+    /// Every capability request the run sent, in order.
+    pub fn models(&self) -> &[Model] {
+        &self.models
+    }
+
+    /// The judge's turns, in order, and then the verdict when there is one.
+    pub fn judge(&self) -> &[Judged] {
+        &self.judge
+    }
+
+    /// The verdict, when the run concluded one.
+    pub fn verdict(&self) -> Option<(Decision, &str)> {
+        match self.judge.last() {
+            Some(Judged::Verdict { decision, why }) => Some((*decision, why)),
+            _ => None,
+        }
     }
 
     /// What was reserved for the run, and its paid requests.

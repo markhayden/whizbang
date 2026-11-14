@@ -11,11 +11,12 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Instant;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::contract::{Cancellation, text};
+use crate::contract::{Cancellation, Capability, text};
 
-use super::fault::clean;
+use super::fault::{Raw, clean};
 use super::{Bounds, Declaration, Fault, FaultKind, Picture, Unfit, feature};
 
 /// The most messages a conversation holds.
@@ -650,13 +651,41 @@ impl Usage {
     }
 }
 
-/// What a judge answered: ordered content, why it stopped, and what it used.
-#[derive(Debug, Clone, PartialEq)]
+/// What a judge answered: ordered content, why it stopped, and what it used. Two turns
+/// are equal when those are, and the provider's id.
+#[derive(Clone)]
 pub struct Turn {
     parts: Vec<Part>,
     stop: StopReason,
     usage: Option<Usage>,
     request_id: Option<String>,
+    /// A provider's word for another stop reason, and its id, as they were given:
+    /// until a handle has looked for secrets in them.
+    raw_stop: Option<Raw>,
+    raw_id: Option<Raw>,
+}
+
+impl PartialEq for Turn {
+    fn eq(&self, other: &Turn) -> bool {
+        (&self.parts, &self.stop, &self.usage, &self.request_id)
+            == (&other.parts, &other.stop, &other.usage, &other.request_id)
+    }
+}
+
+impl std::fmt::Debug for Turn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Turn")
+            .field("parts", &self.parts)
+            .field("stop", &self.stop)
+            .field("usage", &self.usage)
+            .field("request_id", &self.request_id)
+            .finish()
+    }
+}
+
+/// A provider's id, from its text: trimmed, cleaned and cut.
+fn id_of(text: &str) -> String {
+    clean(text.trim(), ID_LIMIT)
 }
 
 impl Turn {
@@ -720,19 +749,48 @@ impl Turn {
                 why: "stopped to use a tool and calls none",
             });
         }
+        let mut raw_stop = None;
         let stop = match stop {
-            StopReason::Other(reason) => StopReason::Other(clean(&reason, NAME_LIMIT)),
+            StopReason::Other(reason) => {
+                raw_stop = Some(Raw::of(&reason));
+                StopReason::Other(clean(&reason, NAME_LIMIT))
+            }
             named => named,
         };
-        let request_id = request_id
-            .map(|id| clean(id.trim(), ID_LIMIT))
-            .filter(|id| !id.is_empty());
+        let raw_id = request_id.map(Raw::of);
+        let request_id = request_id.map(id_of).filter(|id| !id.is_empty());
         Ok(Turn {
             parts,
             stop,
             usage,
             request_id,
+            raw_stop,
+            raw_id,
         })
+    }
+
+    /// The same turn as a run may be told of it and may store it: the provider's word
+    /// for its stop reason and the provider's id made again from the words that were
+    /// given, with the secrets taken out while they were whole, and only then cleaned
+    /// and cut. A handle that knows its run's secrets does this to every turn before
+    /// it hands it on. A second time changes nothing. The parts are not touched: they
+    /// are never cut, and what is stored of them is redacted where it is stored.
+    pub(crate) fn redacted(mut self, redact: &dyn Fn(&str) -> String) -> Turn {
+        if let Some(raw) = self.raw_stop.take() {
+            let shape = |word: &str| clean(word, NAME_LIMIT);
+            self.stop = StopReason::Other(raw.shown(redact, shape, "not kept"));
+        }
+        if let Some(raw) = self.raw_id.take() {
+            let id = raw.shown(redact, id_of, "not kept");
+            self.request_id = Some(id).filter(|id| !id.is_empty());
+        }
+        self
+    }
+
+    /// The bytes of text the turn holds: its texts, its opaque parts, and its calls'
+    /// arguments as written.
+    pub fn text_bytes(&self) -> u64 {
+        self.parts.iter().map(Part::bytes).sum()
     }
 
     /// The content, in the order the model wrote it.
@@ -806,6 +864,8 @@ pub trait Judge: Send + Sync {
 pub struct JudgeHandle {
     backend: Arc<dyn Judge>,
     bounds: Bounds,
+    /// The most bytes of text a turn may hold to be taken, when the action set one.
+    turn_bytes: Option<u64>,
 }
 
 impl JudgeHandle {
@@ -814,6 +874,7 @@ impl JudgeHandle {
         JudgeHandle {
             backend,
             bounds: Bounds::new(cancellation),
+            turn_bytes: None,
         }
     }
 
@@ -849,7 +910,24 @@ impl JudgeHandle {
     /// than this backend; nor when it holds an image, or defines a tool, and the judge
     /// does not declare that feature. A turn that holds another adapter's opaque part
     /// is a malformed answer.
+    ///
+    /// A handle that an executor's context made keeps the exchange (ADR 0009): the
+    /// whole of what was sent and of what came back as a diagnostic of the run, and
+    /// what the run's record says of it.
     pub fn send(&self, request: &JudgeRequest) -> Result<Turn, Fault> {
+        self.bounds.told(self.asked(request))
+    }
+
+    /// The same handle, taking no turn that holds more than this many bytes of text
+    /// ([`Turn::text_bytes`]): a larger one is the fault `too_large`, and what the run
+    /// stores of it is its sizes and a digest, not the turn. A limit is only ever
+    /// narrowed, as a deadline is.
+    pub fn turns_within(mut self, bytes: u64) -> JudgeHandle {
+        self.turn_bytes = Some(self.turn_bytes.map_or(bytes, |set| set.min(bytes)));
+        self
+    }
+
+    fn asked(&self, request: &JudgeRequest) -> Result<Turn, Fault> {
         let declaration = self.declaration();
         self.bounds.before_sending(declaration, [])?;
         let backend = declaration.model().backend();
@@ -872,18 +950,153 @@ impl JudgeHandle {
         let tool = (!request.tools.is_empty()).then_some(feature::TOOL);
         self.bounds
             .before_sending(declaration, image.into_iter().chain(tool))?;
-        let turn = {
-            let _sent = self.bounds.sending()?;
-            self.backend.send(request, &self.bounds)
-        }?;
-        if turn.opaque().any(|opaque| opaque.adapter != backend) {
-            return Err(Unfit::NotAllowed {
-                what: "a turn",
-                why: "holds a part of another adapter than the backend that answered",
-            }
-            .into());
+        let mut sent = self.bounds.sending(Capability::Judge, declaration)?;
+        // What was sent is written before it is sent, when the run keeps its
+        // exchanges: a request whose exchange the run has no room for is not sent.
+        let head = sent.as_ref().and_then(|sent| sent.head(request));
+        if let Some((sent, head)) = sent.as_mut().zip(head.as_ref())
+            && let Err(fault) = sent.room(head)
+        {
+            let refused = Err(fault);
+            sent.ended(&refused);
+            sent.judged(None, request, &refused, None);
+            return refused;
         }
-        Ok(turn)
+        let answer = self.backend.send(request, &self.bounds).and_then(|turn| {
+            if turn.opaque().any(|opaque| opaque.adapter != backend) {
+                return Err(Unfit::NotAllowed {
+                    what: "a turn",
+                    why: "holds a part of another adapter than the backend that answered",
+                }
+                .into());
+            }
+            Ok(turn)
+        });
+        // The provider's own words, in a turn or in a fault, have the run's secrets
+        // taken out while they are whole, before anything keeps them or is told them.
+        let redactor = self.bounds.redactor();
+        let answer = match (answer, &redactor) {
+            (Ok(turn), Some(recorder)) => Ok(turn.redacted(&|text| recorder.redact(text))),
+            (Err(fault), Some(recorder)) => Err(fault.redacted(&|text| recorder.redact(text))),
+            (answer, None) => answer,
+        };
+        // A turn over the limit this handle was given is not taken, and not stored.
+        let over = |turn: &Turn| {
+            self.turn_bytes
+                .is_some_and(|limit| turn.text_bytes() > limit)
+        };
+        let (answer, unwritten) = match answer {
+            Ok(turn) if over(&turn) => {
+                let fault = Fault::new(
+                    FaultKind::TooLarge,
+                    &format!(
+                        "the turn holds {} bytes of text, and at most {} are taken",
+                        turn.text_bytes(),
+                        self.turn_bytes.unwrap_or(0)
+                    ),
+                );
+                (Err(fault), Some(turn))
+            }
+            answer => (answer, None),
+        };
+        if let Some(sent) = &mut sent {
+            sent.ended(&answer);
+            sent.judged(head.as_ref(), request, &answer, unwritten.as_ref());
+        }
+        answer
+    }
+
+    /// Says that the answer to the last request the run sent to a judge was left out
+    /// of the conversation that went on, and why: the harness's decision, which the
+    /// run's record keeps with the turn (ADR 0009). It is for a loop that sends one
+    /// request at a time. False when the handle keeps nothing, or no judge was asked.
+    pub fn exclude_last(&self, why: Excluded) -> bool {
+        self.bounds.exclude_last(why)
+    }
+}
+
+/// Why the harness left a judge's answer out of the conversation that went on. The
+/// words are those of the baseline's transcripts (`docs/baseline/transcript.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Excluded {
+    /// The answer was cut off at the most output tokens.
+    Truncated,
+    /// The model declined.
+    Refusal,
+    /// The answer called no tool and gave no verdict.
+    NoCall,
+}
+
+impl Excluded {
+    /// Every reason, in the order above.
+    pub const ALL: [Excluded; 3] = [Excluded::Truncated, Excluded::Refusal, Excluded::NoCall];
+}
+
+/// What a run's record says of one exchange with a judge (ADR 0009): a summary within
+/// a bound. The whole exchange is a diagnostic of the run, named here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Judged {
+    /// The name, among the run's names, of the diagnostic that holds the exchange.
+    pub(crate) exchange: Option<String>,
+    pub(crate) max_output_tokens: u32,
+    /// How many messages were sent.
+    pub(crate) messages: usize,
+    /// Why the turn ended, as a word; none when no turn came back.
+    pub(crate) stop: Option<&'static str>,
+    /// How many tools the turn called.
+    pub(crate) tool_calls: usize,
+    pub(crate) usage: Option<Usage>,
+    /// The provider's name for the exchange, cleaned when the turn was made.
+    pub(crate) provider_id: Option<String>,
+    pub(crate) excluded: Option<Excluded>,
+}
+
+impl Judged {
+    /// What is kept of a request whose backend's call unwound: nothing of it.
+    pub(crate) fn unanswered() -> Judged {
+        Judged {
+            exchange: None,
+            max_output_tokens: 0,
+            messages: 0,
+            stop: None,
+            tool_calls: 0,
+            usage: None,
+            provider_id: None,
+            excluded: None,
+        }
+    }
+
+    pub(crate) fn of(
+        request: &JudgeRequest,
+        answer: &Result<Turn, Fault>,
+        exchange: Option<String>,
+    ) -> Judged {
+        let turn = answer.as_ref().ok();
+        Judged {
+            exchange,
+            max_output_tokens: request.controls.max_output_tokens,
+            messages: request.messages.len(),
+            stop: turn.map(|turn| turn.stop.word()),
+            tool_calls: turn.map_or(0, |turn| turn.tool_calls().count()),
+            usage: turn.and_then(Turn::usage),
+            provider_id: turn.and_then(|turn| turn.request_id.clone()),
+            excluded: None,
+        }
+    }
+}
+
+impl StopReason {
+    /// The reason as a word. Another reason is `other`: the provider's own word is in
+    /// the turn.
+    pub fn word(&self) -> &'static str {
+        match self {
+            StopReason::EndTurn => "end_turn",
+            StopReason::ToolUse => "tool_use",
+            StopReason::MaxTokens => "max_tokens",
+            StopReason::Refusal => "refusal",
+            StopReason::Other(_) => "other",
+        }
     }
 }
 
