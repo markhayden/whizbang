@@ -118,7 +118,8 @@ export SEGMENT_TOKEN=made-up-token-0123456789
 
 A line is `NAME=value`, with `export` before it if you like; quotes around a value are
 taken off, and what is inside them is the value, all of it: a space at either end inside
-the quotes is refused, and so are quotes around nothing. A `#` straight after a value,
+the quotes is refused, and so are quotes around nothing. A name with nothing after the
+`=`, and no quotes, is as a variable not set. A `#` straight after a value,
 with no space before it, is part of the value; a comment has a line of its own. Save the
 file as plain UTF-8 with no byte-order mark, which some editors add and which is refused.
 A link to a file is followed, and what it leads to is read. Nothing is expanded, and the

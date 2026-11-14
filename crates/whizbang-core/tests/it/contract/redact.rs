@@ -445,6 +445,84 @@ fn the_forms_are_found_inside_one_another() {
 }
 
 #[test]
+fn two_forms_that_end_at_one_place_are_both_found() {
+    // One secret is, as it stands, some letters and then the base64 characters of
+    // another. Where the two end together, the longer is found first; the shorter is
+    // still found, and with it the base64 character after it, which holds the last
+    // bits of the second secret beside its neighbour's.
+    let key = made_up_key("x");
+    assert_eq!(key.len() * 8 % 6, 2, "its bits do not end a character");
+    let encoded = base64(format!("{key}zz").as_bytes(), false);
+    let whole = key.len() * 8 / 6;
+    let longer = format!("PRE{}", &encoded[..whole]);
+    let secrets = Secrets::new([key.clone(), longer]).unwrap();
+    assert_eq!(
+        secrets.redact(&format!("PRE{encoded}")),
+        format!("[redacted]{}", &encoded[whole + 1..])
+    );
+}
+
+#[test]
+fn values_an_env_file_keeps_are_found_in_every_form_whatever_marks_they_hold() {
+    // An env file's reader keeps a value with a mark that is white space and not
+    // ASCII at an end (a no-break space, a line separator, an ideographic space), with
+    // `$(...)`, `#`, `=`, and with a quote of the other kind. A set of secrets trims
+    // ASCII white space only, so each is searched for as the file gave it.
+    let values = [
+        "\u{a0}zqxjkvwpyh-0123\u{a0}".to_owned(),
+        "zqxjkvwpyh-4567\u{2028}".to_owned(),
+        "\u{3000}zqxjkvwpyh-89ab".to_owned(),
+        "zq$(xjk)vw#py=h+0/1%2".to_owned(),
+        "zqxj\"kvw'pyh\\0123".to_owned(),
+    ];
+    let file = format!(
+        "A={}\nB={}\nC={}\nD={}\nE='zqxj\"kvw'\nF=\"kvw'pyh-0123\"\n",
+        values[0], values[1], values[2], values[3]
+    );
+    let env = whizbang_core::config::EnvFile::parse(file.as_bytes()).unwrap();
+    assert_eq!(format!("{:?}", env.secrets()), "Secrets(6)");
+    let from_file = env.secrets();
+    let told = Secrets::new(values.clone()).unwrap();
+    for (index, value) in values.iter().enumerate() {
+        let secrets = if index < 4 { &from_file } else { &told };
+        let percent: String = value.bytes().map(|byte| format!("%{byte:02X}")).collect();
+        let escaped: String = value
+            .chars()
+            .map(|c| {
+                let mut units = [0u16; 2];
+                c.encode_utf16(&mut units)
+                    .iter()
+                    .map(|unit| format!("\\u{unit:04x}"))
+                    .collect::<String>()
+            })
+            .collect();
+        let quoted = serde_json::to_string(value).unwrap();
+        for form in [
+            value.clone(),
+            percent,
+            escaped,
+            quoted[1..quoted.len() - 1].to_owned(),
+            base64(value.as_bytes(), false),
+            base64(format!("x:{value}").as_bytes(), true),
+        ] {
+            let stored = secrets.redact(&format!("<{form}>"));
+            assert!(stored.contains(REDACTED), "{index}: {form}");
+            assert!(
+                !stored.contains("zqxjkvwpyh") && !stored.contains("kvw'pyh"),
+                "{stored}"
+            );
+        }
+        let wide: Vec<u8> = value.encode_utf16().flat_map(u16::to_be_bytes).collect();
+        assert_eq!(secrets.redact_bytes(&wide), REDACTED.as_bytes(), "{index}");
+    }
+    // The two quoted values of the file, each with a quote of the other kind.
+    assert_eq!(
+        from_file.redact("a zqxj\"kvw b kvw'pyh-0123 c"),
+        "a [redacted] b [redacted] c"
+    );
+}
+
+#[test]
 fn what_redaction_does_not_find_is_known() {
     // ADR 0014, "What is accepted". Each of these gets through, with its reason in the
     // record, and is pinned so that the list there stays true.
