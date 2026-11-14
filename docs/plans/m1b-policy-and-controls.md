@@ -1577,10 +1577,10 @@ installation records. **Size:** medium.
 **Depends on:** M1. **Reads:** rascal `tools/python/src/rascal_tools/installer.py` (`get`,
 `_copy_bounded`, `model_lock`); rascal `crates/rascal-testkit/src/fake_install.rs`.
 
-- [ ] `crates/whizbang-testkit/src/downloads.rs`: a fake of the download interface that
+- [x] `crates/whizbang-testkit/src/downloads.rs`: a fake of the download interface that
       serves bytes from memory, can stop at a barrier after a stated count of bytes, serve
       wrong bytes, serve too many, or fail.
-- [ ] Each file of a catalogue entry is downloaded into staging under the model's lock,
+- [x] Each file of a catalogue entry is downloaded into staging under the model's lock,
       stopped at its stated size and checked by hash. The modules of the installer are
       laid out as "Strands" says. Nothing is published yet.
 

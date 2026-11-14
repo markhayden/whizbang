@@ -3,10 +3,12 @@
 //! installs: no test touches a disk or asks anything of a network.
 
 mod catalogue;
+mod downloads;
 mod identity;
 mod installation;
 mod names;
 mod refusals;
+mod staging;
 
 use whizbang_backends::models::{
     CatalogueFile, Entry, EntryParts, FileName, Licence, ModelName, Refused, Revision,
