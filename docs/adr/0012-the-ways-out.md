@@ -4,6 +4,7 @@ Status: accepted. Changes ADR 0006 ("Declarations and features": a declaration m
 who receives its backend's requests) and ADR 0010 (what a roster answers for a backend
 that states no price)
 Date: 2026-11-13
+Amended: 2026-11-14, with task B3. Added: "The fakes".
 Spec: section 4, "Backends"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -212,6 +213,57 @@ In its declaration: `Declaration::sending_to(recipient)`, read by
 
 This changes ADR 0010, which answered nothing for every backend with no price: that
 stands for a local backend alone.
+
+### The fakes
+
+Added by task B3. `whizbang-testkit` gives the fakes of ADR 0006 what a real backend
+says of cost (ADR 0010) and of where its requests go, and adds a fake of the sending
+interface. None of them spends or sends anything. The tests are in
+`crates/whizbang-testkit/tests/it/`, named below as `priced::…` and `sending::…`.
+
+- **Each fake of a capability** (`FakeFiller`, `FakeSegmenter`, `FakeJudge`) can be
+  built with a price (`priced`) and with a recipient (`sending_to`), which it declares
+  and does nothing else with: the roster a build makes of the fakes answers
+  `Backends::bound` from them
+  (`priced::a_fake_built_with_each_kind_of_price_quotes_it_for_a_request`,
+  `priced::a_fake_with_a_recipient_names_it_and_one_without_is_local`). Both stay when
+  a fake is told what else to declare
+  (`priced::a_price_and_a_recipient_stay_when_a_fake_is_told_what_else_to_declare`).
+- **It reports a charge with every answer** when told one (`charging`), in whole
+  millionths; a test chooses a charge under the bound, over it, or none
+  (`priced::a_fake_reports_the_charge_it_was_told_to_under_its_bound_over_it_or_none`,
+  `priced::a_fake_reports_a_charge_past_what_a_float_holds_exactly`).
+- **It fails every request at a named stage** when told to (`failing_at`): the fault is
+  `unavailable` and states that stage, and told to fail as answered it carries the
+  charge the fake reports. A request is counted once, whether it is answered or fails;
+  a judge that fails keeps the request and plays no entry of its script
+  (`priced::a_fake_told_to_fail_at_each_stage_gives_a_fault_that_says_that_stage`,
+  `priced::a_fake_counts_a_request_once_whether_it_answers_or_fails`).
+- **The fakes state the stage of the faults they make themselves:** a request cancelled
+  while it was held open at a barrier, and a judge past the end of its script, are
+  unresolved, said and not left to be read. What a fake does at a barrier is as it was
+  (`priced::a_priced_fake_stopped_at_its_barrier_holds_its_request_open_and_sees_the_cancellation`,
+  `priced::a_judge_past_the_end_of_its_script_says_that_nothing_settles_the_request`).
+- **`FakeSender`** (`sending.rs`) plays scripted hops: each request it is handed
+  through `Sender::send` is answered with the next entry of its script, a reply or a
+  fault, and a reply may be a redirect or an answer that names an upload address or a
+  download address. It does not look at what it is handed and follows nothing itself.
+  It keeps every request, in order, with the address it was for, its pieces and the
+  headers it would have carried, which are the credential's and no other
+  (`sending::the_sending_fake_records_each_hop_in_order_with_the_headers_it_would_have_carried`,
+  `sending::the_sending_fake_plays_a_fault_where_its_script_has_one_and_keeps_the_hop`).
+  Past the end of its script it answers `malformed`, unresolved, and does not panic;
+  a request the handle refused never reaches it; and what is printed of it holds no
+  credential
+  (`sending::the_sending_fake_past_the_end_of_its_script_fails_and_does_not_panic`,
+  `sending::the_sending_fake_sends_nothing_for_a_run_that_was_cancelled`,
+  `sending::what_is_printed_of_the_sending_fake_and_of_a_hop_holds_no_credential`).
+
+Limits: a fake's `Hop::headers` gives a credential's value to the test that asks, which
+is what lets a test show that a credential went to one origin and no other; the test
+kit is a development dependency and nothing that ships holds it. The fakes of a
+download and of a probe are not here: a download's is task M2's, and a probe's comes
+with the task that first probes (E3).
 
 ### Limits, each pinned or stated
 
