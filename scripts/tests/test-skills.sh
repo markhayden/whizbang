@@ -168,6 +168,8 @@ check_kickoff() {
     'So first go through the two files against "Secrets and private data"' \
     'address. Then scan them (the commands below).' \
     'After any edit to either file, read and scan again.' \
+    "or a model's name that it knows (but for the folder \`.claude\` and the file" \
+    '`CLAUDE.md` of this repo, named as paths)' \
     '`check (macos-15)` and `check (ubuntu-22.04)`' 'says "no checks reported"' \
     'a run whose commit is the head lists all three' \
     'go back to step 4' 'hand back again with the new commit'; do
@@ -213,6 +215,7 @@ check_review_merge() {
     '- [ ] 6. With `WHIZBANG_WORDLIST` set, `just scan-range <base> <head>` passes: secrets,' \
     '- [ ] 7. The title and body. No scan sees them on the pull request, so save them to a file' \
     'and scan it (the commands below), then read them yourself' \
+    'folder `.claude` and the file `CLAUDE.md` of this repo, named as paths), a path that' \
     'a name it does not know is found only by reading, and so' 'lists. It lists each line that says "co-authored-by" or "generated with" and is not' \
     'refused: go through those.' 'lines it lists, and are gone through again,' \
     'The corrected files get every check of this step again, the scan and the' \
@@ -629,6 +632,9 @@ AGENTS.md: - **The pre-push hook fails closed.** Without `WHIZBANG_WORDLIST` set
 AGENTS.md: from, the push is refused. That is intended; set the variable, do not bypass the hook.
 AGENTS.md: - **CI cannot run the clean-room scan,** because the word list never leaves the owner's
 AGENTS.md: - **A worktree on a branch cut before a change to the hooks** runs that branch's older hook.
+AGENTS.md: - **`just setup` is run only from a working tree that has `scripts/hook-dispatch.sh`,** and
+AGENTS.md: back for every worktree of the clone, and a push from another folder then runs no hook.
+AGENTS.md: repository's hooks folder, a hook of your own included, and says so.
 .claude/agents/builder.md: The same checklist covers what comes after: a push the hook refuses (its step 9), a change
 .claude/agents/builder.md: need `WHIZBANG_WORDLIST` in your environment to scan and to push: it is set where it lasts
 .claude/agents/builder.md: The path is never written into a hand-back, a pull request, a commit or a tracked file.
@@ -638,8 +644,8 @@ AGENTS.md: - **A worktree on a branch cut before a change to the hooks** runs th
 .claude/skills/kickoff/SKILL.md: - [ ] 3. `WHIZBANG_WORDLIST` is set in your shell: the path of a private list the owner
 .claude/skills/kickoff/SKILL.md: The path is never written into a hand-back, a pull request, a commit or a tracked file.
 .claude/skills/kickoff/SKILL.md: Never open, print, quote or copy the word list, and never pass on what it holds.
-.claude/skills/kickoff/SKILL.md: `GIT_WORK_TREE` set, runs no hook.
 .claude/skills/kickoff/SKILL.md: Never push with `--no-verify`, never force a push, and never push to `main`.
+.claude/skills/kickoff/SKILL.md: name, from inside the worktree: a push made from another folder runs the hook of
 .claude/skills/kickoff/SKILL.md: Never retry around the hook, and never use `--no-verify`.
 .claude/skills/kickoff/SKILL.md: Tell the orchestrator in the hand-back: which scan refused, the commit, path and
 .claude/skills/review-merge/SKILL.md: - [ ] 6. With `WHIZBANG_WORDLIST` set, `just scan-range <base> <head>` passes: secrets,
@@ -808,12 +814,12 @@ sentence() {
   tr '\n' ' ' <"$1" | tr -s ' ' | grep -F -e "$2" >/dev/null || { echo "$1 must say, as one run of words: $2"; return 1; }
 }
 kickoff=.claude/skills/kickoff/SKILL.md
-no_hook='Push the branch by name, from inside the worktree: a push made from another folder, with `GIT_DIR` and `GIT_WORK_TREE` set, runs no hook.'
+no_hook='Push the branch by name, from inside the worktree: a push made from another folder runs the hook of the working tree git is then acting on (the one `git -C` or `GIT_WORK_TREE` names, or else the folder git is run in), and is refused when that is no checkout of this repo.'
 # Held to the end of its paragraph: the next words are the next step.
 no_value='Tell the orchestrator in the hand-back: which scan refused, the commit, path and line if it named them, and what you did, without the value. - [ ] 10. Write the pull request'
 expect_pass "kickoff: why the push is made from the worktree" sentence "$kickoff" "$no_hook"
 expect_pass "kickoff: a refused push is told without the value" sentence "$kickoff" "$no_value"
-sed 's/a push made from another folder, with `GIT_DIR` and$/when the scan is slow, make the push from another folder: with `GIT_DIR` and/' "$kickoff" >"$tmp/sentence.md"
+sed 's/a push made from another folder runs the hook of$/when the scan is slow, make the push from another folder: it runs the hook of/' "$kickoff" >"$tmp/sentence.md"
 cmp -s "$kickoff" "$tmp/sentence.md" && fail "the edit to the line before the fragment changed nothing"
 expect_fail "kickoff: the line before the fragment rewritten" "must say, as one run of words" sentence "$tmp/sentence.md" "$no_hook"
 sed 's/and what you did, without the value\.$/and what you did, with the value./' "$kickoff" >"$tmp/sentence.md"

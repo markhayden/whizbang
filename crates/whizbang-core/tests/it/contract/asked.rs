@@ -12,9 +12,9 @@ use serde_json::{Value as Json, json};
 use whizbang_core::artifact::{self, Artifact, ArtifactType, ImageRole};
 use whizbang_core::capability::written::EXCHANGE;
 use whizbang_core::capability::{
-    Controls, Declaration, DeclarationError, EXCHANGES_MAX_BYTES, Excluded, Fault, FaultKind,
-    FillRequest, Judge, JudgeRequest, MODEL_NAME_LIMIT, Message, Opaque, Part, Picture,
-    REQUESTS_LIMIT, Role, Roster, StopReason, Support, ToolCall, Turn, Usage,
+    Charge, Controls, Declaration, DeclarationError, EXCHANGES_MAX_BYTES, Excluded, Fault,
+    FaultKind, FillRequest, Judge, JudgeRequest, MODEL_NAME_LIMIT, Message, Opaque, Part, Picture,
+    REQUESTS_LIMIT, Role, Roster, Stage, StopReason, Support, ToolCall, Turn, Usage,
 };
 use whizbang_core::contract::ModelIdentity;
 use whizbang_core::contract::record::{
@@ -936,6 +936,76 @@ fn a_fault_of_any_capability_is_told_to_an_action_with_the_secrets_taken_out_who
     let message = &record.outcome().error.as_ref().unwrap().message;
     assert_eq!(*message, format!("{} ?redacted?", "x".repeat(229)));
     assert!(!holds(&names["record"], b"zqHEAD"));
+}
+
+#[test]
+fn the_stage_and_the_charge_of_a_fault_reach_an_action_through_redaction() {
+    // On a run that has secrets, every fault a handle hands on is made again with the
+    // secrets taken out. What it said of how far its request got, and of what the
+    // answer cost, is not words and comes through as it was: for a filler, whose
+    // fault the handle redacts as it tells it, and for a judge, whose fault the handle
+    // redacts before it keeps the exchange.
+    let world = World::new();
+    let key = plain_key();
+    let charge = Charge::of_micros(450.0).unwrap();
+    let words = format!("the key {key} was refused");
+    let fault = |kind| Fault::new(kind, &words);
+    let filler = Arc::new(FakeFiller::new(Paint::Fails(
+        fault(FaultKind::Credential)
+            .answered(Some(charge))
+            .retry_after_ms(30),
+    )));
+    let judge = Arc::new(FakeJudge::scripted(vec![
+        Err(fault(FaultKind::Unavailable).not_sent()),
+        Err(fault(FaultKind::Rejected).answered(Some(charge))),
+        Err(fault(FaultKind::Unavailable).answered(None)),
+    ]));
+    let told: Noted<Fault> = Noted::default();
+    let asks = {
+        let told = told.clone();
+        let needs = vec![
+            Requirement::new(Capability::Fill),
+            Requirement::new(Capability::Judge),
+        ];
+        action("asks", needs, move |_, context| {
+            let capabilities = context.capabilities();
+            let fill = capabilities.fill().unwrap().fill(&fill_request());
+            told.lock().unwrap().push(fill.unwrap_err());
+            for _ in 0..3 {
+                let fault = capabilities.judge().unwrap().send(&asking("well?", 64));
+                told.lock().unwrap().push(fault.unwrap_err());
+            }
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(
+        &world,
+        roster(None, Some(filler.as_ref()), Some(judge.as_ref())),
+        Capabilities::none()
+            .with_fill(filler.clone())
+            .with_judge(judge.clone()),
+        vec![asks],
+    )
+    .with_secrets(Secrets::new([key.clone()]).unwrap());
+    executor.submit(&Call::new("asks")).unwrap();
+    let told = told.lock().unwrap();
+    let said: Vec<_> = told
+        .iter()
+        .map(|fault| (fault.stage(), fault.charge(), fault.wait_ms()))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            (Stage::Answered, Some(charge), Some(30)),
+            (Stage::NotSent, None, None),
+            (Stage::Answered, Some(charge), None),
+            (Stage::Answered, None, None),
+        ]
+    );
+    // And each was redacted: the words changed and the key is in none.
+    for fault in told.iter() {
+        assert_eq!(fault.sentence(), "the key ?redacted? was refused");
+    }
 }
 
 #[test]
