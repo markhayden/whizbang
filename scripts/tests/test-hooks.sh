@@ -32,10 +32,27 @@ git config user.email "tester@example.com"
 git remote add origin "$remote"
 mkdir -p scripts
 cp -R "$root/scripts/hooks" scripts/hooks
-cp "$root/scripts/setup.sh" "$root/scripts/tool-versions.txt" scripts/
+cp "$root/scripts/setup.sh" "$root/scripts/hook-dispatch.sh" "$root/scripts/tool-versions.txt" scripts/
 printf 'scripts/\n' >.git/info/exclude
+# A clone that an earlier setup pointed at scripts/hooks by a path relative to wherever git
+# is run: setup takes that setting away, because a push from another folder then ran no hook.
+git config core.hooksPath scripts/hooks
 expect_pass "setup, with the hooks and the tools in order" scripts/setup.sh
-[ "$(git config core.hooksPath)" = "scripts/hooks" ] || fail "setup installs the hooks from scripts/hooks"
+[ -z "$(git config --get core.hooksPath || true)" ] || fail "setup leaves no core.hooksPath"
+# What it installs: the same small script under each hook's name in the repository's own
+# hooks folder, where git looks from any folder and from every worktree.
+for hook in pre-commit commit-msg pre-push; do
+  [ -x ".git/hooks/$hook" ] || fail "setup installs .git/hooks/$hook, and it can be run"
+  cmp -s "$root/scripts/hook-dispatch.sh" ".git/hooks/$hook" || fail ".git/hooks/$hook is scripts/hook-dispatch.sh"
+done
+# A setting that sends git elsewhere for its hooks, which setup did not make, is left and
+# is a problem: git would not look in the hooks folder at all.
+git config core.hooksPath "$tmp/other-hooks"
+expect_fail "setup with core.hooksPath set to another folder" "hook problem: core.hooksPath is set" scripts/setup.sh
+quiet_path() { grep -q -F -e "$tmp" "$tmp/out" && { cat "$tmp/out" >&2; fail "$1: no path of this machine is printed"; }; return 0; }
+quiet_path "setup with core.hooksPath set"
+git config --unset core.hooksPath
+expect_pass "setup once the setting is gone" scripts/setup.sh
 for hook in pre-commit commit-msg pre-push; do
   [ -x "scripts/hooks/$hook" ] || fail "scripts/hooks/$hook can be run"
   # Git skips a hook it cannot execute, so the three are committed as files that can be.
@@ -69,11 +86,17 @@ broken_scan() {
     "echo \"\$*\" >>\"$tmp/scan-ran\"" 'if true; then' '  echo "inside"' 'done' >scripts/scan.sh
   chmod +x scripts/scan.sh
 }
-# only <hook...>: the hooks in place are these, as this repo has them.
+# only <hook...>: the hooks in place are these, as this repo has them. Each of the others is
+# a stand-in that passes and says nothing, so that what follows is the work of the hooks
+# named: a hook that is not there at all is refused where it would be run (below).
 only() {
   rm -rf scripts/hooks
   mkdir scripts/hooks
   local hook
+  for hook in pre-commit commit-msg pre-push; do
+    printf '%s\n' '#!/bin/sh' 'exit 0' >"scripts/hooks/$hook"
+    chmod +x "scripts/hooks/$hook"
+  done
   for hook in "$@"; do cp "$root/scripts/hooks/$hook" scripts/hooks/; done
 }
 change() {
@@ -197,5 +220,99 @@ change "strays"
 expect_pass "a commit with strays in the hooks folder" git commit -m "feat: strays"
 expect_pass "a push with strays in the hooks folder" git push origin main
 [ "$(git ls-remote "$remote" refs/heads/main | cut -f1)" = "$(git rev-parse HEAD)" ] || fail "the push with strays arrived"
+
+# --- A push made around the folder: git run from another folder, with the repository and
+# the working tree named in the environment or by options. The hooks are found all the
+# same, because they are in the repository's own hooks folder: the push is scanned by the
+# scan of the working tree it names, or refused when none is named. With the real scan.
+cp "$root/scripts/scan.sh" scripts/scan.sh
+only pre-commit commit-msg pre-push
+rm -rf scripts/hooks/notes scripts/hooks/README
+printf 'zorblaxquint\n' >"$tmp/words"
+export WHIZBANG_WORDLIST="$tmp/words"
+elsewhere="$tmp/elsewhere"
+mkdir "$elsewhere"
+key="sk""-abcdefghij0123456789ABCDEFGHIJ"
+on_remote() { git ls-remote "$remote" "refs/heads/$1" | cut -f1; }
+# around <way> <git arguments...>: git, run from the other folder, told where the
+# repository and its working tree are in one of three ways.
+around() {
+  local way=$1
+  shift
+  case "$way" in
+    environment) (cd "$elsewhere" && GIT_DIR="$repo/.git" GIT_WORK_TREE="$repo" git "$@") ;;
+    options) (cd "$elsewhere" && git --git-dir="$repo/.git" --work-tree="$repo" "$@") ;;
+    repository-alone) (cd "$elsewhere" && GIT_DIR="$repo/.git" git "$@") ;;
+  esac
+}
+git checkout -q -b around-key
+printf 'token = %s\n' "$key" >config.txt
+git add config.txt
+git commit -q --no-verify -m "feat: a config"
+with_key=$(git rev-parse HEAD)
+git checkout -q -b around-word main
+echo "it says zorblaxquint" >words.txt
+git add words.txt
+git commit -q --no-verify -m "feat: words"
+git checkout -q -b around-clean main
+echo "nothing" >clean.txt
+git add clean.txt
+git commit -q --no-verify -m "feat: clean"
+git checkout -q -b zorblaxquint-branch around-clean
+git checkout -q main
+for way in environment options; do
+  expect_fail "a push around the folder ($way), with a key" "$with_key:config.txt:1" around "$way" push origin around-key
+  [ -z "$(on_remote around-key)" ] || fail "a push around the folder ($way): the key did not reach the remote"
+  grep -q -F -e "$key" "$tmp/out" && fail "a push around the folder ($way): the key is not printed"
+  expect_fail "a push around the folder ($way), with a listed word" "clean-room scan: 2 matching lines" around "$way" push origin around-word
+  [ -z "$(on_remote around-word)" ] || fail "a push around the folder ($way): the word did not reach the remote"
+  expect_fail "a push around the folder ($way), of a branch named with a listed word" "ref names 1" \
+    around "$way" push origin zorblaxquint-branch
+  [ -z "$(on_remote zorblaxquint-branch)" ] || fail "a push around the folder ($way): the branch name did not reach the remote"
+  expect_fail "a push around the folder ($way), with no word list" "WHIZBANG_WORDLIST is not set" \
+    env -u WHIZBANG_WORDLIST bash -c "cd '$elsewhere' && GIT_DIR='$repo/.git' GIT_WORK_TREE='$repo' git push origin around-clean:no-list-$way"
+  [ -z "$(on_remote "no-list-$way")" ] || fail "a push around the folder ($way), with no word list: nothing reached the remote"
+  # A clean one is scanned and arrives.
+  expect_pass "a clean push around the folder ($way)" around "$way" push origin "around-clean:clean-$way"
+  grep -q -F "secrets scan: clean (1 commits" "$tmp/out" || { cat "$tmp/out" >&2; fail "a clean push around the folder ($way) is scanned"; }
+  [ "$(on_remote "clean-$way")" = "$(git rev-parse around-clean)" ] || fail "a clean push around the folder ($way) arrived"
+  git push -q origin ":clean-$way" >/dev/null 2>&1
+done
+# With the repository named and no working tree, git takes the folder it is in for the
+# working tree. There is no scan there, so nothing can be scanned: refused, clean or not.
+for branch in around-key around-clean; do
+  expect_fail "a push with the repository named alone ($branch)" "pre-push: no scripts/hooks/pre-push here that can be run" \
+    around repository-alone push origin "$branch"
+  [ -z "$(on_remote "$branch")" ] || fail "a push with the repository named alone: $branch did not reach the remote"
+  # The hook names no folder; git's own line names the remote, as it always does.
+  grep -e '^pre-push:' "$tmp/out" | grep -F -e "$tmp" >/dev/null && fail "the refusal names no path of this machine"
+done
+# A commit made the same way goes through the commit hooks of the working tree.
+printf 'feat: a thing\n\n%s: A Person <person@example.com>\n' "Co""-Authored-By" >"$tmp/message"
+echo "more" >>file.txt
+expect_fail "a commit around the folder, with a credit" "has a Co""-Authored-By line" \
+  around environment commit -q -a -F "$tmp/message"
+git checkout -q -- file.txt
+# A linked worktree runs the hooks of its own branch, found from its own folder.
+git checkout -q main
+git worktree add -q "$tmp/linked" -b linked main
+mkdir -p "$tmp/linked/scripts"
+cp -R scripts/hooks "$tmp/linked/scripts/hooks"
+cp scripts/scan.sh "$tmp/linked/scripts/scan.sh"
+(
+  cd "$tmp/linked"
+  printf 'token = %s\n' "$key" >config.txt
+  git add config.txt
+  git commit -q --no-verify -m "feat: a config"
+  expect_fail "a push from a linked worktree, with a key" "config.txt:1" git push origin linked
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "the hook of the linked worktree ran" >&2' 'exit 1' >scripts/hooks/pre-push
+  expect_fail "a linked worktree runs its own hook" "the hook of the linked worktree ran" git push origin linked
+)
+[ -z "$(on_remote linked)" ] || fail "a push from a linked worktree: the key did not reach the remote"
+# A working tree that has lost its hook: refused, not passed.
+rm "$tmp/linked/scripts/hooks/pre-push"
+(cd "$tmp/linked" && expect_fail "a push from a working tree with no pre-push hook" \
+  "pre-push: no scripts/hooks/pre-push here that can be run" git push origin linked)
+[ -z "$(on_remote linked)" ] || fail "a push from a working tree with no hook: nothing reached the remote"
 
 finished

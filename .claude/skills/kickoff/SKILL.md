@@ -70,8 +70,8 @@ If one is missing, ask the orchestrator. Do not guess.
       prints nothing. The push of that same commit then needs no second run.
 - [ ] 8. Before every push: `just check` has passed on exactly the tree being pushed
       (step 7), then `just scan` passes. Push the branch by
-      name, from inside the worktree: a push made from another folder, with `GIT_DIR` and
-      `GIT_WORK_TREE` set, runs no hook.
+      name, from inside the worktree: a push made from another folder is scanned only
+      when `GIT_DIR` and `GIT_WORK_TREE` both name the worktree, and is refused otherwise.
       Never push with `--no-verify`, never force a push, and never push to `main`.
 - [ ] 9. If the push is refused, nothing reached origin. The secrets scan names each place
       it found as `<commit>:<path>:<line>`; the clean-room scan prints a count and names
