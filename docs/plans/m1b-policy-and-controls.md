@@ -1390,11 +1390,11 @@ example in the guide is read by a test (rule 5).
 **Depends on:** C1. **Reads:** squint `crates/squint-core/src/env.rs` and
 `crates/squint-providers/src/privacy.rs` (`credential`); `.env.example` of squint.
 
-- [ ] An env file is read for the variables the config names and no others. A value in
+- [x] An env file is read for the variables the config names and no others. A value in
       single or double quotes has them taken off; a value shorter than the least a secret
       may be is refused, naming the variable and never the value or its length beyond what
       ADR 0005 allows.
-- [ ] The secrets the executor redacts are every credential the config names that has a
+- [x] The secrets the executor redacts are every credential the config names that has a
       value. A credential is handed only to the backend whose table names it.
 
 **Done when** these pass: a quoted value, a value with a trailing line break and an
@@ -1807,7 +1807,7 @@ holds each long script to the form.
 
 **Depends on:** X5. Scripts only.
 
-- [ ] The sixteen lines under `scripts/` that end a pipe with `grep -q` send the output
+- [x] The sixteen lines under `scripts/` that end a pipe with `grep -q` send the output
       to `/dev/null` instead, and `scripts/tests/test-syntax.sh` refuses a new one.
 
 **Done when** no script under `scripts/` has the pattern, a planted one fails the test,

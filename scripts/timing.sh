@@ -32,7 +32,7 @@ while [ $# -gt 0 ]; do
 done
 # A plain number of seconds: digits, with an optional fraction. Anything else (NaN, 1e3,
 # 1.5.2) would be compared as text and could pass by accident.
-is_seconds() { echo "$1" | grep -q -E '^[0-9]+(\.[0-9]+)?$'; }
+is_seconds() { echo "$1" | grep -E '^[0-9]+(\.[0-9]+)?$' >/dev/null; }
 if ! is_seconds "$limit"; then
   echo "timing: the limit must be a number of seconds: $limit" >&2
   exit 2
@@ -55,7 +55,7 @@ fi
 # nextest writes one element per line: <testsuites ... time="total">, <testsuite name="...">,
 # <testcase ... time="seconds">.
 attr() { sed -n "s/.* $1=\"\\([^\"]*\\)\".*/\\1/p"; }
-total=$({ grep '<testsuites ' "$junit" || true; } | attr time | head -1)
+total=$({ grep '<testsuites ' "$junit" || true; } | attr time | sed -n '1p')
 if ! grep -q '<testsuites .* time="' "$junit"; then
   echo "timing: no total in $junit" >&2
   exit 1

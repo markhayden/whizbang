@@ -332,6 +332,42 @@ fn where_one_text_ends_and_the_next_begins_is_in_the_digest() {
 }
 
 #[test]
+fn the_ways_of_writing_one_origin_have_one_digest() {
+    // An origin is hashed as an origin writes itself (ADR 0012): the scheme and the
+    // host in lower case, and no port when it is the scheme's own. The same for a
+    // backend's address, whose path is hashed as it was given.
+    let recipient = |origin: &str, upstream: &str| {
+        digest(&format!(
+            "[egress.recipients.one]\norigin = \"{origin}\"\nclasses = []\nupstreams = [\"{upstream}\"]\n"
+        ))
+    };
+    let plain = recipient("https://h.example", "http://u.example");
+    for (origin, upstream) in [
+        ("https://h.example:443", "http://u.example:80"),
+        ("HTTPS://H.Example", "HTTP://U.EXAMPLE"),
+        ("https://H.example:443", "http://u.example"),
+    ] {
+        assert_eq!(recipient(origin, upstream), plain, "{origin} {upstream}");
+    }
+    assert_ne!(
+        recipient("https://h.example:8443", "http://u.example"),
+        plain
+    );
+    assert_ne!(recipient("http://h.example", "http://u.example"), plain);
+    let backend = |url: &str| digest(&format!("[backends.fill]\nkind = \"a\"\nurl = \"{url}\"\n"));
+    assert_eq!(
+        backend("HTTPS://H.Example:443/v1/Fill"),
+        backend("https://h.example/v1/Fill")
+    );
+    // The path is not folded: its letters' case is the path's.
+    assert_ne!(
+        backend("https://h.example/v1/fill"),
+        backend("https://h.example/v1/Fill")
+    );
+    assert_ne!(backend("https://h.example"), backend("https://h.example/"));
+}
+
+#[test]
 fn a_variable_is_in_the_digest_by_its_name_and_a_value_by_nothing() {
     // A config holds the name of a variable and never its value, so the digest of a
     // config cannot depend on a key: there is none to read. The name is in it.

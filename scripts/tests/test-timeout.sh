@@ -9,7 +9,7 @@ source "$(dirname "$0")/lib.sh"
 config=.config/nextest.toml
 # The [profile.default] table, up to the next table.
 default=$(awk '/^\[/ { on = ($0 == "[profile.default]") } on' "$config")
-echo "$default" | grep -q -E '^slow-timeout *= *\{ *period *= *"30s", *terminate-after *= *1 *\}$' ||
+echo "$default" | grep -E '^slow-timeout *= *\{ *period *= *"30s", *terminate-after *= *1 *\}$' >/dev/null ||
   fail "$config: [profile.default] must set slow-timeout to a 30s period that terminates after 1"
 
 # The real run happens automatically in CI, on one runner.
