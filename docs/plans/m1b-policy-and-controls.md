@@ -1805,7 +1805,7 @@ holds each long script to the form.
 
 **Depends on:** X5. Scripts only.
 
-- [ ] The sixteen lines under `scripts/` that end a pipe with `grep -q` send the output
+- [x] The sixteen lines under `scripts/` that end a pipe with `grep -q` send the output
       to `/dev/null` instead, and `scripts/tests/test-syntax.sh` refuses a new one.
 
 **Done when** no script under `scripts/` has the pattern, a planted one fails the test,

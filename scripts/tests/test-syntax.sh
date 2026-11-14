@@ -253,8 +253,8 @@ check_rule() { # <file>: prints what is wrong with it, if anything
   [ -n "$guard_line" ] && [ "$guard_line" -lt "$trap_line" ] ||
     echo "$f sets an EXIT trap without parsing itself first (see the top of scripts/scan.sh)"
   [ "$(grep -c -E '^[[:space:]]*trap .*EXIT' "$f")" = 1 ] || echo "$f sets more than one EXIT trap"
-  sed -n "${trap_line}p" "$f" | grep -q -F -e "trap 'rc=\$?; " || echo "$f: the EXIT trap does not start by keeping the status"
-  { sed -n "${trap_line}p" "$f" | grep -F -e "$trap_test" | grep -q -F -e "$trap_end"; } ||
+  sed -n "${trap_line}p" "$f" | grep -F -e "trap 'rc=\$?; " >/dev/null || echo "$f: the EXIT trap does not start by keeping the status"
+  { sed -n "${trap_line}p" "$f" | grep -F -e "$trap_test" | grep -F -e "$trap_end" >/dev/null; } ||
     echo "$f: the EXIT trap does not turn an unmeant exit of 0 into 70 (see the top of scripts/scan.sh)"
   [ "$(sed -n "$((trap_line - 1))p" "$f")" = "done_ok=0" ] || echo "$f: done_ok=0 is not on the line before the EXIT trap"
   # done_ok=1 only where the script is about to end as it meant to: the next line is an
@@ -406,8 +406,48 @@ printf '%s\n' "\$GIT $search_word -n x" "\"\$tool\" $search_word -n x" "\${GIT} 
 printf '%s\n' "\$GIT ${one_thread}$search_word -n x" "$tool \\" "  ${one_thread}$search_word -n x" \
   "\$words | $search_word x" "echo \"\$out\" | $search_word -q x" >"$tmp/threads/better.sh"
 [ "$(unthreaded "$tmp/threads" | wc -l | tr -d ' ')" = 9 ] || { unthreaded "$tmp/threads" >&2; fail "the rule finds nine searches not on one thread"; }
-unthreaded "$tmp/threads" | grep -q -F "better.sh" && fail "the rule passes a variable, and a line that goes on, on one thread"
-unthreaded "$tmp/threads" | grep -q -F "good.sh" && fail "the rule passes searches on one thread and what is not a search"
+unthreaded "$tmp/threads" | grep -F "better.sh" >/dev/null && fail "the rule passes a variable, and a line that goes on, on one thread"
+unthreaded "$tmp/threads" | grep -F "good.sh" >/dev/null && fail "the rule passes searches on one thread and what is not a search"
+
+# --- No search after a pipe is told to be quiet, anywhere under scripts/. With `pipefail`,
+# a quiet search stops at its first match; the command before it can then be killed while
+# it is still writing, and the pipeline fails though there was a match. It happened on the
+# Linux runner and not on macOS (AGENTS.md, "Gotchas"). The output goes to /dev/null
+# instead, and the search reads its input to the end. The words are put together here so
+# that these lines are not themselves taken for one.
+quiet_flag="-q"
+# quiet_after_pipe <folder>: the lines under it where a pipe (not `||`) leads into the
+# search with a quiet option: a short option with q in it, or one of the two long ones,
+# anywhere after the search's name on the line. A line that ends in a pipe or a backslash
+# goes on in the next. A comment is not a command.
+quiet_after_pipe() {
+  local f
+  while IFS= read -r -d '' f; do
+    sed -e ':more' -e '/[|\\]$/{' -e 'N' -e 's/\\\n[[:space:]]*/ /' -e 's/|\n[[:space:]]*/| /' -e 'b more' -e '}' "$f" |
+      { grep -n -E -e "(^|[^|])\\|[[:space:]]*[ef]?${search_word}[[:space:]]([^#]*[[:space:]])?(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:];)}]|\$)" || true; } |
+      { grep -v -E -e "^[0-9]+:[[:space:]]*#" || true; } | sed "s|^|$f:|"
+  done < <(find "$1" -type f -print0)
+  return 0
+}
+found=$(quiet_after_pipe scripts)
+[ -z "$found" ] || fail "a $search_word $quiet_flag after a pipe (send the output to /dev/null instead; AGENTS.md, Gotchas): $found"
+# The rule itself, on lines that break it and lines that do not.
+mkdir "$tmp/quiet"
+printf '%s\n' "echo x | $search_word $quiet_flag x" "  ls | $search_word -F $quiet_flag -e x && echo found" \
+  "if printf x | $search_word -${quiet_flag#-}F x; then" "ls | $search_word -Fx${quiet_flag#-} x || exit 1" \
+  "echo x | $search_word --quiet x" "echo x | $search_word -e x --silent" "cat f | sort | e$search_word $quiet_flag 'a|b'" \
+  "ls |" "  $search_word $quiet_flag x" "ls | \\" "  $search_word $quiet_flag x" "{ ls | $search_word -c x | $search_word $quiet_flag 1; } || true" \
+  "ls|$search_word $quiet_flag x" >"$tmp/quiet/bad.sh"
+printf '%s\n' "$search_word $quiet_flag x file" "ls | $search_word x >/dev/null" "true || $search_word $quiet_flag x file" \
+  "# ls | $search_word $quiet_flag x" "  # echo x | $search_word $quiet_flag x" "ls | sort $quiet_flag" "ls | $search_word -c x" \
+  "[ -n x ] || $search_word $quiet_flag -F x file || echo no" "ls | $search_word -e quiet x" >"$tmp/quiet/good.sh"
+[ "$(quiet_after_pipe "$tmp/quiet" | wc -l | tr -d ' ')" = 11 ] || { quiet_after_pipe "$tmp/quiet" >&2; fail "the rule finds eleven quiet searches after a pipe"; }
+quiet_after_pipe "$tmp/quiet" | grep -F "good.sh" >/dev/null && fail "the rule passes a quiet search of a file, a search that is not quiet, and a comment"
+# A planted one among this repo's scripts is found, and named.
+cp -R scripts "$tmp/quiet-scripts"
+printf 'ls | %s %s x\n' "$search_word" "$quiet_flag" >>"$tmp/quiet-scripts/timing.sh"
+[ "$(quiet_after_pipe "$tmp/quiet-scripts" | wc -l | tr -d ' ')" = 1 ] || { quiet_after_pipe "$tmp/quiet-scripts" >&2; fail "a planted quiet search after a pipe is the one line found"; }
+quiet_after_pipe "$tmp/quiet-scripts" | grep -F "quiet-scripts/timing.sh:" >/dev/null || fail "the planted line is named by its file"
 
 # --- run.sh: the syntax check comes before any test, and a test file passes only when it
 # printed its last line.

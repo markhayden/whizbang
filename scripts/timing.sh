@@ -32,7 +32,7 @@ while [ $# -gt 0 ]; do
 done
 # A plain number of seconds: digits, with an optional fraction. Anything else (NaN, 1e3,
 # 1.5.2) would be compared as text and could pass by accident.
-is_seconds() { echo "$1" | grep -q -E '^[0-9]+(\.[0-9]+)?$'; }
+is_seconds() { echo "$1" | grep -E '^[0-9]+(\.[0-9]+)?$' >/dev/null; }
 if ! is_seconds "$limit"; then
   echo "timing: the limit must be a number of seconds: $limit" >&2
   exit 2
