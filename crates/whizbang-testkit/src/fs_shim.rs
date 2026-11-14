@@ -10,6 +10,8 @@
 //!
 //! - **Content:** a file's bytes, once the sync inside [`Fs::write_new`] ran. That call is
 //!   two events, the write and the sync, so a crash or a refusal can fall between them.
+//!   Of a file written piece by piece ([`Fs::begin_new`]): the bytes appended before its
+//!   last sync that ran.
 //! - **Names:** a new file, a new directory, the new name of a rename and a removal, once
 //!   [`Fs::sync_dir`] ran on the directory that holds the name (for a rename, the directory
 //!   of the new name). Syncing any other directory does nothing for it.
@@ -19,22 +21,73 @@
 //! one name of a directory without the next. A correct protocol passes under every choice.
 //!
 //! The shim never calls the real sync: it models durability, and a real sync is slow.
+//!
+//! # Links
+//!
+//! The shim makes no link, and models one only where a removal or a replacing rename
+//! meets it. [`Fs::remove_all`] on a link, or on a folder that holds links, removes the
+//! links themselves, as the real file system does, and never follows one: what a link
+//! leads to is not read, copied, cut or removed. What is kept of a link, so that a
+//! crash can bring it back, is where it leads. A crash that undoes the removal, or the
+//! rename that replaced the link, makes the link again, leading where it led, whether
+//! or not anything is there. Nothing else is modelled: every other call does with a
+//! link what the real file system does with it, and a file reached through a link is
+//! known to the shim by the name it was written under, not by the link's.
+//!
+//! # A file written piece by piece
+//!
+//! Opening one, each piece appended, each sync and the finish are events, each of which
+//! can be refused or be where the crash falls. So are the opening of a file to be read
+//! piece by piece and each piece read, and a share that a try was given: the reads and
+//! the locks of the store's own calls are not events, but one piece of many must be
+//! refusable, and so must a try.
+//!
+//! What a crash leaves of such a file is one outcome for each choice of [`Tail`], the
+//! same every time. If its name survives (the name is a new file's, lost or kept as
+//! [`Lost`] says), the file holds every byte that a sync made durable, and after them
+//! what the test chose. By default that is the first half, rounded down, of the bytes
+//! appended since the last sync, and nothing after. So a file whose every byte was
+//! synced is whole, finished or not; one never synced is the first half of itself, as a
+//! file whose [`Fs::write_new`] was interrupted is; and one byte appended and not synced
+//! is lost. The cut falls where half of those bytes ends, inside a piece or between two:
+//! that stands for a crash inside an append, which as an event happens whole or not at
+//! all. The file is cut under the name it has at the crash, renamed or in a folder that
+//! was. A streamed file that was removed, by itself or with its folder, or replaced by
+//! a rename over it, and that the crash brings back because the removal or the rename
+//! was not durable, comes back as the crash would have left it had it stayed: the same
+//! choice applies to it.
+//!
+//! A real disk may keep all of what was never synced, or none of it, or any prefix, or a
+//! file of the full length whose unsynced part is zeros or other bytes. The shim shows
+//! half by default and, by a test's choice, all, none, or the full length with the
+//! unsynced part zeroed; it does not show other bytes there. A caller that decides by a
+//! file's length after a crash is exposed only under the zeroed choice.
+//!
+//! What the shim does not model besides: a refused append that left part of its piece.
+//! A handle used after the crash fails and writes nothing.
+//!
+//! A refusal that is waiting ([`ShimFs::fail_before`], [`ShimFs::refuse_matching`]) is
+//! used up by a try at a share that would have been refused anyway: the try gets the
+//! injected error, not `None`, as [`Fs::hold_lock_file`] does.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use whizbang_core::store::fs::{Fs, Held, LockFile, RealFs};
+use whizbang_core::store::fs::{Fs, Held, LockFile, NewFile, OpenFile, RealFs, Streamed};
 
-/// One recorded call that changes the disk or makes a change durable. Reads are not events.
+/// One recorded call that changes the disk or makes a change durable. The reads of the
+/// store's own calls are not events; the opening and the pieces of a file read piece by
+/// piece are.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     /// A directory was created.
     CreateDir(PathBuf),
     /// A file was created with its content: the first half of [`Fs::write_new`].
     Write(PathBuf),
-    /// A file's content was made durable: the second half of [`Fs::write_new`].
+    /// A file's content was made durable: the second half of [`Fs::write_new`], or the
+    /// sync of a file being written piece by piece.
     SyncFile(PathBuf),
     /// A directory's names were made durable.
     SyncDir(PathBuf),
@@ -46,10 +99,25 @@ pub enum Event {
     /// and neither is recording the holder, sharing a file or taking one alone: nothing
     /// durable changes by them.
     Lock(PathBuf),
+    /// A new file was created empty, to be written piece by piece ([`Fs::begin_new`]).
+    Begin(PathBuf),
+    /// A piece was appended to a file being written piece by piece.
+    Append(PathBuf),
+    /// A file being written piece by piece was closed as whole.
+    Finish(PathBuf),
+    /// A file was opened to be read piece by piece ([`Fs::open_file`]).
+    Open(PathBuf),
+    /// A piece of such a file was read.
+    Read(PathBuf),
+    /// A file was shared by a try that does not wait ([`Fs::try_share`]). A try that
+    /// found the file held alone is not an event.
+    TryShare(PathBuf),
 }
 
 /// What a crash loses. Under every choice, a file whose content was not synced is cut to
-/// half its length if its name survives.
+/// half its length if its name survives; and of a file written piece by piece, the bytes
+/// appended since its last sync are left as [`Tail`] says, which is their first half
+/// unless a test chose otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lost {
     /// Every name that was not durable is undone, newest first: a new file or directory
@@ -73,10 +141,35 @@ pub enum Lost {
     Names(u64),
 }
 
+/// What a crash leaves of the bytes that were appended to a file written piece by piece
+/// since its last sync, when the file's name survives. What a sync made durable is kept
+/// under every choice. A real disk can do any of these; a test chooses one
+/// ([`ShimFs::with_tail`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Tail {
+    /// The first half of them, rounded down, and nothing after: the default, and what
+    /// a file whose [`Fs::write_new`] was interrupted is cut to.
+    #[default]
+    Half,
+    /// The file has its full length, and every byte that was not synced is zero: the
+    /// disk kept the file's size and lost its data. A reader that decides by the
+    /// length takes this file for whole.
+    Zeroed,
+    /// All of them: the disk kept what it was never asked to.
+    All,
+    /// None of them: the file ends where its last sync left it.
+    None,
+}
+
 /// A copy of what a path held, kept so that a crash can bring it back.
 enum Saved {
-    File(Vec<u8>),
+    /// A file's bytes; and, for a file written piece by piece, how many of them a
+    /// sync had made durable, so that a crash which brings the file back leaves of it
+    /// what it would have left had the file stayed.
+    File(Vec<u8>, Option<u64>),
     Dir(Vec<(PathBuf, Saved)>),
+    /// A link, as where it leads: what is there was never read.
+    Link(PathBuf),
 }
 
 /// A change of names that no sync has made durable yet.
@@ -109,6 +202,23 @@ impl Pending {
             Pending::Renamed { to, .. } => to,
         }
     }
+}
+
+/// A file written piece by piece.
+struct Stream {
+    path: PathBuf,
+    durable: u64,
+}
+
+/// `path` under its new name, when it is `from` or inside it.
+fn renamed(path: &Path, from: &Path, to: &Path) -> Option<PathBuf> {
+    path.strip_prefix(from).ok().map(|rest| {
+        if rest.as_os_str().is_empty() {
+            to.to_path_buf()
+        } else {
+            to.join(rest)
+        }
+    })
 }
 
 /// A lock on the real disk, shared between the value handed to the store and the shim, so
@@ -153,6 +263,13 @@ struct State {
     events: Vec<Event>,
     /// Files whose content was written and not synced.
     unsynced: BTreeSet<PathBuf>,
+    /// The files written piece by piece, each by the number its handle has: the name
+    /// the file has now, and how many of its bytes a sync made durable. One stays
+    /// here until the file is removed or replaced, or its handle finishes it.
+    streams: BTreeMap<u64, Stream>,
+    next_stream: u64,
+    /// What a crash leaves of a streamed file's unsynced bytes.
+    tail: Tail,
     /// Changes of names not yet durable, oldest first.
     pending: Vec<Pending>,
     crash_before: Option<(usize, Lost)>,
@@ -176,7 +293,9 @@ struct State {
 /// The file system that can lose power.
 pub struct ShimFs {
     real: RealFs,
-    state: Mutex<State>,
+    /// Shared with the handles of the files it streams, which are events of this file
+    /// system and end with its crash.
+    state: Arc<Mutex<State>>,
 }
 
 impl Default for ShimFs {
@@ -190,7 +309,16 @@ impl ShimFs {
     pub fn new() -> ShimFs {
         ShimFs {
             real: RealFs,
-            state: Mutex::new(State::default()),
+            state: Arc::new(Mutex::new(State::default())),
+        }
+    }
+
+    /// This file system again, for a handle it gave out: the same events, the same
+    /// crash.
+    fn same(&self) -> ShimFs {
+        ShimFs {
+            real: self.real,
+            state: self.state.clone(),
         }
     }
 
@@ -241,6 +369,18 @@ impl ShimFs {
     /// what any other thread could see at that moment. The hook may use this shim.
     pub fn pause_after_rename_onto(&self, name: &str, hook: impl FnOnce() + Send + 'static) {
         self.lock().after_rename = Some((name.to_owned(), Box::new(hook)));
+    }
+
+    /// Chooses what a crash leaves of the bytes appended to a streamed file since its
+    /// last sync ([`Tail`]). Without this it is [`Tail::Half`].
+    pub fn with_tail(self, tail: Tail) -> ShimFs {
+        self.set_tail(tail);
+        self
+    }
+
+    /// As [`ShimFs::with_tail`], on a shim already in use.
+    pub fn set_tail(&self, tail: Tail) {
+        self.lock().tail = tail;
     }
 
     /// The events so far, in order.
@@ -362,6 +502,28 @@ fn crash(state: &mut State, lost: Lost) {
             let _ = file.set_len(meta.len() / 2);
         }
     }
+    // A file written piece by piece keeps what a sync made durable, and of what was
+    // appended since, what the test chose.
+    let tail = state.tail;
+    for stream in std::mem::take(&mut state.streams).into_values() {
+        if let Ok(meta) = std::fs::symlink_metadata(&stream.path)
+            && meta.is_file()
+            && let Ok(mut file) = std::fs::OpenOptions::new().write(true).open(&stream.path)
+        {
+            use std::io::{Seek, Write};
+            let left = Left::of(meta.len(), stream.durable, tail);
+            let _ = file.set_len(left.length);
+            if left.zeros > 0
+                && file
+                    .seek(io::SeekFrom::Start(left.length - left.zeros))
+                    .is_ok()
+            {
+                // A file of these tests is small: its tail is held once, as zeros.
+                let zeros = vec![0u8; usize::try_from(left.zeros).unwrap_or(0)];
+                let _ = file.write_all(&zeros);
+            }
+        }
+    }
     let pending = std::mem::take(&mut state.pending);
     let dirs: Vec<&Path> = pending
         .iter()
@@ -408,10 +570,10 @@ fn crash(state: &mut State, lost: Lost) {
                     let _ = RealFs.remove_all(&to);
                 }
                 if let Some(saved) = replaced {
-                    restore(&to, &saved);
+                    restore(&to, &saved, tail);
                 }
             }
-            Pending::Removed { path, saved } => restore(&path, &saved),
+            Pending::Removed { path, saved } => restore(&path, &saved, tail),
         }
     }
 }
@@ -419,38 +581,90 @@ fn crash(state: &mut State, lost: Lost) {
 /// Creates a file with this content, owner-only, without a sync.
 fn create(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path)?.write_all(bytes)
+    new_file(path)?.write_all(bytes)
 }
 
-fn save(path: &Path) -> io::Result<Saved> {
-    if std::fs::symlink_metadata(path)?.is_dir() {
+/// What a crash leaves of a file written piece by piece: how long it is, and how many
+/// bytes at its end are zeros.
+struct Left {
+    length: u64,
+    zeros: u64,
+}
+
+impl Left {
+    /// Of a file of `length` bytes, the first `durable` of which a sync made durable.
+    fn of(length: u64, durable: u64, tail: Tail) -> Left {
+        let unsynced = length.saturating_sub(durable);
+        let (kept, zeros) = match tail {
+            Tail::Half => (unsynced / 2, 0),
+            Tail::Zeroed => (unsynced, unsynced),
+            Tail::All => (unsynced, 0),
+            Tail::None => (0, 0),
+        };
+        Left {
+            length: length - unsynced + kept,
+            zeros,
+        }
+    }
+}
+
+/// Makes a link at `path` again, leading where it led.
+#[cfg(unix)]
+fn link(leads_to: &Path, path: &Path) {
+    let _ = std::os::unix::fs::symlink(leads_to, path);
+}
+
+/// Where a link cannot be made this way, a removed link stays removed.
+#[cfg(not(unix))]
+fn link(_leads_to: &Path, _path: &Path) {}
+
+/// A copy of what is at `path`. A file written piece by piece is kept with how many
+/// of its bytes are durable, by its name in `streams`.
+fn save(path: &Path, streams: &BTreeMap<u64, Stream>) -> io::Result<Saved> {
+    let found = std::fs::symlink_metadata(path)?;
+    if found.is_symlink() {
+        // Not followed: removing a link, or replacing one, touches the link alone.
+        return Ok(Saved::Link(std::fs::read_link(path)?));
+    }
+    if found.is_dir() {
         let mut entries = Vec::new();
         for entry in RealFs.list(path)? {
-            let saved = save(&entry)?;
+            let saved = save(&entry, streams)?;
             entries.push((entry, saved));
         }
         Ok(Saved::Dir(entries))
     } else {
-        Ok(Saved::File(std::fs::read(path)?))
+        let durable = streams
+            .values()
+            .find(|stream| stream.path == path)
+            .map(|stream| stream.durable);
+        Ok(Saved::File(std::fs::read(path)?, durable))
     }
 }
 
-fn restore(path: &Path, saved: &Saved) {
+/// Puts a saved copy back, at a crash: a file written piece by piece as the crash
+/// would have left it.
+fn restore(path: &Path, saved: &Saved, tail: Tail) {
     match saved {
-        Saved::File(bytes) => {
+        Saved::File(bytes, None) => {
             let _ = create(path, bytes);
         }
+        Saved::File(bytes, Some(durable)) => {
+            let length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+            let left = Left::of(length, *durable, tail);
+            let mut bytes = bytes.clone();
+            bytes.truncate(usize::try_from(left.length).unwrap_or(usize::MAX));
+            let from = bytes
+                .len()
+                .saturating_sub(usize::try_from(left.zeros).unwrap_or(usize::MAX));
+            bytes[from..].fill(0);
+            let _ = create(path, &bytes);
+        }
+        Saved::Link(leads_to) => link(leads_to, path),
         Saved::Dir(entries) => {
             let _ = RealFs.create_dir(path);
             for (entry, saved) in entries {
-                restore(entry, saved);
+                restore(entry, saved, tail);
             }
         }
     }
@@ -509,7 +723,7 @@ impl Fs for ShimFs {
             ));
         }
         let replaced = match std::fs::symlink_metadata(to) {
-            Ok(_) => Some(save(to)?),
+            Ok(_) => Some(save(to, &state.streams)?),
             Err(_) => None,
         };
         self.real.rename(from, to)?;
@@ -517,6 +731,19 @@ impl Fs for ShimFs {
         // one that another thread is still writing keeps its state under its new name.
         if state.unsynced.remove(from) {
             state.unsynced.insert(to.to_path_buf());
+        }
+        // A streamed file that was replaced is no more: its saved copy holds what a
+        // crash may bring back. One that was renamed, or whose folder was, is the same
+        // file under its new name; and one renamed onto itself was replaced by nothing.
+        if from != to {
+            state
+                .streams
+                .retain(|_, stream| !stream.path.starts_with(to));
+        }
+        for stream in state.streams.values_mut() {
+            if let Some(path) = renamed(&stream.path, from, to) {
+                stream.path = path;
+            }
         }
         state.pending.push(Pending::Renamed {
             from: from.to_path_buf(),
@@ -542,9 +769,12 @@ impl Fs for ShimFs {
     fn remove_all(&self, path: &Path) -> io::Result<()> {
         let event = Event::Remove(path.to_path_buf());
         let mut state = self.next_event(&event)?;
-        let saved = save(path)?;
+        let saved = save(path, &state.streams)?;
         self.real.remove_all(path)?;
         state.unsynced.retain(|file| !file.starts_with(path));
+        state
+            .streams
+            .retain(|_, stream| !stream.path.starts_with(path));
         state.pending.push(Pending::Removed {
             path: path.to_path_buf(),
             saved,
@@ -598,5 +828,169 @@ impl Fs for ShimFs {
             .real
             .try_alone(path)?
             .map(|held| Self::keep(&mut state, held)))
+    }
+
+    fn begin_new(&self, path: &Path, most: u64) -> io::Result<Box<dyn NewFile>> {
+        let event = Event::Begin(path.to_path_buf());
+        let mut state = self.next_event(&event)?;
+        let file = new_file(path)?;
+        let id = state.next_stream;
+        state.next_stream += 1;
+        state.streams.insert(
+            id,
+            Stream {
+                path: path.to_path_buf(),
+                durable: 0,
+            },
+        );
+        state.pending.push(Pending::Created(path.to_path_buf()));
+        state.events.push(event);
+        Ok(Box::new(ShimNewFile {
+            fs: self.same(),
+            id,
+            path: path.to_path_buf(),
+            file,
+            count: Streamed::new(most),
+        }))
+    }
+
+    fn open_file(&self, path: &Path) -> io::Result<Box<dyn OpenFile>> {
+        let event = Event::Open(path.to_path_buf());
+        let mut state = self.next_event(&event)?;
+        let real = self.real.open_file(path)?;
+        state.events.push(event);
+        Ok(Box::new(ShimOpenFile {
+            fs: self.same(),
+            path: path.to_path_buf(),
+            real,
+            broken: false,
+        }))
+    }
+
+    fn try_share(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
+        let event = Event::TryShare(path.to_path_buf());
+        // Under the shim's own lock, as taking a file alone is: neither waits.
+        let mut state = self.next_event(&event)?;
+        let Some(held) = self.real.try_share(path)? else {
+            return Ok(None);
+        };
+        state.events.push(event);
+        Ok(Some(Self::keep(&mut state, held)))
+    }
+}
+
+/// Creates an empty file, owner-only, to be written to.
+fn new_file(path: &Path) -> io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
+/// A file being written piece by piece through the shim. Its bytes go to the real
+/// disk as they are appended; its sync is an event and no more, as every sync here.
+struct ShimNewFile {
+    fs: ShimFs,
+    id: u64,
+    /// The name it was opened under: what its events say once the shim has forgotten
+    /// the file, because it was removed or replaced.
+    path: PathBuf,
+    file: std::fs::File,
+    count: Streamed,
+}
+
+impl ShimNewFile {
+    /// The name the file has now.
+    fn path(&self) -> PathBuf {
+        match self.fs.lock().streams.get(&self.id) {
+            Some(stream) => stream.path.clone(),
+            None => self.path.clone(),
+        }
+    }
+
+    fn append_to(&mut self, piece: &[u8]) -> io::Result<()> {
+        use std::io::Write;
+        self.count.admit(piece.len())?;
+        let event = Event::Append(self.path());
+        let mut state = self.fs.next_event(&event)?;
+        self.file.write_all(piece)?;
+        self.count.appended(piece.len());
+        state.events.push(event);
+        Ok(())
+    }
+
+    fn sync_it(&mut self) -> io::Result<()> {
+        self.count.usable()?;
+        let event = Event::SyncFile(self.path());
+        let mut state = self.fs.next_event(&event)?;
+        self.count.synced();
+        if let Some(stream) = state.streams.get_mut(&self.id) {
+            stream.durable = self.count.durable();
+        }
+        state.events.push(event);
+        Ok(())
+    }
+}
+
+impl NewFile for ShimNewFile {
+    fn append(&mut self, piece: &[u8]) -> io::Result<()> {
+        let appended = self.append_to(piece);
+        if appended.is_err() {
+            self.count.fail();
+        }
+        appended
+    }
+
+    fn sync(&mut self) -> io::Result<()> {
+        let synced = self.sync_it();
+        if synced.is_err() {
+            self.count.fail();
+        }
+        synced
+    }
+
+    fn finish(mut self: Box<Self>) -> io::Result<u64> {
+        let length = self.count.whole()?;
+        let event = Event::Finish(self.path());
+        let mut state = self.fs.next_event(&event)?;
+        // Every byte is durable: a crash has nothing of this file to cut.
+        state.streams.remove(&self.id);
+        state.events.push(event);
+        Ok(length)
+    }
+}
+
+/// A file being read piece by piece through the shim.
+struct ShimOpenFile {
+    fs: ShimFs,
+    path: PathBuf,
+    real: Box<dyn OpenFile>,
+    broken: bool,
+}
+
+impl ShimOpenFile {
+    fn fill(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if self.broken {
+            return Err(io::Error::other(
+                "a read of this file failed before, and it answers nothing more",
+            ));
+        }
+        let event = Event::Read(self.path.clone());
+        let mut state = self.fs.next_event(&event)?;
+        let filled = self.real.read(buffer)?;
+        state.events.push(event);
+        Ok(filled)
+    }
+}
+
+impl OpenFile for ShimOpenFile {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let filled = self.fill(buffer);
+        self.broken |= filled.is_err();
+        filled
     }
 }
