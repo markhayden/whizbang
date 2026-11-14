@@ -696,4 +696,75 @@ impl Secrets {
     pub fn redact(&self, text: &str) -> String {
         String::from_utf8_lossy(&self.redact_bytes(text.as_bytes())).into_owned()
     }
+
+    /// A body that is JSON, with every secret taken out and still JSON: each string, a
+    /// key or a value, is decoded, searched as [`Secrets::redact`] searches a text, and
+    /// written again as a JSON string when it held one; a string that held none is left
+    /// byte for byte as it was, and so is everything between the strings. A number,
+    /// `true`, `false` or `null` that holds a secret becomes the string `"[redacted]"`.
+    ///
+    /// A body that is not JSON, or is nested deeper than the reader of JSON goes, is
+    /// not refused: it is searched as bytes, as [`Secrets::redact_bytes`] searches.
+    pub fn redact_json(&self, body: &[u8]) -> Vec<u8> {
+        if self.search.is_none() {
+            return body.to_vec();
+        }
+        if serde_json::from_slice::<serde::de::IgnoredAny>(body).is_err() {
+            return self.redact_bytes(body);
+        }
+        let marker = format!("\"{REDACTED}\"");
+        let between = |byte: &u8| b"{}[]:, \t\n\r\"".contains(byte);
+        let mut out = Vec::with_capacity(body.len());
+        let mut at = 0;
+        while let Some(byte) = body.get(at) {
+            if *byte != b'"' && between(byte) {
+                out.push(*byte);
+                at += 1;
+                continue;
+            }
+            if *byte != b'"' {
+                // A number, or one of the three words.
+                let length = body[at..]
+                    .iter()
+                    .position(between)
+                    .unwrap_or(body.len() - at);
+                let token = &body[at..at + length];
+                if self.redact_bytes(token) == token {
+                    out.extend_from_slice(token);
+                } else {
+                    out.extend_from_slice(marker.as_bytes());
+                }
+                at += length;
+                continue;
+            }
+            // A string, to the quote that ends it: a backslash takes the byte after it.
+            let mut end = at + 1;
+            while let Some(inside) = body.get(end) {
+                end += if *inside == b'\\' { 2 } else { 1 };
+                if *inside == b'"' {
+                    break;
+                }
+            }
+            let end = end.min(body.len());
+            let written = &body[at..end];
+            match serde_json::from_slice::<String>(written) {
+                Ok(text) => {
+                    let redacted = self.redact(&text);
+                    if redacted == text {
+                        out.extend_from_slice(written);
+                    } else {
+                        // Writing a string as JSON cannot fail.
+                        let again = serde_json::to_string(&redacted).unwrap_or(marker.clone());
+                        out.extend_from_slice(again.as_bytes());
+                    }
+                }
+                // A string that is JSON and no text, as half of a pair of escapes is:
+                // it is searched as it is written, and replaced whole if it holds one.
+                Err(_) if self.redact_bytes(written) == written => out.extend_from_slice(written),
+                Err(_) => out.extend_from_slice(marker.as_bytes()),
+            }
+            at = end;
+        }
+        out
+    }
 }

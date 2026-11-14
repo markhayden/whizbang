@@ -11,6 +11,8 @@ secret's twin; a base64 edge is the neighbouring unit of the reading, whole; one
 stretch is noted for a place, however many forms end there; base64 broken by line
 breaks is found. Added: what the machine holds; that bytes can come back as no text; a
 secret that is the marker's word; the generated test that holds the search.
+Amended: 2026-11-14, a second note, with the second part of task C3. Added: "A JSON
+body". Changed: the last line of "What is accepted", which said that part was to come.
 Spec: section 3, "What every run records" ("Secrets are redacted before anything is
 written"); section 10, "Egress" ("Credentials and tokens are redacted from logs, events,
 journals, results and errors")
@@ -60,9 +62,11 @@ below because a reading can be wrong about a text: a secret whose own text holds
 `%` and two hex digits, written as JSON escapes it, is not what a reading of
 percent-encoding makes of it; and a `%` or a backslash straight before a secret can
 take the secret's first characters for its own. A written form is found whatever
-stands before it. (The first of the written forms, a JSON string's escapes with `/` left
-plain, is also what the reading of escapes alone finds; it is kept as a form because it
-was one.) (`redact::a_secret_whose_own_text_holds_an_encoding_is_found_however_it_is_written`,
+stands before it: the JSON form of a secret that begins with a letter an escape ends in
+and holds a quote, straight after a lone backslash, is found by no reading and by its
+written form alone
+(`redact::a_form_of_json_after_a_lone_backslash_is_found_by_its_written_form_alone`,
+`redact::a_secret_whose_own_text_holds_an_encoding_is_found_however_it_is_written`,
 `redact::after_a_text_that_ends_in_a_percent_or_a_backslash_a_written_form_is_still_found`).
 
 **Base64.** Three bytes are written as four characters, so which characters a secret
@@ -121,7 +125,9 @@ Each reading is the only one that finds some text
 (`redact::each_reading_finds_a_text_that_no_other_reading_does`).
 
 A stretch found in a reading is the stretch of the bytes as they were given that the
-reading was made from: the whole of each `%XX` and each escape, never half of one.
+reading was made from: the whole of each `%XX` and each escape. One case leaves part
+of an escape, and is in "What is accepted": after a lone backslash, the last digit of
+an escape that was not read as one can be read as the secret's own first digit.
 
 So percent-encoding is found however it is mixed: the two cases of hex in one value, a
 byte left plain beside encoded ones, a byte encoded that need not be, a space as `+`,
@@ -160,13 +166,13 @@ eleven times more by what it holds. Building the machine costs the summed length
 the forms, once, when the secrets are made; a `Secrets` that is copied shares it.
 
 Measured on the builder's machine, an Apple silicon laptop, in the unoptimised build
-the tests run, inside a run of the tests of three modules:
+the tests run, inside a run of the whole fast tier:
 
 | Case | Time | Test |
 |---|---|---|
-| 1 MiB that holds `%`, `\`, `+` and line breaks throughout, ten secrets: all twelve followings | 1.28 s | `redact::a_mebibyte_with_ten_secrets_is_searched_inside_a_stated_time` |
-| 1 MiB of JSON full of the letters 2,000 keys share, 2,000 secrets (ADR 0005's 3 seconds), building the machine included | 1.02 s | `redact::many_secrets_that_share_their_start_cost_no_more_than_one` |
-| 8 MiB with 2,000 secrets and no `%`, backslash, `+` or line break, building the machine included | 0.76 s | `redact::many_secrets_over_a_large_body_are_one_pass` |
+| 1 MiB that holds `%`, `\`, `+` and line breaks throughout, ten secrets: all twelve followings | 1.5 s | `redact::a_mebibyte_with_ten_secrets_is_searched_inside_a_stated_time` |
+| 1 MiB of JSON full of the letters 2,000 keys share, 2,000 secrets (ADR 0005's 3 seconds), building the machine included | 1.2 to 1.3 s | `redact::many_secrets_that_share_their_start_cost_no_more_than_one` |
+| 8 MiB with 2,000 secrets and no `%`, backslash, `+` or line break, building the machine included | 0.8 s | `redact::many_secrets_over_a_large_body_are_one_pass` |
 | 1 MiB every place of which ends 200 secrets | 0.35 s | `redact::two_hundred_secrets_that_end_inside_one_another_cost_no_more_than_one` |
 
 The tests that state a time ask for it inside 10 seconds, which is loose on purpose: a
@@ -179,8 +185,10 @@ byte of a secret (one for the secret as it is and its written forms where they a
 same bytes, four for UTF-16, eight for base64); and for each state 8 bytes, 16 for
 what ends there, and 5 for the edge that leads to it, in runs and not in a map. That is
 about 380 bytes for each byte of secret: some 12 KiB for a key of 32 bytes, and some
-24 MiB for an env file filled to its 64 KiB with values. While it is made it holds
-more, in a map that is then dropped. The set a config is read with (every value of the env file) and the
+24 MiB for an env file filled to its 64 KiB with values. That holds for a key of
+letters and digits; a value of marks holds up to half as much again, since its written
+forms are then other bytes than the value, and while the machine is made it holds
+several times its final size, in a map that is then dropped. The set a config is read with (every value of the env file) and the
 set the executor takes out (the credentials the config names) are two sets and two
 machines, each made once for a reading of the two files.
 
@@ -193,6 +201,60 @@ some 2,300 cases. What comes back must be the text before, the marker and the te
 after, exactly: so nothing of the secret is left in any encoding, and nothing beside it
 is taken. It is there for the next change to this file.
 
+### A JSON body
+
+`Secrets::redact_json` takes a body that is JSON and gives back one that is still JSON,
+with the secrets taken out:
+
+- **Each string is decoded, searched and written again.** A string, whether a key or a
+  value, is read to the text it means, that text is searched as any text is (every
+  form, every reading), and when it held a secret it is written again as a JSON string
+  with `[redacted]` in the secret's place. So no escape can hide a secret, since the
+  search is of the text and not of how it was written; and the marker cannot break a
+  string, since the string is written anew around it. The two cases ADR 0005 named, a
+  secret that ends in a backslash and one that begins with a letter an escape ends in,
+  are not cases here
+  (`redact::a_json_body_with_a_secret_at_the_edge_of_an_escape_is_still_json_after_it`,
+  `redact::a_secret_behind_any_escape_of_a_json_string_is_taken_out_of_a_json_body`).
+- **What holds no secret is left byte for byte:** a string that held none, with
+  whatever escapes its writer chose, and everything between the strings: spacing, the
+  order of keys, a key given twice, numbers as they were written
+  (`redact::what_holds_no_secret_in_a_json_body_is_left_byte_for_byte`).
+- **A number, `true`, `false` or `null` that holds a secret becomes the string
+  `"[redacted]"`,** whole, so that the body is still JSON
+  (`redact::a_number_that_holds_a_secret_becomes_a_string_and_the_body_is_still_json`).
+- **A string that is JSON and no text,** as half of a pair of `\u` escapes is, is not
+  decoded: it is searched as it is written and replaced whole when it holds a secret
+  (`redact::a_string_that_is_json_and_no_text_is_searched_as_it_is_written`).
+- **A body that is not JSON is not refused.** It is searched as bytes, as
+  `redact_bytes` searches: a body cut short, text after the value, bytes that are no
+  text, and a body nested deeper than the reader of JSON goes, which is 128 levels
+  (`redact::a_body_that_is_not_json_is_redacted_as_bytes_and_not_refused`).
+
+Whether a body is JSON is asked of `serde_json`, which reads it once and keeps nothing;
+the strings are then found by their quotes, which in a body that is JSON is exact. The
+whole costs the body's length: 1 MiB of JSON with ten secrets took 0.5 s in the
+unoptimised build
+(`redact::a_mebibyte_of_json_with_ten_secrets_is_redacted_as_json_inside_a_stated_time`).
+
+**A backslash in a body that is JSON is the writer's own.** A string is decoded before
+it is searched, so a backslash the text holds is a character of the text and not the
+start of something to be read: the cases above in which a lone backslash throws a
+reading off do not arise for a string of a JSON body
+(`redact::a_backslash_before_a_secret_in_a_json_body_is_a_character_and_stays`). The
+function takes the secrets by reference and makes no machine; and each string goes
+through `redact`, as a text, so what is written back is a text.
+
+**What it does not find,** pinned by
+`redact::what_redaction_of_a_json_body_does_not_find_is_known`: a secret that stands
+across two strings, or across a string and what is between strings, is in no one
+string. Searched as bytes it would be found, and the body broken; here the body is kept
+and the secret, which no one value held, is not found.
+
+**Nothing calls it yet.** The writers of a body known to be JSON are the executor's,
+and they redact as bytes at this head. Changing them is a change to the executor's
+files and is on `docs/carry-over.md`.
+
 ### What is accepted
 
 `redact::what_redaction_does_not_find_is_known` pins each of these.
@@ -203,12 +265,13 @@ is taken. It is there for the next change to this file.
 | A value percent-encoded four times or more | The readings go two deep, and the written form they then find is the third. Each level more is another following of every text that holds a `%`, for a form no client is known to write |
 | A `+` for a space inside a value encoded twice | The reading with `+` as a space is made once, of the bytes as given |
 | A mixture that only a reading finds, straight after a `%`, when the secret begins with two hex digits | A reading goes through a text once from its start, and takes `%` and two hex digits for a byte. As it is, and in its written forms, the secret is found there |
+| An encoded secret straight after a lone backslash, when the secret is written as `\u` escapes inside percent-encoding, or in mixed escapes and begins with a letter an escape ends in | A reading goes through a text once from its start, and takes the backslash with what follows. As it is, in its written forms, and as `\u` escapes alone, the secret is found there. Where the secret begins with a digit it is found, and the last digit of the first escape goes with it while the rest of that escape stays |
 | The letters in the other case; the key as hex digits, or in base32 or another alphabet | Each is one more table of forms or one more reading on every write. None is how a header, an address or a JSON body carries a key |
 | UTF-32; base64 of UTF-16; any encoding inside another that no reading opens | The same. Base64 is searched for the secret's own bytes only |
 | Base64 broken by anything but one line break between two of its characters: a blank line, a space, a fold | The reading that passes over line breaks would otherwise join texts that are apart |
 | A secret split across two texts, or across two lines of a journal | Each text is searched alone (ADR 0005) |
 | A secret compressed, hashed, encrypted, or inside an image | Nothing short of undoing each would find it (ADR 0005) |
-| A body searched as bytes is not kept valid as JSON | This record searches bytes. A body known to be JSON is redacted as JSON by the second part of the task, which adds its section to this record; until then a secret that begins with a letter an escape ends in, behind a backslash, still leaves that backslash before the marker |
+| A body searched as bytes is not kept valid as JSON | Bytes are searched without a grammar. A body known to be JSON is handed to `Secrets::redact_json` ("A JSON body", below); one searched as bytes can still be left with a backslash before the marker |
 
 Two things that are not misses, pinned in the same test:
 
@@ -234,7 +297,7 @@ Two things that are not misses, pinned in the same test:
   that yields the secret's bytes is an encoding of the secret, and no other reading
   changes anything.
 - The number of secrets no longer matters to a write. ADR 0005's figure of 3 seconds
-  is about 1 second here, in a build that is not optimised, the machine's making
+  is about 1.2 seconds here, in a build that is not optimised, the machine's making
   included.
 - A text with a backslash in it, as nearly every JSON body has, is followed five times
   and not once, and one with every mark twelve times. That is the price of reading it,
@@ -243,8 +306,8 @@ Two things that are not misses, pinned in the same test:
   forms it replaces was a few times the secrets' own length.
 - A `Secrets` keeps its values as text beside the machine, to be compared with another
   `Secrets`; it still prints only how many it holds.
-- `docs/carry-over.md`: the row on what redaction does not find is cut down to what
-  this record accepts.
+- `docs/carry-over.md`: the row on what redaction does not find is cut down to the one
+  thing left, that nothing hands a JSON body to `redact_json` yet.
 
 ## Alternatives
 
