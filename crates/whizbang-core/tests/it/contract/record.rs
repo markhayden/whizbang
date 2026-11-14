@@ -1439,12 +1439,15 @@ mod facts {
         assert!(Paid::unresolved(0, u64::MAX).is_none());
         assert!(Paid::not_sent(PAID_LIMIT, 1).is_none());
         assert!(Paid::not_sent(PAID_LIMIT - 1, 1).is_some());
-        // They are noted in the order the requests were sent, each once.
+        // They are noted in whatever order they were settled in, each once, and
+        // kept in the order the requests were sent.
         let mut facts = Facts::none();
         assert!(facts.paid(under));
-        assert!(!facts.paid(not_sent));
+        assert!(facts.paid(not_sent));
         assert!(!facts.paid(under));
+        assert!(!facts.paid(not_sent));
         assert!(facts.paid(over));
+        assert_eq!(facts.counts(), (0, 3, 0));
         // A record lists a paid request only for a request it lists: this run sent
         // none, so its record is written without them, and is one the reader takes.
         assert!(with(facts).spend().requests.is_empty());

@@ -1515,19 +1515,38 @@ impl Facts {
         room && new
     }
 
-    /// Notes a paid request. False, and nothing is noted, when the record already
-    /// lists [`PAID_LIMIT`] of them, or one for this request or a later one: they are
-    /// noted in the order the requests were sent.
+    /// Notes a paid request, in whatever order requests are settled: it is kept at
+    /// its place in the order the requests were sent, so one that is settled after a
+    /// later one loses nothing. False, and nothing is noted, when one is noted
+    /// already for this request, or the record already lists [`PAID_LIMIT`] of them.
     pub fn paid(&mut self, paid: Paid) -> bool {
         let room = self.paid.len() < PAID_LIMIT;
-        let next = self
+        let place = self
             .paid
-            .last()
-            .is_none_or(|last| last.request < paid.request);
-        if room && next {
-            self.paid.push(paid);
+            .binary_search_by_key(&paid.request, |noted| noted.request);
+        match place {
+            Err(at) if room => {
+                self.paid.insert(at, paid);
+                true
+            }
+            _ => false,
         }
-        room && next
+    }
+
+    /// The first paid request that is noted for a request past those the run sent,
+    /// when there is one: a record lists what a request cost only for a request it
+    /// lists.
+    pub(super) fn unlisted_paid(&self, sent: usize) -> Option<u64> {
+        let unlisted = self.paid.iter().find(|paid| paid.request >= sent as u64);
+        unlisted.map(|paid| paid.request)
+    }
+
+    /// Leaves out every paid request that is noted for a request past those the run
+    /// sent, and says how many there were.
+    pub(super) fn drop_unlisted_paid(&mut self, sent: usize) -> usize {
+        let before = self.paid.len();
+        self.paid.retain(|paid| paid.request < sent as u64);
+        before - self.paid.len()
     }
 
     /// Notes where data went. An origin, account and outcome that is already listed
@@ -1720,7 +1739,10 @@ impl RunRecord {
         let judge = turns.chain(verdict).collect();
         let models: Vec<Model> = models.collect();
         // What was noted from outside the executor: the settings in the order of their
-        // names, and no paid request that is not one the record lists.
+        // names, and no paid request that is not one the record lists. The executor
+        // has said so already, loudly, where one was noted for a request the run did
+        // not send (its run ends as an error): what is left out here is left out so
+        // that no record is written that its reader refuses.
         let Facts {
             mut settings,
             mut paid,

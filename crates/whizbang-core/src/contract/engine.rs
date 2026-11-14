@@ -1310,6 +1310,27 @@ impl Engine {
         let mut noted = facts.close();
         let mut inside = live.nest().inside(parent);
         inside.verdict = verdict;
+        // A record lists what a request cost only for a request it lists. What was
+        // noted for a request the run did not send cannot be written, and leaving it
+        // out in silence would be a record that says less was spent than was noted:
+        // the run ends as an error that says so, whatever its action handed back, and
+        // commits nothing.
+        if let Some(request) = noted.unlisted_paid(inside.asked.len()) {
+            let (_, all, _) = noted.counts();
+            let left_out = noted.drop_unlisted_paid(inside.asked.len());
+            outputs.clear();
+            inside.verdict = None;
+            outcome = Outcome::Error {
+                kind: "record".to_owned(),
+                message: format!(
+                    "what a request cost was noted for request {request}, and the run sent \
+                     {} capability requests: a record lists what a request cost only for \
+                     a request it lists, so {left_out} of the {all} that were noted is not \
+                     in this record",
+                    inside.asked.len()
+                ),
+            };
+        }
         let record_of = |outcome: &Outcome, inside: &Inside, noted: &Facts| {
             RunRecord::of(
                 Ran {

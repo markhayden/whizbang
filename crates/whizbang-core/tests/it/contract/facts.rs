@@ -349,3 +349,91 @@ fn with_the_limit_set_low_a_run_whose_facts_take_its_record_over_ends_as_an_erro
     assert!(record.asked().settings.is_empty() && record.egress().is_empty());
     assert!(record.spend().requests.is_empty() && record.models().is_empty());
 }
+
+#[test]
+fn paid_requests_settled_out_of_order_are_all_listed_in_the_order_they_were_sent() {
+    // Requests are settled as their answers come, which need not be the order they
+    // were sent in. Whatever order they are noted in, none is lost: the record lists
+    // each, in the order of the requests. One noted twice is noted once.
+    let world = World::new();
+    let filler = filler();
+    let notes = action(
+        "notes",
+        vec![Requirement::new(Capability::Fill)],
+        |_, context| {
+            let (facts, fill) = (context.facts(), context.capabilities().fill().unwrap());
+            for _ in 0..3 {
+                fill.fill(&fill_request()).unwrap();
+            }
+            assert!(facts.paid(Paid::answered(2, 500, 300).unwrap()));
+            assert!(facts.paid(Paid::answered(0, 500, 100).unwrap()));
+            assert!(facts.paid(Paid::unresolved(1, 500).unwrap()));
+            assert!(!facts.paid(Paid::answered(1, 500, 1).unwrap()));
+            Ok(Produced::nothing())
+        },
+    );
+    let executor = engine(
+        &world,
+        roster(None, Some(filler.as_ref()), None),
+        Capabilities::none().with_fill(filler.clone()),
+        vec![notes],
+    );
+    let finished = executor.submit(&Call::new("notes")).unwrap();
+    let (record, _) = stored(&world, finished.run());
+    assert_eq!(record.outcome().status, Status::Completed);
+    let listed: Vec<(u64, u64)> = record
+        .spend()
+        .requests
+        .iter()
+        .map(|paid| (paid.request(), paid.settled_micros()))
+        .collect();
+    assert_eq!(listed, [(0, 100), (1, 500), (2, 300)]);
+}
+
+#[test]
+fn a_paid_request_noted_for_a_request_the_run_did_not_send_ends_the_run_as_an_error_that_says_so() {
+    // A record lists a paid request only for a request it lists. One that was noted
+    // for a request the run never sent cannot be written, and is not dropped in
+    // silence, which would be a record that says less was spent: the run ends as an
+    // error that says so, whatever its action handed back.
+    let world = World::new();
+    let filler = filler();
+    let notes = action(
+        "notes",
+        vec![Requirement::new(Capability::Fill)],
+        |_, context| {
+            let (facts, fill) = (context.facts(), context.capabilities().fill().unwrap());
+            fill.fill(&fill_request()).unwrap();
+            assert!(facts.paid(Paid::answered(0, 500, 120).unwrap()));
+            // The run sent one request: there is no request 3.
+            assert!(facts.paid(Paid::answered(3, 500, 400).unwrap()));
+            Ok(Produced::nothing())
+        },
+    );
+    let executor = engine(
+        &world,
+        roster(None, Some(filler.as_ref()), None),
+        Capabilities::none().with_fill(filler.clone()),
+        vec![notes],
+    );
+    let finished = executor.submit(&Call::new("notes")).unwrap();
+    let (record, _) = stored(&world, finished.run());
+    assert_eq!(record.outcome().status, Status::Error);
+    let error = record.outcome().error.as_ref().unwrap();
+    assert_eq!(error.kind, "record");
+    assert_eq!(
+        error.message,
+        "what a request cost was noted for request 3, and the run sent 1 capability \
+         requests: a record lists what a request cost only for a request it lists, so 1 \
+         of the 2 that were noted is not in this record"
+    );
+    // What could be written is written: the request the run did send.
+    let listed: Vec<u64> = record
+        .spend()
+        .requests
+        .iter()
+        .map(|p| p.request())
+        .collect();
+    assert_eq!(listed, [0]);
+    assert_eq!(record.models().len(), 1);
+}
