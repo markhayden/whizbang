@@ -38,6 +38,9 @@
 # are printed, never a value; set to `pwd`, the folder it would run in.
 # Parse the whole file first: see the top of scripts/scan.sh.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "test-only: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
+# The whole script is one function, read before any of it runs, so a change to this file
+# during a run does not change the run: see `main` in scripts/scan.sh.
+main() {
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -124,3 +127,5 @@ case "${WHIZBANG_TEST_ONLY_DRY:-}" in
   pwd) pwd -P; exit 0 ;;
 esac
 exec scripts/thread-guard.sh cargo nextest run --manifest-path "$root/Cargo.toml" "$@"
+}
+main "$@"; exit

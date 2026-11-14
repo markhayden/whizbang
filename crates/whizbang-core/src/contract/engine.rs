@@ -1372,6 +1372,27 @@ impl Engine {
         let mut noted = facts.close();
         let mut inside = live.nest().inside(parent);
         inside.verdict = verdict;
+        // A record lists what a request cost only for a request it lists. What was
+        // noted for a request the run did not send cannot be written, and leaving it
+        // out in silence would be a record that says less was spent than was noted:
+        // the run ends as an error that says so, whatever its action handed back, and
+        // commits nothing.
+        if let Some(request) = noted.unlisted_paid(inside.asked.len()) {
+            let (_, all, _) = noted.counts();
+            let left_out = noted.drop_unlisted_paid(inside.asked.len());
+            outputs.clear();
+            inside.verdict = None;
+            outcome = Outcome::Error {
+                kind: "record".to_owned(),
+                message: format!(
+                    "what a request cost was noted for request {request}, and the run sent \
+                     {} capability requests: a record lists what a request cost only for \
+                     a request it lists, so {left_out} of the {all} that were noted is not \
+                     in this record",
+                    inside.asked.len()
+                ),
+            };
+        }
         let record_of = |outcome: &Outcome, inside: &Inside, noted: &Facts| {
             RunRecord::of(
                 Ran {
@@ -1391,46 +1412,55 @@ impl Engine {
             )
         };
         let mut record = record_of(&outcome, &inside, &noted);
-        // A record lists every output, and one over the limit is refused on reading
-        // (ADR 0005). A run whose outputs make such a record commits none of them: it
-        // ends as an error, with a record that lists none.
+        // A record over the limit is refused on reading, so it is not published as it
+        // is. What makes it too large is left out in two stages, the outputs first.
         //
-        // The same holds of a run with no output (ADR 0009): a record over the limit
-        // is not published as it is. The run ends as an error of the type `record`,
-        // and its record leaves out what it would have said of its capability
-        // requests, saying how many there were. Everything else a record lists is
-        // bounded where it comes in, a call's texts and inputs at admission and a
-        // run's diagnostics where they are written, and the sum of it all is under
-        // the limit (ADR 0008, "What a call and a run may hold"): so the record that
-        // is written here is one that is read back.
-        let bytes = record.to_bytes().len() as u64;
-        if bytes > self.record_max {
-            let is_at_most = format!("a record is at most {} bytes", self.record_max);
-            outcome = if outputs.is_empty() {
-                Outcome::Error {
-                    kind: "record".to_owned(),
-                    message: {
-                        let (settings, paid, went) = noted.counts();
-                        format!(
-                            "the run sent {} capability requests, and what was noted of \
-                             it is {settings} settings, {paid} paid requests and {went} \
-                             entries of where data went: the record that lists them would \
-                             be {bytes} bytes, and {is_at_most}",
-                            inside.asked.len()
-                        )
-                    },
-                }
-            } else {
-                Outcome::Error {
-                    kind: "output".to_owned(),
-                    message: format!(
-                        "the action handed back {} artifacts, and the record that lists \
-                         them would be {bytes} bytes: {is_at_most}",
-                        outputs.len()
-                    ),
-                }
+        // First (ADR 0005): a run whose outputs make such a record commits none of
+        // them. It ends as an error of the type `output`, with a record that lists no
+        // output and keeps everything else: what the run sent, what it paid and where
+        // its data went are not what was too large, and a run that paid never has a
+        // record that says nothing was spent because it handed back too much.
+        let is_at_most = format!("a record is at most {} bytes", self.record_max);
+        let mut handed_back = None;
+        let mut bytes = record.to_bytes().len() as u64;
+        if bytes > self.record_max && !outputs.is_empty() {
+            handed_back = Some(outputs.len());
+            outcome = Outcome::Error {
+                kind: "output".to_owned(),
+                message: format!(
+                    "the action handed back {} artifacts, and the record that lists \
+                     them would be {bytes} bytes: {is_at_most}",
+                    outputs.len()
+                ),
             };
             outputs.clear();
+            inside.verdict = None;
+            record = record_of(&outcome, &inside, &noted);
+            bytes = record.to_bytes().len() as u64;
+        }
+        // Then (ADR 0009, ADR 0013): a record that is over the limit with no output in
+        // it leaves out what it would have said of the run's capability requests and
+        // what was noted of the run, and says so: how many there were of each, and
+        // that none of them is listed. The run ends as an error of the type `record`.
+        // Everything else a record lists is bounded where it comes in, and the sum of
+        // it all is under the limit (ADR 0008, "What a call and a run may hold"), so
+        // only a limit that a test lowered reaches this, and the record that is
+        // written here is one that is read back.
+        if bytes > self.record_max {
+            let (settings, paid, went) = noted.counts();
+            let before = handed_back.map_or_else(String::new, |count| {
+                format!("the action handed back {count} artifacts, which are not committed; ")
+            });
+            outcome = Outcome::Error {
+                kind: "record".to_owned(),
+                message: format!(
+                    "{before}the run sent {} capability requests, and what was noted of \
+                     it is {settings} settings, {paid} paid requests and {went} entries \
+                     of where data went: the record that lists them would be {bytes} \
+                     bytes, and {is_at_most}, so none of them is listed in this record",
+                    inside.asked.len()
+                ),
+            };
             inside.asked.clear();
             inside.timed.clear();
             inside.verdict = None;

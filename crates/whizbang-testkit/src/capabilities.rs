@@ -281,7 +281,9 @@ impl FakeFiller {
         self
     }
 
-    /// How many requests it was sent, answered or not.
+    /// How many requests it was sent, answered or not: how many times the backend was
+    /// called. A request it was told to fail is counted, at whatever stage it says it
+    /// failed, `not_sent` among them: the count is of calls, not of what left.
     pub fn requests(&self) -> u64 {
         self.requests.load(Ordering::SeqCst)
     }
@@ -385,7 +387,8 @@ impl FakeSegmenter {
         }
     }
 
-    /// The same segmenter, declaring these features and no others.
+    /// The same segmenter, declaring these features and no others. What it states of
+    /// its price and its recipient stays.
     pub fn declaring(mut self, features: &[&str]) -> FakeSegmenter {
         self.declaration = redeclared(&self.declaration, None, features);
         self
@@ -426,7 +429,9 @@ impl FakeSegmenter {
         self
     }
 
-    /// How many requests it was sent, answered or not. A batch is one request.
+    /// How many requests it was sent, answered or not: how many times the backend was
+    /// called, a request it was told to fail as `not_sent` among them. A batch is one
+    /// request.
     pub fn requests(&self) -> u64 {
         self.requests.load(Ordering::SeqCst)
     }
@@ -596,7 +601,9 @@ impl FakeJudge {
         self
     }
 
-    /// The same judge, declaring these features and no others.
+    /// The same judge, declaring these features and no others. The model stays, the
+    /// one given by [`FakeJudge::as_model`] included, and so do what it states of its
+    /// price and its recipient.
     pub fn declaring(mut self, features: &[&str]) -> FakeJudge {
         self.declaration = redeclared(&self.declaration, None, features);
         self
@@ -616,8 +623,9 @@ impl FakeJudge {
     }
 
     /// The same judge, reporting this charge, in millionths of a US dollar, with every
-    /// answer: under its bound, over it, as the test chooses. A fake that was not
-    /// told reports none.
+    /// answer: under its bound, over it, as the test chooses. It replaces the charge a
+    /// scripted turn carries of its own. A fake that was not told reports none, and
+    /// plays each turn with the charge the script gave it.
     pub fn charging(mut self, micros: u64) -> FakeJudge {
         self.terms.charge = Some(charge(micros));
         self
@@ -630,7 +638,8 @@ impl FakeJudge {
         self
     }
 
-    /// How many requests it was sent, answered or not.
+    /// How many requests it was sent, answered or not: how many times the backend was
+    /// called, a request it was told to fail as `not_sent` among them.
     pub fn requests(&self) -> u64 {
         lock(&self.played).received.len() as u64
     }

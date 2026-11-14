@@ -36,6 +36,10 @@
 # more; a hit names the variable, never the value). It prints where a match is, never the
 # matching text, and not the path either when the path itself holds a match.
 #
+# Every mode but --message refuses when a local .env is there and cannot be read (its
+# values could not be searched for), when it is run outside a repository, and when a
+# second mode is given.
+#
 # Attribution check: no commit or tag message has a Co-Authored-By line, for a person or
 # an agent, or a line that credits an agent or a model; no commit or tag is authored by
 # one (SPEC.md section 15).
@@ -86,6 +90,15 @@
 # here-document with no end. So the trap turns an exit of 0 into 70, and says so, unless
 # `done_ok` is 1, and that is set only on the line before an exit that is meant to succeed.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "scan: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
+# The whole script is the function `main`, and the last line calls it and exits. Bash reads
+# a script as it runs it, a piece at a time, so a file changed during a run (an editor that
+# writes in place, a checkout that rewrites it) would make the rest of the run another
+# program: the `EXIT` trap fails a run that stops early, not one that goes on wrongly. A
+# function is read whole before any of it runs, and the last line is read with it in hand,
+# so the run finishes as the program it started as. Every script under scripts/ that is not
+# a test has this form, and scripts/tests/test-syntax.sh holds them to it. The body is not
+# indented, so that each line is where it was.
+main() {
 set -euo pipefail
 umask 077
 # Bytes, not characters: a byte that is not valid UTF-8 must not hide the rest of its line.
@@ -944,7 +957,9 @@ scan_tag_chain() { # <sha>
     sed '1,/^$/d' "$work/tag" >"$text/tag-message/$obj"
     sed -n '1,/^$/s/^tag //p' "$work/tag" >>"$text/ref-names/tags"
     sed -n '1,/^$/s/^tagger //p' "$work/tag" >"$work/taggers/$obj"
-    obj=$(sed -n '1,/^$/s/^object //p' "$work/tag" | head -n 1)
+    # The first of them, read to the end: a reader that stopped at its first line could
+    # have the writer killed while it wrote, and the pipeline then fails (AGENTS.md).
+    obj=$(sed -n '1,/^$/s/^object //p' "$work/tag" | sed -n '1p')
   done
   [ "$kind" = commit ] || die "$obj is a $kind, not a commit; the scan cannot cover it; refusing to pass"
   tip=$obj
@@ -1222,3 +1237,5 @@ fi
 
 done_ok=1
 exit "$status"
+}
+main "$@"; exit

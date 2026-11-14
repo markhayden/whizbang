@@ -110,10 +110,14 @@ impl RunFacts {
         self.note(|facts| facts.setting(setting))
     }
 
-    /// Notes what one paid request of the run cost. False, and nothing is noted: when
-    /// one is noted already for this request or a later one, or the record lists as
-    /// many as it may; and when the run's end has begun. One that names a request the
-    /// run did not send is taken here and left out of the record.
+    /// Notes what one paid request of the run cost, in whatever order requests are
+    /// settled: the record lists them in the order they were sent. False, and nothing
+    /// is noted: when one is noted already for this request, or the record lists as
+    /// many as it may; and when the run's end has begun.
+    ///
+    /// One that names a request the run did not send is taken here, since only the
+    /// end of the run knows what it sent. It is never dropped in silence: such a run
+    /// ends as an error of the type `record` that says so.
     pub fn paid(&self, paid: Paid) -> bool {
         self.note(|facts| facts.paid(paid))
     }

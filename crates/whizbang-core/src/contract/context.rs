@@ -529,13 +529,13 @@ impl Context {
         }
     }
 
-    /// The same context, whose executor holds its calls to what is frozen here.
     /// The same context, noting its run's facts here.
     pub(super) fn noting(mut self, facts: RunFacts) -> Context {
         self.facts = facts;
         self
     }
 
+    /// The same context, whose executor holds its calls to what is frozen here.
     pub(super) fn offering(mut self, offer: Arc<Offer>) -> Context {
         self.offer = offer;
         self

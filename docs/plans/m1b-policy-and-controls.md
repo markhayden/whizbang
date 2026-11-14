@@ -1364,14 +1364,14 @@ executor accepts can write an adjustment, shown as S9 shows it for a reset.
 `docs/adr/0004-toml-config.md` and `schemas/config-v1.json`; rascal
 `crates/rascal-core/src/config.rs` and `schemas/rascal/config-v1.json`.
 
-- [ ] An ADR: one TOML file; where it is found; its tables (`backends`, `spend`, `egress`,
+- [x] An ADR: one TOML file; where it is found; its tables (`backends`, `spend`, `egress`,
       `models`, and `tools`, which is refused until milestone 2 gives it a shape); how
       several named backends of one capability and a default are written, with the example
       of `SPEC.md` section 4 either read as it stands or corrected in this pull request;
       that a credential is named by its variable and never held; the digest, of the
       settings and not of the file's bytes, and exactly what enters it; which settings a
       run records.
-- [ ] The type and its strict reader in `crates/whizbang-core/src/config/`, and
+- [x] The type and its strict reader in `crates/whizbang-core/src/config/`, and
       `docs/guides/config.md`. Nothing is built from a config yet.
 
 **Done when** these pass: the spec's example is read to the backends it shows; an unknown
@@ -1390,11 +1390,11 @@ example in the guide is read by a test (rule 5).
 **Depends on:** C1. **Reads:** squint `crates/squint-core/src/env.rs` and
 `crates/squint-providers/src/privacy.rs` (`credential`); `.env.example` of squint.
 
-- [ ] An env file is read for the variables the config names and no others. A value in
+- [x] An env file is read for the variables the config names and no others. A value in
       single or double quotes has them taken off; a value shorter than the least a secret
       may be is refused, naming the variable and never the value or its length beyond what
       ADR 0005 allows.
-- [ ] The secrets the executor redacts are every credential the config names that has a
+- [x] The secrets the executor redacts are every credential the config names that has a
       value. A credential is handed only to the backend whose table names it.
 
 **Done when** these pass: a quoted value, a value with a trailing line break and an
@@ -1781,7 +1781,7 @@ with the two changed lines.
 
 **Depends on:** X3. Scripts only.
 
-- [ ] A push made with `GIT_DIR` and `GIT_WORK_TREE` set from another folder is refused,
+- [x] A push made with `GIT_DIR` and `GIT_WORK_TREE` set from another folder is refused,
       or what it published is scanned before a merge: `review-merge`'s range scan takes
       every branch the pull request's commits are on and the branch's name. Which of the
       two is the builder's finding, written in the row.
@@ -1795,7 +1795,7 @@ a script, stops, and the gap goes to the owner to accept in a line of the row.
 
 **Depends on:** X4. Scripts only.
 
-- [ ] `scripts/scan.sh` and the other long scripts run from a function read whole before
+- [x] `scripts/scan.sh` and the other long scripts run from a function read whole before
       it starts, or from a copy.
 
 **Done when** a test edits the file during a run, at a barrier the test holds and not by
@@ -1807,7 +1807,7 @@ holds each long script to the form.
 
 **Depends on:** X5. Scripts only.
 
-- [ ] The sixteen lines under `scripts/` that end a pipe with `grep -q` send the output
+- [x] The sixteen lines under `scripts/` that end a pipe with `grep -q` send the output
       to `/dev/null` instead, and `scripts/tests/test-syntax.sh` refuses a new one.
 
 **Done when** no script under `scripts/` has the pattern, a planted one fails the test,
