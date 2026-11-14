@@ -862,6 +862,18 @@ fn a_name_or_a_key_that_holds_a_secret_is_refused_whole_and_not_shown() {
             "{text}"
         );
     }
+    // A secret that folding a backend's address makes across its host and its path:
+    // capitals in the host, or the scheme's own port between the halves. What
+    // `Backend::url` would give, and a run would record, holds it.
+    let across = Secrets::new(["zqxjkvwpyh/Path9".to_owned()]).unwrap();
+    for url in ["https://ZQXJKVWPYH/Path9", "https://zqxjkvwpyh:443/Path9"] {
+        let text = format!("[backends.fill]\nkind = \"a\"\nurl = \"{url}\"\n");
+        assert_eq!(
+            Config::parse(text.as_bytes(), &across).unwrap_err(),
+            ConfigRefused::HoldsSecret,
+            "{url}"
+        );
+    }
     // A secret written with an escape inside a list, where only the decoded text
     // holds it.
     for text in [

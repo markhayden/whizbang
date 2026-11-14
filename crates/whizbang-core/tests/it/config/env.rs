@@ -385,6 +385,24 @@ fn the_env_file_is_read_first_and_a_config_that_holds_any_of_its_values_is_refus
             );
         }
     }
+    // A key of the shape of a host and a path. A backend's address that only folding
+    // turns into it, by lowering its host or dropping its scheme's own port, is
+    // refused like any other place the key stands.
+    let shaped = format!("zqxjkvwpyh{}Path9-0123", "/");
+    let env_shaped = read_env(&format!("FAL_KEY='{shaped}'\n"));
+    for url in [
+        format!("https://{shaped}"),
+        "https://ZQXJKVWPYH/Path9-0123".to_owned(),
+        "https://zqxjkvwpyh:443/Path9-0123".to_owned(),
+    ] {
+        let text =
+            format!("[backends.fill]\nkind = \"a\"\nkey_env = \"FAL_KEY\"\nurl = \"{url}\"\n");
+        assert_eq!(
+            Config::parse(text.as_bytes(), &env_shaped.secrets()).unwrap_err(),
+            ConfigRefused::HoldsSecret,
+            "{url}"
+        );
+    }
     // A value too short to be a secret is not looked for: `8080` may stand in a config.
     let text = "[backends.fill]\nkind = \"a\"\nurl = \"http://127.0.0.1:8080\"\n";
     Config::parse(text.as_bytes(), &env.secrets()).unwrap();

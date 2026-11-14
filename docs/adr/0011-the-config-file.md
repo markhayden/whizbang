@@ -445,8 +445,9 @@ What follows from hashing what was read:
   host in lower case, and the port only when it is not the scheme's own. A backend's
   address is its origin so written and then its path as the file gave it. So
   `https://h.example`, `https://h.example:443` and `HTTPS://H.Example` are one digest,
-  and a path's own letters are not folded
-  (`digest::the_ways_of_writing_one_origin_have_one_digest`). Until this was so, for one
+  and a path's own letters are not folded. A slash at the end of a backend's address is
+  part of its path: `https://h.example` and `https://h.example/` are two addresses and
+  two digests (`digest::the_ways_of_writing_one_origin_have_one_digest`). Until this was so, for one
   day, the three were refused or were two digests; no digest of a config had been
   stored.
 
