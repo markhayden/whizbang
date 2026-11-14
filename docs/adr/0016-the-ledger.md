@@ -14,7 +14,9 @@ publication that changes what is left, in the epoch it changes; a correction tha
 names its place and its turn and is sealed over the names it was made over; and what a
 run sent, known or not. And after the third: what a frozen reservation counts for
 is one sum with no credits, in every epoch, and it stops admissions until the owner
-acts.
+acts. And after the hunt over other seeds that followed: a reservation with no hold,
+or with more than one, falls under no one epoch when its owner has corrected it
+either.
 Spec: section 6, "Spend"; section 3, "Storage"
 
 ## Context
@@ -78,7 +80,8 @@ then is, ends that. The store has the same rule for its turns ("Nothing is publi
 on a stale balance").
 
 **That is deliberate: tampering or damage stops new work until a person looks.** A
-frozen reservation over-counts heavily, and is the owner's to repair.
+frozen reservation over-counts heavily, and is the owner's to repair. A reset does not
+repair it: only the owner's correction of that reservation does.
 
 Two rounds of review each found seven ways past rules written case by case (a
 settlement without its guard, a correction counted by its names, a place taken twice).
@@ -86,8 +89,8 @@ A rule that says what is allowed, and freezes everything else, has no case to fo
 
 **A writer who forges a complete, consistent chain is believed.** A set of names that
 the recogniser takes is, in the names alone, what the ledger would have made, and the
-fold reads names. That, and three more, are the limits of the guarantee, each stated
-under "Limits".
+fold reads names. That is the first of the limits of the guarantee, (a) to (f), each
+stated under "Limits".
 
 ### The books are names
 
@@ -180,7 +183,10 @@ is looked at afterwards ("A person's correction").
 Every history of the table in which other hands do nothing passes it after every event,
 and each name of a full set of books lost alone, each of fifteen names made, and each
 name damaged, fails it
-(`spend::the_recogniser_takes_what_the_ledger_writes_and_nothing_else`). What it does
+(`spend::the_recogniser_takes_what_the_ledger_writes_and_nothing_else`). The same is
+held of 2,048 books that the ledger alone wrote, generated from the seed: no name of
+them lost alone, damaged alone or made alone leaves a reservation that the recogniser
+takes ("The invariants, and what holds them" has the suite). What it does
 not hold is order: which bare place was the closing's, and that no dispatch came after
 it. No count depends on it.
 
@@ -227,6 +233,10 @@ the place look accounted for (history 65), and a guarded settlement at a charge 
 stage forbids was taken for an overrun that had used a place (history 66). A sum that
 gives no credit has none to forge. So a reservation of 10 with one request settled
 and closed, whose record is damaged, counts 27 where it released at 3 (history 15).
+A name can name any place a number can say and state any amount, so the places that
+hold no dispatch are counted and never walked, and a store's sum of what its
+reservations count for stops at the largest number
+(`spend::a_name_can_name_any_place_and_state_any_amount_and_the_fold_still_ends`).
 
 A settlement's *whole chain* is the row "A settlement" of the recogniser with the
 dispatch's `place` there and none of the four damaged. What such settlements say is
@@ -235,6 +245,10 @@ may say.
 
 **A frozen reservation counts in every epoch there is,** whatever its holds name: a
 hold other hands made can name any epoch, and the real one can be lost (history 67).
+**So does a reservation that has no hold, or more than one, when its owner has
+corrected it:** a correction says what a reservation is charged, and not where
+(history 68). A corrected reservation that has its one hold falls under that hold's
+epoch, as every reachable one does (history 42).
 
 **What a dispatch may still take** is *A* less what is known, of an open reservation,
 and nothing of any other: nothing is dispatched under a frozen reservation (history
@@ -284,17 +298,20 @@ another with one name gone (`spend::losing_any_one_name_lowers_nothing`, which l
 each name of three books in turn). It then counts for no less than it did, but for two
 names that are the only place their amount is in:
 
-- **a settlement over its bound:** the charge was in that name alone. What is left is
+- **a settlement over its bound** (limit (b)): the charge was in that name alone. What is left is
   the amount, its dispatch's bound and the amount again for the place the overrun
   took (history 53: 12 was counted, 25 is);
-- **the hold:** the amount was in that name alone. The reservation is frozen at every
+- **the hold** (limit (c)): the amount was in that name alone. The reservation is frozen at every
   bound and charge its other names say, and takes no dispatch.
 
 A name lost from a reservation that is frozen already takes what it said out of the
-sum: the rule is of books that were whole.
+sum: the rule is of books that were whole. So it is with any reservation that other
+hands touched before: a correction its owner made over a name they made can say more
+than the names do once that name and the correction are gone
+(`spend::losing_any_one_name_lowers_nothing`, its last case).
 
-Losses of more than one name that leave a reachable set are believed: "Limits" lists
-them.
+Losses of more than one name that leave a reachable set are believed: "Limits", (d),
+lists them.
 
 ### Epochs: what a reset bounds
 
@@ -310,7 +327,7 @@ without it, stops admissions until the owner resets again, and never allows more
 **Turns are an epoch's.** `spend/turn/<epoch>/<n>` is taken by whatever changes what
 is left of that epoch's allowance, and the fold counts what the epoch's turns are
 *due*: one for each `held` in it, one for each `settling`, `closed` and `adjusted` of a
-reservation that counts in it, and one when the next epoch is there, for the reset that
+reservation with a hold in it, and one when the next epoch is there, for the reset that
 closed it. **An epoch whose turns are not exactly 1 to that count needs the owner:**
 nothing is left in it and no admission is taken, until a reset opens the next epoch,
 whose turns start again. So a turn that is lost, a turn that other hands made at the
@@ -319,9 +336,13 @@ admissions and never let one through that judged after it (histories 47 and 61,
 `spend::the_turns_of_an_epoch_are_exactly_those_its_publications_took`). What a
 reservation counts for is not changed by it.
 
-**A frozen reservation makes the store need its owner too, in every epoch,** and a
-reset does not end that: the reservation is still there. The owner's correction of it
-does (histories 65 and 67). A reservation that is interrupted and reachable does not
+**A frozen reservation makes the store need its owner too, in every epoch. A reset
+does not clear a frozen reservation:** it is still there, it counts in the new epoch
+as in every other, and no admission is taken. Only the owner's correction of that
+reservation does (histories 31, 65 and 67;
+`spend::a_reset_does_not_clear_a_frozen_reservation_and_its_owners_correction_does`;
+`spend::the_turns_of_an_epoch_are_exactly_those_its_publications_took`). A
+reservation that is interrupted and reachable does not
 stop admissions; only names the ledger could not have written do. Dispatches under
 other, reachable reservations go on against what each has left.
 
@@ -334,6 +355,13 @@ A run that is still executing when its epoch is closed goes on drawing on its ow
 reservation, and its settlements and its closing take their turns in that epoch. A
 reset takes the next turn of the epoch it closes, so an admission that judged before it
 is asked again and falls under the new epoch.
+
+**The epochs end at the largest number a name can say.** Other hands that open that
+epoch leave a store that allows nothing and that no reset can follow: the reset
+would name the same epoch, and the store refuses it
+(`spend::known_after_the_largest_epoch_a_name_can_say_no_reset_follows`). Nothing is
+under-counted by it. What the owner's command says there, and how such a name is
+taken away, is the second part's to decide.
 
 ### An allowance holds a signed balance
 
@@ -407,7 +435,7 @@ closing that other hands made without a place is published (history 48, its last
 event); so is an admission judged before a turn was lost (history 61), and a dispatch
 judged before its place's guard was lost (history 59). In each the books freeze, the
 reservation or the store, so nothing is released and nothing more is admitted; but the
-one publication stands. "Limits" has it.
+one publication stands. "Limits", (e), has it.
 
 ### Settlement, closing and recovery
 
@@ -420,7 +448,7 @@ judgements among them (history 51).
 and its settlement the charge is in the memory of one process. A crash there leaves a
 dispatch with no settlement: recovery counts the reservation in full and releases
 nothing (history 52). When the answer was over the bound, no name says by how much,
-and the reservation counts for its amount: "Limits".
+and the reservation counts for its amount: "Limits", (b).
 
 A request is settled by the run that sent it, while that run is open, from what the
 process holds of the request and never from a name it reads back, once
@@ -506,18 +534,44 @@ state from the one the owner corrected, because it is the same state.
 What the checker leaves out is the limits under "Limits", and nothing else.
 
 The table has the 38 histories of the plan, in its order, this record's own after
-them (39 to 42), and from 43 those of its review rounds. The generated histories are 4,096 of at most 24 events each, from a seed written
+them (39 to 42), from 43 those of its review rounds, and 68 from the hunt that
+followed them. The generated histories are 4,096 of at most 24 events each, from a seed written
 in the test, and 4,096 more of another shape: books the ledger alone wrote, then one to
-three things other hands do, then one to four things the ledger and its processes do
+six things other hands do, then one to four things the ledger and its processes do
 (`spend::every_generated_history_of_whole_books_then_other_hands_keeps_every_invariant`); one that breaks an invariant is printed with the seed and its number.
 Other hands make names of every form in them, at any point between the ledger's own
-events and its late judgements: a turn far ahead, a whole settlement, a correction with
+events and its late judgements: a turn far ahead, a hold in any epoch up to three past
+the newest and for a run that has no reservation, a whole settlement, a correction with
 the right seal and no place, a whole correction; names are damaged and lost; about one event in four
 happens in a second process with its own memory over the same store; and a provider
 charges before a settlement is published. They reach every event, every state and
 every way a publication ends, late ones among them
 (`spend::the_generated_histories_reach_every_event_every_state_and_every_way_a_publication_ends`),
 and an event that is refused changes no name (`spend::a_refusal_changes_no_name`).
+
+**A third suite changes one name.** 2,048 books that the ledger and the owner alone
+wrote, from the same seed, each have every name lost alone, every name damaged alone,
+and a sample of names made alone: of every form, at numbers the books have and at
+numbers far outside them, for a reservation that is there and for a run that has
+none. That is 35,099 names lost, 35,099 damaged and 35,793 made. Each is held
+by what the fold answers, with nothing left out but the two losses in the table; and
+those of one books in sixteen are also held by the checker, and followed by an
+admission and a dispatch asked of the ledger for real
+(`spend::every_name_of_whole_books_lost_or_damaged_alone_freezes_or_allows_no_more`,
+`spend::a_name_made_alone_in_whole_books_freezes_or_allows_no_more`).
+
+| The one name | What it comes to | How many |
+|---|---|---|
+| A name of a reservation, lost, damaged or made | The reservation is frozen and the store needs its owner in every epoch. It counts for no less than it did and no less than its requests really took; nothing is admitted, and nothing is dispatched under it | 65,305 |
+| Of those: a settlement over its bound, lost | Limit (b). No less than the amount, and less than it counted by no more than the charge was over the bound | 78 |
+| Of those: the hold, lost | Limit (c). Every bound and every charge its other names say | 5,840 |
+| A turn of the newest epoch, lost or made | The store needs its owner | 8,937 |
+| A reset or its guard, lost, damaged or made; a turn of another epoch, lost or made | No reservation is frozen. No more can be reserved in any epoch than before, and no reservation counts for less: the epoch allows what it did or less, or it is not the newest and needs its owner | 20,067 |
+| A turn, damaged; a second reset of an epoch that says more than the first | The fold answers what it answered: a turn's content is not read, and of two resets the smaller is the allowance | 11,682 |
+
+**No one name falls under limit (a) or (d).** No publication of the ledger makes one
+name of a reservation alone, so no one name made is what the ledger would write next;
+and no set the ledger writes is another with one name gone.
 
 ### What the second part builds, as decided here
 
@@ -563,53 +617,92 @@ and an event that is refused changes no name (`spend::a_refusal_changes_no_name`
 - **The fold reads every name each time.** What that costs as a store ages is on
   `docs/carry-over.md`, with milestone 2.
 
-**The guarantee has four limits.** The checker (`Books::check` and `run_watched` in
-the model) takes its floor from the truth and leaves out these and nothing else:
+**The guarantee has six limits, (a) to (f).** Five are things the fold does not hold,
+and the sixth is a ruling it cannot meet.
 
-1. **A complete, consistent chain is believed, whoever made it.** Where other hands
-   made or lost names of a reservation and the recogniser still takes the set, the
-   fold counts by it. The checker believes it only when a second reading of the names,
-   written apart from the recogniser, takes the set too, the stage rule of ADR 0010
-   among its rows; a set the fold took and that reading does not is a failure. So a
-   `settling` and a `settled` at a charge the stage allows lower their place, and a
-   recovery then releases
-   (`spend::known_what_the_names_cannot_say_is_not_counted`); a correction with its
-   place, its turn and the right seal is a correction; a reset with its guard is an
-   allowance. Any part of such a chain without the rest lowers nothing; and a chain
-   that took no turn leaves the store needing its owner.
-2. **A charge that no name states is not counted.** A provider's charge over the
-   bound that is in memory when the process dies, and a settlement over its bound
-   whose name is lost, leave the reservation at its amount or more, and under the
-   charge when the charge was over that (history 52, the same test, history 53).
-   Invariant 1 is of what the records show.
-3. **The amount, when every hold is lost** (and only then: with a hold other hands
-   made still there, the reservation is held to its epoch and its floor). The reservation counts for what its other
-   names say, in every epoch; a request whose dispatch is lost as well has then no
-   name that states any amount.
-4. **A loss that leaves a reachable set is believed**
-   (`spend::known_a_loss_that_leaves_what_the_ledger_could_have_written_is_believed`).
-   No loss of one name does. These do: the last places of a reservation, each with
-   everything at it (a dispatch that is not settled and its place; a closing and its
-   place; a correction and its place); a settlement with its guard, and the place it
-   took when it was over its bound and that place is the last; every name of the
-   reservation; and a reset with its guard when it is the newest. Each but the
-   request also leaves the epoch's turns one more than its publications account for,
-   so the store needs its owner, unless the turn is lost with it.
+- **(a) A forged set that the recogniser takes, and that is consistent in its stages,
+  is believed.** Where other hands made names of a reservation and the recogniser
+  still takes the set, the fold counts by it. So a `settling` and a `settled` at a
+  charge the stage allows lower their place, and a recovery then releases
+  (`spend::known_what_the_names_cannot_say_is_not_counted`); a correction with its
+  place, its turn and the right seal is a correction
+  (`spend::a_correction_never_counts_under_what_whole_settlements_say_whoever_wrote_it`);
+  one hold made in the place of the ledger's states the amount and the epoch, and
+  still does when the owner corrects that reservation
+  (`spend::known_one_hold_made_in_the_place_of_the_ledgers_states_the_epoch`); and a
+  reset with its guard is an allowance, of a whole later epoch, or of the owner's own
+  epoch when the owner's reset is lost
+  (`spend::an_allowance_is_its_resets_only_with_the_guard_and_with_neither_damaged`).
+  Any part of such a chain without the rest lowers nothing; and a chain that took no
+  turn leaves the store needing its owner.
+- **(b) A charge that no name states is not counted.** A provider's charge over the
+  bound that is in memory when the process dies, and a settlement over its bound
+  whose name is lost, leave the reservation at its amount or more, and under the
+  charge when the charge was over that (history 52,
+  `spend::known_what_the_names_cannot_say_is_not_counted`, history 53). Invariant 1
+  is of what the records show.
+- **(c) When every hold of a reservation is lost, its amount is unknown.** Only then:
+  with a hold still there, the ledger's or one other hands made, there is an amount.
+  The reservation is frozen and counts for what its other names say, in every epoch;
+  a request whose dispatch is lost as well has then no name that states any amount.
+- **(d) A loss of several names that leaves a set the recogniser takes is believed**
+  (`spend::known_a_loss_that_leaves_what_the_ledger_could_have_written_is_believed`).
+  No loss of one name does. These do: the last places of a reservation, each with
+  everything at it (a dispatch that is not settled and its place; a closing and its
+  place; a correction and its place); a settlement with its guard, and the place it
+  took when it was over its bound and that place is the last; every name of the
+  reservation; and a reset with its guard when it is the newest. Each but the
+  request also leaves the epoch's turns one more than its publications account for,
+  so the store needs its owner, unless the turn is lost with it.
+- **(e) One publication that was judged before other hands tampered may still land,
+  after which the reservation or the store is frozen.** The store refuses a
+  publication only for a name it makes, and each judgement is published once. A
+  judgement made before a turn was lost, before a place's guard was lost, or before
+  other hands made a closing without its place, is published (histories 61, 59 and
+  48), and an admission or a dispatch then stands that the books as they were at
+  publication would have refused. In those three the reservation is frozen or the
+  store needs its owner. The hunt found two more, in which nothing is frozen and no
+  more is admitted in the epoch all the same: an admission that falls under an epoch
+  other hands closed by opening a later one
+  (`spend::known_an_admission_judged_before_other_hands_opened_an_epoch_falls_under_the_old_one`),
+  and one that falls under an epoch whose reset they took away. What is held of
+  every such publication: a dispatch stands after a closing only under a reservation
+  that other hands touched, and never over what was really reserved; and an
+  admission stands only in an epoch where nothing more is then admitted, because it
+  needs its owner, has nothing left, or is no longer the newest. The second review
+  round did not accept this limit. Closing it needs the store to refuse a
+  publication for something other than a name it makes, such as the generation it
+  judged on having changed, which is not ADR 0007's rule and is not decided here.
+- **(f) A correction stands again when the names return to exactly the set it was
+  sealed over.** The ruling of the second round, that a correction never stands
+  again once a later name ended it, cannot be met by a fold of names: made and taken
+  away again, the name leaves the same names the owner corrected ("A person's
+  correction").
 
-**One more thing is outside the guarantee, and the second review round did not accept
-it: what other hands do between a judgement and its publication.** The store refuses a
-publication only for a name it makes. A judgement made before a turn was lost, before a
-place's guard was lost, or before other hands made a closing without its place, is
-published (histories 61, 59 and 48), and an admission or a dispatch then stands that the
-books as they were at publication would have refused. After it the reservation or the
-store is frozen. Closing this needs the store to refuse a publication for something
-other than a name it makes, such as the generation it judged on having changed, which
-is not ADR 0007's rule and is not decided here. The checker leaves out a late
-publication exactly when other hands did something between its judgement and it.
+**What the checker leaves out, each under one limit.** The checker (`Books::check` and
+`Books::checked` in the model) takes its floor from the truth. These are its
+exemptions, all of them:
 
-**And one ruling of that round cannot be met by a fold of names:** that a correction,
-once a later name ended it, never stands again. Made and taken away again, the name
-leaves the same names the owner corrected ("A person's correction").
+| Limit | What the checker does not hold | Where in the model |
+|---|---|---|
+| (a) | The count of a reservation where other hands made a name of it and it is not frozen: the fold is believed when a second reading of the names, written apart from the recogniser and with the stage rule of ADR 0010 among its rows, takes the set too. A set the fold took and that reading does not is a failure | `held_to` and `believable` |
+| (a) | The count of a reservation that a correction other hands made corrects, when the correction's name, the place and the turn it names are there and its seal is right | `held_to` and `forged_correction` |
+| (a) | The epoch of a reservation whose one hold other hands made in the place of the ledger's: it is not held to the epoch it was reserved in, and is counted against the newest allowance only where the fold has it there | `replaced` in `check`; `here` in `really_left` |
+| (a) | The allowance: of an epoch after the newest that other hands made whole, reset and guard, nothing is held; and where the owner's reset of the newest epoch is lost, the allowance is the names' | `really_left` |
+| (b) | A request whose settlement's name is lost is held to its bound at most; and a provider's charge that was never settled is not in the truth | `Asked::floor` |
+| (c) | A request whose dispatch is lost, under a reservation with no hold left, is held to nothing | `unnamed` |
+| (d) | The count of a reservation where other hands only lost names of it and it is not frozen: believed when the second reading takes what is left | `held_to` and `believable` |
+| (d) | A reservation of which every name is lost is not held at all | `held_to` |
+| (d) | Where the newest epoch is lost, the allowance is not held | `really_left` |
+| (e) | A dispatch published late is not held to a closing where other hands did something between its judgement and it and touched its reservation; an admission published late is not held to what is left, where they did something between and no more is then admitted in the epoch it fell under | `unseen` and `excused` in `checked` |
+| (f) | Nothing. The truth keeps the names the owner's last correction left, and the correction is the owner's again whenever the names are those | `held_to` |
+
+The first row and the seventh are one piece of code, told apart by what the truth wrote
+down: a name other hands made, or only names lost. What a correction writes off is not
+in the table: it is the correction's stated meaning ("A person's correction"). No
+dispatch is in it either: whatever the names say, a run's allowance in the memory of
+its process holds each dispatch to what was really reserved. Four exemptions were
+taken out after the third round and two made narrower ("Review rounds").
 
 ## Review rounds
 
@@ -714,11 +807,65 @@ One rule of the recogniser is new with it: a correction is of a reservation clos
 `held`. A released reservation that carries a correction which no longer stands was
 frozen before by a rule of its own, and is now frozen as every other.
 
-Not done at this head, and owed before the next round: the generators do not yet make
-holds in an epoch up to three past the newest or for runs with no reservation, the
-second suite still allows three things from other hands and not six, there is no
-third suite that loses each name of each of many whole books, and the frozen sum and
-the store's freeze have not been through the mutation check.
+**2026-11-14, after the third round: the generators, a hunt over other seeds, and the
+mutation check.** What the third round left owed was done. Other hands now make a
+hold in any epoch up to three past the newest and for a run that has no reservation;
+the second suite lets them do one to six things; and the third suite, which changes
+one name of each of 2,048 whole books, is new ("The invariants, and what holds
+them"). Then all three suites were run from 48 other seeds: 4,096 histories of each
+of the first two shapes and 2,048 whole books for each seed, 5,073,392 single names
+changed in all, none of which fell under limit (a) or (d). The run is not kept as a
+test.
+
+It found one trace outside the limits. It was first a history that failed.
+
+| Trace | What it showed | Held by | History |
+|---|---|---|---|
+| 1 | A reservation whose own hold was lost, and that other hands gave holds in other epochs, was frozen and counted in every epoch. Its owner's correction ended the freeze, and it then counted in the epochs of those holds alone, so that its own epoch had room again | A reservation with no hold, or more than one, falls under no one epoch, corrected or not | 68 |
+
+No history before it changed what it gives. A reservation with exactly one hold that
+other hands made, corrected by its owner, still falls under that hold's epoch: that
+is limit (a), one hold in the place of the ledger's, and the correction is sealed
+over it.
+
+The hunt and the mutation check also found the checker wrong in these, and the model
+unsafe in three. None changed a rule.
+
+| What | Was | Is |
+|---|---|---|
+| The allowance where the owner's reset is lost and other hands made one with more (too strict) | Held to the owner's amount, though a reset with its guard is believed under (a) | The names' allowance, while the owner's reset is not there |
+| A reservation believed under another epoch, by one hold made in the place of the ledger's (too strict) | Counted against the newest allowance all the same, and held to its own epoch once its owner corrected it | Counted where the fold has it; the epoch is not held, under (a) |
+| The epoch of a reservation with every hold lost (an exemption that excused nothing) | Not held | Taken out: such a reservation counts in every epoch, and is held to its own |
+| A reservation that read as released after it read as interrupted, where other hands touched it (an exemption that excused nothing) | Not held | Taken out: no one event turns the one into the other |
+| A loss from a reservation other hands had touched before (too strict) | Held to count no less than before, though a correction made over their names could say more than the names do | The rule is of books that were whole: the first thing other hands do to a reservation |
+| A loss from a reservation that was corrected (too loose) | Held to count no less than nothing | Taken out: held to count no less than it did |
+| A late dispatch after other hands did anything at all (too loose) | Held to no closing | Held to none only where they touched its reservation |
+| What a dispatch may take under a reservation other hands touched, late or not (an exemption that excused nothing) | Not held | Taken out: a run's allowance in memory holds every dispatch to what was really reserved |
+| A late admission after other hands did anything at all (too loose) | Not held | Not held only where no more is then admitted in the epoch it fell under |
+| A settlement's name lost and made again as it was (too loose) | Held to its bound | Held to its charge again |
+| The places of a frozen reservation that hold no dispatch (the model) | Walked, from 1 to the highest: a name with a place at the largest number would not end | Counted |
+| A store's sum of what its reservations count for (the model) | Could pass the largest number | Stops at it |
+| A reset after the largest epoch (the model) | Passed the largest number | Refused: the epoch is taken |
+
+The mutation check, of what the third round added and of these: 64 changes of one
+rule each, to the frozen sum term by term, the rule for a place, the count of the
+places that hold no dispatch, the store's freeze, the epochs a reservation counts in,
+the rule that a correction is of a reservation closed as `held`, the checker's
+rules, each of its exemptions taken away, and five more faults in the fold and the
+ledger to try the checker's rules against. 47 were caught by the tests as they
+stood, and three more by tests added for them: a guard and a correction past the
+last place, a frozen reservation after a reset, and the newest epoch lost with the
+turn its reset took. Two were of an exemption that excused nothing, which was taken
+out (a dispatch under a reservation other hands touched, above). The 12 that are left
+each make an assertion of the checker looser, which no test can catch while the model
+is right. Six of them were shown to matter by a fault put in the model beside them,
+which the generated suites catch with the checker as it is and no longer catch with
+the looser one: the excuse for an epoch (two), the allowance (three), and the second
+reading of a reservation's names. For the other six no such fault was found among
+those tried: a later epoch made without its guard held to nothing, a first loss held
+to lower nothing, a late dispatch and a late admission excused after anything other
+hands did, a reservation released after it was interrupted, and a settlement's name
+made again.
 
 ## Consequences
 

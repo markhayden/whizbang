@@ -2356,8 +2356,8 @@ impl Books {
             .map(|(run, live)| (*run, live.clone()))
             .collect();
         let (_, judged, plain) = event.plain();
-        // The reservation a dispatch draws on: what is really left of it, whether a
-        // closing names it, and whether other hands touched it.
+        // The reservation a dispatch draws on: what is really left of it, and
+        // whether a closing names it.
         let drawn = match plain {
             Event::Dispatch { by, .. } => books.open(*by).map(|live| live.root),
             _ => None,
@@ -2369,7 +2369,6 @@ impl Books {
         let is_closing =
             |name: &&Name| matches!(name, Name::Closed { run, .. } if Some(*run) == drawn);
         let closing = books.names.iter().find(is_closing).cloned();
-        let believed = drawn.is_some_and(|root| books.touched(root) && books.believable(root));
         // Whether this is the first thing other hands do to the reservation a name
         // that is lost belongs to.
         let first = match plain {
@@ -2459,24 +2458,22 @@ impl Books {
                 return Err(broke("more can be reserved than before".into()));
             }
         }
-        // Limit (e): a dispatch judged before other hands acted is published all
-        // the same, where it was its reservation they touched.
-        let excused = unseen && drawn.is_some_and(|root| books.touched(root));
         if let Event::Dispatch { micros, .. } = plain
             && done
-            && !excused
         {
             // No dispatch is published once a closing names its reservation,
-            // whenever it was judged.
-            if let Some(closing) = closing {
+            // whenever it was judged. Limit (e): one judged before other hands
+            // acted is published all the same, where it was its reservation they
+            // touched.
+            let excused = unseen && drawn.is_some_and(|root| books.touched(root));
+            if let Some(closing) = closing.filter(|_| !excused) {
                 return Err(broke(format!("dispatched after {closing}")));
             }
-            // And none that what was really reserved does not really cover, unless
-            // other hands touched the reservation's names and both readings take
-            // them: believed, as its count is (limit (a), or (d) where names are
-            // only lost).
+            // And none that what was really reserved does not really cover,
+            // whatever the names say and whoever made them: a run's allowance, in
+            // the memory of its process, holds it.
             let room = room.unwrap_or(0);
-            if u128::from(*micros) > room && !believed {
+            if u128::from(*micros) > room {
                 return Err(broke(format!("dispatched, and really {room} was left")));
             }
         }
@@ -2486,15 +2483,14 @@ impl Books {
         // Limit (e): an admission judged before other hands acted is published all
         // the same; after it nothing more is admitted in the epoch it fell under,
         // which has nothing left or is no longer the newest.
-        let fell = match plain {
-            Event::Admit { run, .. } => after.reservations.get(run).and_then(|one| one.epoch),
-            _ => None,
+        let fell = |run: &Run| {
+            let under = after.reservations.get(run).and_then(|one| one.epoch);
+            after.balance_of(under.unwrap_or(before.epoch()))
         };
-        let fell = after.balance_of(fell.unwrap_or(before.epoch()));
-        let excused = unseen && (fell.left == 0 || fell.epoch != after.epoch());
-        if let Event::Admit { micros, .. } = plain
+        let excused = |fell: Balance| unseen && (fell.left == 0 || fell.epoch != after.epoch());
+        if let Event::Admit { run, micros } = plain
             && done
-            && !excused
+            && !excused(fell(run))
         {
             if let Some(really) = really_left.filter(|really| u128::from(*micros) > *really) {
                 return Err(broke(format!("admitted, and really {really} was left")));

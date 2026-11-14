@@ -1129,6 +1129,17 @@ fn what_the_ledger_could_not_have_written_is_frozen_at_the_most_it_can_mean() {
     assert_eq!(with(&[dispatched(2, 3)]), (0, 7, 17));
     // A place that nothing is at: the amount once more.
     assert_eq!(with(&[place(2)]), (0, 4, 24));
+    // A guard, and a correction, two past the last place: the amount for each
+    // number up to it that holds no dispatch.
+    assert_eq!(with(&[guard(3)]), (0, 4, 34));
+    let correction = Name::Adjusted {
+        run,
+        place: 3,
+        turn: 1,
+        seal: 0,
+        micros: 0,
+    };
+    assert_eq!(with(&[correction]), (0, 4, 34));
     // A hold of more is the amount.
     assert_eq!(with(&[held(25)]), (0, 4, 29));
     // Both closings, each with a place.
@@ -2015,6 +2026,24 @@ fn known_a_loss_that_leaves_what_the_ledger_could_have_written_is_believed() {
     let mut lost = events.to_vec();
     lost.extend(settlement.iter().cloned().map(Event::Remove));
     assert!(run_checked(&lost).unwrap().0.balance().needs_owner);
+    // The newest reset with its guard: the epoch before it is the newest again, and
+    // needs its owner for the turn the reset took in it. With that turn lost too,
+    // the books are those of before the reset, and are believed.
+    let mut lost = vec![reset(30), admit(1, 10), reset(50)];
+    lost.extend([
+        Event::Remove(Name::Reset {
+            epoch: 2,
+            micros: 50,
+        }),
+        Event::Remove(Name::Epoch(2)),
+    ]);
+    let balance = run_checked(&lost).unwrap().0.balance();
+    assert_eq!((balance.epoch, balance.left), (1, 0));
+    assert!(balance.needs_owner);
+    lost.push(Event::Remove(Name::Turn { epoch: 1, turn: 2 }));
+    let balance = run_checked(&lost).unwrap().0.balance();
+    assert_eq!((balance.epoch, balance.allowed, balance.left), (1, 30, 20));
+    assert!(!balance.needs_owner);
 }
 
 #[test]
@@ -2066,6 +2095,56 @@ fn an_allowance_is_its_resets_only_with_the_guard_and_with_neither_damaged() {
     let (books, outcomes) = run_checked(&[reset(30), more, lost, admit(1, 400)]).unwrap();
     assert_eq!(outcomes[3], Outcome::Done);
     assert_eq!((books.balance().allowed, books.balance().left), (500, 100));
+}
+
+#[test]
+fn a_reset_does_not_clear_a_frozen_reservation_and_its_owners_correction_does() {
+    // A reservation of 10, frozen by damage and closed by recovery, in the first
+    // epoch. The owner resets: it counts in the new epoch as in every other, the
+    // amount and the amount again for its closing's place, and nothing is admitted.
+    let run = Run(1);
+    let mut events = vec![
+        reset(10),
+        admit(1, 10),
+        Event::Crash,
+        Event::Damage(Name::Reservation(run)),
+        Event::Recover,
+        reset(20),
+        admit(2, 1),
+    ];
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[6], Outcome::Refused(Why::NeedsOwner));
+    let one = books.reservation(run).unwrap();
+    assert_eq!(
+        (one.state, one.epoch, one.counts),
+        (State::Frozen, Some(1), 20)
+    );
+    let balance = books.balance();
+    assert_eq!(
+        (
+            balance.epoch,
+            balance.allowed,
+            balance.counted,
+            balance.left
+        ),
+        (2, 20, 20, 0)
+    );
+    assert!(balance.needs_owner);
+    // A second reset changes nothing of that.
+    events.extend([reset(40), admit(2, 1)]);
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[8], Outcome::Refused(Why::NeedsOwner));
+    assert_eq!((books.balance().counted, books.balance().left), (20, 0));
+    // The owner's correction of that reservation does: it falls under the epoch of
+    // its hold again, and the newest has its whole allowance.
+    events.extend([Event::Adjust { run, micros: 4 }, admit(2, 1)]);
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[9..], [Outcome::Done, Outcome::Done]);
+    let one = books.reservation(run).unwrap();
+    assert_eq!((one.state, one.counts), (State::Adjusted, 4));
+    let balance = books.balance();
+    assert_eq!((balance.counted, balance.left), (1, 39));
+    assert!(!balance.needs_owner);
 }
 
 #[test]
