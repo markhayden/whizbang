@@ -56,6 +56,15 @@ git config --unset core.hooksPath
 printf '[core]\n\thooksPath = %s\n' "$tmp/other-hooks" >"$tmp/user-config"
 expect_fail "setup with core.hooksPath set by the user" "hook problem: core.hooksPath is set" \
   env GIT_CONFIG_GLOBAL="$tmp/user-config" scripts/setup.sh
+grep -q -F "hooks installed in the repository's hooks folder" "$tmp/out" && { cat "$tmp/out" >&2; fail "setup does not say the hooks are installed while core.hooksPath sends git elsewhere"; }
+# With the setting of an earlier setup in this repo as well: taking it away would leave
+# the user's in effect and no hook of this repo run at all. It is kept, and setup fails.
+git config core.hooksPath scripts/hooks
+expect_fail "setup with the old setting here and another set by the user" "The setting of an earlier setup is kept" \
+  env GIT_CONFIG_GLOBAL="$tmp/user-config" scripts/setup.sh
+[ "$(git config --local --get core.hooksPath)" = scripts/hooks ] || fail "the old setting stays while the user's would take its place"
+[ "$(env GIT_CONFIG_GLOBAL="$tmp/user-config" git config --get core.hooksPath)" = scripts/hooks ] || fail "git still looks in scripts/hooks, as before the setup that failed"
+grep -q -F "hooks installed in the repository's hooks folder" "$tmp/out" && { cat "$tmp/out" >&2; fail "setup does not say the hooks are installed when it kept the old setting"; }
 expect_pass "setup once the setting is gone" scripts/setup.sh
 
 # An installation that fails leaves the clone as it was and says that it failed: the old
@@ -87,6 +96,33 @@ else
   git config core.hooksPath scripts/hooks
 fi
 chmod 755 .git/hooks
+# Two of the three in place is not an installation either: the old setting stays.
+git config core.hooksPath scripts/hooks
+mkdir .git/hooks/commit-msg
+expect_fail "setup with one hook that cannot be installed" "the hooks are NOT installed (2 of 3 are in place)" scripts/setup.sh
+[ "$(git config --get core.hooksPath)" = scripts/hooks ] || fail "the old setting stays with two of three installed"
+rmdir .git/hooks/commit-msg
+# The copy is made executable, whatever the file it is copied from is, and held to it and
+# to its content: stand-ins for chmod and for cp that do less than asked are found out.
+chmod -x scripts/hook-dispatch.sh
+expect_pass "setup from a dispatch script that is not executable" scripts/setup.sh
+for hook in pre-commit commit-msg pre-push; do
+  [ -x ".git/hooks/$hook" ] || fail "the installed $hook can be run though its source could not"
+done
+mkdir "$tmp/less"
+printf '%s\n' '#!/bin/sh' 'exit 0' >"$tmp/less/chmod"
+chmod +x "$tmp/less/chmod"
+rm -f .git/hooks/pre-commit .git/hooks/commit-msg .git/hooks/pre-push
+expect_fail "setup when the copies cannot be made executable" "hook problem: pre-push could not be installed" \
+  env PATH="$tmp/less:$PATH" scripts/setup.sh
+rm "$tmp/less/chmod"
+chmod +x scripts/hook-dispatch.sh
+real_cp=$(command -v cp)
+printf '%s\n' '#!/bin/sh' "\"$real_cp\" \"\$@\" || exit 1" 'for last; do :; done' 'echo "# one line more" >>"$last"' >"$tmp/less/cp"
+chmod +x "$tmp/less/cp"
+expect_fail "setup when a copy is not what was copied" "hook problem: pre-push could not be installed" \
+  env PATH="$tmp/less:$PATH" scripts/setup.sh
+rm "$tmp/less/cp"
 expect_pass "setup once the folder can be written" scripts/setup.sh
 [ "$(installed_hooks)" = 3 ] || fail "the three hooks are installed"
 [ -z "$(git config --get core.hooksPath || true)" ] || fail "the old setting is gone once the hooks are installed"
@@ -100,6 +136,41 @@ cmp -s "$root/scripts/hooks/pre-push" scripts/hooks/pre-push || fail "setup does
 [ ! -L .git/hooks/pre-push ] || fail "setup replaces the link with the hook"
 [ "$(installed_hooks)" = 3 ] || fail "the three hooks are installed where a link was"
 grep -q -F "replaced what was at pre-push in the repository's hooks folder" "$tmp/out" || { cat "$tmp/out" >&2; fail "setup says that it replaced the link"; }
+# A link to a folder is replaced too: the copy does not go into the folder.
+rm .git/hooks/pre-commit
+mkdir "$tmp/a-folder"
+ln -s "$tmp/a-folder" .git/hooks/pre-commit
+expect_pass "setup with a link to a folder where a hook goes" scripts/setup.sh
+[ ! -L .git/hooks/pre-commit ] && [ -f .git/hooks/pre-commit ] || fail "setup replaces a link to a folder with the hook"
+[ -z "$(ls -A "$tmp/a-folder")" ] || fail "setup writes nothing into the folder a link led to"
+[ "$(installed_hooks)" = 3 ] || fail "the three hooks are installed where a link to a folder was"
+# A link to the dispatch script itself reads the same and is still not the hook: git
+# would run whatever the link came to lead to.
+rm .git/hooks/commit-msg
+ln -s ../../scripts/hook-dispatch.sh .git/hooks/commit-msg
+expect_pass "setup with a link to the dispatch script" scripts/setup.sh
+[ ! -L .git/hooks/commit-msg ] || fail "a link is never this repo's hook: setup replaces it"
+grep -q -F "replaced what was at commit-msg" "$tmp/out" || { cat "$tmp/out" >&2; fail "setup says that it replaced the link to the dispatch script"; }
+cmp -s "$root/scripts/hook-dispatch.sh" scripts/hook-dispatch.sh || fail "setup does not write through a link to the dispatch script"
+# An earlier copy of this repo's own hook is updated, and not called a hook of the user's.
+marker='# What `just setup` installs as each git hook: this file, copied under the hook'"'"'s name'
+grep -q -x -F -e "$marker" "$root/scripts/hook-dispatch.sh" || fail "the dispatch script holds the line setup knows its copies by"
+{ cat "$root/scripts/hook-dispatch.sh"; echo "# as an earlier version had it"; } >.git/hooks/pre-push
+expect_pass "setup over an earlier copy of this repo's hook" scripts/setup.sh
+grep -q -F "setup: updated pre-push in the repository's hooks folder" "$tmp/out" || { cat "$tmp/out" >&2; fail "setup says that it updated its own earlier copy"; }
+grep -q -F "replaced what was at pre-push" "$tmp/out" && { cat "$tmp/out" >&2; fail "setup does not call its own earlier copy a hook of the user's"; }
+[ "$(installed_hooks)" = 3 ] || fail "the earlier copy is replaced by this one"
+# Setup run from a linked worktree installs into the hooks folder every worktree shares.
+# (A worktree needs a commit to start from.)
+git commit -q --allow-empty --no-verify -m "docs: a start"
+git worktree add -q "$tmp/setup-from-here" -b setup-from-here
+mkdir -p "$tmp/setup-from-here/scripts"
+cp -R scripts/hooks scripts/setup.sh scripts/hook-dispatch.sh scripts/tool-versions.txt "$tmp/setup-from-here/scripts/"
+rm -f .git/hooks/pre-commit .git/hooks/commit-msg .git/hooks/pre-push
+(cd "$tmp/setup-from-here" && expect_pass "setup from a linked worktree" scripts/setup.sh)
+[ "$(installed_hooks)" = 3 ] || fail "setup from a linked worktree installs into the shared hooks folder"
+git worktree remove --force "$tmp/setup-from-here"
+git branch -q -D setup-from-here
 # A hook of the user's own under one of the three names is replaced, and setup says so.
 printf '%s\n' '#!/bin/sh' 'echo "a hook of my own"' >.git/hooks/commit-msg
 chmod +x .git/hooks/commit-msg

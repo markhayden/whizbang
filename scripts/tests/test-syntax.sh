@@ -310,12 +310,39 @@ check_form() { # <file>: prints what is wrong with its form, if anything
   [ "$(tail -n 1 "$f")" = "$last_line" ] || echo "$f: the last line is not: $last_line"
   [ "$(grep -c -F -e 'main "$@"' "$f")" = 1 ] || echo "$f calls main in more than one place"
   [ "$(sed -n "$((lines - 1))p" "$f")" = "}" ] || echo "$f: the line before the last is not the } that ends main"
-  sed -n "2,$((start - 1))p" "$f" | grep -v -E -e '^(#|[[:space:]]*$)' |
-    grep -v -E -e '^"\$BASH" -n "\$\{BASH_SOURCE\[0\]\}" \|\| \{ echo "[a-z -]+: \$\{BASH_SOURCE\[0\]\} has a syntax error; refusing to run" >&2; exit 2; \}$' >"$tmp/before-main" || true
+  # What stands between the first line and main, when anything does.
+  : >"$tmp/before-main"
+  if [ "$start" -gt 2 ]; then
+    sed -n "2,$((start - 1))p" "$f" | grep -v -E -e '^(#|[[:space:]]*$)' |
+      grep -v -E -e '^"\$BASH" -n "\$\{BASH_SOURCE\[0\]\}" \|\| \{ echo "[a-z -]+: \$\{BASH_SOURCE\[0\]\} has a syntax error; refusing to run" >&2; exit 2; \}$' >"$tmp/before-main" || true
+  fi
   [ ! -s "$tmp/before-main" ] || echo "$f has a command before main that is not the line that parses the file"
   [ "$lines" -gt $((start + 2)) ] || { echo "$f: main is empty"; return 0; }
   sed -n "$((start + 1)),$((lines - 2))p" "$f" >"$tmp/body"
   "$BASH" -n "$tmp/body" 2>/dev/null || echo "$f: what is between main() { and the last } is not whole by itself: main ends early, or a command stands outside it"
+  # A return at the level of main would end the script by its last line with whatever
+  # status the return gave, past the lines that were to follow. Inside a function of the
+  # script it is that function's: a function starts at a line `name() {`, at the margin or
+  # indented, and ends at a `}` with the same indent, or is one line. Text between single
+  # quotes that runs over lines (an awk or perl program) is not the script's: a line with
+  # an odd number of single quotes opens or closes it. This reads the text, not the
+  # program: quoting it does not follow can hide a return, or show one that is not there.
+  awk '
+    function quotes(line,   n) { n = gsub(/\047/, "", line); return n % 2 }
+    /^[[:space:]]*#/ && !quoted { next }
+    {
+      was = quoted
+      if (quotes($0)) quoted = !quoted
+      if (was) next
+    }
+    inside { if ($0 == ends) inside = 0; next }
+    /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*\(\) \{/ {
+      if ($0 !~ /\}[[:space:]]*(#.*)?$/) { match($0, /^[[:space:]]*/); ends = substr($0, 1, RLENGTH) "}"; inside = 1 }
+      next
+    }
+    /(^|[[:space:];&|{(])return([[:space:];]|$)/ { found = 1 }
+    END { exit !found }' "$tmp/body" && echo "$f has a return at the level of main"
+  return 0
 }
 # programs <folder>: the shell scripts under it that are run as programs: those with a
 # first line that names a shell, but for the tests.
@@ -327,43 +354,76 @@ programs() {
     case "$first" in '#!'*sh | '#!'*sh' '*) printf '%s\n' "$f" ;; esac
   done < <(find "$1" -type f ! -path "$1/tests/*" -print0)
 }
+# unnamed_shell <folder>: the files under it that should be programs and have no first
+# line that names a shell, so that nothing would hold them to the form: any file among
+# the hooks, whatever its name, and any file named as a shell script, but for the tests.
+unnamed_shell() {
+  local f first
+  while IFS= read -r -d '' f; do
+    first=
+    IFS= read -r first <"$f" || true
+    case "$first" in '#!'*sh | '#!'*sh' '*) ;; *) printf '%s\n' "$f" ;; esac
+  done < <(find "$1" -type f ! -path "$1/tests/*" \( -path "$1/hooks/*" -o -name '*.sh' -o -name '*.bash' \) -print0)
+}
 programs scripts >"$tmp/programs"
 [ "$(wc -l <"$tmp/programs" | tr -d ' ')" -ge 15 ] || fail "the scripts and the hooks are found (at least 15 programs under scripts/)"
 for name in scan.sh heavy.sh thread-guard.sh worktree.sh docs.sh setup.sh hook-dispatch.sh hooks/pre-push hooks/commit-msg hooks/pre-commit; do
-  grep -q -x -F -e "scripts/$name" "$tmp/programs" || fail "scripts/$name is one of the programs held to the form"
+  grep -x -F -e "scripts/$name" "$tmp/programs" >/dev/null || fail "scripts/$name is one of the programs held to the form"
 done
+# The runner of these tests is held to it too: its last lines are read after every test
+# has run, which is when a file is most likely to have changed under it.
+echo "scripts/tests/run.sh" >>"$tmp/programs"
 while IFS= read -r f; do
   problems=$(check_form "$f")
   [ -z "$problems" ] || fail "$problems (see the comment above main in scripts/scan.sh)"
 done <"$tmp/programs"
-# A script with no first line that names a shell would not be held to it: there is none.
-while IFS= read -r -d '' f; do
-  IFS= read -r first <"$f" || true
-  case "$first" in '#!'*) ;; *) fail "$f is a script with no first line that names its shell, so nothing holds it to the form" ;; esac
-done < <(find scripts -type f -name '*.sh' ! -path 'scripts/tests/*' -print0)
-# The rule itself, on forms that break it.
+found=$(unnamed_shell scripts)
+[ -z "$found" ] || fail "a script or a hook with no first line that names its shell, so nothing holds it to the form: $found"
+# The rule itself, on forms that break it. Each planted form breaks it in the ways named
+# and in no other: the lines it prints are counted.
 mkdir "$tmp/form"
-form_case() { # <name> <expected> <line...>
-  local name=$1 expected=$2
-  shift 2
+form_case() { # <name> <lines expected> <expected text> <line...>
+  local name=$1 count=$2 expected=$3 got
+  shift 3
   printf '%s\n' "$@" >"$tmp/form/$name.sh"
-  case "$(check_form "$tmp/form/$name.sh")" in
+  got=$(check_form "$tmp/form/$name.sh")
+  case "$got" in
     *"$expected"*) ;;
-    *) check_form "$tmp/form/$name.sh" >&2; fail "the form rule, $name: expected: $expected" ;;
+    *) printf '%s\n' "$got" >&2; fail "the form rule, $name: expected: $expected" ;;
   esac
+  [ "$(printf '%s\n' "$got" | grep -c .)" = "$count" ] || { printf '%s\n' "$got" >&2; fail "the form rule, $name: expected $count problems and no other"; }
 }
 guard='"$BASH" -n "${BASH_SOURCE[0]}" || { echo "a tool: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }'
-printf '%s\n' '#!/usr/bin/env bash' '# a comment' '' "$guard" '# another' 'main() {' 'set -euo pipefail' 'f() {' '  echo f' '}' 'f' '}' "$last_line" >"$tmp/form/good.sh"
+top=('#!/usr/bin/env bash' '# a comment' '')
+printf '%s\n' "${top[@]}" "$guard" '# another' 'main() {' 'set -euo pipefail' 'f() {' '  echo f' '  return 0' '}' 'g() { return 1; }' 'f' 'if g; then' '  echo g' 'fi' '}' "$last_line" >"$tmp/form/good.sh"
 [ -z "$(check_form "$tmp/form/good.sh")" ] || { check_form "$tmp/form/good.sh" >&2; fail "the form rule passes a script of the form"; }
-form_case no-main "has no line: main() {" '#!/usr/bin/env bash' 'echo x'
-form_case before "has a command before main" '#!/usr/bin/env bash' 'set -euo pipefail' 'main() {' 'echo x' '}' "$last_line"
-form_case other-guard "has a command before main" '#!/usr/bin/env bash' '"$BASH" -n "${BASH_SOURCE[0]}" || echo "went on"' 'main() {' 'echo x' '}' "$last_line"
-form_case after "the last line is not" '#!/usr/bin/env bash' 'main() {' 'echo x' '}' "$last_line" 'echo after'
-form_case no-exit "the last line is not" '#!/usr/bin/env bash' 'main() {' 'echo x' '}' 'main "$@"'
-form_case two-lines "the last line is not" '#!/usr/bin/env bash' 'main() {' 'echo x' '}' 'main "$@"' 'exit'
-form_case outside "is not whole by itself" '#!/usr/bin/env bash' 'main() {' 'echo x' '}' 'echo outside' 'g() {' 'echo g' '}' "$last_line"
-form_case called-twice "calls main in more than one place" '#!/usr/bin/env bash' 'main() {' 'echo x' '}' 'main "$@"' 'g() {' 'echo g' '}' "$last_line"
-form_case empty "main is empty" '#!/usr/bin/env bash' 'main() {' '}' "$last_line"
+# With main on the second line, nothing stands before it.
+printf '%s\n' '#!/usr/bin/env bash' 'main() {' 'echo x' '}' "$last_line" >"$tmp/form/second-line.sh"
+[ -z "$(check_form "$tmp/form/second-line.sh")" ] || { check_form "$tmp/form/second-line.sh" >&2; fail "the form rule passes a script whose main is on its second line"; }
+form_case no-main 1 "has no line: main() {" "${top[@]}" 'echo x'
+form_case before 1 "has a command before main" "${top[@]}" 'set -euo pipefail' 'main() {' 'echo x' '}' "$last_line"
+form_case other-guard 1 "has a command before main" "${top[@]}" '"$BASH" -n "${BASH_SOURCE[0]}" || echo "went on"' 'main() {' 'echo x' '}' "$last_line"
+form_case no-exit 1 "the last line is not" "${top[@]}" 'main() {' 'echo x' '}' 'main "$@"'
+form_case outside 1 "is not whole by itself" "${top[@]}" 'main() {' 'echo x' '}' 'echo outside' 'g() {' 'echo g' '}' "$last_line"
+form_case empty 1 "main is empty" "${top[@]}" 'main() {' '}' "$last_line"
+form_case twice 1 "has more than one line: main() {" "${top[@]}" 'main() {' 'echo x' 'main() {' 'echo y' '}' '}' "$last_line"
+form_case return 1 "has a return at the level of main" "${top[@]}" 'main() {' 'echo x' 'return 0' 'echo y' '}' "$last_line"
+form_case return-inside 1 "has a return at the level of main" "${top[@]}" 'main() {' 'f() {' '  return 0' '}' 'if f; then' '  return 3' 'fi' '}' "$last_line"
+# A command after the last line, and the call and the exit on two lines, each move the
+# last line, the line before it and the end of main at once: three problems, all meant.
+form_case after 3 "the last line is not" "${top[@]}" 'main() {' 'echo x' '}' "$last_line" 'echo after'
+form_case two-lines 3 "the last line is not" "${top[@]}" 'main() {' 'echo x' '}' 'main "$@"' 'exit'
+# A second call of main stands outside it: two problems.
+form_case called-twice 2 "calls main in more than one place" "${top[@]}" 'main() {' 'echo x' '}' 'main "$@"' 'g() {' 'echo g' '}' "$last_line"
+# A hook, or a file named as a script, with no first line that names a shell is found.
+mkdir -p "$tmp/unnamed/hooks" "$tmp/unnamed/tests"
+printf '%s\n' '#!/usr/bin/env bash' 'main() {' 'echo x' '}' "$last_line" >"$tmp/unnamed/hooks/pre-push"
+printf '%s\n' 'echo "a hook with no first line"' >"$tmp/unnamed/hooks/post-merge"
+printf '%s\n' 'echo "a script with no first line"' >"$tmp/unnamed/tool.sh"
+printf '%s\n' 'echo "sourced by the tests"' >"$tmp/unnamed/tests/lib.sh"
+printf '%s\n' 'some notes' >"$tmp/unnamed/notes.txt"
+[ "$(unnamed_shell "$tmp/unnamed" | sort | tr '\n' ' ')" = "$tmp/unnamed/hooks/post-merge $tmp/unnamed/tool.sh " ] ||
+  { unnamed_shell "$tmp/unnamed" >&2; fail "a hook and a script with no first line that names a shell are found, and nothing else"; }
 
 # --- Every search with git's grep, anywhere under scripts/, runs on one thread: on several
 # it has lost matches at random on CI's macOS runner (the comment above `search` in

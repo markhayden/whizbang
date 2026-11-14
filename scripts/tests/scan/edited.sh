@@ -8,6 +8,7 @@
 # waits, at the first listing of the working tree, for a line from a pipe that only the
 # test writes to. By then the scan has read its arguments and its settings and has the
 # whole search still to do. The test changes the file, in place, and lets the scan go on.
+# What the test waits for is the stand-in's note that it is there, for a limited time.
 source "$(dirname "$0")/common.sh"
 
 real_git=$(command -v git)
@@ -43,10 +44,24 @@ edited_run() {
   mkfifo "$tmp/barrier"
   env -u WHIZBANG_WORDLIST PATH="$tmp/gitbin:$PATH" BARRIER="$tmp/barrier" bash "$here" --secrets-only >"$tmp/out" 2>&1 &
   local pid=$!
-  # Opening the pipe to write waits until the stand-in has opened it to read: the scan is
-  # then at the barrier.
-  exec 3>"$tmp/barrier"
-  [ -e "$tmp/barrier.reached" ] || fail "$how: the scan reached the barrier"
+  # The pipe is opened to read and to write, which does not wait: a scan that ended before
+  # the barrier would otherwise leave this test waiting for ever. The stand-in notes that
+  # it is at the barrier before it reads from the pipe, and waits there for the line this
+  # test writes once the file is changed. The wait for that note is the only one here
+  # with a clock, and the clock is its limit: 60 seconds, 600 looks, then a failure.
+  exec 3<>"$tmp/barrier"
+  local looks=0
+  until [ -e "$tmp/barrier.reached" ]; do
+    looks=$((looks + 1))
+    if [ "$looks" -gt 600 ] || ! kill -0 "$pid" 2>/dev/null; then
+      exec 3>&-
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      cat "$tmp/out" >&2
+      fail "$how: the scan did not reach the barrier (it ended, or 60 seconds passed)"
+    fi
+    sleep 0.1
+  done
   case "$how" in
     untouched) ;;
     emptied) : >"$here" ;;
