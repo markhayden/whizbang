@@ -4,6 +4,13 @@ Status: accepted. Changes ADR 0006 ("Declarations and features": a declaration m
 who receives its backend's requests) and ADR 0010 (what a roster answers for a backend
 that states no price)
 Date: 2026-11-13
+Amended: 2026-11-14, after the review of its pull request, before it merged. Changed: a
+host that is a number is four plain decimal parts or is refused, and the sentence that
+said a host is one host however it was typed; a secret is looked for again in the
+origin as it is written, after the host is lowered; a query follows a path; a
+credential's constructor is told the secrets; a recipient's upstreams are kept in one
+order, and equality does not depend on the order they were given in; what a sink's
+"no" means. Added: "For later tasks"; a limit on the rest of an address, pinned.
 Amended: 2026-11-14, with task B3. Added: "The fakes".
 Spec: section 4, "Backends"; section 6, "Spend"; section 10, "Egress"
 
@@ -54,6 +61,15 @@ the executor's secrets, and **looks at the whole text for a secret before it par
 cuts or bounds it**: a text that holds one is refused as `NotAllowed::Secret`, whatever
 else is wrong with it, and nothing of it is shown
 (`ways_out::an_account_or_an_origin_that_holds_a_secret_is_refused_whole_and_not_shown`).
+Where a constructor changes the text, it looks again at what it made: an origin's host
+is lowered, so the origin as it is written is looked at too, and a secret that the
+lowering made is refused the same way
+(`ways_out::a_secret_that_lowering_a_host_makes_is_refused_and_not_shown`). No other
+constructor changes a text it keeps: an address's rest and an account are kept as they
+were given, and a credential's header and value are. A credential's constructor is told
+the secrets for its header's name, which is printed; its value is the secret, and is
+never printed
+(`ways_out::a_credential_is_told_the_secrets_and_its_header_holds_none`).
 A refusal is a `NotAllowed`: a kind and a sentence of fixed words. It never quotes the
 text that was refused, secret or not
 (`ways_out::a_refusal_of_an_address_shows_nothing_of_the_address`).
@@ -68,12 +84,22 @@ An `Origin` is a scheme, a host and a port, as squint's `same_origin` compared t
 - the scheme is `http` or `https`, in either case of its letters;
 - the host is a name of 253 characters at most, of labels of 1 to 63 letters, digits and
   hyphens, none starting or ending with a hyphen, separated by single dots. It is kept
-  in lower case, so a host is one host however it was typed. A dotted IPv4 address is
-  such a name;
+  in lower case, so a name is one host in either case of its letters;
+- **a host that is a number is written one way, or refused.** A client reads a host
+  whose last label is a number as an address in numbers, in any of many spellings:
+  `127.1`, `0x7f.1`, `2130706433` and `017700000001` are all the machine `127.0.0.1`,
+  and `00000127.0.0.1` is another machine than it looks. So a host whose last label is
+  a number (digits alone, or `0x` and hex digits or none) is taken only when the whole
+  host is exactly four decimal parts of 0 to 255, none with a leading zero. Every
+  other is refused as no host
+  (`ways_out::a_host_that_is_a_number_is_four_plain_parts_or_is_refused`);
 - the port is 1 to 65,535, written without a sign or a leading zero; with none written
   it is the scheme's own, 80 or 443, and `https://host` and `https://host:443` are one
   origin;
-- a path may follow, and is no part of the origin;
+- a path may follow, and is no part of the origin. The host and the port end at the
+  first `/` and nowhere else: a query written straight after the host is refused, in
+  an origin and in an address alike
+  (`ways_out::a_query_follows_a_path_and_never_the_host`);
 - an `@` anywhere, which is how a user and a password are written, is refused; so are a
   query (`?`) and a fragment (`#`).
 
@@ -101,7 +127,10 @@ and the upstreams it may forward to.**
   (`ways_out::a_recipient_is_an_origin_an_account_and_the_upstreams_it_may_forward_to`,
   `ways_out::a_recipients_upstreams_are_bounded_other_than_itself_and_named_once`).
 - Two recipients are equal when all three are. The same endpoint under another account
-  is another recipient.
+  is another recipient. **The upstreams are a set:** they are kept in the order of
+  their text, whatever order they were given in, so a recipient a config lists one
+  way and a backend declares another is one recipient
+  (`ways_out::a_recipient_is_the_same_recipient_in_whatever_order_its_upstreams_were_given`).
 - What `{:?}` prints of a recipient is its origin and its cut account, and nothing else:
   not its upstreams
   (`ways_out::what_is_printed_of_a_recipient_is_its_origin_and_a_cut_account_and_nothing_else`).
@@ -125,7 +154,8 @@ request's address (`NotAllowed::Elsewhere` otherwise): so a request to another o
 cannot be built with it, which is how "credentials are never forwarded to another
 origin" is held by the types
 (`ways_out::a_credential_is_bound_to_one_origin_and_is_never_printed`,
-`ways_out::what_is_sent_is_an_address_bounded_pieces_and_a_credential_of_its_own_origin`).
+`ways_out::what_is_sent_is_an_address_bounded_pieces_and_a_credential_of_its_own_origin`,
+`ways_out::a_credential_of_another_scheme_on_the_same_host_and_port_is_refused_by_each_request`).
 
 ### The four classes of data
 
@@ -178,7 +208,10 @@ reaching either is another request through the same interface.
   its own to the policy (task I5), not a class of data.
 - **A download's bytes go to a sink,** piece by piece, and the sink says whether to go
   on: the installer stops at the size its catalogue states and need not hold a file in
-  memory. A download and a probe are bounded by a cancellation signal; they are not
+  memory. **A sink's "no" means this:** the piece it answered no to was handed over,
+  so the sink has seen it and it is counted in `Downloaded::Bytes`; nothing is handed
+  over after it; and the download ends there as one that was answered, not as a
+  fault. The count a caller is given back is the count of what its sink was handed. A download and a probe are bounded by a cancellation signal; they are not
   part of a run. A send is part of a backend's request and is handed that request's
   `Bounds` (ADR 0006)
   (`ways_out::a_download_hands_its_bytes_to_a_sink_that_can_stop_it_and_a_probe_says_what_it_reached`,
@@ -282,7 +315,29 @@ with the task that first probes (E3).
 - **A secret is found only when the constructor was told of it.** A key in a path that
   the executor never heard of is kept in an address's rest, and is not printed.
 - **The rest of an address is not normalised.** `/a/../b` and `/b` are two addresses of
-  one origin. Only the origin is ever compared.
+  one origin. Only the origin is ever compared
+  (`ways_out::known_the_rest_of_an_address_is_not_normalised`).
+
+### For later tasks
+
+What this record leaves open on purpose, for the tasks that build on it. None of it is
+code here.
+
+- **Nothing at a handle knows a source image from a derived one.** A `Picture` has no
+  class, and the rule above puts the statement with whoever builds a piece. Tasks I3
+  and E2 decide who that is for a capability's request, before the test that a
+  recipient approved for prompts and not for source images is refused a source image.
+- **`Credential::expose` is public.** The types stop a credential being forwarded by
+  accident, not by intent: code that holds one can read its value and put it anywhere.
+  Task E3 keeps credentials inside the checked sender, and hands a backend none.
+- **A real client makes a redirect's `Address` itself,** from what a server sent, and
+  needs the executor's secrets to make it.
+- **`Sender::send` is given no recipient.** It is one request to one address. Task I5
+  builds a sender for each backend, which knows that backend's recipient and checks
+  each address against it.
+- **`Account::shown` shows four characters,** which may be the first four of a secret
+  when an account is one. An account that holds a secret the constructor was told of is
+  refused whole; one it was not told of is shown cut like any other.
 
 ## Consequences
 

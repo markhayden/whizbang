@@ -27,6 +27,21 @@ rm planted.txt
 commit_file "feat: a setting" settings.txt "x = $secret_value"
 expect_fail "a value from .env in a commit" "settings.txt:1 (the value of SOME_TOKEN in .env)" "$scan" --secrets-only --range "$first" HEAD
 quiet "$secret_value"
+# A .env that cannot be read is not a .env with nothing in it: the scan refuses, in the
+# working tree and over a range.
+chmod 000 .env
+if [ -r .env ]; then
+  echo "skip: an unreadable .env; this user can read a file with mode 000"
+else
+  expect_fail "a .env that cannot be read, in the working tree" "the local .env cannot be read" "$scan"
+  grep -a -q -e "secrets scan: clean" "$tmp/out" && { cat "$tmp/out" >&2; fail "with a .env that cannot be read, the tree is not reported clean"; }
+  expect_fail "a .env that cannot be read, over a range" "the local .env cannot be read" "$scan" --secrets-only --range "$first" HEAD
+fi
+chmod 600 .env
 rm .env
+# Outside any repository the scan refuses: it does not carry on in the folder it is in.
+mkdir "$tmp/nowhere"
+(cd "$tmp/nowhere" && expect_fail "the scan outside any repository" "not inside a repository" \
+  env GIT_CEILING_DIRECTORIES="$tmp" "$scan" --secrets-only)
 
 finished

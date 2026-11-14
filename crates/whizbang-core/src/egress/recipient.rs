@@ -63,7 +63,9 @@ fn parse(text: &str, secrets: &Secrets, query: bool) -> Result<(Origin, String),
         "https" => ("https", 443),
         _ => return Err(NotAllowed::Scheme),
     };
-    let end = after.find(['/', '?']).unwrap_or(after.len());
+    // The host and the port end at the first `/`, and nowhere else: a query follows a
+    // path, and one written straight after the host is no part of a host or a port.
+    let end = after.find('/').unwrap_or(after.len());
     let (authority, rest) = after.split_at(end);
     let (host, port) = match authority.split_once(':') {
         Some((host, port)) => (host, Some(port)),
@@ -78,7 +80,7 @@ fn parse(text: &str, secrets: &Secrets, query: bool) -> Result<(Origin, String),
             && !label.starts_with('-')
             && !label.ends_with('-')
     };
-    if host.len() > HOST_LIMIT || !host.split('.').all(label) {
+    if host.len() > HOST_LIMIT || !host.split('.').all(label) || !plainly_numbered(&host) {
         return Err(NotAllowed::Host);
     }
     let port = match port {
@@ -97,7 +99,35 @@ fn parse(text: &str, secrets: &Secrets, query: bool) -> Result<(Origin, String),
         }
     };
     let origin = Origin { scheme, host, port };
+    // The host was lowered, so the origin is not the text that was looked at: a
+    // secret that the lowering made is in what would be printed and compared. It is
+    // looked for again, in the origin as it is written.
+    if holds_secret(&origin.to_string(), secrets) {
+        return Err(NotAllowed::Secret);
+    }
     Ok((origin, rest.to_owned()))
+}
+
+/// Whether a host that ends in a number is one machine written the one way. A client
+/// reads a host whose last label is a number as an address in numbers, in whatever of
+/// many spellings it is given: `127.1`, `0x7f.1`, `2130706433` and `017700000001` are
+/// one machine, and `00000127.0.0.1` is another than it looks. So a host whose last
+/// label is a number (digits alone, or `0x` and hex digits or none) is taken only when
+/// the whole host is four decimal parts of 0 to 255, none with a leading zero. A host
+/// whose last label is no number is a name, and is as it is.
+fn plainly_numbered(host: &str) -> bool {
+    let last = host.rsplit('.').next().unwrap_or(host);
+    let hex = last.strip_prefix("0x");
+    let number = last.bytes().all(|b| b.is_ascii_digit())
+        || hex.is_some_and(|digits| digits.bytes().all(|b| b.is_ascii_hexdigit()));
+    if !number {
+        return true;
+    }
+    let part = |part: &str| {
+        let plain = part == "0" || !part.starts_with('0');
+        plain && part.len() <= 3 && part.parse::<u8>().is_ok()
+    };
+    host.split('.').count() == 4 && host.split('.').all(part)
 }
 
 /// A scheme, a host and a port: what two addresses share when a request to one may
@@ -116,8 +146,10 @@ impl Origin {
     /// `https`; its host is a name of letters, digits and hyphens in labels of 1 to
     /// 63, 253 characters at most, kept in lower case; its port is 1 to 65,535,
     /// written plainly, or the scheme's own when none is written. A path may follow
-    /// and is no part of the origin. Refused: an `@` anywhere, a query, a fragment,
-    /// and a text that holds a secret, which is looked for first.
+    /// and is no part of the origin. A host whose last label is a number is taken
+    /// only as four decimal parts of 0 to 255 written plainly. Refused: an `@`
+    /// anywhere, a query, a fragment, and a text that holds a secret, which is looked
+    /// for first in the text as given and again in the origin as it is written.
     pub fn of(address: &str, secrets: &Secrets) -> Result<Origin, NotAllowed> {
         parse(address, secrets, false).map(|(origin, _)| origin)
     }
@@ -167,8 +199,9 @@ pub struct Address {
 }
 
 impl Address {
-    /// The address, by the rules of [`Origin::of`], but that it may have a query. The
-    /// rest is kept as it was given and is not normalised: only origins are compared.
+    /// The address, by the rules of [`Origin::of`], but that it may have a query after
+    /// its path: one straight after the host is refused. The rest is kept as it was
+    /// given and is not normalised: only origins are compared.
     pub fn of(text: &str, secrets: &Secrets) -> Result<Address, NotAllowed> {
         parse(text, secrets, true).map(|(origin, rest)| Address { origin, rest })
     }
@@ -275,6 +308,10 @@ impl Recipient {
                 return Err(NotAllowed::Twice);
             }
         }
+        // Kept in one order, so that a recipient is the same recipient in whatever
+        // order its upstreams were given.
+        let mut upstreams = upstreams;
+        upstreams.sort_by_key(Origin::to_string);
         self.upstreams = upstreams;
         Ok(self)
     }
@@ -287,7 +324,7 @@ impl Recipient {
         self.account.as_ref()
     }
 
-    /// The origins it may forward to, in the order they were given.
+    /// The origins it may forward to, in the order of their text.
     pub fn upstreams(&self) -> &[Origin] {
         &self.upstreams
     }
@@ -321,9 +358,20 @@ pub struct Credential {
 
 impl Credential {
     /// A credential for this origin, carried in this header. The header's name is 1
-    /// to 64 ASCII letters, digits, `-` and `_`; the value is 1 to 4,096 bytes of
-    /// printable ASCII and spaces.
-    pub fn new(origin: Origin, header: &str, value: &str) -> Result<Credential, NotAllowed> {
+    /// to 64 ASCII letters, digits, `-` and `_`, and holds no secret the constructor
+    /// was told of; the value is 1 to 4,096 bytes of printable ASCII and spaces, and
+    /// is the secret: it is not looked at for one, and is never printed.
+    pub fn new(
+        origin: Origin,
+        header: &str,
+        value: &str,
+        secrets: &Secrets,
+    ) -> Result<Credential, NotAllowed> {
+        // The header's name is printed and the value never is. A key written where the
+        // name belongs is refused whole, before the name is judged, and not shown.
+        if holds_secret(header, secrets) {
+            return Err(NotAllowed::Secret);
+        }
         let named = |b: u8| b.is_ascii_alphanumeric() || b == b'-' || b == b'_';
         if header.is_empty() || header.len() > HEADER_LIMIT || !header.bytes().all(named) {
             return Err(NotAllowed::Name);
