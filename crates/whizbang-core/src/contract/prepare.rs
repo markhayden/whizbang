@@ -583,6 +583,72 @@ pub enum CallError {
     },
 }
 
+/// Why one that takes part in an admission, a part ([`super::AdmissionPart`]) or the
+/// ledger ([`super::Ledger`]), could not judge a call: the store failed, or a record
+/// of the store was not one this build reads, or a sentence of its own.
+///
+/// It holds nothing else. A refusal of the call is not a failure, and no other error
+/// of the executor's is a part's or a ledger's to give: any [`CallError`] turned into
+/// this keeps a failure of the store as it is and a record that was not read as that
+/// ([`CallError::Record`], which the ledger's step answers for a stored reservation),
+/// and is otherwise only what it says, as a sentence. The executor takes its secrets
+/// out of every sentence here, cuts it and looks for them once more, so no sentence
+/// that one who takes part hands back reaches a caller as it was given; and since
+/// what comes of it is never a refusal, it is returned without a second look for the
+/// request's id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotJudged(Why);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Why {
+    Store(StoreFailure),
+    Record { what: &'static str, why: String },
+    Said(String),
+}
+
+impl NotJudged {
+    /// A failure that says this: not redacted, not cut and not escaped until the
+    /// executor returns it.
+    pub fn saying(why: &str) -> NotJudged {
+        NotJudged(Why::Said(why.to_owned()))
+    }
+
+    /// The error a caller is given. The store's is as it is. Every sentence goes
+    /// through `clean` first: a record's stays a record's, and `said` makes the error
+    /// of any other.
+    pub(super) fn into_error(
+        self,
+        clean: impl Fn(&str) -> String,
+        said: impl FnOnce(String) -> CallError,
+    ) -> CallError {
+        match self.0 {
+            Why::Store(failure) => CallError::Store(failure),
+            Why::Record { what, why } => CallError::Record {
+                what,
+                why: clean(&why),
+            },
+            Why::Said(why) => said(clean(&why)),
+        }
+    }
+}
+
+impl From<StoreFailure> for NotJudged {
+    fn from(failure: StoreFailure) -> NotJudged {
+        NotJudged(Why::Store(failure))
+    }
+}
+
+impl From<CallError> for NotJudged {
+    fn from(error: CallError) -> NotJudged {
+        NotJudged(match error {
+            CallError::Store(failure) => Why::Store(failure),
+            CallError::Record { what, why } => Why::Record { what, why },
+            CallError::Ledger { why } | CallError::Part { why, .. } => Why::Said(why),
+            other => Why::Said(other.to_string()),
+        })
+    }
+}
+
 impl CallError {
     /// The same error, a failure of the store in it made without paths
     /// ([`StoreFailure::pathless`]). No other kind holds the store's own error.

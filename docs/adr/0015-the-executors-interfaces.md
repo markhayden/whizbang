@@ -5,6 +5,10 @@ admission's step; "A preparation handed to admission": a preparation carries the
 was made, and a request may carry a cap), and names ADR 0004 (`prepared/1` is as it
 was) and ADR 0013 (the kinds a record has for a refused call)
 Date: 2026-11-14
+Amended: 2026-11-14, after the review of task I1. Changed under "A part in the
+admission": what a part's failure may hold (`NotJudged`: a failure of the store, a
+record that was not read, or a sentence), that it is returned without a second look
+for the id, and that the ledger's failure holds the same; and a part that panics.
 Spec: section 3, "The execution contract"; section 6, "Spend"
 
 ## Context
@@ -93,6 +97,26 @@ A part then does one of three things.
   `CallError::Part`, with the part's name: not a refusal of the call, and nothing is
   published
   (`part::a_part_that_fails_is_not_a_refusal_of_the_call_and_nothing_is_published`).
+  **A failure holds a failure of the store, a record that was not read, or a
+  sentence, and nothing else** (`NotJudged`): the type has no place for a refusal or
+  for any other error of the executor's. Whatever error a part hands back is turned
+  into one: the store's stays the store's, a record's stays `CallError::Record`, and
+  any other, a refusal among them, is only what it says, returned as `CallError::Part`
+  under the name of the part that was asked. Every sentence has the executor's
+  secrets taken out, is cut at 512 characters and is looked through once more
+  (`part::whatever_a_part_fails_with_reaches_the_caller_as_the_parts_failure_with_no_secret_in_it`,
+  `part::a_store_failure_inside_a_part_reaches_the_caller_as_the_stores`). The
+  ledger's `Declined::Failed` holds the same type and is treated the same way, as
+  `CallError::Ledger`
+  (`admit::whatever_a_ledger_fails_with_reaches_the_caller_as_the_ledgers_failure_with_no_secret_in_it`,
+  `admit::a_store_failure_inside_a_ledger_reaches_the_caller_as_the_stores`).
+- **It panics.** The panic is its caller's: of whoever made the request, or, for a
+  call from inside an action, of that action, whose run ends as an error as after any
+  panic of an action. Either way the publication is dropped with what it staged: the
+  store is as it was and publishes for the next, nothing is reserved for the call,
+  and the same request is admitted afterwards
+  (`part::a_part_that_panics_leaves_the_store_as_it_was_and_the_same_request_is_admitted_after`,
+  `part::a_part_that_panics_at_a_call_from_inside_an_action_ends_that_run_and_leaves_no_other`).
 
 **A refusal of its own kind.** A part names itself, and its refusal carries that name:
 a caller tells the cap's refusal from another part's by `part`. It also carries a
@@ -112,6 +136,9 @@ admitted for another request. So for a request with an id the id is looked up on
 before the refusal is returned: an id that is taken by then answers, as a repeat or a
 conflict, and the refusal stands only when it is not
 (`part::a_refusal_by_a_part_is_a_refusal_after_the_look_so_the_id_is_looked_up_once_more`).
+A part's failure, like a ledger's, is returned without a second look for the id
+(`part::a_parts_failure_is_returned_without_a_second_look_for_the_id`,
+`admit::a_ledgers_failure_is_returned_without_a_second_look_for_the_id`).
 
 **A part's records.** `PartStep::put(name, bytes)` adds a record **among the names of
 the run the attempt makes**, as `admission/<name>` (`part_record_name`), stored as a
