@@ -216,7 +216,7 @@ fn echo_runs_through_the_executor_and_its_record_is_in_the_store() {
     assert_eq!(record.identity().run, finished.run().as_str());
     assert_eq!(record.identity().whizbang, WHIZBANG_VERSION);
     assert_eq!(record.outcome().status, Status::Completed);
-    assert_eq!(record.asked().config, Digest::of_bytes(b""));
+    assert_eq!(record.asked().config, Some(Digest::of_bytes(b"")));
     // Each diagnostic the record lists is what the run holds under that name.
     for diagnostic in record.diagnostics() {
         let (_, _, bytes) = held
@@ -302,7 +302,7 @@ fn a_failed_echo_writes_the_same_record_with_its_error_and_keeps_its_diagnostics
     // The record, by hand: the same shape, the error in its place, no output and no
     // completed status.
     let by_hand = concat!(
-        r#"{"record":"run/2","#,
+        r#"{"record":"run/3","#,
         r#""identity":{"run":"1000-1","request":null,"parent":null,"whizbang":"0.0.1"},"#,
         r#""asked":{"action":"echo","version":"1.0.0","#,
         r#""arguments":[{"name":"text","value":{"text":"hello"}},"#,
@@ -310,7 +310,7 @@ fn a_failed_echo_writes_the_same_record_with_its_error_and_keeps_its_diagnostics
         r#""config":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"#,
         r#""inputs":[],"outputs":[],"#,
         r#""outcome":{"status":"error","error":{"kind":"echo","message":"boom"},"#,
-        r#""invalid":null,"refusals":[],"refusals_omitted":0},"#,
+        r#""invalid":null,"refusals":[],"refusals_omitted":0,"lost":[]},"#,
         r#""time":{"start_ms":1000,"end_ms":1002,"durations":[]},"#,
         r#""models":[],"spend":{"reserved_micros":null,"requests":[]},"egress":[],"steps":[],"#,
         r#""judge":[],"#,

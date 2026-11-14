@@ -117,16 +117,23 @@ fn list(root: &Path) -> Result<String, String> {
     let mut text = format!("runs: {}\n", generation.runs().len());
     for id in generation.runs().keys() {
         let line = match record_of(&reader, &generation, id) {
-            Some(Ok(record)) => format!(
-                "{}\t{}\t{} {}\t{}\t{} ms{}",
-                shown(id),
-                record.outcome().status.name(),
-                shown(&record.asked().action),
-                shown(&record.asked().version),
-                utc(record.time().start_ms),
-                record.time().end_ms - record.time().start_ms,
-                called_by(record.identity().parent.as_deref())
-            ),
+            // What the record of a run a dead process left does not know is shown as
+            // unknown: its action, when its admission could not be read, and its start.
+            Some(Ok(record)) => {
+                let unknown = || "unknown".to_owned();
+                let (asked, time) = (record.asked(), record.time());
+                format!(
+                    "{}\t{}\t{} {}\t{}\t{}{}",
+                    shown(id),
+                    record.outcome().status.name(),
+                    asked.action.as_deref().map_or_else(unknown, shown),
+                    asked.version.as_deref().map_or_else(unknown, shown),
+                    time.start_ms.map_or_else(unknown, utc),
+                    time.start_ms
+                        .map_or_else(unknown, |start| format!("{} ms", time.end_ms - start)),
+                    called_by(record.identity().parent.as_deref())
+                )
+            }
             // A run is in the store from its admission, and has its record from its
             // end: one with an admission and no record was admitted and has not ended.
             Some(Err(StoredRecordError::NoRecord)) | None => {
@@ -328,10 +335,13 @@ fn text_of(record: &RunRecord) -> String {
     line(format!("request: {}", or_none(&identity.request)));
     line(format!("parent: {}", or_none(&identity.parent)));
     line(format!("whizbang: {}", shown(&identity.whizbang)));
+    // What the record of a run a dead process left does not know is shown as
+    // unknown (`outcome.lost` says which groups those are).
+    let unknown = || "unknown".to_owned();
     line(format!(
         "action: {} {}",
-        shown(&asked.action),
-        shown(&asked.version)
+        asked.action.as_deref().map_or_else(unknown, shown),
+        asked.version.as_deref().map_or_else(unknown, shown)
     ));
     line(format!("status: {}", outcome.status.name()));
     if let Some(error) = &outcome.error {
@@ -361,13 +371,20 @@ fn text_of(record: &RunRecord) -> String {
             outcome.refusals_omitted
         ));
     }
-    line(format!("started: {}", utc(time.start_ms)));
     line(format!(
-        "ended: {} ({} ms)",
-        utc(time.end_ms),
-        time.end_ms - time.start_ms
+        "started: {}",
+        time.start_ms.map_or_else(unknown, utc)
     ));
-    line(format!("config: {}", asked.config));
+    line(match time.start_ms {
+        Some(start) => format!("ended: {} ({} ms)", utc(time.end_ms), time.end_ms - start),
+        None => format!("ended: {}", utc(time.end_ms)),
+    });
+    line(format!(
+        "config: {}",
+        asked
+            .config
+            .map_or_else(unknown, |config| config.to_string())
+    ));
     line("settings: none".to_owned());
     line(format!("arguments: {}", count(asked.arguments.len())));
     for argument in &asked.arguments {

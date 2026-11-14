@@ -207,7 +207,7 @@ fn a_call_from_inside_an_action_is_a_run_of_its_own_under_the_run_that_made_it()
         let stored = record(&world, child);
         assert_eq!(stored.identity().parent.as_deref(), Some(parent.as_str()));
         assert_eq!(stored.identity().request, None);
-        assert_eq!(stored.asked().action, "inner");
+        assert_eq!(stored.asked().action.as_deref(), Some("inner"));
         assert_eq!(stored.outcome().status, Status::Completed);
         assert_eq!(stored.spend().reserved_micros, None);
         assert_eq!(stored.diagnostics().len(), 2);
@@ -335,7 +335,10 @@ fn a_fifth_level_is_refused_and_the_refusal_is_in_the_record_of_the_run_that_mad
     let all = records(&world);
     assert_eq!(all.len(), 4);
     let by_action = |name: &str| {
-        let found = all.values().flatten().find(|r| r.asked().action == name);
+        let found = all
+            .values()
+            .flatten()
+            .find(|r| r.asked().action.as_deref() == Some(name));
         found.unwrap_or_else(|| panic!("no run of {name}")).clone()
     };
     let mut above: Option<String> = None;
@@ -401,7 +404,7 @@ fn a_call_back_into_an_action_on_the_stack_is_refused_by_the_actions_name() {
     assert_eq!(all.len(), 3);
     for stored in all.values().flatten() {
         let kinds: Vec<_> = stored.outcome().refusals.iter().map(|r| r.kind()).collect();
-        if stored.asked().action == "inner" {
+        if stored.asked().action.as_deref() == Some("inner") {
             assert_eq!(kinds, [RefusalKind::CallBack, RefusalKind::CallBack]);
         } else {
             assert!(kinds.is_empty());
@@ -645,7 +648,7 @@ fn a_nested_call_draws_on_the_allowance_of_the_run_that_made_it_and_the_ledger_i
     for (id, stored) in &all {
         let stored = stored.as_ref().unwrap();
         let admitted = admission(&world, id);
-        let (taken, above) = match stored.asked().action.as_str() {
+        let (taken, above) = match stored.asked().action.as_deref().unwrap() {
             "outer" => (200, None),
             "inner" => (100, Some(parent.as_str())),
             _ => (100, stored.identity().parent.as_deref()),
@@ -654,7 +657,10 @@ fn a_nested_call_draws_on_the_allowance_of_the_run_that_made_it_and_the_ledger_i
         assert_eq!(admitted.reserved_micros(), Some(taken));
         assert_eq!(stored.identity().parent.as_deref(), above);
         assert_eq!(admitted.parent().map(RunId::as_str), above);
-        assert_eq!(above.is_some(), stored.asked().action != "outer");
+        assert_eq!(
+            above.is_some(),
+            stored.asked().action.as_deref() != Some("outer")
+        );
     }
     let stored = record(&world, &parent);
     let refusals = &stored.outcome().refusals;
@@ -811,7 +817,7 @@ fn cancelling_a_run_cancels_every_run_under_it_and_a_call_made_after_is_refused(
         assert_eq!(stored.outcome().status, Status::Cancelled, "{id}");
         let kinds: Vec<_> = stored.outcome().refusals.iter().map(|r| r.kind()).collect();
         let steps: Vec<_> = stored.steps().iter().map(|s| s.status()).collect();
-        match stored.asked().action.as_str() {
+        match stored.asked().action.as_deref().unwrap() {
             "leaf" => assert!(kinds.is_empty() && steps.is_empty()),
             "middle" => {
                 assert_eq!(kinds, [RefusalKind::Cancelled, RefusalKind::Cancelled]);
@@ -1737,14 +1743,14 @@ fn what_is_refused_inside_a_run_is_recorded_with_the_secrets_taken_out_and_withi
 /// one itself and had one call refused: by hand.
 fn nested() -> String {
     concat!(
-        r#"{"record":"run/2","#,
+        r#"{"record":"run/3","#,
         r#""identity":{"run":"1000-2","request":null,"parent":"1000-1","whizbang":"0.0.1"},"#,
         r#""asked":{"action":"inner","version":"1.0.0","arguments":[],"settings":[],"#,
         r#""config":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"#,
         r#""inputs":[],"outputs":[],"#,
         r#""outcome":{"status":"completed","error":null,"invalid":null,"#,
         r#""refusals":[{"action":"outer","kind":"call_back","why":"outer was not called"}],"#,
-        r#""refusals_omitted":0},"#,
+        r#""refusals_omitted":0,"lost":[]},"#,
         r#""time":{"start_ms":1000,"end_ms":1003,"durations":[]},"#,
         r#""models":[],"spend":{"reserved_micros":100,"requests":[]},"egress":[],"#,
         r#""steps":[{"step":"call","run":"1000-3","action":"leaf","status":"completed"},"#,
@@ -1756,7 +1762,7 @@ fn nested() -> String {
 }
 
 /// The fields of a record, in the order a record is written in.
-const ORDER: [&str; 37] = [
+const ORDER: [&str; 38] = [
     "record",
     "identity",
     "step",
@@ -1780,6 +1786,7 @@ const ORDER: [&str; 37] = [
     "kind",
     "why",
     "refusals_omitted",
+    "lost",
     "time",
     "start_ms",
     "end_ms",
@@ -1847,8 +1854,8 @@ fn a_record_with_a_parent_steps_and_refusals_is_read_and_written_back_as_the_sam
     validate(&schema(), &document).unwrap();
 
     // The kinds of refusal the schema lists are the kinds there are, in order.
-    let listed = &schema()["properties"]["outcome"]["properties"]["refusals"]["items"]["properties"]
-        ["kind"]["enum"];
+    let listed = &schema()["$defs"]["outcome"]["properties"]["refusals"]["items"]["properties"]["kind"]
+        ["enum"];
     let kinds: Vec<Json> = RefusalKind::ALL
         .iter()
         .map(|kind| serde_json::to_value(kind).unwrap())

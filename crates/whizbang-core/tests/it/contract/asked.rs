@@ -334,7 +334,10 @@ fn each_request_a_run_sends_is_in_its_record_with_its_model_how_long_it_took_and
         ]
     );
     for duration in durations {
-        assert!(duration.start_ms > record.time().start_ms, "{duration:?}");
+        assert!(
+            Some(duration.start_ms) > record.time().start_ms,
+            "{duration:?}"
+        );
         assert!(duration.ms >= 1, "{duration:?}");
         assert!(
             duration.start_ms + duration.ms <= record.time().end_ms,
@@ -396,7 +399,7 @@ fn the_bound_on_a_runs_requests_is_the_one_its_record_and_the_schema_hold() {
     // The seam only lowers the bound: an executor asked for more keeps the real one,
     // which is what the record's types and the schema refuse one more than.
     assert_eq!((REQUESTS_LIMIT, MODELS_LIMIT), (1024, 1024));
-    let limit = schema()["properties"]["models"]["maxItems"].as_u64();
+    let limit = schema()["$defs"]["models"]["maxItems"].as_u64();
     assert_eq!(limit, Some(REQUESTS_LIMIT as u64));
     let world = World::new();
     let judge = Arc::new(FakeJudge::scripted(Vec::new()));

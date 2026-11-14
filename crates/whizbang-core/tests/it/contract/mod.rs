@@ -17,6 +17,7 @@ mod fixtures;
 mod nested;
 mod prepare;
 mod record;
+mod record3;
 mod redact;
 mod registry;
 mod run;

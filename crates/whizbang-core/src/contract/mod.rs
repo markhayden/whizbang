@@ -69,8 +69,8 @@ pub use prepare::{
 };
 pub use record::{
     DIAGNOSTIC_NAME_LIMIT, DIAGNOSTICS_LIMIT, RECORD_MAX_BYTES, REFUSAL_WHY_LIMIT, REFUSALS_LIMIT,
-    RUN_RECORD, RUN_RECORD_SCHEMA, RecordError, RefusalKind, RunRecord, STEPS_LIMIT,
-    is_diagnostic_name,
+    RUN_2, RUN_2_SCHEMA, RUN_RECORD, RUN_RECORD_SCHEMA, RecordError, RefusalKind, RunRecord,
+    STEPS_LIMIT, is_diagnostic_name,
 };
 pub use redact::{REDACTED, SECRET_MIN_BYTES, SecretRefused, Secrets};
 pub use registry::{Action, Failure, Produced, RegistrationError, Registry, Verdict};

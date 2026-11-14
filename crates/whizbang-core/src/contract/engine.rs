@@ -18,8 +18,8 @@ use super::live::{self, LiveRun, Told};
 use super::nested::{Added, DESCENDANTS_LIMIT, Family, HeldOpen, Nested, Offer, Under};
 use super::prepare::prepare;
 use super::record::{
-    Diagnostic, Inside, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran, RunRecord,
-    StoredRecordError,
+    Diagnostic, Facts, Inside, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran,
+    RunRecord, StoredRecordError,
 };
 use super::request::{Found, look_up, outcome_of};
 use super::{
@@ -1312,6 +1312,9 @@ impl Engine {
                     end_ms,
                     diagnostics: kept.iter().map(|(d, _)| d.clone()).collect(),
                     inside: inside.clone(),
+                    // Nothing notes a setting, a paid request or a recipient yet: a
+                    // run's place for facts is the next task's.
+                    facts: Facts::none(),
                 },
                 &self.secrets,
             )

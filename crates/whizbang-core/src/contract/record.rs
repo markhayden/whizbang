@@ -1,14 +1,11 @@
 //! The run record (`SPEC.md` section 3, "What every run records"; ADR 0005): the one
 //! account of a run, written whatever its outcome, with a fixed, versioned shape.
 //!
-//! A record holds every group the spec lists. A group that nothing can fill yet is there
-//! and empty, and its type has no value: such a list cannot hold anything in `run/2`.
-//! Whatever first fills one writes a new version of the record, except that the fills
-//! made before checkpoint 1A is tagged share `run/2` (ADR 0005). Three of them are
-//! here: `spend` says what was reserved for the run when it was admitted; and, with
-//! nested calls (ADR 0008), `identity.parent` names the run that called this one,
-//! `steps` lists the runs it called, and `outcome.refusals` the calls it made that
-//! were refused.
+//! A record holds every group the spec lists. This build writes `run/3` (ADR 0013),
+//! which gives `asked.settings`, `spend.requests` and `egress` their elements, adds
+//! the refusals of a capability request, and adds `outcome.lost`: what the record of
+//! a run that a dead process left does not know. It reads `run/3`, and `run/2` as the
+//! tag `m1a` froze it (ADR 0005), in which those lists hold nothing.
 //!
 //! A record is written one way: as JSON on one line, its fields in the order of the
 //! types below, followed by a newline. It is read strictly: a field that is not known, a
@@ -18,7 +15,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::ArtifactType;
-use crate::capability::{Excluded, FaultKind, HowEnded, Logged, MODEL_NAME_LIMIT};
+use crate::capability::{Excluded, FaultKind, HowEnded, Logged, MODEL_NAME_LIMIT, Stage};
+use crate::egress::{Account, Classes, DataClass, Origin, Recipient};
 use crate::identity::Digest;
 use crate::store::{self, Entry, Generation, Kind};
 
@@ -28,11 +26,18 @@ use super::{
     text,
 };
 
-/// The record's kind, with its version.
-pub const RUN_RECORD: &str = "run/2";
+/// The record's kind, with the version this build writes.
+pub const RUN_RECORD: &str = "run/3";
 
-/// The JSON Schema of a `run/2` record, as a document.
-pub const RUN_RECORD_SCHEMA: &str = include_str!("../../schemas/run-2.json");
+/// The JSON Schema of a `run/3` record, as a document.
+pub const RUN_RECORD_SCHEMA: &str = include_str!("../../schemas/run-3.json");
+
+/// The kind and version of the record checkpoint 1A wrote. It is still read, as the
+/// tag `m1a` froze it, and never written again.
+pub const RUN_2: &str = "run/2";
+
+/// The JSON Schema of a `run/2` record, as the tag `m1a` froze it.
+pub const RUN_2_SCHEMA: &str = include_str!("../../schemas/run-2.json");
 
 /// The most bytes a stored record may be: four mebibytes. A record is read whole and
 /// written again to be compared, so what is read is bounded before it is read.
@@ -148,11 +153,31 @@ pub enum RefusalKind {
     WaitCancelled,
     NotOffered,
     NotReadable,
+    /// A capability request to a backend that states no enforceable bound.
+    RequestNoBound,
+    /// A capability request whose bound is over what its run has left.
+    RequestOverAllowance,
+    /// A capability request to a recipient that is not approved for what it holds.
+    RequestNotApproved,
+    /// A capability request to a model that is not installed, or is being removed.
+    RequestNotReady,
 }
 
 impl RefusalKind {
+    /// Whether this is a refusal of a capability request that was not sent, which
+    /// names no action (ADR 0013), and not of a call.
+    pub fn is_of_a_request(self) -> bool {
+        matches!(
+            self,
+            RefusalKind::RequestNoBound
+                | RefusalKind::RequestOverAllowance
+                | RefusalKind::RequestNotApproved
+                | RefusalKind::RequestNotReady
+        )
+    }
+
     /// Every kind, in the order above.
-    pub const ALL: [RefusalKind; 27] = [
+    pub const ALL: [RefusalKind; 31] = [
         RefusalKind::UnknownAction,
         RefusalKind::Invalid,
         RefusalKind::Input,
@@ -180,6 +205,10 @@ impl RefusalKind {
         RefusalKind::WaitCancelled,
         RefusalKind::NotOffered,
         RefusalKind::NotReadable,
+        RefusalKind::RequestNoBound,
+        RefusalKind::RequestOverAllowance,
+        RefusalKind::RequestNotApproved,
+        RefusalKind::RequestNotReady,
     ];
 }
 
@@ -239,6 +268,20 @@ impl Refused {
             kind: refusal.kind(),
             why: why.chars().take(REFUSAL_WHY_LIMIT).collect(),
         }
+    }
+
+    /// The refusal of a capability request that was not sent (ADR 0013): it names no
+    /// action, and its kind is one of the four that are of a request. Its sentence
+    /// goes through the same redaction and cut as any refusal's. None when the kind
+    /// is of a call.
+    pub fn of_a_request(kind: RefusalKind, why: &str, secrets: &Secrets) -> Option<Refused> {
+        let why = super::engine::said(secrets, why);
+        let why: String = why.chars().take(REFUSAL_WHY_LIMIT).collect();
+        (kind.is_of_a_request() && !why.is_empty()).then_some(Refused {
+            action: None,
+            kind,
+            why,
+        })
     }
 
     /// The action the call named, when what it named is an action's name by the rule.
@@ -531,7 +574,8 @@ pub struct Identity {
     /// ([`RunId`]), and not this run's.
     #[serde(deserialize_with = "present")]
     pub parent: Option<String>,
-    /// The version of whizbang that ran it.
+    /// The version of whizbang that ran it; for a run a dead process left, the
+    /// version that ended it, with `version` among what is lost.
     pub whizbang: String,
 }
 
@@ -553,19 +597,97 @@ pub struct Argument {
     pub value: ArgumentValue,
 }
 
+/// The most settings a record lists.
+pub const SETTINGS_LIMIT: usize = 96;
+
+/// The most characters of a setting's name, and of a setting's text.
+pub const SETTING_NAME_LIMIT: usize = 128;
+pub const SETTING_TEXT_LIMIT: usize = 256;
+
+/// One resolved setting the run ran under (ADR 0013): a name and a value, written as
+/// an argument is. A record lists them in the order of their names' bytes, each once.
+///
+/// It is written as JSON, and read from JSON only as part of a stored record.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Setting {
+    name: String,
+    value: ArgumentValue,
+}
+
+impl Setting {
+    /// A setting, as a record keeps it. The name is 1 to [`SETTING_NAME_LIMIT`]
+    /// printable ASCII characters with no space, no `"` and no `\`, and holds no
+    /// secret: one that does is refused and not shown, as is one that is not a name.
+    /// A text has the secrets taken out while it is whole, and is then cut at
+    /// [`SETTING_TEXT_LIMIT`] characters.
+    pub fn new(name: &str, value: &Value, secrets: &Secrets) -> Option<Setting> {
+        if secrets.redact(name) != name || !is_setting_name(name) {
+            return None;
+        }
+        let value = match value {
+            Value::Number(number) => ArgumentValue::Number(*number),
+            Value::Integer(number) => ArgumentValue::Integer(*number),
+            Value::Boolean(boolean) => ArgumentValue::Boolean(*boolean),
+            Value::Text(text) => {
+                ArgumentValue::Text(super::engine::cut_to(secrets, text, SETTING_TEXT_LIMIT, ""))
+            }
+        };
+        Some(Setting {
+            name: name.to_owned(),
+            value,
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn value(&self) -> &ArgumentValue {
+        &self.value
+    }
+}
+
+fn is_setting_name(name: &str) -> bool {
+    let plain = |b: u8| b.is_ascii_graphic() && b != b'"' && b != b'\\';
+    !name.is_empty() && name.len() <= SETTING_NAME_LIMIT && name.bytes().all(plain)
+}
+
+#[derive(Deserialize)]
+#[serde(remote = "Setting", deny_unknown_fields)]
+struct SettingWire {
+    name: String,
+    value: ArgumentValue,
+}
+
+fn settings_wire<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<Setting>, D::Error> {
+    #[derive(Deserialize)]
+    struct One(#[serde(with = "SettingWire")] Setting);
+    let read = Vec::<One>::deserialize(deserializer)?;
+    Ok(read.into_iter().map(|One(setting)| setting).collect())
+}
+
 /// What was asked: the action, its exact arguments, and the settings it ran under.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Asked {
-    pub action: String,
-    /// The action's version, as its descriptor gave it.
-    pub version: String,
+    /// The action. None only in the record of a run whose admission could not be
+    /// read, where `admission` is among what is lost.
+    #[serde(deserialize_with = "present")]
+    pub action: Option<String>,
+    /// The action's version, as its descriptor gave it. None as the action is.
+    #[serde(deserialize_with = "present")]
+    pub version: Option<String>,
     /// Every argument that had a value, in the descriptor's order.
     pub arguments: Vec<Argument>,
-    /// The resolved settings. There is no config yet, so there are none.
-    pub settings: Vec<Nothing>,
-    /// The digest of the config the settings came from.
-    pub config: Digest,
+    /// The resolved settings, in the order of their names.
+    #[serde(deserialize_with = "settings_wire")]
+    pub settings: Vec<Setting>,
+    /// The digest of the config the settings came from. None only in the record of a
+    /// run a dead process left, where `settings` is among what is lost.
+    #[serde(deserialize_with = "present")]
+    pub config: Option<Digest>,
 }
 
 /// One input: the port, the artifact's type and identity, and the identity of the
@@ -638,13 +760,85 @@ pub struct Ended {
     pub refusals: Vec<Refused>,
     /// How many more refusals there were than the list holds.
     pub refusals_omitted: u64,
+    /// What the record does not know (ADR 0013): nothing, for a run that ended by
+    /// itself; every group but the admission, for a run a dead process left; and the
+    /// admission too, when it could not be read. A `run/2` record has no such field,
+    /// and none is written for one.
+    pub lost: Vec<Lost>,
 }
+
+/// One group of a record that a run's record may not know (ADR 0013).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Lost {
+    /// `asked.arguments`.
+    Arguments,
+    /// `asked.settings`, and `asked.config`, which is then null.
+    Settings,
+    /// `inputs`.
+    Inputs,
+    /// `outcome.refusals` and `outcome.refusals_omitted`.
+    Refusals,
+    /// `time.durations`.
+    Durations,
+    /// `models`.
+    Models,
+    /// `spend.requests`.
+    Requests,
+    /// `egress`.
+    Egress,
+    /// `steps`.
+    Steps,
+    /// `judge`.
+    Judge,
+    /// `diagnostics`: the journal among them.
+    Diagnostics,
+    /// The version of whizbang that ran the run: `identity.whizbang` is the version
+    /// that ended it.
+    Version,
+    /// What the admission gives: `identity.request`, `identity.parent`,
+    /// `asked.action`, `asked.version`, `time.start_ms` and `spend.reserved_micros`,
+    /// each then null.
+    Admission,
+}
+
+impl Lost {
+    /// Every group, in the one order a record lists them: what a record has lost
+    /// when its admission could not be read.
+    pub const ALL: [Lost; 13] = [
+        Lost::Arguments,
+        Lost::Settings,
+        Lost::Inputs,
+        Lost::Refusals,
+        Lost::Durations,
+        Lost::Models,
+        Lost::Requests,
+        Lost::Egress,
+        Lost::Steps,
+        Lost::Judge,
+        Lost::Diagnostics,
+        Lost::Version,
+        Lost::Admission,
+    ];
+
+    /// What the record of a run a dead process left has lost when its admission was
+    /// read: every group but the admission.
+    pub fn but_the_admission() -> &'static [Lost] {
+        &Lost::ALL[..12]
+    }
+}
+
+/// The kind of the error a run a dead process left is ended with.
+pub const INTERRUPTED: &str = "interrupted";
 
 /// Time: the start and the end, in milliseconds since the Unix epoch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Time {
-    pub start_ms: u64,
+    /// When the run started. None only in the record of a run whose admission could
+    /// not be read.
+    #[serde(deserialize_with = "present")]
+    pub start_ms: Option<u64>,
     pub end_ms: u64,
     /// The duration of each capability request and of each call of another action.
     pub durations: Vec<Duration>,
@@ -661,8 +855,272 @@ pub struct Spend {
     #[serde(deserialize_with = "present")]
     pub reserved_micros: Option<u64>,
     /// Every paid request, with what was reserved for it, what was settled and what is
-    /// unresolved. No request is dispatched or settled yet: it holds nothing.
-    pub requests: Vec<Nothing>,
+    /// unresolved, in the order they were sent.
+    #[serde(deserialize_with = "paid_wire")]
+    pub requests: Vec<Paid>,
+}
+
+/// The most paid requests a record lists: the most requests one run sends.
+pub const PAID_LIMIT: usize = MODELS_LIMIT;
+
+/// One paid request of the run (ADR 0013), all amounts in millionths of a US dollar:
+/// its place in `models`; what was held for it, which is its bound; what it was
+/// settled at; how much of that no answer settled; the stage it reached; and whether
+/// what it was settled at is over what was held.
+///
+/// It is written as JSON, and read from JSON only as part of a stored record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Paid {
+    request: u64,
+    reserved_micros: u64,
+    settled_micros: u64,
+    unresolved_micros: u64,
+    #[serde(with = "stage_name")]
+    stage: Stage,
+    over_bound: bool,
+}
+
+impl Paid {
+    /// A request that was not sent: nothing was charged.
+    pub fn not_sent(request: usize, reserved_micros: u64) -> Option<Paid> {
+        Paid::of(request, reserved_micros, 0, Stage::NotSent)
+    }
+
+    /// A request that was answered, by a response or by a fault, and was settled at
+    /// this charge: the charge the answer gave, or the bound when it gave none.
+    pub fn answered(request: usize, reserved_micros: u64, settled_micros: u64) -> Option<Paid> {
+        Paid::of(request, reserved_micros, settled_micros, Stage::Answered)
+    }
+
+    /// A request that no answer settled: it is settled at what was held for it, all
+    /// of it unresolved.
+    pub fn unresolved(request: usize, reserved_micros: u64) -> Option<Paid> {
+        Paid::of(request, reserved_micros, reserved_micros, Stage::Unresolved)
+    }
+
+    fn of(request: usize, reserved: u64, settled: u64, stage: Stage) -> Option<Paid> {
+        let paid = Paid {
+            request: request as u64,
+            reserved_micros: reserved,
+            settled_micros: settled,
+            unresolved_micros: if stage == Stage::Unresolved {
+                settled
+            } else {
+                0
+            },
+            stage,
+            over_bound: settled > reserved,
+        };
+        paid.holds().then_some(paid)
+    }
+
+    /// What the shape alone does not hold of one paid request.
+    fn holds(&self) -> bool {
+        let amounts = [
+            self.reserved_micros,
+            self.settled_micros,
+            self.unresolved_micros,
+        ];
+        let by_stage = match self.stage {
+            Stage::NotSent => self.settled_micros == 0 && self.unresolved_micros == 0,
+            Stage::Answered => self.unresolved_micros == 0,
+            Stage::Unresolved => {
+                self.unresolved_micros == self.settled_micros
+                    && self.settled_micros == self.reserved_micros
+            }
+        };
+        self.request < PAID_LIMIT as u64
+            && amounts.iter().all(|amount| *amount != u64::MAX)
+            && by_stage
+            && self.over_bound == (self.settled_micros > self.reserved_micros)
+    }
+
+    /// The request's place in `models`.
+    pub fn request(&self) -> u64 {
+        self.request
+    }
+
+    pub fn reserved_micros(&self) -> u64 {
+        self.reserved_micros
+    }
+
+    pub fn settled_micros(&self) -> u64 {
+        self.settled_micros
+    }
+
+    pub fn unresolved_micros(&self) -> u64 {
+        self.unresolved_micros
+    }
+
+    pub fn stage(&self) -> Stage {
+        self.stage
+    }
+
+    pub fn is_over_bound(&self) -> bool {
+        self.over_bound
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(remote = "Paid", deny_unknown_fields)]
+struct PaidWire {
+    request: u64,
+    reserved_micros: u64,
+    settled_micros: u64,
+    unresolved_micros: u64,
+    #[serde(with = "stage_name")]
+    stage: Stage,
+    over_bound: bool,
+}
+
+fn paid_wire<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<Paid>, D::Error> {
+    #[derive(Deserialize)]
+    struct One(#[serde(with = "PaidWire")] Paid);
+    let read = Vec::<One>::deserialize(deserializer)?;
+    Ok(read.into_iter().map(|One(paid)| paid).collect())
+}
+
+/// The most entries a record lists of where data went.
+pub const EGRESS_LIMIT: usize = 128;
+
+/// Whether data was handed to a recipient, or the send was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Handed {
+    Sent,
+    Refused,
+}
+
+/// One entry of where the run's data went (ADR 0013): the origin that was reached, or
+/// that a send was refused for; the account used with it, cut as it is always shown;
+/// the classes of data; and whether it was sent or refused. A record lists each
+/// origin, account and outcome once, in the order they were first noted.
+///
+/// It is written as JSON, and read from JSON only as part of a stored record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Went {
+    origin: String,
+    account: Option<String>,
+    classes: Vec<Class>,
+    outcome: Handed,
+}
+
+/// A class of data, as a record spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Class {
+    SourceImages,
+    DerivedImages,
+    Prompts,
+    Evidence,
+}
+
+impl Class {
+    fn of(class: DataClass) -> Class {
+        match class {
+            DataClass::SourceImages => Class::SourceImages,
+            DataClass::DerivedImages => Class::DerivedImages,
+            DataClass::Prompts => Class::Prompts,
+            DataClass::Evidence => Class::Evidence,
+        }
+    }
+
+    fn class(self) -> DataClass {
+        match self {
+            Class::SourceImages => DataClass::SourceImages,
+            Class::DerivedImages => DataClass::DerivedImages,
+            Class::Prompts => DataClass::Prompts,
+            Class::Evidence => DataClass::Evidence,
+        }
+    }
+}
+
+impl Went {
+    /// An entry for this origin, under the recipient's account. The account is
+    /// written cut ([`Account::shown`]). An account that holds a secret the executor
+    /// was told of is not written at all, not even cut: the entry then names none.
+    pub fn new(
+        origin: &Origin,
+        account: Option<&Account>,
+        classes: Classes,
+        outcome: Handed,
+        secrets: &Secrets,
+    ) -> Went {
+        Went {
+            origin: origin.to_string(),
+            account: account.and_then(|account| account.shown_without(secrets)),
+            classes: classes.iter().map(Class::of).collect(),
+            outcome,
+        }
+    }
+
+    /// An entry for the recipient's own origin.
+    pub fn to(recipient: &Recipient, classes: Classes, outcome: Handed, secrets: &Secrets) -> Went {
+        Went::new(
+            recipient.origin(),
+            recipient.account(),
+            classes,
+            outcome,
+            secrets,
+        )
+    }
+
+    /// The origin, as an origin is written.
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    /// The account, cut.
+    pub fn account(&self) -> Option<&str> {
+        self.account.as_deref()
+    }
+
+    /// The classes of data, as a set.
+    pub fn classes(&self) -> Classes {
+        let classes: Vec<DataClass> = self.classes.iter().map(|class| class.class()).collect();
+        Classes::of(&classes)
+    }
+
+    pub fn outcome(&self) -> Handed {
+        self.outcome
+    }
+
+    /// What the shape alone does not hold: the origin is one, written the one way,
+    /// and the account is one that was cut.
+    fn holds(&self) -> bool {
+        let none = Secrets::none();
+        let origin = Origin::of(&self.origin, &none);
+        let written = origin.is_ok_and(|origin| origin.to_string() == self.origin);
+        let cut = self.account.as_ref().is_none_or(|shown| {
+            let whole = shown.strip_suffix("...").unwrap_or(shown);
+            let lengths = if whole.len() == shown.len() {
+                (1..=4).contains(&whole.len())
+            } else {
+                whole.len() == 4
+            };
+            lengths && Account::new(whole, &none).is_ok()
+        });
+        // The classes in their one order, each once.
+        let ordered: Vec<Class> = self.classes().iter().map(Class::of).collect();
+        written && cut && ordered == self.classes
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(remote = "Went", deny_unknown_fields)]
+struct WentWire {
+    origin: String,
+    #[serde(deserialize_with = "present")]
+    account: Option<String>,
+    classes: Vec<Class>,
+    outcome: Handed,
+}
+
+fn went_wire<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<Went>, D::Error> {
+    #[derive(Deserialize)]
+    struct One(#[serde(with = "WentWire")] Went);
+    let read = Vec::<One>::deserialize(deserializer)?;
+    Ok(read.into_iter().map(|One(went)| went).collect())
 }
 
 /// One diagnostic of the run: its name among the run's names in the store, and the
@@ -777,7 +1235,8 @@ struct RunRecordWire {
     time: Time,
     models: Vec<Model>,
     spend: Spend,
-    egress: Vec<Nothing>,
+    #[serde(deserialize_with = "went_wire")]
+    egress: Vec<Went>,
     #[serde(deserialize_with = "steps_wire")]
     steps: Vec<Step>,
     judge: Vec<Judged>,
@@ -798,10 +1257,142 @@ pub struct RunRecord {
     time: Time,
     models: Vec<Model>,
     spend: Spend,
-    egress: Vec<Nothing>,
+    egress: Vec<Went>,
     steps: Vec<Step>,
     judge: Vec<Judged>,
     diagnostics: Vec<Diagnostic>,
+}
+
+/// A `run/2` record as it is stored, as the tag `m1a` froze it: what `run/3` added is
+/// not in it, and what `run/3` lets be null is not null in it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Frozen {
+    record: String,
+    identity: Identity,
+    asked: FrozenAsked,
+    inputs: Vec<Input>,
+    outputs: Vec<Output>,
+    outcome: FrozenEnded,
+    time: FrozenTime,
+    models: Vec<Model>,
+    spend: FrozenSpend,
+    egress: Vec<Nothing>,
+    #[serde(deserialize_with = "steps_wire")]
+    steps: Vec<Step>,
+    judge: Vec<Judged>,
+    #[serde(deserialize_with = "diagnostics_wire")]
+    diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FrozenAsked {
+    action: String,
+    version: String,
+    arguments: Vec<Argument>,
+    settings: Vec<Nothing>,
+    config: Digest,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FrozenEnded {
+    status: Status,
+    #[serde(deserialize_with = "present")]
+    error: Option<Failed>,
+    #[serde(deserialize_with = "present")]
+    invalid: Option<String>,
+    #[serde(deserialize_with = "refusals_wire")]
+    refusals: Vec<Refused>,
+    refusals_omitted: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FrozenTime {
+    start_ms: u64,
+    end_ms: u64,
+    durations: Vec<Duration>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FrozenSpend {
+    #[serde(deserialize_with = "present")]
+    reserved_micros: Option<u64>,
+    requests: Vec<Nothing>,
+}
+
+impl Frozen {
+    fn record(self) -> RunRecord {
+        let (_, _, _): (Vec<Nothing>, Vec<Nothing>, Vec<Nothing>) =
+            (self.asked.settings, self.spend.requests, self.egress);
+        RunRecord {
+            record: self.record,
+            identity: self.identity,
+            asked: Asked {
+                action: Some(self.asked.action),
+                version: Some(self.asked.version),
+                arguments: self.asked.arguments,
+                settings: Vec::new(),
+                config: Some(self.asked.config),
+            },
+            inputs: self.inputs,
+            outputs: self.outputs,
+            outcome: Ended {
+                status: self.outcome.status,
+                error: self.outcome.error,
+                invalid: self.outcome.invalid,
+                refusals: self.outcome.refusals,
+                refusals_omitted: self.outcome.refusals_omitted,
+                lost: Vec::new(),
+            },
+            time: Time {
+                start_ms: Some(self.time.start_ms),
+                end_ms: self.time.end_ms,
+                durations: self.time.durations,
+            },
+            models: self.models,
+            spend: Spend {
+                reserved_micros: self.spend.reserved_micros,
+                requests: Vec::new(),
+            },
+            egress: Vec::new(),
+            steps: self.steps,
+            judge: self.judge,
+            diagnostics: self.diagnostics,
+        }
+    }
+}
+
+/// A `run/2` record as it is written: the record, without the one field `run/2` has
+/// not. Its other fields are written as `run/3` writes them, which for a record that
+/// was read as `run/2` is as the tag wrote them.
+#[derive(Serialize)]
+struct FrozenOut<'a> {
+    record: &'a str,
+    identity: &'a Identity,
+    asked: &'a Asked,
+    inputs: &'a [Input],
+    outputs: &'a [Output],
+    outcome: FrozenEndedOut<'a>,
+    time: &'a Time,
+    models: &'a [Model],
+    spend: &'a Spend,
+    egress: &'a [Went],
+    steps: &'a [Step],
+    judge: &'a [Judged],
+    diagnostics: &'a [Diagnostic],
+}
+
+#[derive(Serialize)]
+struct FrozenEndedOut<'a> {
+    status: Status,
+    error: &'a Option<Failed>,
+    invalid: &'a Option<String>,
+    refusals: &'a [Refused],
+    refusals_omitted: u64,
 }
 
 /// Why bytes are not a run record this build reads.
@@ -866,6 +1457,96 @@ pub struct Ran<'a> {
     /// What the run did inside itself: the run that called it, the calls it made, and
     /// those that were refused.
     pub inside: Inside,
+    /// What was noted of the run from outside the executor: its settings, what its
+    /// paid requests cost, and where its data went.
+    pub facts: Facts,
+}
+
+/// What `run/3` records beside what the executor itself knows (ADR 0013): the
+/// resolved settings, the paid requests and where data went. Each list is bounded
+/// here, where it comes in: one more than a record lists is not taken, and the caller
+/// is told.
+#[derive(Debug, Clone, Default)]
+pub struct Facts {
+    settings: Vec<Setting>,
+    paid: Vec<Paid>,
+    went: Vec<Went>,
+}
+
+impl Facts {
+    /// No facts.
+    pub fn none() -> Facts {
+        Facts::default()
+    }
+
+    /// Notes a setting. False, and nothing is noted, when the record already lists
+    /// [`SETTINGS_LIMIT`] of them or one of this name.
+    pub fn setting(&mut self, setting: Setting) -> bool {
+        let room = self.settings.len() < SETTINGS_LIMIT;
+        let new = self.settings.iter().all(|other| other.name != setting.name);
+        if room && new {
+            self.settings.push(setting);
+        }
+        room && new
+    }
+
+    /// Notes a paid request. False, and nothing is noted, when the record already
+    /// lists [`PAID_LIMIT`] of them, or one for this request or a later one: they are
+    /// noted in the order the requests were sent.
+    pub fn paid(&mut self, paid: Paid) -> bool {
+        let room = self.paid.len() < PAID_LIMIT;
+        let next = self
+            .paid
+            .last()
+            .is_none_or(|last| last.request < paid.request);
+        if room && next {
+            self.paid.push(paid);
+        }
+        room && next
+    }
+
+    /// Notes where data went. An origin, account and outcome that is already listed
+    /// gains the classes of this one, and is not listed twice. False, and nothing is
+    /// noted, when it is new and the record already lists [`EGRESS_LIMIT`].
+    pub fn went(&mut self, went: Went) -> bool {
+        let same = |other: &&mut Went| {
+            (&other.origin, &other.account, other.outcome)
+                == (&went.origin, &went.account, went.outcome)
+        };
+        if let Some(listed) = self.went.iter_mut().find(same) {
+            let both = went.classes().iter().fold(listed.classes(), Classes::with);
+            listed.classes = both.iter().map(Class::of).collect();
+            return true;
+        }
+        let room = self.went.len() < EGRESS_LIMIT;
+        if room {
+            self.went.push(went);
+        }
+        room
+    }
+}
+
+/// What the record of a run that a dead process left is made from (ADR 0013): the
+/// run's name, what its admission said when it could be read, and when it was ended.
+pub struct Left<'a> {
+    /// The run's id.
+    pub run: &'a RunId,
+    /// The version of whizbang that ends it.
+    pub whizbang: &'a str,
+    /// What the run's admission said, when it could be read.
+    pub admitted: Option<Admitted<'a>>,
+    /// When the run is ended, in milliseconds since the Unix epoch.
+    pub end_ms: u64,
+}
+
+/// What a record takes from a run's admission.
+pub struct Admitted<'a> {
+    pub request: Option<&'a RequestId>,
+    pub parent: Option<&'a RunId>,
+    pub action: &'a str,
+    pub version: &'a str,
+    pub reserved_micros: Option<u64>,
+    pub start_ms: u64,
 }
 
 /// What a record holds of nested calls (ADR 0008): the run that called this one, the
@@ -1012,7 +1693,16 @@ impl RunRecord {
             why: super::engine::said(secrets, verdict.why()),
         });
         let judge = turns.chain(verdict).collect();
-        let models = models.collect();
+        let models: Vec<Model> = models.collect();
+        // What was noted from outside the executor: the settings in the order of their
+        // names, and no paid request that is not one the record lists.
+        let Facts {
+            mut settings,
+            mut paid,
+            went,
+        } = ran.facts;
+        settings.sort_by(|a, b| a.name.cmp(&b.name));
+        paid.retain(|paid| paid.request < models.len() as u64);
         RunRecord {
             record: RUN_RECORD.to_owned(),
             identity: Identity {
@@ -1022,11 +1712,11 @@ impl RunRecord {
                 whizbang: ran.whizbang.to_owned(),
             },
             asked: Asked {
-                action: prepared.action().to_owned(),
-                version: prepared.version().to_owned(),
+                action: Some(prepared.action().to_owned()),
+                version: Some(prepared.version().to_owned()),
                 arguments,
-                settings: Vec::new(),
-                config: prepared.config(),
+                settings,
+                config: Some(prepared.config()),
             },
             inputs,
             outputs,
@@ -1036,9 +1726,10 @@ impl RunRecord {
                 invalid,
                 refusals: ran.inside.refusals,
                 refusals_omitted: ran.inside.refusals_omitted,
+                lost: Vec::new(),
             },
             time: Time {
-                start_ms: ran.start_ms,
+                start_ms: Some(ran.start_ms),
                 // A clock that went back does not make a run end before it started.
                 end_ms: ran.end_ms.max(ran.start_ms),
                 durations,
@@ -1046,20 +1737,102 @@ impl RunRecord {
             models,
             spend: Spend {
                 reserved_micros: ran.reserved_micros,
-                requests: Vec::new(),
+                requests: paid,
             },
-            egress: Vec::new(),
+            egress: went,
             steps: ran.inside.steps,
             judge,
             diagnostics,
         }
     }
 
+    /// The record of a run that a dead process left (ADR 0013): an error of the kind
+    /// `interrupted`, made from the run's admission alone, or from its name alone when
+    /// the admission could not be read, with everything else named as lost. The end
+    /// is never before the start.
+    pub fn interrupted(left: Left<'_>) -> RunRecord {
+        let admitted = left.admitted.as_ref();
+        let lost = match admitted {
+            Some(_) => Lost::but_the_admission().to_vec(),
+            None => Lost::ALL.to_vec(),
+        };
+        let start_ms = admitted.map(|admitted| admitted.start_ms);
+        RunRecord {
+            record: RUN_RECORD.to_owned(),
+            identity: Identity {
+                run: left.run.as_str().to_owned(),
+                request: admitted.and_then(|a| a.request.map(|id| id.as_str().to_owned())),
+                parent: admitted.and_then(|a| a.parent.map(|run| run.as_str().to_owned())),
+                whizbang: left.whizbang.to_owned(),
+            },
+            asked: Asked {
+                action: admitted.map(|admitted| admitted.action.to_owned()),
+                version: admitted.map(|admitted| admitted.version.to_owned()),
+                arguments: Vec::new(),
+                settings: Vec::new(),
+                config: None,
+            },
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            outcome: Ended {
+                status: Status::Error,
+                error: Some(Failed {
+                    kind: INTERRUPTED.to_owned(),
+                    message: "the process that ran it ended before the run did".to_owned(),
+                }),
+                invalid: None,
+                refusals: Vec::new(),
+                refusals_omitted: 0,
+                lost,
+            },
+            time: Time {
+                start_ms,
+                end_ms: left.end_ms.max(start_ms.unwrap_or(0)),
+                durations: Vec::new(),
+            },
+            models: Vec::new(),
+            spend: Spend {
+                reserved_micros: admitted.and_then(|admitted| admitted.reserved_micros),
+                requests: Vec::new(),
+            },
+            egress: Vec::new(),
+            steps: Vec::new(),
+            judge: Vec::new(),
+            diagnostics: Vec::new(),
+        }
+    }
+
     /// The record as it is stored: JSON on one line, then a newline.
     pub fn to_bytes(&self) -> Vec<u8> {
         // A record holds strings, whole numbers, finite numbers and lists of these;
-        // writing one as JSON cannot fail.
-        let mut bytes = serde_json::to_vec(self).unwrap_or_default();
+        // writing one as JSON cannot fail. A record that was read as `run/2` is
+        // written as `run/2` is, without the field it has not.
+        let written = if self.record == RUN_2 {
+            serde_json::to_vec(&FrozenOut {
+                record: &self.record,
+                identity: &self.identity,
+                asked: &self.asked,
+                inputs: &self.inputs,
+                outputs: &self.outputs,
+                outcome: FrozenEndedOut {
+                    status: self.outcome.status,
+                    error: &self.outcome.error,
+                    invalid: &self.outcome.invalid,
+                    refusals: &self.outcome.refusals,
+                    refusals_omitted: self.outcome.refusals_omitted,
+                },
+                time: &self.time,
+                models: &self.models,
+                spend: &self.spend,
+                egress: &self.egress,
+                steps: &self.steps,
+                judge: &self.judge,
+                diagnostics: &self.diagnostics,
+            })
+        } else {
+            serde_json::to_vec(self)
+        };
+        let mut bytes = written.unwrap_or_default();
         bytes.push(b'\n');
         bytes
     }
@@ -1077,19 +1850,25 @@ impl RunRecord {
         struct Version {
             record: String,
         }
-        match serde_json::from_slice::<Version>(bytes) {
-            Ok(Version { record }) if record != RUN_RECORD => {
+        let frozen = match serde_json::from_slice::<Version>(bytes) {
+            Ok(Version { record }) if record != RUN_RECORD && record != RUN_2 => {
                 // What it says its version is can be anything: its first 64 characters
                 // are kept.
                 return Err(RecordError::OtherVersion {
                     found: record.chars().take(QUOTED_LIMIT).collect(),
                 });
             }
-            _ => {}
-        }
+            Ok(Version { record }) => record == RUN_2,
+            Err(_) => false,
+        };
         let malformed = |error: serde_json::Error| RecordError::Malformed(error.to_string());
         let mut reader = serde_json::Deserializer::from_slice(bytes);
-        let record = RunRecordWire::deserialize(&mut reader).map_err(malformed)?;
+        let record = if frozen {
+            Frozen::deserialize(&mut reader).map(Frozen::record)
+        } else {
+            RunRecordWire::deserialize(&mut reader)
+        };
+        let record = record.map_err(malformed)?;
         // Nothing but white space after the record.
         reader.end().map_err(malformed)?;
         record.check()?;
@@ -1102,12 +1881,21 @@ impl RunRecord {
     /// What the shape alone does not hold.
     fn check(&self) -> Result<(), RecordError> {
         let refuse = |why: &str| Err(RecordError::Inconsistent(why.to_owned()));
+        let nothing = String::new();
         let named = [
             ("the run's id", &self.identity.run),
             ("the version of whizbang", &self.identity.whizbang),
-            ("the action's name", &self.asked.action),
-            ("the action's version", &self.asked.version),
+            (
+                "the action's name",
+                self.asked.action.as_ref().unwrap_or(&nothing),
+            ),
+            (
+                "the action's version",
+                self.asked.version.as_ref().unwrap_or(&nothing),
+            ),
         ];
+        // What is lost, and what that says of the rest (ADR 0013).
+        self.check_lost()?;
         let arguments = self
             .asked
             .arguments
@@ -1121,7 +1909,8 @@ impl RunRecord {
             .chain(inputs)
             .chain(outputs)
         {
-            if text.is_empty() {
+            let unknown = std::ptr::eq(text, &nothing);
+            if text.is_empty() && !unknown {
                 return refuse(&format!("{what} is empty"));
             }
         }
@@ -1172,6 +1961,13 @@ impl RunRecord {
             );
         }
         for refused in refusals {
+            let of_a_request = refused.kind.is_of_a_request();
+            if of_a_request && (refused.action.is_some() || self.record == RUN_2) {
+                return refuse(
+                    "a refusal of a capability request names an action, or is in a record \
+                     of a version that has none",
+                );
+            }
             let named = refused.action.as_ref();
             if named.is_some_and(|action| text::action_name(action).is_err()) {
                 return refuse("a refusal's action is not the name of one");
@@ -1278,8 +2074,53 @@ impl RunRecord {
         if outcome.status != Status::Completed && !self.outputs.is_empty() {
             return refuse("only a completed run has outputs");
         }
-        if self.time.end_ms < self.time.start_ms {
+        if self
+            .time
+            .start_ms
+            .is_some_and(|start| self.time.end_ms < start)
+        {
             return refuse("the run ends before it starts");
+        }
+        // The settings: in the order of their names, each once, each a name.
+        let settings = &self.asked.settings;
+        if settings.len() > SETTINGS_LIMIT
+            || !settings.is_sorted_by(|a, b| a.name < b.name)
+            || !settings
+                .iter()
+                .all(|setting| is_setting_name(&setting.name))
+        {
+            return refuse(
+                "the settings are not in the order of their names, each once, each \
+                 under a name of 1 to 128 printable ASCII characters, 96 at most",
+            );
+        }
+        // The paid requests: each one the record lists, in order, each once.
+        let paid = &self.spend.requests;
+        if paid.len() > PAID_LIMIT
+            || !paid.is_sorted_by(|a, b| a.request < b.request)
+            || paid
+                .iter()
+                .any(|paid| paid.request >= self.models.len() as u64 || !paid.holds())
+        {
+            return refuse(
+                "a paid request is not one the record lists, named once and in order, \
+                 with amounts that agree with the stage it reached",
+            );
+        }
+        // Where data went: each origin, account and outcome once.
+        let went = &self.egress;
+        let twice = went.iter().enumerate().any(|(at, one)| {
+            let same = |other: &Went| {
+                (&other.origin, &other.account, other.outcome)
+                    == (&one.origin, &one.account, one.outcome)
+            };
+            went[..at].iter().any(same)
+        });
+        if went.len() > EGRESS_LIMIT || twice || !went.iter().all(Went::holds) {
+            return refuse(
+                "an entry of where data went is not an origin written the one way, a \
+                 cut account and classes in their order, each named once",
+            );
         }
         if self.spend.reserved_micros == Some(u64::MAX) {
             return refuse(super::request::NOT_AN_AMOUNT);
@@ -1288,6 +2129,87 @@ impl RunRecord {
             return refuse("the diagnostics are not in the order of their names, each once");
         }
         Ok(())
+    }
+
+    /// What is lost, and what that says of the other fields (ADR 0013, "What is
+    /// lost").
+    fn check_lost(&self) -> Result<(), RecordError> {
+        let refuse = |why: &str| Err(RecordError::Inconsistent(why.to_owned()));
+        let (asked, time, outcome) = (&self.asked, &self.time, &self.outcome);
+        let lost = &outcome.lost;
+        let admission = lost.as_slice() == Lost::ALL;
+        if !lost.is_empty() && !admission && lost.as_slice() != Lost::but_the_admission() {
+            return refuse(
+                "what is lost is not nothing, every group but the admission, or every \
+                 group, in their one order",
+            );
+        }
+        if lost.is_empty() {
+            let known = asked.action.is_some()
+                && asked.version.is_some()
+                && asked.config.is_some()
+                && time.start_ms.is_some();
+            return if known {
+                Ok(())
+            } else {
+                refuse("a field is null that only a lost group leaves null, and nothing is lost")
+            };
+        }
+        let interrupted = outcome.status == Status::Error
+            && outcome
+                .error
+                .as_ref()
+                .is_some_and(|e| e.kind == INTERRUPTED);
+        if !interrupted {
+            return refuse("only an error of the kind interrupted has lost anything");
+        }
+        let empty = asked.arguments.is_empty()
+            && asked.settings.is_empty()
+            && asked.config.is_none()
+            && self.inputs.is_empty()
+            && outcome.refusals.is_empty()
+            && outcome.refusals_omitted == 0
+            && time.durations.is_empty()
+            && self.models.is_empty()
+            && self.spend.requests.is_empty()
+            && self.egress.is_empty()
+            && self.steps.is_empty()
+            && self.judge.is_empty()
+            && self.diagnostics.is_empty();
+        if !empty {
+            return refuse("a field holds something though its group is lost");
+        }
+        let from_the_admission = [
+            asked.action.is_some(),
+            asked.version.is_some(),
+            time.start_ms.is_some(),
+        ];
+        let rest_absent = self.identity.request.is_none()
+            && self.identity.parent.is_none()
+            && self.spend.reserved_micros.is_none();
+        let agrees = if admission {
+            from_the_admission == [false; 3] && rest_absent
+        } else {
+            from_the_admission == [true; 3]
+        };
+        if !agrees {
+            return refuse(
+                "what the admission gives is there though the admission is lost, or is \
+                 not there though it is not",
+            );
+        }
+        Ok(())
+    }
+
+    /// The record's kind and version: `run/3`, or `run/2` for a record that the tag
+    /// `m1a` wrote.
+    pub fn version(&self) -> &str {
+        &self.record
+    }
+
+    /// Where the run's data went, in the order it was first noted.
+    pub fn egress(&self) -> &[Went] {
+        &self.egress
     }
 
     pub fn identity(&self) -> &Identity {
@@ -1418,6 +2340,25 @@ pub fn stored(
 /// The kind of reference a run's record and its diagnostics are stored as: they are
 /// kept and readable, and never usable as an output.
 pub const RECORD_KIND: Kind = Kind::Diagnostic;
+
+/// A stage as a record spells it: its name.
+mod stage_name {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use crate::capability::Stage;
+
+    pub fn serialize<S: Serializer>(stage: &Stage, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(stage.name())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Stage, D::Error> {
+        let name = String::deserialize(d)?;
+        Stage::ALL
+            .into_iter()
+            .find(|stage| stage.name() == name)
+            .ok_or_else(|| serde::de::Error::custom("not the name of a stage"))
+    }
+}
 
 /// An artifact type as a record spells it: its name.
 mod type_name {

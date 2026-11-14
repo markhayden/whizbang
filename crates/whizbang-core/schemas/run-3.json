@@ -1,0 +1,588 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A whizbang run record, version run/3 (ADR 0013): a run that ended by itself, a run a dead process left, or one whose admission could not be read",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record",
+        "identity",
+        "asked",
+        "inputs",
+        "outputs",
+        "outcome",
+        "time",
+        "models",
+        "spend",
+        "egress",
+        "steps",
+        "judge",
+        "diagnostics"
+      ],
+      "properties": {
+        "record": { "const": "run/3" },
+        "identity": { "$ref": "#/$defs/identity" },
+        "asked": { "$ref": "#/$defs/asked" },
+        "inputs": { "$ref": "#/$defs/inputs" },
+        "outputs": { "$ref": "#/$defs/outputs" },
+        "outcome": { "$ref": "#/$defs/outcome" },
+        "time": { "$ref": "#/$defs/time" },
+        "models": { "$ref": "#/$defs/models" },
+        "spend": { "$ref": "#/$defs/spend" },
+        "egress": { "$ref": "#/$defs/egress" },
+        "steps": { "$ref": "#/$defs/steps" },
+        "judge": { "$ref": "#/$defs/judge" },
+        "diagnostics": { "$ref": "#/$defs/diagnostics" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record",
+        "identity",
+        "asked",
+        "inputs",
+        "outputs",
+        "outcome",
+        "time",
+        "models",
+        "spend",
+        "egress",
+        "steps",
+        "judge",
+        "diagnostics"
+      ],
+      "properties": {
+        "record": { "const": "run/3" },
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["run", "request", "parent", "whizbang"],
+          "properties": {
+            "run": { "type": "string", "minLength": 1 },
+            "request": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+            "parent": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+            "whizbang": { "type": "string", "minLength": 1 }
+          }
+        },
+        "asked": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "version", "arguments", "settings", "config"],
+          "properties": {
+            "action": { "type": "string", "minLength": 1 },
+            "version": { "type": "string", "minLength": 1 },
+            "arguments": { "$ref": "#/$defs/none" },
+            "settings": { "$ref": "#/$defs/none" },
+            "config": { "type": "null" }
+          }
+        },
+        "inputs": { "$ref": "#/$defs/none" },
+        "outputs": { "$ref": "#/$defs/none" },
+        "outcome": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "error", "invalid", "refusals", "refusals_omitted", "lost"],
+          "properties": {
+            "status": { "const": "error" },
+            "error": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "message"],
+              "properties": { "kind": { "const": "interrupted" }, "message": { "type": "string" } }
+            },
+            "invalid": { "type": "null" },
+            "refusals": { "$ref": "#/$defs/none" },
+            "refusals_omitted": { "const": 0 },
+            "lost": {
+              "const": [
+                "arguments",
+                "settings",
+                "inputs",
+                "refusals",
+                "durations",
+                "models",
+                "requests",
+                "egress",
+                "steps",
+                "judge",
+                "diagnostics",
+                "version"
+              ]
+            }
+          }
+        },
+        "time": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["start_ms", "end_ms", "durations"],
+          "properties": {
+            "start_ms": { "type": "integer", "minimum": 0 },
+            "end_ms": { "type": "integer", "minimum": 0 },
+            "durations": { "$ref": "#/$defs/none" }
+          }
+        },
+        "models": { "$ref": "#/$defs/none" },
+        "spend": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reserved_micros", "requests"],
+          "properties": {
+            "reserved_micros": { "type": ["integer", "null"], "minimum": 0 },
+            "requests": { "$ref": "#/$defs/none" }
+          }
+        },
+        "egress": { "$ref": "#/$defs/none" },
+        "steps": { "$ref": "#/$defs/none" },
+        "judge": { "$ref": "#/$defs/none" },
+        "diagnostics": { "$ref": "#/$defs/none" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record",
+        "identity",
+        "asked",
+        "inputs",
+        "outputs",
+        "outcome",
+        "time",
+        "models",
+        "spend",
+        "egress",
+        "steps",
+        "judge",
+        "diagnostics"
+      ],
+      "properties": {
+        "record": { "const": "run/3" },
+        "identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["run", "request", "parent", "whizbang"],
+          "properties": {
+            "run": { "type": "string", "minLength": 1 },
+            "request": { "type": "null" },
+            "parent": { "type": "null" },
+            "whizbang": { "type": "string", "minLength": 1 }
+          }
+        },
+        "asked": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "version", "arguments", "settings", "config"],
+          "properties": {
+            "action": { "type": "null" },
+            "version": { "type": "null" },
+            "arguments": { "$ref": "#/$defs/none" },
+            "settings": { "$ref": "#/$defs/none" },
+            "config": { "type": "null" }
+          }
+        },
+        "inputs": { "$ref": "#/$defs/none" },
+        "outputs": { "$ref": "#/$defs/none" },
+        "outcome": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "error", "invalid", "refusals", "refusals_omitted", "lost"],
+          "properties": {
+            "status": { "const": "error" },
+            "error": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "message"],
+              "properties": { "kind": { "const": "interrupted" }, "message": { "type": "string" } }
+            },
+            "invalid": { "type": "null" },
+            "refusals": { "$ref": "#/$defs/none" },
+            "refusals_omitted": { "const": 0 },
+            "lost": {
+              "const": [
+                "arguments",
+                "settings",
+                "inputs",
+                "refusals",
+                "durations",
+                "models",
+                "requests",
+                "egress",
+                "steps",
+                "judge",
+                "diagnostics",
+                "version",
+                "admission"
+              ]
+            }
+          }
+        },
+        "time": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["start_ms", "end_ms", "durations"],
+          "properties": {
+            "start_ms": { "type": "null" },
+            "end_ms": { "type": "integer", "minimum": 0 },
+            "durations": { "$ref": "#/$defs/none" }
+          }
+        },
+        "models": { "$ref": "#/$defs/none" },
+        "spend": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reserved_micros", "requests"],
+          "properties": { "reserved_micros": { "type": "null" }, "requests": { "$ref": "#/$defs/none" } }
+        },
+        "egress": { "$ref": "#/$defs/none" },
+        "steps": { "$ref": "#/$defs/none" },
+        "judge": { "$ref": "#/$defs/none" },
+        "diagnostics": { "$ref": "#/$defs/none" }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": { "type": "string", "minLength": 71, "maxLength": 71 },
+    "artifact_type": { "enum": ["mask", "location", "image", "band_profile", "series", "plan"] },
+    "value": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "number": { "type": "number" },
+        "integer": { "type": "integer" },
+        "boolean": { "type": "boolean" },
+        "text": { "type": "string" }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run", "request", "parent", "whizbang"],
+      "properties": {
+        "run": { "type": "string", "minLength": 1 },
+        "request": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+        "parent": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+        "whizbang": { "type": "string", "minLength": 1 }
+      }
+    },
+    "asked": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "version", "arguments", "settings", "config"],
+      "properties": {
+        "action": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value"],
+            "properties": { "name": { "type": "string", "minLength": 1 }, "value": { "$ref": "#/$defs/value" } }
+          }
+        },
+        "settings": {
+          "type": "array",
+          "maxItems": 96,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "value": { "$ref": "#/$defs/value" }
+            }
+          }
+        },
+        "config": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["port", "type", "artifact", "binding"],
+        "properties": {
+          "port": { "type": "string", "minLength": 1 },
+          "type": { "$ref": "#/$defs/artifact_type" },
+          "artifact": { "$ref": "#/$defs/digest" },
+          "binding": { "$ref": "#/$defs/digest" }
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["port", "type", "artifact"],
+        "properties": {
+          "port": { "type": "string", "minLength": 1 },
+          "type": { "$ref": "#/$defs/artifact_type" },
+          "artifact": { "$ref": "#/$defs/digest" }
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "error", "invalid", "refusals", "refusals_omitted", "lost"],
+      "properties": {
+        "status": { "enum": ["completed", "cancelled", "error", "invalid"] },
+        "error": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["kind", "message"],
+          "properties": { "kind": { "type": "string" }, "message": { "type": "string" } }
+        },
+        "invalid": { "type": ["string", "null"] },
+        "refusals": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["action", "kind", "why"],
+            "properties": {
+              "action": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+              "kind": {
+                "enum": [
+                  "unknown_action",
+                  "invalid",
+                  "input",
+                  "not_ready",
+                  "read_only",
+                  "no_such_run",
+                  "conflict",
+                  "stale",
+                  "over_allowance",
+                  "no_bound",
+                  "secret_in_request_id",
+                  "not_a_request_id",
+                  "cancelled",
+                  "deadline_passed",
+                  "too_deep",
+                  "call_back",
+                  "over_caller",
+                  "caller_over",
+                  "too_many_calls",
+                  "tree_full",
+                  "too_many_started",
+                  "too_many_started_under",
+                  "id_inside",
+                  "wait_above",
+                  "wait_cancelled",
+                  "not_offered",
+                  "not_readable",
+                  "request_no_bound",
+                  "request_over_allowance",
+                  "request_not_approved",
+                  "request_not_ready"
+                ]
+              },
+              "why": { "type": "string", "minLength": 1, "maxLength": 512 }
+            }
+          }
+        },
+        "refusals_omitted": { "type": "integer", "minimum": 0 },
+        "lost": { "type": "array", "maxItems": 0 }
+      }
+    },
+    "time": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_ms", "end_ms", "durations"],
+      "properties": {
+        "start_ms": { "type": "integer", "minimum": 0 },
+        "end_ms": { "type": "integer", "minimum": 0 },
+        "durations": {
+          "type": "array",
+          "maxItems": 1280,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["of", "index", "start_ms", "ms"],
+            "properties": {
+              "of": { "enum": ["request", "call"] },
+              "index": { "type": "integer", "minimum": 0 },
+              "start_ms": { "type": "integer", "minimum": 0 },
+              "ms": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "models": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability", "backend", "model", "version", "device", "cached", "ended"],
+        "properties": {
+          "capability": { "enum": ["segment", "fill", "judge"] },
+          "backend": { "type": "string", "maxLength": 128 },
+          "model": { "type": "string", "maxLength": 128 },
+          "version": { "type": "string", "maxLength": 128 },
+          "device": { "type": "null" },
+          "cached": { "type": "null" },
+          "ended": {
+            "enum": [
+              "answered",
+              "cancelled",
+              "unsupported",
+              "credential",
+              "rejected",
+              "unavailable",
+              "timed_out",
+              "malformed",
+              "too_large",
+              "unwound"
+            ]
+          }
+        }
+      }
+    },
+    "spend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reserved_micros", "requests"],
+      "properties": {
+        "reserved_micros": { "type": ["integer", "null"], "minimum": 0 },
+        "requests": {
+          "type": "array",
+          "maxItems": 1024,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "request",
+              "reserved_micros",
+              "settled_micros",
+              "unresolved_micros",
+              "stage",
+              "over_bound"
+            ],
+            "properties": {
+              "request": { "type": "integer", "minimum": 0, "maximum": 1023 },
+              "reserved_micros": { "type": "integer", "minimum": 0 },
+              "settled_micros": { "type": "integer", "minimum": 0 },
+              "unresolved_micros": { "type": "integer", "minimum": 0 },
+              "stage": { "enum": ["not_sent", "answered", "unresolved"] },
+              "over_bound": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "egress": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["origin", "account", "classes", "outcome"],
+        "properties": {
+          "origin": { "type": "string", "minLength": 8, "maxLength": 267 },
+          "account": { "type": ["string", "null"], "minLength": 1, "maxLength": 7 },
+          "classes": {
+            "type": "array",
+            "maxItems": 4,
+            "items": { "enum": ["source_images", "derived_images", "prompts", "evidence"] }
+          },
+          "outcome": { "enum": ["sent", "refused"] }
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["step", "run", "action", "status"],
+        "properties": {
+          "step": { "enum": ["call"] },
+          "run": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "action": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "status": { "enum": ["completed", "cancelled", "error", "invalid", null] }
+        }
+      }
+    },
+    "judge": {
+      "type": "array",
+      "maxItems": 1025,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "judge",
+              "request",
+              "exchange",
+              "max_output_tokens",
+              "messages",
+              "stop",
+              "tool_calls",
+              "usage",
+              "provider_id",
+              "excluded"
+            ],
+            "properties": {
+              "judge": { "const": "turn" },
+              "request": { "type": "integer", "minimum": 0 },
+              "exchange": { "type": ["string", "null"], "minLength": 1, "maxLength": 76 },
+              "max_output_tokens": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+              "messages": { "type": "integer", "minimum": 0 },
+              "stop": { "enum": ["end_turn", "tool_use", "max_tokens", "refusal", "other", null] },
+              "tool_calls": { "type": "integer", "minimum": 0 },
+              "usage": {
+                "type": ["object", "null"],
+                "additionalProperties": false,
+                "required": ["input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"],
+                "properties": {
+                  "input_tokens": { "type": "integer", "minimum": 0 },
+                  "output_tokens": { "type": "integer", "minimum": 0 },
+                  "cache_read_tokens": { "type": "integer", "minimum": 0 },
+                  "cache_write_tokens": { "type": "integer", "minimum": 0 }
+                }
+              },
+              "provider_id": { "type": ["string", "null"], "maxLength": 128 },
+              "excluded": { "enum": ["truncated", "refusal", "no_call", null] }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["judge", "decision", "why"],
+            "properties": {
+              "judge": { "const": "verdict" },
+              "decision": { "enum": ["pass", "fail", "unsure"] },
+              "why": { "type": "string", "maxLength": 4099 }
+            }
+          }
+        ]
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "digest", "bytes"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "digest": { "$ref": "#/$defs/digest" },
+          "bytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "none": { "type": "array", "maxItems": 0 }
+  }
+}
