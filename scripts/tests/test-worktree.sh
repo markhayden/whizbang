@@ -102,6 +102,21 @@ install_hooks
 printf '%s\n' '#!/bin/sh' 'exit 0' >"$repo/.git/hooks/pre-push"
 expect_fail "add with an installed hook that is another script" "the hooks are not installed" wt add s1
 install_hooks
+# Each of the three is required, the first as much as the last.
+for hook in pre-commit commit-msg pre-push; do
+  rm "$repo/.git/hooks/$hook"
+  expect_fail "add with the installed $hook missing" "the hooks are not installed" wt add s1
+  install_hooks
+done
+# With them installed, the setting of an earlier setup still sends git to a folder it reads
+# from wherever it is run: refused.
+git -C "$repo" config core.hooksPath scripts/hooks
+expect_fail "add with the hooks installed and the old setting back" "core.hooksPath is set" wt add s1
+git -C "$repo" config --unset core.hooksPath
+# The same setting in the user's own configuration.
+printf '[core]\n\thooksPath = %s\n' "$w/other-hooks" >"$w/user-config"
+expect_fail "add with core.hooksPath set by the user" "core.hooksPath is set" env GIT_CONFIG_GLOBAL="$w/user-config" bash -c 'cd "$1" && scripts/worktree.sh add s1' - "$repo"
+rm "$w/user-config"
 # With them installed, a setting that sends git elsewhere for its hooks switches them off.
 git -C "$repo" config core.hooksPath "$w/other-hooks"
 expect_fail "add with core.hooksPath set" "core.hooksPath is set" wt add s1

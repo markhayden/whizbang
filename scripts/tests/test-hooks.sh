@@ -52,7 +52,66 @@ expect_fail "setup with core.hooksPath set to another folder" "hook problem: cor
 quiet_path() { grep -q -F -e "$tmp" "$tmp/out" && { cat "$tmp/out" >&2; fail "$1: no path of this machine is printed"; }; return 0; }
 quiet_path "setup with core.hooksPath set"
 git config --unset core.hooksPath
+# The same from the user's own configuration, which this repo's does not hold.
+printf '[core]\n\thooksPath = %s\n' "$tmp/other-hooks" >"$tmp/user-config"
+expect_fail "setup with core.hooksPath set by the user" "hook problem: core.hooksPath is set" \
+  env GIT_CONFIG_GLOBAL="$tmp/user-config" scripts/setup.sh
 expect_pass "setup once the setting is gone" scripts/setup.sh
+
+# An installation that fails leaves the clone as it was and says that it failed: the old
+# setting is taken away last, only once all three hooks are in place.
+installed_hooks() { # prints how many of the three are this repo's dispatch
+  local hook n=0
+  for hook in pre-commit commit-msg pre-push; do
+    ! cmp -s "$root/scripts/hook-dispatch.sh" ".git/hooks/$hook" || n=$((n + 1))
+  done
+  echo "$n"
+}
+rm -f .git/hooks/pre-commit .git/hooks/commit-msg .git/hooks/pre-push
+git config core.hooksPath scripts/hooks
+chmod 555 .git/hooks
+if [ -w .git/hooks ]; then
+  echo "skip: a hooks folder that cannot be written; this user can write to a folder with mode 555"
+else
+  status=0
+  scripts/setup.sh >"$tmp/out" 2>&1 || status=$?
+  [ "$status" -ne 0 ] || { cat "$tmp/out" >&2; fail "setup fails when the hooks cannot be installed"; }
+  grep -q -F "hook problem: pre-push could not be installed" "$tmp/out" || { cat "$tmp/out" >&2; fail "setup names the hook it could not install"; }
+  grep -q -F "the hooks are NOT installed" "$tmp/out" || { cat "$tmp/out" >&2; fail "setup says that the hooks are not installed"; }
+  grep -q -F "hooks installed in the repository's hooks folder" "$tmp/out" && { cat "$tmp/out" >&2; fail "setup does not say the hooks are installed when they are not"; }
+  [ "$(installed_hooks)" = 0 ] || fail "nothing was installed in a folder that cannot be written"
+  [ "$(git config --get core.hooksPath)" = scripts/hooks ] || fail "the old setting stays while the hooks are not installed"
+  # The same with no old setting: nothing is on, and setup says so.
+  git config --unset core.hooksPath
+  expect_fail "setup with no way to install and no old setting" "git runs no hook of this repo in this clone" scripts/setup.sh
+  git config core.hooksPath scripts/hooks
+fi
+chmod 755 .git/hooks
+expect_pass "setup once the folder can be written" scripts/setup.sh
+[ "$(installed_hooks)" = 3 ] || fail "the three hooks are installed"
+[ -z "$(git config --get core.hooksPath || true)" ] || fail "the old setting is gone once the hooks are installed"
+
+# A link where a hook goes is replaced, not written through: a link into scripts/hooks
+# would have had the tracked hook overwritten with the dispatch.
+rm .git/hooks/pre-push
+ln -s ../../scripts/hooks/pre-push .git/hooks/pre-push
+expect_pass "setup with a link where a hook goes" scripts/setup.sh
+cmp -s "$root/scripts/hooks/pre-push" scripts/hooks/pre-push || fail "setup does not write through a link into scripts/hooks"
+[ ! -L .git/hooks/pre-push ] || fail "setup replaces the link with the hook"
+[ "$(installed_hooks)" = 3 ] || fail "the three hooks are installed where a link was"
+grep -q -F "replaced what was at pre-push in the repository's hooks folder" "$tmp/out" || { cat "$tmp/out" >&2; fail "setup says that it replaced the link"; }
+# A hook of the user's own under one of the three names is replaced, and setup says so.
+printf '%s\n' '#!/bin/sh' 'echo "a hook of my own"' >.git/hooks/commit-msg
+chmod +x .git/hooks/commit-msg
+expect_pass "setup over a hook of the user's own" scripts/setup.sh
+grep -q -F "replaced what was at commit-msg in the repository's hooks folder" "$tmp/out" || { cat "$tmp/out" >&2; fail "setup says that it replaced a hook that was not this repo's"; }
+grep -q -F "replaced what was at pre-push" "$tmp/out" && { cat "$tmp/out" >&2; fail "setup says nothing of a hook that was already this repo's"; }
+# A folder where a hook goes cannot be replaced: not installed, and said.
+rm .git/hooks/pre-commit
+mkdir .git/hooks/pre-commit
+expect_fail "setup with a folder where a hook goes" "hook problem: pre-commit could not be installed" scripts/setup.sh
+rmdir .git/hooks/pre-commit
+expect_pass "setup once the folder is gone" scripts/setup.sh
 for hook in pre-commit commit-msg pre-push; do
   [ -x "scripts/hooks/$hook" ] || fail "scripts/hooks/$hook can be run"
   # Git skips a hook it cannot execute, so the three are committed as files that can be.
@@ -243,6 +302,8 @@ elsewhere="$tmp/elsewhere"
 mkdir "$elsewhere"
 key="sk""-abcdefghij0123456789ABCDEFGHIJ"
 on_remote() { git ls-remote "$remote" "refs/heads/$1" | cut -f1; }
+# no_list <command...>: the command with no word list in its environment.
+no_list() { (unset WHIZBANG_WORDLIST; "$@"); }
 # around <way> <git arguments...>: git, run from the other folder, told where the
 # repository and its working tree are in one of three ways.
 around() {
@@ -279,7 +340,7 @@ for way in environment options; do
     around "$way" push origin zorblaxquint-branch
   [ -z "$(on_remote zorblaxquint-branch)" ] || fail "a push around the folder ($way): the branch name did not reach the remote"
   expect_fail "a push around the folder ($way), with no word list" "WHIZBANG_WORDLIST is not set" \
-    env -u WHIZBANG_WORDLIST bash -c "cd '$elsewhere' && GIT_DIR='$repo/.git' GIT_WORK_TREE='$repo' git push origin around-clean:no-list-$way"
+    no_list around "$way" push origin "around-clean:no-list-$way"
   [ -z "$(on_remote "no-list-$way")" ] || fail "a push around the folder ($way), with no word list: nothing reached the remote"
   # A clean one is scanned and arrives.
   expect_pass "a clean push around the folder ($way)" around "$way" push origin "around-clean:clean-$way"
@@ -296,6 +357,36 @@ for branch in around-key around-clean; do
   # The hook names no folder; git's own line names the remote, as it always does.
   grep -e '^pre-push:' "$tmp/out" | grep -F -e "$tmp" >/dev/null && fail "the refusal names no path of this machine"
 done
+# Where git names no working tree at all, nothing can be scanned: refused. From inside the
+# repository's own folder, and from a bare copy of the repository with the hooks installed.
+(cd "$repo/.git" && expect_fail "a push from inside the repository's own folder" \
+  "pre-push: git cannot tell which working tree this is" git push origin around-clean:from-inside)
+[ -z "$(on_remote from-inside)" ] || fail "a push from inside the repository's own folder: nothing reached the remote"
+git clone -q --bare "$repo" "$tmp/bare.git"
+for hook in pre-commit commit-msg pre-push; do cp "$root/scripts/hook-dispatch.sh" "$tmp/bare.git/hooks/$hook"; chmod +x "$tmp/bare.git/hooks/$hook"; done
+(cd "$tmp/bare.git" && expect_fail "a push from a bare repository" \
+  "pre-push: git cannot tell which working tree this is" git push "$remote" around-clean:from-bare)
+[ -z "$(on_remote from-bare)" ] || fail "a push from a bare repository: nothing reached the remote"
+# A hook that is there and cannot be run is no hook: git would skip it, the dispatch refuses.
+chmod -x scripts/hooks/pre-push
+expect_fail "a push with a pre-push hook that cannot be run" "pre-push: no scripts/hooks/pre-push here that can be run" \
+  git push origin around-clean:not-executable
+[ -z "$(on_remote not-executable)" ] || fail "a push with a hook that cannot be run: nothing reached the remote"
+chmod +x scripts/hooks/pre-push
+# Another checkout of this repo, named with the repository alone: git takes the folder it
+# is in for the working tree, and that folder's hook and scan are what run.
+git clone -q "$repo" "$tmp/second"
+mkdir -p "$tmp/second/scripts"
+cp -R scripts/hooks "$tmp/second/scripts/hooks"
+cp scripts/scan.sh "$tmp/second/scripts/scan.sh"
+printf 'scripts/\n' >"$tmp/second/.git/info/exclude"
+(cd "$tmp/second" && expect_fail "the repository named alone, from another checkout, with a key" "$with_key:config.txt:1" \
+  env GIT_DIR="$repo/.git" git push origin around-key)
+[ -z "$(on_remote around-key)" ] || fail "the repository named alone, from another checkout: the key did not reach the remote"
+# With -C, git goes to the working tree first: it is a push from inside it.
+(cd "$elsewhere" && expect_fail "a push with -C, with a key" "$with_key:config.txt:1" git -C "$repo" push origin around-key)
+[ -z "$(on_remote around-key)" ] || fail "a push with -C: the key did not reach the remote"
+
 # A commit made the same way goes through the commit hooks of the working tree.
 printf 'feat: a thing\n\n%s: A Person <person@example.com>\n' "Co""-Authored-By" >"$tmp/message"
 echo "more" >>file.txt

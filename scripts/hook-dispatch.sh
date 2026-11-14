@@ -12,6 +12,10 @@
 # working tree, git takes the folder it is in for one, and nothing there can be scanned.
 # The folder is not named in the refusal; a path of this machine is not for a log.
 #
+# The working tree git is told to act on is trusted: its scripts/hooks/<name> is what
+# runs, and its scripts/scan.sh is what scans. Whoever names another working tree chooses
+# the hook, as whoever edits a hook in their own does.
+#
 # It sets no `EXIT` trap, so its own syntax error is a failure.
 # The whole script is one function, read before any of it runs, so a change to this file
 # during a run does not change the run: see `main` in scripts/scan.sh.
