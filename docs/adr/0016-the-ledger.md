@@ -12,7 +12,9 @@ place of the rules for each case, that a reservation counts by the ledger's arit
 only when its names are a set the ledger could have written; a turn for every
 publication that changes what is left, in the epoch it changes; a correction that
 names its place and its turn and is sealed over the names it was made over; and what a
-run sent, known or not.
+run sent, known or not. And after the third: what a frozen reservation counts for
+is one sum with no credits, in every epoch, and it stops admissions until the owner
+acts.
 Spec: section 6, "Spend"; section 3, "Storage"
 
 ## Context
@@ -67,11 +69,16 @@ guarded evidence can only raise a count or freeze, never lower one.**
 written.** The names of a reservation are *reachable* when they are exactly a set that
 some sequence of the ledger's own publications makes, with nothing damaged; "What the
 ledger can have written" is the table a recogniser holds them to. A reachable
-reservation counts by the ledger's arithmetic. Any other is **frozen**: it counts for
-the most its names can mean, in every epoch a hold of it names; nothing is dispatched
-under it; no settlement, closing or old correction lowers it; and only a correction the
-owner makes over it, as it then is, ends that. The store has the same rule for its
-turns ("Nothing is published on a stale balance").
+reservation counts by the ledger's arithmetic. Any other is **frozen**, and **no name
+in it is trusted to explain, credit or attribute anything**: it counts for the most its
+names can mean, by one sum that has no credits, in every epoch there is; nothing is
+dispatched under it; no settlement, closing or old correction lowers it; and the store
+takes no admission while it is there. Only a correction the owner makes over it, as it
+then is, ends that. The store has the same rule for its turns ("Nothing is published
+on a stale balance").
+
+**That is deliberate: tampering or damage stops new work until a person looks.** A
+frozen reservation over-counts heavily, and is the owner's to repair.
 
 Two rounds of review each found seven ways past rules written case by case (a
 settlement without its guard, a correction counted by its names, a place taken twice).
@@ -167,7 +174,7 @@ is looked at afterwards ("A person's correction").
 | A request not settled | Its place has no `settling` and no `settled` |
 | A settlement | Its place has one `dispatched`, one `settled` and the `settling`; and the charge is one its stage allows (ADR 0010): `not_sent`, nothing; `unresolved`, the dispatch's bound; `answered`, any charge |
 | A closing | There is at most one; and with `released`, every dispatch has its settlement |
-| A correction | There is a closing; the place it names is there and holds no dispatch; no two corrections name one place |
+| A correction | The closing is there and is `held`; the place the correction names is there and holds no dispatch; no two corrections name one place |
 | Every other place | The places that hold no dispatch are exactly as many as the settlements over their bounds, the closing and the corrections: each of those took one |
 
 Every history of the table in which other hands do nothing passes it after every event,
@@ -205,24 +212,29 @@ that says so. A reachable reservation that carries a correction which no longer 
 is interrupted, at the larger of *A*, what is known and what any correction says: a
 settlement that arrives after a correction ends it (history 60).
 
-**The most a frozen reservation's names can mean.** *A* is then the largest amount a
-`held` of it names. A settlement's *whole chain* is the row "A settlement" of the
-recogniser with the dispatch's `place` there and none of the four damaged; what such
-settlements say is *settled*, which a correction cannot go under. Each place counts
-for:
+**The most a frozen reservation's names can mean** is one sum, with no credits. *H* is
+the largest amount a `held` of it names, or nothing. It counts for
 
-| The place has | Counts for |
-|---|---|
-| One dispatch | The larger of its bound and all the charges named there: a settlement gives up nothing of its bound here, whole or not |
-| More than one dispatch | Every bound and every charge named there: each dispatch may be a request of its own (history 59) |
-| No dispatch | The charges named there |
+> *H*, and every bound a `dispatched` under it names, and every charge a `settled`
+> under it names, and *H* once more for each number from 1 to the highest place any of
+> its names names that holds no `dispatched`
 
-A place is *unexplained* when a `place` name has nothing at it and is more than the
-guarded settlements over their bounds, one closing and the corrections account for;
-and so is each number missing below the highest `place` there is. Each may be a
-dispatch whose name is lost, of any bound up to the amount, and counts for *A* once
-more (histories 53 and 62). *Most* is the largest of: *A*; the places and the
-unexplained places together; and what any correction says.
+or for what a correction of it says, where that is more. No settlement gives up
+anything of a bound, guarded or not; no overrun, closing or correction accounts for a
+place; a place with a settlement and no dispatch counts *H* and the charge. The third
+review round found the credits: a settlement made at the place of a lost dispatch made
+the place look accounted for (history 65), and a guarded settlement at a charge its
+stage forbids was taken for an overrun that had used a place (history 66). A sum that
+gives no credit has none to forge. So a reservation of 10 with one request settled
+and closed, whose record is damaged, counts 27 where it released at 3 (history 15).
+
+A settlement's *whole chain* is the row "A settlement" of the recogniser with the
+dispatch's `place` there and none of the four damaged. What such settlements say is
+*settled*: it lowers nothing in a frozen reservation, and it is the least a correction
+may say.
+
+**A frozen reservation counts in every epoch there is,** whatever its holds name: a
+hold other hands made can name any epoch, and the real one can be lost (history 67).
 
 **What a dispatch may still take** is *A* less what is known, of an open reservation,
 and nothing of any other: nothing is dispatched under a frozen reservation (history
@@ -263,9 +275,9 @@ makes a set the ledger could have written
 `spend::a_closing_and_a_correction_count_only_as_the_ledger_writes_them`): a
 settlement without its guard or at a charge its stage does not allow (histories 43 and
 64), a second hold in any epoch and of any amount (45, 46), a second dispatch at a
-place (17, 50), a closing without its place (48), a name of no form. A reservation
-with more than one hold counts in every epoch a hold names; one with none is a
-reservation of nothing that counts in every epoch there is, for what its names say.
+place (17, 50), a closing without its place (48), a name of no form. Names that
+name a run with no hold are a frozen reservation of nothing, counted for what they
+say.
 
 **Losing one name of a reservation always freezes it:** no set the ledger writes is
 another with one name gone (`spend::losing_any_one_name_lowers_nothing`, which loses
@@ -273,11 +285,13 @@ each name of three books in turn). It then counts for no less than it did, but f
 names that are the only place their amount is in:
 
 - **a settlement over its bound:** the charge was in that name alone. What is left is
-  its dispatch's bound and the place the overrun took, now unexplained: no less than
-  the amount, and the bound and the amount together where that is more (history 53: 12
-  was counted, 15 is);
-- **the hold:** the amount was in that name alone. The reservation is frozen at what
-  its other names say, counts in every epoch, and takes no dispatch.
+  the amount, its dispatch's bound and the amount again for the place the overrun
+  took (history 53: 12 was counted, 25 is);
+- **the hold:** the amount was in that name alone. The reservation is frozen at every
+  bound and charge its other names say, and takes no dispatch.
+
+A name lost from a reservation that is frozen already takes what it said out of the
+sum: the rule is of books that were whole.
 
 Losses of more than one name that leave a reachable set are believed: "Limits" lists
 them.
@@ -304,6 +318,12 @@ next number or far ahead, and a name that takes a turn made without one, each st
 admissions and never let one through that judged after it (histories 47 and 61,
 `spend::the_turns_of_an_epoch_are_exactly_those_its_publications_took`). What a
 reservation counts for is not changed by it.
+
+**A frozen reservation makes the store need its owner too, in every epoch,** and a
+reset does not end that: the reservation is still there. The owner's correction of it
+does (histories 65 and 67). A reservation that is interrupted and reachable does not
+stop admissions; only names the ledger could not have written do. Dispatches under
+other, reachable reservations go on against what each has left.
 
 **A reservation falls under the epoch its hold names, for good.** The balance an admission is judged on is the newest
 epoch's, so a reset closes the books before it: a reservation of an earlier epoch
@@ -562,7 +582,8 @@ the model) takes its floor from the truth and leaves out these and nothing else:
    whose name is lost, leave the reservation at its amount or more, and under the
    charge when the charge was over that (history 52, the same test, history 53).
    Invariant 1 is of what the records show.
-3. **The amount, when every hold is lost.** The reservation counts for what its other
+3. **The amount, when every hold is lost** (and only then: with a hold other hands
+   made still there, the reservation is held to its epoch and its floor). The reservation counts for what its other
    names say, in every epoch; a request whose dispatch is lost as well has then no
    name that states any amount.
 4. **A loss that leaves a reachable set is believed**
@@ -652,6 +673,52 @@ largest (history 59 is under at the largest: 10 counted, 11 real); a reservation
 no hold counts in every epoch, not in the newest alone, which is never less; and the
 two under "Limits": a correction can stand again, and a judgement made before other
 hands acted is published.
+
+**2026-11-14, the third round.** The same review, told of the limits as they then
+stood, the two below among them as (e) and (f), found that the recogniser held: no
+change of one name to books the ledger wrote both passes it and lowers a count.
+Three traces remained, all in what a frozen reservation counts for and where.
+
+| Trace | What it showed | Held by | History |
+|---|---|---|---|
+| 1 | A settlement made without a guard at the place of a lost dispatch made the place look accounted for | The frozen sum has no credits: every place with no dispatch counts the amount | 65 |
+| 2 | A guarded settlement at a charge its stage forbids, over its bound, was taken for an overrun that had used a place | The same | 66 |
+| 3 | With the real hold lost and holds other hands made in other epochs left, the reservation counted in those alone; a hold made for another run made the turns of its own epoch look right; and the checker let it by | A frozen reservation counts in every epoch and stops admissions; the checker holds the epoch unless every hold is lost, and works out the allowance from the truth | 67 |
+
+(e) is that a judgement made before other hands acted is published; (f) that a
+correction can stand again when the names are again those it was sealed over.
+
+What it changed in the histories before it, each of which has damage or names other
+hands made, and each of which now also leaves the store needing its owner:
+
+| History | Counted before | Counted now |
+|---|---|---|
+| 13 | 12 | 32 |
+| 14 | 10 | 20 |
+| 15 | 10 | 27 |
+| 17 | 13, and 10 for the second | 23, and 44 |
+| 43 | 17 | 52 |
+| 44 | 10 where it is frozen | 35, and 45 at the end |
+| 45 | 10 | 15 |
+| 46 | 20 | 57 |
+| 48, 50 | 10 | 15 |
+| 53 | 15 | 25 |
+| 57 | 10 | 35 |
+| 58 | 10 | 40 |
+| 59 | 25 | 35 |
+| 62 | 16 | 31 |
+| 63 | 10 | 33 |
+| 64 | 10 | 25 |
+
+One rule of the recogniser is new with it: a correction is of a reservation closed as
+`held`. A released reservation that carries a correction which no longer stands was
+frozen before by a rule of its own, and is now frozen as every other.
+
+Not done at this head, and owed before the next round: the generators do not yet make
+holds in an epoch up to three past the newest or for runs with no reservation, the
+second suite still allows three things from other hands and not six, there is no
+third suite that loses each name of each of many whole books, and the frozen sum and
+the store's freeze have not been through the mutation check.
 
 ## Consequences
 

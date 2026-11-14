@@ -294,15 +294,16 @@ pub struct Standing {
     /// The part of `charged` that settlements with their whole chain say: what a
     /// correction cannot go under.
     pub settled: u128,
-    /// What its places count for beyond their charges.
+    /// The bounds of its dispatches that are not settled; and where its names are
+    /// not reachable, the bound of every dispatch named.
     pub outstanding: u128,
     /// The part of `charged` and all of `outstanding` that no answer settled.
     pub unresolved: u128,
     /// The places under it that have no settlement with its whole chain.
     pub unsettled: u64,
-    /// The places that nothing accounts for, and the numbers missing among its
-    /// places: each may be a dispatch whose name is lost, of any bound up to the
-    /// amount. None where the names are reachable.
+    /// Where the names are not reachable: the numbers from 1 to the highest place
+    /// any of them names that hold no dispatch. Each may be a dispatch whose name is
+    /// lost, of any bound up to the amount. None where the names are reachable.
     pub unexplained: u64,
     /// The largest amount a correction of it names.
     pub corrections: u64,
@@ -320,11 +321,18 @@ impl Standing {
         self.charged + self.outstanding
     }
 
-    /// The most its names can mean: its amount, or what is known and the amount once
-    /// more for each place nothing accounts for, or a correction, whichever is most.
+    /// The most its names can mean. Of a reachable reservation: its amount, what is
+    /// known, or what a correction says, whichever is most. Of any other, with no
+    /// name trusted to explain another: its amount, and every bound and every charge
+    /// named under it, and its amount once more for each place that holds no
+    /// dispatch; or what a correction says, when that is more.
     pub fn most(&self) -> u128 {
-        let exposed = self.known() + u128::from(self.unexplained) * u128::from(self.amount);
-        u128::from(self.amount.max(self.corrections)).max(exposed)
+        let amount = u128::from(self.amount);
+        let named = match self.reachable {
+            true => self.known(),
+            false => amount + self.known() + u128::from(self.unexplained) * amount,
+        };
+        u128::from(self.amount.max(self.corrections)).max(named)
     }
 
     /// What a dispatch under it may still take: nothing unless it is open.
@@ -337,7 +345,9 @@ impl Standing {
 
     /// Whether it counts against this epoch's allowance.
     pub fn counts_in(&self, epoch: u64) -> bool {
-        self.epochs.is_empty() || self.epochs.contains(&epoch)
+        // A frozen reservation counts in every epoch there is: its holds are not
+        // trusted to say which.
+        self.state == State::Frozen || self.epochs.is_empty() || self.epochs.contains(&epoch)
     }
 }
 
@@ -414,7 +424,10 @@ impl Folded {
         let turns = self.turns.get(&epoch).unwrap_or(&none);
         let count = turns.len() as u64;
         let due = self.due.get(&epoch).copied().unwrap_or(0);
-        !turns.iter().copied().eq(1..=count) || count != due
+        let frozen = |one: &Standing| one.state == State::Frozen;
+        !turns.iter().copied().eq(1..=count)
+            || count != due
+            || self.reservations.values().any(frozen)
     }
 
     /// The balance of this epoch.
@@ -598,7 +611,7 @@ fn reachable(of: &Found) -> bool {
     let mut taken = BTreeSet::new();
     for one in &of.adjusted {
         let own = of.places.contains(&one.place) && !of.dispatched.contains_key(&one.place);
-        if of.closed.is_empty() || !own || !taken.insert(one.place) {
+        if of.closed != [false] || !own || !taken.insert(one.place) {
             return false;
         }
     }
@@ -726,7 +739,7 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
         let base = reachable(&of);
         let (mut charged, mut settled) = (0u128, 0u128);
         let (mut outstanding, mut unresolved) = (0u128, 0u128);
-        let (mut overruns, mut unsettled) = (0u64, 0u64);
+        let mut unsettled = 0u64;
         let at: BTreeSet<u64> = of
             .dispatched
             .keys()
@@ -755,25 +768,18 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
                 }
                 _ => false,
             };
-            // What the place counts for: with its whole chain, the charge; with
-            // one dispatch, the larger of its bound and every charge named there;
-            // with more, every bound and every charge, because each may be a
-            // request of its own.
-            let value = match sent.len() {
-                _ if whole && base => charge,
-                0 => charge,
-                1 => bounds.max(charge),
-                _ => bounds + charge,
+            // What the place counts for beyond its charges. Where the names are
+            // reachable, a place is settled or it is not: nothing, or its bound.
+            // Where they are not, no settlement gives up a bound: every bound named
+            // there, beside every charge.
+            let rest = match whole && base {
+                true => 0,
+                false => bounds,
             };
-            let rest = value - charge;
             if whole {
                 settled += charge;
             } else {
                 unsettled += 1;
-            }
-            // A guarded charge over its one dispatch's bound took a place.
-            if sent.len() == 1 && ended.len() == 1 && guarded && charge > bounds {
-                overruns += 1;
             }
             charged += charge;
             outstanding += rest;
@@ -787,23 +793,22 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
                 spend.unresolved += open + rest;
             }
         }
-        // Where the names are not reachable: each place that no dispatch,
-        // settlement, guarded overrun, closing or correction accounts for, and each
-        // number missing below the highest place named, may be a dispatch whose
-        // name is lost.
+        // Where the names are not reachable, no name is trusted to account for a
+        // place: every number up to the highest place named that holds no dispatch
+        // may be a dispatch whose name is lost.
         let unexplained = if base {
             0
         } else {
-            let bare = of.places.iter().filter(|place| !at.contains(place));
-            let own =
-                |one: &&Correction| of.places.contains(&one.place) && !at.contains(&one.place);
-            let due = overruns
-                + of.closed.len().min(1) as u64
-                + of.adjusted.iter().filter(own).count() as u64;
-            let highest = of.places.last().copied().unwrap_or(0);
-
-            let missing = (1..=highest).filter(|place| !of.places.contains(place));
-            (bare.count() as u64).saturating_sub(due) + missing.count() as u64
+            let corrected = of.adjusted.iter().map(|one| &one.place);
+            let named = of
+                .places
+                .iter()
+                .chain(&at)
+                .chain(&of.settling)
+                .chain(corrected);
+            let highest = named.max().copied().unwrap_or(0);
+            let bare = (1..=highest).filter(|place| !of.dispatched.contains_key(place));
+            bare.count() as u64
         };
         let closed = !of.closed.is_empty();
         // A correction stands when it is not damaged, its reservation has a closing,
@@ -855,9 +860,6 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
             // chain say.
             Some(micros) => (State::Adjusted, u128::from(micros).max(settled)),
             None if !base => (State::Frozen, one.most()),
-            // A correction that no longer stands lowers nothing, and its
-            // reservation is never released.
-            None if !of.adjusted.is_empty() && of.closed == [true] => (State::Frozen, one.most()),
             None if of.closed == [true] => (State::Released, one.known()),
             None if closed => (State::Interrupted, one.most()),
             None => (State::Open, one.most()),
@@ -2032,12 +2034,18 @@ impl Books {
     /// allowance itself is other hands' or is lost.
     fn really_left(&self, folded: &Folded) -> Option<u128> {
         let newest = self.allowed.keys().next_back().copied().unwrap_or(0);
-        let of_allowance = |name: &Name| match name {
-            Name::Reset { epoch, .. } | Name::Epoch(epoch) => *epoch >= newest,
-            _ => false,
-        };
-        if folded.epoch() != newest || self.planted.keys().any(of_allowance) {
+        // An epoch after the newest that other hands made whole, its reset and its
+        // guard, is believed; so is the loss of the newest. An epoch made without
+        // its guard allows nothing, and is held to that.
+        let epoch = folded.epoch();
+        let made = |name: &Name| self.planted.contains_key(name);
+        let reset = |name: &Name| matches!(name, Name::Reset { epoch: of, .. } if *of == epoch);
+        let forged = made(&Name::Epoch(epoch)) && self.planted.keys().any(reset);
+        if epoch < newest || (epoch > newest && forged) {
             return None;
+        }
+        if epoch > newest {
+            return Some(0);
         }
         let mut counted = 0u128;
         for (root, truth) in self.truth.iter().filter(|(_, truth)| truth.epoch == newest) {
@@ -2156,9 +2164,9 @@ impl Books {
                     one.counts
                 ));
             }
-            // The epoch is in the hold: with the ledger's hold lost it is not held.
+            // The epoch is in the hold: with every hold lost it is not held.
             let hold = |name: &Name| matches!(name, Name::Held { run, .. } if run == root);
-            if !one.counts_in(truth.epoch) && !self.removed.keys().any(hold) {
+            if !one.counts_in(truth.epoch) && self.names.iter().any(hold) {
                 return Err(format!(
                     "{root}: reserved in epoch {} and not counted there",
                     truth.epoch
@@ -2327,8 +2335,17 @@ pub fn run_watched(
             && books.removed.contains_key(name)
         {
             let own = |name: &&Name| name.of() == plain_run(plain);
+            // Of a reservation whose names were whole: one that was frozen already
+            // counts each name it has, and counts less with one fewer.
+            let whole = |run: Run| {
+                before
+                    .reservations
+                    .get(&run)
+                    .is_some_and(|was| was.state != State::Frozen)
+            };
             let alone = books.removed.keys().filter(own).count() == 1
-                && books.planted.keys().filter(own).count() == 0;
+                && books.planted.keys().filter(own).count() == 0
+                && name.of().is_some_and(whole);
             let was = name.of().and_then(|run| before.reservations.get(&run));
             let is = name.of().and_then(|run| after.reservations.get(&run));
             if let (Some(was), Some(is), true) = (was, is, alone) {
@@ -2594,11 +2611,13 @@ impl History {
     /// Runs the history on the model, holding every state to the invariants, and
     /// holds the books to what the history must give.
     pub fn verify(&self) -> Result<Books, String> {
-        let mut after = Vec::new();
+        // Everything it must give that it does not is said, not the first alone.
+        let (mut after, mut wrong) = (Vec::new(), Vec::new());
         let (books, outcomes) = run_watched(&self.events, |at, books, outcomes| {
             for (_, must) in self.earlier.iter().filter(|(when, _)| *when == at) {
-                must.holds(books, outcomes)
-                    .map_err(|why| format!("after event {at}: {why}"))?;
+                if let Err(why) = must.holds(books, outcomes) {
+                    wrong.push(format!("after event {at}: {why}"));
+                }
             }
             after.push(at);
             Ok(())
@@ -2607,11 +2626,15 @@ impl History {
         if let Some((at, _)) = self.earlier.iter().find(|(at, _)| !after.contains(at)) {
             return Err(format!("{}: it has no event {at}", self.name));
         }
-        for must in &self.must {
-            must.holds(&books, &outcomes)
-                .map_err(|why| format!("{}: {why}", self.name))?;
+        let last = self
+            .must
+            .iter()
+            .filter_map(|must| must.holds(&books, &outcomes).err());
+        wrong.extend(last);
+        match wrong.is_empty() {
+            true => Ok(books),
+            false => Err(format!("{}: {}", self.name, wrong.join("; "))),
         }
-        Ok(books)
     }
 }
 
@@ -2906,7 +2929,7 @@ pub fn histories() -> Vec<History> {
             Event::Crash,
             Event::Recover,
         ],
-        vec![state(r(1), State::Frozen), Counts(r(1), 12), Left(8)],
+        vec![state(r(1), State::Frozen), Counts(r(1), 32), Left(0)],
         vec![],
     );
     add(
@@ -2920,7 +2943,7 @@ pub fn histories() -> Vec<History> {
             Event::DeletePrune { run: r(1) },
             Event::Recover,
         ],
-        vec![state(r(1), State::Frozen), Counts(r(1), 10), Left(10)],
+        vec![state(r(1), State::Frozen), Counts(r(1), 20), Left(0)],
         vec![],
     );
     add(
@@ -2935,7 +2958,7 @@ pub fn histories() -> Vec<History> {
             end(1),
             Event::Damage(Name::Reservation(r(1))),
         ],
-        vec![state(r(1), State::Frozen), Counts(r(1), 10), Left(10)],
+        vec![state(r(1), State::Frozen), Counts(r(1), 27), Left(0)],
         vec![(6, state(r(1), State::Released)), (6, Counts(r(1), 3))],
     );
     add(
@@ -2978,13 +3001,14 @@ pub fn histories() -> Vec<History> {
         ],
         vec![
             state(r(1), State::Frozen),
-            // Two dispatches at one place may each be a request: 5 and 8.
-            Counts(r(1), 13),
+            // Frozen: the amount and every bound; and for the other, the amount,
+            // the charge, and the amount for each of three places with no dispatch.
+            Counts(r(1), 23),
             state(r(2), State::Frozen),
-            Counts(r(2), 10),
+            Counts(r(2), 44),
             state(r(3), State::Open),
             Counts(r(3), 5),
-            Left(2),
+            Left(0),
         ],
         vec![(4, Left(5)), (5, state(r(1), State::Open))],
     );
@@ -3420,14 +3444,14 @@ pub fn histories() -> Vec<History> {
         ),
         vec![
             state(r(1), State::Frozen),
-            Counts(r(1), 17),
-            Outstanding(r(1), 5),
-            Left(3),
+            Counts(r(1), 52),
+            Outstanding(r(1), 10),
+            Left(0),
         ],
         vec![
             (4, Counts(r(1), 17)),
             (5, state(r(1), State::Frozen)),
-            (5, Counts(r(1), 17)),
+            (5, Counts(r(1), 42)),
         ],
     );
     let interrupted = || with(prefix(), vec![Event::Crash, Event::Recover]);
@@ -3457,19 +3481,19 @@ pub fn histories() -> Vec<History> {
             came(8, Outcome::Done),
             came(9, Outcome::Done),
             state(r(1), State::Frozen),
-            Counts(r(1), 10),
-            Counted(10),
+            Counts(r(1), 45),
+            Counted(45),
         ],
         vec![
             (4, state(r(1), State::Interrupted)),
             (5, state(r(1), State::Frozen)),
-            (5, Counts(r(1), 10)),
+            (5, Counts(r(1), 35)),
             // A correction other hands made took no turn: the owner is needed.
             (5, Must::NeedsOwner),
             (6, state(r(1), State::Adjusted)),
             (6, Counts(r(1), 0)),
             (7, state(r(1), State::Frozen)),
-            (7, Counts(r(1), 10)),
+            (7, Counts(r(1), 35)),
             (8, state(r(1), State::Adjusted)),
             (8, Counts(r(1), 0)),
         ],
@@ -3490,12 +3514,12 @@ pub fn histories() -> Vec<History> {
         vec![
             state(r(1), State::Frozen),
             Epoch(2),
-            Counted(10),
+            Counted(15),
             // The hold other hands made in the new epoch took no turn there.
             Must::NeedsOwner,
             Left(0),
         ],
-        vec![(3, Epoch(1)), (3, Counted(10)), (3, Left(10))],
+        vec![(3, Epoch(1)), (3, Counted(15)), (3, Left(0))],
     );
     add(
         "46 a second hold of more: counted at the larger, and nothing more is dispatched",
@@ -3515,7 +3539,7 @@ pub fn histories() -> Vec<History> {
         vec![
             came(6, refused(Why::Frozen)),
             state(r(1), State::Frozen),
-            Counts(r(1), 20),
+            Counts(r(1), 57),
             Left(0),
         ],
         vec![],
@@ -3563,9 +3587,9 @@ pub fn histories() -> Vec<History> {
             came(3, refused(Why::AlreadyClosed)),
             came(4, Outcome::Placed(1)),
             state(r(1), State::Frozen),
-            Counts(r(1), 10),
+            Counts(r(1), 15),
             Outstanding(r(1), 5),
-            Counted(10),
+            Counted(15),
             Must::NeedsOwner,
         ],
         vec![(2, state(r(1), State::Frozen)), (2, Counts(r(1), 10))],
@@ -3603,8 +3627,8 @@ pub fn histories() -> Vec<History> {
         ),
         vec![
             state(r(1), State::Frozen),
-            Counts(r(1), 10),
-            Must::SentAtMost(r(1), 10),
+            Counts(r(1), 15),
+            Must::SentAtMost(r(1), 15),
         ],
         vec![(2, Must::Sent(r(1), 5))],
     );
@@ -3666,10 +3690,9 @@ pub fn histories() -> Vec<History> {
         vec![
             state(r(1), State::Frozen),
             Outstanding(r(1), 5),
-            // The bound, and the amount once for the place the charge took, which
-            // nothing accounts for now.
-            Counts(r(1), 15),
-            Left(5),
+            // The amount, the bound, and the amount for the place the charge took.
+            Counts(r(1), 25),
+            Left(0),
         ],
         vec![(3, Counts(r(1), 12)), (3, Left(8))],
     );
@@ -3773,10 +3796,10 @@ pub fn histories() -> Vec<History> {
         vec![
             came(7, refused(Why::NeedsOwner)),
             state(r(1), State::Frozen),
-            Counts(r(1), 10),
-            Counted(10),
+            Counts(r(1), 35),
+            Counted(35),
         ],
-        vec![(5, state(r(1), State::Frozen)), (5, Counts(r(1), 10))],
+        vec![(5, state(r(1), State::Frozen)), (5, Counts(r(1), 35))],
     );
     add(
         "58 a correction, then a settlement, then names made and lost until as many are \
@@ -3798,14 +3821,14 @@ pub fn histories() -> Vec<History> {
         ),
         vec![
             state(r(1), State::Frozen),
-            Counts(r(1), 10),
+            Counts(r(1), 40),
             Charged(r(1), 5),
         ],
         vec![
             (7, state(r(1), State::Adjusted)),
             (7, Counts(r(1), 0)),
             (8, state(r(1), State::Frozen)),
-            (8, Counts(r(1), 10)),
+            (8, Counts(r(1), 39)),
             (10, state(r(1), State::Frozen)),
             (11, state(r(1), State::Frozen)),
         ],
@@ -3831,11 +3854,11 @@ pub fn histories() -> Vec<History> {
             came(5, Outcome::Placed(1)),
             came(8, refused(Why::RequestsOutstanding)),
             state(r(1), State::Frozen),
-            // 3 and 4 and 8, and the amount for the place the charge took.
-            Counts(r(1), 25),
-            Must::SentAtMost(r(1), 25),
+            // The amount, 3 and 4 and 8, and the amount for the place the charge took.
+            Counts(r(1), 35),
+            Must::SentAtMost(r(1), 35),
         ],
-        vec![(4, state(r(1), State::Frozen)), (5, Counts(r(1), 10))],
+        vec![(4, state(r(1), State::Frozen)), (5, Counts(r(1), 17))],
     );
     add(
         "60 a settlement under its bound that ends a correction: an admission that \
@@ -3897,8 +3920,8 @@ pub fn histories() -> Vec<History> {
                 Event::Plant(answered(1, 6)),
             ],
         ),
-        vec![state(r(1), State::Frozen), Counts(r(1), 16)],
-        vec![(5, Counts(r(1), 15))],
+        vec![state(r(1), State::Frozen), Counts(r(1), 31)],
+        vec![(5, Counts(r(1), 25))],
     );
     add(
         "63 a dispatch whose name is lost, its settlement still there: what its run \
@@ -3918,8 +3941,8 @@ pub fn histories() -> Vec<History> {
         ),
         vec![
             state(r(1), State::Frozen),
-            Counts(r(1), 10),
-            Must::SentAtMost(r(1), 10),
+            Counts(r(1), 33),
+            Must::SentAtMost(r(1), 33),
         ],
         vec![(4, Must::Sent(r(1), 3)), (4, Counts(r(1), 3))],
     );
@@ -3943,8 +3966,122 @@ pub fn histories() -> Vec<History> {
                 Event::Recover,
             ],
         ),
-        vec![state(r(1), State::Frozen), Counts(r(1), 10), Counted(10)],
-        vec![(4, state(r(1), State::Frozen)), (4, Counts(r(1), 10))],
+        vec![state(r(1), State::Frozen), Counts(r(1), 25), Counted(25)],
+        vec![(4, state(r(1), State::Frozen)), (4, Counts(r(1), 15))],
+    );
+    // What the third review round found: each of its three traces, as it was given.
+    add(
+        "65 a dispatch whose name is lost, then a settlement made at its place without \
+         a guard: the place counts the amount still, and nothing is admitted",
+        with(
+            prefix(),
+            vec![
+                dispatch(1, 5),
+                settle(1, 1, charged(12)),
+                Event::Remove(Name::Dispatched {
+                    run: r(1),
+                    place: 2,
+                    by: r(1),
+                    micros: 5,
+                }),
+                Event::Plant(Name::Settled {
+                    run: r(1),
+                    place: 2,
+                    stage: Stage::NotSent,
+                    micros: 0,
+                }),
+                admit(2, 8),
+            ],
+        ),
+        vec![
+            came(7, refused(Why::NeedsOwner)),
+            state(r(1), State::Frozen),
+            // The amount, the bound, the charge, and the amount for each of the two
+            // places that hold no dispatch.
+            Counts(r(1), 10 + 5 + 12 + 20),
+            Must::SentAtMost(r(1), 47),
+            Absent(r(2)),
+        ],
+        vec![(4, Counts(r(1), 17)), (5, state(r(1), State::Frozen))],
+    );
+    add(
+        "66 a settlement with its guard at a charge its stage does not allow, over its \
+         bound: it accounts for no place",
+        vec![
+            reset(20),
+            admit(1, 10),
+            dispatch(1, 0),
+            dispatch(1, 5),
+            dispatch(1, 5),
+            settle(1, 3, charged(12)),
+            Event::Remove(Name::Dispatched {
+                run: r(1),
+                place: 2,
+                by: r(1),
+                micros: 5,
+            }),
+            Event::Plant(Name::Settling {
+                run: r(1),
+                place: 1,
+            }),
+            Event::Plant(Name::Settled {
+                run: r(1),
+                place: 1,
+                stage: Stage::Unresolved,
+                micros: 1,
+            }),
+        ],
+        vec![
+            state(r(1), State::Frozen),
+            Counts(r(1), 10 + 5 + 13 + 20),
+            Must::NeedsOwner,
+        ],
+        vec![(5, Counts(r(1), 17))],
+    );
+    add(
+        "67 the hold lost while holds other hands made in other epochs remain, and a \
+         hold made for another run: counted in its own epoch still, and nothing is \
+         admitted",
+        vec![
+            reset(10),
+            admit(1, 10),
+            dispatch(1, 10),
+            Event::Plant(Name::Reset {
+                epoch: 1,
+                micros: 11,
+            }),
+            Event::Plant(Name::Held {
+                epoch: 2,
+                run: r(1),
+                micros: 10,
+            }),
+            Event::Plant(Name::Held {
+                epoch: 3,
+                run: r(1),
+                micros: 10,
+            }),
+            Event::Remove(Name::Held {
+                epoch: 1,
+                run: r(1),
+                micros: 10,
+            }),
+            Event::Plant(Name::Held {
+                epoch: 1,
+                run: r(9),
+                micros: 0,
+            }),
+            admit(2, 10),
+        ],
+        vec![
+            came(8, refused(Why::NeedsOwner)),
+            Epoch(1),
+            Allowed(10),
+            state(r(1), State::Frozen),
+            Counted(20),
+            Left(0),
+            Absent(r(2)),
+        ],
+        vec![],
     );
     table
 }
