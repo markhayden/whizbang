@@ -100,7 +100,8 @@ If one is missing, ask the orchestrator. Do not guess.
       in `AGENTS.md`: no attribution line, no agent or model name, no private path or
       address. Then scan them (the commands below).
       After any edit to either file, read and scan again. The scan refuses an agent's
-      or a model's name that it knows, a path that starts with `~`, a value of the repo's
+      or a model's name that it knows (but for the folder `.claude` and the file
+      `CLAUDE.md` of this repo, named as paths), a path that starts with `~`, a value of the repo's
       local `.env`, and a credit line with nothing before it but marks that are not
       letters (a number, a sign, a table bar, a quote, a backtick, a box); a name it does
       not know is found only by reading, and so is a credit behind a mark made of letters

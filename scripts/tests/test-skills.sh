@@ -168,6 +168,8 @@ check_kickoff() {
     'So first go through the two files against "Secrets and private data"' \
     'address. Then scan them (the commands below).' \
     'After any edit to either file, read and scan again.' \
+    "or a model's name that it knows (but for the folder \`.claude\` and the file" \
+    '`CLAUDE.md` of this repo, named as paths)' \
     '`check (macos-15)` and `check (ubuntu-22.04)`' 'says "no checks reported"' \
     'a run whose commit is the head lists all three' \
     'go back to step 4' 'hand back again with the new commit'; do
@@ -213,6 +215,7 @@ check_review_merge() {
     '- [ ] 6. With `WHIZBANG_WORDLIST` set, `just scan-range <base> <head>` passes: secrets,' \
     '- [ ] 7. The title and body. No scan sees them on the pull request, so save them to a file' \
     'and scan it (the commands below), then read them yourself' \
+    'folder `.claude` and the file `CLAUDE.md` of this repo, named as paths), a path that' \
     'a name it does not know is found only by reading, and so' 'lists. It lists each line that says "co-authored-by" or "generated with" and is not' \
     'refused: go through those.' 'lines it lists, and are gone through again,' \
     'The corrected files get every check of this step again, the scan and the' \
