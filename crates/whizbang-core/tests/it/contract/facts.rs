@@ -405,8 +405,9 @@ fn a_paid_request_noted_for_a_request_the_run_did_not_send_ends_the_run_as_an_er
             let (facts, fill) = (context.facts(), context.capabilities().fill().unwrap());
             fill.fill(&fill_request()).unwrap();
             assert!(facts.paid(Paid::answered(0, 500, 120).unwrap()));
-            // The run sent one request: there is no request 3.
-            assert!(facts.paid(Paid::answered(3, 500, 400).unwrap()));
+            // The run sent one request, which is request 0: there is no request 1,
+            // the first place past those it sent.
+            assert!(facts.paid(Paid::answered(1, 500, 400).unwrap()));
             Ok(Produced::nothing())
         },
     );
@@ -423,7 +424,7 @@ fn a_paid_request_noted_for_a_request_the_run_did_not_send_ends_the_run_as_an_er
     assert_eq!(error.kind, "record");
     assert_eq!(
         error.message,
-        "what a request cost was noted for request 3, and the run sent 1 capability \
+        "what a request cost was noted for request 1, and the run sent 1 capability \
          requests: a record lists what a request cost only for a request it lists, so 1 \
          of the 2 that were noted is not in this record"
     );
