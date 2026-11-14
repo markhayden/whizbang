@@ -15,6 +15,8 @@ mod refused;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::egress::{Account, Address, Classes, Origin, Recipient};
+
 use crate::contract::Capability;
 
 pub use refused::{ConfigRefused, KEY_SHOWN_LIMIT};
@@ -32,17 +34,11 @@ pub const SETTINGS_LIMIT: usize = 32;
 /// The most recipients a config may approve.
 pub const RECIPIENTS_LIMIT: usize = 32;
 
-/// The most upstreams one recipient may forward to.
-pub const UPSTREAMS_LIMIT: usize = 16;
-
-/// The longest model or account, in characters.
+/// The longest model, in characters.
 pub const TEXT_LIMIT: usize = 128;
 
 /// The longest text of a setting, in characters.
 pub const SETTING_TEXT_LIMIT: usize = 1024;
-
-/// The longest address of a backend, in characters.
-pub const ADDRESS_LIMIT: usize = 2048;
 
 /// The longest name of a variable, in characters.
 pub const VARIABLE_LIMIT: usize = 64;
@@ -59,7 +55,7 @@ pub struct Config {
     /// By the capability's name. A capability that is given no backend is not here.
     backends: BTreeMap<&'static str, Offered>,
     call_cap_micros: Option<u64>,
-    recipients: BTreeMap<String, Recipient>,
+    recipients: BTreeMap<String, Approval>,
 }
 
 /// The backends of one capability.
@@ -75,7 +71,7 @@ pub struct Backend {
     kind: String,
     model: Option<String>,
     provider: Option<String>,
-    url: Option<String>,
+    url: Option<Address>,
     key_env: Option<String>,
     token_env: Option<String>,
     settings: BTreeMap<String, Setting>,
@@ -89,43 +85,13 @@ pub enum Setting {
     Boolean(bool),
 }
 
-/// A class of data a recipient may be approved for (`SPEC.md` section 10, "Egress").
-/// They are in the order of their names' bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum DataClass {
-    DerivedImages,
-    Evidence,
-    Prompts,
-    SourceImages,
-}
-
-impl DataClass {
-    /// Every class, in the order of their names' bytes.
-    pub const ALL: [DataClass; 4] = [
-        DataClass::DerivedImages,
-        DataClass::Evidence,
-        DataClass::Prompts,
-        DataClass::SourceImages,
-    ];
-
-    /// The class as the file names it.
-    pub fn name(self) -> &'static str {
-        match self {
-            DataClass::DerivedImages => "derived_images",
-            DataClass::Evidence => "evidence",
-            DataClass::Prompts => "prompts",
-            DataClass::SourceImages => "source_images",
-        }
-    }
-}
-
-/// One recipient the config approves, and what for.
+/// One recipient the config approves, and what for: the recipient as the egress types
+/// make one (ADR 0012), the classes of data it may receive, and whether it may be
+/// probed.
 #[derive(Clone, PartialEq, Eq)]
-pub struct Recipient {
-    origin: String,
-    account: Option<String>,
-    upstreams: BTreeSet<String>,
-    classes: BTreeSet<DataClass>,
+pub struct Approval {
+    recipient: Recipient,
+    classes: Classes,
     probe: bool,
 }
 
@@ -158,7 +124,7 @@ impl Config {
 
     /// The recipients the file approves, each with its name, in the order of the names'
     /// bytes.
-    pub fn recipients(&self) -> impl Iterator<Item = (&str, &Recipient)> {
+    pub fn recipients(&self) -> impl Iterator<Item = (&str, &Approval)> {
         self.recipients
             .iter()
             .map(|(name, recipient)| (name.as_str(), recipient))
@@ -189,10 +155,17 @@ impl Backend {
         self.provider.as_deref()
     }
 
-    /// The backend's address: a scheme, a host, perhaps a port and a path, and nothing
-    /// a credential could be written in.
-    pub fn url(&self) -> Option<&str> {
-        self.url.as_deref()
+    /// The backend's address: its origin and the path after it, with nothing a
+    /// credential could be written in.
+    pub fn address(&self) -> Option<&Address> {
+        self.url.as_ref()
+    }
+
+    /// The backend's address as a text: its origin as an origin is written, and the
+    /// path as the file gave it.
+    pub fn url(&self) -> Option<String> {
+        let address = self.url.as_ref()?;
+        Some(format!("{}{}", address.origin(), address.rest()))
     }
 
     /// The credentials this backend names, each as the key that names it (`key_env`,
@@ -212,24 +185,29 @@ impl Backend {
     }
 }
 
-impl Recipient {
-    /// The recipient's origin: a scheme, a host and perhaps a port.
-    pub fn origin(&self) -> &str {
-        &self.origin
+impl Approval {
+    /// The recipient that is approved.
+    pub fn recipient(&self) -> &Recipient {
+        &self.recipient
     }
 
-    pub fn account(&self) -> Option<&str> {
-        self.account.as_deref()
+    /// The recipient's origin: a scheme, a host in lower case, and a port.
+    pub fn origin(&self) -> &Origin {
+        self.recipient.origin()
     }
 
-    /// The origins the recipient may forward to, in the order of their bytes.
-    pub fn upstreams(&self) -> impl Iterator<Item = &str> {
-        self.upstreams.iter().map(String::as_str)
+    pub fn account(&self) -> Option<&Account> {
+        self.recipient.account()
     }
 
-    /// The classes of data the recipient may receive, in the order of their names' bytes.
-    pub fn classes(&self) -> impl Iterator<Item = DataClass> {
-        self.classes.iter().copied()
+    /// The origins the recipient may forward to, in the order of their text.
+    pub fn upstreams(&self) -> &[Origin] {
+        self.recipient.upstreams()
+    }
+
+    /// The classes of data the recipient may receive.
+    pub fn classes(&self) -> Classes {
+        self.classes
     }
 
     /// Whether the file approves probing this recipient. Unless it says so, it does not.
@@ -278,12 +256,12 @@ impl std::fmt::Debug for Setting {
     }
 }
 
-impl std::fmt::Debug for Recipient {
+impl std::fmt::Debug for Approval {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Recipient")
-            .field("account", &self.account.is_some())
-            .field("upstreams", &self.upstreams.len())
-            .field("classes", &self.classes.len())
+        f.debug_struct("Approval")
+            .field("account", &self.account().is_some())
+            .field("upstreams", &self.upstreams().len())
+            .field("classes", &self.classes.iter().count())
             .field("probe", &self.probe)
             .finish()
     }

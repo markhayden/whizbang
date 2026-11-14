@@ -4,10 +4,11 @@
 //! a key, escaped and cut, and never shows a value or a path.
 
 use whizbang_core::config::{
-    BACKENDS_LIMIT, CONFIG_BYTES_LIMIT, Config, ConfigRefused, DataClass, KEY_SHOWN_LIMIT,
-    RECIPIENTS_LIMIT, SETTINGS_LIMIT, Setting, UPSTREAMS_LIMIT,
+    BACKENDS_LIMIT, CONFIG_BYTES_LIMIT, Config, ConfigRefused, KEY_SHOWN_LIMIT, RECIPIENTS_LIMIT,
+    SETTINGS_LIMIT, Setting,
 };
 use whizbang_core::contract::{Capability, Secrets};
+use whizbang_core::egress::{Account, DataClass, UPSTREAM_LIMIT};
 use whizbang_testkit::scratch::Scratch;
 
 use super::{made_up_key, the_specs_example};
@@ -51,7 +52,10 @@ fn the_specs_example_is_read_to_the_backends_it_shows() {
     assert_eq!(config.default_of(Capability::Segment), Some("default"));
     assert_eq!(backend.kind(), "remote");
     assert_eq!(backend.model(), Some("sam3"));
-    assert_eq!(backend.url(), Some("https://example-host/whizbang-sam3"));
+    assert_eq!(
+        backend.url().as_deref(),
+        Some("https://example-host/whizbang-sam3")
+    );
     assert_eq!(backend.provider(), None);
     assert_eq!(
         backend.credentials().collect::<Vec<_>>(),
@@ -67,6 +71,7 @@ fn the_specs_example_is_read_to_the_backends_it_shows() {
     assert_eq!(backend.provider(), Some("fal"));
     assert_eq!(backend.model(), Some("bria-erase"));
     assert_eq!(backend.url(), None);
+    assert!(backend.address().is_none());
     assert_eq!(
         backend.credentials().collect::<Vec<_>>(),
         [("key_env", "FAL_KEY")]
@@ -843,6 +848,20 @@ fn a_name_or_a_key_that_holds_a_secret_is_refused_whole_and_not_shown() {
             "{untold:?}"
         );
     }
+    // A secret that only the lowering of a host makes: the file holds it in capitals,
+    // which no look at the file finds, and the origin would be kept and shown lowered.
+    let lowered = Secrets::new(["zqxjkvwpyh.example".to_owned()]).unwrap();
+    for text in [
+        "[egress.recipients.one]\norigin = \"https://ZQXJKVWPYH.Example\"\nclasses = []\n",
+        "[egress.recipients.one]\norigin = \"https://h\"\nclasses = []\nupstreams = [\"https://ZQXJKVWPYH.Example\"]\n",
+        "[backends.fill]\nkind = \"a\"\nurl = \"https://ZQXJKVWPYH.Example/v1\"\n",
+    ] {
+        assert_eq!(
+            Config::parse(text.as_bytes(), &lowered).unwrap_err(),
+            ConfigRefused::HoldsSecret,
+            "{text}"
+        );
+    }
     // A secret written with an escape inside a list, where only the decoded text
     // holds it.
     for text in [
@@ -947,43 +966,86 @@ classes = []
         recipients.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
         ["fal", "judge-host"]
     );
+    // What is approved is a recipient as the egress types make one (ADR 0012), with
+    // the classes it may receive, in the order `SPEC.md` lists them.
     let fal = recipients[0].1;
-    assert_eq!(fal.origin(), "https://fal.example");
-    assert_eq!(fal.account(), Some("team-1234"));
+    assert_eq!(fal.origin().to_string(), "https://fal.example");
     assert_eq!(
-        fal.upstreams().collect::<Vec<_>>(),
+        fal.account().map(Account::shown).as_deref(),
+        Some("team...")
+    );
+    assert_eq!(
+        fal.upstreams()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
         [
             "https://cdn.fal.example:8443",
             "https://storage.fal.example"
         ]
     );
     assert_eq!(
-        fal.classes().collect::<Vec<_>>(),
+        fal.classes().iter().collect::<Vec<_>>(),
         [
+            DataClass::SourceImages,
             DataClass::DerivedImages,
-            DataClass::Prompts,
-            DataClass::SourceImages
+            DataClass::Prompts
         ]
     );
     assert!(fal.may_be_probed());
+    assert!(fal.recipient().reaches(fal.origin()));
     // Approved for nothing, and not to be probed, unless the file says so.
     let host = recipients[1].1;
-    assert_eq!(host.origin(), "http://127.0.0.1:8080");
-    assert_eq!(host.account(), None);
-    assert_eq!(host.upstreams().count(), 0);
-    assert_eq!(host.classes().count(), 0);
+    assert_eq!(host.origin().to_string(), "http://127.0.0.1:8080");
+    assert!(host.account().is_none());
+    assert!(host.upstreams().is_empty());
+    assert!(host.classes().is_empty());
     assert!(!host.may_be_probed());
-    // The four classes, by the names the file gives them.
-    assert_eq!(
-        [
-            DataClass::DerivedImages,
-            DataClass::Evidence,
-            DataClass::Prompts,
-            DataClass::SourceImages
-        ]
-        .map(DataClass::name),
-        ["derived_images", "evidence", "prompts", "source_images"]
+    // An origin is kept as the egress types write it: the scheme and the host in
+    // lower case, and the port left out when it is the scheme's own. So the ways of
+    // writing one origin are one config, and an upstream that is the origin, or
+    // another upstream, written another way is still the same one twice.
+    let one = "[egress.recipients.one]\norigin = \"https://h.example\"\nclasses = []\n";
+    for origin in [
+        "https://h.example:443",
+        "HTTPS://H.Example",
+        "https://H.EXAMPLE:443",
+    ] {
+        let other = format!("[egress.recipients.one]\norigin = \"{origin}\"\nclasses = []\n");
+        assert_eq!(read(&other), read(one), "{origin}");
+    }
+    for upstreams in [
+        "\"https://h.example:443\"",
+        "\"HTTPS://H.example\"",
+        "\"https://u\", \"https://u:443\"",
+        "\"http://u:80\", \"http://U\"",
+    ] {
+        let text = format!("{one}upstreams = [{upstreams}]\n");
+        assert_eq!(
+            key_of(&refusal(&text)),
+            "egress.recipients.one.upstreams",
+            "{upstreams}"
+        );
+    }
+    // One recipient is approved once: two names for one origin and one account are
+    // refused, by the second. The same origin under another account is another
+    // recipient, and so is one with an account beside one with none.
+    let twice = refusal(
+        "[egress.recipients.a]\norigin = \"https://h\"\nclasses = []\n\
+         [egress.recipients.b]\norigin = \"https://H:443\"\nclasses = [\"prompts\"]\n",
     );
+    assert_eq!(key_of(&twice), "egress.recipients.b.origin");
+    let twice = refusal(
+        "[egress.recipients.a]\norigin = \"https://h\"\naccount = \"x\"\nclasses = []\n\
+         [egress.recipients.b]\norigin = \"https://h\"\naccount = \"x\"\nclasses = []\n",
+    );
+    assert_eq!(key_of(&twice), "egress.recipients.b.origin");
+    let apart = read(
+        "[egress.recipients.a]\norigin = \"https://h\"\naccount = \"x\"\nclasses = []\n\
+         [egress.recipients.b]\norigin = \"https://h\"\naccount = \"y\"\nclasses = []\n\
+         [egress.recipients.c]\norigin = \"https://h\"\nclasses = []\n",
+    );
+    assert_eq!(apart.recipients().count(), 3);
     // An origin and the classes are not left to a default; a class or an upstream
     // given twice is refused, not folded.
     for (text, key) in [
@@ -1029,7 +1091,12 @@ fn an_address_that_could_hold_a_credential_is_refused_and_not_shown() {
         format!("https://h.example#{marker}"),
         format!("ftp://{marker}.example"),
         format!("{marker}.example"),
-        format!("https://{marker}.Example"),
+        format!("https://h.example:8443/{marker}"),
+        "http://127.1".to_owned(),
+        "http://0x7f.1".to_owned(),
+        "http://2130706433".to_owned(),
+        "http://127.0.0.01".to_owned(),
+        format!("https://{}.example", "l".repeat(64)),
         "https://".to_owned(),
         "https://h.example:".to_owned(),
         "https://h.example:0".to_owned(),
@@ -1059,6 +1126,8 @@ fn an_address_that_could_hold_a_credential_is_refused_and_not_shown() {
         format!("https://h.example/v1#{marker}"),
         format!("https://h.example/{marker} v1"),
         format!("https://h.example/v1\\\\{marker}"),
+        format!("https://h.example/v1/user@{marker}"),
+        "https://h.example?".to_owned(),
         marker.to_owned(),
         format!("https://h.example/{}", "p".repeat(2048)),
     ] {
@@ -1075,7 +1144,22 @@ fn an_address_that_could_hold_a_credential_is_refused_and_not_shown() {
     ] {
         let config = read(&format!("[backends.fill]\nkind = \"a\"\nurl = \"{url}\"\n"));
         let (_, backend) = config.backends(Capability::Fill).next().unwrap();
-        assert_eq!(backend.url(), Some(url));
+        assert_eq!(backend.url().as_deref(), Some(url));
+        assert_eq!(
+            backend.address().unwrap().origin().scheme(),
+            url.split(':').next().unwrap()
+        );
+    }
+    // An account is one word: no space, no quote and no backslash in it.
+    for account in ["team 1234", "team\\\"1234", "team\\\\1234", ""] {
+        let text = format!(
+            "[egress.recipients.one]\norigin = \"https://h\"\nclasses = []\naccount = \"{account}\"\n"
+        );
+        assert_eq!(
+            key_of(&refusal(&text)),
+            "egress.recipients.one.account",
+            "{account}"
+        );
     }
 }
 
@@ -1086,7 +1170,7 @@ fn more_than_the_bound_of_a_list_is_refused() {
             BACKENDS_LIMIT,
             SETTINGS_LIMIT,
             RECIPIENTS_LIMIT,
-            UPSTREAMS_LIMIT
+            UPSTREAM_LIMIT
         ),
         (16, 32, 32, 16)
     );
@@ -1149,7 +1233,7 @@ fn a_config_prints_its_shape_and_none_of_its_values() {
     assert_eq!(
         parts,
         "Backend { model: true, provider: false, url: true, credentials: 1, settings: 1 } \
-         Recipient { account: true, upstreams: 0, classes: 1, probe: false } Setting(text)"
+         Approval { account: true, upstreams: 0, classes: 1, probe: false } Setting(text)"
     );
     for text in [shown, parts] {
         assert!(!text.to_lowercase().contains(marker), "{text}");
@@ -1181,12 +1265,6 @@ fn what_the_reader_does_not_find_or_tell_apart_is_known() {
     let text = format!("[backends.fill]\nkind = \"a\"\nkey_env = \"{capitals}\"\n");
     let config = Config::parse(text.as_bytes(), &none).unwrap();
     assert!(config.variables().contains(capitals.as_str()));
-    // Two origins that a client would reach as one are two texts, and two configs.
-    let origin = |origin: &str| {
-        let text = format!("[egress.recipients.one]\norigin = \"{origin}\"\nclasses = []\n");
-        Config::parse(text.as_bytes(), &none).unwrap()
-    };
-    assert_ne!(origin("https://h.example"), origin("https://h.example:443"));
     // A key that is not known is shown, its first 64 characters, whatever it looks
     // like: a key the reader was not told of, pasted as a KEY of the file, is said back.
     let pasted = Config::parse(format!("\"{key}\" = 1\n").as_bytes(), &none).unwrap_err();
