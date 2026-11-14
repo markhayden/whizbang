@@ -13,6 +13,7 @@ publish = false
 [workspace.dependencies]
 whizbang-core = { path = "crates/whizbang-core" }
 whizbang-rascal = { path = "crates/whizbang-rascal" }
+whizbang-squint = { path = "crates/whizbang-squint" }
 whizbang-testkit = { path = "crates/whizbang-testkit" }
 clap = { version = "4.6", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }

@@ -23,10 +23,10 @@ fn indented_description() -> &'static str {
 
 /// How the one-line form starts and ends, byte for byte: the same fields in the same
 /// order, with no space between them, and one newline at the end. The first action is
-/// `grow`.
+/// `check`, the recipe.
 fn compact_start() -> String {
     format!(
-        "{{\"description_version\":4,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"grow\",\"version\":\"1.0.0\",\"kind\":\"primitive\",\"purpose\":\"",
+        "{{\"description_version\":4,\"name\":\"whizbang\",\"version\":\"{}\",\"actions\":[{{\"name\":\"check\",\"version\":\"1.0.0\",\"kind\":\"recipe\",\"purpose\":\"",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -110,7 +110,18 @@ fn describe_json_is_valid_and_lists_the_actions_that_ship() {
         .iter()
         .map(|action| action["name"].as_str().expect("a name"))
         .collect();
-    assert_eq!(names, ["grow"]);
+    // A recipe first, then the primitives, in the order the registry lists them.
+    assert_eq!(names, ["check", "grow", "view"]);
+    let kinds: Vec<&str> = doc["actions"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|action| action["kind"].as_str().expect("a kind"))
+        .collect();
+    assert_eq!(kinds, ["recipe", "primitive", "primitive"]);
+    // `check` says what it needs: a judge. Whether one is there is no part of a
+    // description, which is the same on every machine.
+    assert_eq!(doc["actions"][0]["needs"][0]["capability"], "judge");
 }
 
 #[test]
@@ -133,6 +144,12 @@ fn describe_without_json_names_the_build() {
         ),
         "{text}"
     );
+    let lines: Vec<&str> = text.lines().skip(1).collect();
+    let names: Vec<&str> = lines
+        .iter()
+        .map(|line| line.split_whitespace().next().expect("a name"))
+        .collect();
+    assert_eq!(names, ["check", "grow", "view"], "{text}");
 }
 
 #[test]
@@ -217,7 +234,7 @@ fn a_test_adds_echo_to_the_registry_the_binary_builds() {
 fn describe_json_pretty_starts_and_ends_with_these_bytes() {
     let (_, pretty) = whizbang(&["describe", "--json", "--pretty"]);
     let start = format!(
-        "{{\n  \"description_version\": 4,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [\n    {{\n      \"name\": \"grow\",\n",
+        "{{\n  \"description_version\": 4,\n  \"name\": \"whizbang\",\n  \"version\": \"{}\",\n  \"actions\": [\n    {{\n      \"name\": \"check\",\n",
         env!("CARGO_PKG_VERSION")
     );
     let types = r#"    {

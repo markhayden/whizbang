@@ -9,9 +9,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use whizbang_core::artifact::{self, Artifact, ArtifactType, ImageRole};
 use whizbang_core::contract::record::{self, RunRecord, Status};
 use whizbang_core::contract::{
-    ADMITTED_NAME, Action, ActionDescriptor, Call, CallError, Clock, Context, Engine, Executor,
-    Failure, Finished, InputPort, Kind, NoBackends, Outcome, PreparedCall, Produced, Refusal,
-    Registry, RunId, Secrets, Value, WHIZBANG_VERSION, is_diagnostic_name, read_journal,
+    ADMITTED_NAME, Action, ActionDescriptor, Call, CallError, Clock, Context, Count,
+    DIAGNOSTICS_LIMIT, Engine, Executor, Failure, Finished, INPUTS_LIMIT, InputPort, Kind,
+    NoBackends, Outcome, OutputPort, PreparedCall, Produced, Refusal, Registry, RunId, Secrets,
+    Value, WHIZBANG_VERSION, is_diagnostic_name, read_journal,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::{Fs, RealFs};
@@ -873,6 +874,250 @@ fn a_run_that_failed_on_a_store_failure_it_was_handed_holds_no_path_in_its_recor
     }
 }
 
+#[test]
+fn an_action_is_handed_the_stores_failures_without_a_path_however_it_quotes_them() {
+    // The store in an action's context answers a failure in words that hold no path.
+    // So an action that copies one whole, as its text, as `{:?}` or by its source,
+    // from reading an artifact or from the store itself, into its error, a progress
+    // event and a diagnostic, writes nothing of where the store is. No action has to
+    // choose the right call for that.
+    let world = World::new();
+    let image = image_of(photo(), ImageRole::Picture);
+    {
+        let store = world.store();
+        let mut publication = store.begin().unwrap();
+        artifact::put(&mut publication, &Artifact::from(image.clone())).unwrap();
+        publication.publish().unwrap();
+    }
+    let (objects, id) = (world.root().join("objects"), image.id());
+    let engine = world.engine_with(vec![scripted("reads", move |_, context| {
+        // The file goes missing while the action runs.
+        for entry in std::fs::read_dir(&objects).unwrap() {
+            std::fs::remove_file(entry.unwrap().path()).unwrap();
+        }
+        let limits = whizbang_core::identity::DecodeLimits::default();
+        let error = artifact::get(context.store(), ArtifactType::Image, id, &limits).unwrap_err();
+        assert!(
+            matches!(error, artifact::ArtifactError::Store(_)),
+            "{error:?}"
+        );
+        let generation = context.store().snapshot().unwrap();
+        let entry = generation
+            .get(&artifact::name(ArtifactType::Image, id))
+            .unwrap();
+        let raw = context.store().read(entry).unwrap_err();
+        let record = context.store().read_record(entry).unwrap_err();
+        let source = std::error::Error::source(&error).unwrap();
+        let quoted =
+            format!("{error} / {error:?} / {raw} / {raw:?} / {record} / {source} / {source:?}");
+        context
+            .diagnostics()
+            .write("inner-error.txt", quoted.as_bytes())
+            .unwrap();
+        context.events().progress(&quoted);
+        Err(Failure::error("store", &quoted))
+    })]);
+    let finished = engine.submit(&Call::new("reads")).unwrap();
+    let Outcome::Error { message, .. } = finished.outcome() else {
+        panic!("{finished:?}");
+    };
+    // What failed is still said: which file, by its last part.
+    let file = Digest::of_bytes(&Artifact::from(image).to_bytes()).hex();
+    let said = format!("the store's file {file} is missing or damaged");
+    assert!(message.contains(&said), "{message}");
+    let private = [
+        world.root().display().to_string(),
+        std::env::temp_dir().display().to_string(),
+    ];
+    let held = names_of(&world.root(), world.fs.clone(), finished.run().as_str());
+    assert_eq!(held.len(), 3, "the diagnostic, the journal and the record");
+    for (name, _, bytes) in held {
+        assert!(holds(&bytes, said.as_bytes()), "{name}");
+        for path in &private {
+            assert!(!holds(&bytes, path.as_bytes()), "{name} holds {path}");
+        }
+        assert!(
+            !holds(&bytes, b"objects/") && !holds(&bytes, b"objects\\"),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_snapshot_that_fails_inside_an_action_is_said_without_a_path_as_well() {
+    // Once a run it called has committed an output, a run's store looks at the current
+    // generation to find it. The pointer is damaged for the length of one look, so
+    // the look fails, and what the action is handed names the pointer by its last
+    // part alone.
+    let world = World::new();
+    let image = image_of(photo(), ImageRole::Picture);
+    let draft = ActionDescriptor::draft("makes", "1.0.0", Kind::Primitive, "Makes one.")
+        .output(OutputPort::one("made", ArtifactType::Image, "An image."));
+    let body: Body = Box::new(move |_, _| Ok(Produced::nothing().with("made", image.clone())));
+    let makes: Arc<dyn Action> = Arc::new(Scripted(draft.build().unwrap(), body));
+    let pointer = world.root().join("CURRENT");
+    let outer = scripted("outer", move |_, context| {
+        context.executor().submit(&Call::new("makes")).unwrap();
+        let kept = std::fs::read(&pointer).unwrap();
+        std::fs::write(&pointer, b"not a pointer").unwrap();
+        let failed = context.store().snapshot().map(|_| ());
+        std::fs::write(&pointer, kept).unwrap();
+        let failed = failed.unwrap_err();
+        Err(Failure::error("store", &format!("{failed} / {failed:?}")))
+    });
+    let engine = world.engine_with(vec![makes, outer]);
+    let finished = engine.submit(&Call::new("outer")).unwrap();
+    let Outcome::Error { message, .. } = finished.outcome() else {
+        panic!("{finished:?}");
+    };
+    let said = "the store's file CURRENT is missing or damaged";
+    assert_eq!(
+        message,
+        &format!("{said} / WithoutPaths {{ said: \"{said}\" }}")
+    );
+}
+
+// --- what a call and a run may hold, so that a record is read back ---------------------------
+
+/// The action `takes`, which takes any number of images at `images` and runs nothing.
+fn takes_many() -> Arc<dyn Action> {
+    let draft = ActionDescriptor::draft("takes", "1.0.0", Kind::Primitive, "Takes many.").input(
+        InputPort::variadic(
+            "images",
+            ArtifactType::Image,
+            "Any number of images.",
+            Count::at_least(1),
+        ),
+    );
+    let body: Body = Box::new(|_, _| Ok(Produced::nothing()));
+    Arc::new(Scripted(draft.build().unwrap(), body))
+}
+
+#[test]
+fn a_call_gives_only_so_many_inputs_and_one_more_is_refused_before_any_is_read() {
+    // A record lists every input, and a port may take any number: so a call gives
+    // 1,024 artifacts at most, over all its ports. One more is refused before an
+    // input is read, and no run is made.
+    assert_eq!(INPUTS_LIMIT, 1024);
+    let world = World::new();
+    let image = image_of(photo(), ImageRole::Picture);
+    {
+        let store = world.store();
+        let mut publication = store.begin().unwrap();
+        artifact::put(&mut publication, &Artifact::from(image.clone())).unwrap();
+        publication.publish().unwrap();
+    }
+    let engine = world.engine_with(vec![takes_many()]);
+    let call = |count: usize| {
+        let mut call = Call::new("takes");
+        for _ in 0..count {
+            call = call.input("images", image.id());
+        }
+        call
+    };
+    let refused = engine.submit(&call(INPUTS_LIMIT + 1)).unwrap_err();
+    assert_eq!(
+        refused.to_string(),
+        "not a call of takes: it gives 1025 artifacts as inputs, and a call gives 1024 at most"
+    );
+    // Nothing was read to say so: an identity the store does not hold is not looked
+    // for.
+    let absent = whizbang_core::artifact::ArtifactId(Digest::of_bytes(b"absent"));
+    let mut unread = call(INPUTS_LIMIT);
+    unread = unread.input("images", absent);
+    let refused = engine.prepare(&unread).unwrap_err();
+    assert!(
+        matches!(&refused, CallError::Refused(Refusal::Invalid { .. })),
+        "{refused:?}"
+    );
+    assert!(runs_of(&world.root(), world.fs.clone()).is_empty());
+    // As many as a call may give are taken, and the record that lists them is read.
+    let finished = engine.submit(&call(INPUTS_LIMIT)).unwrap();
+    let record = record_of(&world.root(), world.fs.clone(), finished.run().as_str());
+    assert_eq!(record.inputs().len(), INPUTS_LIMIT);
+}
+
+#[test]
+fn a_run_writes_only_so_many_diagnostics_and_one_more_is_refused() {
+    // A record lists every diagnostic. An action writes 1,024 at most; one more is
+    // refused where it is written, and the record of a run that wrote as many as it
+    // may, each under the longest name there is, is read back.
+    assert_eq!(DIAGNOSTICS_LIMIT, 1024);
+    let world = World::new();
+    let engine = world.engine_with(vec![scripted("writes", |_, context| {
+        let name = |at: usize| format!("{at:04}{}", "d".repeat(60));
+        for at in 0..DIAGNOSTICS_LIMIT {
+            context.diagnostics().write(&name(at), b"x").unwrap();
+        }
+        let refused = context.diagnostics().write("one-more", b"x").unwrap_err();
+        assert_eq!(
+            refused,
+            "the run has written 1024 diagnostics, which is as many as one run may"
+        );
+        // A name that was refused is not taken: the same holds of the next.
+        assert!(context.diagnostics().write("one-more", b"x").is_err());
+        assert!(context.diagnostics().write_exact("one-more", b"x").is_err());
+        Ok(Produced::nothing())
+    })]);
+    let finished = engine.submit(&Call::new("writes")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let record = record_of(&world.root(), world.fs.clone(), finished.run().as_str());
+    // The journal is the run's own, and is not counted.
+    assert_eq!(record.diagnostics().len(), DIAGNOSTICS_LIMIT + 1);
+}
+
+#[test]
+fn bytes_written_exactly_are_kept_as_they_are_or_not_at_all() {
+    // A file of a format of its own, a picture or an artifact's canonical file, is
+    // not text: taking a secret out of it would leave another file under its name,
+    // and one that may no longer be read. So such bytes are written exactly: kept as
+    // they were given when they hold no secret, and refused, with nothing kept and
+    // the secret not shown, when they hold one.
+    let key = made_up_key("");
+    let world = World::new();
+    let secrets = Secrets::new([key.clone()]).unwrap();
+    let picture = [&[0x89, b'P', b'N', b'G', 0xff, 0x00][..], key.as_bytes()].concat();
+    let engine = world
+        .engine_with(vec![scripted("keeps", move |_, context| {
+            let diagnostics = context.diagnostics();
+            diagnostics
+                .write_exact("clean.bin", &[0xff, 0x00, 0xfe])
+                .unwrap();
+            let refused = diagnostics.write_exact("crop.png", &picture).unwrap_err();
+            assert_eq!(
+                refused,
+                "the bytes hold something that must not be written, and they are a file \
+                 that cannot be changed: nothing was kept"
+            );
+            // The name was not taken, and the rules of a name hold here as well.
+            diagnostics.write_exact("crop.png", b"other").unwrap();
+            assert!(diagnostics.write_exact("crop.png", b"again").is_err());
+            assert!(diagnostics.write_exact("exchange-0001", b"x").is_err());
+            assert!(diagnostics.write_exact("No", b"x").is_err());
+            // The same bytes as text have the secret taken out, as before.
+            diagnostics.write("as-text.bin", &picture).unwrap();
+            Ok(Produced::nothing())
+        })])
+        .with_secrets(secrets);
+    let finished = engine.submit(&Call::new("keeps")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let held = names_of(&world.root(), world.fs.clone(), finished.run().as_str());
+    let kept: Vec<(&str, &[u8])> = held
+        .iter()
+        .map(|(n, _, b)| (n.as_str(), b.as_slice()))
+        .collect();
+    assert_eq!(
+        kept[0],
+        ("diagnostics/as-text.bin", &b"\x89PNG\xff\x00[redacted]"[..])
+    );
+    assert_eq!(kept[1], ("diagnostics/clean.bin", &[0xff, 0x00, 0xfe][..]));
+    assert_eq!(kept[2], ("diagnostics/crop.png", &b"other"[..]));
+    assert_eq!(kept.len(), 5);
+    for (name, _, bytes) in &held {
+        assert!(!holds(bytes, key.as_bytes()), "{name}");
+    }
+}
+
 // --- one id, one run -------------------------------------------------------------------------
 
 /// Every run of a store, with how many names it holds.
@@ -1097,8 +1342,8 @@ impl Fs for Taker {
     fn remove_all(&self, path: &Path) -> std::io::Result<()> {
         self.inner.remove_all(path)
     }
-    fn read(&self, path: &Path) -> std::io::Result<Vec<u8>> {
-        self.inner.read(path)
+    fn read_at_most(&self, path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+        self.inner.read_at_most(path, limit)
     }
     fn list(&self, path: &Path) -> std::io::Result<Vec<std::path::PathBuf>> {
         self.inner.list(path)

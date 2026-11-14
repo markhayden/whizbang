@@ -86,6 +86,12 @@ pub(super) fn quoted(reason: &str) -> String {
 /// The longest name of a diagnostic an action wrote, in characters.
 pub const DIAGNOSTIC_NAME_LIMIT: usize = 64;
 
+/// The most diagnostics the action of one run may write. A record lists each, so one
+/// more is refused where it is written ([`super::Diagnostics::write`]). The run's
+/// journal and the exchanges the executor keeps are not among them: there is one
+/// journal, and a run sends a bounded number of requests.
+pub const DIAGNOSTICS_LIMIT: usize = 1024;
+
 /// Whether this can be the name an action gives a diagnostic: a lower-case letter or a
 /// digit, then lower-case letters, digits, `_`, `-` or `.`; 64 characters at most. So it
 /// is one path segment and one word on a command line, as a run's id is.

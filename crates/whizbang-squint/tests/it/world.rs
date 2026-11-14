@@ -52,6 +52,21 @@ impl Action for Grow {
     }
 }
 
+/// An action that is another, with something done first each time it runs: how a test
+/// reaches the moment after a call was admitted and before its action reads anything.
+pub struct Before(pub Arc<dyn Action>, pub Box<dyn Fn() + Send + Sync>);
+
+impl Action for Before {
+    fn descriptor(&self) -> &ActionDescriptor {
+        self.0.descriptor()
+    }
+
+    fn run(&self, call: &PreparedCall, context: &Context) -> Result<Produced, Failure> {
+        (self.1)();
+        self.0.run(call, context)
+    }
+}
+
 pub struct World {
     dir: Scratch,
     pub fs: Arc<ShimFs>,
@@ -98,6 +113,16 @@ impl World {
     /// An executor over this world's store whose calls resolve this judge, and that
     /// holds it.
     pub fn engine(&self, judge: Arc<dyn Judge>, secrets: Secrets) -> Engine {
+        self.engine_wrapping(judge, secrets, |action| action)
+    }
+
+    /// The same executor, with `check` and `view` each as `wrap` gives it back.
+    pub fn engine_wrapping(
+        &self,
+        judge: Arc<dyn Judge>,
+        secrets: Secrets,
+        wrap: impl Fn(Arc<dyn Action>) -> Arc<dyn Action>,
+    ) -> Engine {
         let grow = ActionDescriptor::draft("grow", "1.0.0", Kind::Primitive, "Grows a mask.")
             .input(InputPort::optional("mask", ArtifactType::Image, "A mask."))
             .argument(Argument::optional(
@@ -107,10 +132,10 @@ impl World {
             ));
         let grow = Grow(grow.build().unwrap(), self.grown.clone());
         let mut registry = Registry::new();
-        registry
-            .register(Arc::new(Check::new(self.toolbox.clone()).unwrap()))
-            .unwrap();
-        registry.register(Arc::new(View::new().unwrap())).unwrap();
+        let check = Check::new(self.toolbox.clone()).unwrap();
+        registry.register(wrap(Arc::new(check))).unwrap();
+        let view = View::new().unwrap();
+        registry.register(wrap(Arc::new(view))).unwrap();
         registry.register(Arc::new(grow)).unwrap();
         let offered = roster(None, None, Some(judge.as_ref()));
         Engine::over(

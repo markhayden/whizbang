@@ -102,20 +102,11 @@ pub trait Fs: Send + Sync {
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
     /// Removes a file, or a directory with everything in it.
     fn remove_all(&self, path: &Path) -> io::Result<()>;
-    /// The whole content of a file.
-    fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
-    /// The first `limit` bytes of a file, or all of it when it has no more. It is how
-    /// stored content is read: the caller knows how long the file should be, asks for
-    /// one byte more, and so learns that a file is too long without holding all of it.
-    ///
-    /// The default reads the file whole and cuts it, which is right and saves nothing:
-    /// a file system that stands for the real one in a test may leave it so. The real
-    /// one reads no further than the limit.
-    fn read_at_most(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>> {
-        let mut bytes = self.read(path)?;
-        bytes.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
-        Ok(bytes)
-    }
+    /// The first `limit` bytes of a file, or all of it when it has no more. It is the
+    /// one way a file of the store is read: the caller knows how long the file may be,
+    /// asks for one byte more, and so learns that a file is too long without holding
+    /// all of it. Nothing reads a file whole, whatever it has grown to.
+    fn read_at_most(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>>;
     /// The entries of a directory, as full paths, in order.
     fn list(&self, path: &Path) -> io::Result<Vec<PathBuf>>;
     /// Whether something has this name.
@@ -305,10 +296,6 @@ impl Fs for RealFs {
         } else {
             std::fs::remove_file(path)
         }
-    }
-
-    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        std::fs::read(path)
     }
 
     fn read_at_most(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>> {

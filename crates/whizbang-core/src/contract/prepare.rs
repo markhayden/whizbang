@@ -449,9 +449,20 @@ impl StoreFailure {
     }
 
     /// The store's own error, with the paths it names: for whoever runs the store, and
-    /// never for a caller elsewhere.
+    /// never for a caller elsewhere. Of a failure that an action was handed, by the
+    /// executor in its context, it names none: that failure was made without them
+    /// ([`StoreFailure::pathless`]).
     pub fn cause(&self) -> &store::Error {
         &self.cause
+    }
+
+    /// The same failure with nothing behind it that holds a path: what the executor
+    /// in a context hands an action, whose messages are kept in its run's record.
+    pub(super) fn pathless(&self) -> StoreFailure {
+        StoreFailure {
+            what: self.what.clone(),
+            cause: Arc::new(self.cause.pathless()),
+        }
     }
 }
 
@@ -502,6 +513,15 @@ pub enum CallError {
 }
 
 impl CallError {
+    /// The same error, a failure of the store in it made without paths
+    /// ([`StoreFailure::pathless`]). No other kind holds the store's own error.
+    pub(super) fn pathless(self) -> CallError {
+        match self {
+            CallError::Store(failure) => CallError::Store(failure.pathless()),
+            other => other,
+        }
+    }
+
     /// The refusal, when the call was refused.
     pub fn refusal(&self) -> Option<&Refusal> {
         match self {
@@ -869,6 +889,18 @@ fn binding_of(artifact: &Artifact) -> Binding {
     }
 }
 
+/// The most bytes the text arguments of one call may hold together, as UTF-8: 64 KiB.
+/// An argument's text is written in the run's record as it was given, and a record is
+/// read back only under its limit ([`super::RECORD_MAX_BYTES`]), so a call over this
+/// is refused where it comes in, before any run exists (ADR 0008, "What a call and a
+/// run may hold").
+pub const ARGUMENTS_TEXT_MAX_BYTES: usize = 64 * 1024;
+
+/// The most artifacts one call may give as inputs, over all its ports: a record lists
+/// each, and a port may take any number. A call that gives more is refused before any
+/// input is read.
+pub const INPUTS_LIMIT: usize = 1024;
+
 /// How many a port takes, in words.
 fn takes(count: Count) -> String {
     match (count.min(), count.max()) {
@@ -909,6 +941,19 @@ pub(super) fn prepare(
     {
         return Err(invalid(format!("{name} is no argument of it")));
     }
+    // The texts of a call are recorded as they were given: together they are bounded.
+    // The refusal gives their length and shows none of them.
+    let texts = call.arguments().values().map(|value| match value {
+        Value::Text(text) => text.len(),
+        _ => 0,
+    });
+    let texts = texts.fold(0usize, usize::saturating_add);
+    if texts > ARGUMENTS_TEXT_MAX_BYTES {
+        return Err(invalid(format!(
+            "its text arguments hold {texts} bytes together, and a call's hold \
+             {ARGUMENTS_TEXT_MAX_BYTES} at most"
+        )));
+    }
     let mut arguments = Vec::new();
     let mut given = BTreeSet::new();
     for argument in descriptor.arguments() {
@@ -940,6 +985,14 @@ pub(super) fn prepare(
         .find(|port| descriptor.input(port).is_none())
     {
         return Err(invalid(format!("{port} is no input of it")));
+    }
+    // A record lists every input: a call gives so many, whatever its ports take.
+    let gives = call.inputs().values().map(Vec::len);
+    let gives = gives.fold(0usize, usize::saturating_add);
+    if gives > INPUTS_LIMIT {
+        return Err(invalid(format!(
+            "it gives {gives} artifacts as inputs, and a call gives {INPUTS_LIMIT} at most"
+        )));
     }
     let given_at = |port: &InputPort| -> &[ArtifactId] {
         call.inputs()

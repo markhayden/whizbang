@@ -40,7 +40,8 @@ pub enum Command {
     Delete {
         #[command(flatten)]
         at: Where,
-        /// The runs to delete, by id.
+        /// The runs to delete, each by its id, or as `runs list` prints it when that
+        /// is no run's id: the same run `runs show` shows for the same text.
         #[arg(required = true, value_name = "RUN")]
         runs: Vec<String>,
     },
@@ -116,9 +117,15 @@ fn list(root: &Path) -> Result<String, String> {
 
 fn delete(root: &Path, runs: &[String]) -> Result<String, String> {
     let store = writer(root)?;
-    // A run named twice is one run.
-    let runs: BTreeSet<&str> = runs.iter().map(String::as_str).collect();
-    let runs: Vec<&str> = runs.into_iter().collect();
+    // Each run is found as `runs show` finds it, by the same function: by its id, or
+    // as `runs list` prints it when that is no run's id. One that could mean two runs
+    // is refused, and then none is deleted. A run named twice is one run.
+    let generation = store.snapshot().map_err(|e| e.to_string())?;
+    let mut meant = BTreeSet::new();
+    for given in runs {
+        meant.insert(crate::runs::meant(&generation, given)?.0);
+    }
+    let runs: Vec<&str> = meant.into_iter().collect();
     let published = store.delete(&runs).map_err(|e| e.to_string())?;
     let mut text = format!(
         "runs deleted: {}\ngeneration: {}\n",

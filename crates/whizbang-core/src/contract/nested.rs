@@ -630,26 +630,75 @@ impl Nested {
     }
 }
 
+/// What the executor in a context answers with is what an action is handed, and an
+/// action's messages are kept in its run's record. So every answer of the methods
+/// below, a failure and a run's state alike, is made without the store's paths before
+/// it leaves ([`CallError::pathless`], [`RunState::pathless`]): behind a failure of
+/// the store there is nothing an action could quote that says where the store is.
+/// Each method is the one beside it in [`Asked`], with that done to its answer.
 impl Executor for Nested {
+    fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError> {
+        Asked(self).prepare(call).map_err(CallError::pathless)
+    }
+
+    fn submit(&self, call: &Call) -> Result<Finished, CallError> {
+        Asked(self).submit(call).map_err(CallError::pathless)
+    }
+
+    fn request(&self, request: &Request) -> Result<Answer, CallError> {
+        let answer = Asked(self).request(request);
+        answer.map(Answer::pathless).map_err(CallError::pathless)
+    }
+
+    fn start(&self, request: &Request) -> Result<Answer, CallError> {
+        let answer = Asked(self).start(request);
+        answer.map(Answer::pathless).map_err(CallError::pathless)
+    }
+
+    fn status(&self, run: &RunId) -> Result<Watched, CallError> {
+        let answer = Asked(self).status(run);
+        answer.map(Watched::pathless).map_err(CallError::pathless)
+    }
+
+    fn wait(&self, run: &RunId) -> Result<Watched, CallError> {
+        let answer = Asked(self).wait(run);
+        answer.map(Watched::pathless).map_err(CallError::pathless)
+    }
+
+    fn cancel(&self, run: &RunId) -> Result<Cancel, CallError> {
+        let answer = Asked(self).cancel(run);
+        answer.map(Cancel::pathless).map_err(CallError::pathless)
+    }
+
+    fn request_id(&self, text: &str) -> Result<RequestId, CallError> {
+        let id = self.engine.request_id(text);
+        id.map_err(CallError::pathless)
+    }
+}
+
+/// The executor in a context, before its answers are made fit for an action.
+struct Asked<'a>(&'a Nested);
+
+impl Asked<'_> {
     fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError> {
         // A run that froze its calls is told of a call it may not make what it would
         // be told if it made it, and nothing more: not whether the action is one of
         // the build, and not whether the store holds the artifact. As any
         // preparation, it is not a call, and is not recorded.
-        match self.frozen(call) {
+        match self.0.frozen(call) {
             Some(refusal) => Err(refusal.into()),
-            None => self.engine.prepare(call),
+            None => self.0.engine.prepare(call),
         }
     }
 
     fn submit(&self, call: &Call) -> Result<Finished, CallError> {
-        let admitted = self.admit(&Request::new(call.clone()), false)?;
-        self.engine.execute(admitted)
+        let admitted = self.0.admit(&Request::new(call.clone()), false)?;
+        self.0.engine.execute(admitted)
     }
 
     fn request(&self, request: &Request) -> Result<Answer, CallError> {
-        let admitted = self.admit(request, false)?;
-        Ok(Answer::Ran(self.engine.execute(admitted)?))
+        let admitted = self.0.admit(request, false)?;
+        Ok(Answer::Ran(self.0.engine.execute(admitted)?))
     }
 
     fn start(&self, request: &Request) -> Result<Answer, CallError> {
@@ -660,28 +709,28 @@ impl Executor for Nested {
         // whoever waits for it is told.
         // What the run froze is held first: a call the run may not make takes no
         // place, and is told so whatever the count of started runs is.
-        if let Some(refusal) = self.frozen(request.call()) {
-            let refused = Refused::of(request.call(), &refusal, &self.secrets);
-            self.under.live.nest().refused(refused);
+        if let Some(refusal) = self.0.frozen(request.call()) {
+            let refused = Refused::of(request.call(), &refusal, &self.0.secrets);
+            self.0.under.live.nest().refused(refused);
             return Err(refusal.into());
         }
-        let place = match self.engine.start_place() {
+        let place = match self.0.engine.start_place() {
             Ok(place) => place,
             Err(refusal) => {
-                let refused = Refused::of(request.call(), &refusal, &self.secrets);
-                self.under.live.nest().refused(refused);
+                let refused = Refused::of(request.call(), &refusal, &self.0.secrets);
+                self.0.under.live.nest().refused(refused);
                 return Err(refusal.into());
             }
         };
-        let mut admitted = self.admit(request, true)?;
-        admitted.started_under(self.under.live.clone());
+        let mut admitted = self.0.admit(request, true)?;
+        admitted.started_under(self.0.under.live.clone());
         // The thread is made where every run's thread is made; a thread that cannot
         // be made ends the run as an error, and the caller is told.
-        self.engine.launch(admitted, place)
+        self.0.engine.launch(admitted, place)
     }
 
     fn status(&self, run: &RunId) -> Result<Watched, CallError> {
-        self.engine.status(run)
+        self.0.engine.status(run)
     }
 
     fn wait(&self, run: &RunId) -> Result<Watched, CallError> {
@@ -689,27 +738,23 @@ impl Executor for Nested {
         // one above it, would never end, and is refused. Any other wait is given up
         // when this run is cancelled, so two runs that wait for each other are freed
         // by cancelling either, or a run above them. Both are kept for the record.
-        let under = &self.under;
+        let under = &self.0.under;
         let waited = if under.above.contains(run) {
             Err(Refusal::WaitAbove { run: run.clone() }.into())
         } else {
-            self.engine.wait_unless(run, under.live.signal())
+            self.0.engine.wait_unless(run, under.live.signal())
         };
         if let Err(CallError::Refused(
             refusal @ (Refusal::WaitAbove { .. } | Refusal::WaitCancelled { .. }),
         )) = &waited
         {
-            let refused = Refused::of_a_question(refusal, &self.secrets);
+            let refused = Refused::of_a_question(refusal, &self.0.secrets);
             under.live.nest().refused(refused);
         }
         waited
     }
 
     fn cancel(&self, run: &RunId) -> Result<Cancel, CallError> {
-        self.engine.cancel(run)
-    }
-
-    fn request_id(&self, text: &str) -> Result<RequestId, CallError> {
-        self.engine.request_id(text)
+        self.0.engine.cancel(run)
     }
 }

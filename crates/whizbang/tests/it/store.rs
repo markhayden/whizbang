@@ -255,7 +255,7 @@ fn deleting_a_run_the_store_does_not_hold_fails_and_changes_nothing() {
     let deleted = whizbang(&["delete", "one", "nine"], &root);
     assert_eq!(deleted.code, Some(1));
     assert_eq!(deleted.out, "");
-    assert!(deleted.err.contains("no run \"nine\""), "{}", deleted.err);
+    assert!(deleted.err.contains("no run nine"), "{}", deleted.err);
     assert_eq!(whizbang(&["list"], &root).out, listing_of_the_three_runs());
     assert!(object(&root, RENDER).exists());
 
@@ -270,7 +270,7 @@ fn deleting_a_run_the_store_does_not_hold_fails_and_changes_nothing() {
     // And once deleted it is a run the store does not hold.
     let again = whizbang(&["delete", "one"], &root);
     assert_eq!(again.code, Some(1));
-    assert!(again.err.contains("no run \"one\""), "{}", again.err);
+    assert!(again.err.contains("no run one"), "{}", again.err);
 
     // No run named at all is a usage error.
     let none = whizbang(&["delete"], &root);
@@ -425,6 +425,82 @@ fn runs_whose_ids_the_store_would_refuse_are_listed_and_deleted() {
         "generation: 3\nnames outside runs: 0\nruns: 0\n"
     );
     assert!(!object(&root, MASK).exists(), "nothing names it any more");
+}
+
+#[test]
+fn delete_means_the_run_that_show_means_and_refuses_a_text_that_could_mean_two() {
+    // `delete` finds a run as `runs show` does, through the same function: by its
+    // id, or as `runs list` prints it when no run has that id. So what was looked at
+    // is what is deleted. A text that is one run's id and how another is listed, and
+    // a cut id that two runs share, delete nothing.
+    let dir = Scratch::new("cli-store");
+    let root = with_runs(&dir);
+    let entry = format!(
+        r#"{{"digest": "{}", "bytes": {}, "kind": "output"}}"#,
+        Digest::of_bytes(MASK).hex(),
+        MASK.len()
+    );
+    let long = format!("long-{}", "z".repeat(70));
+    let twin = "t".repeat(64);
+    let run = |id: &str| format!(r#"{id}: {{"entries": {{"mask": {entry}}}}}"#);
+    let runs = [
+        run(r#""a\u0001b""#),
+        run(r#""a\\u{1}b""#),
+        run(&format!("\"{long}\"")),
+        run(&format!("\"{twin}-one\"")),
+        run(&format!("\"{twin}-two\"")),
+        run("\"plain\""),
+    ];
+    hand_made(&root, &runs.join(", "));
+    let count = || {
+        let listed = whizbang(&["list"], &root);
+        let runs = listed.out.lines().nth(2).unwrap().to_owned();
+        runs.trim_start_matches("runs: ").parse::<usize>().unwrap()
+    };
+    assert_eq!(count(), 6);
+    let refused = |args: &[&str], says: &str| {
+        let ran = whizbang(args, &root);
+        assert_eq!(ran.code, Some(1), "{args:?}: {}", ran.out);
+        assert!(ran.out.is_empty());
+        assert!(ran.err.contains(says), "{args:?}: {}", ran.err);
+    };
+    // One run's id, and how the run with the control character is listed.
+    refused(&["delete", "a\\u{1}b"], "is the id of one run");
+    // Two runs are listed so.
+    let cut = format!("{twin}...");
+    refused(&["delete", &cut], "2 runs are listed as tttt");
+    // One that is meant plainly beside one that is not: none is deleted.
+    refused(&["delete", "plain", "a\\u{1}b"], "is the id of one run");
+    refused(
+        &["delete", "plain", "absent"],
+        "the store holds no run absent",
+    );
+    assert_eq!(count(), 6);
+
+    // A cut id as it is listed, and the same run by its id: one run.
+    let listed_long = format!("{}...", long.chars().take(64).collect::<String>());
+    let deleted = whizbang(&["delete", &listed_long, &long], &root);
+    assert_eq!(deleted.code, Some(0), "{}", deleted.err);
+    assert!(
+        deleted.out.starts_with("runs deleted: 1\n"),
+        "{}",
+        deleted.out
+    );
+    // The run with the control character by its id, and the other as it is listed.
+    let deleted = whizbang(&["delete", "a\u{1}b", "a\\\\u{1}b"], &root);
+    assert_eq!(deleted.code, Some(0), "{}", deleted.err);
+    assert!(
+        deleted.out.starts_with("runs deleted: 2\n"),
+        "{}",
+        deleted.out
+    );
+    let listed = whizbang(&["list"], &root);
+    let left: Vec<&str> = listed.out.lines().skip(3).collect();
+    let left: Vec<&str> = left.iter().map(|l| l.split('\t').next().unwrap()).collect();
+    assert_eq!(
+        left,
+        ["plain", &format!("{twin}-one"), &format!("{twin}-two")]
+    );
 }
 
 #[test]

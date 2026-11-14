@@ -17,6 +17,7 @@ use crate::artifact::Contents;
 use crate::capability::{
     Declaration, FillHandle, Filler, Judge, JudgeHandle, Recorder, SegmentHandle, Segmenter, Tally,
 };
+use crate::store;
 
 use super::nested::Offer;
 use super::{Capability, Clock, Executor, PreparedCall, Refusal};
@@ -155,6 +156,14 @@ pub trait Diagnostics: Send + Sync {
     /// at most, and is written once in a run. Text has the secrets taken out before it
     /// is kept; bytes that are not UTF-8 are kept as they are.
     fn write(&self, name: &str, bytes: &[u8]) -> Result<(), String>;
+
+    /// Keeps `bytes` under `name` as [`Diagnostics::write`] does, for bytes that are a
+    /// file of a format of its own: a picture, an artifact's canonical file. Taking a
+    /// secret out of such a file would leave another file under its name, and one that
+    /// may no longer be read. So the bytes are kept exactly as they were given, or not
+    /// at all: when they hold a secret the write is refused, in words that do not show
+    /// it, and nothing is kept (ADR 0009, "Evidence").
+    fn write_exact(&self, name: &str, bytes: &[u8]) -> Result<(), String>;
 }
 
 /// Nowhere to write: what a context has until it is given a place.
@@ -164,6 +173,10 @@ pub struct NoDiagnostics;
 impl Diagnostics for NoDiagnostics {
     fn write(&self, _: &str, _: &[u8]) -> Result<(), String> {
         Err("this context keeps no diagnostics".to_owned())
+    }
+
+    fn write_exact(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        self.write(name, bytes)
     }
 }
 
@@ -441,6 +454,28 @@ impl Handles {
     }
 }
 
+/// The store as an action reads it: the same content, and every failure in the words
+/// that hold no path ([`store::Error::pathless`]). An action's messages are kept in its
+/// run's record and handed to callers who are not on this machine, and the store's own
+/// error names files by where they are. So no action is handed one: whatever it does
+/// with a failure of the store, or with an artifact's error that holds one, it writes
+/// no path (ADR 0005, "Redaction").
+struct NoPaths(Arc<dyn Contents + Send + Sync>);
+
+impl Contents for NoPaths {
+    fn snapshot(&self) -> store::Result<store::Generation> {
+        self.0.snapshot().map_err(|error| error.pathless())
+    }
+
+    fn read(&self, entry: &store::Entry) -> store::Result<Vec<u8>> {
+        self.0.read(entry).map_err(|error| error.pathless())
+    }
+
+    fn read_record(&self, entry: &store::Entry) -> store::Result<Vec<u8>> {
+        self.0.read_record(entry).map_err(|error| error.pathless())
+    }
+}
+
 /// What one execution of an action is handed.
 #[derive(Clone)]
 pub struct Context {
@@ -482,7 +517,7 @@ impl Context {
             clock,
             events,
             allowance,
-            store,
+            store: Arc::new(NoPaths(store)),
             capabilities,
             requests,
             executor,
@@ -575,7 +610,9 @@ impl Context {
     }
 
     /// The store, to read from. An action's outputs do not go in through this: they are
-    /// committed together when it completes.
+    /// committed together when it completes. A failure it answers with holds no path,
+    /// as its text and as `{:?}`: what an action copies into a message is kept in its
+    /// run's record.
     pub fn store(&self) -> &(dyn Contents + Send + Sync) {
         self.store.as_ref()
     }

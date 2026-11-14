@@ -2094,14 +2094,14 @@ impl Fs for Between {
     fn remove_all(&self, path: &Path) -> std::io::Result<()> {
         self.inner.remove_all(path)
     }
-    fn read(&self, path: &Path) -> std::io::Result<Vec<u8>> {
+    fn read_at_most(&self, path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
         if path.parent().is_some_and(|dir| dir.ends_with("objects")) {
             let hook = self.hook.lock().unwrap().take();
             if let Some(hook) = hook {
                 hook();
             }
         }
-        self.inner.read(path)
+        self.inner.read_at_most(path, limit)
     }
     fn list(&self, path: &Path) -> std::io::Result<Vec<PathBuf>> {
         self.inner.list(path)

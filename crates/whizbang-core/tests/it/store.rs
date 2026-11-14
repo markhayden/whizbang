@@ -14,7 +14,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use whizbang_core::store::fs::{Fs, Held, LockFile, RealFs};
-use whizbang_core::store::{Digest, Error, Published, Reader, Store};
+use whizbang_core::store::{
+    Digest, Error, GENERATION_MAX_BYTES, LOCK_MAX_BYTES, POINTER_MAX_BYTES, Published, Reader,
+    Store,
+};
 use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
 use whizbang_testkit::scratch::Scratch;
 
@@ -226,11 +229,11 @@ impl Fs for Hooked {
     fn remove_all(&self, path: &Path) -> io::Result<()> {
         RealFs.remove_all(path)
     }
-    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+    fn read_at_most(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>> {
         if matches!(&self.when, When::Reading(file) if file == path) {
             self.run();
         }
-        RealFs.read(path)
+        RealFs.read_at_most(path, limit)
     }
     fn list(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
         if matches!(&self.when, When::Listing(dir) if dir == path) {
@@ -366,8 +369,7 @@ fn a_stored_file_far_larger_than_its_entry_says_is_refused_and_not_read_whole() 
     let object = root.join("objects").join(Digest::of_bytes(B).hex());
     std::fs::remove_file(&object).unwrap();
     std::fs::write(&object, vec![7u8; 1 << 20]).unwrap();
-    let most = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let fs = Arc::new(Measured(most.clone()));
+    let fs = Arc::new(Measured::default());
     let reader = Reader::open(&root, fs.clone()).unwrap();
     let generation = reader.snapshot().unwrap();
     let entry = generation.get("b").unwrap();
@@ -382,32 +384,162 @@ fn a_stored_file_far_larger_than_its_entry_says_is_refused_and_not_read_whole() 
         "{said}"
     );
     assert_eq!(
-        most.load(std::sync::atomic::Ordering::SeqCst),
+        fs.most(&object),
         B.len() + 1,
         "more of the file was read than its entry's length and one byte"
     );
     // A writer reads the same way.
     drop(reader);
-    let store = Store::open(&root, fs).unwrap();
+    let store = Store::open(&root, fs.clone()).unwrap();
     assert!(matches!(store.read(entry), Err(Error::Corrupt { .. })));
     assert!(matches!(
         store.read_output(entry),
         Err(Error::Corrupt { .. })
     ));
-    assert_eq!(most.load(std::sync::atomic::Ordering::SeqCst), B.len() + 1);
+    assert_eq!(fs.most(&object), B.len() + 1);
 }
 
-/// The real file system, noting the most bytes of stored content one read gave back.
-struct Measured(Arc<std::sync::atomic::AtomicUsize>);
+/// The real file system, noting how many bytes each read of a file gave back.
+#[derive(Default)]
+struct Measured(std::sync::Mutex<Vec<(PathBuf, usize)>>);
 
 impl Measured {
     fn note(&self, path: &Path, read: io::Result<Vec<u8>>) -> io::Result<Vec<u8>> {
-        if let (Ok(bytes), true) = (&read, path.parent().is_some_and(|p| p.ends_with("objects"))) {
-            self.0
-                .fetch_max(bytes.len(), std::sync::atomic::Ordering::SeqCst);
+        if let Ok(bytes) = &read {
+            let mut reads = self.0.lock().unwrap();
+            reads.push((path.to_path_buf(), bytes.len()));
         }
         read
     }
+
+    /// The most bytes one read of this file gave back; 0 when it was never read.
+    fn most(&self, path: &Path) -> usize {
+        let reads = self.0.lock().unwrap();
+        let of_it = reads.iter().filter(|(read, _)| read == path);
+        of_it.map(|(_, bytes)| *bytes).max().unwrap_or(0)
+    }
+}
+
+#[test]
+fn the_pointer_a_generation_file_and_the_lock_file_are_each_read_up_to_a_limit() {
+    // None of the three has an entry that says how long it is, so each has a limit of
+    // its own, and no more of it is read than that and one byte: a file that damage or
+    // other hands made very large is refused, or cut, without being held whole.
+    assert_eq!(POINTER_MAX_BYTES, 21);
+    assert_eq!(GENERATION_MAX_BYTES, 64 << 20);
+    assert_eq!(LOCK_MAX_BYTES, 1024);
+
+    // The pointer: twenty digits and a newline at most.
+    let dir = Scratch::new("store");
+    let root = with_old(&dir);
+    let pointer = root.join("CURRENT");
+    std::fs::write(&pointer, "1".repeat(1 << 20)).unwrap();
+    let fs = Arc::new(Measured::default());
+    let reader = Reader::open(&root, fs.clone()).unwrap();
+    let refused = reader.snapshot().unwrap_err();
+    assert!(matches!(refused, Error::Corrupt { .. }), "{refused:?}");
+    assert_eq!(fs.most(&pointer), POINTER_MAX_BYTES as usize + 1);
+    // The largest number there is, written the one way, is read.
+    std::fs::write(&pointer, format!("{}\n", u64::MAX)).unwrap();
+    let refused = reader.snapshot().unwrap_err().to_string();
+    assert!(refused.contains("which has no file"), "{refused}");
+
+    // A generation file. One over the limit is refused as damage, and says so; of a
+    // file a kibibyte over, the limit and one byte are read.
+    let dir = Scratch::new("store");
+    let root = with_old(&dir);
+    let generation = root.join("generations/1.json");
+    let file = std::fs::OpenOptions::new().write(true).open(&generation);
+    file.unwrap().set_len(GENERATION_MAX_BYTES + 1024).unwrap();
+    let fs = Arc::new(Measured::default());
+    let reader = Reader::open(&root, fs.clone()).unwrap();
+    let refused = reader.snapshot().unwrap_err();
+    assert!(matches!(refused, Error::Corrupt { .. }), "{refused:?}");
+    let said = refused.to_string();
+    assert!(
+        said.contains("it is more than 67108864 bytes, the most a generation file may be"),
+        "{said}"
+    );
+    assert_eq!(fs.most(&generation), GENERATION_MAX_BYTES as usize + 1);
+    // A file of exactly the limit is not refused for its length: it is read, and is
+    // refused here for what it holds, which is nothing.
+    let file = std::fs::OpenOptions::new().write(true).open(&generation);
+    file.unwrap().set_len(GENERATION_MAX_BYTES).unwrap();
+    let said = reader.snapshot().unwrap_err().to_string();
+    assert!(!said.contains("it is more than"), "{said}");
+    let file = std::fs::OpenOptions::new().write(true).open(&generation);
+    file.unwrap().set_len(GENERATION_MAX_BYTES + 1).unwrap();
+    // A writer refuses it the same way, having read no more.
+    let fs = Arc::new(Measured::default());
+    let refused = Store::open(&root, fs.clone()).map(|_| ()).unwrap_err();
+    assert!(matches!(refused, Error::Corrupt { .. }), "{refused:?}");
+    assert_eq!(fs.most(&generation), GENERATION_MAX_BYTES as usize + 1);
+
+    // The lock file: a second writer is refused and shown the holder's line, which is
+    // read from the first 1,024 bytes and no further.
+    let dir = Scratch::new("store");
+    let root = with_old(&dir);
+    let first = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let lock = root.join("LOCK");
+    let mut held = std::fs::read(&lock).unwrap();
+    let line = String::from_utf8(held.clone()).unwrap();
+    held.extend(std::iter::repeat_n(b'x', 1 << 20));
+    std::fs::write(&lock, held).unwrap();
+    let fs = Arc::new(Measured::default());
+    let Err(Error::Held { holder, .. }) = Store::open(&root, fs.clone()) else {
+        panic!("a second writer was not refused as held");
+    };
+    assert_eq!(holder.as_deref(), Some(line.trim()));
+    assert_eq!(fs.most(&lock), LOCK_MAX_BYTES as usize);
+    drop(first);
+}
+
+#[test]
+fn a_publication_that_would_write_a_generation_file_over_the_limit_is_refused_unseen() {
+    // What the store will not read it does not write. Names of a mebibyte each fill
+    // a generation file to within two of the limit; a publication that adds two more is
+    // refused before anything of it is visible, and the store goes on.
+    let dir = Scratch::new("store");
+    let root = with_old(&dir);
+    let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+    let name = |at: usize| format!("{at:02}{}", "n".repeat(1 << 20));
+    let mut publication = store.begin().unwrap();
+    for at in 0..61 {
+        publication.put(&name(at), B).unwrap();
+    }
+    publication
+        .put_in("big", &name(61), whizbang_core::store::Kind::Output, B)
+        .unwrap();
+    assert_eq!(publication.publish().unwrap().generation, 2);
+    let full = std::fs::metadata(root.join("generations/2.json")).unwrap();
+    assert!(
+        full.len() > GENERATION_MAX_BYTES - (2 << 20),
+        "{}",
+        full.len()
+    );
+    // Sixty-two names are in it; two more would be sixty-four mebibytes and over.
+    let more = || {
+        let mut publication = store.begin().unwrap();
+        publication.put(&name(70), B).unwrap();
+        publication.put(&name(71), B).unwrap();
+        publication.publish()
+    };
+    let refused = more().unwrap_err();
+    let Error::GenerationTooLarge { bytes, limit } = refused else {
+        panic!("{refused:?}");
+    };
+    assert!(bytes > limit && limit == GENERATION_MAX_BYTES, "{bytes}");
+    assert_eq!(store.snapshot().unwrap().number(), 2);
+    assert!(!root.join("generations/3.json").exists());
+
+    // A full store is not stuck: a deletion makes the file smaller, so it is
+    // published, and there is room again for what was refused.
+    assert_eq!(store.delete(&["big"]).unwrap().generation, 3);
+    assert_eq!(more().unwrap().generation, 4);
+    let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
+    let generation = reader.snapshot().unwrap();
+    assert_eq!((generation.number(), generation.entries().len()), (4, 65));
+    assert!(generation.runs().is_empty());
 }
 
 impl Fs for Measured {
@@ -425,9 +557,6 @@ impl Fs for Measured {
     }
     fn remove_all(&self, path: &Path) -> io::Result<()> {
         RealFs.remove_all(path)
-    }
-    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        self.note(path, RealFs.read(path))
     }
     fn read_at_most(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>> {
         self.note(path, RealFs.read_at_most(path, limit))
@@ -729,20 +858,38 @@ fn a_crash_after_the_final_sync_leaves_the_new_generation() {
 // Recovery: every point, not only the named ones.
 
 /// Runs a case under every loss a crash can bring: every unsynced name lost, none lost,
-/// and each subset of the directories that held unsynced names. The case returns how many
-/// such directories its crash found.
-fn for_every_loss(case: impl Fn(Lost) -> usize) {
+/// each subset of the directories that held unsynced names, and each subset of the
+/// names themselves, so that two names of one directory fare differently. The case
+/// returns how many such directories and how many such names its crash found
+/// ([`losses`]).
+fn for_every_loss(case: impl Fn(Lost) -> (usize, usize)) {
     case(Lost::Unsynced);
     case(Lost::ContentOnly);
     let mut mask = 0;
-    loop {
-        let choices = case(Lost::Subset(mask));
+    let names = loop {
+        let (choices, names) = case(Lost::Subset(mask));
         assert!(choices < 16, "{choices} directories with unsynced names");
         mask += 1;
         if mask >= 1 << choices {
-            break;
+            break names;
         }
+    };
+    // Every choice of which names a crash kept: two to the power of the names, which
+    // is why the count is held here. A sweep that came to more would be sampled.
+    assert!(names <= NAMES_SWEPT, "{names} names with unsynced changes");
+    for mask in 0..1u64 << names {
+        case(Lost::Names(mask));
     }
+}
+
+/// The most names with changes not yet durable that a crash of these sweeps finds at
+/// one event: each is tried lost and kept apart from the others, 128 crashes at seven.
+const NAMES_SWEPT: usize = 7;
+
+/// What a crash of this disk found not yet durable: how many directories, and how many
+/// names.
+fn losses(fs: &ShimFs) -> (usize, usize) {
+    (fs.crash_choices(), fs.crash_names())
 }
 
 #[test]
@@ -789,7 +936,7 @@ fn a_crash_at_any_event_leaves_one_whole_generation_and_a_store_that_still_publi
             expected.insert("d".to_string(), b"after the crash".to_vec());
             next.crash(lost);
             assert_eq!(after_restart(&root), (number + 1, expected), "{case}");
-            fs.crash_choices()
+            losses(&fs)
         });
     }
 }
@@ -827,7 +974,7 @@ fn a_crash_at_any_event_of_a_stores_first_publication_leaves_nothing_or_all_of_i
             if result.is_ok() {
                 assert_eq!(number, 1, "{case}: success was reported");
             }
-            fs.crash_choices()
+            losses(&fs)
         });
     }
 }
@@ -1470,7 +1617,18 @@ fn tree(dir: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
 #[test]
 fn a_directory_that_is_not_a_store_is_refused_and_left_exactly_as_it_is() {
     type Build = fn(&Path);
-    let cases: [(&str, Build); 7] = [
+    let cases: [(&str, Build); 8] = [
+        (
+            "a staged file that starts as the first pointer and goes on",
+            |root| {
+                // What a creation leaves in staging is the first pointer or the start of
+                // it. A longer file is something else, though its start is the same.
+                for name in ["objects", "generations", "staging"] {
+                    std::fs::create_dir(root.join(name)).unwrap();
+                }
+                std::fs::write(root.join("staging/CURRENT"), b"0\nmine").unwrap();
+            },
+        ),
         ("unrelated files", |root| {
             std::fs::write(root.join("notes.txt"), b"mine").unwrap();
         }),
@@ -1619,7 +1777,7 @@ fn a_crash_at_any_event_of_a_stores_creation_leaves_no_store_or_an_empty_one() {
             assert_eq!(reader.events(), vec![], "{case}");
             // A writer completes it.
             assert_eq!(after_restart(&root), (0, Contents::new()), "{case}");
-            fs.crash_choices()
+            losses(&fs)
         });
     }
 }
@@ -1686,6 +1844,7 @@ fn every_failure_can_be_said_without_a_path() {
         Error::NameExists {
             name: "/somewhere/private".to_owned(),
         },
+        Error::GenerationTooLarge { bytes: 9, limit: 8 },
     ];
     for failure in &failures {
         let said = failure.without_paths();

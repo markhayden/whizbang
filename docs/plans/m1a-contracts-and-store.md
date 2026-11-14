@@ -296,8 +296,8 @@ is ticked by the pull request that makes it true.
   publication. Of "Done when": the fake action with two outputs, crashed inside its
   commit. With it, from `docs/carry-over.md`: the store reads no more of a stored file
   than its entry says. That covers the files under `objects/` only: `CURRENT`, the
-  generation files and the lock file are still read whole (`docs/carry-over.md`, task
-  A12).
+  generation files and the lock file were still read whole, and each was given a limit
+  at the exit check (task A12; ADR 0008, "What the store reads of its own files").
 - **Part 2, in two pull requests,** because the first half alone came to about a
   thousand lines. First, status and progress: `start`, `status` and `wait` on the
   executor, one table of open runs, and of "Done when" the caller that disconnects and
@@ -437,6 +437,14 @@ stays. The dependency was then removed, and the result is in the record's
 source image within one pixel, and the record's examples run as tests.
 **Size:** small.
 
+**As built** (amended at the exit check, task A12). "Within one pixel" is true of the
+mapping and is not the whole of what was measured (`docs/reference/tools/view.md`, "Rung
+2 results" and "Limits"; ADR 0001 for the mapping). The mapping itself is exact at a
+crop's corners and within 1e-9 of a pixel inside it. What a judge sees in a reduced crop
+is only as fine as the crop: a thing seen in one crop pixel is found again within half
+a crop pixel, which is more than one source pixel once the crop is reduced more than
+twice. The sentence above is read as the first of these.
+
 ### A11. Proof two: the scripted squint run
 
 **Depends on:** A7, A8, A10. **Reads:** squint `crates/squint-core/src/run.rs`, for the shape
@@ -475,8 +483,16 @@ transcripts. The boxes are ticked by the second.
 | `view` on a guessed artifact id | Refused |
 | A failure on turn two | A failed run whose turn-one evidence is still readable |
 
-And: changing the tool list after admission has no effect on the run. And the publication
-tests of A7, named for this action: a cancelled `check` has no verdict and keeps its
+And: changing the tool list after admission has no effect on the run. (As built, and
+amended at the exit check, task A12: the list is frozen at the action's first step, not
+at admission. The names a run asks for are an argument, so they are fixed at admission
+and are in its record; the tools on offer are read once, when the action starts, and a
+tool withdrawn after that does not leave a run that has started. A tool withdrawn
+between a run's admission and its action's first step makes the run invalid: it is
+never run with a tool that was not on offer when it started. ADR 0009, "`check`, and
+what a judge may do";
+`check::changing_the_tool_list_after_admission_has_no_effect_on_the_run`.) And the
+publication tests of A7, named for this action: a cancelled `check` has no verdict and keeps its
 evidence; a completed `check` returns only after its verdict and status are durable, and
 both are present after a reopen. After a failure or an accepted cancellation, the store is
 closed and reopened: the run has its terminal status, no verdict, no committed output and no

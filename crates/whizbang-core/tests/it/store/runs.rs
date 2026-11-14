@@ -9,7 +9,7 @@ use whizbang_core::store::{Digest, Error, Kind, Reader, Store};
 use whizbang_testkit::fs_shim::{Lost, ShimFs};
 use whizbang_testkit::scratch::Scratch;
 
-use super::{B, C, after_restart, contents, for_every_loss, root};
+use super::{B, C, after_restart, contents, for_every_loss, losses, root};
 
 pub(super) const MASK: &[u8] = b"a mask two runs share";
 pub(super) const EXCHANGE: &[u8] = b"the exchange of a turn that failed";
@@ -506,7 +506,7 @@ fn a_crash_at_any_event_of_a_publication_that_only_keeps_a_name_leaves_it_whole_
             if matches!(lost, Lost::Unsynced) && crash_at == count {
                 assert_eq!(number, 2, "{case}");
             }
-            fs.crash_choices()
+            losses(&fs)
         });
     }
 }
@@ -897,7 +897,7 @@ fn a_crash_at_any_event_of_a_deletion_leaves_the_run_whole_or_gone() {
             if matches!(lost, Lost::Unsynced) && crash_at == count {
                 assert_eq!(number, 2, "{case}");
             }
-            fs.crash_choices()
+            losses(&fs)
         });
     }
 }

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::capability::Recorder;
 
-use super::record::{DIAGNOSTICS_PREFIX, Diagnostic, quoted};
+use super::record::{DIAGNOSTICS_LIMIT, DIAGNOSTICS_PREFIX, Diagnostic, quoted};
 use super::{Diagnostics, Events, Secrets};
 
 /// What tells a run the time: milliseconds since the Unix epoch.
@@ -124,8 +124,10 @@ impl Recorder for Kept {
     }
 }
 
-impl Diagnostics for Kept {
-    fn write(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+impl Kept {
+    /// Keeps what an action wrote under a name of its own: `exact` when the bytes are
+    /// kept only if taking the secrets out leaves them as they were given.
+    fn keep(&self, name: &str, bytes: &[u8], exact: bool) -> Result<(), String> {
         if name.starts_with(EXCHANGE_PREFIX) {
             return Err(format!(
                 "a diagnostic whose name starts with {EXCHANGE_PREFIX} is an exchange with a \
@@ -133,14 +135,39 @@ impl Diagnostics for Kept {
             ));
         }
         let made = Diagnostic::written(name, bytes, &self.secrets)?;
+        if exact && made.1 != bytes {
+            return Err(
+                "the bytes hold something that must not be written, and they are a file \
+                 that cannot be changed: nothing was kept"
+                    .to_owned(),
+            );
+        }
         let mut diagnostics = self.diagnostics.lock().unwrap_or_else(|e| e.into_inner());
         if diagnostics.contains_key(name) {
             return Err(format!(
                 "the run already wrote a diagnostic named {name}: a name is written once"
             ));
         }
+        // The exchanges are the executor's, and are bounded with the run's requests.
+        let own = |name: &&String| !name.starts_with(EXCHANGE_PREFIX);
+        if diagnostics.keys().filter(own).count() >= DIAGNOSTICS_LIMIT {
+            return Err(format!(
+                "the run has written {DIAGNOSTICS_LIMIT} diagnostics, which is as many as \
+                 one run may"
+            ));
+        }
         diagnostics.insert(name.to_owned(), made);
         Ok(())
+    }
+}
+
+impl Diagnostics for Kept {
+    fn write(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        self.keep(name, bytes, false)
+    }
+
+    fn write_exact(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        self.keep(name, bytes, true)
     }
 }
 

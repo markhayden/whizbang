@@ -274,6 +274,68 @@ fn a_tool_call_that_the_tool_rejects() {
     assert!(!left.has("evidence-001"));
 }
 
+#[test]
+fn arguments_that_are_not_a_views_make_no_call_and_a_box_past_the_image_is_refused() {
+    // Five calls in one turn. A box whose entries are not all numbers is no box,
+    // however many of them are: nothing is called. Nor is anything called for a key
+    // that is no argument of the tool. A box that reaches past the image is a call,
+    // which the executor refuses when it prepares it: no run is made, and the
+    // refusal is in the record. Each answer goes back as its call's result.
+    let world = World::new();
+    let photo = world.photo.id().to_string();
+    let call = |id: &str, arguments: Json| json!({"tool_call": {"id": id, "name": "view", "arguments": arguments}});
+    let parts = json!([
+        call(
+            "c1",
+            json!({"image": photo, "bbox": [0, "x", 0.25, 0.75, 0.75]})
+        ),
+        call(
+            "c2",
+            json!({"image": photo, "bbox": [0.25, null, 0.75, 0.75]})
+        ),
+        call(
+            "c3",
+            json!({"image": photo, "bbox": [0, 0, 0.5, 0.5, 0.75]})
+        ),
+        call(
+            "c4",
+            json!({"image": photo, "bbox": [0, 0, 0.5, 0.5], "zoom": 2})
+        ),
+        call(
+            "c5",
+            json!({"image": photo, "bbox": [0.25, 0.25, 0.75, 1.5]})
+        ),
+    ]);
+    let done = (json!([{"text": "unsure"}]), "end_turn");
+    let (finished, left, judge) = run(&world, &turns(&[(parts, "tool_use"), done]), &[]);
+    assert_eq!(finished.outcome().name(), "completed");
+    let said = results(&judge, 1);
+    assert!(
+        said.iter()
+            .all(|result| result.is_error() && result.images().is_empty())
+    );
+    let said: Vec<&str> = said.iter().map(ToolResult::text).collect();
+    let no_box = "not called: bbox is four numbers: left, top, right and bottom";
+    assert_eq!(said[..3], [no_box, no_box, no_box]);
+    assert_eq!(
+        said[3],
+        "not called: the arguments are image, bbox and also, and no other"
+    );
+    assert_eq!(
+        said[4],
+        "refused: not a call of view: the argument bottom: 1.5 is outside 0 to 1"
+    );
+    let record = left.record();
+    assert!(record.steps().is_empty(), "{:?}", record.steps());
+    assert_eq!(
+        refusals(record),
+        [(Some("view"), RefusalKind::Invalid)],
+        "the box past the image, and no other"
+    );
+    assert_eq!(runs(&world.root(), world.fs.clone()), 1);
+    assert!(!left.has("evidence-001"));
+}
+
 const CUT_OFF: &str = r#"{"script":"judge-script/1","entries":[
   {"turn":{"parts":[{"text":"pass\nThe label rea"},
       {"tool_call":{"id":"c1","name":"view","arguments":{"image":"$photo","bbox":[0,0,1,1]}}}],
@@ -751,6 +813,108 @@ fn a_check_whose_end_is_refused_at_any_step_is_not_reported_as_completed_a_sweep
 }
 
 // --- a judge that is not trusted ----------------------------------------------------------------
+
+#[test]
+fn a_failure_of_the_store_inside_a_running_view_or_check_leaves_no_path_in_its_record() {
+    // The photograph's file goes missing after the call was admitted and before the
+    // action reads it. Both actions copy the artifact's error whole into their
+    // failure; the store in their context said it without a path, so neither wrote
+    // one (`grow` has the same test in its crate).
+    for (damaged, kind) in [("view", "view"), ("check", "image")] {
+        let world = World::new();
+        let root = world.root();
+        let file = whizbang_core::artifact::Artifact::Image(world.photo.clone()).to_bytes();
+        let file = whizbang_core::store::Digest::of_bytes(&file).hex();
+        let gone = root.join("objects").join(&file);
+        assert!(gone.exists());
+        let wrap = |action: Arc<dyn whizbang_core::contract::Action>| {
+            if action.descriptor().name() != damaged {
+                return action;
+            }
+            let gone = gone.clone();
+            let remove = move || drop(std::fs::remove_file(&gone));
+            Arc::new(Before(action, Box::new(remove))) as Arc<dyn whizbang_core::contract::Action>
+        };
+        let judge = judge(LOOK_CLOSER, &[("photo", world.photo.id())]);
+        let executor = world.engine_wrapping(judge, Secrets::none(), wrap);
+        let call = match damaged {
+            "check" => world.check(),
+            _ => Call::new("view")
+                .input("image", world.photo.id())
+                .argument("left", Value::Number(0.25))
+                .argument("top", Value::Number(0.25))
+                .argument("right", Value::Number(0.75))
+                .argument("bottom", Value::Number(0.75)),
+        };
+        let finished = executor.submit(&call).unwrap();
+        drop(executor);
+        let Outcome::Error {
+            kind: said,
+            message,
+        } = finished.outcome()
+        else {
+            panic!("{damaged}: {:?}", finished.outcome());
+        };
+        assert_eq!(said, kind);
+        assert_eq!(
+            message,
+            &format!("the store's file {file} is missing or damaged"),
+            "{damaged}"
+        );
+        let left = left(&root, world.fs.clone(), finished.run());
+        let folder = root.parent().unwrap().file_name().unwrap();
+        for (name, (_, bytes)) in &left.names {
+            let text = String::from_utf8_lossy(bytes);
+            assert!(!text.contains(root.to_str().unwrap()), "{name}: {text}");
+            assert!(
+                !text.contains(folder.to_str().unwrap()) && !text.contains("objects"),
+                "{damaged}: {name}: {text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn evidence_that_holds_a_secrets_bytes_is_not_kept_altered_and_the_run_fails() {
+    // Evidence is an image's file. A secret the executor was told of can stand in
+    // such a file by chance, and taking it out would leave a file that is no image
+    // under the evidence's name. So evidence is written exactly: here the crop's
+    // file holds the secret's bytes, the evidence is not kept, and the run fails.
+    // The crop itself is the committed output of the `view` run, which stores an
+    // artifact as its bytes, as every artifact is stored.
+    let world = World::new();
+    let crop = crop_of(&world.photo, HALF);
+    let file = whizbang_core::artifact::Artifact::Image(crop.clone()).to_bytes();
+    let space = |byte: &u8| byte.is_ascii_whitespace();
+    let stands_in_it = file.windows(8).find_map(|window| {
+        let text = std::str::from_utf8(window).ok()?;
+        (!space(&window[0]) && !space(&window[7])).then(|| text.to_owned())
+    });
+    let secret = stands_in_it.expect("eight bytes of the file that are a text");
+    let names = [("photo", world.photo.id()), ("crop", crop.id())];
+    let judge = judge(LOOK_CLOSER, &names);
+    let secrets = Secrets::new([secret.clone()]).unwrap();
+    let executor = world.engine(judge, secrets);
+    let finished = executor.submit(&world.check()).unwrap();
+    drop(executor);
+    assert_eq!(
+        finished.outcome(),
+        &Outcome::Error {
+            kind: "evidence".to_owned(),
+            message: "the bytes hold something that must not be written, and they are a \
+                      file that cannot be changed: nothing was kept"
+                .to_owned(),
+        }
+    );
+    let left = left(&world.root(), world.fs.clone(), finished.run());
+    assert!(!left.has("evidence-001"));
+    assert_eq!(steps(left.record()), [("view", Some(Status::Completed))]);
+    // The crop the tool's run committed is whole.
+    let reader = whizbang_core::store::Reader::open(&world.root(), world.fs.clone()).unwrap();
+    let kind = whizbang_core::artifact::ArtifactType::Image;
+    let held = whizbang_core::artifact::get(&reader, kind, crop.id(), &limits()).unwrap();
+    assert_eq!(held.to_bytes(), file);
+}
 
 /// A script of these turns, each a list of parts and the word it stopped with.
 fn turns(turns: &[(Json, &str)]) -> String {

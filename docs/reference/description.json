@@ -4,6 +4,68 @@
   "version": "0.0.1",
   "actions": [
     {
+      "name": "check",
+      "version": "1.0.0",
+      "kind": "recipe",
+      "purpose": "Has a judge look at images through evidence tools and conclude: pass, fail or unsure.",
+      "arguments": [
+        {
+          "name": "tools",
+          "purpose": "The evidence tools the judge may call, by name, separated by commas.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": "view"
+        },
+        {
+          "name": "judge",
+          "purpose": "The judge to ask; without it, the configured default.",
+          "type": {
+            "type": "text"
+          },
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "max_output_tokens",
+          "purpose": "The most output tokens of one turn of the judge.",
+          "type": {
+            "type": "integer",
+            "min": 1,
+            "max": 1073741823
+          },
+          "required": false,
+          "default": 1024
+        }
+      ],
+      "inputs": [
+        {
+          "name": "images",
+          "artifact": "image",
+          "purpose": "The images the judge is shown, and may look into.",
+          "count": {
+            "min": 1,
+            "max": 8
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [],
+      "needs": [
+        {
+          "capability": "judge",
+          "features": [
+            "image",
+            "tool"
+          ],
+          "when": "always",
+          "chosen_by": "judge"
+        }
+      ],
+      "concurrent": false
+    },
+    {
       "name": "grow",
       "version": "1.0.0",
       "kind": "primitive",
@@ -52,6 +114,97 @@
           "count": {
             "min": 1,
             "max": 1
+          },
+          "when": "always",
+          "belongs_to": null,
+          "derived_from": null,
+          "rebound_onto": null
+        }
+      ],
+      "needs": [],
+      "concurrent": true
+    },
+    {
+      "name": "view",
+      "version": "1.0.0",
+      "kind": "primitive",
+      "purpose": "Shows a region of an image closer, and the same region of a second image when one is given.",
+      "arguments": [
+        {
+          "name": "left",
+          "purpose": "The left edge of the region, as a fraction of the width.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "top",
+          "purpose": "The top edge of the region, as a fraction of the height.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "right",
+          "purpose": "The right edge of the region, as a fraction of the width.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
+          },
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "bottom",
+          "purpose": "The bottom edge of the region, as a fraction of the height.",
+          "type": {
+            "type": "number",
+            "min": 0.0,
+            "max": 1.0
+          },
+          "required": true,
+          "default": null
+        }
+      ],
+      "inputs": [
+        {
+          "name": "image",
+          "artifact": "image",
+          "purpose": "The image to look into.",
+          "count": {
+            "min": 1,
+            "max": 1
+          },
+          "belongs_to": null
+        },
+        {
+          "name": "also",
+          "artifact": "image",
+          "purpose": "A second image to show the same region of.",
+          "count": {
+            "min": 0,
+            "max": 1
+          },
+          "belongs_to": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "crops",
+          "artifact": "image",
+          "purpose": "The region of each image, the first image's first.",
+          "count": {
+            "min": 1,
+            "max": 2
           },
           "when": "always",
           "belongs_to": null,

@@ -225,9 +225,10 @@ fn view_call(arguments: &Json) -> Result<Call, String> {
     let Some(image) = named("image")? else {
         return Err("image is required".to_owned());
     };
+    // Four entries, each a number: an entry that is none is not skipped, or five
+    // entries of which four are numbers would be a box.
     let sides = arguments.get("bbox").and_then(Json::as_array);
-    let sides: Option<Vec<f64>> =
-        sides.map(|sides| sides.iter().filter_map(Json::as_f64).collect());
+    let sides: Option<Vec<f64>> = sides.and_then(|sides| sides.iter().map(Json::as_f64).collect());
     let Some(sides) = sides.filter(|sides| sides.len() == 4) else {
         return Err("bbox is four numbers: left, top, right and bottom".to_owned());
     };
@@ -323,11 +324,13 @@ impl Run<'_> {
                 for output in outputs {
                     let (image, crop) = shown(self.context, output.id())?;
                     // The evidence is the run's own: kept with it as a diagnostic,
-                    // whatever the run comes to, and never one of its outputs.
+                    // whatever the run comes to, and never one of its outputs. It is
+                    // an image's file, so it is kept exactly or not at all: a file
+                    // with a secret taken out of it would be no image (ADR 0009).
                     self.crops += 1;
                     let name = format!("evidence-{:03}", self.crops);
                     let file = Artifact::Image(image).to_bytes();
-                    let kept = self.context.diagnostics().write(&name, &file);
+                    let kept = self.context.diagnostics().write_exact(&name, &file);
                     kept.map_err(|why| failed("evidence", &why))?;
                     said.push(label(&crop));
                     pictures.push(crop.picture);

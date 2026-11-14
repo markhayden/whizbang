@@ -8,16 +8,30 @@
 use std::sync::Arc;
 
 use whizbang_core::artifact::Contents;
-use whizbang_core::contract::{Engine, NoBackends, RegistrationError, Registry};
+use whizbang_core::contract::{Action, Engine, NoBackends, Registry};
 use whizbang_core::description::Description;
 use whizbang_core::identity::Digest;
 use whizbang_core::store::Store;
 
-/// Every action this build ships, registered in the order a door lists them. Tools add
-/// theirs here as they are ported.
-pub fn registry() -> Result<Registry, RegistrationError> {
+/// Every action this build ships, registered in the order a door lists them: the
+/// recipe first, then the primitives. Tools add theirs here as they are ported. What
+/// comes back otherwise is why an action could not be registered, in a sentence.
+///
+/// `check` and `view` are squint's (ADR 0009). They are described, and no command runs
+/// them yet: `whizbang squint check` is milestone 2's. `check` needs a judge, and the
+/// executors below are built with no backend, so on this build it is prepared as not
+/// ready; `view` needs none, and is what `check` calls.
+pub fn registry() -> Result<Registry, String> {
+    let said = |error: &dyn std::fmt::Display| error.to_string();
     let mut registry = Registry::new();
-    registry.register(Arc::new(whizbang_rascal::grow::Grow::new()))?;
+    let toolbox = whizbang_squint::check::Toolbox::standard();
+    let check = whizbang_squint::check::Check::new(toolbox).map_err(|e| said(&e))?;
+    let grow = whizbang_rascal::grow::Grow::new();
+    let view = whizbang_squint::view::View::new().map_err(|e| said(&e))?;
+    let actions: [Arc<dyn Action>; 3] = [Arc::new(check), Arc::new(grow), Arc::new(view)];
+    for action in actions {
+        registry.register(action).map_err(|e| said(&e))?;
+    }
     Ok(registry)
 }
 

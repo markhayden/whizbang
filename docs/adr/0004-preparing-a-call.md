@@ -53,6 +53,9 @@ with the call prepared again is done, at admission.
 Amended: 2026-11-12, with the last part of ADR 0007. Changed: the bound a backend
 states is an `Estimate`, not a bare number; that prepare reserves nothing is shown
 against a ledger that counts.
+Amended: 2026-11-13, at the exit check of checkpoint 1A (task A12). Added, in "What
+prepare does, in order": the two bounds on what a call may hold, its texts and its
+inputs, which ADR 0008 decides.
 Spec: section 3, "The execution contract", "Identities" and "Storage"; section 6,
 "Readiness"
 
@@ -99,9 +102,10 @@ derivation. An input is something the store already holds.
 1. Finds the action in the registry. An unknown name is refused.
 2. Checks the arguments against the descriptor (ADR 0003): none that is not declared, every
    required one, each a value its type accepts. An argument left out takes its default; one
-   left out with no default has no value.
-3. Checks the inputs: no port that is not declared, and at each port as many artifacts as
-   it takes.
+   left out with no default has no value. The texts of one call are 64 KiB together at
+   most (ADR 0008, "What a call and a run may hold").
+3. Checks the inputs: no port that is not declared, at each port as many artifacts as
+   it takes, and 1,024 over all the ports at most (the same section).
 4. Reads each input from the store as the type its port takes. One the store does not
    hold, and one it holds as another type, is refused; so a rendering is refused where a
    mask is required, here as everywhere. So is content stored under an artifact's name
