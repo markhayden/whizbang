@@ -91,3 +91,114 @@ fn store_import_escapes_the_file_it_cannot_read_and_the_store_it_makes() {
     std::fs::write(&file, super::rascal::fixture().to_bytes()).unwrap();
     each_bad_store(&["store", "import", file.to_str().unwrap()]);
 }
+
+#[test]
+fn printable_escapes_every_control_character_and_leaves_nothing_a_terminal_obeys() {
+    // Every control character there is: the C0 set with the carriage return, the line
+    // break and the tab, DEL, and the C1 set, which some terminals read as the start
+    // of a sequence. And what turns text around or breaks a line without being a
+    // control: the line and paragraph separators and a right-to-left override.
+    let mut marks: Vec<char> = (0u32..0x20).chain(0x7f..0xa0).map(control).collect();
+    marks.extend(['\u{2028}', '\u{2029}', '\u{202e}', '\u{200b}', '\u{feff}']);
+    for mark in marks {
+        let said = whizbang::door::printable(&format!("a{mark}b"));
+        assert!(said.is_ascii(), "{:?} is printed as {said:?}", mark as u32);
+        assert!(!said.chars().any(char::is_control), "{:?}", mark as u32);
+        assert!(said.starts_with("a\\") && said.ends_with('b'), "{said:?}");
+    }
+    assert_eq!(whizbang::door::printable("a\rb\tc\nd"), "a\\rb\\tc\\nd");
+    assert_eq!(
+        whizbang::door::printable("\u{7}\u{8}\u{9b}"),
+        "\\u{7}\\u{8}\\u{9b}"
+    );
+    // Quotes and the backslash are left, so escaping twice is escaping once.
+    let once = whizbang::door::printable("it's \"so\"\r");
+    assert_eq!(once, "it's \"so\"\\r");
+    assert_eq!(whizbang::door::printable(&once), once);
+    // Letters of any script are printed as they are.
+    assert_eq!(
+        whizbang::door::printable("caf\u{e9} \u{65e5}"),
+        "caf\u{e9} \u{65e5}"
+    );
+}
+
+fn control(code: u32) -> char {
+    char::from_u32(code).expect("a character")
+}
+
+#[test]
+fn store_import_escapes_the_path_of_the_store_it_made() {
+    // The line that says a store was made is on the standard output, which nothing
+    // else escapes: the path is printed escaped, and the store is at the path given.
+    let dir = Scratch::new("escape");
+    let file = dir.path().join("seam.mask");
+    std::fs::write(&file, super::rascal::fixture().to_bytes()).unwrap();
+    let store = dir.path().join("a\r\u{1b}[2Jstore");
+    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+        .args(["store", "import", file.to_str().unwrap(), "--create"])
+        .arg("--store")
+        .arg(&store)
+        .output()
+        .expect("the binary runs");
+    let printed = String::from_utf8(out.stdout).expect("output is UTF-8");
+    assert_eq!(out.status.code(), Some(0), "{printed}");
+    assert!(store.join("CURRENT").exists());
+    let first = printed.lines().next().unwrap();
+    assert!(first.starts_with("created a store at "), "{printed:?}");
+    assert!(first.ends_with("a\\r\\u{1b}[2Jstore"), "{printed:?}");
+    assert!(
+        !printed.chars().any(|c| c.is_control() && c != '\n'),
+        "{printed:?}"
+    );
+    assert_eq!(printed.lines().count(), 2, "{printed:?}");
+}
+
+/// Runs `whizbang` with these arguments and gives its exit code and its two outputs.
+fn ran(args: &[&str]) -> (Option<i32>, String, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+        .args(args)
+        .output()
+        .expect("the binary runs");
+    let text = |bytes: Vec<u8>| String::from_utf8(bytes).expect("output is UTF-8");
+    (out.status.code(), text(out.stdout), text(out.stderr))
+}
+
+#[test]
+fn a_usage_error_shows_what_was_typed_with_no_control_character() {
+    // The parser of the command line answers a mistake itself, and quotes what was
+    // typed: a value that is no number, a command that is none, an argument too many,
+    // a flag that is none. What it says is printed with every control character but
+    // its own line breaks escaped; the exit code is 2, as it was.
+    let typed = "1\r\u{1b}[31mX\u{7}";
+    let cases: [&[&str]; 4] = [
+        &[
+            "rascal", "grow", "--mask", ID, "--px", typed, "--store", "s",
+        ],
+        &[typed],
+        &["runs", "show", "a", typed, "--store", "s"],
+        &["store", "list", "--store", "s", &format!("--{typed}")],
+    ];
+    for args in cases {
+        let (code, out, err) = ran(args);
+        assert_eq!(code, Some(2), "{args:?}: {err:?}");
+        assert!(out.is_empty(), "{out:?}");
+        assert!(
+            !err.chars().any(|c| c.is_control() && c != '\n'),
+            "{args:?}: {err:?}"
+        );
+        // The carriage return is there, escaped. (The parser's own printing drops an
+        // escape sequence it is given when it does not write to a terminal; nothing
+        // here relies on that.)
+        assert!(err.contains("1\\r"), "{args:?}: {err:?}");
+        assert!(err.starts_with("error: "), "{err:?}");
+        assert!(err.contains("--help"), "{err:?}");
+        assert!(err.ends_with('\n'), "{err:?}");
+    }
+    // Help and the version are the parser's too, and are printed as they were.
+    let (code, out, err) = ran(&["--help"]);
+    assert_eq!((code, err.as_str()), (Some(0), ""));
+    assert!(out.starts_with("One toolkit for working on images with models\n"));
+    let (code, out, _) = ran(&["runs", "show", "--help"]);
+    assert_eq!(code, Some(0));
+    assert!(out.contains("\nUsage: whizbang runs show"), "{out}");
+}

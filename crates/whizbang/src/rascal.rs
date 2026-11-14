@@ -61,7 +61,7 @@ pub fn run(command: &Command) -> Result<String, String> {
             // A command that runs an action makes no store where there is none.
             let store = Store::open_existing(at.root(), Arc::new(RealFs))
                 .map_err(|error| error.to_string())?;
-            let registry = wiring::registry().map_err(|error| error.to_string())?;
+            let registry = wiring::registry()?;
             let executor = wiring::runner(registry, Arc::new(store));
             let asked = GrowAsked {
                 mask,

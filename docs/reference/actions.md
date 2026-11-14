@@ -5,6 +5,14 @@
 What `whizbang` 0.0.1 can do, from its static description (version 4).
 The same as data: [description.json](description.json).
 
+## `check`
+
+Has a judge look at images through evidence tools and conclude: pass, fail or unsure.
+
 ## `grow`
 
 Grows the core of a mask by a disc, and further downward for a shadow.
+
+## `view`
+
+Shows a region of an image closer, and the same region of a second image when one is given.

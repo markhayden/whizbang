@@ -54,7 +54,8 @@ whose name starts with `exchange-` is the executor's.
 Amended: 2026-11-13, at the exit check of checkpoint 1A (task A12). Changed: an action
 is handed the store's failures in words that hold no path, where one action chose the
 right call and nothing held the next to it; a run writes 1,024 diagnostics at most; a
-diagnostic that is a file of its own format is written exactly or not at all.
+diagnostic that is a file of its own format is written exactly or not at all; `runs
+show` takes a run as `runs list` prints it.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
 
@@ -527,7 +528,12 @@ name, which is any diagnostic name of the run and also `record`, as the bytes th
 stored: they are not escaped, and the help says so. A reader that stops reading, as
 `head` does, is not an error: the command says nothing and exits 0. Both read only. Neither holds a run's id to the rule of a `RunId`: a
 run is looked up under whatever the store has it under, and everything read from a store
-is printed escaped, except the bytes asked for with `--json` and `--diagnostic`. A run
+is printed escaped, except the bytes asked for with `--json` and `--diagnostic`. `list`
+prints an id with a control character escaped, in a form no shell gives back, and cuts
+one over 64 characters, so `show` takes a run as `list` prints it as well as by its id:
+the run listed so comes first, then the run of that id, and when several runs are
+listed so and none has that id, none is shown and the complaint says how many
+(`runs::every_listed_run_can_be_shown_from_its_listed_line`). A run
 that was admitted and has not ended is listed and shown as such, from its admission (ADR
 0007); one with no record and no admission, or with a record this build does not read,
 is listed with the reason. No

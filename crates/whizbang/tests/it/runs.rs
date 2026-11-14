@@ -422,6 +422,114 @@ fn runs_that_other_hands_made_are_listed_and_shown_as_they_are() {
 }
 
 #[test]
+fn every_listed_run_can_be_shown_from_its_listed_line() {
+    // `list` escapes an id that holds a control character and cuts one over 64
+    // characters, so what it prints is not always the id. `show` takes the id as it is
+    // listed too: copied from a line of `list`, it finds the run.
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let (completed, _) = with_two_runs(&root);
+    let json = whizbang(&["show", &completed, "--json"], &root);
+    let record_of = |run: &str| {
+        let named = format!(r#""run":{}"#, serde_json::to_string(run).unwrap());
+        let record = json
+            .text()
+            .replace(&format!(r#""run":"{completed}""#), &named);
+        assert!(record.contains(&named));
+        record
+    };
+    let long = format!("long-{}", "z".repeat(70));
+    let twins = [
+        format!("{}-one", "t".repeat(64)),
+        format!("{}-two", "t".repeat(64)),
+    ];
+    // An id that is, letter for letter, how another id is listed.
+    let escaped = "Loose \\u{1b}[2J Run";
+    {
+        let store = Store::open_existing(&root, Arc::new(RealFs)).unwrap();
+        let mut publication = store.begin().unwrap();
+        let mut ids = vec!["Loose Run", long.as_str(), escaped];
+        ids.extend(twins.iter().map(String::as_str));
+        for id in ids {
+            let record = record_of(&id.replace("Loose Run", "Loose \u{1b}[2J Run"));
+            let kind = Kind::Diagnostic;
+            publication
+                .put_in(id, "record", kind, record.as_bytes())
+                .unwrap();
+        }
+        let published = publication.publish().unwrap();
+        let file = root
+            .join("generations")
+            .join(format!("{}.json", published.generation));
+        let text = std::fs::read_to_string(&file).unwrap();
+        let text = text.replace(r#""Loose Run""#, r#""Loose \u001b[2J Run""#);
+        std::fs::remove_file(&file).unwrap();
+        std::fs::write(&file, text).unwrap();
+    }
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(listed.code, Some(0), "{}", listed.err);
+    let lines: Vec<&str> = listed.text().lines().skip(1).collect();
+    assert_eq!(lines.len(), 7, "{}", listed.text());
+    let mut twice = 0;
+    for line in lines {
+        let (id, rest) = line.split_once('\t').unwrap();
+        assert!(!rest.is_empty(), "{line}");
+        let shown = whizbang(&["show", id], &root);
+        if id.starts_with("tttt") {
+            // Two runs are listed so: `show` says that, and shows neither.
+            twice += 1;
+            assert_eq!(shown.code, Some(1), "{id}");
+            assert!(
+                shown.err.contains("2 runs are listed as tttt")
+                    && shown.err.contains("`whizbang store list` prints"),
+                "{}",
+                shown.err
+            );
+            continue;
+        }
+        assert_eq!(shown.code, Some(0), "{id}: {}", shown.err);
+        // The run that was shown is the one of that line.
+        let first = shown.text().lines().next().unwrap();
+        assert_eq!(first, format!("run: {id}"), "{id}");
+    }
+    assert_eq!(twice, 2);
+    // An id that is spelt as another run is listed: what is listed comes first, so
+    // each of the two is shown from its own line, as the loop above found. The run
+    // whose id holds the escape character is also shown by the id itself.
+    let by_line = whizbang(&["show", escaped, "--json"], &root);
+    let raw = whizbang(&["show", "Loose \u{1b}[2J Run", "--json"], &root);
+    for shown in [&by_line, &raw] {
+        assert!(
+            shown.text().contains(r#""run":"Loose \u001b[2J Run""#),
+            "{}",
+            shown.text()
+        );
+    }
+    let spelt_so = whizbang(&["show", "Loose \\\\u{1b}[2J Run", "--json"], &root);
+    assert!(
+        spelt_so.text().contains(r#""run":"Loose \\u{1b}[2J Run""#),
+        "{}",
+        spelt_so.text()
+    );
+    // An id that `list` cut is taken whole as well.
+    for twin in &twins {
+        assert_eq!(whizbang(&["show", twin], &root).code, Some(0));
+    }
+    // The cut id of the long run, as listed, finds it.
+    let cut: String = long.chars().take(64).collect();
+    let found = whizbang(&["show", &format!("{cut}..."), "--json"], &root);
+    assert!(found.text().contains(&long), "{}", found.err);
+    // What is listed as no run is still no run.
+    let ran = whizbang(&["show", "absent..."], &root);
+    assert_eq!(ran.code, Some(1));
+    assert!(
+        ran.err.contains("the store holds no run absent..."),
+        "{}",
+        ran.err
+    );
+}
+
+#[test]
 fn a_refusal_is_printed_as_the_core_says_it_once_escaped_and_whole() {
     // A record that is not one, with an escape sequence in a field's name. The core's
     // sentence quotes it escaped; the command prints that sentence as it is, so a

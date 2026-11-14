@@ -3,9 +3,9 @@
 //! writes the store.
 //!
 //! What a store holds is not trusted to be what this build would have written. A run's
-//! id is whatever the store has it under, and is taken as given: `show` looks its
-//! argument up as it is, and does not hold it to the rule for the ids the executor
-//! makes, or a run that `list` shows could not be shown. Everything read from the store
+//! id is whatever the store has it under, and is not held to the rule for the ids the
+//! executor makes, or a run that `list` shows could not be shown. `show` takes a run as
+//! `list` prints it, escaped or cut, and by its id as it is ([`meant`]). Everything read from the store
 //! is printed escaped, so nothing in it reaches a terminal as a control character,
 //! except where the caller asks for bytes as they are stored (`--json`, `--diagnostic`).
 
@@ -17,7 +17,7 @@ use whizbang_core::contract::Admission;
 use whizbang_core::contract::record::{self, ArgumentValue, Judged, RunRecord, StoredRecordError};
 use whizbang_core::contract::request::{StoredAdmissionError, admitted};
 use whizbang_core::store::fs::RealFs;
-use whizbang_core::store::{Generation, Kind, Reader};
+use whizbang_core::store::{Generation, Kind, Reader, Run};
 
 use crate::store::Where;
 
@@ -34,7 +34,8 @@ pub enum Command {
     /// Show one run's record: what was asked, how it ended, and what it kept. A run
     /// that was admitted and has not ended is shown from its admission.
     Show {
-        /// The run, by its id, as `runs list` shows it.
+        /// The run, by its id or as `runs list` prints it: a line's first field can be
+        /// copied here, though it was escaped or cut.
         run: String,
         #[command(flatten)]
         at: Where,
@@ -155,11 +156,35 @@ fn list(root: &Path) -> Result<String, String> {
     Ok(text)
 }
 
-fn show(root: &Path, id: &str, json: bool, diagnostic: Option<&str>) -> Result<Vec<u8>, String> {
+/// The run a caller means by `given`: the run that `list` prints so, or the run of that
+/// id. What is listed comes first, so that every line of `list` leads to its run: an id
+/// with a control character is listed escaped, in a form no shell gives back, and one
+/// over 64 characters is listed cut. An id that is listed as it is, is both. Only when
+/// no run is listed so, or several are, is `given` taken as an id; and when several
+/// runs are listed so and none has that id, none is shown.
+fn meant<'a>(generation: &'a Generation, given: &str) -> Result<(&'a str, &'a Run), String> {
+    let runs = generation.runs();
+    let listed: Vec<_> = runs.iter().filter(|(id, _)| shown(id) == given).collect();
+    if let [(id, run)] = listed.as_slice() {
+        return Ok((id.as_str(), run));
+    }
+    if let Some((id, run)) = runs.get_key_value(given) {
+        return Ok((id.as_str(), run));
+    }
+    if listed.is_empty() {
+        return Err(format!("the store holds no run {}", shown(given)));
+    }
+    Err(format!(
+        "{} runs are listed as {}: an id over 64 characters is listed cut, and these \
+         differ after that. Give the whole id, which `whizbang store list` prints",
+        listed.len(),
+        shown(given)
+    ))
+}
+
+fn show(root: &Path, given: &str, json: bool, diagnostic: Option<&str>) -> Result<Vec<u8>, String> {
     let (reader, generation) = open(root)?;
-    let Some(run) = generation.run(id) else {
-        return Err(format!("the store holds no run {}", shown(id)));
-    };
+    let (id, run) = meant(&generation, given)?;
     if let Some(name) = diagnostic {
         let Some(entry) = run.get(name) else {
             return Err(format!(

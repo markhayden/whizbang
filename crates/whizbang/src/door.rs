@@ -11,9 +11,11 @@
 //!   has had the secrets taken out and been cut to a length already; the door then
 //!   escapes it ([`printable`]), so that no control character reaches a terminal. And
 //!   the binary passes every complaint of every command through the same escape where
-//!   it prints it, a store's failure that names a path among them. What a caller typed and the executor never saw, such as text that is no
-//!   artifact identity, is not said back at all: the door has no list of secrets to
-//!   take out of it.
+//!   it prints it, a store's failure that names a path among them. What a caller typed
+//!   and the executor never saw, such as text that is no artifact identity, is not said
+//!   back at all: the door has no list of secrets to take out of it. One thing does
+//!   say back what was typed, the parser of the command line in its usage errors: the
+//!   binary prints those through the same escape, line by line.
 //! - **A panic prints one fixed line** ([`quiet_panics`]). The default hook prints the
 //!   panic's whole text and its place in the source, with no secret taken out.
 //!

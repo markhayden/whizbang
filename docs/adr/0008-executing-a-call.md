@@ -56,7 +56,8 @@ where they come in, so that no record is written that is not read back; "What th
 reads of its own files"; "What deleting a run removes", which decides it and says what
 is built. Changed: the last paragraph of "What an action or a panic says is cut", which
 said two things were not bounded; the order in which the executor lets go of a run is
-held by two tests, where one half of it was held by none.
+held by two tests, where one half of it was held by none; in "The first door", the
+parser's usage errors are printed through the door's escape.
 Spec: section 3, "The execution contract", "What a run publishes", "Nested calls",
 "Storage" and "What every run records"; section 6, "Spend"
 
@@ -1227,7 +1228,14 @@ after it does.
   each command). The escape leaves a backslash as it is, so doing it twice is doing it
   once. Text the executor never saw, such as
   something given as an artifact's identity that is none, is not said back: a door holds
-  no list of secrets to take out of it.
+  no list of secrets to take out of it. The parser of the command line does say back
+  what was typed, in its own usage errors, and printed them itself, a carriage return
+  and all: the binary now takes the parser's error and prints it line by line through
+  the same escape, with exit code 2 as before. The line breaks are the parser's, and
+  one typed inside an argument stays a line break; help and the version hold nothing a
+  caller typed and are printed as the parser prints them
+  (`escape::a_usage_error_shows_what_was_typed_with_no_control_character`,
+  `escape::printable_escapes_every_control_character_and_leaves_nothing_a_terminal_obeys`).
 - **One process owns every run it makes.** The command runs the action in its own
   process and waits for it. The table of open runs is that process's ("Cancellation"),
   so no other process can cancel the run or wait for it: a second process sees it as
