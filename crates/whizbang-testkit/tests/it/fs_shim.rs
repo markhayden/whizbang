@@ -35,7 +35,7 @@ fn a_file_in_a_directory_that_was_never_synced_is_gone_after_a_crash() {
     let file = dir.path().join("f");
     fs.write_new(&file, b"content").unwrap();
     assert_eq!(
-        fs.read(&file).unwrap(),
+        fs.read_at_most(&file, u64::MAX).unwrap(),
         b"content",
         "visible before the crash"
     );
@@ -111,7 +111,7 @@ fn a_rename_is_undone_unless_the_destination_directory_was_synced() {
 
         fs.rename(&a.join("new"), &b.join("pointer")).unwrap();
         assert_eq!(
-            fs.read(&b.join("pointer")).unwrap(),
+            fs.read_at_most(&b.join("pointer"), u64::MAX).unwrap(),
             b"new",
             "visible at once"
         );
@@ -301,7 +301,7 @@ fn after_a_crash_every_call_fails_and_nothing_more_reaches_the_disk() {
     assert!(fs.sync_dir(dir.path()).is_err());
     assert!(fs.rename(&file, &dir.path().join("h")).is_err());
     assert!(fs.remove_all(&file).is_err());
-    assert!(fs.read(&file).is_err());
+    assert!(fs.read_at_most(&file, u64::MAX).is_err());
     assert!(fs.list(dir.path()).is_err());
     assert!(fs.exists(&file).is_err());
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
@@ -335,7 +335,11 @@ fn an_injected_failure_refuses_one_call_and_drops_nothing() {
     fs.write_new(&file, b"content").unwrap();
     assert!(fs.sync_dir(dir.path()).is_err());
     assert!(!fs.crashed());
-    assert_eq!(fs.read(&file).unwrap(), b"content", "still visible");
+    assert_eq!(
+        fs.read_at_most(&file, u64::MAX).unwrap(),
+        b"content",
+        "still visible"
+    );
     fs.sync_dir(dir.path()).unwrap();
     assert_eq!(fs.events().len(), 3, "the refused call is not an event");
 
@@ -429,7 +433,7 @@ fn events_are_recorded_in_order_and_reads_are_not_events() {
     let (f, g) = (sub.join("f"), sub.join("g"));
     fs.create_dir(&sub).unwrap();
     fs.write_new(&f, b"content").unwrap();
-    fs.read(&f).unwrap();
+    fs.read_at_most(&f, u64::MAX).unwrap();
     fs.list(&sub).unwrap();
     fs.exists(&f).unwrap();
     fs.rename(&f, &g).unwrap();

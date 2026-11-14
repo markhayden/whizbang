@@ -395,8 +395,8 @@ impl Fs for AfterTheLook {
     fn remove_all(&self, path: &Path) -> std::io::Result<()> {
         RealFs.remove_all(path)
     }
-    fn read(&self, path: &Path) -> std::io::Result<Vec<u8>> {
-        let read = RealFs.read(path);
+    fn read_at_most(&self, path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+        let read = RealFs.read_at_most(path, limit);
         if path
             .parent()
             .is_some_and(|dir| dir.ends_with("generations"))

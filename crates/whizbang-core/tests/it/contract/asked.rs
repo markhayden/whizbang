@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value as Json, json};
+use whizbang_core::artifact::{self, Artifact, ArtifactType, ImageRole};
 use whizbang_core::capability::written::EXCHANGE;
 use whizbang_core::capability::{
     Controls, Declaration, DeclarationError, EXCHANGES_MAX_BYTES, Excluded, Fault, FaultKind,
@@ -20,9 +21,10 @@ use whizbang_core::contract::record::{
     Decision, Judged, MODELS_LIMIT, RequestEnded, RunRecord, Status, Stop, Timed,
 };
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Argument, Backends, Call, Capabilities, Capability, Clock, Context,
-    EXCHANGE_PREFIX, Engine, Executor, Failure, Kind, PreparedCall, Produced, RECORD_MAX_BYTES,
-    RecordError, Registry, Requirement, RunId, Secrets, ValueType, Verdict,
+    ARGUMENTS_TEXT_MAX_BYTES, Action, ActionDescriptor, Argument, Backends, Call, Capabilities,
+    Capability, Clock, Context, Count, EXCHANGE_PREFIX, Engine, Executor, Failure, INPUTS_LIMIT,
+    InputPort, Kind, NoBackends, PreparedCall, Produced, RECORD_MAX_BYTES, RecordError, Registry,
+    Requirement, RunId, Secrets, ValueType, Verdict,
 };
 use whizbang_core::contract::{MESSAGE_LIMIT, Value};
 use whizbang_core::identity::{CanonicalPixels, Digest};
@@ -35,6 +37,7 @@ use whizbang_testkit::threads;
 use super::commit::World;
 use super::record::schema;
 use super::redact::made_up_key;
+use crate::artifact::support::{image_of, photo};
 use crate::capability::written::BODY;
 
 /// A clock that says one millisecond more each time it is asked.
@@ -1165,12 +1168,100 @@ fn a_record_of_as_many_requests_as_a_run_sends_is_under_the_limit_by_arithmetic(
 }
 
 #[test]
+fn a_calls_text_arguments_are_bounded_where_the_call_comes_in() {
+    // An argument's text is recorded as it was given, so what a call may give is
+    // bounded: 64 KiB for its texts together. A call over that is refused before any
+    // run exists, in a sentence that shows none of the text; a call at the bound
+    // runs, and its record is read back though every byte of the text is one that
+    // JSON writes as six.
+    assert_eq!(ARGUMENTS_TEXT_MAX_BYTES, 64 * 1024);
+    let world = World::new();
+    let asks = action("asks", Vec::new(), |_, _| Ok(Produced::nothing()));
+    let executor = engine(&world, NoBackends, Capabilities::none(), vec![asks]);
+    let call = |judge: usize, note: usize| {
+        Call::new("asks")
+            .argument("judge", Value::text(&"\u{1}".repeat(judge)))
+            .argument("note", Value::text(&"\u{1}".repeat(note)))
+    };
+    for over in [
+        call(0, ARGUMENTS_TEXT_MAX_BYTES + 1),
+        call(1, ARGUMENTS_TEXT_MAX_BYTES),
+    ] {
+        for refused in [executor.prepare(&over).err(), executor.submit(&over).err()] {
+            assert_eq!(
+                refused.unwrap().to_string(),
+                "not a call of asks: its text arguments hold 65537 bytes together, and a \
+                 call's hold 65536 at most"
+            );
+        }
+    }
+    let reader = Reader::open(&world.root(), world.fs.clone()).unwrap();
+    assert!(reader.snapshot().unwrap().runs().is_empty());
+    let finished = executor.submit(&call(1, ARGUMENTS_TEXT_MAX_BYTES - 1));
+    let (_, names) = stored(&world, finished.unwrap().run());
+    assert!(names["record"].len() > 6 * ARGUMENTS_TEXT_MAX_BYTES);
+}
+
+#[test]
+fn everything_a_record_lists_but_outputs_is_bounded_and_the_sum_is_under_the_limit() {
+    // What the executor does not fill itself, at its bounds: the texts of a call at
+    // 64 KiB of bytes that JSON writes as six, 1,024 inputs and 1,024 diagnostics
+    // under the longest names. What they add to a record is measured, and with the
+    // most the executor's own lists can come to (the test above) it is under the
+    // limit. So no record is over it but one of a run that handed back outputs, and
+    // such a run commits none.
+    let world = World::new();
+    let image = image_of(photo(), ImageRole::Picture);
+    {
+        let store = world.store();
+        let mut publication = store.begin().unwrap();
+        artifact::put(&mut publication, &Artifact::from(image.clone())).unwrap();
+        publication.publish().unwrap();
+    }
+    let draft = ActionDescriptor::draft("full", "1.0.0", Kind::Primitive, "A test action.")
+        .argument(Argument::optional("note", "A note.", ValueType::Text))
+        .input(InputPort::variadic(
+            "images",
+            ArtifactType::Image,
+            "Any number of images.",
+            Count::at_least(0),
+        ));
+    let body: Body = Box::new(|call, context| {
+        for at in 0..call.inputs().len() {
+            let name = format!("{at:04}{}", "d".repeat(60));
+            context.diagnostics().write(&name, b"x").unwrap();
+        }
+        Ok(Produced::nothing())
+    });
+    let full: Arc<dyn Action> = Arc::new(Scripted(draft.build().unwrap(), body));
+    let executor = engine(&world, NoBackends, Capabilities::none(), vec![full]);
+    let bytes = |call: Call| {
+        let finished = executor.submit(&call).unwrap();
+        stored(&world, finished.run()).1["record"].len()
+    };
+    let empty = bytes(Call::new("full"));
+    let mut call = Call::new("full").argument(
+        "note",
+        Value::text(&"\u{1}".repeat(ARGUMENTS_TEXT_MAX_BYTES)),
+    );
+    for _ in 0..INPUTS_LIMIT {
+        call = call.input("images", image.id());
+    }
+    let added = bytes(call) - empty;
+    // 393,216 for the texts, and about 383 for an input and a diagnostic together.
+    assert!((780_000..=800_000).contains(&added), "{added}");
+    let executors_own = 2_364_470;
+    assert!((added + empty + executors_own) as u64 + 900_000 < RECORD_MAX_BYTES);
+}
+
+#[test]
 fn a_record_that_would_be_over_the_limit_is_not_published_as_it_is() {
-    // An argument of nearly four mebibytes, which is the caller's and is recorded as
-    // it was given, and requests that take the record over the limit. The record that
-    // would not be read back is not written: the run ends as an error of the type
-    // `record`, and its record, which leaves the requests out and says how many
-    // there were, is read back.
+    // Requests that take the record over the limit, which here is lowered through
+    // the executor's seam for tests: with what a call and a run may hold bounded
+    // where it comes in, the sum of what a record lists is under the real one. The
+    // record that would not be read back is not written: the run ends as an error
+    // of the type `record`, and its record, which leaves the requests out and says
+    // how many there were, is read back.
     let world = World::new();
     let judge = Arc::new(FakeJudge::scripted(Vec::new()));
     let asks = action("asks", judging(), |_, context| {
@@ -1185,11 +1276,11 @@ fn a_record_that_would_be_over_the_limit_is_not_published_as_it_is() {
         roster(None, None, Some(judge.as_ref())),
         Capabilities::none().with_judge(judge.clone()),
         vec![asks],
-    );
-    let note = "n".repeat(RECORD_MAX_BYTES as usize - 6000);
-    let call = Call::new("asks").argument("note", Value::text(&note));
-    let finished = executor.submit(&call).unwrap();
+    )
+    .with_record_limit(9_000);
+    let finished = executor.submit(&Call::new("asks")).unwrap();
     let (record, names) = stored(&world, finished.run());
+    assert!(names["record"].len() < 9_000, "{}", names["record"].len());
     assert_eq!(record.outcome().status, Status::Error);
     let error = record.outcome().error.as_ref().unwrap();
     assert_eq!(error.kind, "record");

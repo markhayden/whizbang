@@ -553,11 +553,6 @@ impl Fs for ShimFs {
         Ok(())
     }
 
-    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        let _state = self.alive()?;
-        self.real.read(path)
-    }
-
     fn read_at_most(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>> {
         let _state = self.alive()?;
         self.real.read_at_most(path, limit)

@@ -290,7 +290,10 @@ impl Files {
         if !self.exists(&path)? {
             return Ok(None);
         }
-        let bytes = self.fs.read(&path).map_err(Error::io("read", &path))?;
+        // No more than the longest pointer and one byte: a longer file is no pointer.
+        let most = POINTER_MAX_BYTES + 1;
+        let bytes = self.fs.read_at_most(&path, most);
+        let bytes = bytes.map_err(Error::io("read", &path))?;
         // One way to write each number: no sign, no leading zero, one newline.
         std::str::from_utf8(&bytes)
             .ok()
@@ -366,7 +369,20 @@ impl Files {
     /// Generation `number`, from its file.
     fn generation(&self, number: u64) -> Result<Generation> {
         let path = self.layout.generation(number);
-        let bytes = self.fs.read(&path).map_err(Error::io("read", &path))?;
+        // No more than the largest generation file and one byte, which is enough to
+        // know that a file is larger: the store never wrote it so.
+        let most = GENERATION_MAX_BYTES + 1;
+        let bytes = self.fs.read_at_most(&path, most);
+        let bytes = bytes.map_err(Error::io("read", &path))?;
+        if bytes.len() as u64 > GENERATION_MAX_BYTES {
+            return Err(Error::corrupt(
+                &path,
+                format!(
+                    "it is more than {GENERATION_MAX_BYTES} bytes, the most a generation \
+                     file may be"
+                ),
+            ));
+        }
         // The format first, by itself: a file of another format does not have this
         // format's shape, and is another format, not damage.
         #[derive(serde::Deserialize)]
@@ -398,8 +414,8 @@ impl Files {
         let path = self.layout.object(&digest);
         // No more is read than the entry says, and one byte: a file that damage or
         // other hands made far larger is known to be wrong without being held whole.
-        // That is so of the files under `objects/` only, which have an entry: the
-        // pointer, a generation and the lock file are still read whole.
+        // The pointer, a generation and the lock file have no entry, and each has a
+        // limit of its own.
         let limit = entry.bytes.saturating_add(1);
         let bytes = self.fs.read_at_most(&path, limit).map_err(|source| {
             if source.kind() == io::ErrorKind::NotFound {
@@ -525,7 +541,9 @@ impl Files {
                     if staged != staging.join("CURRENT") {
                         return Ok(Some(staged));
                     }
-                    match self.fs.read(&staged) {
+                    // One byte more than the first pointer: a longer file is not it.
+                    let most = FIRST_POINTER.len() as u64 + 1;
+                    match self.fs.read_at_most(&staged, most) {
                         Ok(bytes) if FIRST_POINTER.starts_with(&bytes) => {}
                         Ok(_) => return Ok(Some(staged)),
                         Err(error) if error.kind() == io::ErrorKind::IsADirectory => {
@@ -546,7 +564,8 @@ impl Files {
     /// Who holds the writer lock, as the holder wrote it: one line, kept short, and
     /// nothing that is not printable. `None` when it cannot be read.
     fn holder(&self) -> Option<String> {
-        let bytes = self.fs.read(&self.layout.lock()).ok()?;
+        let lock = self.layout.lock();
+        let bytes = self.fs.read_at_most(&lock, LOCK_MAX_BYTES).ok()?;
         let text = String::from_utf8_lossy(&bytes);
         let line: String = text
             .lines()
@@ -717,6 +736,23 @@ fn check_run_id(run: &str) -> Result<()> {
 
 /// What the first pointer of a store holds.
 const FIRST_POINTER: &[u8] = b"0\n";
+
+/// The most bytes the pointer, `CURRENT`, may be: the twenty digits of the largest
+/// generation number and a newline. No more of it is read than this and one byte.
+pub const POINTER_MAX_BYTES: u64 = 21;
+
+/// The most bytes a generation file may be: 64 MiB. No more of one is read than this and
+/// one byte, and a larger one is refused as damage; a publication whose generation file
+/// would be larger is refused before anything of it is visible
+/// ([`Error::GenerationTooLarge`]), so the store never writes what it will not read. A
+/// generation file grows with the names a store holds, about 400 bytes for a request
+/// id's two (`docs/carry-over.md`).
+pub const GENERATION_MAX_BYTES: u64 = 64 << 20;
+
+/// The most bytes that are read of the lock file, `LOCK`, to show who holds it. What a
+/// writer writes there is one short line; of a larger file the start is read, and the
+/// line shown is cut as it always is.
+pub const LOCK_MAX_BYTES: u64 = 1024;
 
 /// What a writer writes in the lock file, for a writer that is refused to show: its
 /// process id and the name of its program.
@@ -1455,6 +1491,13 @@ impl Publication<'_> {
         let mut text = serde_json::to_vec_pretty(&generation)
             .map_err(|e| Error::corrupt(&layout.generation(number), e.to_string()))?;
         text.push(b'\n');
+        // What a reader would refuse is not written: nothing of this is visible yet.
+        if text.len() as u64 > GENERATION_MAX_BYTES {
+            return Err(Error::GenerationTooLarge {
+                bytes: text.len() as u64,
+                limit: GENERATION_MAX_BYTES,
+            });
+        }
         let staged = self.dir.join("generation.json");
         fs.write_new(&staged, &text)
             .map_err(Error::io("write", &staged))?;

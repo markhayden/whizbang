@@ -50,6 +50,13 @@ its deadline has passed, by the executor's clock.
 Amended: 2026-11-13, with ADR 0009 (task A11). Changed: a run is handed the backend its
 call resolved; capability requests are recorded; a run may freeze the actions its calls
 are held to, with two more refusals.
+Amended: 2026-11-13, at the exit check of checkpoint 1A (task A12). Added: "What a call
+and a run may hold", which bounds a call's texts and inputs and a run's diagnostics
+where they come in, so that no record is written that is not read back; "What the store
+reads of its own files"; "What deleting a run removes", which decides it and says what
+is built. Changed: the last paragraph of "What an action or a panic says is cut", which
+said two things were not bounded; the order in which the executor lets go of a run is
+held by two tests, where one half of it was held by none.
 Spec: section 3, "The execution contract", "What a run publishes", "Nested calls",
 "Storage" and "What every run records"; section 6, "Spend"
 
@@ -201,6 +208,42 @@ in the store, and no command removes it
 (`commit::deleting_a_run_removes_its_references_and_known_leaves_the_artifacts_it_committed`;
 `docs/carry-over.md`).
 
+### What deleting a run removes
+
+Decided at the exit check of checkpoint 1A, which `docs/carry-over.md` asked to decide
+it or give it a milestone. It does both.
+
+**The rule is the spec's, and it stands:** `store delete` and `store prune` remove runs
+and what only they reference (`SPEC.md` section 3, "Storage"). An artifact that only a
+deleted run accounts for goes with the run. "Nothing, with the spec saying so" was
+turned down: a store would then keep every image a deleted run made for as long as the
+store lives, with no command that removes one, and a person who deletes a run means
+its pictures as well.
+
+**What is built at the tag `m1a` is short of the rule, and says so.** Deleting a run
+removes the run's names: its record, its journal, its diagnostics with any evidence,
+and its own references to its outputs. It leaves each output's name under `artifacts/`,
+so the prune that follows keeps the file
+(`commit::deleting_a_run_removes_its_references_and_known_leaves_the_artifacts_it_committed`).
+The records of request ids and of spend are outside runs and are never removed, which
+is unchanged and is what checkpoint 1B builds on.
+
+**Why it is not built here.** A deletion can remove an artifact's name only when it
+knows that nothing else accounts for it, and the store cannot say that today. Three
+things can account for an artifact beside the run that committed it: another run that
+committed the same identity, which holds a reference of its own, so the generation
+shows it; a run that took it as an input, which is in that run's record and in no name
+of the store; and `whizbang store import`, which leaves no mark at all. So the rule
+needs two more kinds of name before a deletion can be decided from the generation
+alone, without reading every other run's record: a run's reference to each input it
+took, as it has one to each output, and a mark of an import. That changes what
+admission and import publish, each with its crash sweep, and it meets the reference
+"that only its parent reads" which the tools a judge may call are owed
+(`docs/carry-over.md`). It is milestone 2's, with those tools, and is on the list with
+this as its "done when": a deletion removes the name of an artifact that no remaining
+run holds a reference to and no import marked, with a test through a deletion and a
+prune.
+
 **A failure of the store in the commit step** is answered as ADR 0005 says of the end of
 a run: with the store's failure, not with a finished run. The run stays as it was
 admitted, and no output is committed; where the publication became visible and its last
@@ -248,9 +291,78 @@ of the type `output` that says how many there were and how large the record woul
 been; none is committed, and the record that is written lists none
 (`commit::a_run_whose_outputs_make_a_record_too_large_to_read_commits_none_of_them`).
 
-What can still make a record too large to read back: an argument's text, which is
-recorded as it was given, and the list of a run's diagnostics, when there are tens of
-thousands of them. Neither is bounded yet (`docs/carry-over.md`).
+An argument's text, a call's inputs and a run's diagnostics were not bounded when this
+was written. They are now, where they come in ("What a call and a run may hold",
+below).
+
+### What a call and a run may hold
+
+A record lists what a call gave and what its run wrote, as they were. Three of those
+had no bound, and each alone could make a record over 4 MiB, which the executor
+published and no reader took: the run was reported one way, and a repeat of its request
+was answered "not a run record". Each is bounded where it comes in, so that the refusal
+is the caller's or the action's to see, and nothing has to be left out of a record
+afterwards.
+
+- **A call's texts: 64 KiB together** (`ARGUMENTS_TEXT_MAX_BYTES`, 65,536 bytes of
+  UTF-8, over all the text arguments of one call). Prepare refuses a call over it as
+  `Invalid`, in a sentence that gives the length and shows none of the text; admission
+  prepares again, so no run is made. A record writes a text as JSON, which can take six
+  bytes for one; a secret taken out is ten bytes written for eight or more, which is
+  less. So the texts of one call are at most 393,216 bytes of a record
+  (`asked::a_calls_text_arguments_are_bounded_where_the_call_comes_in`).
+- **A call's inputs: 1,024** (`INPUTS_LIMIT`, over all its ports). A port may take any
+  number (`Count::at_least`), and a record lists each input with its binding. Prepare
+  refuses a call that gives more, before it reads any of them
+  (`execute::a_call_gives_only_so_many_inputs_and_one_more_is_refused_before_any_is_read`).
+- **A run's diagnostics: 1,024** (`DIAGNOSTICS_LIMIT`) that its action writes. One more
+  is refused where it is written, as a name written twice is, and the action decides
+  what that means for its run. The journal is not among them, nor are the exchanges
+  the executor keeps, which are bounded with the run's requests (ADR 0009)
+  (`execute::a_run_writes_only_so_many_diagnostics_and_one_more_is_refused`).
+
+**The sum.** A test runs one call at all three bounds, with texts whose every byte JSON
+writes as six and diagnostics under the longest names, and measures what they add to a
+record: about 785,000 bytes. The lists the executor fills itself come to 2,364,470 at
+most (ADR 0009, "The sum"). Together about 3,150,000, with an empty record's few
+hundred bytes: a megabyte under the limit
+(`asked::everything_a_record_lists_but_outputs_is_bounded_and_the_sum_is_under_the_limit`).
+What is left without a bound of its own is what a build declares, the arguments and
+ports of its descriptors, which no caller chooses, and the outputs a run hands back,
+which the paragraph above this section answers: such a run commits none.
+
+**So a record over the limit is never published.** By the sum, the only run whose
+record would be over it is one that handed back outputs, and that run ends as an error
+of the type `output` with a record that lists none. The executor's other answer, for a
+record over the limit with no outputs (ADR 0009: the type `record`, with the lists of
+requests left out), can no longer be reached at the real limit; it is kept as the
+backstop behind the sum, and its test lowers the limit through a seam for tests
+(`Engine::with_record_limit`,
+`asked::a_record_that_would_be_over_the_limit_is_not_published_as_it_is`).
+
+### What the store reads of its own files
+
+A file under `objects/` is read up to the length its entry gives and one byte (above,
+with the commit step's first pull request). Three files have no entry, and were read
+whole before they were judged. Each has a limit now, and the file system the store is
+built on has no way left to read a file whole (`Fs::read_at_most` is its one read):
+
+- **`CURRENT`: 21 bytes** (`POINTER_MAX_BYTES`): twenty digits and a newline. A longer
+  file is no pointer, and is refused as damage, as before, with 22 bytes read.
+- **A generation file: 64 MiB** (`GENERATION_MAX_BYTES`). One byte more is refused as
+  damage, by a reader and by a writer alike. And the store does not write what it will
+  not read: a publication whose generation file would be over the limit is refused
+  before anything of it is visible (`store::Error::GenerationTooLarge`). A generation
+  file grows with the names a store holds, about 400 bytes for the two names of a
+  request id, so the limit is about 160,000 request ids; what a store does long before
+  that, when each publication writes tens of megabytes, is on `docs/carry-over.md` for
+  checkpoint 1B.
+- **`LOCK`: its first 1,024 bytes** (`LOCK_MAX_BYTES`) are read, to show a refused
+  writer who holds the store. Nothing is refused for a longer file: the holder's line
+  is one short line, and is cut at 200 characters as it always was.
+
+(`store::the_pointer_a_generation_file_and_the_lock_file_are_each_read_up_to_a_limit`,
+`store::a_publication_that_would_write_a_generation_file_over_the_limit_is_refused_unseen`.)
 
 ### A panic in an action
 
@@ -376,9 +488,14 @@ One test stops a run at its end publication's last sync, with a bound of one: a 
 says `Ended`, a `start` is refused, a caller that waits is still waiting, and once the
 run goes on the wait answers and the `start` after it is admitted
 (`started::a_wait_for_a_started_run_answers_only_when_its_place_is_free`). The order of
-letting go is held by a test of its own, which holds the lock a waiter is told under
-while the executor lets go
+letting go is held by two tests of its own. One holds the lock a waiter is told under
+while the executor lets go, and finds the place free
 (`contract::engine::tests::a_runs_place_is_free_before_whoever_waits_for_the_run_is_told`).
+The other attaches to a run something that looks for a free place at the moment the
+table lets the run go, and finds one: the place before the table, which nothing held
+until the exit check, and which is what keeps a wait that finds the run gone from the
+table from answering while its place is still taken
+(`contract::engine::tests::a_runs_place_is_free_before_the_run_leaves_the_table_of_open_runs`).
 For a run that `submit` or `request` ran there is no place, and a `wait` by another
 caller answers when that call has all but returned.
 

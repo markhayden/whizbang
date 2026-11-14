@@ -9,6 +9,11 @@ the bytes of exchanges a run stores, and a turn that is not written; that what a
 froze binds every run under it, and binds a preparation. Corrected: the bound on what a
 run stores, which left out the answer; what a stored digest gives away; that a redacted
 exchange is not promised to be JSON; `RefusalKind` has 27 kinds.
+Amended: 2026-11-13, at the exit check of checkpoint 1A (task A12). Added, under
+"Evidence": evidence is kept exactly or not at all, and how much evidence one run can
+hold. Changed: what remains of a record over the limit, which is nothing (ADR 0008,
+"What a call and a run may hold"); a box whose entries are not all numbers makes no
+call; and the sentence of the plan on the tool list, which is corrected there.
 Spec: section 3, "The execution contract", "What a run publishes", "What a judge model may
 call" and "What every run records"; section 4, "Backends"
 
@@ -130,10 +135,12 @@ an action wrote. When the record would be over `RECORD_MAX_BYTES`, the run ends 
 error, of the type `output` when it handed back artifacts (ADR 0008) and `record` when
 it did not; its record leaves out `models`, `time.durations` and `judge`, and the
 message says how many requests there were. The exchanges are kept, and listed
-(`asked::a_record_that_would_be_over_the_limit_is_not_published_as_it_is`). What
-remains: when the record is still over the limit without them, because the argument or
-the diagnostics alone are, it is published as before and is not read back
-(`docs/carry-over.md`).
+(`asked::a_record_that_would_be_over_the_limit_is_not_published_as_it_is`). Nothing
+remains of the case in which the record was still over the limit without them: an
+argument's text, a call's inputs and a run's diagnostics are bounded where they come
+in, and with them the sum above is under the limit (ADR 0008, "What a call and a run
+may hold"). That test now lowers the limit through a seam for tests to reach this
+answer at all.
 
 ### A provider's words are redacted whole
 
@@ -436,7 +443,12 @@ the judge ends its turn with `pass`, `fail` or `unsure` on the first line of its
   call over, the executor refuses it before it is admitted, as it refuses any call the
   run did not freeze. A call of a listed tool is made from the judge's arguments. An
   image is named by its identity, as the judge was told it; the executor decides
-  whether the run may read it.
+  whether the run may read it. Arguments that are not the tool's make no call: a key
+  the tool does not have, and a `bbox` that is not four entries, each a number (an
+  entry that is none is not skipped, or five entries of which four are numbers would
+  be a box). A box that reaches past the image is a call, which the executor refuses
+  when it prepares it, with the refusal in the record
+  (`check::arguments_that_are_not_a_views_make_no_call_and_a_box_past_the_image_is_refused`).
 - **A cut-off turn** is left out of the conversation, whatever it holds, marked
   `truncated`, and asked for once more with four times the output limit
   (`RETRY_FACTOR`). A second one fails the run. No call inside one is dispatched.
@@ -480,6 +492,26 @@ first. What is built:
   crop's identity is refused: it was not given that image and no call of its own returned
   it, though the store holds it
   (`check::evidence_is_no_output_of_check_and_another_runs_judge_cannot_read_it`).
+
+- **Kept exactly, or not at all.** Evidence is an image's canonical file, and a
+  diagnostic's bytes pass through redaction, which works on bytes whatever they are
+  (ADR 0005). A secret the executor was told of can stand in an image file by chance,
+  eight bytes of compressed pixels, and taking it out would leave under the evidence's
+  name a file that is no image. So evidence is written with `Diagnostics::write_exact`:
+  kept as the bytes that were given, or refused, with nothing kept and nothing of the
+  secret shown, when redaction would change one of them. `check` then fails, as an
+  error of the type `evidence`: a run does not go on with evidence it could not keep.
+  The crop itself is unchanged in the store, as the committed output of the tool's own
+  run: an artifact is stored as its bytes, and is never redacted
+  (`execute::bytes_written_exactly_are_kept_as_they_are_or_not_at_all`,
+  `check::evidence_that_holds_a_secrets_bytes_is_not_kept_altered_and_the_run_fails`).
+- **How much evidence one run holds.** At most 32 tool calls are dispatched
+  (`CALLS_LIMIT`), each returns at most two crops, and a crop is at most 1,024 pixels
+  on its longer side (`view::MAX_SIDE`): 64 files of at most 1,024 by 1,024 pixels at
+  four bytes, 4 MiB of pixels each before the PNG's own framing and the artifact's
+  record around it, so about 270 MiB at the very most, held in memory until the run
+  ends, as every diagnostic is. That is under the 1,024 diagnostics a run may write
+  (ADR 0008).
 
 **What is not held, and why it is accepted.** The crop is also an image artifact in the
 store, under its identity, as the output of the `view` run that cut it. A caller of the

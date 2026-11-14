@@ -51,6 +51,10 @@ Changed: `identity.parent`, `steps` and `outcome.refusals` are filled, in `run/2
 Amended: 2026-11-13, with ADR 0009 (task A11). Changed: `models`, `time.durations` and
 `judge` are filled, in `run/2`; three lists hold nothing, where six did; a diagnostic
 whose name starts with `exchange-` is the executor's.
+Amended: 2026-11-13, at the exit check of checkpoint 1A (task A12). Changed: an action
+is handed the store's failures in words that hold no path, where one action chose the
+right call and nothing held the next to it; a run writes 1,024 diagnostics at most; a
+diagnostic that is a file of its own format is written exactly or not at all.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
 
@@ -365,9 +369,21 @@ not find a key by its shape. What keeps other private things out of a record is 
 it has no field for a path, a host name, a user or an environment variable. A free text
 is the one place the shape does not reach: an action that writes a path into its error's
 message has written it into the record. A `CallError` shows no path,
-as its text or as `{:?}`; the store's own error does, and an action that quotes one in a
-message quotes it without (`store::Error::without_paths`). Nothing holds an action to
-that (`docs/carry-over.md`).
+as its text or as `{:?}`; the store's own error does. So an action is never handed the
+store's own error. The store in a context answers every failure as
+`store::Error::WithoutPaths`, which holds the failure's words without paths
+(`store::Error::without_paths`) and nothing else of it: a file is named by its last
+part, a digest or a fixed name, and the reason a file was found damaged is left out.
+An artifact's error that holds such a failure prints it so, as its text, as `{:?}` and
+as its source. Whatever an action then copies into a message, a progress event or a
+diagnostic, it writes nothing of where the store is; it is held by what the action is
+given, and no action has to choose the right call
+(`execute::an_action_is_handed_the_stores_failures_without_a_path_however_it_quotes_them`,
+and through each of the three actions:
+`grow_action::a_failure_of_the_store_inside_a_running_grow_leaves_no_path_in_its_record`,
+`check::a_failure_of_the_store_inside_a_running_view_or_check_leaves_no_path_in_its_record`).
+A path an action builds for itself, from something that is not the store, is still the
+action's to keep out.
 
 ### Where a record is, in a store
 
@@ -488,8 +504,12 @@ place for diagnostics.
 **Diagnostics.** `Context::diagnostics` takes bytes under a name: a lower-case letter or a
 digit, then lower-case letters, digits, `_`, `-` or `.`, 64 characters at most, written
 once in a run, and not starting with `exchange-`: those names are the executor's, for
-the exchanges with a judge (ADR 0009). The content has the secrets taken out before it
-is kept, whatever its encoding. The name is a key in the store, written as it is in the generation file and in
+the exchanges with a judge (ADR 0009). A run's action writes 1,024 at most
+(`DIAGNOSTICS_LIMIT`; ADR 0008, "What a call and a run may hold"). The content has the
+secrets taken out before it is kept, whatever its encoding; bytes that are a file of a
+format of their own, a picture or an artifact's canonical file, are written with
+`write_exact` instead, which keeps them as they were given or, when they hold a
+secret, refuses and keeps nothing (ADR 0009, "Evidence"). The name is a key in the store, written as it is in the generation file and in
 the record: a name that redaction would change, because it is or holds a secret, is
 refused, and the refusal does not show it. No other name of a run comes from outside the
 build: a port and an argument are named by the action's descriptor, a call that names
