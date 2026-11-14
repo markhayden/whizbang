@@ -667,9 +667,15 @@ fn white_space_at_an_end_inside_quotes_and_quotes_around_nothing_are_refused() {
 
 #[test]
 fn no_more_than_the_bound_and_one_byte_is_asked_of_what_an_env_file_is_read_from() {
+    // It gives without end as far as the reader under test may ask, and fails once it
+    // has given a mebibyte: a reader that asked without a bound would otherwise fill
+    // the machine's memory before anything stopped it.
     struct Endless(usize);
     impl std::io::Read for Endless {
         fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.0 > 1024 * 1024 {
+                return Err(std::io::Error::other("asked for more than a mebibyte"));
+            }
             buffer.fill(b'#');
             self.0 += buffer.len();
             Ok(buffer.len())
