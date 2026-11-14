@@ -209,7 +209,9 @@ impl Fault {
     }
 
     /// The same fault, of a request that was answered, by an answer that settles it:
-    /// with what the answer said it cost, when it said.
+    /// with what the answer said it cost, when it said. No charge means that the
+    /// answer did not say, and the request then settles at its bound, never at
+    /// nothing: an answer known to have cost nothing is given a charge of nothing.
     pub fn answered(mut self, charge: Option<Charge>) -> Fault {
         (self.stage, self.charge) = (Some(Stage::Answered), charge);
         self
@@ -222,25 +224,20 @@ impl Fault {
         self
     }
 
-    /// How far the request got: what whoever made the fault stated, or else what the
-    /// kind says. `unsupported` means the request was not sent; no other kind says how
-    /// far its request got, so each reads as unresolved. That is the conservative
-    /// reading: an unresolved request may have been charged, and is counted at its
-    /// bound. A fake or an adapter that knows better must state the stage (ADR 0010).
+    /// How far the request got: what whoever made the fault stated, and unresolved
+    /// when nobody did, whatever the kind. No kind says how far a request got: a
+    /// backend that returns `unsupported` was called, and may have found out what it
+    /// does not support after the request left. That is the conservative reading: an
+    /// unresolved request may have been charged, and is counted at its bound. A fake
+    /// or an adapter that knows better must state the stage (ADR 0010).
     pub fn stage(&self) -> Stage {
-        self.stage.unwrap_or(match self.kind {
-            FaultKind::Unsupported => Stage::NotSent,
-            FaultKind::Cancelled
-            | FaultKind::Credential
-            | FaultKind::Rejected
-            | FaultKind::Unavailable
-            | FaultKind::TimedOut
-            | FaultKind::Malformed
-            | FaultKind::TooLarge => Stage::Unresolved,
-        })
+        self.stage.unwrap_or(Stage::Unresolved)
     }
 
     /// What the answer said the request cost, for an answered fault whose answer said.
+    /// None, for an answered fault, does not mean that the request cost nothing: the
+    /// answer did not say, and the request settles at its bound. An answer known to
+    /// have cost nothing says a charge of nothing.
     pub fn charge(&self) -> Option<Charge> {
         self.charge
     }
