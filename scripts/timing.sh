@@ -55,7 +55,7 @@ fi
 # nextest writes one element per line: <testsuites ... time="total">, <testsuite name="...">,
 # <testcase ... time="seconds">.
 attr() { sed -n "s/.* $1=\"\\([^\"]*\\)\".*/\\1/p"; }
-total=$({ grep '<testsuites ' "$junit" || true; } | attr time | head -1)
+total=$({ grep '<testsuites ' "$junit" || true; } | attr time | sed -n '1p')
 if ! grep -q '<testsuites .* time="' "$junit"; then
   echo "timing: no total in $junit" >&2
   exit 1

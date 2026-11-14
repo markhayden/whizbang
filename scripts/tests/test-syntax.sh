@@ -327,6 +327,11 @@ check_form() { # <file>: prints what is wrong with its form, if anything
   # quotes that runs over lines (an awk or perl program) is not the script's: a line with
   # an odd number of single quotes opens or closes it. This reads the text, not the
   # program: quoting it does not follow can hide a return, or show one that is not there.
+  # Known to pass unseen: a return after a line with one apostrophe in it (in a string in
+  # double quotes, or after a command on the line of a comment), which is taken for the
+  # start of quoted text; a return after a function of the script whose closing brace has
+  # more on its line (`} >/dev/null`, `};`), which is taken to be still inside it; a
+  # return with nothing before it in a case arm (`x)return 0;;`); and one run by `eval`.
   awk '
     function quotes(line,   n) { n = gsub(/\047/, "", line); return n % 2 }
     /^[[:space:]]*#/ && !quoted { next }
@@ -479,12 +484,21 @@ quiet_flag="-q"
 # quiet_after_pipe <folder>: the lines under it where a pipe (not `||`) leads into the
 # search with a quiet option: a short option with q in it, or one of the two long ones,
 # anywhere after the search's name on the line. A line that ends in a pipe or a backslash
-# goes on in the next. A comment is not a command.
+# goes on in the next. A comment is not a command. The pipe may be the one that carries
+# errors too (`|&`), and the search may have variables set in front of it or be run
+# through `command` or `env`.
+#
+# What it does not find, each a way to write the same thing: the search on the line after
+# a pipe and a comment; the search by a path, with a backslash before its name or with
+# its name in quotes; inside `{ }` or `( )` after the pipe; after `if` or `!`. And the
+# same hazard from another reader that ends early is not looked for at all: `head -n 1`,
+# a search told to stop at its first match with `-m 1`, another search tool told to be
+# quiet, an awk that exits at its first line. docs/carry-over.md has the row.
 quiet_after_pipe() {
   local f
   while IFS= read -r -d '' f; do
     sed -e ':more' -e '/[|\\]$/{' -e 'N' -e 's/\\\n[[:space:]]*/ /' -e 's/|\n[[:space:]]*/| /' -e 'b more' -e '}' "$f" |
-      { grep -n -E -e "(^|[^|])\\|[[:space:]]*[ef]?${search_word}[[:space:]]([^#]*[[:space:]])?(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:];)}]|\$)" || true; } |
+      { grep -n -E -e "(^|[^|])\\|&?[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*((command|env)[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*[ef]?${search_word}[[:space:]]([^#]*[[:space:]])?(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:];)}]|\$)" || true; } |
       { grep -v -E -e "^[0-9]+:[[:space:]]*#" || true; } | sed "s|^|$f:|"
   done < <(find "$1" -type f -print0)
   return 0
@@ -497,11 +511,12 @@ printf '%s\n' "echo x | $search_word $quiet_flag x" "  ls | $search_word -F $qui
   "if printf x | $search_word -${quiet_flag#-}F x; then" "ls | $search_word -Fx${quiet_flag#-} x || exit 1" \
   "echo x | $search_word --quiet x" "echo x | $search_word -e x --silent" "cat f | sort | e$search_word $quiet_flag 'a|b'" \
   "ls |" "  $search_word $quiet_flag x" "ls | \\" "  $search_word $quiet_flag x" "{ ls | $search_word -c x | $search_word $quiet_flag 1; } || true" \
-  "ls|$search_word $quiet_flag x" >"$tmp/quiet/bad.sh"
+  "ls|$search_word $quiet_flag x" "ls 2>&1 |& $search_word $quiet_flag x" "ls | LC_ALL=C $search_word $quiet_flag x" \
+  "ls | command $search_word $quiet_flag x" "ls | env LC_ALL=C A=b $search_word $quiet_flag x" "ls | A=b command $search_word $quiet_flag x" >"$tmp/quiet/bad.sh"
 printf '%s\n' "$search_word $quiet_flag x file" "ls | $search_word x >/dev/null" "true || $search_word $quiet_flag x file" \
   "# ls | $search_word $quiet_flag x" "  # echo x | $search_word $quiet_flag x" "ls | sort $quiet_flag" "ls | $search_word -c x" \
   "[ -n x ] || $search_word $quiet_flag -F x file || echo no" "ls | $search_word -e quiet x" >"$tmp/quiet/good.sh"
-[ "$(quiet_after_pipe "$tmp/quiet" | wc -l | tr -d ' ')" = 11 ] || { quiet_after_pipe "$tmp/quiet" >&2; fail "the rule finds eleven quiet searches after a pipe"; }
+[ "$(quiet_after_pipe "$tmp/quiet" | wc -l | tr -d ' ')" = 16 ] || { quiet_after_pipe "$tmp/quiet" >&2; fail "the rule finds sixteen quiet searches after a pipe"; }
 quiet_after_pipe "$tmp/quiet" | grep -F "good.sh" >/dev/null && fail "the rule passes a quiet search of a file, a search that is not quiet, and a comment"
 # A planted one among this repo's scripts is found, and named.
 cp -R scripts "$tmp/quiet-scripts"

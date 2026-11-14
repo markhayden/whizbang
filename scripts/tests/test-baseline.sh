@@ -46,7 +46,7 @@ complete=$(grep -E '^complete = ' "$record" | sed -E 's/^complete = //')
   || fail "$record: fixtures, decisions and complete are not one number"
 arm_c=$(awk '/^\[\[cell\]\]/ { arm = "" } /^arm = "C"/ { arm = "C" } /^decisions = / && arm == "C" { n += $3 } END { print n }' docs/baseline/manifest.toml)
 [ "$fixtures" = "$arm_c" ] || fail "$record: $fixtures fixtures, and manifest.toml counts $arm_c decisions for the replay arm"
-grep -q -E '^tools_version = "'"$(grep -E '^TOOLS_VERSION = ' scripts/baseline/common.py | grep -o -E '[0-9.]+' | head -1)"'"$' "$record" \
+grep -q -E '^tools_version = "'"$(grep -E '^TOOLS_VERSION = ' scripts/baseline/common.py | grep -o -E '[0-9.]+' | sed -n '1p')"'"$' "$record" \
   || fail "$record was not written by this version of the scripts"
 grep -q -E '^incomplete = 0$' "$record" || fail "$record: the baseline has incomplete decisions"
 grep -q -E '^invalid = 0$' "$record" || fail "$record: the baseline has invalid transcripts"
@@ -74,7 +74,7 @@ expect_fail "a changed value in a sentence" "generated block or value differs" \
 printf '\nIt gained 47 items.\n' | cat "$study.md" - >"$tmp/edited.md"
 expect_fail "a count written by hand in the prose" "the prose counts 47 by hand" \
   python3 -B scripts/baseline/tables.py check "$study.toml" "$tmp/edited.md"
-grep -q -E '^tables_version = "'"$(grep -E '^TABLES_VERSION = ' scripts/baseline/tables.py | grep -o -E '[0-9.]+' | head -1)"'"$' "$study.toml" \
+grep -q -E '^tables_version = "'"$(grep -E '^TABLES_VERSION = ' scripts/baseline/tables.py | grep -o -E '[0-9.]+' | sed -n '1p')"'"$' "$study.toml" \
   || fail "$study.toml was not written by this version of tables.py"
 # The numbers file holds aggregates: a number, a truth value, or a name from the lists held
 # here. A new run, kind of error or class of error is added here on purpose or not at all.

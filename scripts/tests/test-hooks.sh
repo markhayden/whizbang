@@ -160,6 +160,13 @@ expect_pass "setup over an earlier copy of this repo's hook" scripts/setup.sh
 grep -q -F "setup: updated pre-push in the repository's hooks folder" "$tmp/out" || { cat "$tmp/out" >&2; fail "setup says that it updated its own earlier copy"; }
 grep -q -F "replaced what was at pre-push" "$tmp/out" && { cat "$tmp/out" >&2; fail "setup does not call its own earlier copy a hook of the user's"; }
 [ "$(installed_hooks)" = 3 ] || fail "the earlier copy is replaced by this one"
+# The line setup knows its own copies by counts only as a whole line: a hook of the
+# user's that holds the words inside another line is the user's, and is said to be replaced.
+printf '%s\n' '#!/bin/sh' "echo \"$marker\"" "$marker and more" " $marker" >.git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+expect_pass "setup over a hook that only quotes the line" scripts/setup.sh
+grep -q -F "replaced what was at pre-push" "$tmp/out" || { cat "$tmp/out" >&2; fail "a hook that only quotes the line is not taken for an earlier copy"; }
+grep -q -F "setup: updated pre-push" "$tmp/out" && { cat "$tmp/out" >&2; fail "a hook that only quotes the line is not said to be updated"; }
 # Setup run from a linked worktree installs into the hooks folder every worktree shares.
 # (A worktree needs a commit to start from.)
 git commit -q --allow-empty --no-verify -m "docs: a start"
