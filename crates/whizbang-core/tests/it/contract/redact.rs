@@ -1,5 +1,5 @@
 //! Redaction (`SPEC.md` section 3: "Secrets are redacted before anything is written";
-//! ADR 0005, "Redaction"). The pass began as squint's
+//! ADR 0005, "Redaction"; ADR 0014, which changes what is found). The pass began as squint's
 //! (`crates/squint-core/src/artifacts.rs`), and its two tests of bodies are the first two
 //! here. The secrets are made up, in the shape the scan's own tests plant, and are put
 //! together at run time so that no file of the repository holds one whole.
@@ -243,45 +243,15 @@ fn bytes_are_searched_whatever_their_encoding() {
     );
 }
 
-#[test]
-fn what_redaction_does_not_find_is_known() {
-    // ADR 0005, "What redaction does not find". Each of these gets through, and is
-    // pinned so that the list in the record stays true: the key inside base64, a letter
-    // of it written as a `\u` escape, and the key in UTF-16.
-    // Percent-encoding is found only when every reserved byte is encoded, in one case
-    // of hex. These five are not: the two cases mixed in one value, a reserved byte left
-    // plain beside encoded ones, a space written `+`, a byte encoded that need not be,
-    // and a value encoded twice.
-    let odd = "ab cd/ef+gh=ij".to_owned();
-    let found = secrets(&[&odd]);
-    assert_eq!(found.redact("k=ab%20cd%2Fef%2Bgh%3Dij"), "k=[redacted]");
-    for missed in [
-        "k=ab%20cd%2fef%2Bgh%3dij",
-        "k=ab%20cd/ef%2Bgh%3Dij",
-        "k=ab+cd%2Fef%2Bgh%3Dij",
-        "k=%61b%20cd%2Fef%2Bgh%3Dij",
-        "k=ab%2520cd%252Fef%252Bgh%253Dij",
-    ] {
-        assert_eq!(found.redact(missed), missed);
-    }
-    // A JSON body is searched as bytes: a secret that begins with a letter an escape
-    // ends in, behind a backslash, leaves the backslash in front of the marker.
-    let after = secrets(&["nabcdefgh"]);
-    let body = serde_json::json!({ "t": "x\nabcdefgh" }).to_string();
-    let stored = after.redact(&body);
-    assert_eq!(stored, r#"{"t":"x\[redacted]"}"#);
-    assert!(serde_json::from_str::<serde_json::Value>(&stored).is_err());
-    let key = made_up_key("");
-    let secrets = secrets(&[&key]);
-    let escaped = key.replacen('a', "\\u0061", 1);
-    assert_eq!(secrets.redact(&escaped), escaped);
-    let wide: Vec<u8> = key.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    assert_eq!(secrets.redact_bytes(&wide), wide);
-    // Base64 of `user:<key>`, by hand: the alphabet is the standard one.
-    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let plain = format!("user:{key}");
+/// Base64 of these bytes, by hand, in the standard alphabet or the one for URLs.
+fn base64(plain: &[u8], url: bool) -> String {
+    let alphabet: &[u8; 64] = if url {
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    } else {
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    };
     let mut encoded = String::new();
-    for chunk in plain.as_bytes().chunks(3) {
+    for chunk in plain.chunks(3) {
         let padded = [
             chunk[0],
             *chunk.get(1).unwrap_or(&0),
@@ -298,7 +268,345 @@ fn what_redaction_does_not_find_is_known() {
             }
         }
     }
+    encoded
+}
+
+#[test]
+fn a_secret_is_found_percent_encoded_in_any_mixture() {
+    // ADR 0014: percent-encoding is read, not matched against one written form. The
+    // five forms that ADR 0005 listed as getting through are found: the two cases of
+    // hex mixed in one value, a reserved byte left plain beside encoded ones, a space
+    // written `+`, a byte encoded that need not be, and a value encoded twice.
+    let odd = "ab cd/ef+gh=ij".to_owned();
+    let found = secrets(&[&odd]);
+    for body in [
+        "k=ab%20cd%2Fef%2Bgh%3Dij",
+        "k=ab%20cd%2fef%2Bgh%3dij",
+        "k=ab%20cd/ef%2Bgh%3Dij",
+        "k=ab+cd%2Fef%2Bgh%3Dij",
+        "k=ab+cd/ef%2bgh=ij",
+        "k=%61b%20cd%2Fef%2Bgh%3Dij",
+        "k=%61%62%20%63%64%2F%65%66%2B%67%68%3D%69%6A",
+        "k=ab%2520cd%252Fef%252Bgh%253Dij",
+        "k=ab%2520cd%252fef%2Bgh=ij",
+    ] {
+        assert_eq!(
+            found.redact(&format!("{body}&x=1")),
+            "k=[redacted]&x=1",
+            "{body}"
+        );
+    }
+    // A `+` is a space only where the rest agrees: the secret's own `+`, written
+    // plain, is found as it is, and a body that only looks alike is left alone.
+    assert_eq!(found.redact("k=ab cd/ef+gh=ij;"), "k=[redacted];");
+    assert_eq!(found.redact("k=ab+cd/ef gh=ij;"), "k=ab+cd/ef gh=ij;");
+    // Text that holds a percent sign and no secret is as it was.
+    for plain in ["100% of 20%2", "a%zzb+c", "%", "%4", "50%+"] {
+        assert_eq!(found.redact(plain), plain);
+    }
+}
+
+#[test]
+fn a_secret_is_found_behind_the_escapes_of_a_json_string() {
+    let key = made_up_key("");
+    let secrets = secrets(&[&key]);
+    // One letter as a `\u` escape, in either case of hex; every letter as one; and
+    // the hyphen as the escape a cautious writer gives it.
+    let one = key.replacen('a', "\\u0061", 1);
+    let upper = key.replacen('j', "\\u006A", 1);
+    let lower = key.replacen('j', "\\u006a", 1);
+    let all: String = key
+        .chars()
+        .map(|c| format!("\\u{:04x}", c as u32))
+        .collect();
+    for escaped in [one, upper, lower, all] {
+        let body = format!("{{\"t\":\"auth {escaped} end\"}}");
+        assert_eq!(
+            secrets.redact(&body),
+            "{\"t\":\"auth [redacted] end\"}",
+            "{body}"
+        );
+    }
+    // A letter outside ASCII, as itself, as its escape, and as the two escapes of a
+    // letter outside the first plane.
+    let wide = "cl\u{e9}-\u{1f511}-abcdef".to_owned();
+    let secrets = Secrets::new([wide.clone()]).unwrap();
+    for escaped in [
+        wide.clone(),
+        "cl\\u00e9-\\ud83d\\udd11-abcdef".to_owned(),
+        "cl\\u00E9-\\uD83D\\uDD11-abcdef".to_owned(),
+        "\\u0063l\u{e9}-\u{1f511}-abc\\u0064ef".to_owned(),
+    ] {
+        assert_eq!(
+            secrets.redact(&format!("<{escaped}>")),
+            "<[redacted]>",
+            "{escaped}"
+        );
+    }
+    // What is no escape is left as it is: half of a pair, too few digits, a letter
+    // that is no hex digit.
+    for plain in ["\\ud83d-abcdef", "\\u00e", "\\u00zz", "a\\qb", "\\"] {
+        assert_eq!(secrets.redact(plain), plain);
+    }
+}
+
+#[test]
+fn a_secret_is_found_in_utf_16_of_either_byte_order() {
+    let key = made_up_key("");
+    let wide = "cl\u{e9}-\u{1f511}-abcdef".to_owned();
+    let secrets = Secrets::new([key.clone(), wide.clone()]).unwrap();
+    for secret in [&key, &wide] {
+        for big in [false, true] {
+            let encode = |text: &str| -> Vec<u8> {
+                text.encode_utf16()
+                    .flat_map(|unit| {
+                        if big {
+                            unit.to_be_bytes()
+                        } else {
+                            unit.to_le_bytes()
+                        }
+                    })
+                    .collect()
+            };
+            let mut body = encode("auth: ");
+            body.extend(encode(secret));
+            body.extend(encode(" end"));
+            let stored = secrets.redact_bytes(&body);
+            let mut expected = encode("auth: ");
+            expected.extend_from_slice(REDACTED.as_bytes());
+            expected.extend(encode(" end"));
+            assert_eq!(stored, expected, "big-endian: {big}");
+        }
+    }
+}
+
+#[test]
+fn a_secret_is_found_inside_base64_at_each_place_in_a_group_of_three() {
+    // Base64 writes three bytes as four characters, so a secret's characters depend on
+    // where in a group of three it begins: after nothing, after one byte, after two.
+    // With `user:` before it, as a basic authorization header has it, it begins two
+    // bytes into a group, and so sits across the edge of one.
+    let key = made_up_key("");
+    let secrets = secrets(&[&key]);
+    for before in ["", "u", "us", "use", "user", "user:", "a longer text: "] {
+        for after in ["", "!", "!!", "!!!", " and more after it"] {
+            for url in [false, true] {
+                let plain = format!("{before}{key}{after}");
+                let encoded = base64(plain.as_bytes(), url);
+                // The characters that hold any bit of the secret, from the first to
+                // the last: every one is replaced, and no other.
+                let first = before.len() * 8 / 6;
+                let last = ((before.len() + key.len()) * 8 - 1) / 6;
+                let expected = format!(
+                    "Basic {}[redacted]{} x",
+                    &encoded[..first],
+                    &encoded[last + 1..]
+                );
+                let stored = secrets.redact(&format!("Basic {encoded} x"));
+                assert_eq!(stored, expected, "{before:?} {after:?} {url}");
+            }
+        }
+    }
+    // A secret whose base64 holds `+` or `/` is found in both alphabets.
+    let odd = "k\u{fb}\u{ff}\u{fe}~~>>??zz".to_owned();
+    let secrets = Secrets::new([odd.clone()]).unwrap();
+    let (standard, url) = (base64(odd.as_bytes(), false), base64(odd.as_bytes(), true));
+    assert!(standard.contains('+') || standard.contains('/'));
+    assert_ne!(standard, url);
+    assert_eq!(secrets.redact(&standard), "[redacted]");
+    assert_eq!(secrets.redact(&url), "[redacted]");
+}
+
+#[test]
+fn the_forms_are_found_inside_one_another() {
+    // The forms are read, so one inside another is found where the reading reaches:
+    // base64 inside a JSON string that escapes its slashes, base64 percent-encoded in
+    // a URL, and a `\u` escape inside percent-encoding.
+    let odd = "k\u{fb}\u{ff}\u{fe}~~>>??zz".to_owned();
+    let key = made_up_key("");
+    let secrets = Secrets::new([odd.clone(), key.clone()]).unwrap();
+    let encoded = base64(odd.as_bytes(), false);
+    assert!(encoded.contains('/') && encoded.contains('+'), "{encoded}");
+    let in_json = format!("{{\"h\":\"{}\"}}", encoded.replace('/', "\\/"));
+    assert_eq!(secrets.redact(&in_json), "{\"h\":\"[redacted]\"}");
+    let in_url = format!(
+        "?h={}&x=1",
+        encoded
+            .replace('+', "%2B")
+            .replace('/', "%2F")
+            .replace('=', "%3D")
+    );
+    assert_eq!(secrets.redact(&in_url), "?h=[redacted]&x=1");
+    let both = key.replacen('a', "%5Cu0061", 1);
+    assert_eq!(
+        secrets.redact(&format!("?k={both}&x=1")),
+        "?k=[redacted]&x=1"
+    );
+}
+
+#[test]
+fn two_forms_that_end_at_one_place_are_both_found() {
+    // One secret is, as it stands, some letters and then the base64 characters of
+    // another. Where the two end together, the longer is found first; the shorter is
+    // still found, and with it the base64 character after it, which holds the last
+    // bits of the second secret beside its neighbour's.
+    let key = made_up_key("x");
+    assert_eq!(key.len() * 8 % 6, 2, "its bits do not end a character");
+    let encoded = base64(format!("{key}zz").as_bytes(), false);
+    let whole = key.len() * 8 / 6;
+    let longer = format!("PRE{}", &encoded[..whole]);
+    let secrets = Secrets::new([key.clone(), longer]).unwrap();
+    assert_eq!(
+        secrets.redact(&format!("PRE{encoded}")),
+        format!("[redacted]{}", &encoded[whole + 1..])
+    );
+}
+
+#[test]
+fn values_an_env_file_keeps_are_found_in_every_form_whatever_marks_they_hold() {
+    // An env file's reader keeps a value with a mark that is white space and not
+    // ASCII at an end (a no-break space, a line separator, an ideographic space), with
+    // `$(...)`, `#`, `=`, and with a quote of the other kind. A set of secrets trims
+    // ASCII white space only, so each is searched for as the file gave it.
+    let values = [
+        "\u{a0}zqxjkvwpyh-0123\u{a0}".to_owned(),
+        "zqxjkvwpyh-4567\u{2028}".to_owned(),
+        "\u{3000}zqxjkvwpyh-89ab".to_owned(),
+        "zq$(xjk)vw#py=h+0/1%2".to_owned(),
+        "zqxj\"kvw'pyh\\0123".to_owned(),
+    ];
+    let file = format!(
+        "A={}\nB={}\nC={}\nD={}\nE='zqxj\"kvw'\nF=\"kvw'pyh-0123\"\n",
+        values[0], values[1], values[2], values[3]
+    );
+    let env = whizbang_core::config::EnvFile::parse(file.as_bytes()).unwrap();
+    assert_eq!(format!("{:?}", env.secrets()), "Secrets(6)");
+    let from_file = env.secrets();
+    let told = Secrets::new(values.clone()).unwrap();
+    for (index, value) in values.iter().enumerate() {
+        let secrets = if index < 4 { &from_file } else { &told };
+        let percent: String = value.bytes().map(|byte| format!("%{byte:02X}")).collect();
+        let escaped: String = value
+            .chars()
+            .map(|c| {
+                let mut units = [0u16; 2];
+                c.encode_utf16(&mut units)
+                    .iter()
+                    .map(|unit| format!("\\u{unit:04x}"))
+                    .collect::<String>()
+            })
+            .collect();
+        let quoted = serde_json::to_string(value).unwrap();
+        for form in [
+            value.clone(),
+            percent,
+            escaped,
+            quoted[1..quoted.len() - 1].to_owned(),
+            base64(value.as_bytes(), false),
+            base64(format!("x:{value}").as_bytes(), true),
+        ] {
+            let stored = secrets.redact(&format!("<{form}>"));
+            assert!(stored.contains(REDACTED), "{index}: {form}");
+            assert!(
+                !stored.contains("zqxjkvwpyh") && !stored.contains("kvw'pyh"),
+                "{stored}"
+            );
+        }
+        let wide: Vec<u8> = value.encode_utf16().flat_map(u16::to_be_bytes).collect();
+        assert_eq!(secrets.redact_bytes(&wide), REDACTED.as_bytes(), "{index}");
+    }
+    // The two quoted values of the file, each with a quote of the other kind.
+    assert_eq!(
+        from_file.redact("a zqxj\"kvw b kvw'pyh-0123 c"),
+        "a [redacted] b [redacted] c"
+    );
+}
+
+#[test]
+fn what_redaction_does_not_find_is_known() {
+    // ADR 0014, "What is accepted". Each of these gets through, with its reason in the
+    // record, and is pinned so that the list there stays true.
+    let key = made_up_key("");
+    let secrets = secrets(&[&key]);
+    // Percent-encoded three times: the reading goes two deep.
+    let odd = Secrets::new(["ab cd/ef+gh=ij".to_owned()]).unwrap();
+    let thrice = "k=ab%252520cd%25252Fef%25252Bgh%25253Dij";
+    assert_eq!(odd.redact(thrice), thrice);
+    // A `+` for a space inside a value that is encoded twice.
+    let plus_twice = "k=ab+cd%252Fef%252Bgh%253Dij";
+    assert_eq!(odd.redact(plus_twice), plus_twice);
+    // The letters in the other case, and the key written as hex digits.
+    let upper = key.to_uppercase();
+    assert_eq!(secrets.redact(&upper), upper);
+    let hex: String = key.bytes().map(|byte| format!("{byte:02x}")).collect();
+    assert_eq!(secrets.redact(&hex), hex);
+    // UTF-32, and base64 of UTF-16, as a shell's encoded command holds a text.
+    let wide: Vec<u8> = key.chars().flat_map(|c| (c as u32).to_le_bytes()).collect();
+    assert_eq!(secrets.redact_bytes(&wide), wide);
+    let utf16: Vec<u8> = key.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let encoded = base64(&utf16, false);
     assert_eq!(secrets.redact(&encoded), encoded);
+    // Base64 with a line break inside the key's characters, as a wrapped body has it.
+    let wrapped = base64(format!("user:{key}").as_bytes(), false);
+    let wrapped = format!("{}\r\n{}", &wrapped[..16], &wrapped[16..]);
+    assert_eq!(secrets.redact(&wrapped), wrapped);
+    // A key split across two texts.
+    let (head, tail) = key.split_at(key.len() / 2);
+    assert_eq!(secrets.redact(head), head);
+    assert_eq!(secrets.redact(tail), tail);
+    // A body searched as bytes is not read as JSON: a secret that begins with a letter
+    // an escape ends in, behind a backslash, leaves the backslash in front of the
+    // marker, and the body is no longer JSON.
+    let after = Secrets::new(["nabcdefgh".to_owned()]).unwrap();
+    let body = serde_json::json!({ "t": "x\nabcdefgh" }).to_string();
+    let stored = after.redact(&body);
+    assert_eq!(stored, r#"{"t":"x\[redacted]"}"#);
+    assert!(serde_json::from_str::<serde_json::Value>(&stored).is_err());
+}
+
+#[test]
+fn many_secrets_that_share_their_start_cost_no_more_than_one() {
+    // The case ADR 0005 measured at about 3 seconds: 1 MiB of JSON against 2,000 keys
+    // that share their first letters, where the text is full of those letters. The
+    // search follows the text once, whatever the number of secrets, so it is asked to
+    // finish inside a bound far under that; what it took is in ADR 0014.
+    let keys: Vec<String> = (0..2000)
+        .map(|n| made_up_key(&format!("-{n:04}")))
+        .collect();
+    let secrets = Secrets::new(keys.clone()).unwrap();
+    let shared = &keys[0][..keys[0].len() - 4];
+    let mut body = String::from("{\"lines\":[");
+    while body.len() < 1024 * 1024 {
+        body.push_str(&format!("\"{shared}\",\"x\\n{shared}zzzz\","));
+    }
+    body.push_str(&format!("\"{}\"]}}", keys[1999]));
+    let started = std::time::Instant::now();
+    let stored = secrets.redact(&body);
+    let took = started.elapsed();
+    assert!(stored.ends_with("\"[redacted]\"]}"));
+    assert_eq!(stored.len(), body.len() - keys[1999].len() + REDACTED.len());
+    assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+}
+
+#[test]
+fn a_mebibyte_with_ten_secrets_is_searched_inside_a_stated_time() {
+    // Plan 1B, task C3: the pass over 1 MiB with ten secrets, in a body that makes
+    // every reading run (it holds `%`, `\` and `+`). The bound is loose, for a busy
+    // machine and an unoptimised build; what it took on a quiet one is in ADR 0014.
+    let keys: Vec<String> = (0..10).map(|n| made_up_key(&format!("-{n}"))).collect();
+    let secrets = Secrets::new(keys.clone()).unwrap();
+    let mut body = String::new();
+    while body.len() < 1024 * 1024 {
+        body.push_str("{\"u\":\"https:\\/\\/h.example\\/a%20b+c?q=1\",\"n\":\"line\\nline\"}\n");
+    }
+    for key in &keys {
+        body.push_str(&format!("auth={}&\n", key.replacen('a', "%61", 1)));
+    }
+    let started = std::time::Instant::now();
+    let stored = secrets.redact(&body);
+    let took = started.elapsed();
+    assert_eq!(stored.matches(REDACTED).count(), 10);
+    assert!(took < std::time::Duration::from_secs(10), "{took:?}");
 }
 
 #[test]
