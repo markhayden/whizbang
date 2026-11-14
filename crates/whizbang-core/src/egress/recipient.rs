@@ -202,8 +202,17 @@ impl Address {
     /// The address, by the rules of [`Origin::of`], but that it may have a query after
     /// its path: one straight after the host is refused. The rest is kept as it was
     /// given and is not normalised: only origins are compared.
+    ///
+    /// A secret is looked for a third time, in the address as it is written: its
+    /// origin, lowered and without a port that is the scheme's own, and then the rest.
+    /// Folding the origin can join a host and a path into a secret that neither the
+    /// text as given nor the origin alone holds.
     pub fn of(text: &str, secrets: &Secrets) -> Result<Address, NotAllowed> {
-        parse(text, secrets, true).map(|(origin, rest)| Address { origin, rest })
+        let (origin, rest) = parse(text, secrets, true)?;
+        if holds_secret(&format!("{origin}{rest}"), secrets) {
+            return Err(NotAllowed::Secret);
+        }
+        Ok(Address { origin, rest })
     }
 
     pub fn origin(&self) -> &Origin {
@@ -257,6 +266,16 @@ impl Account {
             Some(start) if self.name.len() > ACCOUNT_SHOWN => format!("{start}..."),
             _ => self.name.clone(),
         }
+    }
+}
+
+impl Account {
+    /// The account as it is shown ([`Account::shown`]), for something that is written
+    /// and kept: none when the whole account holds a secret, which may have come to be
+    /// known after the account was made. A cut account is too short to hold a secret
+    /// itself, so it is the whole that is looked at.
+    pub fn shown_without(&self, secrets: &Secrets) -> Option<String> {
+        (!holds_secret(&self.name, secrets)).then(|| self.shown())
     }
 }
 
