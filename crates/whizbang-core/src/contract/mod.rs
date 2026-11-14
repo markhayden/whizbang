@@ -43,6 +43,7 @@ mod redact;
 mod registry;
 pub mod request;
 mod run;
+mod snapshot;
 pub mod text;
 
 pub use crate::capability::{FillHandle, JudgeHandle, SegmentHandle};
@@ -55,8 +56,8 @@ pub use descriptor::{
     OutputPort, PortRef, Requirement, Value, ValueType, When,
 };
 pub use engine::{
-    BoundRefused, ConfigSource, Engine, Executor, STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT,
-    Spawn, WHIZBANG_VERSION,
+    BoundRefused, Engine, Executor, STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT, Spawn,
+    WHIZBANG_VERSION,
 };
 pub use facts::RunFacts;
 pub use journal::{Clock, EXCHANGE_PREFIX, JournalLine, SystemClock, journal_bytes, read_journal};
@@ -89,3 +90,7 @@ pub use request::{
     RequestRecordError, RunState, Watched, request_fingerprint,
 };
 pub use run::{Committed, Finished, MESSAGE_LIMIT, Outcome, RUN_ID_LIMIT, RunId};
+pub use snapshot::{
+    ConfigSource, Made, Offered, SECRETS_KEPT_LIMIT, SOURCE_WHY_LIMIT, SOURCE_WHY_WITHHELD,
+    Settings, Snapshot, SourceRefused,
+};

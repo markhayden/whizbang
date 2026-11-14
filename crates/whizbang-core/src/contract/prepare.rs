@@ -233,6 +233,15 @@ pub struct Missing {
 }
 
 impl Missing {
+    /// A capability that nothing answers, for this reason.
+    pub(super) fn of(capability: Capability, features: &[String], why: &str) -> Missing {
+        Missing {
+            capability,
+            features: features.to_vec(),
+            why: why.to_owned(),
+        }
+    }
+
     pub fn capability(&self) -> Capability {
         self.capability
     }
@@ -581,6 +590,14 @@ pub enum CallError {
         part: &'static str,
         why: String,
     },
+    /// The config's source answered no snapshot, or what a snapshot gives could not
+    /// be used: the sentence says which, and quotes nothing of the config or of its
+    /// env file. This is not a judgement of the call: the call was not looked at
+    /// under a config, and nothing was published (ADR 0015, "One snapshot of the
+    /// config").
+    Config {
+        why: String,
+    },
 }
 
 /// Why one that takes part in an admission, a part ([`super::AdmissionPart`]) or the
@@ -643,7 +660,9 @@ impl From<CallError> for NotJudged {
         NotJudged(match error {
             CallError::Store(failure) => Why::Store(failure),
             CallError::Record { what, why } => Why::Record { what, why },
-            CallError::Ledger { why } | CallError::Part { why, .. } => Why::Said(why),
+            CallError::Ledger { why } | CallError::Part { why, .. } | CallError::Config { why } => {
+                Why::Said(why)
+            }
             other => Why::Said(other.to_string()),
         })
     }
@@ -667,7 +686,8 @@ impl CallError {
             | CallError::Record { .. }
             | CallError::Ledger { .. }
             | CallError::NotStarted { .. }
-            | CallError::Part { .. } => None,
+            | CallError::Part { .. }
+            | CallError::Config { .. } => None,
         }
     }
 }
@@ -700,6 +720,7 @@ impl std::fmt::Display for CallError {
                 "a part of the admission failed ({}): {why}",
                 part.escape_debug()
             ),
+            CallError::Config { why } => write!(f, "the config was not used: {why}"),
         }
     }
 }
