@@ -320,7 +320,8 @@ afterwards.
   is refused where it is written, as a name written twice is, and the action decides
   what that means for its run. The journal is not among them, nor are the exchanges
   the executor keeps, which are bounded with the run's requests (ADR 0009)
-  (`execute::a_run_writes_only_so_many_diagnostics_and_one_more_is_refused`).
+  (`execute::a_run_writes_only_so_many_diagnostics_and_one_more_is_refused`,
+  `asked::the_exchanges_the_executor_keeps_are_not_counted_among_a_runs_diagnostics`).
 
 **The sum.** A test runs one call at all three bounds, with texts whose every byte JSON
 writes as six and diagnostics under the longest names, and measures what they add to a

@@ -22,9 +22,9 @@ use whizbang_core::contract::record::{
 };
 use whizbang_core::contract::{
     ARGUMENTS_TEXT_MAX_BYTES, Action, ActionDescriptor, Argument, Backends, Call, Capabilities,
-    Capability, Clock, Context, Count, EXCHANGE_PREFIX, Engine, Executor, Failure, INPUTS_LIMIT,
-    InputPort, Kind, NoBackends, PreparedCall, Produced, RECORD_MAX_BYTES, RecordError, Registry,
-    Requirement, RunId, Secrets, ValueType, Verdict,
+    Capability, Clock, Context, Count, DIAGNOSTICS_LIMIT, EXCHANGE_PREFIX, Engine, Executor,
+    Failure, INPUTS_LIMIT, InputPort, Kind, NoBackends, PreparedCall, Produced, RECORD_MAX_BYTES,
+    RecordError, Registry, Requirement, RunId, Secrets, ValueType, Verdict,
 };
 use whizbang_core::contract::{MESSAGE_LIMIT, Value};
 use whizbang_core::identity::{CanonicalPixels, Digest};
@@ -1200,6 +1200,40 @@ fn a_calls_text_arguments_are_bounded_where_the_call_comes_in() {
     let finished = executor.submit(&call(1, ARGUMENTS_TEXT_MAX_BYTES - 1));
     let (_, names) = stored(&world, finished.unwrap().run());
     assert!(names["record"].len() > 6 * ARGUMENTS_TEXT_MAX_BYTES);
+}
+
+#[test]
+fn the_exchanges_the_executor_keeps_are_not_counted_among_a_runs_diagnostics() {
+    // A run's action writes 1,024 diagnostics at most. The exchanges with a judge are
+    // the executor's, bounded with the run's requests, and take none of those: a run
+    // that sent requests still writes as many, and one that wrote as many still has
+    // its next exchange kept.
+    let world = World::new();
+    let judge = Arc::new(FakeJudge::scripted(vec![Ok(said("yes")), Ok(said("yes"))]));
+    let asks = action("asks", judging(), |_, context| {
+        let judge = context.capabilities().judge().unwrap();
+        judge.send(&asking("well?", 64)).unwrap();
+        for at in 0..DIAGNOSTICS_LIMIT {
+            let written = context.diagnostics().write(&format!("d{at}"), b"x");
+            written.unwrap();
+        }
+        assert!(context.diagnostics().write("one-more", b"x").is_err());
+        judge.send(&asking("and now?", 64)).unwrap();
+        Ok(Produced::nothing())
+    });
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    );
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let (record, names) = stored(&world, finished.run());
+    // The journal, two exchanges, and what the action wrote.
+    assert_eq!(record.diagnostics().len(), 3 + DIAGNOSTICS_LIMIT);
+    assert!(names.contains_key("diagnostics/exchange-0002"));
+    assert!(!names.contains_key("diagnostics/one-more"));
 }
 
 #[test]

@@ -444,12 +444,13 @@ fn the_pointer_a_generation_file_and_the_lock_file_are_each_read_up_to_a_limit()
     let refused = reader.snapshot().unwrap_err().to_string();
     assert!(refused.contains("which has no file"), "{refused}");
 
-    // A generation file. One byte over the limit is refused as damage, and says so.
+    // A generation file. One over the limit is refused as damage, and says so; of a
+    // file a kibibyte over, the limit and one byte are read.
     let dir = Scratch::new("store");
     let root = with_old(&dir);
     let generation = root.join("generations/1.json");
     let file = std::fs::OpenOptions::new().write(true).open(&generation);
-    file.unwrap().set_len(GENERATION_MAX_BYTES + 1).unwrap();
+    file.unwrap().set_len(GENERATION_MAX_BYTES + 1024).unwrap();
     let fs = Arc::new(Measured::default());
     let reader = Reader::open(&root, fs.clone()).unwrap();
     let refused = reader.snapshot().unwrap_err();
@@ -460,6 +461,14 @@ fn the_pointer_a_generation_file_and_the_lock_file_are_each_read_up_to_a_limit()
         "{said}"
     );
     assert_eq!(fs.most(&generation), GENERATION_MAX_BYTES as usize + 1);
+    // A file of exactly the limit is not refused for its length: it is read, and is
+    // refused here for what it holds, which is nothing.
+    let file = std::fs::OpenOptions::new().write(true).open(&generation);
+    file.unwrap().set_len(GENERATION_MAX_BYTES).unwrap();
+    let said = reader.snapshot().unwrap_err().to_string();
+    assert!(!said.contains("it is more than"), "{said}");
+    let file = std::fs::OpenOptions::new().write(true).open(&generation);
+    file.unwrap().set_len(GENERATION_MAX_BYTES + 1).unwrap();
     // A writer refuses it the same way, having read no more.
     let fs = Arc::new(Measured::default());
     let refused = Store::open(&root, fs.clone()).map(|_| ()).unwrap_err();
@@ -1588,7 +1597,18 @@ fn tree(dir: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
 #[test]
 fn a_directory_that_is_not_a_store_is_refused_and_left_exactly_as_it_is() {
     type Build = fn(&Path);
-    let cases: [(&str, Build); 7] = [
+    let cases: [(&str, Build); 8] = [
+        (
+            "a staged file that starts as the first pointer and goes on",
+            |root| {
+                // What a creation leaves in staging is the first pointer or the start of
+                // it. A longer file is something else, though its start is the same.
+                for name in ["objects", "generations", "staging"] {
+                    std::fs::create_dir(root.join(name)).unwrap();
+                }
+                std::fs::write(root.join("staging/CURRENT"), b"0\nmine").unwrap();
+            },
+        ),
         ("unrelated files", |root| {
             std::fs::write(root.join("notes.txt"), b"mine").unwrap();
         }),

@@ -380,6 +380,7 @@ as its source. Whatever an action then copies into a message, a progress event o
 diagnostic, it writes nothing of where the store is; it is held by what the action is
 given, and no action has to choose the right call
 (`execute::an_action_is_handed_the_stores_failures_without_a_path_however_it_quotes_them`,
+`execute::a_snapshot_that_fails_inside_an_action_is_said_without_a_path_as_well`,
 and through each of the three actions:
 `grow_action::a_failure_of_the_store_inside_a_running_grow_leaves_no_path_in_its_record`,
 `check::a_failure_of_the_store_inside_a_running_view_or_check_leaves_no_path_in_its_record`).

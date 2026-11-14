@@ -11,8 +11,8 @@ use whizbang_core::contract::record::{self, RunRecord, Status};
 use whizbang_core::contract::{
     ADMITTED_NAME, Action, ActionDescriptor, Call, CallError, Clock, Context, Count,
     DIAGNOSTICS_LIMIT, Engine, Executor, Failure, Finished, INPUTS_LIMIT, InputPort, Kind,
-    NoBackends, Outcome, PreparedCall, Produced, Refusal, Registry, RunId, Secrets, Value,
-    WHIZBANG_VERSION, is_diagnostic_name, read_journal,
+    NoBackends, Outcome, OutputPort, PreparedCall, Produced, Refusal, Registry, RunId, Secrets,
+    Value, WHIZBANG_VERSION, is_diagnostic_name, read_journal,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::{Fs, RealFs};
@@ -941,6 +941,40 @@ fn an_action_is_handed_the_stores_failures_without_a_path_however_it_quotes_them
             "{name}"
         );
     }
+}
+
+#[test]
+fn a_snapshot_that_fails_inside_an_action_is_said_without_a_path_as_well() {
+    // Once a run it called has committed an output, a run's store looks at the current
+    // generation to find it. The pointer is damaged for the length of one look, so
+    // the look fails, and what the action is handed names the pointer by its last
+    // part alone.
+    let world = World::new();
+    let image = image_of(photo(), ImageRole::Picture);
+    let draft = ActionDescriptor::draft("makes", "1.0.0", Kind::Primitive, "Makes one.")
+        .output(OutputPort::one("made", ArtifactType::Image, "An image."));
+    let body: Body = Box::new(move |_, _| Ok(Produced::nothing().with("made", image.clone())));
+    let makes: Arc<dyn Action> = Arc::new(Scripted(draft.build().unwrap(), body));
+    let pointer = world.root().join("CURRENT");
+    let outer = scripted("outer", move |_, context| {
+        context.executor().submit(&Call::new("makes")).unwrap();
+        let kept = std::fs::read(&pointer).unwrap();
+        std::fs::write(&pointer, b"not a pointer").unwrap();
+        let failed = context.store().snapshot().map(|_| ());
+        std::fs::write(&pointer, kept).unwrap();
+        let failed = failed.unwrap_err();
+        Err(Failure::error("store", &format!("{failed} / {failed:?}")))
+    });
+    let engine = world.engine_with(vec![makes, outer]);
+    let finished = engine.submit(&Call::new("outer")).unwrap();
+    let Outcome::Error { message, .. } = finished.outcome() else {
+        panic!("{finished:?}");
+    };
+    let said = "the store's file CURRENT is missing or damaged";
+    assert_eq!(
+        message,
+        &format!("{said} / WithoutPaths {{ said: \"{said}\" }}")
+    );
 }
 
 // --- what a call and a run may hold, so that a record is read back ---------------------------
