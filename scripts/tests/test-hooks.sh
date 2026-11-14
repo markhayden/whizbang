@@ -156,20 +156,29 @@ expect_pass "a push once the hooks are sound" git push origin main
 [ "$(git ls-remote "$remote" refs/heads/main | cut -f1)" = "$(git rev-parse HEAD)" ] || fail "the last push arrived"
 published=$(git rev-parse HEAD)
 
-# The real scan, with a fault that a parse does not find on the line after its trap: an
-# unset variable, which makes bash 3.2 exit 0, and a here-document with no end, which
-# makes any bash exit 0 with the rest of the scan unread. The trap of the scan turns that
-# into a failure, so the commit and the push are refused.
+# The real scan, with a fault on the line after its trap: an unset variable, which no
+# parse finds and which makes bash 3.2 exit 0, and a here-document with no end, which
+# would make any bash exit 0 with the rest of a script unread. The commit and the push are
+# refused for both: the first by the trap of the scan, the second by the parse.
 for fault in 'echo "$no_such_variable"' "cat <<'NEVER_ENDS' >/dev/null"; do
   FAULT="$fault" awk '{ print } /^trap .* EXIT$/ && !put { print ENVIRON["FAULT"]; put = 1 }' \
     "$root/scripts/scan.sh" >scripts/scan.sh
   grep -q -F -e "$fault" scripts/scan.sh || fail "the scan has an EXIT trap to put a fault after"
   chmod +x scripts/scan.sh
-  bash -n scripts/scan.sh 2>/dev/null || fail "a parse does not find the fault: $fault"
-  # Any bash exits 0 from the here-document, so the scan's trap speaks. At the unset
-  # variable bash 3 exits 0 too; a later bash fails by itself. Both name the variable.
-  said="scan: stopped before its end; failing"
-  case "$fault" in echo*) said="no_such_variable" ;; esac
+  # The scan is one function, and a here-document with no end swallows the end of it: a
+  # parse finds that, so each hook refuses before the scan is started. No parse finds the
+  # unset variable: bash 3 exits 0 at it and the scan's trap makes that a failure; a later
+  # bash fails by itself. Both name the variable.
+  case "$fault" in
+    echo*)
+      bash -n scripts/scan.sh 2>/dev/null || fail "a parse does not find the fault: $fault"
+      said="no_such_variable"
+      ;;
+    *)
+      bash -n scripts/scan.sh 2>/dev/null && fail "a parse finds a here-document with no end in the scan"
+      said="scripts/scan.sh $refuses"
+      ;;
+  esac
   only commit-msg
   change "$fault"
   expect_fail "a commit with a scan that stops at: $fault" "$said" git commit -m "feat: a fault"
