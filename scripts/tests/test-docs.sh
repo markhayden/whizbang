@@ -42,9 +42,9 @@ reached() {
   done
   echo "$seen" | tr ' ' '\n' | grep -v -x -e "$1" -e ''
 }
-reached check | grep -q -x 'docs-check' || fail "justfile: reached does not see docs-check under check"
+reached check | grep -x 'docs-check' >/dev/null || fail "justfile: reached does not see docs-check under check"
 for top in check ci; do
-  if reached "$top" | grep -q -x 'docs'; then
+  if reached "$top" | grep -x 'docs' >/dev/null; then
     fail "justfile: $top must not reach docs: a check that regenerates first cannot fail"
   fi
 done

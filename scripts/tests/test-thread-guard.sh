@@ -205,7 +205,7 @@ wait "$beside" || true
 outside=$(ulimit -S -u)
 inside=$(WHIZBANG_THREAD_HEADROOM=2000 "$guard" bash -c 'ulimit -S -u')
 if [ "$(uname -s)" = "Linux" ]; then
-  echo "$inside" | grep -q -E '^[0-9]+$' || fail "on Linux the command's user is limited (got $inside)"
+  echo "$inside" | grep -E '^[0-9]+$' >/dev/null || fail "on Linux the command's user is limited (got $inside)"
   [ "$inside" -ge 2000 ] && [ "$inside" -lt 200000 ] || fail "on Linux the limit is what the user holds and 2000 more (got $inside)"
   if [ "$outside" != unlimited ] && [ "$outside" -lt 2000 ]; then
     echo "skip: lowering the user's limit; it is already $outside"
