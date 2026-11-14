@@ -52,12 +52,25 @@ holds() {
   grep -q -F -e "$2" "$1" || { echo "$1 must say: $2"; return 1; }
 }
 
-# The attribution check skips a line that starts with # and all that follows a scissors
-# line, so both skills give it a copy without the marks that start a line. This is the
-# command they must give; below, it is run.
-strip='s/^[#*>[:space:]-]*//'
-# The second net over the raw text: every line it prints is read.
-second_net='co-authored-by|generated with'
+# The one scan of a pull request's title and body (`scripts/scan.sh --pr-text`): both
+# scans, and the attribution check made for text. This is the command both skills must
+# give, as a line of its own; below, it is run.
+pr_scan='scripts/scan.sh --pr-text "$text/title.txt" "$text/body.md"'
+# pr_scan_alone <file>: the command is a whole line there, once, and the scan of a pull
+# request's text is run in no other way: not without the clean-room scan, and not by the
+# commands it replaced, which did not see the values of the local .env.
+pr_scan_alone() {
+  [ "$(grep -c -x -F -e "$pr_scan" "$1" || true)" = 1 ] ||
+    { echo "skill: $1 must say, as one whole line and once: $pr_scan"; return 1; }
+  if grep -n -e '--pr-text' "$1" | grep -v -x -E -e "[0-9]+:$(printf '%s' "$pr_scan" | sed 's/[][\.*^$]/\\&/g')" >/dev/null; then
+    echo "skill: $1 scans a pull request's text in another way than the one line: $pr_scan"
+    return 1
+  fi
+  if grep -q -e '--secrets-only' -e 'scan.sh --message' -e '"$repo/scripts/scan.sh"' "$1"; then
+    echo "skill: $1 must scan a pull request's text with the one line, not without the clean-room scan and not with the commands it replaced"
+    return 1
+  fi
+}
 
 merge_line='gh[[:space:]]+pr[[:space:]]+merge'
 # A way round a check, or a way to lose work.
@@ -102,15 +115,14 @@ own_build_plain() {
 check_kickoff() {
   local text
   for text in 'scripts/worktree.sh add <slug>' 'just check' 'just scan' 'git push -u origin <slug>' \
-    'gh pr create --base main' 'gh pr checks <number>' '(cd "$text" && "$repo/scripts/scan.sh")' \
-    "sed '$strip' >\"\$plain\"" 'scripts/scan.sh --message "$plain"' \
+    'gh pr create --base main' 'gh pr checks <number>' "$pr_scan" \
+    'It says where, never what.' 'Exit 0 is the pass.' \
+    'A line it prints that starts "to read:" is not refused: go through it.' \
     "git rev-parse '<base>^{commit}'" 'git rev-parse origin/main' \
     'just test-only -p <crate>' 'bash scripts/tests/<name>.sh' \
     'git reset --soft <good>' \
     'printf '"'%s\\n'"' "type(scope): summary" >"$text/title.txt"' 'cat >"$text/body.md" <<' \
     'cat "$text/title.txt" "$text/body.md"          # read first' \
-    'plain=$(mktemp)' 'It prints nothing when it passes: exit 0 is the pass.' \
-    "grep -n -i -E '$second_net' \"\$text/title.txt\" \"\$text/body.md\"" \
     'gh pr edit <number> --title "$(cat "$text/title.txt")" --body-file "$text/body.md"' \
     'until run=$(gh run list --commit "$head" --json databaseId' \
     '.jobs | length'"'"')" -ge 3 ]; do' '[ "$tries" -le 60 ] ||' \
@@ -118,6 +130,7 @@ check_kickoff() {
     'gh pr checks <number> --watch                  # check (macos-15), check (ubuntu-22.04), ci'; do
     says "$1" Commands "$text" || return 1
   done
+  pr_scan_alone "$1" || return 1
   says "$1" Inputs 'It may be given short: resolve it to the full commit with `git rev-parse`' || return 1
   for text in 'Never merge a pull request, and never merge into `main`: only the orchestrator does.' \
     'Never open, print, quote or copy the word list, and never pass on what it holds.' \
@@ -143,6 +156,7 @@ check_kickoff() {
     'merge `origin/main` into your' 'with a merge commit (this asks first), never with a rebase' \
     '`<commit>:<path>:<line>`' 'Never retry around the hook, and never use `--no-verify`.' \
     'the system temp folder may be used for this' 'After any edit to either file, read' \
+    'a name it does' 'not know is found only by reading' 'and is not refused: go through those' \
     '`check (macos-15)` and `check (ubuntu-22.04)`' 'says "no checks reported"' \
     'a run whose commit is the head lists all three' \
     'go back to step 4' 'hand back again with the new commit'; do
@@ -188,6 +202,8 @@ check_review_merge() {
     '- [ ] 6. With `WHIZBANG_WORDLIST` set, `just scan-range <base> <head>` passes: secrets,' \
     '- [ ] 7. The title and body. No scan sees them on the pull request, so save them to a file' \
     'and scan it (the commands below), then read them yourself' \
+    'a name it does not know is found only by reading' 'lists each line that says "co-authored-by" or "generated with" and is not refused:' \
+    'The corrected files get every check of this step again, the scan and the' \
     '- [ ] 8. Files that grant permissions or check the pull request. List the changed files.' \
     'any file under `.github/`' 'any file under a folder named `.claude`, at' '`.mcp.json`, at any depth' \
     '`justfile`' 'any file under `scripts/`' \
@@ -198,13 +214,10 @@ check_review_merge() {
   done
   for text in 'gh pr view <pr> --json title --jq .title >"$text/title.txt"' \
     'gh pr view <pr> --json body --jq .body >"$text/body.md"' \
-    'After a correction to either file, all of them run again on the two files.' \
+    'After a correction to either file, it runs again on the two files.' \
     'A variable' 'gh run list --commit <head>' \
-    '(cd "$text" && "$repo/scripts/scan.sh")' \
-    "sed '$strip' >\"\$plain\"" \
-    'plain=$(mktemp)' 'It prints nothing when it passes: exit 0 is the pass.' \
-    'scripts/scan.sh --message "$plain"' \
-    "grep -n -i -E '$second_net' \"\$text/title.txt\" \"\$text/body.md\"" \
+    "$pr_scan" 'It says where, never what.' 'Exit 0 is the pass.' \
+    'A line it prints that starts "to read:" is not refused: go through it.' \
     'gh pr edit <pr> --title "$(cat "$text/title.txt")" --body-file "$text/body.md"' \
     "git diff <base> <head> -- .github justfile scripts ':(glob)**/.claude/**' ':(glob)**/.mcp.json'" \
     'git merge-base --is-ancestor origin/<branch> origin/main' \
@@ -213,6 +226,7 @@ check_review_merge() {
     'git push origin --delete <branch>'; do
     says "$1" Commands "$text" || return 1
   done
+  pr_scan_alone "$1" || return 1
   # Both scans: never the recipe that leaves the clean-room scan out.
   if grep -q -e 'scan-range-secrets' -e '--secrets-only' "$1"; then
     echo "skill: $1 must run just scan-range, not the scan without the clean-room scan"
@@ -292,45 +306,59 @@ for f in .claude/skills/*/SKILL.md .claude/agents/*.md; do
   expect_pass "$f" check_file "$f"
 done
 
-# --- The attribution check on a title and body, with the command the skills give ---------
-
+# --- The scan of a title and body, with the command the skills give ----------------------
+# It is run as the skills run it: from inside the repo, on two files in a folder of their
+# own, with a word list (here a made-up one). The cases the skills' own commands refused
+# or listed before this scan are all refused now; scripts/tests/scan/pr-text.sh has the
+# rest. The lines are put together here, so this file holds none.
+pr_dir="$tmp/pr-text"
+mkdir "$pr_dir"
+printf 'zorblaxquint\n' >"$tmp/words"
+# The command names the folder as $text, as the skills do.
+scanned() {
+  local text=$pr_dir
+  WHIZBANG_WORDLIST="$tmp/words" eval "$pr_scan"
+}
 # refused <name> <expected text> <line>...: the text, through the command, fails the check.
-stripped() {
-  sed "$strip" "$tmp/text.md" >"$tmp/plain.txt"
-  scripts/scan.sh --message "$tmp/plain.txt"
-}
 refused() {
-  local name=$1 text=$2
+  local name=$1 expected=$2
   shift 2
-  printf '%s\n' "docs: a title" "" "$@" >"$tmp/text.md"
-  expect_fail "a pull request with $name" "$text" stripped
+  printf '%s\n' "docs: a title" >"$pr_dir/title.txt"
+  printf '%s\n' "$@" >"$pr_dir/body.md"
+  expect_fail "a pull request with $name" "$expected" scanned
 }
-credit='Co-Authored-By: A Person <person@example.com>'
-made='Generated with [Some Tool](https://example.com/tool)'
+credit='Co''-Authored-By: A Person <person@example.com>'
+made='Generated ''with [Some Tool](https://example.com/tool)'
+has_credit="has a Co""-Authored-By line"
 refused "a heading that credits a tool" "credits an agent or a model" "# $made"
-refused "a credit after a # and no space" "has a Co-Authored-By line" "#$credit"
-refused "a credit after a scissors line" "has a Co-Authored-By line" "words" "# ------------------------ >8 ------------------------" "$credit"
-refused "a credit in a second-level heading" "has a Co-Authored-By line" "## $credit"
-refused "a credit in a list" "has a Co-Authored-By line" "- $credit"
-refused "a credit in a starred list" "has a Co-Authored-By line" "* $credit"
-refused "a credit in an indented list" "has a Co-Authored-By line" "   - $credit"
-refused "a credit in a quoted heading" "has a Co-Authored-By line" "> # $credit"
-refused "a credit on a plain line" "has a Co-Authored-By line" "$credit"
-printf '%s\n' "docs: a title" "" "# A heading" "- a point" "* another" "> a quote" "#8 is the pull request before" >"$tmp/text.md"
-expect_pass "a pull request with headings and lists and no credit" stripped
-
-# The second net, with the command the skills give: a credit behind a mark the copy keeps
-# is not refused above, but its line is listed for reading, in any letter case.
-listed() { grep -n -i -E "$second_net" "$tmp/text.md"; }
+refused "a credit after a # and no space" "$has_credit" "#$credit"
+refused "a credit after a scissors line" "$has_credit" "words" "# ------------------------ >8 ------------------------" "$credit"
+refused "a credit in a second-level heading" "$has_credit" "## $credit"
+refused "a credit in a list" "$has_credit" "- $credit"
+refused "a credit in a starred list" "$has_credit" "* $credit"
+refused "a credit in an indented list" "$has_credit" "   - $credit"
+refused "a credit in a quoted heading" "$has_credit" "> # $credit"
+refused "a credit on a plain line" "$has_credit" "$credit"
+# Behind a mark the skills' stripped copy kept, a credit was only listed for reading. It is
+# refused, and its line named, in any letter case.
 for mark in '1. ' '+ ' '| ' '`' '~ ' '<!-- ' '- [x] ' '_'; do
-  for line in "$credit" "co-authored-by: a person" "$made" "GENERATED WITH a tool"; do
-    printf '%s\n' "docs: a title" "" "words" "$mark$line" >"$tmp/text.md"
-    expect_pass "the second net lists a credit after [$mark]" listed
-    [ "$(cut -d: -f1 "$tmp/out")" = 4 ] || fail "the second net names line 4 for a credit after [$mark]"
-  done
+  refused "a credit after [$mark]" "pull-request/body:2: the message $has_credit" "words" "$mark$credit"
+  refused "a credit in small letters after [$mark]" "pull-request/body:2: the message $has_credit" "words" "${mark}co""-authored-by: a person"
+  refused "a line that credits a tool after [$mark]" "pull-request/body:2: the message credits an agent or a model" "words" "$mark$made"
 done
-printf '%s\n' "docs: a title" "" "# A heading" "- a point about authors" "| a | table |" >"$tmp/text.md"
-if listed >/dev/null; then fail "the second net lists a line of a text with no credit"; fi
+# What reading alone found: a name in a sentence, and a path that starts with ~.
+refused "an agent's name in a sentence" "pull-request/body:1: names an agent or a model" "written with Cl""aude this morning"
+refused "a path that starts with ~" "pull-request/body:1: a path that starts with ~" "the notes are in ~/notes"
+# A phrase that is no credit is listed for reading, and passes.
+printf '%s\n' "docs: a title" >"$pr_dir/title.txt"
+printf '%s\n' "words" "+ GENERATED ""WITH a tool" >"$pr_dir/body.md"
+expect_pass "a phrase that is no credit" scanned
+grep -x -F -e "to read: pull-request/body:2" "$tmp/out" >/dev/null || { cat "$tmp/out" >&2; fail "a phrase that is no credit is listed to be read"; }
+printf '%s\n' "# A heading" "- a point about authors" "* another" "> a quote" "| a | table |" "#8 is the pull request before" >"$pr_dir/body.md"
+expect_pass "a pull request with headings and lists and no credit" scanned
+grep -F -e "to read" "$tmp/out" >/dev/null && { cat "$tmp/out" >&2; fail "a text with no phrase lists no line"; }
+# Without a word list the command refuses: the skills give it with the clean-room scan.
+expect_fail "the command with no word list" "WHIZBANG_WORDLIST is not set" env -u WHIZBANG_WORDLIST bash -c "text='$pr_dir'; $pr_scan"
 
 # changed <check> <file> <sed script> <expected text>: the file after the edit must fail.
 changed() {
@@ -390,10 +418,16 @@ changed check_kickoff "$f" 's/The path may be given to another agent working in 
 changed check_kickoff "$f" 's/, which stays untracked/, which is committed/' "must say: \`.claude/settings.local.json\`, which stays untracked"
 changed check_kickoff "$f" 's/check (macos-15)/check (macOS)/g' "must say:"
 changed check_kickoff "$f" 's/^CI: check (macos-15) <result>, check (ubuntu-22.04) <result>/CI: check <result>/' "must say: CI: check (macos-15)"
-changed check_kickoff "$f" "/^grep -n -i -E /d" "must say: grep -n -i -E"
+changed check_kickoff "$f" '/^scripts\/scan.sh --pr-text /d' "must say: scripts/scan.sh --pr-text"
+changed check_kickoff "$f" 's/^scripts\/scan.sh --pr-text /scripts\/scan.sh --secrets-only --pr-text /' "must say: scripts/scan.sh --pr-text"
+changed check_kickoff "$f" '$s/$/\
+scripts\/scan.sh --secrets-only --pr-text title body/' "in another way than the one line"
+changed check_kickoff "$f" '$s/$/\
+scripts\/scan.sh --message "$text\/body.md"/' "not with the commands it replaced"
+changed check_kickoff "$f" 's/^# Exit 0 is the pass\. A line it prints that starts "to read:" is not refused: go through it\.$/# Exit 0 is the pass./' 'must say: A line it prints that starts "to read:"'
+changed check_kickoff "$f" 's/a name it does$/no name is left/' "must say: a name it does"
 changed check_kickoff "$f" 's/^gh pr edit <number> /gh pr comment <number> /' "must say: gh pr edit <number>"
 changed check_kickoff "$f" 's/Never retry around the hook, and never use `--no-verify`\.//' "must say: Never retry around the hook"
-changed check_kickoff "$f" 's/^plain=$(mktemp)$/plain=$text\/plain.txt/' 'must say: plain=$(mktemp)'
 changed check_kickoff "$f" '/^until run=/d' "must say: until run="
 changed check_kickoff "$f" 's/ -ge 3 \]; do$/ -ge 1 ]; do/' "must say: .jobs | length"
 changed check_kickoff "$f" '/"$tries" -le 60/d' 'must say: [ "$tries" -le 60 ]'
@@ -407,8 +441,6 @@ changed check_kickoff "$f" 's/go back to step 4/open a new pull request/' "must 
 changed check_kickoff "$f" 's/It may be given short: /It is given in full: /' "must say: It may be given short"
 changed check_kickoff "$f" 's/Never merge a pull request, and never merge into `main`: only the orchestrator does\./Merge when CI is green./' "must say: Never merge"
 changed check_kickoff "$f" 's/Never push with `--no-verify`, never force a push, and never push to `main`\.//' "must say: Never push with"
-changed check_kickoff "$f" "/^cat .* sed /d" "must say: sed"
-changed check_kickoff "$f" 's/^scripts\/scan.sh --message "$plain"$/scripts\/scan.sh --message "$text\/body.md"/' 'must say: scripts/scan.sh --message "$plain"'
 never_merges() { says "$1" Checklist 'Never merge a pull request, and never merge into `main`: only the orchestrator does.'; }
 changed never_merges .claude/skills/port-module/SKILL.md 's/Never merge a pull request, and never merge into `main`: only the orchestrator does\.//' "must say: Never merge"
 changed check_kickoff "$f" '/^just scan /d' "must say: just scan"
@@ -430,13 +462,16 @@ changed check_review_merge "$f" '$s/$/\
 just scan-range-secrets <base> <head>/' "not the scan without the clean-room scan"
 changed check_review_merge "$f" 's/`just scan-range <base> <head>` passes: secrets,/the scans pass: secrets,/' "must say: - [ ] 6."
 changed check_review_merge "$f" 's/so save them to a file$/so read them/' "must say: - [ ] 7."
-changed check_review_merge "$f" '/^(cd "$text" && "$repo\/scripts\/scan.sh")/d' 'must say: (cd "$text"'
-changed check_review_merge "$f" "/^cat .* sed /d" "must say: sed"
+changed check_review_merge "$f" '/^scripts\/scan.sh --pr-text /d' "must say: scripts/scan.sh --pr-text"
+changed check_review_merge "$f" 's/^scripts\/scan.sh --pr-text /(cd "$text" \&\& scripts\/scan.sh) # /' "must say: scripts/scan.sh --pr-text"
+changed check_review_merge "$f" '$s/$/\
+scripts\/scan.sh --pr-text "$text\/title.txt" "$text\/body.md"/' "as one whole line and once"
+changed check_review_merge "$f" 's/a name it does not know is found only by reading/it finds every name/' "must say: a name it does not know"
 changed check_review_merge "$f" 's/Nothing is left only in a verdict\.//' "must say: Nothing is left only in a verdict."
 changed check_review_merge "$f" '/^gh run list --commit <head> /d' "must say: gh run list --commit <head>"
 changed check_review_merge "$f" 's/does not review its own build: if/does not review its own build unless it must: if/' "own build"
-changed check_review_merge "$f" 's/^scripts\/scan.sh --message "$plain"$/scripts\/scan.sh --message "$text\/body.md"/' 'must say: scripts/scan.sh --message "$plain"'
-changed check_review_merge "$f" "/^grep -n -i -E /d" "must say: grep -n -i -E"
+changed check_review_merge "$f" '$s/$/\
+scripts\/scan.sh --message "$text\/body.md"/' "not with the commands it replaced"
 changed check_review_merge "$f" 's/, or a verdict for another commit, is a$/ is a/' "must say: A finding that blocks the merge"
 changed check_review_merge "$f" 's/A follow-up does not block/A follow-up blocks/' "must say: A follow-up does not block"
 changed check_review_merge "$f" 's/ justfile scripts / justfile scripts\/hooks scripts\/scan.sh /' "must say: git diff <base> <head> -- .github justfile scripts "
@@ -581,9 +616,7 @@ AGENTS.md: - **A worktree on a branch cut before a change to the hooks** runs th
 .claude/skills/kickoff/SKILL.md: Never push with `--no-verify`, never force a push, and never push to `main`.
 .claude/skills/kickoff/SKILL.md: Never retry around the hook, and never use `--no-verify`.
 .claude/skills/kickoff/SKILL.md: Tell the orchestrator in the hand-back: which scan refused, the commit, path and
-.claude/skills/kickoff/SKILL.md: # The attribution check is made for commit messages: it skips a line that starts with #
 .claude/skills/review-merge/SKILL.md: - [ ] 6. With `WHIZBANG_WORDLIST` set, `just scan-range <base> <head>` passes: secrets,
-.claude/skills/review-merge/SKILL.md: # The attribution check is made for commit messages: it skips a line that starts with #
 AGENTS.md: - **Orchestrator:** the session the owner is talking to. Only the orchestrator merges. It
 AGENTS.md: - Each acts in its role above: only the orchestrator merges, tags, releases and
 AGENTS.md: | `review-merge` | Orchestrator | After the reviewer's verdict: check that it allows the merge and that the head has not moved, test the merged result, run both scans over `base..head`, merge with a merge commit, confirm it, clean up |
