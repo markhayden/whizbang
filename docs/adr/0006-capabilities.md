@@ -1,7 +1,8 @@
 # 0006. Capabilities: an interface for each, declared features, and resolution by choice, then default
 
 Status: accepted. Changed by ADR 0010: a declaration may state a price, and a roster
-answers `Backends::bound` from it
+answers `Backends::bound` from it; a fault says how far its request got, and each
+response may carry a charge
 Date: 2026-11-12
 Amended: 2026-11-12, after the review of the first part, before it merged. Changed: what
 a fault's cleaning guarantees and what it does not find, with a rule for adapters; a
