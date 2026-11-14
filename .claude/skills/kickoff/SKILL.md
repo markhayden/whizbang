@@ -70,8 +70,8 @@ If one is missing, ask the orchestrator. Do not guess.
       prints nothing. The push of that same commit then needs no second run.
 - [ ] 8. Before every push: `just check` has passed on exactly the tree being pushed
       (step 7), then `just scan` passes. Push the branch by
-      name, from inside the worktree: a push made from another folder, with `GIT_DIR` and
-      `GIT_WORK_TREE` set, runs no hook.
+      name, from inside the worktree: a push made from another folder is scanned only
+      when `GIT_DIR` and `GIT_WORK_TREE` both name the worktree, and is refused otherwise.
       Never push with `--no-verify`, never force a push, and never push to `main`.
 - [ ] 9. If the push is refused, nothing reached origin. The secrets scan names each place
       it found as `<commit>:<path>:<line>`; the clean-room scan prints a count and names
@@ -99,11 +99,12 @@ If one is missing, ask the orchestrator. Do not guess.
       pull request. So first go through the two files against "Secrets and private data"
       in `AGENTS.md`: no attribution line, no agent or model name, no private path or
       address. Then scan them (the commands below).
-      After any edit to either file, read and scan again. The scans do not find a bare
-      agent or model name in a sentence, a path that starts with `~`, or a credit line
-      behind a mark the copy keeps (a number, a `+`, a table bar): only reading does, and
-      the last `grep` below lists every line to look at. Then open the pull request
-      against `main`.
+      After any edit to either file, read and scan again. The scan refuses an agent's
+      or a model's name that it knows, a path that starts with `~`, a value of the repo's
+      local `.env`, and a credit line behind any mark that starts a line; a name it does
+      not know is found only by reading. It also lists each line that says
+      "co-authored-by" or "generated with" and is not refused: go through those. Then
+      open the pull request against `main`.
 - [ ] 11. Wait for CI on the head: the jobs `check (macos-15)` and `check (ubuntu-22.04)`,
       and the aggregate `ci`. `ci` is listed only once both check jobs have finished: the
       Linux job takes about 90 seconds and the macOS job about 3 minutes. Straight after
@@ -172,27 +173,21 @@ git restore --staged <path>
 
 # 10: the title alone in title.txt, the body in body.md, in a folder of their own. A
 # variable does not last between separate shell calls: run these in one, or note the paths.
-text=$(mktemp -d) && git init -q "$text"
+text=$(mktemp -d)
 printf '%s\n' "type(scope): summary" >"$text/title.txt"
 cat >"$text/body.md" <<'BODY'
 What changed, and how it was checked.
 BODY
 cat "$text/title.txt" "$text/body.md"          # read first
-repo=$PWD
-(cd "$text" && "$repo/scripts/scan.sh")        # secrets and clean-room, over both files
-# The attribution check is made for commit messages: it skips a line that starts with #
-# and everything after a scissors line. So it is given a copy without the marks that
-# start a line. The copy is kept outside the scanned folder.
-# It prints nothing when it passes: exit 0 is the pass.
-plain=$(mktemp)
-cat "$text/title.txt" "$text/body.md" | sed 's/^[#*>[:space:]-]*//' >"$plain"
-scripts/scan.sh --message "$plain"
-# A second net: you go through every line it prints. No line, and exit 1, is the pass.
-grep -n -i -E 'co-authored-by|generated with' "$text/title.txt" "$text/body.md"
+# One scan of the two files, run from inside the repo: secrets, the values of the local
+# .env among them; the clean-room scan; a credit line behind any mark that starts a line;
+# an agent's or a model's name; a path that starts with ~. It says where, never what.
+# Exit 0 is the pass. A line it prints that starts "to read:" is not refused: go through it.
+scripts/scan.sh --pr-text "$text/title.txt" "$text/body.md"
 gh pr create --base main --head <slug> --title "$(cat "$text/title.txt")" --body-file "$text/body.md"
 # 14: the same two files, written again, then gone through and scanned as above
 gh pr edit <number> --title "$(cat "$text/title.txt")" --body-file "$text/body.md"
-rm -rf "$text" "$plain"
+rm -rf "$text"
 
 # 11: ask every 20 seconds until the run for the head lists three jobs, for 20 minutes
 # at most. The macOS job takes about 3 minutes: give the shell call a longer time limit,

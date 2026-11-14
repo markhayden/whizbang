@@ -10,8 +10,11 @@
 #                                          gives a pre-push hook on stdin
 #   scripts/scan.sh --message <file>       the attribution check alone, on one message file
 #                                          (the commit-msg hook)
-#   --secrets-only                         with any of the first three: skip the clean-room
-#                                          scan (CI: the word list is never there)
+#   scripts/scan.sh --pr-text <title file> <body file>
+#                                          the title and body of a pull request, before they
+#                                          are put on it (the skills kickoff and review-merge)
+#   --secrets-only                         with any but --message: skip the clean-room scan
+#                                          (CI: the word list is never there)
 #
 # For a range or a push, the material is: the files each commit changed, as they were in
 # that commit (so a secret added in one commit and deleted in the next is found); each
@@ -36,6 +39,17 @@
 # Attribution check: no commit or tag message has a Co-Authored-By line, for a person or
 # an agent, or a line that credits an agent or a model; no commit or tag is authored by
 # one (SPEC.md section 15).
+#
+# The title and body of a pull request are two files of plain text, outside the repo. Run
+# from the repo, so the values of its local .env are searched for too, they get both
+# scans, and an attribution check made for text that is not a commit message: a line counts
+# from its first letter, whatever marks stand before it (a list's number or sign, a table
+# bar, a quote, a heading, a backtick, a box, a comment's opening), and so does each cell
+# of a table row; an agent's or a model's name counts wherever it starts a word, but for
+# the folder `.claude` and the file `CLAUDE.md`, which this repo has; and a path that
+# starts with `~` is refused. Each refusal names the file and the line, never the text. A
+# line that says "co-authored-by" or "generated with" and is not refused is listed to be
+# read. A file with a NUL byte is refused: it is not plain text.
 #
 # Clean-room scan: reads a private word list from the path in WHIZBANG_WORDLIST. It fails
 # closed when the variable is unset, or the list is unreadable or empty. It prints counts
@@ -65,6 +79,15 @@
 # here-document with no end. So the trap turns an exit of 0 into 70, and says so, unless
 # `done_ok` is 1, and that is set only on the line before an exit that is meant to succeed.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "scan: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
+# The whole script is the function `main`, and the last line calls it and exits. Bash reads
+# a script as it runs it, a piece at a time, so a file changed during a run (an editor that
+# writes in place, a checkout that rewrites it) would make the rest of the run another
+# program: the `EXIT` trap fails a run that stops early, not one that goes on wrongly. A
+# function is read whole before any of it runs, and the last line is read with it in hand,
+# so the run finishes as the program it started as. Every script under scripts/ that is not
+# a test has this form, and scripts/tests/test-syntax.sh holds them to it. The body is not
+# indented, so that each line is where it was.
+main() {
 set -euo pipefail
 umask 077
 # Bytes, not characters: a byte that is not valid UTF-8 must not hide the rest of its line.
@@ -99,7 +122,7 @@ die() {
   exit 1
 }
 usage() {
-  die "usage: scan.sh [--secrets-only] [--range <base> <head> | --pre-push <remote> <url> | --message <file>]"
+  die "usage: scan.sh [--secrets-only] [--range <base> <head> | --pre-push <remote> <url> | --pr-text <title file> <body file> | --message <file>]"
 }
 
 # Shapes where any matching line is a hit.
@@ -133,6 +156,15 @@ sk_body='sk-(ant|proj|or|svcacct|admin)-|sk-[a-z_-]*[0-9A-Z]'
 # what follows is narrowed: one part of it, between hyphens, is 20 characters or more and
 # holds a digit or a capital (`sk_anywhere_is_key`). Words joined by hyphens have no such
 # part; the keys of this family do, since their random part is long and has few hyphens.
+# What it still takes for a key, each directly after a word that ends in s and k and a
+# hyphen (task-, mask-, disk-, risk-, ask-): a hex digest; a file name of 20 letters and
+# digits or more, as base64 gives; a name in capitals and small letters of 20 characters
+# or more with no hyphen in it (a long class name); and a name joined by underscores, 20
+# characters or more, with a digit in it (a model's weights, written with underscores
+# after the hyphen). None can be told from a key by its shape. When a real name trips
+# the scan, write the name another way: an underscore or a space in place of the hyphen
+# after the word, a hyphen inside the long part, or the word spelled so that it does not
+# end the part. There is no list of exceptions, and the rule is not loosened for a name.
 # What this leaves: a key written directly after a word character whose every part
 # between hyphens is under 20 characters, or has no digit and no capital. It is on
 # docs/carry-over.md. A key that starts a word is held to the rule above, as before.
@@ -156,6 +188,10 @@ agent_line="$agent_line|^[[:space:]>]*[a-z-]+-by:(.*[^a-z])?($names)"
 agent_line="$agent_line|🤖"
 has_credit="the message has a Co-Authored-By line; this repo allows none, for a person or an agent"
 credits_agent="the message credits an agent or a model"
+# In the title and body of a pull request: a path that starts with `~`, alone or with a
+# user's name, where the `~` starts a word. The sign before a number ("~5 seconds", or
+# before a fraction) starts no path.
+tilde='(^|[^A-Za-z0-9_~])~([A-Za-z_][A-Za-z0-9._-]*)?/'
 
 secrets_only=0
 mode=tree
@@ -179,6 +215,11 @@ while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || usage
       mode=message message=$2
       shift 2
+      ;;
+    --pr-text)
+      [ $# -ge 3 ] || usage
+      mode=text pr_title=$2 pr_body=$3
+      shift 3
       ;;
     *) usage ;;
   esac
@@ -238,6 +279,11 @@ fi
 words() { sed 's/[[:space:]]*$//' "$list" | grep -a -v '^$'; }
 # No copy of the list is made: each run of a search reads it again through `words`.
 
+if [ "$mode" = text ]; then
+  # The two files are named from where the scan was started; it goes to the top next.
+  case "$pr_title" in /*) ;; *) pr_title="$PWD/$pr_title" ;; esac
+  case "$pr_body" in /*) ;; *) pr_body="$PWD/$pr_body" ;; esac
+fi
 cd "$(git rev-parse --show-toplevel)"
 text="$work/text"
 mkdir "$text" "$work/env" "$work/strip"
@@ -718,7 +764,7 @@ secrets_here() {
 words_contents=0 words_paths=0 words_messages=0 words_refs=0 words_tags=0
 words_add() { # <kind> <count>
   case "$1" in
-    contents | link-targets) words_contents=$((words_contents + $2)) ;;
+    contents | link-targets | pull-request) words_contents=$((words_contents + $2)) ;;
     tree-paths | commit-paths) words_paths=$((words_paths + $2)) ;;
     commit-message) words_messages=$((words_messages + $2)) ;;
     ref-names) words_refs=$((words_refs + $2)) ;;
@@ -894,8 +940,88 @@ scan_tag_chain() { # <sha>
   tip=$obj
 }
 
+# pr_lines <file> <what>: the title or the body of a pull request against the attribution
+# rules for text. Writes one line to the attribution hits for each line refused, and one
+# to $work/to-read for each line that says one of the two phrases and is not refused.
+#
+# The candidates of a line are the line as it is and, for each part of it between table
+# bars, the part from its first letter: every mark before that is taken off, and a ticked
+# box with it. $work/candidates holds them one to a line and $work/candidate-lines the
+# number of the line each came from, so a rule that is anchored at the start of a line is
+# applied to each candidate, and what it finds is named by its line.
+pr_lines() {
+  local file=$1 what=$2 rc
+  : >"$work/candidate-lines"
+  awk -v numbers="$work/candidate-lines" '{
+    print NR >numbers
+    print
+    cells = split($0, cell, "|")
+    for (i = 1; i <= cells; i++) {
+      c = cell[i]
+      while (c != "") {
+        if (c ~ /^\[[xX]\]/) c = substr(c, 4)
+        else if (c ~ /^[^A-Za-z]/) c = substr(c, 2)
+        else break
+      }
+      print NR >numbers
+      print c
+    }
+  }' "$file" >"$work/candidates"
+  [ "$(wc -l <"$work/candidates" | tr -d ' ')" = "$(wc -l <"$work/candidate-lines" | tr -d ' ')" ] ||
+    die "the lines of the $what could not be taken apart; refusing to pass"
+  : >"$work/refused-lines"
+  pr_rule "$work/candidates" "$work/candidate-lines" "$credit_line" "$what" "$has_credit" -i
+  pr_rule "$work/candidates" "$work/candidate-lines" "$agent_line" "$what" "$credits_agent" -i
+  # A name, wherever it starts a word; the folder and the file this repo has are paths.
+  sed -e 's/\.claude\([^A-Za-z0-9]\)/.\1/g' -e 's/\.claude$/./' -e 's/CLAUDE\.md//g' "$file" >"$work/unnamed"
+  [ "$(awk 'END { print NR }' "$work/unnamed")" = "$(awk 'END { print NR }' "$file")" ] ||
+    die "the lines of the $what could not be read; refusing to pass"
+  pr_rule "$work/unnamed" "" "$agent" "$what" "names an agent or a model" -i
+  pr_rule "$file" "" "$tilde" "$what" "a path that starts with ~"
+  # What is left to read: either phrase, anywhere in a line that was not refused.
+  rc=0
+  grep -a -n -i -E -e 'co-authored-by|generated[[:space:]]+with' "$file" >"$work/phrases" || rc=$?
+  [ "$rc" -le 1 ] || die "a search failed (exit $rc); refusing to pass"
+  cut -d: -f1 "$work/phrases" | REFUSED="$work/refused-lines" WHAT=$what awk '
+    BEGIN { while ((getline n < ENVIRON["REFUSED"]) > 0) refused[n] = 1 }
+    !($1 in refused) { print "to read: pull-request/" ENVIRON["WHAT"] ":" $1 }' >>"$work/to-read"
+}
+# pr_rule <file> <numbers file, or empty: a line is its own number> <pattern> <what>
+# <problem> [-i]: one attribution hit for each line of the pull request's text that holds
+# a line of the file matching the pattern.
+pr_rule() {
+  local rc=0
+  grep -a -n ${6:+"$6"} -E -e "$3" "$1" >"$work/rule-found" || rc=$?
+  [ "$rc" -le 1 ] || die "a search failed (exit $rc); refusing to pass"
+  cut -d: -f1 "$work/rule-found" >"$work/rule-lines"
+  if [ -n "$2" ]; then
+    FOUND="$work/rule-lines" awk 'BEGIN { while ((getline n < ENVIRON["FOUND"]) > 0) found[n] = 1 }
+      NR in found' "$2" >"$work/rule-numbers"
+  else
+    cp "$work/rule-lines" "$work/rule-numbers"
+  fi
+  sort -u -n "$work/rule-numbers" >"$work/rule-lines"
+  cat "$work/rule-lines" >>"$work/refused-lines"
+  WHAT=$4 PROBLEM=$5 awk '{ print "pull-request/" ENVIRON["WHAT"] ":" $1 ": " ENVIRON["PROBLEM"] }' \
+    "$work/rule-lines" >>"$work/attribution-hits"
+}
+
 mkdir "$text/tree-paths" "$text/link-targets"
 case "$mode" in
+  text)
+    mkdir "$text/pull-request"
+    : >"$work/to-read"
+    for what in title body; do
+      if [ "$what" = title ]; then f=$pr_title; else f=$pr_body; fi
+      [ -f "$f" ] && [ -r "$f" ] || die "cannot read the $what of the pull request (a file is expected); refusing to pass"
+      cp -- "$f" "$text/pull-request/$what" || die "cannot read the $what of the pull request; refusing to pass"
+      # Plain text only: a NUL byte hides the rest of its line from a search.
+      [ "$(tr -d '\0' <"$text/pull-request/$what" | wc -c | tr -d ' ')" = "$(wc -c <"$text/pull-request/$what" | tr -d ' ')" ] ||
+        die "the $what of the pull request holds a NUL byte, so it is not plain text and cannot be scanned; refusing to pass"
+      pr_lines "$text/pull-request/$what" "$what"
+    done
+    covered="the title and body of a pull request"
+    ;;
   tree)
     files=0
     # What git says while it lists is not printed either: it names paths.
@@ -993,7 +1119,7 @@ esac
 
 # The text that is not file contents: link targets, paths, messages, names.
 items=()
-for kind in link-targets tree-paths commit-paths commit-message ref-names tag-message; do
+for kind in link-targets tree-paths commit-paths commit-message ref-names tag-message pull-request; do
   [ -d "$text/$kind" ] || continue
   for f in "$text/$kind"/*; do [ -f "$f" ] && items+=("$kind/${f##*/}"); done
 done
@@ -1041,7 +1167,17 @@ else
   echo "secrets scan: clean ($covered)"
 fi
 
-if [ "$mode" != tree ]; then
+if [ "$mode" = text ]; then
+  if [ -s "$work/attribution-hits" ]; then
+    echo "attribution check: a pull request credits no agent or model, names none, and gives no path that starts with ~:" >&2
+    cat "$work/attribution-hits" >&2
+    status=1
+  else
+    echo "attribution check: clean ($covered)"
+  fi
+  # Not refused, and not passed unread: each line that says one of the two phrases.
+  cat "$work/to-read"
+elif [ "$mode" != tree ]; then
   if [ -s "$work/attribution-hits" ]; then
     echo "attribution check: commits and tags here name no agent or model:" >&2
     cat "$work/attribution-hits" >&2
@@ -1053,7 +1189,9 @@ fi
 
 if [ "$secrets_only" -eq 0 ]; then
   count=$((words_contents + words_paths + words_messages + words_refs + words_tags))
-  if [ "$mode" = tree ]; then
+  if [ "$mode" = text ]; then
+    echo "clean-room scan: $count matching lines"
+  elif [ "$mode" = tree ]; then
     echo "clean-room scan: $count matching lines (contents $words_contents, paths $words_paths)"
   else
     echo "clean-room scan: $count matching lines (contents $words_contents, paths $words_paths, messages $words_messages, ref names $words_refs, tag messages $words_tags)"
@@ -1063,3 +1201,5 @@ fi
 
 done_ok=1
 exit "$status"
+}
+main "$@"; exit

@@ -9,6 +9,9 @@
 # The two options exist for scripts/tests/test-crate-graph.sh. Needs jq.
 # Parse the whole file first: see the top of scripts/scan.sh.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "crate graph: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
+# The whole script is one function, read before any of it runs, so a change to this file
+# during a run does not change the run: see `main` in scripts/scan.sh.
+main() {
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -124,3 +127,6 @@ if [ "$status" -ne 0 ]; then
 fi
 echo "crate graph: ok ($crates crates, $found edges between them, all listed in $edges)"
 done_ok=1
+exit 0
+}
+main "$@"; exit
