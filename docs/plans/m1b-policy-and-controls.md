@@ -727,17 +727,17 @@ the one task that was I2 and S1 in earlier drafts.
 
 **First pull request: the design.**
 
-- [ ] An ADR, the ledger, which changes ADR 0007's interface and ADR 0008's allowance:
+- [x] An ADR, the ledger, which changes ADR 0007's interface and ADR 0008's allowance:
       every name under `spend/` and its grammar; the content of each record; what a
       reservation counts for in each state; what an allowance holds and how debt is
       paid; what an admission and a settlement each make so that neither is published
       on a stale balance; how a reset bounds what came before it.
-- [ ] A model of the fold in the test kit: pure, with no store. A history is a list of
+- [x] A model of the fold in the test kit: pure, with no store. A history is a list of
       events (an allowance set, a reset, an admission, a child's share, a dispatch, a
       settlement, an end, a crash with a recovery, damage to one entry, a deletion with
       a prune, an adjustment), and the model answers what is allowed, held, spent and
       left, for the store and for each reservation and run.
-- [ ] The table of histories, run as tests against the model: each history of "The
+- [x] The table of histories, run as tests against the model: each history of "The
       histories the reviews produced" below, by name, with the balances it must give;
       and generated histories, bounded and seeded, 4,096 of at most 24 events each from
       a seed written in the test, each checked against invariants 1 to 6.
