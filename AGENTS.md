@@ -222,7 +222,9 @@ names, and the title and body of a pull request.
 
 - **Secrets.** Keys live only in a `.env` that git ignores. Never read the contents of a
   `.env` into output, a log, a prompt or a commit. The scan searches for its values; you do
-  not need to see them.
+  not need to see them. Every mode of the scan but the check of one commit message
+  refuses when a `.env` is there and cannot be read, and when it is run outside a
+  repository.
 - **Private paths and addresses.** No absolute home path, no location in owner storage and
   no email address in any file or message.
 - **Evaluation sets.** No answer, label or item-level verdict of an unreleased set, in a
