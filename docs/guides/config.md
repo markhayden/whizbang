@@ -59,7 +59,9 @@ rendering = "grey"
 
 A call chooses `bria` or `local` by name. Leave `default` out and a call must choose: no
 backend is picked for it, however few there are. A name is a lower-case letter, then
-lower-case letters, digits, `_` or `-`.
+lower-case letters, digits, `_` or `-`. Eight names are taken, since they are the keys of
+these tables, and no backend can have one: `default`, `kind`, `model`, `provider`, `url`,
+`key_env`, `token_env` and `settings`.
 
 | Key | What it is |
 |---|---|
@@ -96,9 +98,8 @@ url = "https://example-host/whizbang-sam3?token=abc"
 ```
 
 ```text
-the config's key `backends.segment.url` must be an address: http:// or https://, a host
-in lower case, perhaps a port and a path, with no user, password, query or fragment,
-2048 characters at most; what is written there is not shown
+the config's key `backends.segment.url` is refused: the address has a query, and may
+have none; what is written there is not shown
 ```
 
 And once the env file is read, a config that holds one of its values anywhere, a comment
@@ -117,8 +118,9 @@ spend in all is not in this file: it is set by `whizbang spend reset`, by the ow
 
 ## Who may receive data
 
-Nothing leaves the machine to a recipient this table does not name, and a recipient
-receives only the classes of data listed for it.
+This table is what will be enforced once the gate is built: nothing will leave the
+machine to a recipient it does not name, and a recipient will receive only the classes of
+data listed for it. Today it is read and checked, and nothing sends anything.
 
 ```toml
 [egress.recipients.fal]
@@ -135,8 +137,8 @@ classes = []
 
 | Key | What it is |
 |---|---|
-| `origin` | Where data is sent: a scheme, a host and perhaps a port, and nothing after it. Always given |
-| `account` | The account used with it |
+| `origin` | Where data is sent: a scheme, a host and perhaps a port, and nothing after it. Always given. `https://h.example`, `https://h.example:443` and `HTTPS://H.Example` are one origin |
+| `account` | The account used with it: one word, with no space |
 | `upstreams` | The origins it may pass data on to |
 | `classes` | What it may receive, of `source_images`, `derived_images`, `prompts` and `evidence`. Always given; `[]` is nothing |
 | `probe` | Whether it may be asked if it is reachable. Not unless this says `true` |

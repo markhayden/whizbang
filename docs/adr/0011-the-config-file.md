@@ -2,12 +2,21 @@
 
 Status: accepted. Names ADR 0001 (the encoding its digest uses), ADR 0005 ("Redaction":
 the secrets a reader is told of), ADR 0006 ("Resolution": what a capability's default
-is) and ADR 0007 (`ConfigSource`, which answers this digest once task C4 builds a source
-over the file)
+is), ADR 0007 (`ConfigSource`, which answers this digest once task C4 builds a source
+over the file) and ADR 0012 (an origin, an address, an account, a recipient and the
+classes of data, which the reader makes by that record's rules)
 Date: 2026-11-13
 Amended: 2026-11-13, inside checkpoint 1B, with the second part of task C1. Added: "The
 digest", with its consequences and the two alternatives it turned down. Changed: the
 paragraph that said a config had no digest yet.
+Amended: 2026-11-14, a second note, after ADR 0012 gave the egress types. Changed: an
+origin, a backend's address, an account, a recipient and its classes are made by those
+types and held to their rules, where this record had rules of its own for each; one
+recipient is approved once; the two rules that stay the file's own are marked as such.
+And in "The digest": an origin and a backend's address are hashed as an origin writes
+itself, so the digest of a config with an origin in capitals, or with its scheme's own
+port written, is not what it was for one day; no digest had been stored, since nothing
+makes one of a config yet.
 Spec: section 4, "Backends" (config, resolution, credentials); section 6, "Spend";
 section 10, "Egress"
 
@@ -117,7 +126,7 @@ A backend has these keys and no others:
 | `kind` | Which code answers. Required | A name |
 | `model` | The model it is asked for | A plain text of 128 characters at most |
 | `provider` | The service it is reached through | A name |
-| `url` | Its address | `http://` or `https://`, a host, perhaps a port and a path; 2,048 characters at most |
+| `url` | Its address | An address as ADR 0012 has one, and, the file's own rule, with no query |
 | `key_env`, `token_env` | The variable its key, or its token, is in | A variable's name |
 | `settings` | A table of the kind's own settings | 32 at most; a key is a name without `-`; a value is a plain text of 1,024 characters at most, a whole number, or true or false |
 
@@ -127,11 +136,26 @@ fraction, a date, a list or a table: an amount is written in whole units or as a
 so that a setting has one way to be hashed.
 
 A plain text is printable ASCII (the bytes 0x20 to 0x7E), not empty, with no space at
-either end. A host is lower-case letters, digits and hyphens in parts with dots between
-them, 253 characters at most; a port is 1 to 65535 with no leading zero. A variable's
-name is capital letters, digits and `_`, not a digit first, 64 characters at most
-(`file::a_text_is_held_to_its_rule_and_its_length`,
-`file::an_address_that_could_hold_a_credential_is_refused_and_not_shown`).
+either end. A variable's name is capital letters, digits and `_`, not a digit first, 64
+characters at most (`file::a_text_is_held_to_its_rule_and_its_length`).
+
+An address and an origin are what ADR 0012 says they are, made by its constructors
+(`Address::of`, `Origin::of`) with the secrets the reader was told of, and this record
+does not say their rules again: the scheme, the host and its labels, a host written in
+numbers, the port, the length, that an `@` and a fragment are refused anywhere, and
+that a secret is looked for in the text as given and again in the origin as it is
+kept. An origin is kept as that type writes it, the scheme and the host in lower case
+and the port left out when it is the scheme's own, so `https://h.example`,
+`https://h.example:443` and `HTTPS://H.Example` are one origin and one config. Two
+rules are the file's own, on top of those:
+
+- **A backend's address has no query,** though an address may have one: a query is
+  where a key is written.
+- **An origin has nothing after its port,** though `Origin::of` would take an address
+  and drop its path: what a person wrote there is not dropped without a word.
+
+(`file::an_address_that_could_hold_a_credential_is_refused_and_not_shown`,
+`file::a_recipient_is_an_origin_with_the_classes_of_data_it_may_receive`).
 
 **`spend`** holds one key, `call_cap_usd`: the most one call may reserve, in US dollars,
 more than 0 and at most 1,000,000. It is a whole number or a number with at most six
@@ -156,17 +180,24 @@ probe = true
 
 | Key | Is | Rule |
 |---|---|---|
-| `origin` | Where data is sent. Required | A scheme, a host and perhaps a port, and nothing else |
-| `account` | The account used with it | A plain text of 128 characters at most |
-| `upstreams` | The origins it may forward to | 16 at most, each an origin; none twice, and not its own |
+| `origin` | Where data is sent. Required | An origin, with nothing after its port |
+| `account` | The account used with it | An account as ADR 0012 has one: 128 characters at most, with no space, no `"` and no `\` |
+| `upstreams` | The origins it may forward to | 16 at most, each an origin; none twice, and not its own, compared as origins and not as texts |
 | `classes` | The classes of data it may receive. Required, and may be `[]` | Of `source_images`, `derived_images`, `prompts`, `evidence`; none twice |
 | `probe` | Whether it may be probed | True or false; false when not written |
 
 A config that names no recipient approves none, and one that names a recipient with
-`classes = []` approves it for nothing. The config says what is approved; what a
-recipient is, how one is matched to a backend and what the gate does with this table are
-the egress tasks' (B2, E2), and this record decides only how the table is written
-(`file::a_recipient_is_an_origin_with_the_classes_of_data_it_may_receive`).
+`classes = []` approves it for nothing. What the reader makes of an entry is an
+`Approval`: a `Recipient` of ADR 0012 (its origin, its account, its upstreams, with
+that type's rules for how many upstreams there are and that none is given twice or is
+the recipient's own), the `Classes` it may receive, and whether it may be probed.
+
+**One recipient is approved once.** Two entries with one origin and one account are
+refused, by the `origin` of the second: under two names a recipient could be approved
+for two sets of classes, and which held would be the reader's guess. The same origin
+under another account, or with an account beside one with none, is another recipient.
+How an approval is matched to a backend and what the gate does with it are the egress
+tasks' (`file::a_recipient_is_an_origin_with_the_classes_of_data_it_may_receive`).
 
 **`models`** is a table of the file and holds no key yet: any key in it is refused as not
 known. It is named now so that its heading can be written, and it is given its keys by
@@ -280,7 +311,8 @@ be absent is `u` 0, or `u` 1 and then the field. The fields, in order:
    2. the default's name, `b`, which may be absent;
    3. `u`, how many backends. Then for each, sorted by its name:
       1. `b`, its name; `b`, its kind;
-      2. its model, its provider, its address, the name of its key's variable and the
+      2. its model, its provider, its address (its origin as an origin writes itself,
+         then its path as given), the name of its key's variable and the
          name of its token's variable, in that order, each `b` and each of which may be
          absent;
       3. `u`, how many settings. Then for each, sorted by its key: `b`, the key; then
@@ -288,7 +320,8 @@ be absent is `u` 0, or `u` 1 and then the field. The fields, in order:
          2 and `u` 0 for false or 1 for true; or `u` 3 and `b` the text.
 2. The cap of one call: `u` millionths of a dollar, which may be absent.
 3. `u`, how many recipients. Then for each, sorted by its name:
-   1. `b`, its name; `b`, its origin; its account, `b`, which may be absent;
+   1. `b`, its name; `b`, its origin, as an origin writes itself; its account, `b`,
+      whole, which may be absent;
    2. `u`, how many upstreams, and each as `b`, sorted;
    3. `u`, how many classes, and each as `b` its name, sorted;
    4. `u` 1 if it may be probed, else 0.
@@ -324,7 +357,17 @@ What follows from hashing what was read:
 - **No secret is in it.** A variable is in the digest by its name. Its value is in no
   config, so a key that is rotated under the same variable changes no digest; what a
   changed key does to a call is task C5's
-  (`digest::a_variable_is_in_the_digest_by_its_name_and_a_value_by_nothing`).
+  (`digest::a_variable_is_in_the_digest_by_its_name_and_a_value_by_nothing`). A key the
+  reader was not told of, written as a model or into a setting's text, is read like any
+  text and hashed with the rest; the digest does not show it.
+- **An origin is hashed as an origin writes itself** (ADR 0012): the scheme and the
+  host in lower case, and the port only when it is not the scheme's own. A backend's
+  address is its origin so written and then its path as the file gave it. So
+  `https://h.example`, `https://h.example:443` and `HTTPS://H.Example` are one digest,
+  and a path's own letters are not folded
+  (`digest::the_ways_of_writing_one_origin_have_one_digest`). Until this was so, for one
+  day, the three were refused or were two digests; no digest of a config had been
+  stored.
 
 A key added to the file later that is absent from older files must hash as absent, or it
 is a new kind, `config/2`, and every digest changes with it.
@@ -364,9 +407,6 @@ config's digest in `asked.config` stands for the rest.
 - **It finds a secret only in the forms redaction searches for** (ADR 0005, "What
   redaction does not find"), over the bytes and over the decoded keys and texts. One in
   another form, as with its letters in the other case, is not found.
-- **It does not tell two origins apart by what they reach.** `https://h.example` and
-  `https://h.example:443` are two texts, two configs and two digests. A host in capitals is refused,
-  so that case is not a third way.
 
 ## Consequences
 
