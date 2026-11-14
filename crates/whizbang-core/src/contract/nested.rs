@@ -313,7 +313,7 @@ impl Nest {
     /// A call the run's action made was refused: kept for the run's record, the
     /// first of them listed and the rest counted. One that arrives after the record
     /// was written is kept nowhere.
-    fn refused(&self, refused: Refused) {
+    pub(super) fn refused(&self, refused: Refused) {
         let mut calls = self.calls();
         if calls.refusals.len() < REFUSALS_LIMIT {
             calls.refusals.push(refused);

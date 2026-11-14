@@ -29,6 +29,7 @@ mod call;
 mod context;
 mod descriptor;
 mod engine;
+mod facts;
 mod journal;
 pub mod ledger;
 mod live;
@@ -54,6 +55,7 @@ pub use engine::{
     BoundRefused, ConfigSource, Engine, Executor, STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT,
     Spawn, WHIZBANG_VERSION,
 };
+pub use facts::RunFacts;
 pub use journal::{Clock, EXCHANGE_PREFIX, JournalLine, SystemClock, journal_bytes, read_journal};
 pub use ledger::{
     Declined, LEDGER_NAME_LIMIT, Ledger, RESERVATION_RECORD, RESERVATIONS_PREFIX, Reservation,

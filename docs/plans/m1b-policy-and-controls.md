@@ -678,7 +678,7 @@ every list of `run/3` to its bound has a record under the limit, with
 
 **Depends on:** B4.
 
-- [ ] The executor gives each run a place (`RunFacts`) in which a setting, a spend line, a
+- [x] The executor gives each run a place (`RunFacts`) in which a setting, a spend line, a
       refusal of a request and a recipient can be noted from another module, and writes
       what was noted when the run ends. Nothing in it is durable before the run's end:
       what a crash loses of it is what `outcome.lost` names.

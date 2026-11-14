@@ -1479,6 +1479,11 @@ impl Facts {
         Facts::default()
     }
 
+    /// How many settings, paid requests and entries of where data went are noted.
+    pub fn counts(&self) -> (usize, usize, usize) {
+        (self.settings.len(), self.paid.len(), self.went.len())
+    }
+
     /// Notes a setting. False, and nothing is noted, when the record already lists
     /// [`SETTINGS_LIMIT`] of them or one of this name.
     pub fn setting(&mut self, setting: Setting) -> bool {

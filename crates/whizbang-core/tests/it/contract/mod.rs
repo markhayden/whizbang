@@ -13,6 +13,7 @@ mod commit;
 mod describe;
 mod descriptor;
 mod execute;
+mod facts;
 mod fixtures;
 mod nested;
 mod prepare;
