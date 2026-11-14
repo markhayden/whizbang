@@ -741,12 +741,16 @@ fn one_call_reads_the_env_file_first_and_then_the_config_with_its_secrets() {
         )
     );
     // A config that holds either value of the env file, the one no backend names too.
+    // In a comment, and as a KEY of the file: read with no secrets told, the second
+    // is a key that is not known and would be said back.
     for held in [key.clone(), made_up_key("-other")] {
-        std::fs::write(&config_path, format!("# {held}\n")).unwrap();
-        assert_eq!(
-            Loaded::read(&config_path, Some(&env_path)).unwrap_err(),
-            LoadRefused::Config(ConfigRefused::HoldsSecret)
-        );
+        for text in [format!("# {held}\n"), format!("\"{held}\" = 1\n")] {
+            std::fs::write(&config_path, text).unwrap();
+            assert_eq!(
+                Loaded::read(&config_path, Some(&env_path)).unwrap_err(),
+                LoadRefused::Config(ConfigRefused::HoldsSecret)
+            );
+        }
     }
     // An env file that is refused is the refusal, and the config is not read: here it
     // is not there at all.

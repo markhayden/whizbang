@@ -111,9 +111,11 @@ impl CatalogueFile {
     }
 }
 
-/// What an entry is made of. Each part was made by its own constructor; [`Entry::new`]
-/// holds them to the rules that are about more than one of them.
-#[derive(Debug, Clone)]
+/// What an entry is made of. Each part was made by its own constructor, but for the
+/// features, which are plain texts until [`Entry::new`] has looked at them; it holds
+/// the parts to the rules that are about more than one of them. What `{:?}` prints is
+/// the names and how many features, origins and files there are, never one of them.
+#[derive(Clone)]
 pub struct EntryParts {
     pub name: ModelName,
     /// The revision of this entry: whoever changes anything of the entry changes it.
@@ -126,6 +128,20 @@ pub struct EntryParts {
     /// The origins a download of the files may reach.
     pub origins: Vec<Origin>,
     pub files: Vec<CatalogueFile>,
+}
+
+impl std::fmt::Debug for EntryParts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EntryParts")
+            .field("name", &self.name)
+            .field("revision", &self.revision)
+            .field("adapter", &self.adapter)
+            .field("licence", &self.licence)
+            .field("features", &self.features.len())
+            .field("origins", &self.origins.len())
+            .field("files", &self.files.len())
+            .finish()
+    }
 }
 
 /// One model of a catalogue.

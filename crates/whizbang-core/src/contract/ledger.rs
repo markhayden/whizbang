@@ -19,7 +19,7 @@ use crate::store::{self, Entry, Generation, Publication};
 use super::record::RECORD_KIND;
 use super::request::{NOT_AN_AMOUNT, REQUEST_RECORD_MAX_BYTES, RequestRecordError};
 use super::request::{RequestId, kind_of, line_of, malformed, present};
-use super::{CallError, RunId, Secrets, StoreFailure};
+use super::{CallError, NotJudged, RunId, Secrets, StoreFailure};
 
 /// The kind of a reservation record, with its version.
 pub const RESERVATION_RECORD: &str = "reservation/1";
@@ -212,14 +212,24 @@ pub enum Declined {
     /// ([`super::Refusal::OverAllowance`]).
     OverAllowance { left_micros: u64 },
     /// The ledger could not judge: the store failed, or a record it needed is not one
-    /// this build reads, or the ledger itself failed ([`CallError::Ledger`]). This is
-    /// not a judgement of the call.
-    Failed(CallError),
+    /// this build reads, or the ledger itself failed ([`NotJudged`]). This is not a
+    /// judgement of the call. It holds a failure of the store or a sentence and
+    /// nothing else: a refusal handed back here is a sentence, and the caller is
+    /// given [`CallError::Ledger`].
+    Failed(NotJudged),
 }
 
+impl From<NotJudged> for Declined {
+    fn from(failure: NotJudged) -> Declined {
+        Declined::Failed(failure)
+    }
+}
+
+/// So that what a [`Step`] answers can be passed on with `?`. Any other error is kept
+/// as what it says ([`NotJudged`]).
 impl From<CallError> for Declined {
     fn from(error: CallError) -> Declined {
-        Declined::Failed(error)
+        Declined::Failed(error.into())
     }
 }
 

@@ -1413,10 +1413,10 @@ variable named, the least length). **Size:** small.
 
 **Depends on:** B0b. **Reads:** squint `crates/squint-core/src/artifacts.rs` (`redact`).
 
-- [ ] An ADR, which changes ADR 0005's "What redaction does not find": for each form the
+- [x] An ADR, which changes ADR 0005's "What redaction does not find": for each form the
       pin test lists (base64; a `\u00XX` escape; UTF-16 in either byte order; each of the
       five other forms of percent-encoding), found, or accepted with the reason.
-- [ ] The forms that are found, in `crates/whizbang-core/src/contract/redact.rs`, each with
+- [x] The forms that are found, in `crates/whizbang-core/src/contract/redact.rs`, each with
       its pin test turned round. A body known to be JSON is redacted as JSON: each string
       is decoded, searched and written again, so no escape can hide a secret or be broken
       by the marker.
@@ -1558,7 +1558,7 @@ and 5.3 and `schemas/core/installable.json`.
       adapter's revisions; the installation's identity; the pointer that names the one in
       use; holds as file locks. It edits nothing in `SPEC.md`: the two sentences named
       under "Decisions" are B0b's.
-- [ ] The catalogue and the installation record are added to `whizbang-backends`, the
+- [x] The catalogue and the installation record are added to `whizbang-backends`, the
       crate B0b made, as types read strictly. Nothing installs yet.
 
 **Done when** these pass: a catalogue and an installation record each round-trip; each is

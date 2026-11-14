@@ -13,7 +13,9 @@ use crate::capability::Shown;
 use crate::store::Publication;
 
 use super::record::{RECORD_KIND, REFUSAL_WHY_LIMIT, RefusalKind, is_diagnostic_name};
-use super::{Call, CallError, Estimate, PreparedCall, RequestId, RunId, Secrets, StoreFailure};
+use super::{
+    Call, CallError, Estimate, NotJudged, PreparedCall, RequestId, RunId, Secrets, StoreFailure,
+};
 
 /// What the name of every record a part adds to a run starts with: the name the part
 /// gave follows.
@@ -151,14 +153,24 @@ impl PartRefusal {
 pub enum PartDeclined {
     /// The call is refused ([`super::Refusal::ByPart`]).
     Refused(PartRefusal),
-    /// The part could not judge, or did what a part may not ([`CallError::Part`]),
-    /// or the store failed. This is not a judgement of the call.
-    Failed(CallError),
+    /// The part could not judge, or did what a part may not, or the store failed
+    /// ([`NotJudged`]). This is not a judgement of the call. It holds a failure of
+    /// the store or a sentence and nothing else: a refusal handed back here is a
+    /// sentence, and the caller is given [`CallError::Part`] under this part's name.
+    Failed(NotJudged),
 }
 
+impl From<NotJudged> for PartDeclined {
+    fn from(failure: NotJudged) -> PartDeclined {
+        PartDeclined::Failed(failure)
+    }
+}
+
+/// So that what [`PartStep::put`] answers can be passed on with `?`. Any other error
+/// is kept as what it says ([`NotJudged`]).
 impl From<CallError> for PartDeclined {
     fn from(error: CallError) -> PartDeclined {
-        PartDeclined::Failed(error)
+        PartDeclined::Failed(error.into())
     }
 }
 

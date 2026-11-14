@@ -1,8 +1,10 @@
-//! The models directory's types (ADR 0017): the names that become names on a disk and
-//! the catalogue. Nothing here
+//! The models directory's types (ADR 0017): the names that become names on a disk, the
+//! catalogue, the installation record and the identity of an installation. Nothing here
 //! installs: no test touches a disk or asks anything of a network.
 
 mod catalogue;
+mod identity;
+mod installation;
 mod names;
 mod refusals;
 
