@@ -569,12 +569,12 @@ bound of price times limit; a backend of 1A that states no price answers as it d
 **Depends on:** B1. **Reads:** rascal `crates/rascal-mask/src/filler/mod.rs`
 (`FillerCall`, `Charge`, `CallStarted`, `Spent`); table-manners `CONTRACT.md` section 4.5.
 
-- [ ] In B1's ADR, by the same builder: what a failed request says of how far it got (not
+- [x] In B1's ADR, by the same builder: what a failed request says of how far it got (not
       sent; answered, with what it cost when the answer says; sent with no answer that
       settles it), and what a request that succeeded cost: a response may carry a charge,
       which the adapter states or works out from the usage the answer reports at the
       prices it quoted from; a response without one cost its bound.
-- [ ] The stage on a `Fault` and the charge on each response, as private fields (ADR 0006
+- [x] The stage on a `Fault` and the charge on each response, as private fields (ADR 0006
       lets both gain members).
 
 **Done when** these pass: each of the three stages can be read from a fault, and every
@@ -1091,9 +1091,11 @@ is held to the cap too; the two fixed vectors of `prepared/1` are as they were.
 `crates/squint-core/src/ledger.rs` (`plan`, `Envelope`, `PlannedRequest`) and
 `crates/squint-eval/src/estimate.rs`; rascal `crates/rascal-mask/src/estimate.rs`.
 
-- [ ] A wrapper in `spend/` around any `Backends` answers `Backends::bound` from the
-      quotes of the backends it resolves (B1); the roster's own file is not changed. The
-      bound a backend states for a need covers every request the call sends it.
+- [ ] A wrapper in `spend/` around any `Backends`. The roster already answers
+      `Backends::bound` with the quote of one request, from the price a backend declares
+      (B1, ADR 0010); the wrapper delegates to it and adds the per-call part, so that
+      the bound a backend states for a need covers every request the call sends it. The
+      roster's own file is not changed.
 - [ ] The check a request is held to when it is about to be sent, against what its run
       has left: a function of `spend/` that S5's meter calls.
 
@@ -1852,7 +1854,7 @@ tag `m1a`: twenty-five rows.
 | An admission that was visible and not confirmed takes its id | I4b ends it at the next open to write. Ending it at once in the process that made it: **milestone 2**, with the first door that keeps a process alive across runs; until then the limit stays, and the row says so |
 | What every publication costs as ids and reservations accumulate | **Milestone 2, before request ids are used in volume** (the measurement at 100,000 ids, S13 of draft 5). 1B adds a ledger record to each admission and two to each paid request, and each of its publications has a case at the 64 MiB limit, where it is refused and nothing is released (I4, S5, S5b); the row gains that |
 | Whether a failed call may have been charged | B1b (the stage on a fault), S5b (the settlement) |
-| What a provider adapter said of itself: `pricing`, `recipient` | B1 and S4 (`pricing`); B2 and E2 (`recipient`). Image preparation stays with milestone 2 |
+| What a provider adapter said of itself: `pricing`, `recipient` | B1 and S4 (`pricing`); B2 and E2 (`recipient`). Image preparation stays with milestone 2, and a quote worked out from a request's shape (its tokens and images) went there with it (B1, ADR 0010) |
 | What redaction does not find; quotes around a value; the variable named | C3 (the forms, UTF-16 among them, and JSON as JSON); C2 (quotes, the variable, the least length) |
 | `max_spend_usd`, the cap of one call | S3. `set` stays with milestone 3 |
 | Parallel installs of models sharing a file each download it | **1C, before a real download** (M4 of draft 5, with the removal of a shared file) |

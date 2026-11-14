@@ -28,7 +28,7 @@ const TWO_TO_THE_64: f64 = 18_446_744_073_709_551_616.0;
 
 /// The whole count of millionths that a number comes to: rounded up, never down.
 /// Refused when it is not finite, is less than nothing, or reaches 2 to the power 64.
-fn whole(what: &'static str, number: f64) -> Result<u64, Unfit> {
+pub(super) fn whole(what: &'static str, number: f64) -> Result<u64, Unfit> {
     let fits = (0.0..TWO_TO_THE_64).contains(&number);
     if !fits {
         // A number that is not one is in no range, so it is refused here too.
@@ -96,10 +96,18 @@ impl Quote {
         self.kind
     }
 
-    /// The amount, in millionths of a US dollar: the bound, or the estimate; nothing
-    /// for a free quote. Whether it binds is the kind's to say.
-    pub fn micros(&self) -> u64 {
-        self.micros
+    /// The bound, in millionths of a US dollar, when the quote is a bound: the most a
+    /// request is charged. None for an estimate only, which binds nothing, and for a
+    /// free quote. Code that counts money reads [`Quote::most`].
+    pub fn bound_micros(&self) -> Option<u64> {
+        (self.kind == QuoteKind::Bound).then_some(self.micros)
+    }
+
+    /// What an estimate only expects a request to cost, in millionths of a US dollar:
+    /// a figure to show a person, and never an amount to reserve or to hold a request
+    /// to. None for a bound and for a free quote.
+    pub fn estimated_micros(&self) -> Option<u64> {
+        (self.kind == QuoteKind::EstimateOnly).then_some(self.micros)
     }
 
     /// The most the request may cost, as [`Backends::bound`] answers it: nothing when
