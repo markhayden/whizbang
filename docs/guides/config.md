@@ -197,7 +197,7 @@ call_cap_usd = 3
 ```
 
 ```text
-the config gives the key `spend.call_cap_usd` twice, the second time at line 3
+the config gives the key `call_cap_usd` twice, the second time at line 3
 ```
 
 Also refused: a path that names a folder or anything else that is not a file; a file

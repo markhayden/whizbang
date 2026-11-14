@@ -59,10 +59,17 @@ impl Config {
             });
         }
         let file = std::fs::File::open(path).map_err(unreadable)?;
+        Config::read_from(file, secrets)
+    }
+
+    /// Reads a config from what this gives, as [`Config::read`] reads an opened file:
+    /// no more than [`CONFIG_BYTES_LIMIT`] and one byte is asked of it, however much it
+    /// has, and more than the limit is refused.
+    pub fn read_from(from: impl std::io::Read, secrets: &Secrets) -> Result<Config, ConfigRefused> {
         let mut bytes = Vec::new();
-        file.take(CONFIG_BYTES_LIMIT + 1)
+        from.take(CONFIG_BYTES_LIMIT + 1)
             .read_to_end(&mut bytes)
-            .map_err(unreadable)?;
+            .map_err(|error| ConfigRefused::Unreadable(error.kind()))?;
         Config::parse(&bytes, secrets)
     }
 
@@ -133,8 +140,9 @@ fn holds_secret(table: &Table, secrets: &Secrets) -> bool {
 }
 
 /// The refusal of text the format's reader did not take. Its own sentence is not passed
-/// on, since it is not written here; the line is. A key given twice is named, decoded
-/// as the format decodes a key and looked at for a secret before it is shown.
+/// on, since it is not written here; the line is. A key given twice is named by the
+/// key the reader points at, without the table it is in, decoded as the format decodes
+/// a key and looked at whole for a secret before it is shown.
 fn not_toml(text: &str, error: &toml::de::Error, secrets: &Secrets) -> ConfigRefused {
     let span = error.span();
     let line = line_of(text.as_bytes(), span.as_ref().map_or(0, |span| span.start));
@@ -146,19 +154,10 @@ fn not_toml(text: &str, error: &toml::de::Error, secrets: &Secrets) -> ConfigRef
     let Ok(read) = format!("{written} = 0").parse::<Table>() else {
         return ConfigRefused::NotToml { line };
     };
-    // The key's path from the top, as far as the text tells it: the keys of the
-    // heading it stands under and then its own, or the heading's alone when the key
-    // is in a heading.
-    let lines: Vec<&str> = text.split('\n').take(line).collect();
-    let heading = |line: &str| line.trim_start().starts_with('[');
-    let above = lines.iter().rev().filter(|line| heading(line));
-    let mut path = match above.filter_map(|line| line.parse::<Table>().ok()).next() {
-        Some(table) => keys_of(&table),
-        None => Vec::new(),
-    };
-    if !lines.last().is_some_and(|line| heading(line)) {
-        path.extend(keys_of(&read));
-    }
+    // The key as it is written there, and nothing from any other line: the format's
+    // reader says where the second key stands and not which table it is in, and a
+    // line above that looks like a heading may be the text of a value.
+    let path = keys_of(&read);
     let whole = path.join(".");
     if secrets.redact(&whole) != whole {
         return ConfigRefused::HoldsSecret;
