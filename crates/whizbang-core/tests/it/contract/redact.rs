@@ -522,16 +522,471 @@ fn values_an_env_file_keeps_are_found_in_every_form_whatever_marks_they_hold() {
     );
 }
 
+// --- the ways a secret is written, for the tests below --------------------------------
+
+/// As a JSON string escapes it, without the quotes around it.
+fn json_of(text: &str) -> String {
+    let quoted = serde_json::to_string(text).unwrap();
+    quoted[1..quoted.len() - 1].to_owned()
+}
+
+/// Percent-encoded: every byte, or every byte that is not a letter, a digit, `-`, `.`,
+/// `_` or `~`.
+fn pct(text: &str, upper: bool, all: bool) -> String {
+    text.bytes()
+        .map(|byte| {
+            let plain = byte.is_ascii_alphanumeric() || b"-._~".contains(&byte);
+            if plain && !all {
+                char::from(byte).to_string()
+            } else if upper {
+                format!("%{byte:02X}")
+            } else {
+                format!("%{byte:02x}")
+            }
+        })
+        .collect()
+}
+
+/// Every character as `\u` escapes.
+fn u_all(text: &str) -> String {
+    text.encode_utf16()
+        .map(|unit| format!("\\u{unit:04x}"))
+        .collect()
+}
+
+fn utf16(text: &str, big: bool) -> Vec<u8> {
+    text.encode_utf16()
+        .flat_map(|unit| {
+            if big {
+                unit.to_be_bytes()
+            } else {
+                unit.to_le_bytes()
+            }
+        })
+        .collect()
+}
+
+/// The first and the last base64 character that hold a bit of a secret that stands
+/// after `before` bytes.
+fn base64_edges(before: usize, secret: usize) -> (usize, usize) {
+    (before * 8 / 6, ((before + secret) * 8 - 1) / 6)
+}
+
+#[test]
+fn a_secret_whose_own_text_holds_an_encoding_is_found_however_it_is_written() {
+    // A secret can hold a `%` and two hex digits, or a backslash and a letter, as its
+    // own characters. Read as percent-encoding and as JSON escapes at once, such a
+    // secret written as JSON escapes it would be decoded into something else. So the
+    // three written forms of ADR 0005 are searched for as they are, and each kind of
+    // encoding is also read alone.
+    for secret in [
+        "p%40ss/word-12",
+        "sig=ab%2Bcd%3D&exp=12",
+        "100%/done\\now",
+        "a\\u0041b%zz/c9",
+        "%41%42%43%44/x",
+    ] {
+        let secrets = Secrets::new([secret.to_owned()]).unwrap();
+        let json = json_of(secret);
+        for written in [
+            secret.to_owned(),
+            json.clone(),
+            json.replace('/', "\\/"),
+            // As a writer that escapes `&` gives it.
+            json.replace('&', "\\u0026"),
+            json_of(&json),
+            pct(secret, true, false),
+            pct(secret, false, false),
+            pct(secret, true, true),
+            pct(&pct(secret, true, false), true, false),
+            u_all(secret),
+        ] {
+            assert_eq!(
+                secrets.redact(&format!("<{written}>")),
+                "<[redacted]>",
+                "{secret} as {written}"
+            );
+        }
+    }
+    // An address with an encoded password, in a JSON string that escapes its slashes.
+    // (It is put together here from its parts.)
+    let address = format!("postgres://user{}p%40ss-w0rd{}db.example/main", ":", "@");
+    let secrets = Secrets::new([address.clone()]).unwrap();
+    let body = format!("{{\"dsn\":\"{}\"}}", json_of(&address).replace('/', "\\/"));
+    assert_eq!(secrets.redact(&body), "{\"dsn\":\"[redacted]\"}");
+}
+
+#[test]
+fn each_reading_finds_a_text_that_no_other_reading_does() {
+    // The secret holds, as its own letters, a backslash and `n`, and a `%` and two hex
+    // digits: read once more than it was written, either becomes something else. So
+    // each way of writing it below is found by one reading and by no other.
+    let secret = "a\\nb%41c/def";
+    assert_eq!(secret.len(), 12);
+    let secrets = Secrets::new([secret.to_owned()]).unwrap();
+    let both = "%61%5Cn%62\\u002541c/def";
+    for (reading, written) in [
+        // Every character an escape.
+        ("escapes", u_all(secret)),
+        // Every byte percent-encoded.
+        ("percent", pct(secret, true, true)),
+        // Escapes, and then percent-encoding that the escapes hid.
+        (
+            "escapes, then percent",
+            "a\\\\nb\\u00252541c\\u00252Fd\\u002565f".to_owned(),
+        ),
+        // The two mixed at one level, where each alone would misread the other's.
+        ("both at once", both.to_owned()),
+        // The same, written once more: each `%` percent-encoded, the backslash escaped.
+        ("both, twice", "%2561%255Cn%2562\\\\u002541c/def".to_owned()),
+    ] {
+        assert_eq!(
+            secrets.redact(&format!("<{written}>")),
+            "<[redacted]>",
+            "{reading}: {written}"
+        );
+    }
+}
+
+#[test]
+fn after_a_text_that_ends_in_a_percent_or_a_backslash_a_written_form_is_still_found() {
+    // The secret begins with two hex digits, and with a letter an escape ends in.
+    for secret in ["ab12cd34/ef+gh", "nb12cd34/ef+gh"] {
+        let secrets = Secrets::new([secret.to_owned()]).unwrap();
+        for before in ["%", "\\", "100%", "C:\\", "%%", "\\\\"] {
+            let json = json_of(secret);
+            for written in [
+                secret.to_owned(),
+                json.clone(),
+                json.replace('/', "\\/"),
+                pct(secret, true, false),
+                pct(secret, false, false),
+            ] {
+                assert_eq!(
+                    secrets.redact(&format!("{before}{written};")),
+                    format!("{before}[redacted];"),
+                    "{before} {written}"
+                );
+            }
+            let encoded = base64(secret.as_bytes(), false);
+            let (_, last) = base64_edges(0, secret.len());
+            assert_eq!(
+                secrets.redact(&format!("{before}{encoded}")),
+                format!("{before}[redacted]{}", &encoded[last + 1..])
+            );
+            let mut wide = before.as_bytes().to_vec();
+            wide.extend(utf16(secret, false));
+            let mut expected = before.as_bytes().to_vec();
+            expected.extend_from_slice(REDACTED.as_bytes());
+            assert_eq!(secrets.redact_bytes(&wide), expected, "{before}");
+        }
+    }
+}
+
+#[test]
+fn a_second_secret_uncovers_nothing_of_the_first() {
+    // The second secret is the first from its second letter on. The first stands in
+    // UTF-16, little-endian, at an odd place; the second is then found one byte on,
+    // big-endian, at an even place. That is another secret's stretch, and takes
+    // nothing from the first's.
+    let first = made_up_key("");
+    let second = first[1..].to_owned();
+    let mut text = b"X".to_vec();
+    text.extend(utf16(&first, false));
+    for secrets in [
+        Secrets::new([first.clone()]).unwrap(),
+        Secrets::new([first.clone(), second.clone()]).unwrap(),
+    ] {
+        assert_eq!(secrets.redact_bytes(&text), b"X[redacted]");
+    }
+    // For pairs made from one secret, and each way of writing the first: whatever of
+    // it is gone with the first alone told is gone with both told.
+    let mut rng = Rng(0x5eed_0002);
+    for _ in 0..24 {
+        let first = rng.secret();
+        let others = [
+            first[first.char_indices().nth(1).unwrap().0..].to_owned(),
+            first[..first.char_indices().nth_back(0).unwrap().0].to_owned(),
+            format!("x{first}"),
+            rng.secret(),
+        ];
+        for other in others {
+            if other.trim().len() < 8 {
+                continue;
+            }
+            let alone = Secrets::new([first.clone()]).unwrap();
+            let both = Secrets::new([first.clone(), other.clone()]).unwrap();
+            for (written, _) in written_forms(&first) {
+                for before in [&b""[..], b"X", b"auth: "] {
+                    let text = [before, &written[..], b" end"].concat();
+                    let (alone, both) = (alone.redact_bytes(&text), both.redact_bytes(&text));
+                    for slice in written.windows(6) {
+                        if !holds(&alone, slice) {
+                            assert!(!holds(&both, slice), "{first:?} with {other:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn base64_inside_another_form_loses_every_character_that_holds_a_bit_of_the_secret() {
+    // The base64 of a secret, with its characters written again: `/` as `\/`, as a
+    // JSON writer may; `+`, `/` and `=` percent-encoded, as an address must; every
+    // character percent-encoded; every character a `\u` escape. The characters at
+    // the secret's two edges hold two or four of its bits, and each is replaced
+    // whole, however it is written: no half of an escape is left.
+    let odd = "k\u{fb}\u{ff}\u{fe}~~>>??zz";
+    let secrets = Secrets::new([odd.to_owned()]).unwrap();
+    type Way = fn(char) -> String;
+    let ways: [(&str, Way); 4] = [
+        ("json", |c| {
+            if c == '/' {
+                "\\/".to_owned()
+            } else {
+                c.to_string()
+            }
+        }),
+        ("percent of what must be", |c| {
+            if "+/=".contains(c) {
+                format!("%{:02X}", c as u32)
+            } else {
+                c.to_string()
+            }
+        }),
+        ("percent of all", |c| format!("%{:02x}", c as u32)),
+        ("escapes of all", |c| format!("\\u{:04x}", c as u32)),
+    ];
+    for before in ["", "u", "us", "/", "//", "user:"] {
+        for after in ["", "/", "!!", "//?"] {
+            for url in [false, true] {
+                let plain = format!("{before}{odd}{after}");
+                let encoded = base64(plain.as_bytes(), url);
+                let (first, last) = base64_edges(before.len(), odd.len());
+                for (name, way) in ways {
+                    let write = |part: &str| part.chars().map(way).collect::<String>();
+                    assert_eq!(
+                        secrets.redact(&format!("<{}>", write(&encoded))),
+                        format!(
+                            "<{}[redacted]{}>",
+                            write(&encoded[..first]),
+                            write(&encoded[last + 1..])
+                        ),
+                        "{name}: {before:?} {after:?} {url}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn base64_broken_by_line_breaks_is_found_and_ordinary_lines_are_not_joined() {
+    // A long body in base64 is wrapped, at 76 columns by one tool and at 64 by
+    // another, with a line feed or a carriage return and a line feed. A line break
+    // between two base64 characters is passed over, for base64 only.
+    let key = made_up_key(&"z".repeat(40));
+    assert!(key.len() > 57);
+    let secrets = secrets(&[&key]);
+    let encoded = base64(format!("user:{key}").as_bytes(), false);
+    let (first, last) = base64_edges(5, key.len());
+    for width in [76, 64] {
+        for (breaks, wide) in [("\n", 1), ("\r\n", 2), ("\r", 1)] {
+            let lines: Vec<&str> = encoded
+                .as_bytes()
+                .chunks(width)
+                .map(|line| std::str::from_utf8(line).unwrap())
+                .collect();
+            let wrapped = lines.join(breaks);
+            let at = |index: usize| index + index / width * wide;
+            assert!(lines.len() > 1 && at(last) > at(first) + key.len());
+            assert_eq!(
+                secrets.redact(&format!("-----\n{wrapped}\n-----")),
+                format!(
+                    "-----\n{}[redacted]{}\n-----",
+                    &wrapped[..at(first)],
+                    &wrapped[at(last) + 1..]
+                ),
+                "{width} {breaks:?}"
+            );
+            // The same inside a JSON string, where a line break is an escape.
+            let escaped = json_of(&wrapped);
+            let at = |index: usize| index + index / width * wide * 2;
+            assert_eq!(
+                secrets.redact(&format!("{{\"pem\":\"{escaped}\"}}")),
+                format!(
+                    "{{\"pem\":\"{}[redacted]{}\"}}",
+                    &escaped[..at(first)],
+                    &escaped[at(last) + 1..]
+                ),
+                "{width} {breaks:?} in JSON"
+            );
+        }
+    }
+    // A secret that is not base64 is not found across a line break: two lines of an
+    // ordinary text are two texts.
+    let plain = Secrets::new(["abcdefgh12345678".to_owned()]).unwrap();
+    for text in [
+        "abcdefgh\n12345678",
+        "abcdefgh\r\n12345678",
+        "{\"t\":\"abcdefgh\\n12345678\"}",
+    ] {
+        assert_eq!(plain.redact(text), text);
+    }
+}
+
+#[test]
+fn two_hundred_secrets_that_end_inside_one_another_cost_no_more_than_one() {
+    // Every place in the text ends two hundred secrets. One stretch is noted for a
+    // place, the longest, and not one for each: noted each, a mebibyte of this was
+    // some two hundred million stretches.
+    let secrets = Secrets::new((8..208).map(|length| "a".repeat(length))).unwrap();
+    let body = "a".repeat(1024 * 1024);
+    let started = std::time::Instant::now();
+    let stored = secrets.redact(&body);
+    let took = started.elapsed();
+    assert_eq!(stored, "[redacted]");
+    assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+    // The same in UTF-16, and with a rest that is no secret.
+    let mut wide = utf16(&"a".repeat(64 * 1024), false);
+    wide.extend_from_slice(b"\x01\x02");
+    assert_eq!(secrets.redact_bytes(&wide), b"[redacted]\x01\x02");
+}
+
+#[test]
+fn bytes_that_were_text_can_come_back_as_no_text_and_a_text_comes_back_as_one() {
+    // The secret's UTF-16 bytes stand inside the UTF-8 of other letters: taken out as
+    // bytes, the halves of two letters are left. `redact_bytes` gives those bytes; a
+    // text goes through `redact`, which gives a text, with the mark for what is no
+    // character where a half stood.
+    let secret = "\u{a9c3}\u{a9c3}\u{a9c3}";
+    let secrets = Secrets::new([secret.to_owned()]).unwrap();
+    let text = "X\u{e9}\u{e9}\u{e9}\u{e9}";
+    let bytes = secrets.redact_bytes(text.as_bytes());
+    assert_eq!(bytes, [&[b'X', 0xc3][..], b"[redacted]", &[0xa9]].concat());
+    assert!(std::str::from_utf8(&bytes).is_err());
+    assert_eq!(secrets.redact(text), "X\u{fffd}[redacted]\u{fffd}");
+}
+
+/// Numbers that are the same on every run: xorshift, from a seed.
+struct Rng(u64);
+
+impl Rng {
+    fn below(&mut self, bound: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % bound as u64) as usize
+    }
+
+    /// A made-up secret of 8 to 20 pieces, among them the marks an encoding is made
+    /// of, with no space at an end.
+    fn secret(&mut self) -> String {
+        const PIECES: [&str; 26] = [
+            "a", "b", "c", "d", "e", "f", "0", "1", "2", "9", "Z", "q", "n", "u", "%", "\\", "/",
+            "+", "=", "\"", " ", "-", "_", "&", "\u{e9}", "~",
+        ];
+        let count = 8 + self.below(13);
+        let made: String = (0..count).map(|_| PIECES[self.below(26)]).collect();
+        format!("k{}k", made.trim())
+    }
+}
+
+/// A secret in each way it is said to be found written whole, as bytes, with whether
+/// the way is found after a text that ends in a `%` or a backslash.
+fn written_forms(secret: &str) -> Vec<(Vec<u8>, bool)> {
+    let json = json_of(secret);
+    let mut forms: Vec<(Vec<u8>, bool)> = vec![
+        (secret.as_bytes().to_vec(), true),
+        (json.clone().into_bytes(), true),
+        (json.replace('/', "\\/").into_bytes(), true),
+        (pct(secret, true, false).into_bytes(), true),
+        (pct(secret, false, false).into_bytes(), true),
+        (pct(secret, true, true).into_bytes(), false),
+        (pct(secret, false, true).into_bytes(), false),
+        (
+            pct(&pct(secret, true, false), false, false).into_bytes(),
+            false,
+        ),
+        (u_all(secret).into_bytes(), false),
+        (json_of(&json).into_bytes(), false),
+        (utf16(secret, false), true),
+        (utf16(secret, true), true),
+    ];
+    forms.dedup();
+    forms
+}
+
+#[test]
+fn a_generated_secret_in_each_form_at_each_place_is_replaced_exactly() {
+    // Held for the next change to the search: secrets made from a seed, each written
+    // every way it is said to be found, between texts of several kinds. What comes
+    // back is the text before, the marker and the text after, exactly: nothing of the
+    // secret is left in any encoding, and nothing beside it is taken.
+    let mut rng = Rng(0x5eed_0001);
+    let mut cases = 0;
+    for _ in 0..24 {
+        let secret = rng.secret();
+        let secrets = Secrets::new([secret.clone()]).unwrap();
+        let places: [(&str, &str, bool); 6] = [
+            ("", "", false),
+            ("auth: ", " end", false),
+            ("{\"t\":\"", "\"}", false),
+            ("?k=", "&x=1", false),
+            ("100%", ";", true),
+            ("C:\\", ";", true),
+        ];
+        for (before, after, hard) in places {
+            for (written, after_a_mark) in written_forms(&secret) {
+                if hard && !after_a_mark {
+                    continue;
+                }
+                let text = [before.as_bytes(), &written[..], after.as_bytes()].concat();
+                let expected = [before.as_bytes(), REDACTED.as_bytes(), after.as_bytes()].concat();
+                assert_eq!(
+                    String::from_utf8_lossy(&secrets.redact_bytes(&text)),
+                    String::from_utf8_lossy(&expected),
+                    "{secret:?} written {:?} after {before:?}",
+                    String::from_utf8_lossy(&written)
+                );
+                cases += 1;
+            }
+            for lead in ["", "u", "us"] {
+                for url in [false, true] {
+                    let encoded = base64(format!("{lead}{secret}!!").as_bytes(), url);
+                    let (first, last) = base64_edges(lead.len(), secret.len());
+                    assert_eq!(
+                        secrets.redact(&format!("{before}{encoded}{after}")),
+                        format!(
+                            "{before}{}[redacted]{}{after}",
+                            &encoded[..first],
+                            &encoded[last + 1..]
+                        ),
+                        "{secret:?} in base64 after {lead:?} and {before:?}"
+                    );
+                    cases += 1;
+                }
+            }
+        }
+    }
+    assert!(cases > 1500, "{cases}");
+}
+
 #[test]
 fn what_redaction_does_not_find_is_known() {
     // ADR 0014, "What is accepted". Each of these gets through, with its reason in the
     // record, and is pinned so that the list there stays true.
     let key = made_up_key("");
     let secrets = secrets(&[&key]);
-    // Percent-encoded three times: the reading goes two deep.
+    // Percent-encoded four times: the readings go two deep, and the written form they
+    // then find is the third.
     let odd = Secrets::new(["ab cd/ef+gh=ij".to_owned()]).unwrap();
     let thrice = "k=ab%252520cd%25252Fef%25252Bgh%25253Dij";
-    assert_eq!(odd.redact(thrice), thrice);
+    assert_eq!(odd.redact(thrice), "k=[redacted]");
+    let four = thrice.replace('%', "%25");
+    assert_eq!(odd.redact(&four), four);
     // A `+` for a space inside a value that is encoded twice.
     let plus_twice = "k=ab+cd%252Fef%252Bgh%253Dij";
     assert_eq!(odd.redact(plus_twice), plus_twice);
@@ -546,10 +1001,30 @@ fn what_redaction_does_not_find_is_known() {
     let utf16: Vec<u8> = key.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let encoded = base64(&utf16, false);
     assert_eq!(secrets.redact(&encoded), encoded);
-    // Base64 with a line break inside the key's characters, as a wrapped body has it.
-    let wrapped = base64(format!("user:{key}").as_bytes(), false);
-    let wrapped = format!("{}\r\n{}", &wrapped[..16], &wrapped[16..]);
-    assert_eq!(secrets.redact(&wrapped), wrapped);
+    // Base64 broken by something other than one line break: two blank lines, or a
+    // space, as a body folded for a header has it.
+    let whole = base64(format!("user:{key}").as_bytes(), false);
+    for gap in ["\n\n", "\r\n\r\n", "\n\r", "\r\n ", " "] {
+        let folded = format!("{}{gap}{}", &whole[..16], &whole[16..]);
+        assert_eq!(secrets.redact(&folded), folded, "{gap:?}");
+    }
+    // A reading goes through a text once, from its start. A `%` straight before a
+    // secret that begins with two hex digits takes them for its own; where the secret
+    // is written in a mixture that only a reading finds, it is then missed.
+    let eaten = "%ab%20cd%2fef%2Bgh%3dij";
+    assert_eq!(odd.redact("ab%20cd%2fef%2Bgh%3dij"), "[redacted]");
+    assert_eq!(odd.redact(eaten), eaten);
+    // A lone backslash straight before a secret written as `\u` escapes is read with
+    // the first escape's backslash; the second reading then finds the secret, and the
+    // lone backslash goes with it.
+    let escaped = format!("\\{}", u_all(&key));
+    assert_eq!(secrets.redact(&escaped), "[redacted]");
+    // A secret that is the marker's own word, or part of it, is replaced inside the
+    // marker when what was stored is redacted again: the brackets grow.
+    let word = Secrets::new(["redacted".to_owned(), key.clone()]).unwrap();
+    let once = word.redact(&format!("a {key} b"));
+    assert_eq!(once, "a [redacted] b");
+    assert_eq!(word.redact(&once), "a [[redacted]] b");
     // A key split across two texts.
     let (head, tail) = key.split_at(key.len() / 2);
     assert_eq!(secrets.redact(head), head);
