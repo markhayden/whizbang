@@ -1187,6 +1187,10 @@ fn what_the_reader_does_not_find_or_tell_apart_is_known() {
         Config::parse(text.as_bytes(), &none).unwrap()
     };
     assert_ne!(origin("https://h.example"), origin("https://h.example:443"));
+    assert_ne!(
+        origin("https://h.example").digest(),
+        origin("https://h.example:443").digest()
+    );
     // A key that is not known is shown, its first 64 characters, whatever it looks
     // like: a key the reader was not told of, pasted as a KEY of the file, is said back.
     let pasted = Config::parse(format!("\"{key}\" = 1\n").as_bytes(), &none).unwrap_err();

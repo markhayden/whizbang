@@ -1,8 +1,9 @@
 //! The config (`SPEC.md` section 4; ADR 0011; plan 1B, tasks C1 to C5): the file and
-//! its strict reader (`file`), and the examples of its record (`examples`). Here, what
-//! was first: the TOML reader the workspace takes (task B0b), shown to do the three
-//! things a strict reader of a config rests on.
+//! its strict reader (`file`), its digest (`digest`), and the examples of its guide and
+//! of its record (`examples`). Here, what was first: the TOML reader the workspace takes
+//! (task B0b), shown to do the three things a strict reader of a config rests on.
 
+mod digest;
 mod examples;
 mod file;
 
