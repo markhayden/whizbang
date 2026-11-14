@@ -307,9 +307,10 @@ fn a_file_over_its_bound_is_refused_from_its_length_and_no_refusal_has_a_path() 
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
         assert_eq!(EnvFile::read(&path).unwrap_err(), too_large);
-        // A file that is longer than it says is still bounded.
+        // What is not a file is refused before it is opened: the device of endless
+        // zeros, which says its length is nothing.
         let endless = std::path::Path::new("/dev/zero");
-        assert_eq!(EnvFile::read(endless).unwrap_err(), too_large);
+        assert_eq!(EnvFile::read(endless).unwrap_err(), EnvRefused::NotAFile);
     }
     // A file that is not there, a folder, and a line that is not an assignment: no
     // refusal has a path or a name of a file.
@@ -323,6 +324,14 @@ fn a_file_over_its_bound_is_refused_from_its_length_and_no_refusal_has_a_path() 
     assert_eq!(
         missing.to_string(),
         "the env file cannot be read: it is not there"
+    );
+    assert_eq!(
+        EnvFile::read(scratch.path()).unwrap_err(),
+        EnvRefused::NotAFile
+    );
+    assert_eq!(
+        EnvRefused::NotAFile.to_string(),
+        "the env file cannot be read: it is not a file"
     );
     for refused in [
         missing,
@@ -453,7 +462,8 @@ fn expose_none(credentials: &Credentials) -> (bool, Vec<String>) {
 
 #[test]
 fn a_marker_key_is_in_no_error_no_debug_no_record_and_no_journal_of_a_run_that_used_it() {
-    let key = made_up_key("-marker");
+    // The key holds a dot, as a key of several parts does.
+    let key = made_up_key(".marker.0123");
     let scratch = Scratch::new("env-marker");
     let path = scratch.path().join("keys.env");
     std::fs::write(&path, format!("export FAL_KEY=\"{key}\"\nPORT=8080\n")).unwrap();

@@ -33,6 +33,8 @@ pub const ENV_VALUE_LIMIT: usize = 4096;
 pub enum EnvRefused {
     /// The file could not be opened or read. The kind of failure, and no path.
     Unreadable(std::io::ErrorKind),
+    /// What the path names is not a file: a folder, a pipe, a device.
+    NotAFile,
     /// The file is longer than this many bytes.
     TooLarge { limit: u64 },
     /// The bytes are not UTF-8, or hold a control character, first at this line.
@@ -61,11 +63,11 @@ impl std::fmt::Display for EnvRefused {
                 let why = match kind {
                     std::io::ErrorKind::NotFound => "it is not there",
                     std::io::ErrorKind::PermissionDenied => "permission is denied",
-                    std::io::ErrorKind::IsADirectory => "it is a folder",
                     _ => "the system could not read it",
                 };
                 write!(f, "the env file cannot be read: {why}")
             }
+            EnvRefused::NotAFile => f.write_str("the env file cannot be read: it is not a file"),
             EnvRefused::TooLarge { limit } => {
                 write!(f, "the env file is longer than {limit} bytes")
             }
@@ -163,15 +165,20 @@ impl EnvFile {
         EnvFile::default()
     }
 
-    /// Reads the env file at this path. Its length is asked for before it is opened,
-    /// and a file over [`ENV_BYTES_LIMIT`] is refused from it; no more than the limit
-    /// and one byte is read of a file that is longer than it said.
+    /// Reads the env file at this path. What the path names and its length are asked
+    /// for before anything is opened: what is not a file is refused, and so is a file
+    /// over [`ENV_BYTES_LIMIT`]. No more than the limit and one byte is then read,
+    /// should the file have grown since.
     pub fn read(path: &Path) -> Result<EnvFile, EnvRefused> {
         let unreadable = |error: std::io::Error| EnvRefused::Unreadable(error.kind());
         let too_large = EnvRefused::TooLarge {
             limit: ENV_BYTES_LIMIT,
         };
-        if std::fs::metadata(path).map_err(unreadable)?.len() > ENV_BYTES_LIMIT {
+        let metadata = std::fs::metadata(path).map_err(unreadable)?;
+        if !metadata.is_file() {
+            return Err(EnvRefused::NotAFile);
+        }
+        if metadata.len() > ENV_BYTES_LIMIT {
             return Err(too_large);
         }
         let file = std::fs::File::open(path).map_err(unreadable)?;

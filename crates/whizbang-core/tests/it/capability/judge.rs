@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use whizbang_core::capability::{
-    Bounds, Controls, Declaration, Fault, FaultKind, Judge, JudgeHandle, JudgeRequest,
-    MESSAGE_LIMIT, Message, Opaque, PART_LIMIT, Part, Role, StopReason, TEXT_LIMIT, TOOL_LIMIT,
-    ToolCall, ToolDefinition, ToolResult, Turn, Unfit, Usage, feature,
+    Bounds, Charge, Controls, Declaration, Fault, FaultKind, Judge, JudgeHandle, JudgeRequest,
+    MESSAGE_LIMIT, Message, Opaque, PART_LIMIT, Part, Role, Stage, StopReason, TEXT_LIMIT,
+    TOOL_LIMIT, ToolCall, ToolDefinition, ToolResult, Turn, Unfit, Usage, feature,
 };
 use whizbang_core::contract::{Cancellation, ModelIdentity};
 
@@ -862,4 +862,108 @@ fn the_judge_is_handed_its_handles_deadline_which_is_only_ever_narrowed() {
         assert_eq!(fault.kind(), FaultKind::TimedOut);
     }
     assert_eq!(stub.sent(), 3);
+}
+
+// --- how far a request got, and what it cost (ADR 0010) --------------------------------------
+
+#[test]
+fn a_request_the_handle_refuses_before_its_judge_is_called_is_not_sent() {
+    let stub = Stub::new(&[], Ok(yes()));
+    let cancellation = Cancellation::new();
+    cancellation.cancel();
+    let fault = JudgeHandle::new(stub.clone(), cancellation)
+        .send(&plain())
+        .unwrap_err();
+    assert_eq!(
+        (fault.kind(), fault.stage(), fault.charge()),
+        (FaultKind::Cancelled, Stage::NotSent, None)
+    );
+    let fault = JudgeHandle::new(stub.clone(), Cancellation::new())
+        .until(Instant::now())
+        .send(&plain())
+        .unwrap_err();
+    assert_eq!(
+        (fault.kind(), fault.stage()),
+        (FaultKind::TimedOut, Stage::NotSent)
+    );
+    // A tool, for a judge that declares none; and another adapter's part.
+    let tools = JudgeRequest::new("", vec![user("x")], vec![tool("view")], controls()).unwrap();
+    let foreign = Message::new(Role::Assistant, vec![Part::Opaque(opaque("other"))]).unwrap();
+    let carried = JudgeRequest::new("", vec![user("x"), foreign], Vec::new(), controls()).unwrap();
+    for request in [tools, carried] {
+        let fault = JudgeHandle::new(stub.clone(), Cancellation::new())
+            .send(&request)
+            .unwrap_err();
+        assert_eq!(
+            (fault.kind(), fault.stage()),
+            (FaultKind::Unsupported, Stage::NotSent)
+        );
+    }
+    assert_eq!(stub.sent(), 0);
+}
+
+#[test]
+fn a_turn_the_handle_does_not_take_is_answered_with_the_charge_it_carried() {
+    let charge = Charge::of_micros(1200.0).unwrap();
+    // A turn that claims another adapter's part.
+    let claimed = Turn::new(
+        vec![Part::Opaque(opaque("other"))],
+        StopReason::EndTurn,
+        None,
+        None,
+    )
+    .unwrap();
+    let ask = |turn: Turn| {
+        JudgeHandle::new(Stub::new(&[], Ok(turn)), Cancellation::new())
+            .send(&plain())
+            .unwrap_err()
+    };
+    let fault = ask(claimed.clone().charged(charge));
+    assert_eq!(
+        (fault.kind(), fault.stage(), fault.charge()),
+        (FaultKind::Malformed, Stage::Answered, Some(charge))
+    );
+    let fault = ask(claimed);
+    assert_eq!((fault.stage(), fault.charge()), (Stage::Answered, None));
+    // A turn over the limit the handle was given.
+    let over = |turn: Turn| {
+        JudgeHandle::new(Stub::new(&[], Ok(turn)), Cancellation::new())
+            .turns_within(2)
+            .send(&plain())
+            .unwrap_err()
+    };
+    let fault = over(yes().charged(charge));
+    assert_eq!(
+        (fault.kind(), fault.stage(), fault.charge()),
+        (FaultKind::TooLarge, Stage::Answered, Some(charge))
+    );
+    let fault = over(yes());
+    assert_eq!((fault.stage(), fault.charge()), (Stage::Answered, None));
+}
+
+#[test]
+fn a_turn_that_is_taken_keeps_its_charge_and_a_judges_fault_keeps_its_stage() {
+    let charge = Charge::of_micros(1200.0).unwrap();
+    let stub = Stub::new(&[], Ok(yes().charged(charge)));
+    let turn = JudgeHandle::new(stub, Cancellation::new())
+        .send(&plain())
+        .unwrap();
+    assert_eq!(turn.charge(), Some(charge));
+    let fault = || Fault::new(FaultKind::Credential, "status 401");
+    let stated = [
+        fault().not_sent(),
+        fault().answered(Some(charge)),
+        fault().unresolved(),
+        fault(),
+    ];
+    for fault in stated {
+        let handed = JudgeHandle::new(Stub::new(&[], Err(fault.clone())), Cancellation::new())
+            .send(&plain())
+            .unwrap_err();
+        assert_eq!(handed, fault);
+        assert_eq!(
+            (handed.stage(), handed.charge()),
+            (fault.stage(), fault.charge())
+        );
+    }
 }

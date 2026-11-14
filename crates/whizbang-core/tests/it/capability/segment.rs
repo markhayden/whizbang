@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use whizbang_core::capability::{
-    Asked, Bounds, Declaration, Fault, FaultKind, INSTANCE_LIMIT, Instance, PHRASE_LIMIT,
-    QUERY_LIMIT, Query, SegmentHandle, SegmentRequest, SegmentResponse, Segmenter, Unfit, feature,
+    Asked, Bounds, Charge, Declaration, Fault, FaultKind, INSTANCE_LIMIT, Instance, PHRASE_LIMIT,
+    QUERY_LIMIT, Query, SegmentHandle, SegmentRequest, SegmentResponse, Segmenter, Stage, Unfit,
+    feature,
 };
 use whizbang_core::contract::{Cancellation, ModelIdentity};
 
@@ -419,4 +420,98 @@ fn the_segmenter_is_handed_the_handles_own_bounds_and_a_deadline_is_only_narrowe
         assert_eq!(fault.kind(), FaultKind::TimedOut);
     }
     assert_eq!(stub.sent.load(Ordering::SeqCst), 3);
+}
+
+// --- how far a request got, and what it cost (ADR 0010) --------------------------------------
+
+/// A segmenter that answers every request with this.
+fn answering(answer: Result<SegmentResponse, Fault>) -> Arc<Stub> {
+    Arc::new(Stub {
+        declaration: Declaration::new(ModelIdentity::new("stub", "segmenter", "1"), &ALL).unwrap(),
+        answer,
+        sent: AtomicU64::new(0),
+        seen: Mutex::new(None),
+    })
+}
+
+#[test]
+fn a_request_the_handle_refuses_before_its_segmenter_is_called_is_not_sent() {
+    let request = SegmentRequest::new(picture(), dog(), 8).unwrap();
+    let stub = Stub::new(&ALL, vec![Vec::new()]);
+    let cancellation = Cancellation::new();
+    cancellation.cancel();
+    let fault = SegmentHandle::new(stub.clone(), cancellation)
+        .segment(&request)
+        .unwrap_err();
+    assert_eq!(
+        (fault.kind(), fault.stage(), fault.charge()),
+        (FaultKind::Cancelled, Stage::NotSent, None)
+    );
+    let fault = SegmentHandle::new(stub.clone(), Cancellation::new())
+        .until(Instant::now())
+        .segment(&request)
+        .unwrap_err();
+    assert_eq!(
+        (fault.kind(), fault.stage()),
+        (FaultKind::TimedOut, Stage::NotSent)
+    );
+    let pointless = Stub::new(&[feature::POINT], vec![Vec::new()]);
+    let fault = SegmentHandle::new(pointless, Cancellation::new())
+        .segment(&request)
+        .unwrap_err();
+    assert_eq!(
+        (fault.kind(), fault.stage()),
+        (FaultKind::Unsupported, Stage::NotSent)
+    );
+    assert_eq!(stub.sent.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn an_answer_the_handle_does_not_take_is_answered_with_the_charge_it_carried() {
+    let request = SegmentRequest::new(picture(), dog(), 1).unwrap();
+    let charge = Charge::of_micros(800.0).unwrap();
+    // No answer for the one request; and more instances than were asked for.
+    for answers in [Vec::new(), vec![vec![instance(), instance()]]] {
+        let charged = SegmentResponse::new(answers.clone()).charged(charge);
+        let fault = SegmentHandle::new(answering(Ok(charged)), Cancellation::new())
+            .segment(&request)
+            .unwrap_err();
+        assert_eq!(
+            (fault.kind(), fault.stage(), fault.charge()),
+            (FaultKind::Malformed, Stage::Answered, Some(charge))
+        );
+        let silent = SegmentResponse::new(answers);
+        let fault = SegmentHandle::new(answering(Ok(silent)), Cancellation::new())
+            .segment(&request)
+            .unwrap_err();
+        assert_eq!((fault.stage(), fault.charge()), (Stage::Answered, None));
+    }
+}
+
+#[test]
+fn an_answer_that_is_taken_keeps_its_charge_and_a_segmenters_fault_keeps_its_stage() {
+    let request = SegmentRequest::new(picture(), dog(), 8).unwrap();
+    let charge = Charge::of_micros(800.0).unwrap();
+    let charged = SegmentResponse::new(vec![vec![instance()]]).charged(charge);
+    let response = SegmentHandle::new(answering(Ok(charged)), Cancellation::new())
+        .segment(&request)
+        .unwrap();
+    assert_eq!(response.charge(), Some(charge));
+    let fault = || Fault::new(FaultKind::Unavailable, "status 503");
+    let stated = [
+        fault().not_sent(),
+        fault().answered(Some(charge)),
+        fault().unresolved(),
+        fault(),
+    ];
+    for fault in stated {
+        let handed = SegmentHandle::new(answering(Err(fault.clone())), Cancellation::new())
+            .segment(&request)
+            .unwrap_err();
+        assert_eq!(handed, fault);
+        assert_eq!(
+            (handed.stage(), handed.charge()),
+            (fault.stage(), fault.charge())
+        );
+    }
 }
