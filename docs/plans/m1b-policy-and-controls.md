@@ -547,13 +547,13 @@ unchanged; `cargo deny` accepts the new dependency's licence and source.
 `RequestShape`) and `crates/squint-providers/src/catalog.rs` (`Prices`, `bound_tier`);
 table-manners `CONTRACT.md` section 4.5.
 
-- [ ] An ADR, which changes ADR 0006 and names ADR 0007: a quote, in the unit ADR 0007
+- [x] An ADR, which changes ADR 0006 and names ADR 0007: a quote, in the unit ADR 0007
       fixed (millionths of a US dollar), which is one of free, an enforceable bound, or an
       estimate only; for a price by time, that only a limit the host enforces or a fixed
       maximum charge makes a bound; and how a quote becomes the answer of
       `Backends::bound` (an estimate only is no bound). It leaves to B1b what a request
       cost and how far it got, and to B2 which prices go with which recipients.
-- [ ] The quote and a backend's statement of its price, in
+- [x] The quote and a backend's statement of its price, in
       `crates/whizbang-core/src/capability/`. No ledger, no reservation, no fake.
 
 **Done when** these pass: a quote cannot be made from a number that is not finite or is
