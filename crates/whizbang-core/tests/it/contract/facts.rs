@@ -15,8 +15,12 @@ use whizbang_core::contract::{
 use whizbang_core::egress::{Account, Classes, DataClass, Origin};
 use whizbang_testkit::capabilities::{FakeFiller, Paint, roster};
 
-use super::asked::{action, engine, fill_request, stored};
-use super::commit::World;
+use whizbang_core::artifact::ArtifactType;
+use whizbang_core::contract::{Action, ActionDescriptor, Count, Kind, OutputPort, PreparedCall};
+use whizbang_testkit::threads;
+
+use super::asked::{Scripted, action, engine, fill_request, stored};
+use super::commit::{World, held, the_place};
 use super::redact::made_up_key;
 
 fn origin(address: &str) -> Origin {
@@ -35,6 +39,23 @@ fn prompts() -> Classes {
 fn filler() -> Arc<FakeFiller> {
     let price = Price::at_most(500.0).unwrap();
     Arc::new(FakeFiller::new(Paint::Inverse).priced(price).charging(120))
+}
+
+/// An action of this name that needs a filler and may hand back any number of
+/// locations at `bulk`.
+fn returning(
+    name: &str,
+    body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
+) -> Arc<dyn Action> {
+    let draft = ActionDescriptor::draft(name, "1.0.0", Kind::Primitive, "A test action.")
+        .needs(Requirement::new(Capability::Fill))
+        .output(OutputPort::counted(
+            "bulk",
+            ArtifactType::Location,
+            "Any number of locations.",
+            Count::between(0, 1000),
+        ));
+    Arc::new(Scripted(draft.build().unwrap(), Box::new(body)))
 }
 
 /// One fact of each kind, noted as another module would note it. Each is taken.
@@ -342,7 +363,9 @@ fn with_the_limit_set_low_a_run_whose_facts_take_its_record_over_ends_as_an_erro
         error.message.starts_with(
             "the run sent 2 capability requests, and what was noted of it is 96 settings, 2 \
              paid requests and 128 entries of where data went"
-        ),
+        ) && error
+            .message
+            .ends_with(", so none of them is listed in this record"),
         "{}",
         error.message
     );
@@ -398,19 +421,15 @@ fn a_paid_request_noted_for_a_request_the_run_did_not_send_ends_the_run_as_an_er
     // error that says so, whatever its action handed back.
     let world = World::new();
     let filler = filler();
-    let notes = action(
-        "notes",
-        vec![Requirement::new(Capability::Fill)],
-        |_, context| {
-            let (facts, fill) = (context.facts(), context.capabilities().fill().unwrap());
-            fill.fill(&fill_request()).unwrap();
-            assert!(facts.paid(Paid::answered(0, 500, 120).unwrap()));
-            // The run sent one request, which is request 0: there is no request 1,
-            // the first place past those it sent.
-            assert!(facts.paid(Paid::answered(1, 500, 400).unwrap()));
-            Ok(Produced::nothing())
-        },
-    );
+    let notes = returning("notes", |_, context| {
+        let (facts, fill) = (context.facts(), context.capabilities().fill().unwrap());
+        fill.fill(&fill_request()).unwrap();
+        assert!(facts.paid(Paid::answered(0, 500, 120).unwrap()));
+        // The run sent one request, which is request 0: there is no request 1,
+        // the first place past those it sent.
+        assert!(facts.paid(Paid::answered(1, 500, 400).unwrap()));
+        Ok(Produced::nothing().with("bulk", the_place()))
+    });
     let executor = engine(
         &world,
         roster(None, Some(filler.as_ref()), None),
@@ -437,4 +456,177 @@ fn a_paid_request_noted_for_a_request_the_run_did_not_send_ends_the_run_as_an_er
         .collect();
     assert_eq!(listed, [0]);
     assert_eq!(record.models().len(), 1);
+    // And the run committed nothing: the location its action handed back is neither
+    // in the record nor in the store.
+    assert!(record.outputs().is_empty());
+    let after = held(&world.root(), world.fs.clone());
+    assert!(after.outputs.is_empty() && !after.place);
+}
+
+/// An action that sends one fill, notes one fact of each kind, and hands back 200
+/// locations; with `heavy`, it also notes 95 more settings, each of the longest text.
+fn pays_and_returns_many(heavy: bool) -> Arc<dyn Action> {
+    returning("pays", move |_, context| {
+        let fill = context.capabilities().fill().unwrap();
+        fill.fill(&fill_request()).unwrap();
+        note_one_of_each(context);
+        let text = Value::text(&"\u{1}".repeat(256));
+        for at in 0..if heavy { SETTINGS_LIMIT - 1 } else { 0 } {
+            assert!(context.facts().setting(&format!("s{at:03}"), &text), "{at}");
+        }
+        let mut produced = Produced::nothing();
+        for _ in 0..200 {
+            produced = produced.with("bulk", the_place());
+        }
+        Ok(produced)
+    })
+}
+
+#[test]
+fn a_run_whose_outputs_take_its_record_over_the_limit_still_lists_what_it_paid_and_sent() {
+    // The outputs are what takes the record over the limit, which is lowered here
+    // through the executor's seam for tests. They are not committed and not listed.
+    // What the run sent, what it paid and where its data went are not the outputs:
+    // without the outputs the record is under the limit, and it lists them all. A run
+    // that paid never has a record that says nothing was spent because it handed
+    // back too much.
+    let world = World::new();
+    let filler = filler();
+    let executor = engine(
+        &world,
+        roster(None, Some(filler.as_ref()), None),
+        Capabilities::none().with_fill(filler.clone()),
+        vec![pays_and_returns_many(false)],
+    )
+    .with_record_limit(10_000);
+    let finished = executor.submit(&Call::new("pays")).unwrap();
+    let (record, names) = stored(&world, finished.run());
+    assert!(names["record"].len() < 10_000, "{}", names["record"].len());
+    assert_eq!(record.outcome().status, Status::Error);
+    let error = record.outcome().error.as_ref().unwrap();
+    assert_eq!(error.kind, "output");
+    assert!(
+        error
+            .message
+            .starts_with("the action handed back 200 artifacts, and"),
+        "{}",
+        error.message
+    );
+    assert!(record.outputs().is_empty());
+    let after = held(&world.root(), world.fs.clone());
+    assert!(after.outputs.is_empty() && !after.place);
+    // All of it is there.
+    assert_eq!(record.models().len(), 1);
+    assert_eq!(record.time().durations.len(), 1);
+    assert_eq!(record.asked().settings.len(), 1);
+    let paid = &record.spend().requests;
+    assert_eq!(paid.len(), 1);
+    assert_eq!((paid[0].request(), paid[0].settled_micros()), (0, 120));
+    assert_eq!(record.egress().len(), 1);
+    assert_eq!(record.egress()[0].outcome(), Handed::Sent);
+    assert_eq!(record.outcome().refusals.len(), 1);
+}
+
+#[test]
+fn a_record_still_over_the_limit_without_its_outputs_says_what_was_noted_and_that_none_is_listed() {
+    // The second stage, which only the lowered limit reaches: with the outputs gone
+    // the record is still over, so the requests and what was noted are left out too.
+    // The record then says so, with the counts of each, and that none of them is
+    // listed: this is the one case where an ordinary error's lists are empty though
+    // things were noted (ADR 0013).
+    let world = World::new();
+    let filler = filler();
+    let executor = engine(
+        &world,
+        roster(None, Some(filler.as_ref()), None),
+        Capabilities::none().with_fill(filler.clone()),
+        vec![pays_and_returns_many(true)],
+    )
+    .with_record_limit(20_000);
+    let finished = executor.submit(&Call::new("pays")).unwrap();
+    let (record, names) = stored(&world, finished.run());
+    assert!(names["record"].len() < 20_000, "{}", names["record"].len());
+    assert_eq!(record.outcome().status, Status::Error);
+    let error = record.outcome().error.as_ref().unwrap();
+    assert_eq!(error.kind, "record");
+    let (start, end) = (
+        "the action handed back 200 artifacts, which are not committed; the run sent 1 \
+         capability requests, and what was noted of it is 96 settings, 1 paid requests \
+         and 1 entries of where data went: the record that lists them would be ",
+        " bytes, and a record is at most 20000 bytes, so none of them is listed in this \
+         record",
+    );
+    assert!(
+        error.message.starts_with(start) && error.message.ends_with(end),
+        "{}",
+        error.message
+    );
+    assert!(record.outputs().is_empty() && record.models().is_empty());
+    assert!(record.asked().settings.is_empty() && record.egress().is_empty());
+    assert!(record.spend().requests.is_empty());
+    let after = held(&world.root(), world.fs.clone());
+    assert!(after.outputs.is_empty() && !after.place);
+}
+
+#[test]
+fn a_clone_that_notes_from_another_thread_while_the_run_ends_is_in_the_record_or_was_answered_no() {
+    // Another module holds a clone of the run's place and notes from its own thread
+    // while the run ends. Each note answers yes or no. The record holds exactly the
+    // notes that were answered yes, and once one was answered no, every one after
+    // is. Nothing here sleeps: the action comes back once the thread has had its
+    // first yes, and the thread goes on until its first no.
+    let world = World::new();
+    type Noting = std::thread::JoinHandle<(u64, u64)>;
+    let noting: Arc<Mutex<Option<Noting>>> = Arc::default();
+    let notes = {
+        let noting = noting.clone();
+        action("notes", Vec::new(), move |_, context| {
+            let facts = context.facts().clone();
+            let (first, had_first) = std::sync::mpsc::channel();
+            // One thread, joined below once the run is over.
+            let thread = threads::spawn(move || {
+                let (mut yes, mut after) = (0_u64, 0_u64);
+                // A bound far past what the end of a run takes: reaching it fails
+                // the test, which then finds no answer of no.
+                for at in 0..50_000_000_u64 {
+                    if !facts.refused(RefusalKind::RequestNoBound, "no bound") {
+                        // After the first no, sixteen more of two kinds: each is a no.
+                        for _ in 0..16 {
+                            let taken = facts.refused(RefusalKind::RequestNoBound, "late")
+                                || facts.setting("late", &Value::Integer(1));
+                            after += u64::from(taken);
+                        }
+                        break;
+                    }
+                    yes += 1;
+                    if at == 0 {
+                        first.send(()).unwrap();
+                    }
+                }
+                (yes, after)
+            });
+            had_first.recv().unwrap();
+            *noting.lock().unwrap() = Some(thread);
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(
+        &world,
+        roster(None, None, None),
+        Capabilities::none(),
+        vec![notes],
+    );
+    let finished = executor.submit(&Call::new("notes")).unwrap();
+    let thread = noting.lock().unwrap().take().unwrap();
+    let (yes, after) = thread.join().unwrap();
+    assert!((1..50_000_000).contains(&yes), "{yes}");
+    assert_eq!(after, 0, "a note was taken after one was answered no");
+    let (record, _) = stored(&world, finished.run());
+    let outcome = record.outcome();
+    assert_eq!(outcome.status, Status::Completed);
+    assert_eq!(
+        outcome.refusals.len() as u64 + outcome.refusals_omitted,
+        yes
+    );
+    assert!(record.asked().settings.is_empty());
 }
