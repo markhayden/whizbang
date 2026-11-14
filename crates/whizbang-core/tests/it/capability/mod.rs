@@ -2,9 +2,11 @@
 //! feature declarations and resolution, the checked types of each capability's request
 //! and response, and the handles an action asks through.
 
+mod charge;
 mod fault;
 pub mod fill;
 mod judge;
+mod price;
 mod resolve;
 mod segment;
 pub mod written;

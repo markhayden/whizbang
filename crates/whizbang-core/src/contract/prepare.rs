@@ -85,8 +85,14 @@ pub trait Backends: Send + Sync {
 
     /// The most one call's use of this capability can cost when this model answers it:
     /// a bound the backend states, not a guess. It is answered from what is configured,
-    /// as [`Backends::resolve`] is. No backend has a price before the ledger of
-    /// checkpoint 1B, so the answer is nothing unless a backend says otherwise.
+    /// as [`Backends::resolve`] is. The answer is nothing unless an implementation
+    /// says otherwise.
+    ///
+    /// A [`Roster`](crate::capability::Roster) alone does not answer the whole of
+    /// this: it answers the quote of one request from the price a backend declares,
+    /// with an estimate only as the amount that is no bound, and does not know how
+    /// many requests a call sends (ADR 0010, "Limits"). An implementation that an
+    /// executor with a ledger reserves from covers every request the call sends.
     fn bound(&self, capability: Capability, model: &ModelIdentity) -> Estimate {
         let _ = (capability, model);
         Estimate::default()
@@ -109,6 +115,12 @@ impl Estimate {
     /// A bound of this many millionths of a US dollar.
     pub fn of_micros(micros: u64) -> Estimate {
         Estimate { micros }
+    }
+
+    /// The largest amount there is, which is no amount: what a cost with no bound
+    /// that can be counted is answered with ([`Estimate::is_unbounded`]).
+    pub fn unbounded() -> Estimate {
+        Estimate { micros: u64::MAX }
     }
 
     /// The bound, in millionths of a US dollar.

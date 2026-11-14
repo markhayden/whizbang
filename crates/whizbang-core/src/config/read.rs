@@ -23,6 +23,17 @@ use crate::contract::{Secrets, text};
 
 type Read<T> = Result<T, ConfigRefused>;
 
+/// The keys of a backend beside `kind`. In a table of several backends none has one of
+/// these as its name.
+const BACKEND_KEYS: [&str; 6] = [
+    "model",
+    "provider",
+    "url",
+    "key_env",
+    "token_env",
+    "settings",
+];
+
 const NAME_RULE: &str =
     "a lower-case letter, then lower-case letters, digits, _ or -, 64 characters at most";
 
@@ -31,13 +42,18 @@ impl Config {
     /// must never be written, as the values of an env file are: a file that holds one
     /// anywhere is refused, and nothing of it is shown.
     ///
-    /// The file's length is asked for before the file is opened, and a file over
-    /// [`CONFIG_BYTES_LIMIT`] is refused from it. No more than the limit and one byte is
-    /// read of a file that is longer than it said. The refusal holds no path.
+    /// What the path names is asked of the file system before anything is opened: a
+    /// folder, a pipe, a device or anything else that is not a file is refused, and a
+    /// file over [`CONFIG_BYTES_LIMIT`] is refused from its length. No more than the
+    /// limit and one byte is then read, should the file have grown since. The refusal
+    /// holds no path.
     pub fn read(path: &Path, secrets: &Secrets) -> Result<Config, ConfigRefused> {
         let unreadable = |error: std::io::Error| ConfigRefused::Unreadable(error.kind());
-        let length = std::fs::metadata(path).map_err(unreadable)?.len();
-        if length > CONFIG_BYTES_LIMIT {
+        let metadata = std::fs::metadata(path).map_err(unreadable)?;
+        if !metadata.is_file() {
+            return Err(ConfigRefused::NotAFile);
+        }
+        if metadata.len() > CONFIG_BYTES_LIMIT {
             return Err(ConfigRefused::TooLarge {
                 limit: CONFIG_BYTES_LIMIT,
             });
@@ -80,7 +96,7 @@ impl Config {
         if holds_secret(&table, secrets) {
             return Err(ConfigRefused::HoldsSecret);
         }
-        config(table)
+        config(table, secrets)
     }
 }
 
@@ -130,42 +146,81 @@ fn not_toml(text: &str, error: &toml::de::Error, secrets: &Secrets) -> ConfigRef
     let Ok(read) = format!("{written} = 0").parse::<Table>() else {
         return ConfigRefused::NotToml { line };
     };
-    let mut keys: Vec<&str> = Vec::new();
-    let mut table = &read;
-    while let Some((key, value)) = table.iter().next() {
-        keys.push(key);
-        match value {
-            Value::Table(inner) if table.len() == 1 => table = inner,
-            _ => break,
-        }
+    // The key's path from the top, as far as the text tells it: the keys of the
+    // heading it stands under and then its own, or the heading's alone when the key
+    // is in a heading.
+    let lines: Vec<&str> = text.split('\n').take(line).collect();
+    let heading = |line: &str| line.trim_start().starts_with('[');
+    let above = lines.iter().rev().filter(|line| heading(line));
+    let mut path = match above.filter_map(|line| line.parse::<Table>().ok()).next() {
+        Some(table) => keys_of(&table),
+        None => Vec::new(),
+    };
+    if !lines.last().is_some_and(|line| heading(line)) {
+        path.extend(keys_of(&read));
     }
-    let key = keys.join(".");
-    if secrets.redact(&key) != key {
+    let whole = path.join(".");
+    if secrets.redact(&whole) != whole {
         return ConfigRefused::HoldsSecret;
     }
+    let shown: Vec<String> = path.iter().map(|key| shown(key)).collect();
     ConfigRefused::Twice {
-        key: shown(&key),
+        key: shown.join("."),
         line,
     }
 }
 
-/// Where the reader is: the keys from the top of the file, with dots. A key that came
-/// from the file is escaped and cut where it is added.
-#[derive(Clone)]
-struct At(String);
+/// The keys of a table that holds one key, and of the table under it, and so on down.
+fn keys_of(table: &Table) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut table = table;
+    while let Some((key, value)) = table.iter().next()
+        && table.len() == 1
+    {
+        keys.push(key.clone());
+        match value {
+            Value::Table(inner) => table = inner,
+            _ => break,
+        }
+    }
+    keys
+}
 
-impl At {
-    fn top(key: &str) -> At {
-        At(shown(key))
+/// Where the reader is: the keys from the top of the file, with dots, twice: as a
+/// refusal shows them, each key that came from the file escaped and cut; and whole, as
+/// they were read. Every refusal that names a key is made here, by [`At::refuse`],
+/// which looks at the whole path for a secret first: a secret can stand across two
+/// keys, or across a key and a word the reader adds, where no key alone holds it.
+#[derive(Clone)]
+struct At<'a> {
+    shown: String,
+    whole: String,
+    secrets: &'a Secrets,
+}
+
+impl<'a> At<'a> {
+    fn top(key: &str, secrets: &'a Secrets) -> At<'a> {
+        At {
+            shown: shown(key),
+            whole: key.to_owned(),
+            secrets,
+        }
     }
 
-    fn then(&self, key: &str) -> At {
-        At(format!("{}.{}", self.0, shown(key)))
+    fn then(&self, key: &str) -> At<'a> {
+        At {
+            shown: format!("{}.{}", self.shown, shown(key)),
+            whole: format!("{}.{key}", self.whole),
+            secrets: self.secrets,
+        }
     }
 
     fn refuse(&self, why: impl Into<String>) -> ConfigRefused {
+        if self.secrets.redact(&self.whole) != self.whole {
+            return ConfigRefused::HoldsSecret;
+        }
         ConfigRefused::Key {
-            key: self.0.clone(),
+            key: self.shown.clone(),
             why: why.into(),
         }
     }
@@ -314,13 +369,13 @@ fn is_address(text: &str) -> bool {
     is_origin(origin) && path && text.len() <= ADDRESS_LIMIT
 }
 
-fn config(mut table: Table) -> Read<Config> {
+fn config(mut table: Table, secrets: &Secrets) -> Read<Config> {
     let mut config = Config::empty();
     if let Some(value) = table.remove("backends") {
-        config.backends = backends(&At::top("backends"), value)?;
+        config.backends = backends(&At::top("backends", secrets), value)?;
     }
     if let Some(value) = table.remove("spend") {
-        let at = At::top("spend");
+        let at = At::top("spend", secrets);
         let mut spend = at.table(value)?;
         if let Some(value) = spend.remove("call_cap_usd") {
             config.call_cap_micros = Some(call_cap(&at.then("call_cap_usd"), &value)?);
@@ -328,7 +383,7 @@ fn config(mut table: Table) -> Read<Config> {
         at.unknown(&spend, "call_cap_usd")?;
     }
     if let Some(value) = table.remove("egress") {
-        let at = At::top("egress");
+        let at = At::top("egress", secrets);
         let mut egress = at.table(value)?;
         if let Some(value) = egress.remove("recipients") {
             config.recipients = recipients(&at.then("recipients"), value)?;
@@ -336,7 +391,7 @@ fn config(mut table: Table) -> Read<Config> {
         at.unknown(&egress, "recipients")?;
     }
     if let Some(value) = table.remove("models") {
-        let at = At::top("models");
+        let at = At::top("models", secrets);
         if let Some(key) = at.table(value)?.keys().next() {
             return Err(at
                 .then(key)
@@ -344,14 +399,12 @@ fn config(mut table: Table) -> Read<Config> {
         }
     }
     if table.contains_key("tools") {
-        return Err(At::top("tools")
+        return Err(At::top("tools", secrets)
             .refuse("is not read yet: the table of tools is given its shape at milestone 2"));
     }
     match table.keys().next() {
-        Some(key) => {
-            Err(At::top(key)
-                .refuse("is not known; the tables are backends, spend, egress and models"))
-        }
+        Some(key) => Err(At::top(key, secrets)
+            .refuse("is not known; the tables are backends, spend, egress and models")),
         None => Ok(config),
     }
 }
@@ -380,6 +433,14 @@ fn backends(at: &At, value: Value) -> Read<BTreeMap<&'static str, Offered>> {
                 return Err(at.refuse(format!("holds more than {BACKENDS_LIMIT} backends")));
             }
             for (name, value) in table {
+                // A backend's own key here is one backend written without its kind,
+                // and not a backend of that name.
+                if BACKEND_KEYS.contains(&name.as_str()) {
+                    return Err(at.then("kind").refuse(
+                        "is missing: a table that holds a backend's keys is one backend, \
+                         and a backend has a kind",
+                    ));
+                }
                 let at = at.then(&name);
                 if text::action_name(&name).is_err() {
                     return Err(at.refuse(format!("is not a backend's name: {NAME_RULE}")));
