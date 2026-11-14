@@ -84,7 +84,7 @@ fn remote(sender: &Arc<FakeSender>) -> Arc<Remote> {
         declaration: Declaration::new(ModelIdentity::new("fake", "remote", "1"), &["prompt"])
             .unwrap(),
         sender: sender.clone(),
-        credential: Credential::new(origin, "x-api-key", KEY).unwrap(),
+        credential: Credential::new(origin, "x-api-key", KEY, &Secrets::none()).unwrap(),
     })
 }
 

@@ -237,7 +237,8 @@ impl DownloadRequest {
 /// How one request for a file ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Downloaded {
-    /// This many bytes were handed to the sink, and the sink took them.
+    /// This many bytes were handed to the sink, every piece counted: the last one too,
+    /// when the sink answered no to it.
     Bytes(u64),
     /// The file is not here: the request was pointed to this address. Nothing has been
     /// asked of it.
@@ -245,9 +246,15 @@ pub enum Downloaded {
 }
 
 /// The way a model's file arrives: one request to one address. The bytes are handed to
-/// `sink` piece by piece, in order; the sink answers whether to go on, and a download
-/// stops when it says no. It is bounded by a cancellation signal, and does not follow
-/// a redirect.
+/// `sink` piece by piece, in order, and the sink answers whether to go on.
+///
+/// **What a sink's "no" means.** The piece it answered no to was handed over: the sink
+/// has seen it, may have kept it, and it is counted in [`Downloaded::Bytes`]. Nothing
+/// is handed over after it, and the download ends there as one that was answered,
+/// not as a fault. So a caller that stops at a size counts what its sink was handed,
+/// and the count it is given back is the same number.
+///
+/// It is bounded by a cancellation signal, and does not follow a redirect.
 pub trait Downloader: Send + Sync {
     fn download(
         &self,
