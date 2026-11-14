@@ -2,6 +2,7 @@
 //! hands to whatever runs actions.
 
 use std::any::Any;
+use std::collections::BTreeSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -16,6 +17,7 @@ use super::journal::Kept;
 use super::ledger::{Declined, Reservation, Step};
 use super::live::{self, LiveRun, Told};
 use super::nested::{Added, DESCENDANTS_LIMIT, Family, HeldOpen, Nested, Offer, Under};
+use super::part::{self, Asking, PartDeclined, PartStep};
 use super::prepare::prepare;
 use super::record::{
     Diagnostic, Facts, Inside, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran,
@@ -23,11 +25,11 @@ use super::record::{
 };
 use super::request::{Found, look_up, outcome_of};
 use super::{
-    ADMITTED_NAME, Action, ActionDescriptor, Admission, Answer, Backends, Call, CallError, Cancel,
-    Cancellation, Capabilities, Clock, Committed, Context, Ending, Failure, Finished, Ledger,
-    MESSAGE_LIMIT, Outcome, PreparedCall, Produced, Readiness, Refusal, Registry, Request,
-    RequestId, RunFacts, RunId, RunState, Secrets, Stale, StoreFailure, SystemClock, Watched,
-    request_fingerprint,
+    ADMITTED_NAME, Action, ActionDescriptor, Admission, AdmissionPart, Answer, Backends, Call,
+    CallError, Cancel, Cancellation, Capabilities, Clock, Committed, Context, Ending, Estimate,
+    Failure, Finished, Ledger, MESSAGE_LIMIT, Outcome, PreparedCall, Produced, Readiness, Refusal,
+    Registry, Request, RequestId, RunFacts, RunId, RunState, Secrets, Stale, StoreFailure,
+    SystemClock, Watched, request_fingerprint,
 };
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
@@ -123,6 +125,8 @@ pub struct Engine {
     secrets: Secrets,
     /// The ledger that takes part in admission, when this executor was given one.
     ledger: Option<Arc<dyn Ledger>>,
+    /// The parts of every admission, in the order they were given (ADR 0015).
+    parts: Vec<Arc<dyn AdmissionPart>>,
     /// The backends each run's capability handles are made over.
     capabilities: Capabilities,
     /// How many runs may be admitted under one run that nothing called.
@@ -223,6 +227,7 @@ impl Engine {
             clock: Arc::new(SystemClock),
             secrets: Secrets::none(),
             ledger: None,
+            parts: Vec::new(),
             capabilities: Capabilities::none(),
             descendants: DESCENDANTS_LIMIT,
             requests: REQUESTS_LIMIT,
@@ -271,6 +276,14 @@ impl Engine {
     /// asked for (ADR 0007, "The reservation"). Without one nothing is reserved.
     pub fn with_ledger(mut self, ledger: Arc<dyn Ledger>) -> Engine {
         self.ledger = Some(ledger);
+        self
+    }
+
+    /// The same executor, with one more part in every admission, asked after those it
+    /// already has (ADR 0015, "A part in the admission"). Without one, admission is
+    /// as it was.
+    pub fn with_part(mut self, part: Arc<dyn AdmissionPart>) -> Engine {
+        self.parts.push(part);
         self
     }
 
@@ -403,7 +416,10 @@ const MAX_NAMINGS: u32 = 8;
 
 impl Executor for Engine {
     fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError> {
-        self.prepare_from(call, self.contents.as_ref())
+        let prepared = self.prepare_from(call, self.contents.as_ref())?;
+        // A preparation carries the time it was made, beside its fingerprint and not
+        // in it (ADR 0015): the clock is read once it is made, and for no refusal.
+        Ok(prepared.made_at(self.clock.now_ms()))
     }
 
     fn submit(&self, call: &Call) -> Result<Finished, CallError> {
@@ -673,6 +689,9 @@ pub(super) struct Admitted {
 pub(super) struct Bounded {
     pub(super) signal: Cancellation,
     pub(super) deadline: Option<Instant>,
+    /// The cap the request came with, which the executor shows to its parts and
+    /// holds no call to (ADR 0015).
+    pub(super) cap: Option<Estimate>,
 }
 
 impl Bounded {
@@ -682,6 +701,7 @@ impl Bounded {
         Bounded {
             signal: request.cancellation().cloned().unwrap_or_default(),
             deadline: request.deadline(),
+            cap: request.cap(),
         }
     }
 
@@ -689,6 +709,7 @@ impl Bounded {
         Bounded {
             signal: Cancellation::new(),
             deadline: None,
+            cap: None,
         }
     }
 }
@@ -865,7 +886,7 @@ impl Engine {
         };
         let prepared = match &view {
             Some(view) => self.prepare_from(call, view.as_ref()),
-            None => self.prepare(call),
+            None => self.prepare_from(call, self.contents.as_ref()),
         };
         let prepared = match (prepared, expected) {
             (Ok(prepared), _) => prepared,
@@ -907,6 +928,9 @@ impl Engine {
         // published. From the publication on there is a run, durably, and whatever
         // happens to its action it is in the store.
         let start_ms = self.clock.now_ms();
+        // The preparation made here was made at the time of the admission: the one
+        // reading of the clock an admission makes (ADR 0015).
+        let prepared = prepared.made_at(start_ms);
         let request = asked.map(|(id, _)| id);
         let fingerprint = match asked {
             Some((_, fingerprint)) => fingerprint,
@@ -979,6 +1003,44 @@ impl Engine {
             .under(parent.clone())
             .to_bytes();
             let mut publication = store.begin().map_err(failed)?;
+            // The executor's parts are asked first, in the order they were given, for
+            // every attempt: each may refuse the call, and may add records among the
+            // names of the run this attempt makes (ADR 0015). A refusal or a failure
+            // drops the publication with all it staged, before the ledger is asked.
+            let asking = Asking {
+                call,
+                id: request,
+                expected,
+                cap: bounded.cap,
+                prepared: &prepared,
+                now_ms: start_ms,
+                parent: parent.as_ref(),
+            };
+            let mut added = BTreeSet::new();
+            for part in &self.parts {
+                let name = part.name();
+                let mut step =
+                    PartStep::new(&mut publication, &run, &self.secrets, name, &mut added);
+                match part.look(&asking, &mut step) {
+                    Ok(()) => {}
+                    Err(PartDeclined::Refused(refusal)) => {
+                        return Err(CallError::Refused(Refusal::ByPart {
+                            action: prepared.action().to_owned(),
+                            part: name,
+                            kind: refusal.kind(),
+                            why: part::sentence(&self.secrets, refusal.why()),
+                        })
+                        .into());
+                    }
+                    // What a part says of its own failure is cleaned as its refusal
+                    // is; what the store or the step said is as it was.
+                    Err(PartDeclined::Failed(CallError::Part { part, why })) => {
+                        let why = part::sentence(&self.secrets, &why);
+                        return Err(CallError::Part { part, why }.into());
+                    }
+                    Err(PartDeclined::Failed(error)) => return Err(error.into()),
+                }
+            }
             // The ledger takes part here: it judges, and adds what it must to this
             // publication, before anything is published. Declined, the publication is
             // dropped with all it staged.

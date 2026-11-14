@@ -597,6 +597,7 @@ impl Nested {
                 (Some(one), Some(other)) => Some(one.min(other)),
                 (one, other) => one.or(other),
             },
+            cap: request.cap(),
         };
         let admitted = self
             .engine

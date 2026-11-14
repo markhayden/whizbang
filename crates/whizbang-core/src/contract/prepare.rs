@@ -288,7 +288,10 @@ impl ResolvedInput {
 /// A call that was checked and resolved, and what was seen while doing it.
 ///
 /// It is made by preparing a call and in no other way.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Two preparations are equal when they saw the same: the time each was made
+/// ([`PreparedCall::made_ms`]) is beside what a preparation is, and is not compared.
+#[derive(Debug, Clone)]
 pub struct PreparedCall {
     action: String,
     version: String,
@@ -300,9 +303,58 @@ pub struct PreparedCall {
     config: Digest,
     estimate: Estimate,
     fingerprint: Digest,
+    /// When it was made, by the clock of the executor that made it. It is beside the
+    /// fingerprint and not in it, and is not compared when a preparation is held
+    /// against the same call prepared again.
+    made_ms: u64,
+}
+
+impl PartialEq for PreparedCall {
+    fn eq(&self, other: &PreparedCall) -> bool {
+        // Every field is named, so that one added later is compared or left out here
+        // on purpose.
+        let PreparedCall {
+            action,
+            version,
+            arguments,
+            inputs,
+            needs,
+            outputs,
+            readiness,
+            config,
+            estimate,
+            fingerprint,
+            made_ms: _,
+        } = self;
+        *action == other.action
+            && *version == other.version
+            && *arguments == other.arguments
+            && *inputs == other.inputs
+            && *needs == other.needs
+            && *outputs == other.outputs
+            && *readiness == other.readiness
+            && *config == other.config
+            && *estimate == other.estimate
+            && *fingerprint == other.fingerprint
+    }
 }
 
 impl PreparedCall {
+    /// When this preparation was made, in milliseconds since the Unix epoch, by the
+    /// clock of the executor that made it (ADR 0015). It is no part of the
+    /// fingerprint, which stays as `prepared/1` gives it, and a preparation is never
+    /// stale against the same call prepared at another time for the time alone.
+    pub fn made_ms(&self) -> u64 {
+        self.made_ms
+    }
+
+    /// The same preparation, made at this time: the executor says so once it has
+    /// prepared a call, and nothing else does.
+    pub(super) fn made_at(mut self, ms: u64) -> PreparedCall {
+        self.made_ms = ms;
+        self
+    }
+
     /// What the call may cost at most, as the backends state it. It is not part of the
     /// fingerprint; admission compares it beside the fingerprint.
     pub fn estimate(&self) -> Estimate {
@@ -522,6 +574,13 @@ pub enum CallError {
         run: super::RunId,
         why: String,
     },
+    /// A part of the admission ([`super::AdmissionPart`]) failed, or did what a part
+    /// may not: `part` is its name, and the sentence says which. This is not a
+    /// judgement of the call, and nothing was published.
+    Part {
+        part: &'static str,
+        why: String,
+    },
 }
 
 impl CallError {
@@ -541,7 +600,8 @@ impl CallError {
             CallError::Store(_)
             | CallError::Record { .. }
             | CallError::Ledger { .. }
-            | CallError::NotStarted { .. } => None,
+            | CallError::NotStarted { .. }
+            | CallError::Part { .. } => None,
         }
     }
 }
@@ -568,6 +628,11 @@ impl std::fmt::Display for CallError {
                 f,
                 "the run {run} was admitted and could not be started: no thread could be \
                  made for its action: {why}"
+            ),
+            CallError::Part { part, why } => write!(
+                f,
+                "a part of the admission failed ({}): {why}",
+                part.escape_debug()
             ),
         }
     }
@@ -702,6 +767,18 @@ pub enum Refusal {
         port: String,
         id: ArtifactId,
     },
+    /// The call is ready, and a part of the admission refused it
+    /// ([`super::AdmissionPart`], ADR 0015): `part` is the part's name, `kind` is
+    /// what the part says a record spells the refusal as, and `why` is the part's
+    /// sentence, with the executor's secrets taken out and then cut. No run was
+    /// made, nothing was reserved, nothing was taken from a caller's allowance, and
+    /// the request's id is not taken by this request.
+    ByPart {
+        action: String,
+        part: &'static str,
+        kind: RefusalKind,
+        why: String,
+    },
 }
 
 impl Refusal {
@@ -735,6 +812,7 @@ impl Refusal {
             Refusal::WaitCancelled { .. } => RefusalKind::WaitCancelled,
             Refusal::NotOffered { .. } => RefusalKind::NotOffered,
             Refusal::NotReadable { .. } => RefusalKind::NotReadable,
+            Refusal::ByPart { kind, .. } => *kind,
         }
     }
 }
@@ -882,6 +960,13 @@ impl std::fmt::Display for Refusal {
                 f,
                 "{action} was not admitted: the input {port} is {id}, which the run that \
                  made the call was not given and no run it called committed"
+            ),
+            Refusal::ByPart {
+                action, part, why, ..
+            } => write!(
+                f,
+                "{action}: refused at admission, by {}: {why}",
+                part.escape_debug()
             ),
         }
     }
@@ -1172,6 +1257,7 @@ pub(super) fn prepare(
         config,
         estimate,
         fingerprint: config,
+        made_ms: 0,
     };
     prepared.fingerprint = fingerprint(&prepared);
     Ok(prepared)
