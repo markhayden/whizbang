@@ -179,10 +179,11 @@ call_cap_usd = 3
 ```
 
 ```text
-the config gives the key `call_cap_usd` twice, the second time at line 3
+the config gives the key `spend.call_cap_usd` twice, the second time at line 3
 ```
 
-Also refused: a file over 256 KiB; bytes that are not UTF-8, or a control character; a
+Also refused: a path that names a folder or anything else that is not a file; a file
+over 256 KiB; bytes that are not UTF-8, or a control character; a
 table `tools`, which has no shape until milestone 2; any key in the table `models`,
 which has none yet; and a text with a letter outside ASCII, outside a comment.
 

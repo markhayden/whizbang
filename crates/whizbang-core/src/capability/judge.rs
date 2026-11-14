@@ -17,7 +17,7 @@ use serde_json::Value;
 use crate::contract::{Cancellation, Capability, text};
 
 use super::fault::{Raw, clean};
-use super::{Bounds, Declaration, Fault, FaultKind, Picture, Unfit, feature};
+use super::{Bounds, Charge, Declaration, Fault, FaultKind, Picture, Unfit, feature};
 
 /// The most messages a conversation holds.
 pub const MESSAGE_LIMIT: usize = 1024;
@@ -652,7 +652,7 @@ impl Usage {
 }
 
 /// What a judge answered: ordered content, why it stopped, and what it used. Two turns
-/// are equal when those are, and the provider's id.
+/// are equal when those are, and the provider's id, and the charge.
 #[derive(Clone)]
 pub struct Turn {
     parts: Vec<Part>,
@@ -663,12 +663,21 @@ pub struct Turn {
     /// until a handle has looked for secrets in them.
     raw_stop: Option<Raw>,
     raw_id: Option<Raw>,
+    /// What the request cost, when the backend's answer said.
+    charge: Option<Charge>,
 }
 
 impl PartialEq for Turn {
     fn eq(&self, other: &Turn) -> bool {
-        (&self.parts, &self.stop, &self.usage, &self.request_id)
-            == (&other.parts, &other.stop, &other.usage, &other.request_id)
+        let all = |turn: &Turn| {
+            (
+                turn.stop.clone(),
+                turn.usage,
+                turn.request_id.clone(),
+                turn.charge,
+            )
+        };
+        self.parts == other.parts && all(self) == all(other)
     }
 }
 
@@ -679,6 +688,7 @@ impl std::fmt::Debug for Turn {
             .field("stop", &self.stop)
             .field("usage", &self.usage)
             .field("request_id", &self.request_id)
+            .field("charge", &self.charge)
             .finish()
     }
 }
@@ -766,7 +776,21 @@ impl Turn {
             request_id,
             raw_stop,
             raw_id,
+            charge: None,
         })
+    }
+
+    /// The same turn, with what the request cost: the charge the provider's answer
+    /// reports, or the one the adapter works out from the usage the answer reports at
+    /// the prices it quoted from (ADR 0010). A turn without one cost its bound.
+    pub fn charged(mut self, charge: Charge) -> Turn {
+        self.charge = Some(charge);
+        self
+    }
+
+    /// What the request cost, when the answer said.
+    pub fn charge(&self) -> Option<Charge> {
+        self.charge
     }
 
     /// The same turn as a run may be told of it and may store it: the provider's word
@@ -964,11 +988,12 @@ impl JudgeHandle {
         }
         let answer = self.backend.send(request, &self.bounds).and_then(|turn| {
             if turn.opaque().any(|opaque| opaque.adapter != backend) {
-                return Err(Unfit::NotAllowed {
+                // An answer came, and it is not taken: what it said it cost stands.
+                let unfit = Unfit::NotAllowed {
                     what: "a turn",
                     why: "holds a part of another adapter than the backend that answered",
-                }
-                .into());
+                };
+                return Err(Fault::from(unfit).answered(turn.charge));
             }
             Ok(turn)
         });
@@ -994,7 +1019,8 @@ impl JudgeHandle {
                         turn.text_bytes(),
                         self.turn_bytes.unwrap_or(0)
                     ),
-                );
+                )
+                .answered(turn.charge);
                 (Err(fault), Some(turn))
             }
             answer => (answer, None),

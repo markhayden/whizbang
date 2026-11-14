@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use whizbang_core::artifact::{Mask, Source, UseCase};
 
 use whizbang_core::capability::{
-    Bounds, Declaration, Fault, FaultKind, FillHandle, FillRequest, Filler, PIXEL_LIMIT,
-    PROMPT_LIMIT, Painted, Picture, Support, Unfit, feature,
+    Bounds, Charge, Declaration, Fault, FaultKind, FillHandle, FillRequest, Filler, PIXEL_LIMIT,
+    PROMPT_LIMIT, Painted, Picture, Stage, Support, Unfit, feature,
 };
 use whizbang_core::contract::{Cancellation, ModelIdentity};
 use whizbang_core::identity::CanonicalPixels;
@@ -204,7 +204,7 @@ fn what_is_printed_of_a_plane_a_fill_or_a_request_is_its_size_and_never_its_byte
     let painted = Painted::from_rgb(WIDTH, HEIGHT, vec![77; PIXELS * 3]).unwrap();
     assert_eq!(
         format!("{painted:?}"),
-        format!("Painted({WIDTH} by {HEIGHT})")
+        format!("Painted({WIDTH} by {HEIGHT}, no charge)")
     );
     // A request prints its picture's digest, its support's size, and how long its
     // prompt is: not the prompt.
@@ -466,4 +466,108 @@ fn a_fillers_fault_is_handed_back_as_it_is() {
             .unwrap_err(),
         fault
     );
+}
+
+// --- how far a request got, and what it cost (ADR 0010) --------------------------------------
+
+fn charge(micros: u64) -> Charge {
+    Charge::of_micros(micros as f64).unwrap()
+}
+
+#[test]
+fn a_request_the_handle_refuses_before_its_filler_is_called_is_not_sent() {
+    let request = FillRequest::new(picture(), support(), Some("grass")).unwrap();
+    // The run was cancelled.
+    let stub = Stub::new(&[feature::PROMPT], Ok(grey(WIDTH, HEIGHT)));
+    let cancellation = Cancellation::new();
+    cancellation.cancel();
+    let fault = FillHandle::new(stub.clone(), cancellation)
+        .fill(&request)
+        .unwrap_err();
+    assert_eq!(
+        (fault.kind(), fault.stage(), fault.charge()),
+        (FaultKind::Cancelled, Stage::NotSent, None)
+    );
+    // Its deadline had passed.
+    let fault = FillHandle::new(stub.clone(), Cancellation::new())
+        .until(Instant::now())
+        .fill(&request)
+        .unwrap_err();
+    assert_eq!(
+        (fault.kind(), fault.stage()),
+        (FaultKind::TimedOut, Stage::NotSent)
+    );
+    // The filler declares no prompt.
+    let plain = Stub::new(&[], Ok(grey(WIDTH, HEIGHT)));
+    let fault = FillHandle::new(plain.clone(), Cancellation::new())
+        .fill(&request)
+        .unwrap_err();
+    assert_eq!(
+        (fault.kind(), fault.stage()),
+        (FaultKind::Unsupported, Stage::NotSent)
+    );
+    assert_eq!(stub.sent.load(Ordering::SeqCst), 0);
+    assert_eq!(plain.sent.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_fill_the_handle_does_not_take_is_answered_with_the_charge_it_carried() {
+    let request = FillRequest::new(picture(), support(), None).unwrap();
+    let ask = |answer: Painted| {
+        FillHandle::new(Stub::new(&[], Ok(answer)), Cancellation::new())
+            .fill(&request)
+            .unwrap_err()
+    };
+    let fault = ask(grey(1, 1).charged(charge(450)));
+    assert_eq!(
+        (fault.kind(), fault.stage(), fault.charge()),
+        (FaultKind::Malformed, Stage::Answered, Some(charge(450)))
+    );
+    // An answer that said nothing of its cost is answered all the same.
+    let fault = ask(grey(1, 1));
+    assert_eq!((fault.stage(), fault.charge()), (Stage::Answered, None));
+}
+
+#[test]
+fn a_fill_that_is_taken_keeps_its_charge_and_a_fillers_fault_keeps_its_stage() {
+    let request = FillRequest::new(picture(), support(), None).unwrap();
+    let ask = |answer: Result<Painted, Fault>| {
+        FillHandle::new(Stub::new(&[], answer), Cancellation::new()).fill(&request)
+    };
+    let painted = ask(Ok(grey(WIDTH, HEIGHT).charged(charge(450)))).unwrap();
+    assert_eq!(painted.charge(), Some(charge(450)));
+    assert_eq!(ask(Ok(grey(WIDTH, HEIGHT))).unwrap().charge(), None);
+    let fault = || Fault::new(FaultKind::Unavailable, "status 503");
+    let stated = [
+        fault().not_sent(),
+        fault().answered(Some(charge(3))),
+        fault().answered(None),
+        fault().unresolved(),
+        fault(),
+    ];
+    for fault in stated {
+        let handed = ask(Err(fault.clone())).unwrap_err();
+        assert_eq!(handed, fault);
+        assert_eq!(
+            (handed.stage(), handed.charge()),
+            (fault.stage(), fault.charge())
+        );
+    }
+}
+
+#[test]
+fn known_a_fillers_cancelled_or_timed_out_fault_with_no_stage_is_unresolved() {
+    // The same kinds, made by the handle before it called its backend, are not sent
+    // (above). A backend that returns one was called: it may have sent the request
+    // before it saw the signal, and only it knows. It can say; when it does not, the
+    // fault reads as unresolved.
+    let request = FillRequest::new(picture(), support(), None).unwrap();
+    for kind in [FaultKind::Cancelled, FaultKind::TimedOut] {
+        let stub = Stub::new(&[], Err(Fault::new(kind, "gave up")));
+        let fault = FillHandle::new(stub.clone(), Cancellation::new())
+            .fill(&request)
+            .unwrap_err();
+        assert_eq!((fault.kind(), fault.stage()), (kind, Stage::Unresolved));
+        assert_eq!(stub.sent.load(Ordering::SeqCst), 1);
+    }
 }

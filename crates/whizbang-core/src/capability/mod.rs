@@ -20,13 +20,16 @@ use std::time::Instant;
 use crate::contract::{Cancellation, Capability, Clock, ModelIdentity};
 use crate::identity::{CanonicalPixels, PixelDigest};
 
+mod charge;
 mod declare;
 mod fault;
 mod fill;
 mod judge;
+mod price;
 mod segment;
 pub mod written;
 
+pub use charge::{Charge, Stage};
 pub use declare::{
     Declaration, DeclarationError, MODEL_NAME_LIMIT, Resolved, Roster, RosterError, Unresolved,
     feature,
@@ -39,6 +42,7 @@ pub use judge::{
     MESSAGE_LIMIT, Message, Opaque, PART_LIMIT, Part, RESULT_IMAGE_LIMIT, Role, StopReason,
     TEXT_LIMIT, TOOL_LIMIT, ToolCall, ToolDefinition, ToolResult, Turn, Usage,
 };
+pub use price::{Price, Quote, QuoteKind, TimeLimit};
 pub use segment::{
     Asked, INSTANCE_LIMIT, Instance, PHRASE_LIMIT, QUERY_LIMIT, Query, SegmentHandle,
     SegmentRequest, SegmentResponse, Segmenter,
@@ -371,14 +375,16 @@ impl Tally {
             return Err(Fault::new(
                 FaultKind::Cancelled,
                 "the action of the run had come back before the request was sent",
-            ));
+            )
+            .not_sent());
         }
         let limit = counts.limit.unwrap_or(REQUESTS_LIMIT);
         if counts.asked.len() >= limit {
             return Err(Fault::new(
                 FaultKind::TooLarge,
                 &format!("the run has sent {limit} requests, which is as many as one run may"),
-            ));
+            )
+            .not_sent());
         }
         let now = counts
             .recorder
@@ -489,6 +495,7 @@ impl Sent {
                      {left} more of its {budget}"
                 ),
             )
+            .not_sent()
         })
     }
 
@@ -675,14 +682,16 @@ impl Bounds {
             return Err(Fault::new(
                 FaultKind::Cancelled,
                 "the run was cancelled before the request was sent",
-            ));
+            )
+            .not_sent());
         }
         let now = || self.clock.as_ref().map_or_else(Instant::now, |c| c.now());
         if self.deadline.is_some_and(|deadline| now() >= deadline) {
             return Err(Fault::new(
                 FaultKind::TimedOut,
                 "the deadline of the run passed before the request was sent",
-            ));
+            )
+            .not_sent());
         }
         let model = declaration.model();
         for feature in needed {
@@ -723,5 +732,83 @@ impl std::fmt::Display for Shown<'_> {
 impl std::fmt::Debug for Shown<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(self, f)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! What the tally refuses before a backend is called is not sent (ADR 0010). The
+    //! tally is the crate's own, so these are here and not with the other tests.
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    /// A recorder that keeps nothing.
+    struct Nothing;
+
+    impl Recorder for Nothing {
+        fn now_ms(&self) -> u64 {
+            0
+        }
+
+        fn redact(&self, text: &str) -> String {
+            text.to_owned()
+        }
+
+        fn exchange(&self, _: usize, _: &[u8], _: &dyn Fn(u64) -> bool) -> Option<String> {
+            None
+        }
+    }
+
+    fn model() -> ModelIdentity {
+        ModelIdentity::new("fake", "m", "1")
+    }
+
+    fn refused(tally: &Arc<Tally>) -> Fault {
+        match tally.send(Capability::Judge, &model()) {
+            Err(fault) => fault,
+            Ok(_) => panic!("the request was counted"),
+        }
+    }
+
+    #[test]
+    fn a_request_refused_once_the_action_has_come_back_is_not_sent() {
+        let tally = Arc::new(Tally::default());
+        tally.close();
+        let fault = refused(&tally);
+        assert_eq!(
+            (fault.kind(), fault.stage(), fault.charge()),
+            (FaultKind::Cancelled, Stage::NotSent, None)
+        );
+    }
+
+    #[test]
+    fn a_request_over_the_most_a_run_may_send_is_not_sent() {
+        let tally = Arc::new(Tally::default());
+        tally.record_with(Arc::new(Nothing), 1, 0);
+        let first = tally.send(Capability::Judge, &model());
+        assert!(first.is_ok());
+        let fault = refused(&tally);
+        assert_eq!(
+            (fault.kind(), fault.stage()),
+            (FaultKind::TooLarge, Stage::NotSent)
+        );
+    }
+
+    #[test]
+    fn a_request_whose_exchange_the_run_has_no_room_for_is_not_sent() {
+        let tally = Arc::new(Tally::default());
+        // Room for one request, and for no byte of an exchange.
+        tally.record_with(Arc::new(Nothing), 1, 0);
+        let controls = Controls::new(16).unwrap();
+        let said = Message::new(Role::User, vec![Part::Text("x".to_owned())]).unwrap();
+        let request = JudgeRequest::new("", vec![said], Vec::new(), controls).unwrap();
+        let mut sent = tally.send(Capability::Judge, &model()).unwrap();
+        let head = sent.head(&request).unwrap();
+        let fault = sent.room(&head).unwrap_err();
+        assert_eq!(
+            (fault.kind(), fault.stage()),
+            (FaultKind::TooLarge, Stage::NotSent)
+        );
     }
 }

@@ -105,7 +105,9 @@ A name keeps the rule of an action's name (ADR 0003). With no `default` the capa
 has none, however many backends it has, as ADR 0006 has it. A `default` that names no
 backend written there is refused. In the long form no backend is named `default` or
 `kind`, since those two keys are taken; so the two forms never say the same thing, and a
-file cannot mix them
+file cannot mix them. Nor is one named as a backend's other keys are (`model`,
+`provider`, `url`, `key_env`, `token_env`, `settings`): a table that holds one of those
+and no `kind` is one backend written without its kind, and is told so
 (`file::several_backends_of_one_capability_are_written_by_name_with_a_default`).
 
 A backend has these keys and no others:
@@ -196,18 +198,28 @@ rules keep a key out of the file and out of what is said about the file:
   since an escape can spell what the bytes do not hold. A file that holds one, as a
   backend's name, a setting's key, a value or a comment, is refused as `HoldsSecret`,
   and that refusal shows nothing of the file. Both looks come before any key is escaped,
-  cut or shown, so no cut can fall inside a secret
-  (`file::a_name_or_a_key_that_holds_a_secret_is_refused_whole_and_not_shown`).
+  cut or shown, so no cut can fall inside a secret.
+- **A refusal's whole path is looked at too.** A refusal names a key by its path from
+  the top, with dots, and a secret can stand across two keys of that path, or across a
+  key and a word the reader adds (`.kind`, `.origin`), where no key alone holds it and
+  the two halves are on different lines of the file. So the path is looked at whole, as
+  it was read and before it is escaped or cut, in the one place a refusal that names a
+  key is made (`At::refuse`, and the same for a key given twice); a path that holds a
+  secret is `HoldsSecret`
+  (`file::a_name_or_a_key_that_holds_a_secret_is_refused_whole_and_not_shown`, for all
+  three looks).
 
 ### How the file is read
 
-- **Its length first.** The length is asked of the file system before the file is
-  opened, and a file over 256 KiB (`CONFIG_BYTES_LIMIT`) is refused from it. No more than
-  the bound and one byte is then read, so a file that grew, or that says nothing true of
-  its length, is still bounded
-  (`file::a_file_over_the_bound_is_refused_from_its_length`,
-  `file::a_file_over_the_bound_is_refused_before_it_is_opened_to_read`,
-  `file::a_file_that_is_longer_than_its_length_says_is_still_bounded`).
+- **What it is, and its length, first.** Both are asked of the file system before
+  anything is opened. What is not a file (a folder, a pipe, a device, a terminal) is
+  refused, so nothing is opened that could block or never end; and a file over 256 KiB
+  (`CONFIG_BYTES_LIMIT`) is refused from its length
+  (`file::what_is_not_a_file_is_refused_before_it_is_opened`,
+  `file::a_file_over_the_bound_is_refused_from_its_length`,
+  `file::a_file_over_the_bound_is_refused_before_it_is_opened_to_read`). No more than
+  the bound and one byte is then read, for a file that grew between the two; no test
+  shows that last guard, since it needs a file to change under the reader.
 - **Text.** The bytes are UTF-8, with no ASCII control character but a tab, a line feed
   and a carriage return, anywhere, a comment included
   (`file::bytes_that_are_not_text_and_control_characters_are_refused`).
@@ -229,9 +241,9 @@ known to be harmless (`file::a_config_prints_its_shape_and_none_of_its_values`).
 
 ### What a refusal says
 
-A refusal is one of seven (`ConfigRefused`): the file could not be read, with the kind
-of failure; it is too large; it is not text, with the line; it holds a secret; it is not
-TOML, with the line; a key is given twice, with the key and the line; or a key is not
+A refusal is one of eight (`ConfigRefused`): the file could not be read, with the kind
+of failure; what the path names is not a file; it is too large; it is not text, with the line; it holds a secret; it is not
+TOML, with the line; a key is given twice, with the key's path and the line; or a key is not
 known, is missing, or has a value that does not belong, with the key from the top of the
 file and the reason.
 
@@ -239,6 +251,12 @@ file and the reason.
 - **No value.** Every sentence is written in the reader: it says what kind of thing
   belongs at a key and what kind was found, and never quotes what was found. The
   sentence of the `toml` crate is not passed on, since it is not written here.
+- **A key given twice is named by its path as far as the text tells it:** the keys of
+  the nearest heading above it and then its own, or the heading's alone when the key is
+  in a heading. The format's reader says only where the second key stands, so the
+  heading is found by looking up the lines; a line inside a string of several lines
+  that looks like a heading would be taken for one, and the path would be wrong, though
+  never unchecked for a secret (`file::a_key_given_twice_is_refused_naming_the_key`).
 - **A key, escaped and cut.** A key that came from the file is shown with each character
   escaped (`char::escape_default`), so that what is shown is one line of ASCII, and its
   first 64 characters of that, with three dots when there were more
@@ -329,7 +347,14 @@ config's digest in `asked.config` stands for the rest.
 - **It does not know a key by its shape.** A key the reader was not told of, written as
   a model or into a setting's text, is read. Where a variable's name belongs it is
   refused only because it is no variable's name: a key made of capital letters and
-  digits alone is read as a name.
+  digits alone is read as a name. And pasted as a KEY of the file, where no key is
+  known, it is said back in the refusal, its first 64 characters: a refusal shows keys.
+- **It looks for a secret in the bytes, the keys and the texts, and not in a number.**
+  A secret of digits written as a number with a mark between its digits (`1234_5678`)
+  is in none of the three, and is read as that number.
+- **An amount is a double before it is millionths.** Digits past what a double holds
+  are not seen: `2.5000000000000000001` is 2.5, and is not refused as finer than a
+  millionth.
 - **It finds a secret only in the forms redaction searches for** (ADR 0005, "What
   redaction does not find"), over the bytes and over the decoded keys and texts. One in
   another form, as with its letters in the other case, is not found.
