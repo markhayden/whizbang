@@ -26,9 +26,11 @@ if [ -n "${BARRIER:-}" ] && [ ! -e "$BARRIER.reached" ]; then
     : >"$BARRIER.reached"
     [ -z "${BARRIER_SLOW:-}" ] || sleep "$BARRIER_SLOW"
     # Opened to read and to write, which does not wait for the other end; and read for a
-    # limited time, so that a stand-in whose test has gone does not stay for ever.
+    # limited time, so that a stand-in whose test has gone does not stay for ever. A
+    # stand-in that gets no line fails, and the scan with it: a scan that went on
+    # without the test's word would pass a run in which nothing was held.
     exec 9<>"$BARRIER"
-    read -t "${BARRIER_WAIT:-60}" -r _ <&9 || true
+    read -t "${BARRIER_WAIT:-60}" -r _ <&9 || { echo "stand-in: no line from the test in time" >&2; exit 97; }
     exec 9>&-
     ;;
   esac
@@ -110,12 +112,14 @@ for how in untouched emptied replaced lengthened shifted; do
 done
 
 # The test's own waiting. A stand-in that is slow between its note and its read (one
-# second) still gets the line: the pipe is open until the scan has ended. Without that,
-# the line was lost and the stand-in waited for ever.
-BARRIER_SLOW=1 edited_run slow
+# second) still gets the line, because the pipe is open until the scan has ended. With
+# the pipe closed straight after the line was written, the line was lost: the stand-in
+# then gets none within the five seconds it is given here, fails, and the scan with it,
+# so this run does not end as the scan it started as.
+BARRIER_SLOW=1 BARRIER_WAIT=5 edited_run slow
 # And the limit of the wait trips: with a stand-in that is three seconds late to the
 # barrier and five looks allowed, the run fails and says why, and leaves no scan behind.
-# The stand-in it leaves reads for one second and ends.
+# The stand-in it leaves reads for one second, gets no line and ends.
 if (BARRIER_LATE=3 BARRIER_WAIT=1 edited_run late 5) >"$tmp/late" 2>&1; then
   cat "$tmp/late" >&2
   fail "a stand-in that is late to the barrier trips the limit of the wait"

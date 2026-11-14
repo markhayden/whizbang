@@ -490,7 +490,10 @@ quiet_flag="-q"
 #
 # What it does not find, each a way to write the same thing: the search on the line after
 # a pipe and a comment; the search by a path, with a backslash before its name or with
-# its name in quotes; inside `{ }` or `( )` after the pipe; after `if` or `!`. And the
+# its name in quotes; inside `{ }` or `( )` after the pipe; after `if` or `!`; through
+# `command` or `env` with an option of their own (`command -p`, `env -i`) or one after the
+# other (`env A=b command`); and with a variable in front whose quoted value holds a
+# space. And the
 # same hazard from another reader that ends early is not looked for at all: `head -n 1`,
 # a search told to stop at its first match with `-m 1`, another search tool told to be
 # quiet, an awk that exits at its first line. docs/carry-over.md has the row.
