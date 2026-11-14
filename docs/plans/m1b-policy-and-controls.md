@@ -1558,7 +1558,7 @@ and 5.3 and `schemas/core/installable.json`.
       adapter's revisions; the installation's identity; the pointer that names the one in
       use; holds as file locks. It edits nothing in `SPEC.md`: the two sentences named
       under "Decisions" are B0b's.
-- [ ] The catalogue and the installation record are added to `whizbang-backends`, the
+- [x] The catalogue and the installation record are added to `whizbang-backends`, the
       crate B0b made, as types read strictly. Nothing installs yet.
 
 **Done when** these pass: a catalogue and an installation record each round-trip; each is

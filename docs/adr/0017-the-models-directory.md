@@ -10,6 +10,10 @@ until its deadline and sets its mark again; on the busy path the pointer is put 
 before the mark is taken off. Added under "For later tasks": what tasks M2b, M3 and M5
 to M6 must hold to, and the crashes their tests cover. Changed with the catalogue: the
 parts it builds are marked as code and name their tests.
+Amended: 2026-11-14, with the third pull request of task M1. Words only. Added: under
+"Limits", which line a refusal names; a row of the crashes, for one after the pointer's
+rename is durable; that what is printed of an entry's parts is counts. Changed with the
+installation record: the parts it builds are marked as code and name their tests.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -57,20 +61,20 @@ a process id read from a file (R3).
 ## Decision
 
 The code of this record that exists is `crates/whizbang-backends/src/models/`: `name.rs`,
-`catalogue.rs`, `json.rs` and `refused.rs`. Its tests are in
-`crates/whizbang-backends/tests/it/models/`, named below as `names::…`, `catalogue::…`
-and `refusals::…`.
+`catalogue.rs`, `installation.rs`, `json.rs` and `refused.rs`. Its tests are in
+`crates/whizbang-backends/tests/it/models/`, named below as `names::…`, `catalogue::…`,
+`installation::…`, `identity::…` and `refusals::…`.
 
-**What is code now, and what is decided for later.** Each part below says which it is. A
-part marked *decided, not built* has no code and no test yet, and names no test; what
-builds it adds its tests' names here, and this record is what it is held to. Task M1
-came to more lines than one pull request may hold (the plan, "Order"), so it is three
-pull requests; this record arrived with the first, and the second brought the catalogue.
+**What is code now, and what is decided for a later task.** Each part below says which
+it is. A part marked *decided, not built* has no code and no test yet, and names no
+test; the task named builds it, tests it and adds its tests' names here, and this
+record is what it is held to. Task M1 came to more lines than one pull request may hold
+(the plan, "Order"), so it was three: this record and the names, the catalogue, and the
+installation record with its identity.
 
 | Part | State |
 |---|---|
-| Names; the catalogue; how a record is read; what a refusal says | Code, with the tests named |
-| An installation's record; its identity | Decided, not built: the third pull request of task M1 |
+| Names; the catalogue; how a record is read; an installation's record; its identity; what a refusal says | Code, with the tests named |
 | The directory's layout and its three kinds of lock; publishing; the pointer; holds; removal | Decided, not built: tasks M2, M2b, M5 to M5c, M6 |
 
 ### The directory
@@ -101,8 +105,8 @@ default place and no variable is read for it here. In it:
   else:** a model's name under `models/`, a file's under `files/`. So no name from a
   catalogue can be, or shadow, a name whizbang gives (`LOCK`, `CURRENT`, `RECORD`), on a
   disk that tells the cases of letters apart or on one that does not.
-- **An installation's folder is named by its identity,** as 64 hex digits (the hex of
-  an `InstallationId`, which the third pull request of task M1 brings), and holds
+- **An installation's folder is named by its identity,** as 64 hex digits
+  (`InstallationId::hex`), and holds
   exactly its record and the files the record lists, each a regular file of the size
   and hash the record gives. Nothing else is in it: no lock file, so the whole folder
   can be renamed into place and removed.
@@ -183,7 +187,8 @@ read back. Each has a type with a private field, made by a constructor that chec
   does not tell the cases apart. A file's name may hold upper case, as `LICENSE.txt`
   does; two files of one model whose names differ only in the case of their letters are
   refused as one name twice
-  (`catalogue::an_entry_holds_one_to_a_bounded_count_of_files_each_named_once_in_either_case`).
+  (`catalogue::an_entry_holds_one_to_a_bounded_count_of_files_each_named_once_in_either_case`,
+  `installation::a_record_holds_one_to_a_bounded_count_of_files_each_named_once_in_either_case`).
 - (`names::a_revision_is_letters_digits_and_three_marks`,
   `names::a_licence_is_one_line_of_printable_ascii`.)
 - **Each constructor is told the executor's secrets and looks at the whole text for one
@@ -217,8 +222,11 @@ one model:
 | `files` | 1 to 64 files (`FILES_LIMIT`), each with its `name`, its `size` in bytes, its `sha256`, and `from`, the address it is first asked for at |
 
 (`catalogue::a_catalogue_is_read_as_its_models_and_their_files`,
-  `catalogue::an_entry_holds_a_bounded_count_of_features_each_a_name_declared_once`,
-  `catalogue::every_other_field_of_an_entry_keeps_its_rule`.)
+`catalogue::an_entry_holds_a_bounded_count_of_features_each_a_name_declared_once`,
+`catalogue::every_other_field_of_an_entry_keeps_its_rule`.) What an entry is made from,
+`EntryParts`, holds features that no constructor has looked at yet, so what `{:?}`
+prints of it is its names and three counts
+(`catalogue::what_is_printed_of_the_parts_of_an_entry_is_counts_and_never_a_feature`).
 
 - **A file's size** is 1 byte to 1 TiB (`FILE_MAX_BYTES`). It is what a download is
   stopped at, so a size of zero is refused: it would stop a download before its first
@@ -297,36 +305,48 @@ record's alike. In this order:
    bound and one byte is asked of it, however much it has; a source that fails is
    refused by the kind of its failure, with no path
    (`catalogue::a_catalogue_over_its_bound_is_refused_before_it_is_read`,
-  `catalogue::reading_a_catalogue_asks_its_source_for_no_more_than_the_bound_and_one_byte`,
-  `catalogue::a_catalogue_that_cannot_be_read_is_refused_by_the_kind_of_failure_and_no_path`).
+   `catalogue::reading_a_catalogue_asks_its_source_for_no_more_than_the_bound_and_one_byte`,
+   `catalogue::a_catalogue_that_cannot_be_read_is_refused_by_the_kind_of_failure_and_no_path`,
+   `installation::an_installation_record_over_its_bound_is_refused_before_it_is_read`,
+   `installation::reading_a_record_asks_its_source_for_no_more_than_the_bound_and_one_byte_and_keeps_no_path`).
 2. **A secret, in the bytes as they are.** Bytes that hold a secret the reader was told
    of, anywhere, are refused whole.
 3. **JSON.** Bytes that are not JSON, that have anything after the one value, or that
    nest deeper than the format's reader follows (128 levels) are refused by their line
    (`catalogue::a_catalogue_that_is_not_json_is_refused_by_its_line`,
-  `refusals::values_nested_past_what_the_reader_follows_are_refused_and_not_followed`).
+   `installation::a_record_that_is_not_json_is_refused`,
+   `refusals::values_nested_past_what_the_reader_follows_are_refused_and_not_followed`).
 4. **A field given twice** in one object, at any depth, is refused by its line. The usual
    reader keeps the last and says nothing
    (`catalogue::a_catalogue_with_a_field_given_twice_is_refused_by_its_line`).
 5. **A secret, in every key and every text as JSON decoded it:** an escape can spell
    what the bytes do not hold
-   (`catalogue::a_catalogue_that_holds_a_secret_anywhere_is_refused_whole_and_not_shown`).
+   (`catalogue::a_catalogue_that_holds_a_secret_anywhere_is_refused_whole_and_not_shown`,
+   `installation::a_record_that_holds_a_secret_anywhere_is_refused_whole_and_not_shown`).
 6. **The fields, by hand.** Every object is an object with its fields by name; a field
    that is not one of its fields, a field that is missing, and a value of another kind
    than its field's are each refused, with the place
    (`catalogue::a_catalogue_with_an_unknown_field_or_a_missing_one_is_refused`,
-  `catalogue::a_catalogue_with_a_value_of_another_kind_is_refused`).
+   `catalogue::a_catalogue_with_a_value_of_another_kind_is_refused`,
+   `installation::a_record_with_an_unknown_field_a_missing_one_or_one_given_twice_is_refused`).
    A size is a whole number from 0 to what 64 bits hold, written as one: a fraction, a
    negative number and a text are another kind. Every list's count is looked at before
-   any of its items is. The format is the one the reader reads, or the record is refused
-   (`catalogue::a_catalogue_of_another_format_is_refused`).
+   any of its items is
+   (`catalogue::a_list_over_its_bound_is_refused_for_its_count_before_any_of_its_items_is_looked_at`,
+   `installation::a_list_of_files_over_its_bound_is_refused_for_its_count_before_any_file_is_looked_at`).
+   The format is the one the reader reads, or the record is refused
+   (`catalogue::a_catalogue_of_another_format_is_refused`,
+   `installation::a_record_of_another_format_is_refused`).
 7. **Every value by its rule,** through the same constructors that make a value in
    memory, so nothing is read that could not have been made
-   (`catalogue::a_file_name_that_is_not_one_plain_name_is_refused`).
+   (`catalogue::a_file_name_that_is_not_one_plain_name_is_refused`,
+   `installation::a_record_with_a_file_name_that_is_not_one_plain_name_is_refused`,
+   `installation::a_record_with_a_hash_of_the_wrong_length_is_refused`,
+   `installation::a_record_with_a_size_of_zero_is_refused_and_so_is_one_past_the_most_a_file_may_be`).
 
 ### An installation and its record
 
-*Decided, not built.* An **installation** is one model's files as one entry of a catalogue listed them,
+Code. An **installation** is one model's files as one entry of a catalogue listed them,
 installed under one revision of its adapter. Its record, `InstallationRecord`, holds:
 
 | Field | What it is |
@@ -340,7 +360,8 @@ installed under one revision of its adapter. Its record, `InstallationRecord`, h
 - **It holds both revisions,** which is what rascal's did not (R2): task M6 reports an
   installation as out of date when either is not the current one. The catalogue's
   revision is the entry's. The adapter's is stated by the adapter, and is given to
-  `InstallationRecord::of` beside the entry by whoever knows the adapter.
+  `InstallationRecord::of` beside the entry by whoever knows the adapter
+  (`installation::an_installation_record_holds_the_model_its_files_and_the_two_revisions_it_was_made_under`).
 - **It holds nothing of where a file came from,** nothing of when or by whom it was
   installed, and no path. The licence and the features stay in the catalogue, under the
   entry's revision.
@@ -360,16 +381,20 @@ installed under one revision of its adapter. Its record, `InstallationRecord`, h
 
   Bytes that say what a record says in any other way (white space, the fields or the
   files in another order, a character spelled as an escape) are refused as
-  `Refused::OtherForm`: the record is read, written again, and the two compared.
+  `Refused::OtherForm`: the record is read, written again, and the two compared
+  (`installation::a_record_is_read_back_only_in_the_one_form_whizbang_writes`,
+  `installation::an_installation_record_round_trips`).
 - **It is at most 32 KiB** (`INSTALLATION_MAX_BYTES`). The longest record there can be,
   every name at its limit and the most files of the largest size, is 15,979 bytes, so no
-  record that can be made is refused when read back.
-- **A record that would spell a secret as it is written is not made.**
+  record that can be made is refused when read back
+  (`installation::the_longest_record_whizbang_writes_is_under_the_bound_it_reads_back`).
+- **A record that would spell a secret as it is written is not made**
+  (`installation::a_record_that_would_spell_a_secret_is_not_made`).
 
 ### The identity of an installation
 
-*Decided, not built.* An installation is named by `InstallationId`: the SHA-256 of one
-encoding of its record, hashed as ADR 0001 hashes every identity ("How an identity is hashed"). The
+Code. An installation is named by `InstallationId`: the SHA-256 of one encoding of its
+record, hashed as ADR 0001 hashes every identity ("How an identity is hashed"). The
 kind is `installation/1`. The bytes hashed are:
 
 - the bytes `whizbang:installation/1` and a zero byte;
@@ -381,10 +406,10 @@ kind is `installation/1`. The bytes hashed are:
   size (`u`), and its hash (the tag `d` and the 32 bytes of the digest).
 
 It is written `sha256:` and 64 lower-case hex digits, and read back in that form and no
-other.
+other (`identity::an_identity_is_written_one_way_and_read_strictly`).
 
 **Three vectors,** computed apart from the code, which a reader can compute again from
-the words above.
+the words above (`identity::the_identity_of_a_record_is_the_digest_the_adr_gives_for_it`).
 A file's hash is the SHA-256 of the content given.
 
 | Model | Catalogue's revision | Adapter | Adapter's revision | Files: name, size, content | Identity |
@@ -408,12 +433,16 @@ The first is 125 bytes, in hex:
 ```
 
 - **Every part of the record is part of the identity,** and each text is hashed with
-  its length, so no two records share one. **Two records that
-  differ in the adapter's revision alone have two identities:**
+  its length, so no two records share one
+  (`identity::every_part_of_a_record_is_part_of_its_identity`). **Two records that
+  differ in the adapter's revision alone have two identities**
+  (`identity::two_records_that_differ_in_the_adapters_revision_alone_have_two_identities`):
   the second and third vectors.
 - **Nothing local is in it:** no path, no time, no process, no address a file came
   from. The same entry installed under the same adapter's revision on two machines is
-  one identity.
+  one identity
+  (`identity::an_identity_does_not_depend_on_the_order_the_files_were_given_in`,
+  `identity::an_identity_read_back_from_a_record_s_bytes_is_the_identity_of_the_record_that_wrote_them`).
 - **It is the version of a local model** in what a preparation saw (ADR 0004; the plan's
   task I7): a model's version is 1 to 128 printable ASCII characters (ADR 0006), and an
   identity's text is 71. So an installation replaced under a prepared call makes the
@@ -534,6 +563,10 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
 - **A field given twice hides what it held.** Such bytes are refused for the second
   field, and what either held is not looked at for a secret as decoded (step 5 comes
   after step 4). They are refused either way, and a refusal shows nothing.
+- **The line of a refusal is the reader's,** and can be late. A field given twice is
+  refused at the line of what follows its second key: with the key on one line and its
+  colon or its value on a later one, that later line. And a line break written raw
+  inside a text, which JSON does not allow, is refused at the line after it.
 - **A megabyte of JSON may take some tens of megabytes while it is read:** a list of
   many small values in a field nobody knows is read before it is refused
   (`refusals::values_nested_past_what_the_reader_follows_are_refused_and_not_followed`).
@@ -585,7 +618,8 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   | A crash | What is on the disk | What the next does | The model is |
   |---|---|---|---|
   | Publishing, after step 1 | A folder the pointer does not name, with no hold file, or with one from an earlier publication of that identity | Deletes it, taking the hold file alone when there is one | As it was |
-  | Publishing, inside step 2, before the pointer's rename is durable | The same, with the hold file made | Takes the hold file alone and deletes it | As it was |
+  | Publishing, inside step 2, before the pointer's rename is durable | The same, with the hold file made | Takes the hold file alone and deletes the folder | As it was |
+  | Publishing, after the pointer's rename is durable | The new pointer; the old folder, superseded | Cleans the old folder when its hold file is free | The new installation |
   | Removal, after step 1 | The mark; the pointer as it was | Takes the mark off | Installed |
   | Removal, after step 3 | The mark; no pointer; the folder | Finishes the removal: deletes the folder, takes the mark off | Not installed |
   | Cleaning a superseded folder, or a repair, part-way through deleting | Part of a folder the pointer does not name | Deletes the rest | As the pointer says: for a repair, not installed |
