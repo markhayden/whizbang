@@ -6,11 +6,12 @@ its digest is made, is in `docs/adr/0011-the-config-file.md`.
 
 Every example on this page is read by the fast tier: a block that is shown as read is
 read, and a block that is shown as refused is refused with the sentence under it
-(`config::examples::every_example_in_the_guide_and_in_the_record_is_read`).
+(`config::examples::every_example_in_the_guide_and_in_the_record_is_read`,
+`config::examples::the_guides_env_file_is_read_with_its_config`).
 
-Nothing uses a config yet. The reader is built (checkpoint 1B, task C1); the commands
-that take `--config <file>`, the env file that holds the keys, and everything a config
-switches on come with the tasks after it. There is no default place for the file: it is
+Nothing uses a config yet. The readers of the config and of the env file are built
+(checkpoint 1B, tasks C1 and C2); the commands that take them, and everything a config
+switches on, come with the tasks after. There is no default place for the file: it is
 the one a command is given, and a command given none has no backend.
 
 ## Backends
@@ -104,6 +105,27 @@ have none; what is written there is not shown
 
 And once the env file is read, a config that holds one of its values anywhere, a comment
 included, is refused whole, and nothing of it is shown.
+
+## The env file
+
+The keys themselves are in an env file beside your config, which git should ignore:
+
+```env
+# Keys. Never commit this file.
+FAL_KEY='made-up-key-0123456789'
+export SEGMENT_TOKEN=made-up-token-0123456789
+```
+
+A line is `NAME=value`, with `export` before it if you like; quotes around a value are
+taken off, and what is inside them is the value, all of it: a space at either end inside
+the quotes is refused, and so are quotes around nothing. A `#` straight after a value,
+with no space before it, is part of the value; a comment has a line of its own. Save the
+file as plain UTF-8 with no byte-order mark, which some editors add and which is refused.
+A link to a file is followed, and what it leads to is read. Nothing is expanded, and the
+environment of your shell is not read: a key is in this file or it is not set. Only the variables your config names are used, each by
+the backend that names it. A key shorter than 8 bytes is refused, by the name of its
+variable. Keep nothing but keys here: any value of 8 bytes or more is treated as a
+secret, and a config that holds the same text is refused.
 
 ## What one call may spend
 

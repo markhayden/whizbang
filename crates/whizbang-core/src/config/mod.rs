@@ -10,6 +10,7 @@
 //! made from it by the later tasks of checkpoint 1B. The file is TOML, read with the
 //! `toml` crate, which this crate depends on for that and for nothing else.
 
+mod env;
 mod read;
 mod refused;
 
@@ -20,6 +21,10 @@ use crate::egress::{Account, Address, Classes, DataClass, Origin, Recipient};
 use crate::contract::Capability;
 use crate::identity::{Digest, Encoder, Fields};
 
+pub use env::{
+    Credentials, ENV_BYTES_LIMIT, ENV_VALUE_LIMIT, ENV_VARIABLES_LIMIT, EnvFile, EnvRefused,
+    Handed, KeyValue, LoadRefused, Loaded,
+};
 pub use refused::{ConfigRefused, KEY_SHOWN_LIMIT};
 
 /// The longest config file, in bytes. A longer one is refused from its length, before

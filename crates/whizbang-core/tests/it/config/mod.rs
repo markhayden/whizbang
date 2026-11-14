@@ -4,6 +4,7 @@
 //! (task B0b), shown to do the three things a strict reader of a config rests on.
 
 mod digest;
+mod env;
 mod examples;
 mod file;
 
