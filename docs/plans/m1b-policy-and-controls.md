@@ -1795,7 +1795,7 @@ a script, stops, and the gap goes to the owner to accept in a line of the row.
 
 **Depends on:** X4. Scripts only.
 
-- [ ] `scripts/scan.sh` and the other long scripts run from a function read whole before
+- [x] `scripts/scan.sh` and the other long scripts run from a function read whole before
       it starts, or from a copy.
 
 **Done when** a test edits the file during a run, at a barrier the test holds and not by

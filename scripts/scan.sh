@@ -90,6 +90,15 @@
 # here-document with no end. So the trap turns an exit of 0 into 70, and says so, unless
 # `done_ok` is 1, and that is set only on the line before an exit that is meant to succeed.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "scan: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
+# The whole script is the function `main`, and the last line calls it and exits. Bash reads
+# a script as it runs it, a piece at a time, so a file changed during a run (an editor that
+# writes in place, a checkout that rewrites it) would make the rest of the run another
+# program: the `EXIT` trap fails a run that stops early, not one that goes on wrongly. A
+# function is read whole before any of it runs, and the last line is read with it in hand,
+# so the run finishes as the program it started as. Every script under scripts/ that is not
+# a test has this form, and scripts/tests/test-syntax.sh holds them to it. The body is not
+# indented, so that each line is where it was.
+main() {
 set -euo pipefail
 umask 077
 # Bytes, not characters: a byte that is not valid UTF-8 must not hide the rest of its line.
@@ -1226,3 +1235,5 @@ fi
 
 done_ok=1
 exit "$status"
+}
+main "$@"; exit

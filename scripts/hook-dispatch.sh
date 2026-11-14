@@ -12,7 +12,14 @@
 # working tree, git takes the folder it is in for one, and nothing there can be scanned.
 # The folder is not named in the refusal; a path of this machine is not for a log.
 #
+# The working tree git is told to act on is trusted: its scripts/hooks/<name> is what
+# runs, and its scripts/scan.sh is what scans. Whoever names another working tree chooses
+# the hook, as whoever edits a hook in their own does.
+#
 # It sets no `EXIT` trap, so its own syntax error is a failure.
+# The whole script is one function, read before any of it runs, so a change to this file
+# during a run does not change the run: see `main` in scripts/scan.sh.
+main() {
 set -euo pipefail
 name=${0##*/}
 top=$(git rev-parse --show-toplevel 2>/dev/null) ||
@@ -21,3 +28,5 @@ hook="$top/scripts/hooks/$name"
 [ -f "$hook" ] && [ -x "$hook" ] ||
   { echo "$name: no scripts/hooks/$name here that can be run (the working tree git is acting on has none); refusing. Run git from inside the working tree of this repo, or name it with GIT_WORK_TREE as well as GIT_DIR" >&2; exit 1; }
 exec "$hook" "$@"
+}
+main "$@"; exit

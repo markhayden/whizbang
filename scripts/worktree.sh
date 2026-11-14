@@ -29,6 +29,9 @@
 # of GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR and GIT_INDEX_FILE set, since each makes git
 # act on another repo than the one it is run in. It sets no `EXIT` trap, so its own syntax
 # error is a failure.
+# The whole script is one function, read before any of it runs, so a change to this file
+# during a run does not change the run: see `main` in scripts/scan.sh.
+main() {
 set -euo pipefail
 export LC_ALL=C
 
@@ -217,3 +220,5 @@ case "$command" in
 
   *) usage ;;
 esac
+}
+main "$@"; exit
