@@ -591,7 +591,7 @@ half). **Size:** small.
 `Credential`, `redact_account`) and `http.rs` (`same_origin`); squint
 `crates/squint-core/src/provider.rs` (`recipient`); `SPEC.md` section 10, "Egress".
 
-- [ ] An ADR: a recipient (an endpoint's origin, the account used with it, the upstreams it
+- [x] An ADR: a recipient (an endpoint's origin, the account used with it, the upstreams it
       may forward to); the four classes of data (source images, derived images, prompts,
       evidence) and who states the class of each part of a request; that a part with no
       stated class needs every class approved; the interface through which data is sent,
@@ -602,9 +602,9 @@ half). **Size:** small.
       and no price has no bound and is refused as any paid request without one is; free
       for a backend with a recipient is said, never assumed); where a backend says who
       receives its requests.
-- [ ] The types and the three interfaces in `crates/whizbang-core/src/egress/`, and the
+- [x] The types and the three interfaces in `crates/whizbang-core/src/egress/`, and the
       recipient in a backend's declaration. A backend that names no recipient is local.
-- [ ] No enforcement in this task: the gate is E2.
+- [x] No enforcement in this task: the gate is E2.
 
 **Done when** these pass: a recipient cannot be made from an address with a user, a
 password, a query or a fragment in it, and its `{:?}` shows the origin and a cut account
