@@ -7,7 +7,10 @@ Date: 2026-11-13
 Amended: 2026-11-13, with task B1b, which this record said would add to it. Added: "How
 far a request got, and what it cost"; two consequences and two alternatives. Changed:
 the title, which named the quote alone; the status, which now names ADR 0006's
-"Faults" as well; and the sentence that left this to B1b.
+"Faults" as well; and the sentence that left this to B1b. And from the review of the
+first pull request: a quote's amount is read as a bound or as an estimate's figure,
+by two accessors, in place of one that answered either; a limit is stated in the
+host's billing unit; and the limit that a roster's answer is of one request.
 Spec: section 4, "Backends"; section 6, "Spend"
 
 ## Context
@@ -90,6 +93,12 @@ is one of three kinds (`QuoteKind`):
   (`admit::a_call_whose_cost_has_no_bound_is_not_admitted_and_the_ledger_is_not_asked`,
   as at the tag). Nothing in the executor changed for this.
 
+- **An estimate's figure cannot be read as a bound.** `Quote::bound_micros` answers
+  the amount of a bound and nothing for the other two kinds; `Quote::estimated_micros`
+  answers the figure of an estimate only, which is for showing to a person. No accessor
+  answers an amount whatever the kind. Code that counts money reads `Quote::most`
+  (`price::a_quote_says_its_kind_and_its_amount`).
+
 A quote has private fields, is made only through its three constructors, and is never
 deserialised.
 
@@ -115,6 +124,10 @@ stopped billing").
 
 - Under a host's limit the quote is a bound of the price times the limit
   (`price::a_price_by_time_with_a_hosts_limit_gives_the_bound_of_price_times_limit`).
+  A host that bills in whole seconds or whole minutes charges for a unit it has begun,
+  so the limit is stated in the host's billing unit, rounded up: a limit of 90 seconds
+  on a host that bills by the minute is stated as 120,000 milliseconds. Nothing here
+  knows a host's unit; `Price::charged_at_most` is the way to state a firmer maximum.
 - Under whizbang's own timeout alone it is an estimate only, and is no bound when asked
   through `Backends::bound`
   (`price::a_price_by_time_with_only_a_timeout_of_whizbangs_own_gives_an_estimate`).
@@ -163,6 +176,16 @@ text.
   backends offered for one capability declare the same model with different prices,
   the answer is the largest, and no bound when either has none: over, never under
   (`price::known_two_backends_of_one_capability_that_declare_one_model_are_bounded_by_the_dearer`).
+- **A roster's answer is of one request, and a call may send several.**
+  `Backends::bound` is asked for the most one call's use of a capability can cost (ADR
+  0007). A roster answers the quote of one request: it does not know how many requests
+  a call sends its backend. For a call that sends several to one backend, a judge
+  loop's turns or a retry, the estimate from a roster alone is under what the call may
+  cost
+  (`price::known_the_bound_a_roster_answers_is_of_one_request_however_many_a_call_sends`).
+  Task S4 owns the rest: "the bound a backend states for a need covers every request
+  the call sends it", in a wrapper around the roster. Until S4, no executor with a
+  ledger is built from a roster outside a test.
 - **A number that arithmetic made a little too large costs a whole unit more.** 0.0079
   dollars is 7,900 millionths; worked out as `0.0079 × 1,000,000` in floating point it
   is a little over, and its quote is 7,901

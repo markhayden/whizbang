@@ -1,8 +1,10 @@
 //! A fault: the typed error of a capability (ADR 0006, "Faults").
 //!
 //! A fault ends up in a run record. It is a kind, one sentence and, for a backend that
-//! said when to ask again, a wait. The sentence is cleaned when the fault is made, and
-//! what `{:?}` prints of a fault is the kind, that sentence and the wait.
+//! said when to ask again, a wait. The sentence is cleaned when the fault is made. A
+//! fault also says how far its request got, and what the answer said it cost when one
+//! came (ADR 0010), which is what the ledger settles a failed request by. What `{:?}`
+//! prints of a fault is the kind, that sentence, the wait, the stage and the charge.
 //!
 //! **What cleaning guarantees.** A sentence is at most [`FAULT_LIMIT`] characters, cut
 //! between characters. It holds no `/` and no `\`; no `@`, `=` or `&`; no line break,
@@ -22,7 +24,7 @@
 //! never copies a provider's body, a header or an address into it (ADR 0006,
 //! "Faults").
 
-use super::Unfit;
+use super::{Charge, Stage, Unfit};
 
 /// The most characters a fault's sentence holds.
 pub const FAULT_LIMIT: usize = 240;
@@ -128,7 +130,8 @@ impl Raw {
 }
 
 /// The typed error of a capability's request. Two faults are equal when their kind,
-/// their sentence and their wait are; what `{:?}` prints is those three.
+/// their sentence, their wait, their stage and their charge are; what `{:?}` prints is
+/// those five.
 #[derive(Clone)]
 pub struct Fault {
     kind: FaultKind,
@@ -136,12 +139,23 @@ pub struct Fault {
     retry_after_ms: Option<u64>,
     /// The text the fault was made of, until a handle has looked for secrets in it.
     raw: Option<Raw>,
+    /// How far the request got, when whoever made the fault said.
+    stage: Option<Stage>,
+    /// What the answer said the request cost. Only an answered fault holds one.
+    charge: Option<Charge>,
 }
 
 impl PartialEq for Fault {
     fn eq(&self, other: &Fault) -> bool {
-        (self.kind, &self.sentence, self.retry_after_ms)
-            == (other.kind, &other.sentence, other.retry_after_ms)
+        let all = |fault: &Fault| {
+            (
+                fault.kind,
+                fault.retry_after_ms,
+                fault.stage(),
+                fault.charge,
+            )
+        };
+        self.sentence == other.sentence && all(self) == all(other)
     }
 }
 
@@ -153,6 +167,8 @@ impl std::fmt::Debug for Fault {
             .field("kind", &self.kind)
             .field("sentence", &self.sentence)
             .field("retry_after_ms", &self.retry_after_ms)
+            .field("stage", &self.stage())
+            .field("charge", &self.charge)
             .finish()
     }
 }
@@ -179,7 +195,54 @@ impl Fault {
             sentence: sentence_of(text),
             retry_after_ms: None,
             raw: Some(Raw::of(text)),
+            stage: None,
+            charge: None,
         }
+    }
+
+    /// The same fault, of a request that did not leave whizbang: nothing was handed to
+    /// anyone, so nothing was charged. An adapter says this only when no byte of the
+    /// request went to anything outside the process.
+    pub fn not_sent(mut self) -> Fault {
+        (self.stage, self.charge) = (Some(Stage::NotSent), None);
+        self
+    }
+
+    /// The same fault, of a request that was answered, by an answer that settles it:
+    /// with what the answer said it cost, when it said.
+    pub fn answered(mut self, charge: Option<Charge>) -> Fault {
+        (self.stage, self.charge) = (Some(Stage::Answered), charge);
+        self
+    }
+
+    /// The same fault, of a request that left, or may have, with no answer that
+    /// settles it.
+    pub fn unresolved(mut self) -> Fault {
+        (self.stage, self.charge) = (Some(Stage::Unresolved), None);
+        self
+    }
+
+    /// How far the request got: what whoever made the fault stated, or else what the
+    /// kind says. `unsupported` means the request was not sent; no other kind says how
+    /// far its request got, so each reads as unresolved. That is the conservative
+    /// reading: an unresolved request may have been charged, and is counted at its
+    /// bound. A fake or an adapter that knows better must state the stage (ADR 0010).
+    pub fn stage(&self) -> Stage {
+        self.stage.unwrap_or(match self.kind {
+            FaultKind::Unsupported => Stage::NotSent,
+            FaultKind::Cancelled
+            | FaultKind::Credential
+            | FaultKind::Rejected
+            | FaultKind::Unavailable
+            | FaultKind::TimedOut
+            | FaultKind::Malformed
+            | FaultKind::TooLarge => Stage::Unresolved,
+        })
+    }
+
+    /// What the answer said the request cost, for an answered fault whose answer said.
+    pub fn charge(&self) -> Option<Charge> {
+        self.charge
     }
 
     /// The same fault as a run may be told of it and may store it: its sentence made
