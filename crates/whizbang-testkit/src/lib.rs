@@ -7,6 +7,7 @@ pub mod downloads;
 pub mod echo;
 pub mod fs_shim;
 pub mod ledger;
+pub mod part;
 pub mod schema;
 pub mod scratch;
 pub mod sending;

@@ -26,7 +26,7 @@ use super::record::{self, QUOTED_LIMIT, RECORD_NAME, RunRecord, Status, StoredRe
 use std::time::Instant;
 
 use super::{
-    Call, CallError, Cancellation, Committed, JournalLine, Outcome, PreparedCall, RunId,
+    Call, CallError, Cancellation, Committed, Estimate, JournalLine, Outcome, PreparedCall, RunId,
     StoreFailure, Value, text,
 };
 
@@ -105,6 +105,7 @@ pub struct Request {
     expecting: Option<PreparedCall>,
     cancellation: Option<Cancellation>,
     deadline: Option<Instant>,
+    cap: Option<Estimate>,
 }
 
 impl Request {
@@ -116,7 +117,25 @@ impl Request {
             expecting: None,
             cancellation: None,
             deadline: None,
+            cap: None,
         }
+    }
+
+    /// The same request, with a cap of its own on what its call may cost: the most
+    /// the caller lets this one call reserve, in millionths of a US dollar (ADR
+    /// 0015). The executor holds no call to it: it is shown, as it was given, to
+    /// the parts of the admission ([`super::Asking::cap`]), and the part that holds
+    /// calls to a cap says what one is worth. It is no part of the request's
+    /// fingerprint: the same call under the same id with another cap is the same
+    /// request.
+    pub fn capped_at(mut self, cap: Estimate) -> Request {
+        self.cap = Some(cap);
+        self
+    }
+
+    /// The cap the request came with, when it came with one.
+    pub fn cap(&self) -> Option<Estimate> {
+        self.cap
     }
 
     /// The same request, cancelled by this signal, which its caller keeps (ADR 0008,
