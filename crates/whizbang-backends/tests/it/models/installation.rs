@@ -557,6 +557,22 @@ fn a_record_holds_one_to_a_bounded_count_of_files_each_named_once_in_either_case
 /// One change to a record as a value.
 type Change = Box<dyn Fn(&mut Value)>;
 
+#[test]
+fn a_list_of_files_over_its_bound_is_refused_for_its_count_before_any_file_is_looked_at() {
+    let whole = written();
+    let start = whole.find("\"files\":[").unwrap() + "\"files\":[".len();
+    let text = format!(
+        "{}{}{}",
+        &whole[..start],
+        "7,".repeat(FILES_LIMIT),
+        &whole[start..]
+    );
+    assert_eq!(
+        read(&text).unwrap_err(),
+        value_refused("files", Rule::Count { most: FILES_LIMIT })
+    );
+}
+
 // --- a secret is never read into a name, and never written -----------------------------------
 
 #[test]

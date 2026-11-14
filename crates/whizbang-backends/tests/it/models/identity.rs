@@ -197,6 +197,37 @@ fn an_identity_does_not_depend_on_the_order_the_files_were_given_in() {
     let other = record("tiny", "2026-11.1", "owlv2-sam2", "7", reversed);
     assert_eq!(other.identity(), tiny("7").identity());
     assert_eq!(other.to_bytes(), tiny("7").to_bytes());
+    // The order kept is the order of the bytes of the names, upper case first, in the
+    // record and in the catalogue's entry alike: it is the order the identity hashes.
+    let names = |record: &InstallationRecord| -> Vec<String> {
+        record
+            .files()
+            .iter()
+            .map(|file| file.name().as_str().to_owned())
+            .collect()
+    };
+    assert_eq!(names(&other), ["LICENSE.txt", "graph.onnx"]);
+    let from_entry = InstallationRecord::of(&entry("tiny"), revision("7"), &none()).unwrap();
+    let tiny_entry = entry("tiny");
+    let in_entry: Vec<&str> = tiny_entry
+        .files()
+        .iter()
+        .map(|f| f.name().as_str())
+        .collect();
+    assert_eq!(names(&from_entry), in_entry);
+    let mixed = record(
+        "m",
+        "1",
+        "a",
+        "1",
+        vec![
+            installed("b", 1, b"x"),
+            installed("Z", 1, b"x"),
+            installed("a", 1, b"x"),
+            installed("0", 1, b"x"),
+        ],
+    );
+    assert_eq!(names(&mixed), ["0", "Z", "a", "b"]);
 }
 
 #[test]

@@ -10,6 +10,10 @@ until its deadline and sets its mark again; on the busy path the pointer is put 
 before the mark is taken off. Added under "For later tasks": what tasks M2b, M3 and M5
 to M6 must hold to, and the crashes their tests cover. Changed with the catalogue: the
 parts it builds are marked as code and name their tests.
+Amended: 2026-11-14, with the third pull request of task M1. Words only. Added: under
+"Limits", which line a refusal names; a row of the crashes, for one after the pointer's
+rename is durable; that what is printed of an entry's parts is counts. Changed with the
+installation record: the parts it builds are marked as code and name their tests.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -219,7 +223,10 @@ one model:
 
 (`catalogue::a_catalogue_is_read_as_its_models_and_their_files`,
 `catalogue::an_entry_holds_a_bounded_count_of_features_each_a_name_declared_once`,
-`catalogue::every_other_field_of_an_entry_keeps_its_rule`.)
+`catalogue::every_other_field_of_an_entry_keeps_its_rule`.) What an entry is made from,
+`EntryParts`, holds features that no constructor has looked at yet, so what `{:?}`
+prints of it is its names and three counts
+(`catalogue::what_is_printed_of_the_parts_of_an_entry_is_counts_and_never_a_feature`).
 
 - **A file's size** is 1 byte to 1 TiB (`FILE_MAX_BYTES`). It is what a download is
   stopped at, so a size of zero is refused: it would stop a download before its first
@@ -324,7 +331,10 @@ record's alike. In this order:
    `installation::a_record_with_an_unknown_field_a_missing_one_or_one_given_twice_is_refused`).
    A size is a whole number from 0 to what 64 bits hold, written as one: a fraction, a
    negative number and a text are another kind. Every list's count is looked at before
-   any of its items is. The format is the one the reader reads, or the record is refused
+   any of its items is
+   (`catalogue::a_list_over_its_bound_is_refused_for_its_count_before_any_of_its_items_is_looked_at`,
+   `installation::a_list_of_files_over_its_bound_is_refused_for_its_count_before_any_file_is_looked_at`).
+   The format is the one the reader reads, or the record is refused
    (`catalogue::a_catalogue_of_another_format_is_refused`,
    `installation::a_record_of_another_format_is_refused`).
 7. **Every value by its rule,** through the same constructors that make a value in
@@ -553,6 +563,10 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
 - **A field given twice hides what it held.** Such bytes are refused for the second
   field, and what either held is not looked at for a secret as decoded (step 5 comes
   after step 4). They are refused either way, and a refusal shows nothing.
+- **The line of a refusal is the reader's,** and can be late. A field given twice is
+  refused at the line of what follows its second key: with the key on one line and its
+  colon or its value on a later one, that later line. And a line break written raw
+  inside a text, which JSON does not allow, is refused at the line after it.
 - **A megabyte of JSON may take some tens of megabytes while it is read:** a list of
   many small values in a field nobody knows is read before it is refused
   (`refusals::values_nested_past_what_the_reader_follows_are_refused_and_not_followed`).
@@ -604,7 +618,8 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   | A crash | What is on the disk | What the next does | The model is |
   |---|---|---|---|
   | Publishing, after step 1 | A folder the pointer does not name, with no hold file, or with one from an earlier publication of that identity | Deletes it, taking the hold file alone when there is one | As it was |
-  | Publishing, inside step 2, before the pointer's rename is durable | The same, with the hold file made | Takes the hold file alone and deletes it | As it was |
+  | Publishing, inside step 2, before the pointer's rename is durable | The same, with the hold file made | Takes the hold file alone and deletes the folder | As it was |
+  | Publishing, after the pointer's rename is durable | The new pointer; the old folder, superseded | Cleans the old folder when its hold file is free | The new installation |
   | Removal, after step 1 | The mark; the pointer as it was | Takes the mark off | Installed |
   | Removal, after step 3 | The mark; no pointer; the folder | Finishes the removal: deletes the folder, takes the mark off | Not installed |
   | Cleaning a superseded folder, or a repair, part-way through deleting | Part of a folder the pointer does not name | Deletes the rest | As the pointer says: for a repair, not installed |

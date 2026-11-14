@@ -906,6 +906,65 @@ fn a_part_that_holds_a_secret_is_refused_where_the_part_is_made() {
 }
 
 #[test]
+fn what_is_printed_of_the_parts_of_an_entry_is_counts_and_never_a_feature() {
+    // The parts are what an entry is made from, before the entry's constructor has
+    // looked at a feature for a secret: what `{:?}` prints of them holds no feature,
+    // no origin and no address.
+    let mut parts = parts("tiny");
+    parts.features = vec![MARKER.to_owned(), "box".to_owned()];
+    let printed = format!("{parts:?}");
+    assert_eq!(
+        printed,
+        "EntryParts { name: ModelName(tiny), revision: Revision(2026-11.1), \
+         adapter: ModelName(owlv2-sam2), licence: Licence(Apache-2.0), features: 2, \
+         origins: 1, files: 2 }"
+    );
+    assert!(!printed.contains(MARKER) && !printed.contains("example.org"));
+}
+
+#[test]
+fn a_list_over_its_bound_is_refused_for_its_count_before_any_of_its_items_is_looked_at() {
+    // Each list one over its bound, and holding an item that would be refused for
+    // itself: the refusal is the count's, so no item was looked at.
+    let over = |list: &mut Value, most: usize, bad: Value| {
+        let one = list[0].clone();
+        let mut items = vec![one; most + 1];
+        items[0] = bad;
+        *list = Value::Array(items);
+    };
+    assert_eq!(
+        refusal_after(|v| over(&mut v["models"], MODELS_LIMIT, json!("not a model"))),
+        value_refused("models", Rule::Count { most: MODELS_LIMIT })
+    );
+    assert_eq!(
+        refusal_after(|v| over(&mut v["models"][0]["files"], FILES_LIMIT, json!(7))),
+        value_refused("models[0].files", Rule::Count { most: FILES_LIMIT })
+    );
+    assert_eq!(
+        refusal_after(|v| over(&mut v["models"][0]["features"], FEATURES_LIMIT, json!(7))),
+        value_refused(
+            "models[0].features",
+            Rule::Count {
+                most: FEATURES_LIMIT
+            }
+        )
+    );
+    assert_eq!(
+        refusal_after(|v| over(
+            &mut v["models"][0]["origins"],
+            ORIGINS_LIMIT,
+            json!("ftp://x")
+        )),
+        value_refused(
+            "models[0].origins",
+            Rule::Count {
+                most: ORIGINS_LIMIT
+            }
+        )
+    );
+}
+
+#[test]
 fn a_catalogue_too_long_to_be_read_back_is_not_made() {
     // 256 models of 64 files, each with a long address: more than a megabyte written.
     let long = "p".repeat(1900);
