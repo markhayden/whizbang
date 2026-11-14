@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/whizbang-core", "crates/whizbang-eval", "crates/whizbang-rascal", "crates/whizbang-squint", "crates/whizbang-testkit", "crates/whizbang"]
+members = ["crates/whizbang-core", "crates/whizbang-backends", "crates/whizbang-eval", "crates/whizbang-rascal", "crates/whizbang-squint", "crates/whizbang-testkit", "crates/whizbang"]
 
 [workspace.package]
 version = "0.0.1"
@@ -12,6 +12,7 @@ publish = false
 
 [workspace.dependencies]
 whizbang-core = { path = "crates/whizbang-core" }
+whizbang-backends = { path = "crates/whizbang-backends" }
 whizbang-rascal = { path = "crates/whizbang-rascal" }
 whizbang-squint = { path = "crates/whizbang-squint" }
 whizbang-testkit = { path = "crates/whizbang-testkit" }
@@ -24,6 +25,13 @@ serde = { version = "1.0", features = ["derive"] }
 # for every crate, so that no crate that reads JSON can be the one without it.
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 sha2 = "0.11"
+# The reader of the config file (SPEC.md section 4), for the core and for nothing else. One
+# crate, the one both old tools read their configs with; it and what it brings (its parser,
+# its date type, its spans and `winnow`) are MIT or Apache-2.0 and come from crates.io, which
+# `just deny` checks. It reads only: the half that writes TOML is a default feature and is
+# off, since whizbang never writes a config. It refuses a key given twice, and it stops at
+# a depth of nesting unless `unbounded` is asked for, which it is not.
+toml = { version = "1.2", default-features = false, features = ["parse", "serde"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
