@@ -3,10 +3,14 @@
 One toolkit for working on images with models: finding and editing things in an image
 (`rascal`), judging an image against rules (`squint`), and a playground for both.
 
-**State:** nothing usable yet. Milestone 0 (the skeleton, the freeze of the old projects and
-the baseline) is complete: [docs/plans/m0-note.md](docs/plans/m0-note.md). Checkpoint 1A, the
-contracts and the store, is next. The design is in [SPEC.md](SPEC.md); the plans are in
-[docs/plans/](docs/plans/). It replaces four earlier projects, which stay available as
+**State:** little a person would use yet, and nothing that runs a model. Checkpoint 1A,
+the contracts and the store, is complete: [docs/plans/m1a-note.md](docs/plans/m1a-note.md).
+At its tag, `m1a`, one command runs an action: `whizbang rascal grow` grows a mask that is
+in a store and commits the result. `check`, squint's judge loop, is described and has no
+command, and cannot run on this build, which holds no judge. `whizbang runs list|show`
+reads what a run recorded, `whizbang store list|delete|prune|import` looks after a store,
+and `whizbang describe` says what the build holds. Checkpoint 1B, policy and controls, is
+next. The design is in [SPEC.md](SPEC.md); the plans are in [docs/plans/](docs/plans/). It replaces four earlier projects, which stay available as
 reference; their final commits are pinned in [docs/sources.toml](docs/sources.toml).
 
 What a build can do is listed in [docs/reference/actions.md](docs/reference/actions.md), which

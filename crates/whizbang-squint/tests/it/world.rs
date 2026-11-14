@@ -12,9 +12,9 @@ use whizbang_core::artifact::{self, Artifact, ArtifactId, ArtifactType, Image};
 use whizbang_core::capability::Judge;
 use whizbang_core::contract::record::RunRecord;
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Argument, Call, Capabilities, Clock, Context, Engine, Failure,
-    InputPort, Kind, PreparedCall, Produced, RUN_RECORD_SCHEMA, Registry, RunId, Secrets,
-    ValueType,
+    Action, ActionDescriptor, Argument, Backends, Call, Capabilities, Capability, Clock, Context,
+    Engine, Estimate, Failure, InputPort, Kind, ModelIdentity, PreparedCall, Produced,
+    RUN_RECORD_SCHEMA, Registry, RunId, Secrets, Unavailable, ValueType,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::Fs;
@@ -49,6 +49,25 @@ impl Action for Grow {
     fn run(&self, _: &PreparedCall, _: &Context) -> Result<Produced, Failure> {
         self.1.fetch_add(1, Ordering::SeqCst);
         Ok(Produced::nothing())
+    }
+}
+
+/// The roster of a world, whose every model states one bound on what a call of it may
+/// cost, in millionths of a US dollar.
+struct Priced(whizbang_core::capability::Roster, u64);
+
+impl Backends for Priced {
+    fn resolve(
+        &self,
+        capability: Capability,
+        choice: Option<&str>,
+        features: &[String],
+    ) -> Result<ModelIdentity, Unavailable> {
+        Backends::resolve(&self.0, capability, choice, features)
+    }
+
+    fn bound(&self, _: Capability, _: &ModelIdentity) -> Estimate {
+        Estimate::of_micros(self.1)
     }
 }
 
@@ -123,6 +142,17 @@ impl World {
         secrets: Secrets,
         wrap: impl Fn(Arc<dyn Action>) -> Arc<dyn Action>,
     ) -> Engine {
+        self.engine_priced(judge, secrets, wrap, 0)
+    }
+
+    /// The same executor, whose judge states that a call of it may cost `micros`.
+    pub fn engine_priced(
+        &self,
+        judge: Arc<dyn Judge>,
+        secrets: Secrets,
+        wrap: impl Fn(Arc<dyn Action>) -> Arc<dyn Action>,
+        micros: u64,
+    ) -> Engine {
         let grow = ActionDescriptor::draft("grow", "1.0.0", Kind::Primitive, "Grows a mask.")
             .input(InputPort::optional("mask", ArtifactType::Image, "A mask."))
             .argument(Argument::optional(
@@ -140,7 +170,7 @@ impl World {
         let offered = roster(None, None, Some(judge.as_ref()));
         Engine::over(
             registry,
-            Arc::new(offered),
+            Arc::new(Priced(offered, micros)),
             self.store(),
             Digest::of_bytes(b""),
         )

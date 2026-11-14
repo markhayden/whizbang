@@ -501,19 +501,24 @@ completed status, and every diagnostic written before it ended is readable.
 
 ### A12. Exit check
 
-- [ ] Each clause of the checkpoint 1A row in `SPEC.md` section 16 is matched to a named test
+- [x] Each clause of the checkpoint 1A row in `SPEC.md` section 16 is matched to a named test
       in the note.
-- [ ] The run records written by `grow` and by `check` (completed, failed and cancelled) are
+- [x] The run records written by `grow` and by `check` (completed, failed and cancelled) are
       each checked against the list in `SPEC.md` section 3: steps, timings, the fake
       capabilities' identities, the fake ledger's amounts, and for `check` every turn kept
       whole.
-- [ ] `just check` is inside its budget; the timing table is in the note.
-- [ ] The generated reference lists `grow` and `check` and is current.
-- [ ] `docs/plans/m1a-note.md`: what shipped, what the two proofs changed about the contract,
+- [x] `just check` is inside its budget; the timing table is in the note.
+- [x] The generated reference lists `grow` and `check` and is current.
+- [x] `docs/plans/m1a-note.md`: what shipped, what the two proofs changed about the contract,
       the timing table, what moved to the carry-over list.
-- [ ] `port-module` is corrected from its uses in A9 and A10, and now includes writing the
+- [x] `port-module` is corrected from its uses in A9 and A10, and now includes writing the
       tool record.
-- [ ] Tag `m1a`.
+- [ ] Tag `m1a`. (The orchestrator's, on the merge of the pull request that ticks the
+      boxes above; a later pull request ticks this one.)
+
+**Built in two pull requests:** first the leftovers that change code, each from a row of
+`docs/carry-over.md` or a reviewer's note, built with a test or given a new owner with
+its reason; then the exit check itself, with the note.
 
 ## Review rounds
 

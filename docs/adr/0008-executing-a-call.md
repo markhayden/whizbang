@@ -379,8 +379,9 @@ built on has no way left to read a file whole (`Fs::read_at_most` is its one rea
   is still published, because it makes the file smaller, and after it there is room
   again
   (`store::a_publication_that_would_write_a_generation_file_over_the_limit_is_refused_unseen`,
-  which fills a store to within two mebibytes of the limit with long names; the limit
-  has no seam for tests). What a deletion cannot give back is what was never a run's:
+  which lowers the limit on what a store writes through a seam for tests,
+  `Store::limit_generations_to`, to the size its generation file then has; the seam
+  only lowers, and changes nothing of what is read). What a deletion cannot give back is what was never a run's:
   the names of request ids and of spend are never removed, so a store that request
   ids filled shrinks only by the runs that are deleted from it, and is otherwise full
   for good. That is the cost the row on what every publication writes has to settle
