@@ -437,6 +437,16 @@ fn a_setting_is_a_name_and_a_value_in_the_order_of_the_names() {
             .collect();
         d["asked"]["settings"] = json!(many);
     });
+    kept(&ordinary(), "a text as long as one is kept", &|d| {
+        d["asked"]["settings"][0]["value"] = json!({"text": "t".repeat(256)})
+    });
+    both(&ordinary(), "a text one character longer", &|d| {
+        d["asked"]["settings"][0]["value"] = json!({"text": "t".repeat(257)})
+    });
+    // An argument's text has no such bound: it is bounded where a call comes in.
+    kept(&ordinary(), "an argument's text of any length", &|d| {
+        d["asked"]["arguments"][0]["value"] = json!({"text": "t".repeat(257)})
+    });
     kept(&ordinary(), "as many as a record lists", &|d| {
         let many: Vec<Json> = (0..96)
             .map(|at| json!({"name": format!("s{at:03}"), "value": {"integer": at}}))
@@ -512,6 +522,14 @@ fn what_the_schema_cannot_say_of_a_paid_request_the_types_refuse() {
     refused("not sent, and charged", &|d| {
         paid(d, "stage", json!("not_sent"))
     });
+    refused(
+        "not sent, nothing settled, and something unresolved",
+        &|d| {
+            paid(d, "stage", json!("not_sent"));
+            paid(d, "settled_micros", json!(0));
+            paid(d, "unresolved_micros", json!(1));
+        },
+    );
     refused("unresolved, and nothing unresolved", &|d| {
         paid(d, "stage", json!("unresolved"))
     });
@@ -628,14 +646,10 @@ fn a_refusal_of_a_capability_request_names_no_action() {
         kept(&ordinary(), kind, &|d| {
             d["outcome"]["refusals"][0]["kind"] = json!(kind)
         });
-        let mut document = as_json(&ordinary());
-        document["outcome"]["refusals"][0]["kind"] = json!(kind);
-        document["outcome"]["refusals"][0]["action"] = json!("heal");
-        let read = RunRecord::from_bytes(&written(&document));
-        assert!(
-            matches!(read, Err(RecordError::Inconsistent(_))),
-            "{kind}: {read:?}"
-        );
+        both(&ordinary(), &format!("{kind}, naming an action"), &|d| {
+            d["outcome"]["refusals"][0]["kind"] = json!(kind);
+            d["outcome"]["refusals"][0]["action"] = json!("heal");
+        });
     }
     both(&ordinary(), "a kind that is none", &|d| {
         d["outcome"]["refusals"][0]["kind"] = json!("request_refused")
@@ -670,4 +684,52 @@ fn reading_looks_at_the_shape_and_the_meaning_before_how_a_record_is_written() {
     );
     // And the same record in a record's order, with nothing changed, is read.
     assert!(RunRecord::from_bytes(ordinary().as_bytes()).is_ok());
+}
+
+#[test]
+fn a_list_far_over_its_bound_is_refused_for_its_count_before_its_entries_are_compared() {
+    // 55,000 entries of where data went, in a document just under the limit on a
+    // record. Whether each is named once is found by comparing each with those before
+    // it, which for this many is over a thousand million comparisons: the count is
+    // looked at first, so the document is refused at once.
+    let mut document = as_json(&ordinary());
+    let many: Vec<Json> = (0..55_000)
+        .map(|at| {
+            json!({"origin": format!("https://h{at}.io"), "account": null, "classes": [],
+                   "outcome": "sent"})
+        })
+        .collect();
+    document["egress"] = json!(many);
+    let bytes = written(&document);
+    assert!(bytes.len() > 3_500_000 && bytes.len() < 4 * 1024 * 1024);
+    let read = RunRecord::from_bytes(&bytes);
+    assert!(
+        matches!(&read, Err(RecordError::Inconsistent(why)) if why.contains("128")),
+        "{read:?}"
+    );
+}
+
+#[test]
+fn what_the_schema_cannot_say_of_a_setting_the_types_refuse() {
+    // The validator knows no keyword for the characters of a text, so a name's
+    // characters are the types' to hold; and the order of the names, and a name once
+    // (above).
+    let refused = |what: &str, change: &dyn Fn(&mut Json)| {
+        let mut document = as_json(&ordinary());
+        change(&mut document);
+        let read = RunRecord::from_bytes(&written(&document));
+        assert!(
+            matches!(read, Err(RecordError::Inconsistent(_))),
+            "{what}: {read:?}"
+        );
+    };
+    for name in [
+        "two words",
+        "quo\"te",
+        "back\\slash",
+        "caf\u{e9}",
+        "tab\there",
+    ] {
+        refused(name, &|d| d["asked"]["settings"][0]["name"] = json!(name));
+    }
 }

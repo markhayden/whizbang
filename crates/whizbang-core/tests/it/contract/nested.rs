@@ -1853,14 +1853,25 @@ fn a_record_with_a_parent_steps_and_refusals_is_read_and_written_back_as_the_sam
     let document: Json = serde_json::from_str(&nested()).unwrap();
     validate(&schema(), &document).unwrap();
 
-    // The kinds of refusal the schema lists are the kinds there are, in order.
-    let listed = &schema()["$defs"]["outcome"]["properties"]["refusals"]["items"]["properties"]["kind"]
-        ["enum"];
+    // The kinds of refusal the schema lists are the kinds there are, in order: those
+    // of a call, which may name an action, and then those of a capability request,
+    // which names none (ADR 0013).
+    let shapes = &schema()["$defs"]["outcome"]["properties"]["refusals"]["items"]["oneOf"];
+    let listed: Vec<Json> = [0, 1]
+        .into_iter()
+        .flat_map(|at| {
+            shapes[at]["properties"]["kind"]["enum"]
+                .as_array()
+                .unwrap()
+                .clone()
+        })
+        .collect();
     let kinds: Vec<Json> = RefusalKind::ALL
         .iter()
         .map(|kind| serde_json::to_value(kind).unwrap())
         .collect();
-    assert_eq!(listed, &Json::Array(kinds));
+    assert_eq!(listed, kinds);
+    assert_eq!(shapes[1]["properties"]["action"], json!({"type": "null"}));
 }
 
 /// Sets what is at this place in the document, or takes it out when given nothing.
