@@ -176,6 +176,43 @@ printf 'token_%s\n' "$key" >>words.txt
 expect_fail "a key among ordinary words" "words.txt:16" env -u WHIZBANG_WORDLIST "$scan" --secrets-only
 [ "$(grep -a -c -F -e "words.txt:" "$tmp/out")" = 1 ] || { cat "$tmp/out" >&2; fail "only the line with the key is reported"; }
 
+# The edges of the rule, directly after a word character: a part of exactly 20 characters
+# with a digit is a key, one of 19 is not, and a capital counts as a digit does.
+fresh joined-edges
+letters=abcdefghijklmnopqrstuvwxyz
+{
+  echo "token_sk""-${letters:0:19}7"
+  echo "token_sk""-ab-${letters:0:18}7"
+  echo "token_sk""-${letters:0:19}Q"
+  echo "token_sk""-${letters:0:19}_"
+} >edges.txt
+expect_fail "the edges of the rule" "edges.txt:1" env -u WHIZBANG_WORDLIST "$scan" --secrets-only
+grep -a -q -x -F -e "edges.txt:3" "$tmp/out" || { cat "$tmp/out" >&2; fail "a part of 20 with a capital and no digit is found"; }
+grep -a -q -x -F -e "edges.txt:2" "$tmp/out" && { cat "$tmp/out" >&2; fail "a part of 19 with a digit is not a key"; }
+grep -a -q -x -F -e "edges.txt:4" "$tmp/out" && { cat "$tmp/out" >&2; fail "a part of 20 with no digit and no capital is not a key"; }
+[ "$(grep -a -c -F -e "edges.txt:" "$tmp/out")" = 2 ] || { cat "$tmp/out" >&2; fail "two of the four edges are keys"; }
+
+# What the rule takes for a key though it is a name: none can be told from a key by its
+# shape (the comment above sk_anywhere in scripts/scan.sh says what to do about one).
+# They are put together here, like the keys, because this repo's own scan takes them so.
+fresh joined-names
+{
+  echo "task-$hex"
+  echo "mask-${chars}${chars:0:6}.png"
+  echo "task""-VeryLongClassNameForSomething"
+  echo "mask""-rcnn_resnet50_fpn_coco_weights"
+} >names.txt
+expect_fail "names that have a key's shape" "names.txt:1" env -u WHIZBANG_WORDLIST "$scan" --secrets-only
+[ "$(grep -a -c -F -e "names.txt:" "$tmp/out")" = 4 ] || { cat "$tmp/out" >&2; fail "each of the four names is taken for a key"; }
+# Written another way, each passes.
+{
+  echo "task_$hex"
+  echo "mask ${chars}${chars:0:6}.png"
+  echo "task-Very-Long-Class-Name-For-Something"
+  echo "mask_rcnn_resnet50_fpn_coco_weights"
+} >names.txt
+expect_pass "the same names written another way" env -u WHIZBANG_WORDLIST "$scan" --secrets-only
+
 # What is left, and is on docs/carry-over.md: directly after a word character, a key whose
 # every part between hyphens is short is not told from hyphenated words. The same text at
 # the start of a word is found. If this case starts to fail, the row can go.
