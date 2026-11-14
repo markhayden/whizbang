@@ -966,6 +966,38 @@ fn a_secret_that_lowering_a_host_makes_is_refused_and_not_shown() {
 }
 
 #[test]
+fn a_secret_that_folding_an_address_makes_across_its_host_and_its_path_is_refused() {
+    // The secret stands across the host and the path. The address as given does not
+    // hold it: its host is in capitals, or a port stands between the two halves, which
+    // is left out when it is the scheme's own. The address as it is written does, and
+    // neither the origin alone nor the rest alone holds it.
+    let secret = "zqxjkvwpyh/Path9";
+    let secrets = Secrets::new([secret.to_owned()]).unwrap();
+    for text in [
+        "https://ZQXJKVWPYH/Path9",
+        "https://zqxjkvwpyh:443/Path9",
+        "http://zqxjkvwpyh:80/Path9?q=1",
+        "HTTPS://Zqxjkvwpyh:443/Path9/more",
+    ] {
+        assert_eq!(secrets.redact(text), text, "the text as given holds none");
+        assert_eq!(
+            Address::of(text, &secrets).map(|_| ()),
+            Err(NotAllowed::Secret),
+            "{text}"
+        );
+    }
+    // The origin of such an address holds no secret, and is one.
+    Origin::of("https://ZQXJKVWPYH/Path9", &secrets).unwrap();
+    // A port that is not the scheme's own stays between the halves, and a path of
+    // other letters is another text: neither is the secret.
+    for text in ["https://zqxjkvwpyh:8443/Path9", "https://ZQXJKVWPYH/path9"] {
+        let address = Address::of(text, &secrets).unwrap();
+        let written = format!("{}{}", address.origin(), address.rest());
+        assert_eq!(secrets.redact(&written), written, "{text}");
+    }
+}
+
+#[test]
 fn a_credential_of_another_scheme_on_the_same_host_and_port_is_refused_by_each_request() {
     let to = address("https://h/x");
     assert_eq!(to.origin().port(), 443);

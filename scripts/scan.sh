@@ -957,7 +957,9 @@ scan_tag_chain() { # <sha>
     sed '1,/^$/d' "$work/tag" >"$text/tag-message/$obj"
     sed -n '1,/^$/s/^tag //p' "$work/tag" >>"$text/ref-names/tags"
     sed -n '1,/^$/s/^tagger //p' "$work/tag" >"$work/taggers/$obj"
-    obj=$(sed -n '1,/^$/s/^object //p' "$work/tag" | head -n 1)
+    # The first of them, read to the end: a reader that stopped at its first line could
+    # have the writer killed while it wrote, and the pipeline then fails (AGENTS.md).
+    obj=$(sed -n '1,/^$/s/^object //p' "$work/tag" | sed -n '1p')
   done
   [ "$kind" = commit ] || die "$obj is a $kind, not a commit; the scan cannot cover it; refusing to pass"
   tip=$obj

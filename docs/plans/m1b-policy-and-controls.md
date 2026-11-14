@@ -643,7 +643,7 @@ records each hop in order with the headers it would have carried.
 **Depends on:** B3. **Reads:** ADR 0005; ADR 0008, "What is refused inside a run is in its
 record".
 
-- [ ] An ADR, which changes ADR 0005: `run/3`. The element of `asked.settings` (a name and
+- [x] An ADR, which changes ADR 0005: `run/3`. The element of `asked.settings` (a name and
       a value, as an argument is written, in a stated order); of `spend.requests`, one
       paid request (reserved, settled, unresolved, the stage it reached, and whether its
       charge was over its bound); of `egress` (the recipient, the classes of data, and whether
@@ -653,9 +653,9 @@ record".
       empty when `outcome.lost` names their group, as "What a crashed run is recovered
       to" says. What reading does with a `run/2` record: it is read, as frozen
       at `m1a`.
-- [ ] A bound on each new list where it comes in, so that a record stays readable under
+- [x] A bound on each new list where it comes in, so that a record stays readable under
       its limit (ADR 0008, "What a call and a run may hold").
-- [ ] The types, the schema `run-3.json` and fixed vectors. The executor writes `run/3`
+- [x] The types, the schema `run-3.json` and fixed vectors. The executor writes `run/3`
       with the new lists empty.
 
 **Done when** these pass: a `run/3` record with each new element round-trips and validates,
@@ -678,7 +678,7 @@ every list of `run/3` to its bound has a record under the limit, with
 
 **Depends on:** B4.
 
-- [ ] The executor gives each run a place (`RunFacts`) in which a setting, a spend line, a
+- [x] The executor gives each run a place (`RunFacts`) in which a setting, a spend line, a
       refusal of a request and a recipient can be noted from another module, and writes
       what was noted when the run ends. Nothing in it is durable before the run's end:
       what a crash loses of it is what `outcome.lost` names.
@@ -695,16 +695,16 @@ dropped and changes no record.
 
 **Depends on:** B4b. The first section of the interfaces' ADR, which changes ADR 0007.
 
-- [ ] `AdmissionPart`, in the core: the executor holds a list of parts. Each is shown the
+- [x] `AdmissionPart`, in the core: the executor holds a list of parts. Each is shown the
       request, the preparation made at admission and the time, before each attempt at the
       admission's publication; it may refuse, with a refusal of its own kind, and it may
       add records among the run's names to that publication. A refusal by a part is a
       refusal after the look, so the id is looked up once more (ADR 0007).
-- [ ] Two things a part reads, added here because they are the executor's: a request may
+- [x] Two things a part reads, added here because they are the executor's: a request may
       carry a cap of its own, which is no part of its fingerprint; and a preparation
       carries the time it was made, from the executor's clock, beside `prepared/1` and
       not in it.
-- [ ] The executor calls its parts; with none it behaves as before. A fake part in the
+- [x] The executor calls its parts; with none it behaves as before. A fake part in the
       test kit that refuses, or adds a record, on demand.
 
 **Done when** these pass: a part's record is in the store with the run or not at all,
@@ -1552,7 +1552,7 @@ only the chunks the test lists.
 `models/cache.py` and `tools/python/MODEL.md`; table-manners `CONTRACT.md` sections 3.5
 and 5.3 and `schemas/core/installable.json`.
 
-- [ ] An ADR: the models directory and its lock; a catalogue entry (files with their sizes
+- [x] An ADR: the models directory and its lock; a catalogue entry (files with their sizes
       and hashes, the origins they may be downloaded from, licence, features, and a
       revision); an installation and its record, which holds the catalogue's and the
       adapter's revisions; the installation's identity; the pointer that names the one in
@@ -1807,7 +1807,7 @@ holds each long script to the form.
 
 **Depends on:** X5. Scripts only.
 
-- [ ] The sixteen lines under `scripts/` that end a pipe with `grep -q` send the output
+- [x] The sixteen lines under `scripts/` that end a pipe with `grep -q` send the output
       to `/dev/null` instead, and `scripts/tests/test-syntax.sh` refuses a new one.
 
 **Done when** no script under `scripts/` has the pattern, a planted one fails the test,

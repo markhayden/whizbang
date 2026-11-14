@@ -23,7 +23,7 @@ use crate::identity::{Digest, Encoder, Fields};
 
 pub use env::{
     Credentials, ENV_BYTES_LIMIT, ENV_VALUE_LIMIT, ENV_VARIABLES_LIMIT, EnvFile, EnvRefused,
-    Handed, KeyValue,
+    Handed, KeyValue, LoadRefused, Loaded,
 };
 pub use refused::{ConfigRefused, KEY_SHOWN_LIMIT};
 

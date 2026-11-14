@@ -51,8 +51,8 @@ impl std::fmt::Display for ConfigRefused {
             }
             ConfigRefused::NotText { line } => write!(
                 f,
-                "the config file is not text at line {line}: it is UTF-8 with no control \
-                 character"
+                "the config file is not text at line {line}: it is UTF-8 with no ASCII \
+                 control character"
             ),
             ConfigRefused::HoldsSecret => f.write_str(
                 "the config file holds a secret: a credential is named by its variable and \

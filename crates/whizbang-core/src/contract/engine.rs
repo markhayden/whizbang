@@ -2,6 +2,7 @@
 //! hands to whatever runs actions.
 
 use std::any::Any;
+use std::collections::BTreeSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -16,18 +17,19 @@ use super::journal::Kept;
 use super::ledger::{Declined, Reservation, Step};
 use super::live::{self, LiveRun, Told};
 use super::nested::{Added, DESCENDANTS_LIMIT, Family, HeldOpen, Nested, Offer, Under};
+use super::part::{self, Asking, PartDeclined, PartStep};
 use super::prepare::prepare;
 use super::record::{
-    Diagnostic, Inside, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran, RunRecord,
-    StoredRecordError,
+    Diagnostic, Facts, Inside, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran,
+    RunRecord, StoredRecordError,
 };
 use super::request::{Found, look_up, outcome_of};
 use super::{
-    ADMITTED_NAME, Action, ActionDescriptor, Admission, Answer, Backends, Call, CallError, Cancel,
-    Cancellation, Capabilities, Clock, Committed, Context, Ending, Failure, Finished, Ledger,
-    MESSAGE_LIMIT, Outcome, PreparedCall, Produced, Readiness, Refusal, Registry, Request,
-    RequestId, RunId, RunState, Secrets, Stale, StoreFailure, SystemClock, Watched,
-    request_fingerprint,
+    ADMITTED_NAME, Action, ActionDescriptor, Admission, AdmissionPart, Answer, Backends, Call,
+    CallError, Cancel, Cancellation, Capabilities, Clock, Committed, Context, Ending, Estimate,
+    Failure, Finished, Ledger, MESSAGE_LIMIT, Outcome, PreparedCall, Produced, Readiness, Refusal,
+    Registry, Request, RequestId, RunFacts, RunId, RunState, Secrets, Stale, StoreFailure,
+    SystemClock, Watched, request_fingerprint,
 };
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
@@ -123,6 +125,8 @@ pub struct Engine {
     secrets: Secrets,
     /// The ledger that takes part in admission, when this executor was given one.
     ledger: Option<Arc<dyn Ledger>>,
+    /// The parts of every admission, in the order they were given (ADR 0015).
+    parts: Vec<Arc<dyn AdmissionPart>>,
     /// The backends each run's capability handles are made over.
     capabilities: Capabilities,
     /// How many runs may be admitted under one run that nothing called.
@@ -223,6 +227,7 @@ impl Engine {
             clock: Arc::new(SystemClock),
             secrets: Secrets::none(),
             ledger: None,
+            parts: Vec::new(),
             capabilities: Capabilities::none(),
             descendants: DESCENDANTS_LIMIT,
             requests: REQUESTS_LIMIT,
@@ -271,6 +276,14 @@ impl Engine {
     /// asked for (ADR 0007, "The reservation"). Without one nothing is reserved.
     pub fn with_ledger(mut self, ledger: Arc<dyn Ledger>) -> Engine {
         self.ledger = Some(ledger);
+        self
+    }
+
+    /// The same executor, with one more part in every admission, asked after those it
+    /// already has (ADR 0015, "A part in the admission"). Without one, admission is
+    /// as it was.
+    pub fn with_part(mut self, part: Arc<dyn AdmissionPart>) -> Engine {
+        self.parts.push(part);
         self
     }
 
@@ -403,7 +416,10 @@ const MAX_NAMINGS: u32 = 8;
 
 impl Executor for Engine {
     fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError> {
-        self.prepare_from(call, self.contents.as_ref())
+        let prepared = self.prepare_from(call, self.contents.as_ref())?;
+        // A preparation carries the time it was made, beside its fingerprint and not
+        // in it (ADR 0015): the clock is read once it is made, and for no refusal.
+        Ok(prepared.made_at(self.clock.now_ms()))
     }
 
     fn submit(&self, call: &Call) -> Result<Finished, CallError> {
@@ -673,6 +689,9 @@ pub(super) struct Admitted {
 pub(super) struct Bounded {
     pub(super) signal: Cancellation,
     pub(super) deadline: Option<Instant>,
+    /// The cap the request came with, which the executor shows to its parts and
+    /// holds no call to (ADR 0015).
+    pub(super) cap: Option<Estimate>,
 }
 
 impl Bounded {
@@ -682,6 +701,7 @@ impl Bounded {
         Bounded {
             signal: request.cancellation().cloned().unwrap_or_default(),
             deadline: request.deadline(),
+            cap: request.cap(),
         }
     }
 
@@ -689,6 +709,7 @@ impl Bounded {
         Bounded {
             signal: Cancellation::new(),
             deadline: None,
+            cap: None,
         }
     }
 }
@@ -865,7 +886,7 @@ impl Engine {
         };
         let prepared = match &view {
             Some(view) => self.prepare_from(call, view.as_ref()),
-            None => self.prepare(call),
+            None => self.prepare_from(call, self.contents.as_ref()),
         };
         let prepared = match (prepared, expected) {
             (Ok(prepared), _) => prepared,
@@ -907,6 +928,9 @@ impl Engine {
         // published. From the publication on there is a run, durably, and whatever
         // happens to its action it is in the store.
         let start_ms = self.clock.now_ms();
+        // The preparation made here was made at the time of the admission: the one
+        // reading of the clock an admission makes (ADR 0015).
+        let prepared = prepared.made_at(start_ms);
         let request = asked.map(|(id, _)| id);
         let fingerprint = match asked {
             Some((_, fingerprint)) => fingerprint,
@@ -979,6 +1003,44 @@ impl Engine {
             .under(parent.clone())
             .to_bytes();
             let mut publication = store.begin().map_err(failed)?;
+            // The executor's parts are asked first, in the order they were given, for
+            // every attempt: each may refuse the call, and may add records among the
+            // names of the run this attempt makes (ADR 0015). A refusal or a failure
+            // drops the publication with all it staged, before the ledger is asked.
+            let asking = Asking {
+                call,
+                id: request,
+                expected,
+                cap: bounded.cap,
+                prepared: &prepared,
+                now_ms: start_ms,
+                parent: parent.as_ref(),
+            };
+            let mut added = BTreeSet::new();
+            for part in &self.parts {
+                let name = part.name();
+                let mut step =
+                    PartStep::new(&mut publication, &run, &self.secrets, name, &mut added);
+                match part.look(&asking, &mut step) {
+                    Ok(()) => {}
+                    Err(PartDeclined::Refused(refusal)) => {
+                        return Err(CallError::Refused(Refusal::ByPart {
+                            action: prepared.action().to_owned(),
+                            part: name,
+                            kind: refusal.kind(),
+                            why: part::sentence(&self.secrets, refusal.why()),
+                        })
+                        .into());
+                    }
+                    // What a part says of its own failure is cleaned as its refusal
+                    // is; what the store or the step said is as it was.
+                    Err(PartDeclined::Failed(CallError::Part { part, why })) => {
+                        let why = part::sentence(&self.secrets, &why);
+                        return Err(CallError::Part { part, why }.into());
+                    }
+                    Err(PartDeclined::Failed(error)) => return Err(error.into()),
+                }
+            }
             // The ledger takes part here: it judges, and adds what it must to this
             // publication, before anything is published. Declined, the publication is
             // dropped with all it staged.
@@ -1205,6 +1267,13 @@ impl Engine {
             inputs: Arc::new(prepared.inputs().iter().map(|input| input.id()).collect()),
             offer: offer.clone(),
         };
+        // The run's place for facts (ADR 0013): what another module notes of the run
+        // while it executes. A refusal of a request goes with the run's other
+        // refusals, in one order and within one bound.
+        let facts = RunFacts::of_a_run(self.secrets.clone(), {
+            let live = live.clone();
+            Box::new(move |refused| live.nest().refused(refused))
+        });
         let context = Context::new(
             live.signal().clone(),
             deadline,
@@ -1220,6 +1289,7 @@ impl Engine {
         )
         .with_diagnostics(kept.clone())
         .recording(kept.clone(), self.requests, self.exchanges)
+        .noting(facts.clone())
         .offering(offer);
         live.nest().watch(context.requests().clone());
         // A panic in the action is caught: its run ends as any other does, with its
@@ -1297,9 +1367,33 @@ impl Engine {
         let parent = family.parent.as_ref().map(|(run, _)| run.clone());
         // A verdict is written only in the record of a run that completed: the record
         // drops it for any other (ADR 0009).
+        // The run's end begins here for what is noted of it too: no note is taken from
+        // now on, and what was noted is in the record or was answered no.
+        let mut noted = facts.close();
         let mut inside = live.nest().inside(parent);
         inside.verdict = verdict;
-        let record_of = |outcome: &Outcome, inside: &Inside| {
+        // A record lists what a request cost only for a request it lists. What was
+        // noted for a request the run did not send cannot be written, and leaving it
+        // out in silence would be a record that says less was spent than was noted:
+        // the run ends as an error that says so, whatever its action handed back, and
+        // commits nothing.
+        if let Some(request) = noted.unlisted_paid(inside.asked.len()) {
+            let (_, all, _) = noted.counts();
+            let left_out = noted.drop_unlisted_paid(inside.asked.len());
+            outputs.clear();
+            inside.verdict = None;
+            outcome = Outcome::Error {
+                kind: "record".to_owned(),
+                message: format!(
+                    "what a request cost was noted for request {request}, and the run sent \
+                     {} capability requests: a record lists what a request cost only for \
+                     a request it lists, so {left_out} of the {all} that were noted is not \
+                     in this record",
+                    inside.asked.len()
+                ),
+            };
+        }
+        let record_of = |outcome: &Outcome, inside: &Inside, noted: &Facts| {
             RunRecord::of(
                 Ran {
                     run: run.as_str(),
@@ -1312,50 +1406,67 @@ impl Engine {
                     end_ms,
                     diagnostics: kept.iter().map(|(d, _)| d.clone()).collect(),
                     inside: inside.clone(),
+                    facts: noted.clone(),
                 },
                 &self.secrets,
             )
         };
-        let mut record = record_of(&outcome, &inside);
-        // A record lists every output, and one over the limit is refused on reading
-        // (ADR 0005). A run whose outputs make such a record commits none of them: it
-        // ends as an error, with a record that lists none.
+        let mut record = record_of(&outcome, &inside, &noted);
+        // A record over the limit is refused on reading, so it is not published as it
+        // is. What makes it too large is left out in two stages, the outputs first.
         //
-        // The same holds of a run with no output (ADR 0009): a record over the limit
-        // is not published as it is. The run ends as an error of the type `record`,
-        // and its record leaves out what it would have said of its capability
-        // requests, saying how many there were. Everything else a record lists is
-        // bounded where it comes in, a call's texts and inputs at admission and a
-        // run's diagnostics where they are written, and the sum of it all is under
-        // the limit (ADR 0008, "What a call and a run may hold"): so the record that
-        // is written here is one that is read back.
-        let bytes = record.to_bytes().len() as u64;
-        if bytes > self.record_max {
-            let is_at_most = format!("a record is at most {} bytes", self.record_max);
-            outcome = if outputs.is_empty() {
-                Outcome::Error {
-                    kind: "record".to_owned(),
-                    message: format!(
-                        "the run sent {} capability requests, and the record that lists \
-                         them would be {bytes} bytes: {is_at_most}",
-                        inside.asked.len()
-                    ),
-                }
-            } else {
-                Outcome::Error {
-                    kind: "output".to_owned(),
-                    message: format!(
-                        "the action handed back {} artifacts, and the record that lists \
-                         them would be {bytes} bytes: {is_at_most}",
-                        outputs.len()
-                    ),
-                }
+        // First (ADR 0005): a run whose outputs make such a record commits none of
+        // them. It ends as an error of the type `output`, with a record that lists no
+        // output and keeps everything else: what the run sent, what it paid and where
+        // its data went are not what was too large, and a run that paid never has a
+        // record that says nothing was spent because it handed back too much.
+        let is_at_most = format!("a record is at most {} bytes", self.record_max);
+        let mut handed_back = None;
+        let mut bytes = record.to_bytes().len() as u64;
+        if bytes > self.record_max && !outputs.is_empty() {
+            handed_back = Some(outputs.len());
+            outcome = Outcome::Error {
+                kind: "output".to_owned(),
+                message: format!(
+                    "the action handed back {} artifacts, and the record that lists \
+                     them would be {bytes} bytes: {is_at_most}",
+                    outputs.len()
+                ),
             };
             outputs.clear();
+            inside.verdict = None;
+            record = record_of(&outcome, &inside, &noted);
+            bytes = record.to_bytes().len() as u64;
+        }
+        // Then (ADR 0009, ADR 0013): a record that is over the limit with no output in
+        // it leaves out what it would have said of the run's capability requests and
+        // what was noted of the run, and says so: how many there were of each, and
+        // that none of them is listed. The run ends as an error of the type `record`.
+        // Everything else a record lists is bounded where it comes in, and the sum of
+        // it all is under the limit (ADR 0008, "What a call and a run may hold"), so
+        // only a limit that a test lowered reaches this, and the record that is
+        // written here is one that is read back.
+        if bytes > self.record_max {
+            let (settings, paid, went) = noted.counts();
+            let before = handed_back.map_or_else(String::new, |count| {
+                format!("the action handed back {count} artifacts, which are not committed; ")
+            });
+            outcome = Outcome::Error {
+                kind: "record".to_owned(),
+                message: format!(
+                    "{before}the run sent {} capability requests, and what was noted of \
+                     it is {settings} settings, {paid} paid requests and {went} entries \
+                     of where data went: the record that lists them would be {bytes} \
+                     bytes, and {is_at_most}, so none of them is listed in this record",
+                    inside.asked.len()
+                ),
+            };
             inside.asked.clear();
             inside.timed.clear();
             inside.verdict = None;
-            record = record_of(&outcome, &inside);
+            // What was noted of the run is left out with the requests it is about.
+            noted = Facts::none();
+            record = record_of(&outcome, &inside, &noted);
         }
         let mut publication = store.begin().map_err(failed)?;
         publication.close_run(run.as_str()).map_err(failed)?;

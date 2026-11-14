@@ -20,7 +20,7 @@ use crate::capability::{
 use crate::store;
 
 use super::nested::Offer;
-use super::{Capability, Clock, Executor, PreparedCall, Refusal};
+use super::{Capability, Clock, Executor, PreparedCall, Refusal, RunFacts};
 
 /// A cancellation signal. Every clone is the same signal: once one is cancelled, all are,
 /// and none is ever uncancelled.
@@ -493,6 +493,8 @@ pub struct Context {
     diagnostics: Arc<dyn Diagnostics>,
     /// The actions the run's calls are held to, once it froze them.
     offer: Arc<Offer>,
+    /// The run's place for facts.
+    facts: RunFacts,
 }
 
 impl Context {
@@ -523,7 +525,14 @@ impl Context {
             executor,
             diagnostics: Arc::new(NoDiagnostics),
             offer: Arc::new(Offer::default()),
+            facts: RunFacts::default(),
         }
+    }
+
+    /// The same context, noting its run's facts here.
+    pub(super) fn noting(mut self, facts: RunFacts) -> Context {
+        self.facts = facts;
+        self
     }
 
     /// The same context, whose executor holds its calls to what is frozen here.
@@ -573,6 +582,12 @@ impl Context {
     pub fn with_diagnostics(mut self, diagnostics: Arc<dyn Diagnostics>) -> Context {
         self.diagnostics = diagnostics;
         self
+    }
+
+    /// The run's place for facts (ADR 0013): where a setting, a paid request, a
+    /// refusal of a request and where data went are noted while the run executes.
+    pub fn facts(&self) -> &RunFacts {
+        &self.facts
     }
 
     /// Where diagnostic evidence is written.

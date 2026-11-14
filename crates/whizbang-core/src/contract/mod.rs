@@ -23,16 +23,20 @@
 //! after. And nested calls: the executor in an action's [`Context`] admits a call under
 //! the action's run, with an allowance taken from that run's, and refuses a fifth level
 //! and a call back; a cancellation reaches every run under the one it cancels. The
-//! ledger itself and settlement are not here.
+//! ledger itself and settlement are not here. And the executor's parts (ADR 0015): an
+//! [`AdmissionPart`] is asked before each attempt at an admission's publication, may
+//! refuse the call, and may add records among the run's names.
 
 mod call;
 mod context;
 mod descriptor;
 mod engine;
+mod facts;
 mod journal;
 pub mod ledger;
 mod live;
 mod nested;
+mod part;
 mod prepare;
 pub mod record;
 mod redact;
@@ -54,6 +58,7 @@ pub use engine::{
     BoundRefused, ConfigSource, Engine, Executor, STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT,
     Spawn, WHIZBANG_VERSION,
 };
+pub use facts::RunFacts;
 pub use journal::{Clock, EXCHANGE_PREFIX, JournalLine, SystemClock, journal_bytes, read_journal};
 pub use ledger::{
     Declined, LEDGER_NAME_LIMIT, Ledger, RESERVATION_RECORD, RESERVATIONS_PREFIX, Reservation,
@@ -62,6 +67,10 @@ pub use ledger::{
 #[doc(hidden)]
 pub use nested::HeldOpen;
 pub use nested::{DESCENDANTS_LIMIT, LEVELS_LIMIT, STARTED_LIMIT};
+pub use part::{
+    AdmissionPart, Asking, PART_RECORD_MAX_BYTES, PART_RECORDS_LIMIT, PART_RECORDS_PREFIX,
+    PartDeclined, PartRefusal, PartStep, part_record_name,
+};
 pub use prepare::{
     ARGUMENTS_TEXT_MAX_BYTES, Backends, CallError, Estimate, INPUTS_LIMIT, InputFault, Missing,
     ModelIdentity, Need, NoBackends, PreparedCall, Readiness, Refusal, ResolvedInput, Stale,
@@ -69,8 +78,8 @@ pub use prepare::{
 };
 pub use record::{
     DIAGNOSTIC_NAME_LIMIT, DIAGNOSTICS_LIMIT, RECORD_MAX_BYTES, REFUSAL_WHY_LIMIT, REFUSALS_LIMIT,
-    RUN_RECORD, RUN_RECORD_SCHEMA, RecordError, RefusalKind, RunRecord, STEPS_LIMIT,
-    is_diagnostic_name,
+    RUN_2, RUN_2_SCHEMA, RUN_RECORD, RUN_RECORD_SCHEMA, RecordError, RefusalKind, RunRecord,
+    STEPS_LIMIT, is_diagnostic_name,
 };
 pub use redact::{REDACTED, SECRET_MIN_BYTES, SecretRefused, Secrets};
 pub use registry::{Action, Failure, Produced, RegistrationError, Registry, Verdict};

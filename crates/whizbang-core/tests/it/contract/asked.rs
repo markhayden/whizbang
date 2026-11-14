@@ -49,9 +49,10 @@ impl Clock for Ticking {
     }
 }
 
-type Body = Box<dyn Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync>;
+pub(super) type Body =
+    Box<dyn Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync>;
 
-struct Scripted(ActionDescriptor, Body);
+pub(super) struct Scripted(pub(super) ActionDescriptor, pub(super) Body);
 
 impl Action for Scripted {
     fn descriptor(&self) -> &ActionDescriptor {
@@ -66,7 +67,7 @@ impl Action for Scripted {
 /// An action of this name with these needs, whose run is whatever the test says. It
 /// takes an optional text, `judge`, which a need may name as the argument that chooses
 /// its backend.
-fn action(
+pub(super) fn action(
     name: &str,
     needs: Vec<Requirement>,
     body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
@@ -84,7 +85,7 @@ fn judging() -> Vec<Requirement> {
     vec![Requirement::new(Capability::Judge).chosen_by("judge")]
 }
 
-fn engine(
+pub(super) fn engine(
     world: &World,
     backends: impl Backends + 'static,
     held: Capabilities,
@@ -106,7 +107,7 @@ fn engine(
 
 /// The run's record, read from the store and held to the schema, and everything else
 /// the run holds there, by name.
-fn stored(world: &World, run: &RunId) -> (RunRecord, BTreeMap<String, Vec<u8>>) {
+pub(super) fn stored(world: &World, run: &RunId) -> (RunRecord, BTreeMap<String, Vec<u8>>) {
     let reader = Reader::open(&world.root(), world.fs.clone()).unwrap();
     let generation = reader.snapshot().unwrap();
     let entries = generation.run(run.as_str()).unwrap().entries();
@@ -133,7 +134,7 @@ fn asking(text: &str, tokens: u32) -> JudgeRequest {
     JudgeRequest::new("You judge.", vec![message], Vec::new(), controls).unwrap()
 }
 
-fn fill_request() -> FillRequest {
+pub(super) fn fill_request() -> FillRequest {
     let rgba = (0..24u8).flat_map(|at| [at, at, at, 255]).collect();
     let picture = Picture::new(CanonicalPixels::from_rgba(6, 4, rgba).unwrap()).unwrap();
     let mut plane = vec![0; 24];
@@ -334,7 +335,10 @@ fn each_request_a_run_sends_is_in_its_record_with_its_model_how_long_it_took_and
         ]
     );
     for duration in durations {
-        assert!(duration.start_ms > record.time().start_ms, "{duration:?}");
+        assert!(
+            Some(duration.start_ms) > record.time().start_ms,
+            "{duration:?}"
+        );
         assert!(duration.ms >= 1, "{duration:?}");
         assert!(
             duration.start_ms + duration.ms <= record.time().end_ms,
@@ -396,7 +400,7 @@ fn the_bound_on_a_runs_requests_is_the_one_its_record_and_the_schema_hold() {
     // The seam only lowers the bound: an executor asked for more keeps the real one,
     // which is what the record's types and the schema refuse one more than.
     assert_eq!((REQUESTS_LIMIT, MODELS_LIMIT), (1024, 1024));
-    let limit = schema()["properties"]["models"]["maxItems"].as_u64();
+    let limit = schema()["$defs"]["models"]["maxItems"].as_u64();
     assert_eq!(limit, Some(REQUESTS_LIMIT as u64));
     let world = World::new();
     let judge = Arc::new(FakeJudge::scripted(Vec::new()));

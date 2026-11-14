@@ -25,19 +25,32 @@ if [ "${1:-}" != "--check" ]; then
   # where git looks from whatever folder it is run in: each is a copy of
   # scripts/hook-dispatch.sh, which runs scripts/hooks/<name> of the working tree in use.
   #
-  # A copy is written beside its place and then moved into it, so that a link there is
-  # replaced and never written through (a link into scripts/hooks would have the tracked
-  # hook overwritten). Whatever was there and was not this repo's is replaced, and that is
-  # said: a hook of the user's own under one of the three names does not survive setup.
+  # A copy is written beside its place and then moved into it, and a link at the place is
+  # taken away first, so that a link is replaced and never written through: a link into
+  # scripts/hooks would have the tracked hook overwritten, and a link to a folder would
+  # have the copy put inside it. A link is never this repo's hook, whatever it leads to.
+  # Whatever was there and was not this repo's is replaced, and that is said: a hook of
+  # the user's own under one of the three names does not survive setup. An earlier copy
+  # of this repo's hook, known by a line every version of scripts/hook-dispatch.sh has,
+  # is updated and said to be.
+  marker='# What `just setup` installs as each git hook: this file, copied under the hook'"'"'s name'
   hooks_dir=$(git rev-parse --git-common-dir)/hooks
   mkdir -p "$hooks_dir" 2>/dev/null || true
   installed=0
   for hook in pre-commit commit-msg pre-push; do
     to="$hooks_dir/$hook"
     was=nothing
-    if [ -e "$to" ] || [ -L "$to" ]; then
+    if [ -L "$to" ]; then
       was=other
-      [ -L "$to" ] || [ ! -f "$to" ] || ! cmp -s scripts/hook-dispatch.sh "$to" || was=ours
+    elif [ -e "$to" ]; then
+      was=other
+      if [ -f "$to" ]; then
+        if cmp -s scripts/hook-dispatch.sh "$to"; then
+          was=ours
+        elif grep -q -x -F -e "$marker" "$to" 2>/dev/null; then
+          was=older
+        fi
+      fi
     fi
     ok=1
     # A folder cannot be replaced by a file with a move: the copy would go inside it.
@@ -45,14 +58,19 @@ if [ "${1:-}" != "--check" ]; then
       ok=0
     else
       rm -f "$to.new" 2>/dev/null || true
-      cp scripts/hook-dispatch.sh "$to.new" 2>/dev/null && chmod +x "$to.new" 2>/dev/null &&
-        mv -f "$to.new" "$to" 2>/dev/null || ok=0
+      cp scripts/hook-dispatch.sh "$to.new" 2>/dev/null && chmod +x "$to.new" 2>/dev/null || ok=0
+      if [ "$ok" = 1 ] && [ -L "$to" ]; then
+        rm -f "$to" 2>/dev/null || ok=0
+      fi
+      [ "$ok" = 0 ] || mv -f "$to.new" "$to" 2>/dev/null || ok=0
       rm -f "$to.new" 2>/dev/null || true
     fi
     if [ "$ok" = 1 ] && [ -f "$to" ] && [ ! -L "$to" ] && [ -x "$to" ] && cmp -s scripts/hook-dispatch.sh "$to"; then
       installed=$((installed + 1))
-      [ "$was" != other ] ||
-        echo "setup: replaced what was at $hook in the repository's hooks folder, which was not this repo's hook (a hook of your own there is gone: this repo's hooks are scripts/hooks/<name>)"
+      case "$was" in
+        older) echo "setup: updated $hook in the repository's hooks folder (an earlier copy of this repo's hook was there)" ;;
+        other) echo "setup: replaced what was at $hook in the repository's hooks folder, which was not this repo's hook (a hook of your own there is gone: this repo's hooks are scripts/hooks/<name>)" ;;
+      esac
     else
       echo "hook problem: $hook could not be installed in the repository's hooks folder" >&2
       status=1
@@ -60,15 +78,24 @@ if [ "${1:-}" != "--check" ]; then
   done
   # An earlier setup pointed git at scripts/hooks instead, by a path that git reads from
   # the folder it is run in: a push from another folder then found no hook and ran none.
-  # That setting is taken away last, and only once the three hooks are in place, so that
-  # a setup that fails leaves the hooks the clone had. Any other value of the setting was
+  # That setting is taken away last, and only when the three hooks are in place and git
+  # would then look in the hooks folder, so that a setup that fails leaves the hooks the
+  # clone had. Any other value of the setting, here or in the user's configuration, was
   # not made here and is left, and is a problem: git would not look in the hooks folder.
   old=$(git config --local --get core.hooksPath || true)
   if [ "$installed" = 3 ]; then
     if [ "$old" = scripts/hooks ]; then
       git config --local --unset-all core.hooksPath
-    fi
-    if [ -n "$(git config --get core.hooksPath || true)" ]; then
+      if [ -n "$(git config --get core.hooksPath || true)" ]; then
+        # Without the old setting another one takes over, and no hook of this repo would
+        # run at all: the old one is put back.
+        git config --local core.hooksPath scripts/hooks
+        echo "hook problem: core.hooksPath is also set outside this repo's configuration (the user's or the system's), and would send git away from the repository's hooks folder. The setting of an earlier setup is kept, so git still runs scripts/hooks from inside a working tree, and none for a push made from another folder. Remove the other setting (git config --show-origin --get-all core.hooksPath shows where it is) and run \`just setup\` again" >&2
+        status=1
+      else
+        echo "hooks installed in the repository's hooks folder: pre-commit, commit-msg, pre-push (each runs scripts/hooks/<name> of the working tree in use)"
+      fi
+    elif [ -n "$(git config --get core.hooksPath || true)" ]; then
       echo "hook problem: core.hooksPath is set, in this repo's configuration or the user's, so git does not look in the repository's hooks folder and would run none of these hooks; remove the setting (git config --show-origin --get core.hooksPath shows where it is)" >&2
       status=1
     else
