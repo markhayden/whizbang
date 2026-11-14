@@ -1736,7 +1736,7 @@ four clauses of the checkpoint's exit line.
 
 **Depends on:** B0. Scripts only.
 
-- [ ] `sk_shape` in `scripts/scan.sh` finds a key of its family wherever it starts, with
+- [x] `sk_shape` in `scripts/scan.sh` finds a key of its family wherever it starts, with
       what follows the prefix narrowed so that an ordinary hyphenated word is not a match.
 
 **Done when** `scripts/tests/scan/` holds a test for each and they pass: a key directly
