@@ -494,7 +494,9 @@ dependencies = [
  "image",
  "miniz_oxide 0.9.1",
  "png",
+ "serde_json",
  "whizbang-core",
+ "whizbang-testkit",
 ]
 
 [[package]]
