@@ -5,8 +5,9 @@
 use std::collections::BTreeSet;
 
 use whizbang_testkit::spend::{
-    Books, Event, GENERATED_EVENTS, How, Name, Outcome, Run, Sent, Stage, State, Why, fold,
-    generated, generated_tampered, histories, run_checked, seal,
+    Books, Event, Folded, GENERATED_EVENTS, How, Name, Outcome, Run, Sent, Stage, Standing, State,
+    WHOLE_EVENTS, Why, fold, generated, generated_tampered, generated_whole, histories,
+    run_checked, seal,
 };
 
 /// The seed of the generated histories. A history that breaks an invariant is printed
@@ -15,6 +16,9 @@ const SEED: u64 = 0x1B00_2026_1114;
 
 /// How many histories are generated, of each of the two shapes.
 const GENERATED: u64 = 4096;
+
+/// How many books the ledger alone wrote are each changed by one name.
+const WHOLE: u64 = 2048;
 
 fn reset(micros: u64) -> Event {
     Event::Reset { micros }
@@ -115,8 +119,7 @@ fn every_generated_history_of_whole_books_then_other_hands_keeps_every_invariant
         match run_checked(&events) {
             Ok((books, _)) => {
                 let folded = books.fold();
-                let is_frozen =
-                    |one: &&whizbang_testkit::spend::Standing| one.state == State::Frozen;
+                let is_frozen = |one: &&Standing| one.state == State::Frozen;
                 frozen += folded.reservations.values().filter(is_frozen).count();
             }
             Err(why) => panic!("seed {SEED:#x}, tampered history {number}: {why}\n{events:#?}"),
@@ -125,6 +128,581 @@ fn every_generated_history_of_whole_books_then_other_hands_keeps_every_invariant
     // Other hands freeze something in a good part of them.
     assert!(frozen > 1000, "{frozen}");
     assert_eq!(generated_tampered(SEED, 7), generated_tampered(SEED, 7));
+}
+
+/// What became of each one name changed in books the ledger wrote alone, counted.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Tally {
+    states: u64,
+    removals: u64,
+    damages: u64,
+    plants: u64,
+    /// The reservation the name names is frozen, and so the store needs its owner.
+    frozen: u64,
+    /// Of the frozen: a settlement over its bound was lost, and its charge was in
+    /// that name alone (limit (b)); the hold was lost, and the amount was in that
+    /// name alone (limit (c)).
+    charge_lost: u64,
+    amount_lost: u64,
+    /// No reservation is frozen, and the newest epoch needs its owner: a turn of it
+    /// was lost or made.
+    needs_owner: u64,
+    /// Neither: one of an allowance's own names, or a turn of an epoch that is not
+    /// the newest. No more can be reserved in any epoch than before, and no
+    /// reservation counts for less.
+    no_more: u64,
+    /// The fold answers what it answered: a turn whose content is damaged, and a
+    /// second reset of an epoch that allows more than the first.
+    unchanged: u64,
+}
+
+/// A sample of single names other hands could make in these books: every form, at
+/// numbers the books have and at numbers far outside them, for one of the
+/// reservations there are and for a run that has none. Each books are given a third
+/// of them, by their number, so that three books in a row are given them all.
+fn plants(books: &Books, number: u64) -> Vec<Name> {
+    let third = |made: Vec<Name>| {
+        let chosen = |(at, _): &(usize, Name)| at % 3 == (number % 3) as usize;
+        let made = made.into_iter().enumerate().filter(chosen);
+        made.map(|(_, name)| name).collect::<Vec<Name>>()
+    };
+    let folded = books.fold();
+    let newest = folded.epoch();
+    let far = 1_000_000_000_000_000_000u64;
+    let most = u64::MAX - 1;
+    let allowed = folded.balance().allowed;
+    let mut made = vec![
+        Name::Turn {
+            epoch: newest,
+            turn: folded.next_turn(newest),
+        },
+        Name::Turn {
+            epoch: newest,
+            turn: folded.next_turn(newest) + 50,
+        },
+        Name::Turn {
+            epoch: newest,
+            turn: u64::MAX,
+        },
+        Name::Turn {
+            epoch: newest + 1,
+            turn: 1,
+        },
+        Name::Turn {
+            epoch: newest.saturating_sub(1),
+            turn: folded.next_turn(newest.saturating_sub(1)),
+        },
+        Name::Epoch(newest + 1),
+        Name::Epoch(newest + 3),
+        Name::Epoch(far),
+        Name::Reset {
+            epoch: newest + 1,
+            micros: 50,
+        },
+        Name::Reset {
+            epoch: newest + 3,
+            micros: most,
+        },
+        Name::Reset {
+            epoch: newest,
+            micros: allowed + 1,
+        },
+        Name::Reset {
+            epoch: newest,
+            micros: allowed / 2,
+        },
+    ];
+    // A run that has no reservation: each form alone is a reservation the ledger
+    // did not write.
+    let none = Run(900);
+    made.extend([
+        Name::Reservation(none),
+        Name::Held {
+            epoch: newest,
+            run: none,
+            micros: 0,
+        },
+        Name::Held {
+            epoch: newest + 3,
+            run: none,
+            micros: 5,
+        },
+        Name::Place {
+            run: none,
+            place: 1,
+        },
+        Name::Dispatched {
+            run: none,
+            place: 1,
+            by: none,
+            micros: 3,
+        },
+        Name::Settling {
+            run: none,
+            place: 1,
+        },
+        Name::Settled {
+            run: none,
+            place: 1,
+            stage: Stage::Answered,
+            micros: 7,
+        },
+        Name::Closed {
+            run: none,
+            released: true,
+        },
+        Name::Adjusted {
+            run: none,
+            place: 1,
+            turn: 1,
+            seal: 0,
+            micros: 0,
+        },
+        Name::Stray {
+            run: none,
+            count: 1,
+        },
+    ]);
+    let roots: Vec<Run> = folded.reservations.keys().copied().collect();
+    let Some(run) = roots
+        .get((number % roots.len().max(1) as u64) as usize)
+        .copied()
+    else {
+        return third(made);
+    };
+    let one = &folded.reservations[&run];
+    let own = one.epoch.unwrap_or(newest);
+    let next = books.next_place(run);
+    // A place with a request that is not settled, and one with a request that is.
+    let sent = |settled: bool| {
+        books.names().iter().find_map(|name| match name {
+            Name::Dispatched {
+                run: of,
+                place,
+                micros,
+                ..
+            } if *of == run => {
+                let guard = Name::Settling { run, place: *place };
+                (books.names().contains(&guard) == settled).then_some((*place, *micros))
+            }
+            _ => None,
+        })
+    };
+    let (open, ended) = (sent(false), sent(true));
+    let (at_open, bound) = open.unwrap_or((next, 0));
+    let at_ended = ended.map_or(next, |(place, _)| place);
+    let held = |epoch, micros| Name::Held { epoch, run, micros };
+    let place = |place| Name::Place { run, place };
+    let dispatched = |place, by, micros| Name::Dispatched {
+        run,
+        place,
+        by,
+        micros,
+    };
+    let guard = |place| Name::Settling { run, place };
+    let settled = |place, stage, micros| Name::Settled {
+        run,
+        place,
+        stage,
+        micros,
+    };
+    let adjusted = |place, turn, seal, micros| Name::Adjusted {
+        run,
+        place,
+        turn,
+        seal,
+        micros,
+    };
+    made.extend([
+        // A second hold: of more, of less, of the same in another epoch, far ahead.
+        held(own, one.amount + 1),
+        held(own, one.amount / 2),
+        held(own, most),
+        held(own + 1, one.amount),
+        held(newest + 3, one.amount),
+        held(own.saturating_sub(1), one.amount),
+        held(far, 0),
+        // A place: the next, one past it, and far.
+        place(next),
+        place(next + 1),
+        place(far),
+        place(u64::MAX),
+        // A dispatch: at the next place, at a place that has one, by another run,
+        // of nothing, far.
+        dispatched(next, run, 1),
+        dispatched(at_open, run, bound + 1),
+        dispatched(at_ended, none, 0),
+        dispatched(far, run, most),
+        // A guard: at a request that is not settled, at the next place, far.
+        guard(at_open),
+        guard(next),
+        guard(far),
+        // A settlement: as the ledger would write one for a request that is not
+        // settled, at each stage, without its guard; a second at a place that is
+        // settled; at the next place; far.
+        settled(at_open, Stage::NotSent, 0),
+        settled(at_open, Stage::Unresolved, bound),
+        settled(at_open, Stage::Answered, bound + 3),
+        settled(at_ended, Stage::Answered, 1_000),
+        settled(next, Stage::Answered, 0),
+        settled(far, Stage::Unresolved, most),
+        // A closing of each kind.
+        Name::Closed {
+            run,
+            released: true,
+        },
+        Name::Closed {
+            run,
+            released: false,
+        },
+        // A correction: sealed as the command would seal one now, naming a turn
+        // that is there, with no place; at a place that is there; far.
+        adjusted(next, 1, books.seal_for(run, next), 0),
+        adjusted(next.saturating_sub(1).max(1), 1, 0, 0),
+        adjusted(far, u64::MAX, u64::MAX, most),
+        Name::Stray { run, count: 1 },
+        Name::Stray { run, count: far },
+    ]);
+    third(made)
+}
+
+/// Holds one changed name to what the record says of it, by what the fold answers.
+/// `books` are books the ledger wrote alone, `before` their fold and `after` the
+/// fold with the one name changed that `hands` names. The reservation the name
+/// names is frozen and the store needs its owner, or the name is the store's own and
+/// no more can be reserved in any epoch; and nothing counts for less than it did, or
+/// than the truth, but for the two names that are the only place of their amount.
+/// Nothing is left out here but what is said.
+fn one_name_changed(
+    books: &Books,
+    before: &Folded,
+    after: &Folded,
+    hands: &Event,
+    tally: &mut Tally,
+) -> Result<(), String> {
+    let (Event::Remove(name) | Event::Damage(name) | Event::Plant(name)) = hands else {
+        return Err("not something other hands do".to_owned());
+    };
+    let ensure = |holds: bool, what: &str| match holds {
+        true => Ok(()),
+        false => Err(format!("{what}\nbefore: {before:#?}\nafter: {after:#?}")),
+    };
+    // In no epoch can more be reserved than before, and no other reservation counts
+    // for less; only a turn can change another at all, by ending its correction.
+    ensure(
+        after.balance().left <= before.balance().left,
+        "more can be reserved",
+    )?;
+    for epoch in before.resets.keys() {
+        let (was, is) = (before.balance_of(*epoch), after.balance_of(*epoch));
+        ensure(is.left <= was.left, "more is left in an epoch")?;
+        ensure(is.allowed <= was.allowed, "more is allowed in an epoch")?;
+    }
+    let turn = matches!(name, Name::Turn { .. });
+    for (run, was) in &before.reservations {
+        if name.of() == Some(*run) {
+            continue;
+        }
+        let is = after.reservations.get(run);
+        ensure(
+            is.is_some_and(|is| is.counts >= was.counts && (turn || is == was)),
+            "another reservation changed",
+        )?;
+    }
+    let frozen = |one: &Standing| one.state == State::Frozen;
+    let Some(run) = name.of() else {
+        // One of the store's own names. No reservation is frozen by it.
+        ensure(!after.reservations.values().any(frozen), "frozen")?;
+        let damage = matches!(hands, Event::Damage(_));
+        match name {
+            // A turn's content is not read: it says nothing but that it is taken.
+            Name::Turn { .. } if damage => {
+                ensure(after == before, "a damaged turn changed the fold")?;
+                tally.unchanged += 1;
+            }
+            Name::Turn { epoch, .. } => {
+                ensure(after.needs_owner(*epoch), "its epoch has its turns")?;
+                match *epoch == after.epoch() {
+                    true => tally.needs_owner += 1,
+                    false => tally.no_more += 1,
+                }
+            }
+            _ if after == before => tally.unchanged += 1,
+            _ => tally.no_more += 1,
+        }
+        return Ok(());
+    };
+    // A name of a reservation: it is frozen, whatever it was, and the store needs
+    // its owner in every epoch. No single name made, lost or damaged leaves a set
+    // the ledger could have written: limits (a) and (d) take more than one.
+    let is = after.reservations.get(&run);
+    let Some(is) = is.filter(|is| frozen(is) && !is.reachable) else {
+        return Err(format!("{run} is not frozen: {is:#?}"));
+    };
+    ensure(
+        after.balance().needs_owner,
+        "the store has no need of its owner",
+    )?;
+    for epoch in before.resets.keys() {
+        ensure(
+            after.needs_owner(*epoch),
+            "an epoch has no need of its owner",
+        )?;
+    }
+    let none = (0, 0, 0);
+    let was = before.reservations.get(&run);
+    let (counted, known, amount) = was.map_or(none, |was| (was.counts, was.known(), was.amount));
+    let truth = books.really(run);
+    let took = truth.map_or(0, |(_, _, took)| took);
+    if let Some((epoch, reserved, _)) = truth {
+        ensure(is.counts_in(epoch), "not counted in its epoch")?;
+        ensure(reserved == amount, "the truth has another amount")?;
+    }
+    // What it sent over its bound, when the name lost is a settlement's.
+    let over = match (hands, name) {
+        (
+            Event::Remove(_),
+            Name::Settled {
+                place: at, micros, ..
+            },
+        ) => {
+            let bound = books.names().iter().find_map(|other| match other {
+                Name::Dispatched {
+                    run: of,
+                    place,
+                    micros,
+                    ..
+                } if *of == run && place == at => Some(*micros),
+                _ => None,
+            });
+            micros.saturating_sub(bound.unwrap_or(0))
+        }
+        _ => 0,
+    };
+    let hold = matches!((hands, name), (Event::Remove(_), Name::Held { .. }));
+    let over = u128::from(over);
+    if over > 0 {
+        // Limit (b): the charge was in that name alone. What is left is no less
+        // than the amount, and no less than before but for what was over the bound.
+        tally.charge_lost += 1;
+        ensure(is.counts >= u128::from(amount), "under its amount")?;
+        ensure(is.counts + over >= counted, "under what it counted")?;
+        ensure(is.counts + over >= took, "under the truth")?;
+    } else if hold {
+        // Limit (c): the amount was in that name alone. Every bound and every
+        // charge is still counted.
+        tally.amount_lost += 1;
+        ensure(is.counts >= known, "under what is known")?;
+        ensure(is.counts >= took, "under the truth")?;
+    } else {
+        ensure(is.counts >= counted, "under what it counted")?;
+        ensure(is.counts >= took, "under the truth")?;
+        ensure(is.counts >= u128::from(amount), "under its amount")?;
+    }
+    tally.frozen += 1;
+    Ok(())
+}
+
+/// The same one changed name, done to the books and held by the checker, and then an
+/// admission and a dispatch asked of the ledger for real: nothing is admitted where
+/// the store needs its owner, never more than was left before, and nothing is
+/// dispatched under the reservation the name names.
+fn asked_for_real(
+    books: &Books,
+    before: &Folded,
+    after: &Folded,
+    hands: &Event,
+) -> Result<(), String> {
+    let (Event::Remove(name) | Event::Damage(name) | Event::Plant(name)) = hands else {
+        return Err("not something other hands do".to_owned());
+    };
+    let mut changed = books.clone();
+    if changed.checked(hands)? != Outcome::Done {
+        return Err("it was not done".to_owned());
+    }
+    let ensure = |holds: bool, what: &str| match holds {
+        true => Ok(()),
+        false => Err(format!("{what}\nbefore: {before:#?}\nafter: {after:#?}")),
+    };
+    ensure(changed.fold() == *after, "the books fold to something else")?;
+    let admit = |micros| Event::Admit {
+        run: Run(990),
+        micros,
+    };
+    // A refusal changes no name, so each is asked of the same books in turn. One
+    // more than was left before is never admitted. An admission of nothing, which
+    // is always covered, is refused where the newest epoch needs its owner.
+    let over = changed.apply(&admit(before.balance().left + 1));
+    ensure(
+        matches!(over, Outcome::Refused(_)),
+        "admitted over what was left",
+    )?;
+    if after.balance().needs_owner {
+        let nothing = changed.apply(&admit(0));
+        ensure(
+            nothing == Outcome::Refused(Why::NeedsOwner),
+            "admitted where the store needs its owner",
+        )?;
+    }
+    // Nothing is dispatched under the reservation the name names.
+    for by in changed.executing_runs() {
+        if name.of().is_none() || changed.root_of(by) != name.of() {
+            continue;
+        }
+        let sent = changed.apply(&dispatch(by.0, 0));
+        let refused = matches!(sent, Outcome::Refused(Why::Frozen | Why::AlreadyClosed));
+        ensure(refused, "dispatched under a frozen reservation")?;
+    }
+    ensure(changed.fold() == *after, "a refusal changed the books")?;
+    // Where the store has no need of its owner, what is left is admitted, and
+    // breaks nothing.
+    if !after.balance().needs_owner {
+        let rest = changed.checked(&admit(after.balance().left))?;
+        ensure(rest == Outcome::Done, "what is left is not admitted")?;
+    }
+    Ok(())
+}
+
+/// What other hands do to the books in one of the two tests below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hands {
+    /// Every name lost, and every name damaged, each alone.
+    LoseOrDamage,
+    /// A sample of names made, each alone.
+    Make,
+}
+
+/// One name changed in each of `states` books the ledger wrote alone, of this seed:
+/// every change is held by what the fold answers, and those of one books in sixteen
+/// by the checker and by events asked for real as well.
+fn each_name_changed(seed: u64, states: u64, what: Hands) -> Result<Tally, String> {
+    let mut tally = Tally::default();
+    let mut reached: BTreeSet<String> = BTreeSet::new();
+    for number in 0..states {
+        let events = generated_whole(seed, number);
+        let said =
+            |why: String| format!("seed {seed:#x}, whole books {number}: {why}\n{events:#?}");
+        if !(1..=WHOLE_EVENTS).contains(&events.len()) || tampered(&events) {
+            return Err(said("not the ledger's alone".to_owned()));
+        }
+        // Every invariant is held on the way in one of the two tests: the other is
+        // given the same books.
+        let (books, _) = match what {
+            Hands::LoseOrDamage => run_checked(&events).map_err(said)?,
+            Hands::Make => Books::after(&events),
+        };
+        let before = books.fold();
+        // The books are ones the ledger could have written, and need nobody.
+        for (run, one) in &before.reservations {
+            if !one.reachable || one.state == State::Frozen {
+                return Err(said(format!("{run} is not reachable")));
+            }
+            reached.insert(format!("{:?}", one.state));
+            if one.charged > u128::from(one.amount) {
+                reached.insert("over its amount".to_owned());
+            }
+        }
+        if before.resets.keys().any(|epoch| before.needs_owner(*epoch)) {
+            return Err(said("an epoch needs its owner".to_owned()));
+        }
+        if before.epoch() > 1 {
+            reached.insert("a second epoch".to_owned());
+        }
+        tally.states += 1;
+        let mut hands = Vec::new();
+        match what {
+            Hands::LoseOrDamage => {
+                for name in books.names() {
+                    hands.push(Event::Remove(name.clone()));
+                    hands.push(Event::Damage(name.clone()));
+                }
+                tally.removals += books.names().len() as u64;
+                tally.damages += books.names().len() as u64;
+            }
+            Hands::Make => {
+                let absent = |name: &Name| !books.names().contains(name);
+                let made = plants(&books, number).into_iter().filter(absent);
+                hands.extend(made.map(Event::Plant));
+                tally.plants += hands.len() as u64;
+            }
+        }
+        // The names with the one changed, folded, and then as they were.
+        let (mut names, mut damaged) = (books.names().clone(), books.damaged().clone());
+        if !damaged.is_empty() {
+            return Err(said("a name is damaged".to_owned()));
+        }
+        for one in &hands {
+            let said = |why: String| said(format!("{one:?}: {why}"));
+            let after = match one {
+                Event::Remove(name) => {
+                    names.remove(name);
+                    let after = fold(&names, &damaged);
+                    names.insert(name.clone());
+                    after
+                }
+                Event::Damage(name) => {
+                    damaged.insert(name.clone());
+                    let after = fold(&names, &damaged);
+                    damaged.remove(name);
+                    after
+                }
+                Event::Plant(name) => {
+                    names.insert(name.clone());
+                    let after = fold(&names, &damaged);
+                    names.remove(name);
+                    after
+                }
+                _ => return Err(said("not something other hands do".to_owned())),
+            };
+            one_name_changed(&books, &before, &after, one, &mut tally).map_err(said)?;
+            if number % 16 == 0 {
+                asked_for_real(&books, &before, &after, one).map_err(said)?;
+            }
+        }
+    }
+    let wanted = [
+        "Open",
+        "Released",
+        "Interrupted",
+        "Adjusted",
+        "over its amount",
+        "a second epoch",
+    ];
+    // Every one of them came to one of the four.
+    let all = tally.frozen + tally.needs_owner + tally.no_more + tally.unchanged;
+    if all != tally.removals + tally.damages + tally.plants {
+        return Err(format!("seed {seed:#x}: {tally:?}"));
+    }
+    match wanted.iter().find(|one| !reached.contains(**one)) {
+        Some(missing) => Err(format!("seed {seed:#x}: no whole books with {missing}")),
+        None => Ok(tally),
+    }
+}
+
+#[test]
+fn every_name_of_whole_books_lost_or_damaged_alone_freezes_or_allows_no_more() {
+    let tally = each_name_changed(SEED, WHOLE, Hands::LoseOrDamage);
+    let tally = tally.unwrap_or_else(|why| panic!("{why}"));
+    assert_eq!(tally.states, WHOLE);
+    assert!(tally.removals > 20_000, "{tally:?}");
+    assert_eq!(tally.removals, tally.damages);
+    // The two losses the record names are met: limits (b) and (c).
+    assert!(tally.charge_lost > 50, "{tally:?}");
+    assert!(tally.amount_lost > 1_000, "{tally:?}");
+    assert!(tally.needs_owner > 1_000, "{tally:?}");
+    assert_eq!(generated_whole(SEED, 7), generated_whole(SEED, 7));
+    assert_ne!(generated_whole(SEED, 7), generated_whole(SEED + 1, 7));
+}
+
+#[test]
+fn a_name_made_alone_in_whole_books_freezes_or_allows_no_more() {
+    let tally = each_name_changed(SEED, WHOLE, Hands::Make);
+    let tally = tally.unwrap_or_else(|why| panic!("{why}"));
+    assert_eq!(tally.states, WHOLE);
+    assert!(tally.plants > 15 * WHOLE, "{tally:?}");
+    // No name made alone is one whose amount is lost.
+    assert_eq!((tally.charge_lost, tally.amount_lost), (0, 0), "{tally:?}");
+    assert!(tally.needs_owner > 1_000, "{tally:?}");
 }
 
 #[test]
@@ -1352,6 +1930,35 @@ fn losing_any_one_name_lowers_nothing() {
     let one = books.reservation(run).unwrap();
     assert_eq!((one.state, one.unexplained), (State::Frozen, 1));
     assert_eq!(one.counts, 10 + 4 + 2 + 10);
+    // The rule is of books that were whole. A correction the owner made over a name
+    // other hands made says what it said for as long as it is there: with that name
+    // taken away again and then the correction lost, the reservation is frozen at
+    // what its names say, which is less than the correction said.
+    let made = Name::Dispatched {
+        run,
+        place: 9,
+        by: run,
+        micros: 1000,
+    };
+    let mut events = vec![
+        reset(100),
+        admit(1, 10),
+        dispatch(1, 5),
+        Event::Crash,
+        Event::Recover,
+        Event::Plant(made.clone()),
+        Event::Adjust { run, micros: 1000 },
+        Event::Remove(made),
+    ];
+    let (books, _) = run_checked(&events).unwrap();
+    let one = books.reservation(run).unwrap();
+    assert_eq!((one.state, one.counts), (State::Interrupted, 1000));
+    let correction = |name: &&Name| matches!(name, Name::Adjusted { .. });
+    let correction = books.names().iter().find(correction).cloned().unwrap();
+    events.push(Event::Remove(correction));
+    let (books, _) = run_checked(&events).unwrap();
+    let one = books.reservation(run).unwrap();
+    assert_eq!((one.state, one.counts), (State::Frozen, 10 + 5 + 20));
 }
 
 #[test]
@@ -1443,6 +2050,151 @@ fn an_allowance_is_its_resets_only_with_the_guard_and_with_neither_damaged() {
     let guard = Event::Plant(Name::Epoch(2));
     let (books, _) = run_checked(&[reset(30), plant, guard]).unwrap();
     assert_eq!((books.balance().epoch, books.balance().allowed), (2, 500));
+    // A second reset of the owner's epoch says nothing more than the smaller of the
+    // two. With the owner's lost, the one other hands made has the guard to itself
+    // and is the allowance: a whole chain is believed ("Limits", (a)).
+    let more = Event::Plant(Name::Reset {
+        epoch: 1,
+        micros: 500,
+    });
+    let (books, _) = run_checked(&[reset(30), more.clone()]).unwrap();
+    assert_eq!(books.balance().allowed, 30);
+    let lost = Event::Remove(Name::Reset {
+        epoch: 1,
+        micros: 30,
+    });
+    let (books, outcomes) = run_checked(&[reset(30), more, lost, admit(1, 400)]).unwrap();
+    assert_eq!(outcomes[3], Outcome::Done);
+    assert_eq!((books.balance().allowed, books.balance().left), (500, 100));
+}
+
+#[test]
+fn known_one_hold_made_in_the_place_of_the_ledgers_states_the_epoch() {
+    // A reservation of 10 with 10 outstanding. Its hold is lost, other hands make one
+    // for it in another epoch, and the turn its admission took is lost too: the
+    // names are a set the ledger could have written, and are believed ("Limits",
+    // (a)). The reservation falls under the other epoch, and its own has all of its
+    // allowance again.
+    let run = Run(1);
+    let mut events = vec![
+        reset(30),
+        admit(1, 10),
+        dispatch(1, 10),
+        Event::Remove(Name::Held {
+            epoch: 1,
+            run,
+            micros: 10,
+        }),
+        Event::Plant(Name::Held {
+            epoch: 4,
+            run,
+            micros: 10,
+        }),
+        Event::Remove(Name::Turn { epoch: 1, turn: 1 }),
+    ];
+    let (books, _) = run_checked(&events).unwrap();
+    let one = books.reservation(run).unwrap();
+    assert_eq!(
+        (one.state, one.reachable, one.epoch, one.counts),
+        (State::Open, true, Some(4), 10)
+    );
+    assert_eq!((books.balance().counted, books.balance().left), (0, 30));
+    // Its owner's correction is sealed over that hold, and changes what it is
+    // charged, not where.
+    events.extend([
+        Event::Crash,
+        Event::Recover,
+        Event::Adjust { run, micros: 10 },
+    ]);
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[8], Outcome::Done);
+    let one = books.reservation(run).unwrap();
+    assert_eq!(
+        (one.state, one.epoch, one.counts),
+        (State::Adjusted, Some(4), 10)
+    );
+    assert_eq!(books.balance().left, 30);
+}
+
+#[test]
+fn known_an_admission_judged_before_other_hands_opened_an_epoch_falls_under_the_old_one() {
+    // The owner allows 11, and an admission of 10 is judged. Other hands then make
+    // the reset of a later epoch, which took no turn in this one, so the store does
+    // not refuse the admission: it is published under the epoch it was judged in
+    // ("Limits", (e)). That epoch is no longer the newest, and the newest allows
+    // nothing: no more is admitted but a call of nothing.
+    let later = Event::Plant(Name::Reset {
+        epoch: 3,
+        micros: 8,
+    });
+    let events = [
+        reset(11),
+        later,
+        late(1, admit(1, 10)),
+        admit(2, 0),
+        admit(3, 1),
+    ];
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(
+        outcomes[2..],
+        [
+            Outcome::Done,
+            Outcome::Done,
+            Outcome::Refused(Why::OverAllowance { left: 0 }),
+        ]
+    );
+    let one = books.reservation(Run(1)).unwrap();
+    assert_eq!((one.epoch, one.counts), (Some(1), 10));
+    let balance = books.balance();
+    assert_eq!((balance.epoch, balance.allowed), (3, 0));
+}
+
+#[test]
+fn known_after_the_largest_epoch_a_name_can_say_no_reset_follows() {
+    // Other hands open the last epoch there can be. It allows nothing, as any epoch
+    // without its reset does, and the owner's reset finds no epoch after it: it is
+    // refused, and nothing but a call of nothing is admitted from then on.
+    let last = Event::Plant(Name::Epoch(u64::MAX));
+    let events = [reset(30), last, reset(5), admit(1, 0), admit(2, 1)];
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(
+        outcomes[2..],
+        [
+            Outcome::Refused(Why::Taken),
+            Outcome::Done,
+            Outcome::Refused(Why::OverAllowance { left: 0 }),
+        ]
+    );
+    let balance = books.balance();
+    assert_eq!((balance.epoch, balance.allowed), (u64::MAX, 0));
+}
+
+#[test]
+fn a_name_can_name_any_place_and_state_any_amount_and_the_fold_still_ends() {
+    // A place at the largest number there is, and a hold of the largest amount, for
+    // each of two reservations: the places that hold no dispatch are counted and not
+    // walked, and the store's sum stops at the largest number.
+    let most = u64::MAX - 1;
+    let mut events = vec![reset(30), admit(1, 10), admit(2, 10)];
+    for run in [Run(1), Run(2)] {
+        events.push(Event::Plant(Name::Place {
+            run,
+            place: u64::MAX,
+        }));
+        events.push(Event::Plant(Name::Held {
+            epoch: 1,
+            run,
+            micros: most,
+        }));
+    }
+    let (books, _) = run_checked(&events).unwrap();
+    let one = books.reservation(Run(1)).unwrap();
+    assert_eq!((one.state, one.unexplained), (State::Frozen, u64::MAX));
+    let places = u128::from(u64::MAX) * u128::from(most);
+    assert_eq!(one.counts, u128::from(most) + places);
+    let balance = books.balance();
+    assert_eq!((balance.counted, balance.left), (u128::MAX, 0));
+    assert!(balance.needs_owner);
 }
 
 #[test]
@@ -1526,7 +2278,7 @@ fn the_turns_of_an_epoch_are_exactly_those_its_publications_took() {
         assert_eq!(outcomes[11], Outcome::Refused(Why::NeedsOwner), "{hand:?}");
         // A reset starts them again where it was the turns; where the name made
         // froze a reservation, only a correction of that reservation does.
-        let frozen = |one: &whizbang_testkit::spend::Standing| one.state == State::Frozen;
+        let frozen = |one: &Standing| one.state == State::Frozen;
         let frozen = books.fold().reservations.values().any(frozen);
         let turn = matches!(hand, Event::Remove(_) | Event::Plant(Name::Turn { .. }));
         assert_eq!(frozen, !turn, "{hand:?}");
