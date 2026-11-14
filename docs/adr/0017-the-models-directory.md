@@ -155,9 +155,8 @@ read back. Each has a type with a private field, made by a constructor that chec
 
 ### The catalogue
 
-*Decided, not built.* A `Catalogue` is the models that can be installed: at most 256 (`MODELS_LIMIT`), no
-two of one name, kept in the order of their names An `Entry` is
-one model:
+*Decided, not built.* A `Catalogue` is the models that can be installed: at most 256
+(`MODELS_LIMIT`), no two of one name, kept in the order of their names. An `Entry` is one model:
 
 | Field | What it is |
 |---|---|
@@ -222,8 +221,7 @@ in the order above, and an address as its origin and the rest of it; a catalogue
 back from that as itself.
 
 **A catalogue that could not be read back is not made.** `Catalogue::new` refuses one
-whose written form is over the bound and one whose written
-form holds a secret. The written form is looked at whole, because it puts side by side
+whose written form is over the bound, and one whose written form holds a secret. The written form is looked at whole, because it puts side by side
 what a person wrote apart, and writes an address without a port that is its scheme's
 own, which brings its host and its path together.
 A part that holds a secret is refused where the part is made, a file's address and a
