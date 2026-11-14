@@ -123,6 +123,20 @@ patterns=(
 # a digit or a capital, or start with a known prefix, so ordinary kebab-case is not a key.
 sk_shape='(^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}'
 sk_body='sk-(ant|proj|or|svcacct|admin)-|sk-[a-z_-]*[0-9A-Z]'
+# The same family wherever it starts: directly after a hyphen, an underscore, a letter or
+# a digit nothing marks the start of a key, and that is where a key stands after a
+# written-out line break or tab in a JSON string (a backslash and a letter) and after
+# percent-encoding (%20, %3D). A match runs from the letters to the end of the run of key
+# characters, so it holds whatever follows them. Inside a word the rule above would take
+# ordinary hyphenated words for keys (a word that ends in s and k, a hyphen, and a digit
+# anywhere in the twenty characters after it: a version, a date, a model's name), so here
+# what follows is narrowed: one part of it, between hyphens, is 20 characters or more and
+# holds a digit or a capital (`sk_anywhere_is_key`). Words joined by hyphens have no such
+# part; the keys of this family do, since their random part is long and has few hyphens.
+# What this leaves: a key written directly after a word character whose every part
+# between hyphens is under 20 characters, or has no digit and no capital. It is on
+# docs/carry-over.md. A key that starts a word is held to the rule above, as before.
+sk_anywhere='sk-[A-Za-z0-9_-]{20,}'
 # An address is a hit unless the address itself is an allowed one. Nothing else is allowed.
 email='[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
 allow='noreply@|@example\.|git@github\.com'
@@ -663,17 +677,30 @@ hit() {
   NOTE=${1:-} awk -F "$S" -v OFS="$S" '{ print $1, $2, $3, ENVIRON["NOTE"] }' >>"$work/hits"
 }
 
+# sk_anywhere_is_key: of the found lines on stdin, each a match of $sk_anywhere, those
+# where a part of the match after its first hyphen, between hyphens, is 20 characters or
+# more and holds a digit or a capital.
+sk_anywhere_is_key() {
+  awk -F "$S" '{
+    parts = split($NF, part, "-")
+    for (i = 2; i <= parts; i++)
+      if (length(part[i]) >= 20 && part[i] ~ /[0-9A-Z]/) { print; next }
+  }'
+}
+
 secrets_here() {
   local args=() p n
   for p in "${patterns[@]}"; do args+=(-e "$p"); done
   # One search for every shape; a closer look only where that finds something.
-  search -E "${args[@]}" -e "$sk_shape" -e "$email"
+  search -E "${args[@]}" -e "$sk_anywhere" -e "$email"
   if [ -s "$work/found" ]; then
     search -E "${args[@]}"
     hit <"$work/found"
     # -o: one found line per match, the match as its text.
     search -o -E -e "$sk_shape"
     { grep -a -E -e "$S.?($sk_body)[^$S]*\$" "$work/found" || true; } | hit
+    search -o -E -e "$sk_anywhere"
+    sk_anywhere_is_key <"$work/found" | hit
     search -o -E -e "$email"
     { grep -a -v -E -e "($allow)[^$S]*\$" "$work/found" || true; } | hit
   fi
@@ -983,7 +1010,7 @@ if [ -s "$work/hits" ]; then
   : >"$work/withheld-lines"
   if [ -s "$work/strip/paths" ]; then
     look_in_files "$work/strip" - "" paths
-    args=(-e "$sk_shape")
+    args=(-e "$sk_anywhere")
     for p in "${patterns[@]}"; do args+=(-e "$p"); done
     search -E "${args[@]}"
     cut -d "$S" -f 3 "$work/found" >>"$work/withheld-lines"
