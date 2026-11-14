@@ -416,8 +416,13 @@ fn an_address_is_an_origin_and_the_rest_and_shows_only_its_origin() {
 
 #[test]
 fn a_credential_is_bound_to_one_origin_and_is_never_printed() {
-    let credential =
-        Credential::new(origin("https://api.example.com"), "x-api-key", MARKER).unwrap();
+    let credential = Credential::new(
+        origin("https://api.example.com"),
+        "x-api-key",
+        MARKER,
+        &Secrets::none(),
+    )
+    .unwrap();
     assert_eq!(credential.origin(), &origin("https://api.example.com"));
     assert_eq!(credential.header(), "x-api-key");
     assert_eq!(credential.expose(), MARKER);
@@ -430,7 +435,12 @@ fn a_credential_is_bound_to_one_origin_and_is_never_printed() {
         ("x-api-key", ""),
         ("x-api-key", "a\nb"),
     ] {
-        let made = Credential::new(origin("https://api.example.com"), header, value);
+        let made = Credential::new(
+            origin("https://api.example.com"),
+            header,
+            value,
+            &Secrets::none(),
+        );
         assert!(made.is_err(), "{header:?} {value:?}");
         assert!(!format!("{made:?}").contains(value) || value.is_empty());
     }
@@ -524,7 +534,13 @@ fn what_is_sent_is_an_address_bounded_pieces_and_a_credential_of_its_own_origin(
         Err(NotAllowed::TooMany)
     );
     // A credential goes only to the origin it is bound to.
-    let own = Credential::new(origin("https://api.example.com"), "x-api-key", MARKER).unwrap();
+    let own = Credential::new(
+        origin("https://api.example.com"),
+        "x-api-key",
+        MARKER,
+        &Secrets::none(),
+    )
+    .unwrap();
     let carried = outgoing.clone().with_credential(own).unwrap();
     assert_eq!(
         carried.credential().map(Credential::header),
@@ -535,7 +551,8 @@ fn what_is_sent_is_an_address_bounded_pieces_and_a_credential_of_its_own_origin(
         "http://api.example.com",
         "https://api.example.com:8443",
     ] {
-        let elsewhere = Credential::new(origin(other), "x-api-key", MARKER).unwrap();
+        let elsewhere =
+            Credential::new(origin(other), "x-api-key", MARKER, &Secrets::none()).unwrap();
         let refused = outgoing.clone().with_credential(elsewhere);
         assert_eq!(refused.map(|_| ()), Err(NotAllowed::Elsewhere), "{other}");
     }
@@ -651,11 +668,17 @@ fn a_download_asks_for_an_address_and_a_most_and_a_credential_of_its_own_origin(
         origin("https://weights.example.org"),
         "authorization",
         MARKER,
+        &Secrets::none(),
     )
     .unwrap();
     assert!(request.clone().with_credential(own).is_ok());
-    let other =
-        Credential::new(origin("https://api.example.com"), "authorization", MARKER).unwrap();
+    let other = Credential::new(
+        origin("https://api.example.com"),
+        "authorization",
+        MARKER,
+        &Secrets::none(),
+    )
+    .unwrap();
     assert_eq!(
         request.clone().with_credential(other).map(|_| ()),
         Err(NotAllowed::Elsewhere)
@@ -674,13 +697,24 @@ fn a_probe_asks_for_an_address_and_a_credential_of_its_own_origin_and_nothing_el
     let request = ProbeRequest::new(to.clone());
     assert_eq!(request.to(), &to);
     assert!(request.credential().is_none());
-    let other =
-        Credential::new(origin("https://uploads.example.net"), "x-api-key", MARKER).unwrap();
+    let other = Credential::new(
+        origin("https://uploads.example.net"),
+        "x-api-key",
+        MARKER,
+        &Secrets::none(),
+    )
+    .unwrap();
     assert_eq!(
         request.clone().with_credential(other).map(|_| ()),
         Err(NotAllowed::Elsewhere)
     );
-    let own = Credential::new(origin("https://api.example.com"), "x-api-key", MARKER).unwrap();
+    let own = Credential::new(
+        origin("https://api.example.com"),
+        "x-api-key",
+        MARKER,
+        &Secrets::none(),
+    )
+    .unwrap();
     let carried = request.with_credential(own).unwrap();
     assert_eq!(
         format!("{carried:?}"),
@@ -702,10 +736,14 @@ impl Downloader for Fixed {
     ) -> Result<Downloaded, whizbang_core::capability::Fault> {
         let mut handed = 0;
         for chunk in self.0.chunks(2) {
-            if cancellation.is_cancelled() || handed >= request.most_bytes() || !sink(chunk) {
+            if cancellation.is_cancelled() || handed >= request.most_bytes() {
                 break;
             }
+            // A piece that was handed over is counted, whatever the sink then says.
             handed += chunk.len() as u64;
+            if !sink(chunk) {
+                break;
+            }
         }
         Ok(Downloaded::Bytes(handed))
     }
@@ -734,8 +772,10 @@ fn a_download_hands_its_bytes_to_a_sink_that_can_stop_it_and_a_probe_says_what_i
             taken.len() < 4
         })
         .unwrap();
+    // The sink said no to the second piece, having been handed it: the piece is among
+    // what was handed over, the count says so, and nothing follows it.
     assert_eq!(taken, [1, 2, 3, 4]);
-    assert_eq!(done, Downloaded::Bytes(2));
+    assert_eq!(done, Downloaded::Bytes(4));
     assert_ne!(done, Downloaded::Moved(from.clone()));
     let prober: Arc<dyn Prober> = fixed;
     let probed = prober
@@ -839,4 +879,186 @@ fn a_remote_backend_with_no_price_beside_a_local_one_of_the_same_model_has_no_bo
         Backends::bound(&roster, Capability::Fill, &model()),
         Estimate::of_micros(0)
     );
+}
+
+// --- from the review ------------------------------------------------------------------------
+
+#[test]
+fn a_host_that_is_a_number_is_four_plain_parts_or_is_refused() {
+    // One machine has many spellings as a number, and a client that reads an address
+    // may go to another machine than the text names. A host whose last label is a
+    // number is taken only as four decimal parts of 0 to 255, each written plainly.
+    for host in [
+        "127.0.0.1",
+        "10.0.3.17",
+        "0.0.0.0",
+        "255.255.255.255",
+        "192.168.1.1",
+    ] {
+        assert_eq!(origin(&format!("http://{host}")).host(), host);
+    }
+    let refused = [
+        "127.1",
+        "127.0.1",
+        "0x7f.1",
+        "0177.0.0.1",
+        "2130706433",
+        "0x7f000001",
+        "0X7F000001",
+        "017700000001",
+        "127.0.0.01",
+        "00000127.0.0.1",
+        "3232235777",
+        "10.1",
+        "1.2.3",
+        "0",
+        "0x",
+        "256.0.0.1",
+        "1.2.3.256",
+        "1.2.3.4.5",
+        "host.123",
+        "example.0x1f",
+        "a.b.c.7",
+    ];
+    for host in refused {
+        let made = Origin::of(&format!("http://{host}:8080/x"), &Secrets::none());
+        assert_eq!(made, Err(NotAllowed::Host), "{host}");
+        let made = Address::of(&format!("https://{host}"), &Secrets::none());
+        assert_eq!(made.map(|_| ()), Err(NotAllowed::Host), "{host}");
+    }
+    // A name whose last label only starts with a digit, or holds one, is a name.
+    for host in [
+        "host.1a",
+        "3com.example",
+        "a.0xg",
+        "127.0.0.1.example",
+        "x.7z",
+    ] {
+        assert_eq!(origin(&format!("http://{host}")).host(), host);
+    }
+}
+
+#[test]
+fn a_secret_that_lowering_a_host_makes_is_refused_and_not_shown() {
+    // The secret is registered in lower case; the address has it in capitals, so the
+    // text as given holds no secret, and the origin made of it would.
+    let secret = "tokenabcdef0123";
+    let secrets = Secrets::new([secret.to_owned()]).unwrap();
+    let shouted = secret.to_ascii_uppercase();
+    let texts = [
+        format!("https://{shouted}.example.com"),
+        format!("https://api.{shouted}.example.com/v1"),
+        format!("HTTPS://{shouted}"),
+    ];
+    for text in &texts {
+        assert_eq!(secrets.redact(text), *text, "the text as given holds none");
+        for refused in [
+            Origin::of(text, &secrets).map(|_| ()),
+            Address::of(text, &secrets).map(|_| ()),
+            Recipient::at(text, &secrets).map(|_| ()),
+        ] {
+            assert_eq!(refused, Err(NotAllowed::Secret), "{text}");
+        }
+    }
+    // With no secret told, the same address is an origin, in lower case.
+    let plain = Origin::of(&texts[0], &Secrets::none()).unwrap();
+    assert_eq!(plain.host(), format!("{secret}.example.com"));
+}
+
+#[test]
+fn a_credential_of_another_scheme_on_the_same_host_and_port_is_refused_by_each_request() {
+    let to = address("https://h/x");
+    assert_eq!(to.origin().port(), 443);
+    let other = || {
+        Credential::new(
+            origin("http://h:443"),
+            "x-api-key",
+            MARKER,
+            &Secrets::none(),
+        )
+        .unwrap()
+    };
+    assert_eq!(other().origin().port(), 443);
+    let outgoing = Outgoing::new(to.clone(), Vec::new()).unwrap();
+    assert_eq!(
+        outgoing.with_credential(other()).map(|_| ()),
+        Err(NotAllowed::Elsewhere)
+    );
+    let download = DownloadRequest::new(to.clone(), 1).unwrap();
+    assert_eq!(
+        download.with_credential(other()).map(|_| ()),
+        Err(NotAllowed::Elsewhere)
+    );
+    let probe = ProbeRequest::new(to);
+    assert_eq!(
+        probe.with_credential(other()).map(|_| ()),
+        Err(NotAllowed::Elsewhere)
+    );
+}
+
+#[test]
+fn a_query_follows_a_path_and_never_the_host() {
+    for text in [
+        "https://h?x",
+        "https://h:80?x",
+        "https://h?",
+        "http://h.example?a=1",
+    ] {
+        let made = Address::of(text, &Secrets::none());
+        assert!(made.is_err(), "{text}: {made:?}");
+    }
+    assert_eq!(address("https://h/?x").rest(), "/?x");
+    assert_eq!(address("https://h:80/p?x").rest(), "/p?x");
+}
+
+#[test]
+fn a_credential_is_told_the_secrets_and_its_header_holds_none() {
+    let secrets = secrets();
+    let at = || origin("https://api.example.com");
+    // The value is the secret, where one belongs.
+    let made = Credential::new(at(), "x-api-key", MARKER, &secrets).unwrap();
+    assert_eq!(made.expose(), MARKER);
+    // A key written where the header's name belongs is refused, and not shown.
+    for header in [MARKER.to_owned(), format!("x-{MARKER}")] {
+        let refused = Credential::new(at(), &header, "value", &secrets);
+        assert_eq!(
+            refused.clone().map(|_| ()),
+            Err(NotAllowed::Secret),
+            "{header}"
+        );
+        assert!(!format!("{refused:?}").contains("marker"));
+    }
+    // And one that is no name besides is refused for the secret first.
+    let refused = Credential::new(at(), &format!("x {MARKER}"), "value", &secrets);
+    assert_eq!(refused.map(|_| ()), Err(NotAllowed::Secret));
+}
+
+#[test]
+fn a_recipient_is_the_same_recipient_in_whatever_order_its_upstreams_were_given() {
+    let base = || Recipient::new(origin("https://api.example.com"));
+    let (one, two) = (
+        origin("https://one.example.net"),
+        origin("https://two.example.net"),
+    );
+    let forward = base()
+        .forwarding_to(vec![one.clone(), two.clone()])
+        .unwrap();
+    let backward = base()
+        .forwarding_to(vec![two.clone(), one.clone()])
+        .unwrap();
+    assert_eq!(forward, backward);
+    // They are kept in one order, whichever way they came.
+    assert_eq!(forward.upstreams(), backward.upstreams());
+    assert_eq!(forward.upstreams(), &[one, two][..]);
+}
+
+#[test]
+fn known_the_rest_of_an_address_is_not_normalised() {
+    // Two spellings of one path are two addresses of one origin. Only origins are
+    // compared when a hop is checked, so nothing is decided by the difference.
+    let dotted = address("https://api.example.com/a/../b");
+    let plain = address("https://api.example.com/b");
+    assert_ne!(dotted, plain);
+    assert_eq!(dotted.origin(), plain.origin());
+    assert_eq!(dotted.rest(), "/a/../b");
 }
