@@ -117,8 +117,12 @@ export SEGMENT_TOKEN=made-up-token-0123456789
 ```
 
 A line is `NAME=value`, with `export` before it if you like; quotes around a value are
-taken off. Nothing is expanded, and the environment of your shell is not read: a key is
-in this file or it is not set. Only the variables your config names are used, each by
+taken off, and what is inside them is the value, all of it: a space at either end inside
+the quotes is refused, and so are quotes around nothing. A `#` straight after a value,
+with no space before it, is part of the value; a comment has a line of its own. Save the
+file as plain UTF-8 with no byte-order mark, which some editors add and which is refused.
+A link to a file is followed, and what it leads to is read. Nothing is expanded, and the
+environment of your shell is not read: a key is in this file or it is not set. Only the variables your config names are used, each by
 the backend that names it. A key shorter than 8 bytes is refused, by the name of its
 variable. Keep nothing but keys here: any value of 8 bytes or more is treated as a
 secret, and a config that holds the same text is refused.
