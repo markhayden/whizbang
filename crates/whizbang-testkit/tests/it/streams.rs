@@ -595,6 +595,53 @@ fn a_streamed_file_renamed_onto_itself_is_still_cut_at_a_crash() {
     assert_eq!(on_disk(&file).unwrap(), b"synced01234");
 }
 
+// --- a link that was removed, at a crash -------------------------------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn a_removed_link_that_a_crash_brings_back_is_the_link_again_and_its_target_is_never_touched() {
+    use std::os::unix::fs::symlink;
+    for (lost, back) in [(Lost::Unsynced, true), (Lost::ContentOnly, false)] {
+        let dir = Scratch::new("shim-link");
+        let target = dir.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("kept"), b"kept").unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, b"a file").unwrap();
+        let folder = dir.path().join("folder");
+        std::fs::create_dir(&folder).unwrap();
+        let alone = dir.path().join("link");
+        let (inside, to_a_file) = (folder.join("to-a-folder"), folder.join("to-a-file"));
+        symlink(&target, &alone).unwrap();
+        symlink(&target, &inside).unwrap();
+        symlink(&file, &to_a_file).unwrap();
+
+        let fs = ShimFs::new();
+        fs.remove_all(&alone).unwrap();
+        fs.remove_all(&folder).unwrap();
+        assert_eq!(
+            fs.events(),
+            vec![Event::Remove(alone.clone()), Event::Remove(folder.clone())]
+        );
+        fs.crash(lost);
+        for link in [&alone, &inside, &to_a_file] {
+            let found = std::fs::symlink_metadata(link);
+            assert_eq!(found.is_ok(), back, "{lost:?}");
+            if back {
+                assert!(found.unwrap().is_symlink(), "{lost:?}: a link, not a copy");
+            }
+        }
+        if back {
+            assert_eq!(std::fs::read_link(&alone).unwrap(), target);
+            assert_eq!(std::fs::read_link(&inside).unwrap(), target);
+            assert_eq!(std::fs::read_link(&to_a_file).unwrap(), file);
+        }
+        assert_eq!(std::fs::read(target.join("kept")).unwrap(), b"kept");
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 1);
+        assert_eq!(std::fs::read(&file).unwrap(), b"a file");
+    }
+}
+
 // --- what a crash leaves of the bytes that were not synced, by a test's choice ---------------------
 
 /// Each choice, with what it leaves of a file of `synced` and then `0123456789`.

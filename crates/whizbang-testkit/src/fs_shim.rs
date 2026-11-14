@@ -22,6 +22,18 @@
 //!
 //! The shim never calls the real sync: it models durability, and a real sync is slow.
 //!
+//! # Links
+//!
+//! The shim makes no link, and models one only where a removal or a replacing rename
+//! meets it. [`Fs::remove_all`] on a link, or on a folder that holds links, removes the
+//! links themselves, as the real file system does, and never follows one: what a link
+//! leads to is not read, copied, cut or removed. What is kept of a link, so that a
+//! crash can bring it back, is where it leads. A crash that undoes the removal, or the
+//! rename that replaced the link, makes the link again, leading where it led, whether
+//! or not anything is there. Nothing else is modelled: every other call does with a
+//! link what the real file system does with it, and a file reached through a link is
+//! known to the shim by the name it was written under, not by the link's.
+//!
 //! # A file written piece by piece
 //!
 //! Opening one, each piece appended, each sync and the finish are events, each of which
@@ -156,6 +168,8 @@ enum Saved {
     /// what it would have left had the file stayed.
     File(Vec<u8>, Option<u64>),
     Dir(Vec<(PathBuf, Saved)>),
+    /// A link, as where it leads: what is there was never read.
+    Link(PathBuf),
 }
 
 /// A change of names that no sync has made durable yet.
@@ -594,10 +608,25 @@ impl Left {
     }
 }
 
+/// Makes a link at `path` again, leading where it led.
+#[cfg(unix)]
+fn link(leads_to: &Path, path: &Path) {
+    let _ = std::os::unix::fs::symlink(leads_to, path);
+}
+
+/// Where a link cannot be made this way, a removed link stays removed.
+#[cfg(not(unix))]
+fn link(_leads_to: &Path, _path: &Path) {}
+
 /// A copy of what is at `path`. A file written piece by piece is kept with how many
 /// of its bytes are durable, by its name in `streams`.
 fn save(path: &Path, streams: &BTreeMap<u64, Stream>) -> io::Result<Saved> {
-    if std::fs::symlink_metadata(path)?.is_dir() {
+    let found = std::fs::symlink_metadata(path)?;
+    if found.is_symlink() {
+        // Not followed: removing a link, or replacing one, touches the link alone.
+        return Ok(Saved::Link(std::fs::read_link(path)?));
+    }
+    if found.is_dir() {
         let mut entries = Vec::new();
         for entry in RealFs.list(path)? {
             let saved = save(&entry, streams)?;
@@ -631,6 +660,7 @@ fn restore(path: &Path, saved: &Saved, tail: Tail) {
             bytes[from..].fill(0);
             let _ = create(path, &bytes);
         }
+        Saved::Link(leads_to) => link(leads_to, path),
         Saved::Dir(entries) => {
             let _ = RealFs.create_dir(path);
             for (entry, saved) in entries {

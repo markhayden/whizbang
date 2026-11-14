@@ -7,7 +7,7 @@ Amended: 2026-11-14, after the review of its pull request. Changed: what a crash
 leaves of the bytes that were not synced is a test's choice of four (`Tail`); a
 streamed file that was removed or replaced and that a crash brings back is cut as any
 other, which the first form restored whole. Added under "Limits": how the try opens
-its file. Words: rule 2 says who removes a file that is not whole, and which tries
+its file. Added under "The shim": removing a link, which the shim followed. Words: rule 2 says who removes a file that is not whole, and which tries
 are bounded by a thread and a timeout.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
@@ -220,6 +220,16 @@ file that had it before
 crash a handle fails and writes nothing, and a share a try was given is gone
 (`streams::after_a_crash_no_handle_reaches_the_disk`,
 `streams::a_crash_ends_what_a_try_was_refused_for_and_the_share_a_try_was_given`).
+
+**A link that is removed.** `ShimFs::remove_all` copied what it removed by reading
+it, so it followed a link, and failed on a link to a folder. It now removes the link
+itself, as the real file system does, by itself or inside a folder that is removed,
+and never follows one: what a link leads to is not read, copied, cut or removed
+(`fs::removing_a_link_removes_the_link_and_follows_it_nowhere`, on both file
+systems). What the shim keeps of a link is where it leads, and a crash that undoes
+the removal makes the link again
+(`streams::a_removed_link_that_a_crash_brings_back_is_the_link_again_and_its_target_is_never_touched`).
+The shim makes no link and models nothing else of one.
 
 ### Limits, each stated
 

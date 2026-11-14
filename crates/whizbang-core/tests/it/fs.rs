@@ -476,6 +476,50 @@ fn a_link_is_not_followed_to_what_it_names() {
     }
 }
 
+// --- removing a link ----------------------------------------------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn removing_a_link_removes_the_link_and_follows_it_nowhere() {
+    use std::os::unix::fs::symlink;
+    for (which, fs) in both() {
+        let dir = Scratch::new("fs-link-removed");
+        let target = dir.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("kept"), b"kept").unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, b"a file").unwrap();
+        let untouched = || {
+            assert_eq!(
+                std::fs::read(target.join("kept")).unwrap(),
+                b"kept",
+                "{which}"
+            );
+            assert_eq!(std::fs::read(&file).unwrap(), b"a file", "{which}");
+        };
+
+        // A link to a folder, to a file and to nothing, each removed by itself.
+        for leads_to in [target.clone(), file.clone(), dir.path().join("absent")] {
+            let link = dir.path().join("link");
+            symlink(&leads_to, &link).unwrap();
+            fs.remove_all(&link).unwrap();
+            assert!(std::fs::symlink_metadata(&link).is_err(), "{which}");
+            untouched();
+        }
+
+        // Links inside a folder that is removed.
+        let folder = dir.path().join("folder");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("own"), b"its own").unwrap();
+        symlink(&target, folder.join("to-a-folder")).unwrap();
+        symlink(&file, folder.join("to-a-file")).unwrap();
+        symlink(dir.path().join("absent"), folder.join("to-nothing")).unwrap();
+        fs.remove_all(&folder).unwrap();
+        assert!(!folder.exists(), "{which}");
+        untouched();
+    }
+}
+
 // --- the try at a share -----------------------------------------------------------------------
 
 #[test]
