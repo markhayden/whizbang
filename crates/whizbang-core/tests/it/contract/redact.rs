@@ -684,6 +684,70 @@ fn after_a_text_that_ends_in_a_percent_or_a_backslash_a_written_form_is_still_fo
 }
 
 #[test]
+fn a_form_of_json_after_a_lone_backslash_is_found_by_its_written_form_alone() {
+    // The secret begins with a letter an escape ends in, and holds a quote and a
+    // slash. Written as a JSON string escapes it, with the slash left plain, straight
+    // after a lone backslash, no reading finds it: each takes the backslash with the
+    // letter. The written form is found as it stands. (With no slash, the form that
+    // escapes slashes is the same bytes, and would find it.)
+    let secret = "nab\"cd/efgh12";
+    let secrets = Secrets::new([secret.to_owned()]).unwrap();
+    assert_eq!(
+        secrets.redact(&format!("x\\{};", json_of(secret))),
+        "x\\[redacted];"
+    );
+}
+
+#[test]
+fn the_character_before_a_base64_form_is_taken_only_when_it_is_base64_and_the_forms_own() {
+    let key = made_up_key("x");
+    let secrets = secrets(&[&key]);
+    // The run of whole characters of a secret that does not begin a group, straight
+    // after a quote: the quote holds no bit of the secret, and stays.
+    let encoded = base64(format!("u{key}!!").as_bytes(), false);
+    let (first, last) = base64_edges(1, key.len());
+    assert_eq!(
+        secrets.redact(&format!("{{\"h\":\"{}\"}}", &encoded[first + 1..])),
+        format!("{{\"h\":\"[redacted]{}\"}}", &encoded[last + 1..])
+    );
+    // A longer form that ends where a shorter one does has its own edge, and not the
+    // shorter one's. The longer here is a secret that is some letters and then the
+    // base64 characters of the first: the letter before it is no part of either.
+    let run = &encoded[first + 1..=last - 1];
+    let longer = format!("PRE{run}");
+    let both = Secrets::new([key.clone(), longer.clone()]).unwrap();
+    assert_eq!(both.redact(&format!("x{longer};")), "x[redacted];");
+    // And a longer base64 form: the secret with a letter before it begins a group
+    // where the secret alone does not. The character before the longer one's run is
+    // not its, as it is and where a line break stands inside the run.
+    let longer = format!("u{key}");
+    let both = Secrets::new([key.clone(), longer]).unwrap();
+    assert_eq!(
+        both.redact(&format!("x{encoded};")),
+        format!("x[redacted]{};", &encoded[last + 1..])
+    );
+    let wrapped = format!("x{}\n{};", &encoded[..20], &encoded[20..]);
+    assert_eq!(
+        both.redact(&wrapped),
+        format!("x[redacted]{};", &encoded[last + 1..])
+    );
+}
+
+#[test]
+fn a_secret_that_is_anothers_utf_16_bytes_is_never_left_out_for_a_twin() {
+    // One secret, as text, is the bytes of another in UTF-16. The two are one form
+    // of the machine. As the second's wide form it could be left out at an odd place,
+    // for its twin a byte to the side; as the first secret as it stands it is never
+    // left out.
+    let narrow = "abcdefgh";
+    let as_text: String = narrow.chars().flat_map(|c| [c, '\0']).collect();
+    assert_eq!(as_text.as_bytes(), utf16(narrow, false));
+    let secrets = Secrets::new([narrow.to_owned(), as_text.clone()]).unwrap();
+    let text = [&[0u8][..], as_text.as_bytes()].concat();
+    assert_eq!(secrets.redact_bytes(&text), b"[redacted]");
+}
+
+#[test]
 fn a_second_secret_uncovers_nothing_of_the_first() {
     // The second secret is the first from its second letter on. The first stands in
     // UTF-16, little-endian, at an odd place; the second is then found one byte on,
@@ -1019,6 +1083,22 @@ fn what_redaction_does_not_find_is_known() {
     // lone backslash goes with it.
     let escaped = format!("\\{}", u_all(&key));
     assert_eq!(secrets.redact(&escaped), "[redacted]");
+    // After a lone backslash, an encoded secret that only a reading finds can be read
+    // wrongly: the backslash is taken with what follows it. Written as `\u` escapes
+    // inside percent-encoding, it is missed.
+    let inside = format!("\\{}", u_all(&key).replace('\\', "%5C"));
+    assert_eq!(secrets.redact(&inside[1..]), "[redacted]");
+    assert_eq!(secrets.redact(&inside), inside);
+    // In mixed escapes, beginning with a letter an escape ends in, it is missed.
+    let letter = Secrets::new(["nabcdefgh12".to_owned()]).unwrap();
+    let mixed = format!("\\n{}", u_all("abcdefgh12"));
+    assert_eq!(letter.redact(&mixed[1..]), "[redacted]");
+    assert_eq!(letter.redact(&mixed), mixed);
+    // Beginning with a digit it is found, and the last digit of the first escape goes
+    // with it while the rest of that escape stays.
+    let digit = Secrets::new(["1abcdefgh12".to_owned()]).unwrap();
+    let escaped = format!("\\{}", u_all("1abcdefgh12").replace('\\', "%5C"));
+    assert_eq!(digit.redact(&escaped), "\\%5Cu003[redacted]");
     // A secret that is the marker's own word, or part of it, is replaced inside the
     // marker when what was stored is redacted again: the brackets grow.
     let word = Secrets::new(["redacted".to_owned(), key.clone()]).unwrap();
@@ -1112,4 +1192,233 @@ fn secrets_do_not_print_themselves() {
     let shown = format!("{:?}", secrets(&[&key]));
     assert_eq!(shown, "Secrets(1)");
     assert!(!shown.contains(&key));
+}
+
+// --- a body that is JSON, redacted as JSON (ADR 0014, "A JSON body") --------------------
+
+fn json(body: &str) -> serde_json::Value {
+    serde_json::from_str(body).unwrap_or_else(|why| panic!("not JSON: {why}\n{body}"))
+}
+
+#[test]
+fn a_json_body_with_a_secret_at_the_edge_of_an_escape_is_still_json_after_it() {
+    // The two cases that break a body searched as bytes (ADR 0005): a secret that ends
+    // in a backslash, in front of an escape that is not its own; and a secret that
+    // begins with a letter an escape ends in, behind a backslash. Read as JSON, each
+    // string is decoded before it is searched, so neither edge is there.
+    let ends = "abcdefgh\\".to_owned();
+    let begins = "nabcdefgh".to_owned();
+    let secrets = Secrets::new([ends.clone(), begins.clone()]).unwrap();
+    for (value, expected) in [
+        (format!("{ends}\"quoted\""), "[redacted]\"quoted\""),
+        (format!("x {ends}\n"), "x [redacted]\n"),
+        (format!("x\n{}", &begins[1..]), "x\nabcdefgh"),
+        (format!("x\\{begins}"), "x\\[redacted]"),
+        (format!("{begins}{ends}"), "[redacted][redacted]"),
+    ] {
+        let body = serde_json::json!({ "t": value, "n": 1 }).to_string();
+        let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
+        assert_eq!(
+            json(&stored),
+            serde_json::json!({ "t": expected, "n": 1 }),
+            "{body}"
+        );
+    }
+    // The same body searched as bytes is the case ADR 0014 accepts, and is not JSON.
+    let body = serde_json::json!({ "t": "x\nabcdefgh" }).to_string();
+    assert!(serde_json::from_str::<serde_json::Value>(&secrets.redact(&body)).is_err());
+    assert_eq!(
+        String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap(),
+        body,
+        "the string is `x`, a line break and `abcdefgh`, and holds no secret"
+    );
+}
+
+#[test]
+fn a_secret_behind_any_escape_of_a_json_string_is_taken_out_of_a_json_body() {
+    let key = made_up_key("");
+    let secrets = secrets(&[&key]);
+    let every: String = key
+        .chars()
+        .map(|c| format!("\\u{:04X}", c as u32))
+        .collect();
+    let one = key.replacen('a', "\\u0061", 1);
+    let body = format!(
+        "{{ \"a\" : \"Bearer {one}\",\n  \"{every}\" : [ \"{key}\", \"x\\/{key}\\ty\" ] }}"
+    );
+    let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
+    assert_eq!(
+        stored,
+        "{ \"a\" : \"Bearer [redacted]\",\n  \"[redacted]\" : [ \"[redacted]\", \"x/[redacted]\\ty\" ] }"
+    );
+    json(&stored);
+    for start in 0..key.len() - 5 {
+        assert!(!stored.contains(&key[start..start + 5]), "{stored}");
+    }
+    // A string inside a string, as a body that quotes a body has it: the inner body's
+    // escapes are read by the readings every text gets.
+    let inner = serde_json::json!({ "authorization": key }).to_string();
+    let outer = serde_json::json!({ "request": inner }).to_string();
+    let stored = String::from_utf8(secrets.redact_json(outer.as_bytes())).unwrap();
+    assert_eq!(
+        json(&stored),
+        serde_json::json!({ "request": "{\"authorization\":\"[redacted]\"}" })
+    );
+}
+
+#[test]
+fn a_backslash_before_a_secret_in_a_json_body_is_a_character_and_stays() {
+    // The cases in which a lone backslash throws a reading off, as a JSON body has
+    // them: the backslash is written `\\`, the string is decoded before it is
+    // searched, and the secret is found as it stands. The backslash stays.
+    for (secret, written) in [
+        // Beginning with a letter an escape ends in, and holding a quote.
+        ("nab\"cdefgh12", "nab\\\"cdefgh12".to_owned()),
+        // Written as `\u` escapes, and in mixed escapes.
+        ("nabcdefgh12", u_all("nabcdefgh12")),
+        ("nabcdefgh12", format!("n{}", u_all("abcdefgh12"))),
+        // Beginning with a digit.
+        ("1abcdefgh12", u_all("1abcdefgh12")),
+        ("ab12cd34/ef+gh", "ab12cd34\\/ef+gh".to_owned()),
+    ] {
+        let secrets = Secrets::new([secret.to_owned()]).unwrap();
+        for before in ["x\\\\", "\\\\", "100%", "C:\\\\dir\\\\"] {
+            let body = format!("{{\"t\":\"{before}{written}\",\"n\":1}}");
+            let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
+            assert_eq!(
+                stored,
+                format!("{{\"t\":\"{before}[redacted]\",\"n\":1}}"),
+                "{body}"
+            );
+            json(&stored);
+        }
+    }
+    // What is written back is a text, where bytes taken out as bytes would not be.
+    let wide = "\u{a9c3}\u{a9c3}\u{a9c3}";
+    let secrets = Secrets::new([wide.to_owned()]).unwrap();
+    let body = "{\"t\":\"X\u{e9}\u{e9}\u{e9}\u{e9}\"}";
+    let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
+    assert_eq!(stored, "{\"t\":\"X\u{fffd}[redacted]\u{fffd}\"}");
+    json(&stored);
+}
+
+#[test]
+fn what_holds_no_secret_in_a_json_body_is_left_byte_for_byte() {
+    let key = made_up_key("");
+    let secrets = secrets(&[&key]);
+    // Spacing, the order of keys, a key given twice, escapes a writer need not have
+    // used, numbers as they were written: none is touched where no secret is.
+    let before = "{\n\t\"b\" : 1.50e+3,\r\n \"a\":[true,false,null,-0, \"\\u0041\\/\\u00e9 \\ud83d\\udd11\"],\"a\":{} ,\"s\":\"";
+    let after = "\" }  \n";
+    let body = format!("{before}{key}{after}");
+    let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
+    assert_eq!(stored, format!("{before}[redacted]{after}"));
+    let none = format!("{before}plain{after}");
+    assert_eq!(secrets.redact_json(none.as_bytes()), none.as_bytes());
+    // A body that is one string, one number or nothing but a word.
+    assert_eq!(
+        secrets.redact_json(format!("\"{key}\"").as_bytes()),
+        b"\"[redacted]\""
+    );
+    assert_eq!(secrets.redact_json(b" 12 "), b" 12 ");
+    assert_eq!(secrets.redact_json(b"null"), b"null");
+    assert_eq!(Secrets::none().redact_json(b"{\"a\":1}"), b"{\"a\":1}");
+}
+
+#[test]
+fn a_number_that_holds_a_secret_becomes_a_string_and_the_body_is_still_json() {
+    let secrets = secrets(&["1234567890", "truefalse"]);
+    let body = "{\"id\":1234567890,\"big\":-91234567890.5e3,\"ok\":123456789,\"t\":true}";
+    let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
+    assert_eq!(
+        stored,
+        "{\"id\":\"[redacted]\",\"big\":\"[redacted]\",\"ok\":123456789,\"t\":true}"
+    );
+    json(&stored);
+}
+
+#[test]
+fn a_body_that_is_not_json_is_redacted_as_bytes_and_not_refused() {
+    let key = made_up_key("");
+    let secrets = secrets(&[&key]);
+    for body in [
+        format!("{{\"t\":\"{key}\""),
+        format!("{{\"t\":\"{key}\"}} trailing"),
+        format!("{{'t':'{key}'}}"),
+        format!("not json at all: {key}"),
+        format!("{{\"t\":\"{key}\",}}"),
+        String::new(),
+    ] {
+        assert_eq!(
+            secrets.redact_json(body.as_bytes()),
+            secrets.redact_bytes(body.as_bytes()),
+            "{}",
+            body.replace(&key, "<key>")
+        );
+        assert!(
+            !String::from_utf8(secrets.redact_json(body.as_bytes()))
+                .unwrap()
+                .contains(&key)
+        );
+    }
+    // Bytes that are not text at all.
+    let mut bytes = vec![0xff, b'{'];
+    bytes.extend_from_slice(key.as_bytes());
+    assert_eq!(
+        secrets.redact_json(&bytes),
+        [&[0xff, b'{'][..], b"[redacted]"].concat()
+    );
+    // Nested deeper than the reader of JSON goes: searched as bytes, and the key is out.
+    let deep = format!("{}\"{key}\"{}", "[".repeat(200), "]".repeat(200));
+    let stored = String::from_utf8(secrets.redact_json(deep.as_bytes())).unwrap();
+    assert_eq!(
+        stored,
+        format!("{}\"[redacted]\"{}", "[".repeat(200), "]".repeat(200))
+    );
+}
+
+#[test]
+fn a_string_that_is_json_and_no_text_is_searched_as_it_is_written() {
+    // Half of a pair of escapes is a string to JSON's grammar and no text. It is not
+    // decoded; it is searched as bytes, and replaced whole when it holds a secret, so
+    // that the body is still JSON.
+    let key = made_up_key("");
+    let secrets = secrets(&[&key]);
+    let body = format!("{{\"a\":\"\\ud83d {key}\",\"b\":\"\\ud83d plain\"}}");
+    let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
+    assert_eq!(stored, "{\"a\":\"[redacted]\",\"b\":\"\\ud83d plain\"}");
+}
+
+#[test]
+fn what_redaction_of_a_json_body_does_not_find_is_known() {
+    // ADR 0014, "A JSON body". A secret that stands across two strings, or across a
+    // string and what is between strings, is in no one string: read as JSON it is not
+    // found, where the same bytes searched as bytes would be.
+    let across = "abcd\",\"efgh".to_owned();
+    let secrets = Secrets::new([across.clone()]).unwrap();
+    let body = "[\"abcd\",\"efgh\"]";
+    assert_eq!(secrets.redact_json(body.as_bytes()), body.as_bytes());
+    assert_eq!(secrets.redact(body), "[\"[redacted]\"]");
+}
+
+#[test]
+fn a_mebibyte_of_json_with_ten_secrets_is_redacted_as_json_inside_a_stated_time() {
+    let keys: Vec<String> = (0..10).map(|n| made_up_key(&format!("-{n}"))).collect();
+    let secrets = Secrets::new(keys.clone()).unwrap();
+    let mut body = String::from("[");
+    while body.len() < 1024 * 1024 {
+        body.push_str(
+            "{\"u\":\"https:\\/\\/h.example\\/a%20b+c?q=1\",\"n\":\"line\\nline\",\"i\":12345},",
+        );
+    }
+    for key in &keys {
+        body.push_str(&format!("\"auth {}\",", key.replacen('a', "\\u0061", 1)));
+    }
+    body.push_str("0]");
+    let started = std::time::Instant::now();
+    let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
+    let took = started.elapsed();
+    assert_eq!(stored.matches(REDACTED).count(), 10);
+    json(&stored);
+    assert!(took < std::time::Duration::from_secs(10), "{took:?}");
 }

@@ -1032,13 +1032,17 @@ impl Engine {
                         })
                         .into());
                     }
-                    // What a part says of its own failure is cleaned as its refusal
-                    // is; what the store or the step said is as it was.
-                    Err(PartDeclined::Failed(CallError::Part { part, why })) => {
-                        let why = part::sentence(&self.secrets, &why);
-                        return Err(CallError::Part { part, why }.into());
+                    // A failure is the store's, which is as it was, or a sentence,
+                    // which is cleaned as a refusal's is: a record's, or the part's,
+                    // named by the part that was asked. It is never a refusal, whatever the part handed
+                    // back, so it gets no second look for the id.
+                    Err(PartDeclined::Failed(failure)) => {
+                        let failed = failure.into_error(
+                            |why| part::sentence(&self.secrets, why),
+                            |why| CallError::Part { part: name, why },
+                        );
+                        return Err(failed.into());
                     }
-                    Err(PartDeclined::Failed(error)) => return Err(error.into()),
                 }
             }
             // The ledger takes part here: it judges, and adds what it must to this
@@ -1074,7 +1078,15 @@ impl Engine {
                         })
                         .into());
                     }
-                    Err(Declined::Failed(error)) => return Err(error.into()),
+                    // As a part's failure: the store's as it was, or a sentence
+                    // that is cleaned, and never a refusal.
+                    Err(Declined::Failed(failure)) => {
+                        let failed = failure.into_error(
+                            |why| part::sentence(&self.secrets, why),
+                            |why| CallError::Ledger { why },
+                        );
+                        return Err(failed.into());
+                    }
                 }
                 ledgers = step.into_made();
                 let name = reservation.name();

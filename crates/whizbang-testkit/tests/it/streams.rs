@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use whizbang_core::store::fs::{Fs, Held, LockFile};
-use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
+use whizbang_testkit::fs_shim::{Event, Lost, ShimFs, Tail};
 use whizbang_testkit::scratch::Scratch;
 
 fn on_disk(path: &Path) -> Option<Vec<u8>> {
@@ -497,6 +497,280 @@ fn a_name_used_again_is_not_cut_for_the_file_that_had_it_before() {
     assert_eq!(new.finish().unwrap(), 16);
     fs.crash(Lost::ContentOnly);
     assert_eq!(on_disk(&file).unwrap(), WHOLE);
+}
+
+// --- a streamed file that was removed or replaced, and comes back at the crash ---------------------
+
+#[test]
+fn a_streamed_file_that_a_crash_brings_back_is_cut_as_any_other() {
+    // Removed, and the removal lost: what comes back is what a crash leaves of the
+    // file, and not all that was ever appended to it.
+    let dir = Scratch::new("shim-stream-restored");
+    let file = dir.path().join("f");
+    let fs = ShimFs::new();
+    let mut new = fs.begin_new(&file, 64).unwrap();
+    new.append(b"synced").unwrap();
+    new.sync().unwrap();
+    new.append(FIRST).unwrap();
+    fs.sync_dir(dir.path()).unwrap();
+    fs.remove_all(&file).unwrap();
+    assert_eq!(on_disk(&file), None);
+    fs.crash(Lost::Unsynced);
+    assert_eq!(on_disk(&file).unwrap(), b"synced01234");
+
+    // Removed with the folder it is in, as a failed download's staging is.
+    let dir = Scratch::new("shim-stream-restored");
+    let folder = dir.path().join("staging");
+    let file = folder.join("f");
+    let fs = ShimFs::new();
+    fs.create_dir(&folder).unwrap();
+    let mut new = fs.begin_new(&file, 64).unwrap();
+    new.append(FIRST).unwrap();
+    fs.sync_dir(dir.path()).unwrap();
+    fs.sync_dir(&folder).unwrap();
+    fs.remove_all(&folder).unwrap();
+    fs.crash(Lost::Unsynced);
+    assert_eq!(on_disk(&file).unwrap(), b"01234");
+
+    // Replaced by a rename of a whole file over it, and the rename lost.
+    let dir = Scratch::new("shim-stream-restored");
+    let (file, whole) = (dir.path().join("f"), dir.path().join("whole"));
+    let fs = ShimFs::new();
+    let mut new = fs.begin_new(&file, 64).unwrap();
+    new.append(FIRST).unwrap();
+    fs.sync_dir(dir.path()).unwrap();
+    fs.write_new(&whole, WHOLE).unwrap();
+    fs.rename(&whole, &file).unwrap();
+    assert_eq!(on_disk(&file).unwrap(), WHOLE);
+    fs.crash(Lost::Unsynced);
+    assert_eq!(on_disk(&file).unwrap(), b"01234");
+
+    // Each file of a folder comes back by its own count: two streamed files that
+    // differ in what was synced, and a file written whole beside them.
+    let dir = Scratch::new("shim-stream-restored");
+    let folder = dir.path().join("staging");
+    let (one, two, plain) = (folder.join("a"), folder.join("b"), folder.join("c"));
+    let fs = ShimFs::new();
+    fs.create_dir(&folder).unwrap();
+    let mut new = fs.begin_new(&one, 64).unwrap();
+    new.append(FIRST).unwrap();
+    let mut new = fs.begin_new(&two, 64).unwrap();
+    new.append(b"synced").unwrap();
+    new.sync().unwrap();
+    new.append(b"0123").unwrap();
+    fs.write_new(&plain, WHOLE).unwrap();
+    fs.sync_dir(dir.path()).unwrap();
+    fs.sync_dir(&folder).unwrap();
+    fs.remove_all(&folder).unwrap();
+    fs.crash(Lost::Unsynced);
+    assert_eq!(on_disk(&one).unwrap(), b"01234");
+    assert_eq!(on_disk(&two).unwrap(), b"synced01");
+    assert_eq!(on_disk(&plain).unwrap(), WHOLE);
+
+    // And one whose every byte was synced comes back whole.
+    let dir = Scratch::new("shim-stream-restored");
+    let file = dir.path().join("f");
+    let fs = ShimFs::new();
+    let mut new = fs.begin_new(&file, 64).unwrap();
+    new.append(FIRST).unwrap();
+    new.sync().unwrap();
+    assert_eq!(new.finish().unwrap(), 10);
+    fs.sync_dir(dir.path()).unwrap();
+    fs.remove_all(&file).unwrap();
+    fs.crash(Lost::Unsynced);
+    assert_eq!(on_disk(&file).unwrap(), FIRST);
+}
+
+#[test]
+fn a_streamed_file_renamed_onto_itself_is_still_cut_at_a_crash() {
+    let dir = Scratch::new("shim-stream-self");
+    let file = dir.path().join("f");
+    let fs = ShimFs::new();
+    let mut new = fs.begin_new(&file, 64).unwrap();
+    new.append(b"synced").unwrap();
+    new.sync().unwrap();
+    new.append(FIRST).unwrap();
+    fs.rename(&file, &file).unwrap();
+    fs.crash(Lost::ContentOnly);
+    assert_eq!(on_disk(&file).unwrap(), b"synced01234");
+}
+
+// --- a link that was removed, at a crash -------------------------------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn a_removed_link_that_a_crash_brings_back_is_the_link_again_and_its_target_is_never_touched() {
+    use std::os::unix::fs::symlink;
+    for (lost, back) in [(Lost::Unsynced, true), (Lost::ContentOnly, false)] {
+        let dir = Scratch::new("shim-link");
+        let target = dir.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("kept"), b"kept").unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, b"a file").unwrap();
+        let folder = dir.path().join("folder");
+        std::fs::create_dir(&folder).unwrap();
+        let alone = dir.path().join("link");
+        let (inside, to_a_file) = (folder.join("to-a-folder"), folder.join("to-a-file"));
+        symlink(&target, &alone).unwrap();
+        symlink(&target, &inside).unwrap();
+        symlink(&file, &to_a_file).unwrap();
+
+        let fs = ShimFs::new();
+        fs.remove_all(&alone).unwrap();
+        fs.remove_all(&folder).unwrap();
+        assert_eq!(
+            fs.events(),
+            vec![Event::Remove(alone.clone()), Event::Remove(folder.clone())]
+        );
+        fs.crash(lost);
+        for link in [&alone, &inside, &to_a_file] {
+            let found = std::fs::symlink_metadata(link);
+            assert_eq!(found.is_ok(), back, "{lost:?}");
+            if back {
+                assert!(found.unwrap().is_symlink(), "{lost:?}: a link, not a copy");
+            }
+        }
+        if back {
+            assert_eq!(std::fs::read_link(&alone).unwrap(), target);
+            assert_eq!(std::fs::read_link(&inside).unwrap(), target);
+            assert_eq!(std::fs::read_link(&to_a_file).unwrap(), file);
+        }
+        assert_eq!(std::fs::read(target.join("kept")).unwrap(), b"kept");
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 1);
+        assert_eq!(std::fs::read(&file).unwrap(), b"a file");
+    }
+}
+
+// --- what a crash leaves of the bytes that were not synced, by a test's choice ---------------------
+
+/// Each choice, with what it leaves of a file of `synced` and then `0123456789`.
+const TAILS: [(Tail, &[u8]); 4] = [
+    (Tail::Half, b"synced01234"),
+    (Tail::Zeroed, b"synced\0\0\0\0\0\0\0\0\0\0"),
+    (Tail::All, b"synced0123456789"),
+    (Tail::None, b"synced"),
+];
+
+/// A file of six synced bytes and ten that are not, its name durable.
+fn with_a_tail(fs: &ShimFs, file: &Path) {
+    let mut new = fs.begin_new(file, 64).unwrap();
+    new.append(b"synced").unwrap();
+    new.sync().unwrap();
+    new.append(FIRST).unwrap();
+    fs.sync_dir(file.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn each_choice_of_tail_leaves_exactly_what_it_says_of_a_file_that_stays() {
+    assert_eq!(Tail::default(), Tail::Half);
+    for (tail, left) in TAILS {
+        for (lost, _) in LOSSES {
+            let dir = Scratch::new("shim-tail-stays");
+            let file = dir.path().join("f");
+            let fs = ShimFs::new().with_tail(tail);
+            with_a_tail(&fs, &file);
+            fs.crash(lost);
+            assert_eq!(on_disk(&file).unwrap(), left, "{tail:?}, {lost:?}");
+            assert_eq!(read_back(&file), left, "{tail:?}");
+        }
+    }
+    // The choice can be made on a shim in use, and a file with nothing unsynced is
+    // whole under every one.
+    for (tail, _) in TAILS {
+        let dir = Scratch::new("shim-tail-stays");
+        let file = dir.path().join("f");
+        let fs = ShimFs::new();
+        let mut new = fs.begin_new(&file, 64).unwrap();
+        new.append(FIRST).unwrap();
+        new.sync().unwrap();
+        fs.set_tail(tail);
+        fs.crash(Lost::ContentOnly);
+        assert_eq!(on_disk(&file).unwrap(), FIRST, "{tail:?}");
+    }
+    // A file never synced: nothing of it is durable, and each choice says what is left.
+    for (tail, left) in [
+        (Tail::Half, &b"01234"[..]),
+        (Tail::Zeroed, &b"\0\0\0\0\0\0\0\0\0\0"[..]),
+        (Tail::All, FIRST),
+        (Tail::None, &b""[..]),
+    ] {
+        let dir = Scratch::new("shim-tail-stays");
+        let file = dir.path().join("f");
+        let fs = ShimFs::new().with_tail(tail);
+        let mut new = fs.begin_new(&file, 64).unwrap();
+        new.append(FIRST).unwrap();
+        fs.crash(Lost::ContentOnly);
+        assert_eq!(on_disk(&file).unwrap(), left, "{tail:?}");
+    }
+}
+
+#[test]
+fn each_choice_of_tail_leaves_exactly_what_it_says_of_a_file_that_was_renamed() {
+    for (tail, left) in TAILS {
+        // The rename kept, and the rename lost: the same file under one name or the
+        // other.
+        for (lost, kept) in [(Lost::ContentOnly, true), (Lost::Unsynced, false)] {
+            let dir = Scratch::new("shim-tail-renamed");
+            let (file, renamed) = (dir.path().join("f"), dir.path().join("g"));
+            let fs = ShimFs::new().with_tail(tail);
+            with_a_tail(&fs, &file);
+            fs.rename(&file, &renamed).unwrap();
+            fs.crash(lost);
+            let (there, gone) = if kept {
+                (&renamed, &file)
+            } else {
+                (&file, &renamed)
+            };
+            assert_eq!(on_disk(there).unwrap(), left, "{tail:?}, {lost:?}");
+            assert_eq!(on_disk(gone), None, "{tail:?}, {lost:?}");
+        }
+    }
+}
+
+#[test]
+fn each_choice_of_tail_leaves_exactly_what_it_says_of_a_file_that_was_removed_and_comes_back() {
+    for (tail, left) in TAILS {
+        // Removed by itself.
+        let dir = Scratch::new("shim-tail-removed");
+        let file = dir.path().join("f");
+        let fs = ShimFs::new().with_tail(tail);
+        with_a_tail(&fs, &file);
+        fs.remove_all(&file).unwrap();
+        fs.crash(Lost::Unsynced);
+        assert_eq!(on_disk(&file).unwrap(), left, "{tail:?}");
+
+        // Removed with its folder.
+        let dir = Scratch::new("shim-tail-removed");
+        let folder = dir.path().join("staging");
+        let file = folder.join("f");
+        let fs = ShimFs::new().with_tail(tail);
+        fs.create_dir(&folder).unwrap();
+        fs.sync_dir(dir.path()).unwrap();
+        with_a_tail(&fs, &file);
+        fs.remove_all(&folder).unwrap();
+        fs.crash(Lost::Unsynced);
+        assert_eq!(on_disk(&file).unwrap(), left, "{tail:?}");
+
+        // Replaced by a rename over it.
+        let dir = Scratch::new("shim-tail-removed");
+        let (file, whole) = (dir.path().join("f"), dir.path().join("whole"));
+        let fs = ShimFs::new().with_tail(tail);
+        with_a_tail(&fs, &file);
+        fs.write_new(&whole, WHOLE).unwrap();
+        fs.rename(&whole, &file).unwrap();
+        fs.crash(Lost::Unsynced);
+        assert_eq!(on_disk(&file).unwrap(), left, "{tail:?}");
+
+        // And a removal that the crash keeps leaves nothing, whatever the choice.
+        let dir = Scratch::new("shim-tail-removed");
+        let file = dir.path().join("f");
+        let fs = ShimFs::new().with_tail(tail);
+        with_a_tail(&fs, &file);
+        fs.remove_all(&file).unwrap();
+        fs.crash(Lost::ContentOnly);
+        assert_eq!(on_disk(&file), None, "{tail:?}");
+    }
 }
 
 // --- the try at a share ---------------------------------------------------------------------------

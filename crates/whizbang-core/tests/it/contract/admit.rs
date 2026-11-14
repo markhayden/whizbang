@@ -14,10 +14,10 @@ use whizbang_core::contract::request::{StoredAdmissionError, admitted};
 use whizbang_core::contract::{
     ADMITTED_NAME, Action, ActionDescriptor, Admission, Answer, Argument, Backends, Call,
     CallError, Capability, Clock, Context, Declined, Ending, Engine, Estimate, Executor, Failure,
-    Kind, Ledger, ModelIdentity, NoBackends, Outcome, PreparedCall, Produced, REQUEST_ID_LIMIT,
-    REQUEST_RECORD_MAX_BYTES, Refusal, Registry, Request, RequestId, RequestRecordError,
-    Requirement, Reservation, RunState, Secrets, Step, Unavailable, Value, ValueType,
-    request_fingerprint, reservations,
+    Kind, Ledger, ModelIdentity, NoBackends, NotJudged, Outcome, PreparedCall, Produced,
+    REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, Refusal, Registry, Request, RequestId,
+    RequestRecordError, Requirement, Reservation, RunState, Secrets, Step, Unavailable, Value,
+    ValueType, request_fingerprint, reservations,
 };
 use whizbang_core::contract::{ConfigSource, InputFault, InputPort, Readiness, Stale};
 use whizbang_core::identity::Digest;
@@ -3056,9 +3056,9 @@ fn a_ledger_adds_to_the_step_only_names_of_its_own_and_nothing_secret() {
     let world = World::new();
     let store = world.store();
     let failing = Scripted(|_: &Reservation, _: &mut Step<'_, '_>| {
-        Err(Declined::Failed(CallError::Ledger {
-            why: "its books do not balance".to_owned(),
-        }))
+        Err(Declined::Failed(NotJudged::saying(
+            "its books do not balance",
+        )))
     });
     let engine = engine_with(store.clone(), &world.runs, Priced::new(250_000))
         .with_ledger(Arc::new(failing));
@@ -3385,4 +3385,153 @@ fn a_ledgers_name_is_two_hundred_characters_at_most_and_the_fake_does_not_add_pa
             left_micros: 0,
         })
     );
+}
+
+// --- what a ledger may hand back as a failure ------------------------------------------------------
+
+#[test]
+fn whatever_a_ledger_fails_with_reaches_the_caller_as_the_ledgers_failure_with_no_secret_in_it() {
+    let key = made_up_key("");
+    let said = format!("it was told {key} and stopped");
+    let errors: Vec<(&str, CallError)> = vec![
+        (
+            "a refusal",
+            CallError::Refused(Refusal::NotARequestId { why: said.clone() }),
+        ),
+        ("its own", CallError::Ledger { why: said.clone() }),
+        (
+            "a part's",
+            CallError::Part {
+                part: "someone",
+                why: said.clone(),
+            },
+        ),
+    ];
+    for (which, error) in errors {
+        let world = World::new();
+        let store = world.store();
+        let failing =
+            Scripted(move |_: &Reservation, _: &mut Step<'_, '_>| Err(error.clone().into()));
+        let engine = engine_with(store, &world.runs, Priced::new(250_000))
+            .with_secrets(Secrets::new([key.clone()]).unwrap())
+            .with_ledger(Arc::new(failing));
+        let failed = engine.request(&asked("hello", "order-17")).unwrap_err();
+        let CallError::Ledger { why } = &failed else {
+            panic!("{which}: not a failure of the ledger: {failed:?}");
+        };
+        assert!(
+            why.contains("it was told [redacted] and stopped"),
+            "{which}: {why}"
+        );
+        // The sentence of a failure that was already one of this kind is as it was
+        // given, with nothing put before it: what a step answers is passed on so.
+        if which == "its own" {
+            assert_eq!(why, "it was told [redacted] and stopped");
+        }
+        assert_eq!(failed.refusal(), None, "{which}");
+        let shown = format!("{failed} {failed:?}");
+        assert!(!shown.contains(&key), "{which}: {shown}");
+        assert!(shown.starts_with("the ledger failed: "), "{which}: {shown}");
+        assert_eq!(held(&world.root(), world.fs.clone()), (0, vec![], vec![]));
+        assert_eq!(world.ran(), 0, "{which}");
+    }
+
+    // A record that was not read stays that, as the step's own answer for a stored
+    // reservation does; its sentence is cleaned the same way.
+    let world = World::new();
+    let unread = {
+        let said = said.clone();
+        Scripted(move |_: &Reservation, _: &mut Step<'_, '_>| {
+            Err(CallError::Record {
+                what: "a record",
+                why: said.clone(),
+            }
+            .into())
+        })
+    };
+    let engine = engine_with(world.store(), &world.runs, Priced::new(250_000))
+        .with_secrets(Secrets::new([key.clone()]).unwrap())
+        .with_ledger(Arc::new(unread));
+    assert_eq!(
+        engine.request(&asked("hello", "order-17")).unwrap_err(),
+        CallError::Record {
+            what: "a record",
+            why: "it was told [redacted] and stopped".to_owned(),
+        }
+    );
+
+    // Cut as a refusal's sentence is, after its secrets were taken out whole.
+    let world = World::new();
+    let straddling = format!("{}{key}", "x".repeat(record::REFUSAL_WHY_LIMIT - 4));
+    let failing = Scripted(move |_: &Reservation, _: &mut Step<'_, '_>| {
+        Err(CallError::Ledger {
+            why: straddling.clone(),
+        }
+        .into())
+    });
+    let engine = engine_with(world.store(), &world.runs, Priced::new(250_000))
+        .with_secrets(Secrets::new([key.clone()]).unwrap())
+        .with_ledger(Arc::new(failing));
+    let failed = engine.request(&asked("hello", "order-17")).unwrap_err();
+    let CallError::Ledger { why } = &failed else {
+        panic!("not a failure of the ledger: {failed:?}");
+    };
+    assert!(
+        why.chars().count() <= record::REFUSAL_WHY_LIMIT,
+        "{}",
+        why.len()
+    );
+    assert!(!why.contains(&key[..8]), "{why}");
+}
+
+#[test]
+fn a_ledgers_failure_is_returned_without_a_second_look_for_the_id() {
+    // While the ledger is asked, the same request is admitted under the id by another
+    // executor over the store. The ledger then fails, with a refusal as what it hands
+    // back: the caller is told of the failure, and not what the id says now.
+    let world = World::new();
+    let store = world.store();
+    let winner = Mutex::new(Some(world.engine(store.clone())));
+    let first = Arc::new(Mutex::new(None));
+    let failing = {
+        let first = first.clone();
+        Scripted(move |_: &Reservation, _: &mut Step<'_, '_>| {
+            if let Some(winner) = winner.lock().unwrap().take() {
+                *first.lock().unwrap() = Some(winner.request(&asked("hello", "order-17")));
+            }
+            Err(CallError::Refused(Refusal::NotARequestId {
+                why: "it is not one".to_owned(),
+            })
+            .into())
+        })
+    };
+    let loser =
+        engine_with(store, &world.runs, Priced::new(250_000)).with_ledger(Arc::new(failing));
+    let answer = loser.request(&asked("hello", "order-17"));
+    ran(first.lock().unwrap().take().unwrap());
+    assert_eq!(world.ran(), 1);
+    assert_eq!(
+        answer.unwrap_err(),
+        CallError::Ledger {
+            why: "it is not one".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn a_store_failure_inside_a_ledger_reaches_the_caller_as_the_stores() {
+    let world = World::new();
+    let store = world.store();
+    let adding = Scripted(|_: &Reservation, step: &mut Step<'_, '_>| {
+        step.make("spend/notes/one", b"a note\n")?;
+        Ok(())
+    });
+    let engine =
+        engine_with(store, &world.runs, Priced::new(250_000)).with_ledger(Arc::new(adding));
+    world
+        .fs
+        .refuse_matching(0, |event| matches!(event, Event::Write(_)));
+    let failed = engine.request(&asked("hello", "order-17")).unwrap_err();
+    assert!(matches!(failed, CallError::Store(_)), "{failed:?}");
+    assert_eq!(world.ran(), 0);
 }

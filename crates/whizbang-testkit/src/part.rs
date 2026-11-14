@@ -5,7 +5,7 @@
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use whizbang_core::contract::{
-    AdmissionPart, Asking, CallError, Estimate, PartDeclined, PartRefusal, PartStep, RefusalKind,
+    AdmissionPart, Asking, Estimate, NotJudged, PartDeclined, PartRefusal, PartStep, RefusalKind,
     RequestId, RunId,
 };
 use whizbang_core::identity::Digest;
@@ -135,19 +135,15 @@ impl AdmissionPart for FakePart {
             step.put(&name, &bytes)?;
         }
         if let Some(why) = fail {
-            return Err(PartDeclined::Failed(CallError::Part {
-                part: self.name,
-                why,
-            }));
+            return Err(NotJudged::saying(&why).into());
         }
         match refuse {
             None => Ok(()),
             Some((kind, why)) => match PartRefusal::new(kind, &why) {
                 Some(refusal) => Err(refusal.into()),
-                None => Err(PartDeclined::Failed(CallError::Part {
-                    part: self.name,
-                    why: "the test told it to refuse as a part cannot".to_owned(),
-                })),
+                None => {
+                    Err(NotJudged::saying("the test told it to refuse as a part cannot").into())
+                }
             },
         }
     }

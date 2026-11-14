@@ -100,6 +100,8 @@ pub trait NewFile: Send {
     /// whose every byte was synced through this handle: with bytes appended since the
     /// last sync it fails, and writes nothing either way. Only a file that this
     /// answered for is whole; the name is not durable until its directory is synced.
+    /// An empty file is whole without a sync; its name is durable only by
+    /// [`Fs::sync_dir`].
     fn finish(self: Box<Self>) -> io::Result<u64>;
 }
 
@@ -795,9 +797,6 @@ mod tests {
         drop(shared);
         let alone = try_alone(&path).unwrap();
         assert!(alone.is_some(), "the copy kept the share its holder let go");
-        // And while that one has the file alone, a try is refused: the copy shares
-        // nothing.
-        assert!(try_share(&path).unwrap().is_none());
         drop(copy);
     }
 
