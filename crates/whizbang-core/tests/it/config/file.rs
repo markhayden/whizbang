@@ -145,6 +145,24 @@ rendering = "grey"
         let bad = refusal(&format!("[backends.fill.{name}]\nkind = \"a\"\n"));
         assert!(key_of(&bad).starts_with("backends.fill."), "{bad}");
     }
+    // One backend written without its kind is told so, by the key that is missing:
+    // its keys are not taken for the names of backends. So none is named as one of
+    // them is.
+    for key in [
+        "model",
+        "provider",
+        "url",
+        "key_env",
+        "token_env",
+        "settings",
+    ] {
+        let missing = refusal(&format!("[backends.fill]\n{key} = \"zqxjkvalue\"\n"));
+        assert_eq!(key_of(&missing), "backends.fill.kind", "{key}");
+        let sentence = missing.to_string();
+        assert!(sentence.contains("is missing") && !sentence.contains("zqxjk"));
+        let named = refusal(&format!("[backends.fill.{key}]\nkind = \"a\"\n"));
+        assert_eq!(key_of(&named), "backends.fill.kind", "{key}");
+    }
     // A backend has a kind.
     let kindless = refusal("[backends.fill.one]\nmodel = \"m\"\n");
     assert_eq!(key_of(&kindless), "backends.fill.one.kind");
@@ -209,19 +227,27 @@ fn a_key_given_twice_is_refused_naming_the_key() {
     for (text, key, line) in [
         (
             "[spend]\ncall_cap_usd = 1\ncall_cap_usd = 2\n",
-            "call_cap_usd",
+            "spend.call_cap_usd",
             3,
         ),
         (
             "[backends.fill]\nkind = \"a\"\n\n[backends.fill]\nmodel = \"m\"\n",
-            "fill",
+            "backends.fill",
             4,
         ),
         (
             "# twice\n[backends.fill.one]\nkind = \"a\"\n\"kind\" = \"b\"\n",
-            "kind",
+            "backends.fill.one.kind",
             4,
         ),
+        // Under a heading that is some lines above, with a list between that begins
+        // a line as a heading does; and at the top, under none.
+        (
+            "[egress.recipients.one]\norigin = \"https://h\"\nupstreams = [\n[\"x\"],\n]\norigin = \"https://i\"\n",
+            "egress.recipients.one.origin",
+            6,
+        ),
+        ("a = 1\nb = 2\na = 3\n[spend]\n", "a", 3),
     ] {
         match refusal(text) {
             ConfigRefused::Twice {
@@ -379,6 +405,15 @@ fn a_text_is_held_to_its_rule_and_its_length() {
         (
             "[backends.fill]\nkind = \"a\"\nmodel = \"m\\nn\"\n".to_owned(),
             "backends.fill.model",
+        ),
+        (
+            "[backends.fill]\nkind = \"a\"\nmodel = \"m\\u007f\"\n".to_owned(),
+            "backends.fill.model",
+        ),
+        (
+            "[backends.fill]\nkind = \"a\"\n[backends.fill.settings]\nnote = \"m\\u007f\"\n"
+                .to_owned(),
+            "backends.fill.settings.note",
         ),
         (
             "[backends.fill]\nkind = \"a\"\nmodel = \"mod\u{e8}le\"\n".to_owned(),
@@ -549,18 +584,24 @@ fn a_file_over_the_bound_is_refused_before_it_is_opened_to_read() {
     }
 }
 
-#[cfg(unix)]
 #[test]
-fn a_file_that_is_longer_than_its_length_says_is_still_bounded() {
-    // The device of endless zeros says its length is nothing. No more than the bound
-    // and one byte is read of it, and it is refused as too large.
-    let endless = std::path::Path::new("/dev/zero");
-    assert_eq!(
-        Config::read(endless, &Secrets::none()).unwrap_err(),
-        ConfigRefused::TooLarge {
-            limit: CONFIG_BYTES_LIMIT
-        }
-    );
+fn what_is_not_a_file_is_refused_before_it_is_opened() {
+    // A folder, and on a system that has it the device of endless zeros, which says
+    // its length is nothing and would never end: what a path names is asked first,
+    // and only a file is opened.
+    let scratch = Scratch::new("config-not-a-file");
+    let mut paths = vec![scratch.path().to_path_buf()];
+    if cfg!(unix) {
+        paths.push(std::path::PathBuf::from("/dev/zero"));
+    }
+    for path in paths {
+        let refused = Config::read(&path, &Secrets::none()).unwrap_err();
+        assert_eq!(refused, ConfigRefused::NotAFile);
+        assert_eq!(
+            refused.to_string(),
+            "the config file cannot be read: it is not a file"
+        );
+    }
 }
 
 #[test]
@@ -684,6 +725,73 @@ fn a_name_or_a_key_that_holds_a_secret_is_refused_whole_and_not_shown() {
         }
         assert!(!all.contains("kkkk"), "{all}");
     }
+    // A secret that stands across two keys, or across a key and one of the reader's
+    // own words: no key alone holds it, and the path a refusal would show does. The
+    // path is looked at whole, as it would be shown, before any refusal is made.
+    for (secret, text) in [
+        (
+            "abc12345.XYZsecret99",
+            "[backends.fill.abc12345]\nkind = \"k\"\nXYZsecret99 = 1\n",
+        ),
+        (
+            "abc12345.XYZsecret99",
+            "[egress.recipients.abc12345]\norigin = \"https://h\"\nclasses = []\nXYZsecret99 = 1\n",
+        ),
+        (
+            "fill.zqxjkvwpyh",
+            "[backends.\"fill\".zqxjkvwpyh]\nkind = 7\n",
+        ),
+        (
+            "zqxjkvwpyh.kind",
+            "[backends.fill.zqxjkvwpyh]\nmodel = \"m\"\n",
+        ),
+        (
+            "recipients.zqxjkvwpyh.origin",
+            "[egress.recipients.zqxjkvwpyh]\nclasses = []\n",
+        ),
+        (
+            "abc12345.XYZsecret99",
+            "[backends.fill.abc12345]\nkind = \"k\"\nXYZsecret99 = 1\nXYZsecret99 = 2\n",
+        ),
+        (
+            "abc12345.settings.xyzsecret99",
+            "[backends.fill.abc12345]\nkind = \"k\"\n[backends.fill.abc12345.settings]\nxyzsecret99 = 1.5\n",
+        ),
+        // Where the key is cut when it is shown, and the secret reaches past the cut:
+        // the look is at the path as it was read, not as it is shown.
+        (
+            "recipients.kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+            "[egress.recipients.\"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\"]\norigin = \"https://h\"\nclasses = []\n",
+        ),
+    ] {
+        let secrets = Secrets::new([secret.to_owned()]).unwrap();
+        let refused = Config::parse(text.as_bytes(), &secrets).unwrap_err();
+        assert_eq!(refused, ConfigRefused::HoldsSecret, "{text}");
+        // The same file with no secret known is refused for what it is, by a key.
+        let untold = Config::parse(text.as_bytes(), &Secrets::none()).unwrap_err();
+        assert!(
+            matches!(
+                untold,
+                ConfigRefused::Key { .. } | ConfigRefused::Twice { .. }
+            ),
+            "{untold:?}"
+        );
+    }
+    // A secret written with an escape inside a list, where only the decoded text
+    // holds it.
+    for text in [
+        format!("unknown = [\"zq\\u002d{}\"]\n", &secret[3..]),
+        format!(
+            "[egress.recipients.one]\norigin = \"https://h\"\nclasses = [[\"zq\\u002d{}\"]]\n",
+            &secret[3..]
+        ),
+    ] {
+        assert_eq!(
+            Config::parse(text.as_bytes(), &secrets).unwrap_err(),
+            ConfigRefused::HoldsSecret,
+            "{text}"
+        );
+    }
     assert_eq!(
         ConfigRefused::HoldsSecret.to_string(),
         "the config file holds a secret: a credential is named by its variable and is \
@@ -708,6 +816,13 @@ fn the_cap_of_one_call_is_an_amount_in_dollars_read_to_millionths() {
         ("0.000001", 1),
         ("0.1", 100_000),
         ("0.29", 290_000),
+        ("1.1", 1_100_000),
+        ("4.35", 4_350_000),
+        ("0.999999", 999_999),
+        // Two whose product with a million is not a whole number as doubles multiply:
+        // one falls just under, one just over, and each is rounded to the nearest.
+        ("0.000498", 498),
+        ("0.000246", 246),
         ("1_000", 1_000_000_000),
         ("1000000", 1_000_000_000_000),
         ("1000000.0", 1_000_000_000_000),
@@ -727,6 +842,8 @@ fn the_cap_of_one_call_is_an_amount_in_dollars_read_to_millionths() {
         "0.0000001",
         "0.0000015",
         "1.2345678",
+        "1.00000001",
+        "1.0000001",
         "1000001",
         "1000000.000001",
         "1e300",
@@ -1004,6 +1121,30 @@ fn what_the_reader_does_not_find_or_tell_apart_is_known() {
         Config::parse(text.as_bytes(), &none).unwrap()
     };
     assert_ne!(origin("https://h.example"), origin("https://h.example:443"));
+    // A key that is not known is shown, its first 64 characters, whatever it looks
+    // like: a key the reader was not told of, pasted as a KEY of the file, is said back.
+    let pasted = Config::parse(format!("\"{key}\" = 1\n").as_bytes(), &none).unwrap_err();
+    assert_eq!(key_of(&pasted), key);
+    // The reader looks for a secret in the bytes, in the keys and in the texts. A
+    // number is none of these: a secret of digits, written as a number with a mark
+    // between its digits, is read as that number.
+    let digits = Secrets::new(["12345678".to_owned()]).unwrap();
+    let text = "[backends.fill]\nkind = \"a\"\n[backends.fill.settings]\nside = 1234_5678\n";
+    let config = Config::parse(text.as_bytes(), &digits).unwrap();
+    let (_, backend) = config.backends(Capability::Fill).next().unwrap();
+    assert_eq!(
+        backend.settings().next(),
+        Some(("side", &Setting::Integer(12_345_678)))
+    );
+    // An amount is a double before it is millionths: digits past what a double holds
+    // are not seen, and are not refused as finer than a millionth.
+    let cap = "[spend]\ncall_cap_usd = 2.5000000000000000001\n";
+    assert_eq!(
+        Config::parse(cap.as_bytes(), &none)
+            .unwrap()
+            .call_cap_micros(),
+        Some(2_500_000)
+    );
     // A secret the reader was told of, written in a form redaction does not search
     // for, is not found: here, with its letters in the other case.
     let secret = "zqxjkvwpyh0123456789".to_owned();

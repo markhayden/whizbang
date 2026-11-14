@@ -13,6 +13,8 @@ pub const KEY_SHOWN_LIMIT: usize = 64;
 pub enum ConfigRefused {
     /// The file could not be opened or read. The kind of failure, and no path.
     Unreadable(std::io::ErrorKind),
+    /// What the path names is not a file: a folder, a pipe, a device.
+    NotAFile,
     /// The file is longer than this many bytes.
     TooLarge { limit: u64 },
     /// The bytes are not UTF-8, or hold a control character, first at this line.
@@ -21,7 +23,9 @@ pub enum ConfigRefused {
     HoldsSecret,
     /// The text is not TOML, first at this line. None of its words is shown.
     NotToml { line: usize },
-    /// A key is given twice, the second time at this line.
+    /// A key is given twice, the second time at this line. The key is given from the
+    /// top of the file as far as the text tells it: the keys of the heading it stands
+    /// under, and its own.
     Twice { key: String, line: usize },
     /// A key is not known, is missing, or has a value that does not belong there. The
     /// key is given from the top of the file, with dots, and the reason holds fixed
@@ -36,10 +40,12 @@ impl std::fmt::Display for ConfigRefused {
                 let why = match kind {
                     std::io::ErrorKind::NotFound => "it is not there",
                     std::io::ErrorKind::PermissionDenied => "permission is denied",
-                    std::io::ErrorKind::IsADirectory => "it is a folder",
                     _ => "the system could not read it",
                 };
                 write!(f, "the config file cannot be read: {why}")
+            }
+            ConfigRefused::NotAFile => {
+                f.write_str("the config file cannot be read: it is not a file")
             }
             ConfigRefused::TooLarge { limit } => {
                 write!(f, "the config file is longer than {limit} bytes")
