@@ -287,7 +287,7 @@ impl EnvFile {
                         });
                     }
                     values.insert(value.clone());
-                    let credential = Some(Credential(value.clone()));
+                    let credential = Some(KeyValue(value.clone()));
                     match key {
                         "key_env" => handed.key = credential,
                         _ => handed.token = credential,
@@ -355,18 +355,18 @@ impl std::fmt::Debug for Credentials {
 /// What one backend is handed.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct Handed {
-    key: Option<Credential>,
-    token: Option<Credential>,
+    key: Option<KeyValue>,
+    token: Option<KeyValue>,
 }
 
 impl Handed {
     /// The credential the backend's `key_env` names, when the file sets it.
-    pub fn key(&self) -> Option<&Credential> {
+    pub fn key(&self) -> Option<&KeyValue> {
         self.key.as_ref()
     }
 
     /// The credential the backend's `token_env` names, when the file sets it.
-    pub fn token(&self) -> Option<&Credential> {
+    pub fn token(&self) -> Option<&KeyValue> {
         self.token.as_ref()
     }
 }
@@ -381,19 +381,19 @@ impl std::fmt::Debug for Handed {
 }
 
 /// One credential. It is never printed: its `{:?}` shows that it is one, and it has no
-/// other way to a text than [`Credential::expose`].
+/// other way to a text than [`KeyValue::expose`].
 #[derive(Clone, PartialEq, Eq)]
-pub struct Credential(String);
+pub struct KeyValue(String);
 
-impl Credential {
+impl KeyValue {
     /// The secret itself, for the one place a backend sends it.
     pub fn expose(&self) -> &str {
         &self.0
     }
 }
 
-impl std::fmt::Debug for Credential {
+impl std::fmt::Debug for KeyValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Credential(..)")
+        f.write_str("KeyValue(..)")
     }
 }

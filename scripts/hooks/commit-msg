@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # No attribution to an agent or a model, in any commit (SPEC.md section 15). The scan holds
 # the rule, so a push and CI apply the same one.
+# The whole script is one function, read before any of it runs, so a change to this file
+# during a run does not change the run: see `main` in scripts/scan.sh.
+main() {
 set -euo pipefail
 # First, parse the scan and the hooks: the bash that ships with macOS (3.2) exits 0 from a
 # script that stopped at a syntax error after setting an `EXIT` trap, as the scan does.
@@ -13,3 +16,5 @@ for f in "$root/scripts/scan.sh" "$root"/scripts/hooks/*; do
   "$BASH" -n "$f" || { echo "commit-msg: ${f#"$root/"} has a syntax error; refusing the commit" >&2; exit 1; }
 done
 exec "$root/scripts/scan.sh" --message "$1"
+}
+main "$@"; exit

@@ -222,7 +222,9 @@ names, and the title and body of a pull request.
 
 - **Secrets.** Keys live only in a `.env` that git ignores. Never read the contents of a
   `.env` into output, a log, a prompt or a commit. The scan searches for its values; you do
-  not need to see them.
+  not need to see them. Every mode of the scan but the check of one commit message
+  refuses when a `.env` is there and cannot be read, and when it is run outside a
+  repository.
 - **Private paths and addresses.** No absolute home path, no location in owner storage and
   no email address in any file or message.
 - **Evaluation sets.** No answer, label or item-level verdict of an unreleased set, in a
@@ -306,6 +308,12 @@ deferred is on the carry-over list with a milestone. A tool is not done without 
 - **CI cannot run the clean-room scan,** because the word list never leaves the owner's
   machine. A green CI says nothing about it; only the local scans do.
 - **A worktree on a branch cut before a change to the hooks** runs that branch's older hook.
+- **`just setup` is run only from a working tree that has `scripts/hook-dispatch.sh`,** and
+  again after any change to that file: `scripts/worktree.sh add` refuses while the installed
+  copies differ from it. The setup of a branch cut before that file puts the old setting
+  back for every worktree of the clone, and a push from another folder then runs no hook.
+  Setup replaces whatever is at `pre-commit`, `commit-msg` and `pre-push` in the
+  repository's hooks folder, a hook of your own included, and says so.
 - **Linux CI catches timing races that macOS misses.** Tests wait on events, never on sleeps.
 - **Threads and processes.** A test that made threads until the system refused one took a
   machine down, twice. A test makes a thread only through `whizbang_testkit::threads`, which

@@ -86,6 +86,12 @@ quiet "$n"
 # The folder itself, in each place it is exempt, twice in a line and at its end.
 text "in \`.$n/skills\` and .$n/agents/x.md; a folder named \`.$n\`, (.$n) and \".$n\"," ".$n/a .$n/b" "under .$n"
 expect_pass "the folder, as a folder" check
+# Folders in a row, each sharing with the next the character between them: all are the
+# folder. With a name among them, the line is refused.
+text ".$n .$n .$n .$n" "(.$n)(.$n)(.$n)" "\`.$n\`\`.$n\` .$n/a,.$n/b;.$n/c"
+expect_pass "folders that share the character between them" check
+text ".$n .$n .$n-code .$n"
+expect_fail "a name among folders in a row" "pull-request/body:3: $names_agent" check
 # The root file is exempt as a whole word in its exact case, and in no other.
 big=$(printf '%s' "$N" | tr 'a-z' 'A-Z')
 text "\`$big.md\` stays, and $big.md, too. ($big.md)"

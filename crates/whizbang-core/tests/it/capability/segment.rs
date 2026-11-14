@@ -515,3 +515,20 @@ fn an_answer_that_is_taken_keeps_its_charge_and_a_segmenters_fault_keeps_its_sta
         );
     }
 }
+
+#[test]
+fn a_segmenters_own_unsupported_fault_with_no_stage_is_unresolved() {
+    // The handle's own `unsupported`, made before the backend is called, is not sent
+    // (above). The same kind from a backend that was called is no proof of that.
+    let request = SegmentRequest::new(picture(), dog(), 8).unwrap();
+    let fault = Fault::new(FaultKind::Unsupported, "no such feature after all");
+    let stub = answering(Err(fault));
+    let handed = SegmentHandle::new(stub.clone(), Cancellation::new())
+        .segment(&request)
+        .unwrap_err();
+    assert_eq!(
+        (handed.kind(), handed.stage()),
+        (FaultKind::Unsupported, Stage::Unresolved)
+    );
+    assert_eq!(stub.sent.load(Ordering::SeqCst), 1);
+}
