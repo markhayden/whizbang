@@ -8,6 +8,7 @@ mod identity;
 mod installation;
 mod names;
 mod refusals;
+mod staging;
 
 use whizbang_backends::models::{
     CatalogueFile, Entry, EntryParts, FileName, Licence, ModelName, Refused, Revision,

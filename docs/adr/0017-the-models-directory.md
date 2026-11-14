@@ -14,9 +14,10 @@ Amended: 2026-11-14, with the third pull request of task M1. Words only. Added: 
 "Limits", which line a refusal names; a row of the crashes, for one after the pointer's
 rename is durable; that what is printed of an entry's parts is counts. Changed with the
 installation record: the parts it builds are marked as code and name their tests.
-Amended: 2026-11-14, with task M2. Words only, and the test kit's fake of a download.
-Added: "Downloading into staging"; under "For later tasks", how the pointer and a
-record are read back and what is damage.
+Amended: 2026-11-14, with task M2. Added: "Downloading into staging", which is code
+(`directory.rs`, `stage.rs`, and the test kit's fake of a download), on the streamed
+files of ADR 0018; under "For later tasks", how the pointer and a record are read back
+and what is damage; under "Limits", a link where a fixed folder belongs.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -64,9 +65,10 @@ a process id read from a file (R3).
 ## Decision
 
 The code of this record that exists is `crates/whizbang-backends/src/models/`: `name.rs`,
-`catalogue.rs`, `installation.rs`, `json.rs` and `refused.rs`. Its tests are in
-`crates/whizbang-backends/tests/it/models/`, named below as `names::…`, `catalogue::…`,
-`installation::…`, `identity::…` and `refusals::…`.
+`catalogue.rs`, `installation.rs`, `json.rs`, `refused.rs`, `directory.rs` and
+`stage.rs`. Its tests are in `crates/whizbang-backends/tests/it/models/`, named below as
+`names::…`, `catalogue::…`, `installation::…`, `identity::…`, `refusals::…`,
+`downloads::…` and `staging::…`.
 
 **What is code now, and what is decided for a later task.** Each part below says which
 it is. A part marked *decided, not built* has no code and no test yet, and names no
@@ -78,7 +80,8 @@ installation record with its identity.
 | Part | State |
 |---|---|
 | Names; the catalogue; how a record is read; an installation's record; its identity; what a refusal says | Code, with the tests named |
-| The directory's layout and its three kinds of lock; publishing; the pointer; holds; removal | Decided, not built: tasks M2, M2b, M5 to M5c, M6 |
+| Downloading into staging | Code, with the tests named (task M2) |
+| The directory's layout and its three kinds of lock; publishing; the pointer; holds; removal | Decided, not built: tasks M2b, M5 to M5c, M6 |
 
 ### The directory
 
@@ -470,34 +473,80 @@ record is missing.
 
 ### Downloading into staging
 
-*Decided, not built* (task M2), but for the fake. Under the model's lock, each file of
-the entry is downloaded through a `Downloader` (ADR 0012) into one staging folder,
-`models/<model>/staging/incoming/files/<file>`. One install of a model runs at a time,
-so one folder is enough; it is written and cleaned only by the holder of the model's
-lock, who removes what it finds there before it starts.
+Code (task M2: `directory.rs`, `stage.rs`; tests named `staging::…`). `stage` downloads
+each file of an entry through a `Downloader` (ADR 0012) into the model's one staging
+folder, `models/<model>/staging/incoming/files/<file>`, and answers with what was
+staged and the model's lock still held, for the publication to take (task M2b)
+(`staging::two_files_are_staged_and_verified`).
 
+- **Under the model's lock,** taken without waiting before anything of the model is
+  touched. Held by another, the answer is busy, and nothing is asked of the downloader
+  or changed on the disk. One install of a model runs at a time, so one staging folder
+  is enough; whoever has the lock removes what it finds there before it starts, and
+  trusts none of it
+  (`staging::staging_is_under_the_models_lock_and_the_next_cleans_what_the_last_left`).
+- **A file is written as a stream** (ADR 0018), never held whole in memory: begun,
+  appended to piece by piece, synced and finished, and the folder that names it synced.
+  A file system that cannot stream is refused, not worked around
+  (`staging::a_models_directory_on_a_file_system_that_streams_nothing_is_refused_and_not_worked_around`).
 - **A download asks for one byte more than the file's stated size, and keeps no more
-  than the size.** The sink writes at most `size` bytes; when a byte beyond them
-  arrives it answers no, and the file is refused as too long. That is what the plan's
-  "a download reads no more than the stated size" means here: no more is kept. The
-  one byte asked beyond is how a file that is too long is told from one that was cut
-  at its size, which a downloader that keeps to what it was asked would otherwise
-  hand over as a whole file with the right hash. For a file of the right length the
-  downloader hands over exactly `size`.
-- **A file is checked by its length and its hash:** fewer bytes than its size, a byte
-  beyond it, and a SHA-256 that is not the entry's each fail the download. The hash is
-  computed over the pieces as they are handed to the sink; publishing reads the file
-  back before it trusts it (task M2b).
+  than the size.** That is what the plan's "a download reads no more than the stated
+  size" means here: no more is kept. The one byte asked beyond is how a file that is
+  too long is told from one that was cut at its size, which a downloader that keeps to
+  what it was asked would otherwise hand over as a whole file with the right hash. For
+  a file of the right length the downloader hands over exactly `size`
+  (`staging::a_download_asks_for_one_byte_beyond_the_stated_size_and_is_handed_exactly_the_size`).
+- **The byte beyond is never written.** The streamed file is begun with the size as
+  the most it may hold (ADR 0018), and that is the one guard: a piece that would take
+  the file past its size is refused by the file system before any of it is written,
+  which the sink reads as a file that is too long, and answers no. The handle is
+  broken by that refusal, as by any failure, and its file is removed with the staging
+  folder: after any error nothing of a file is kept
+  (`staging::a_file_one_byte_too_long_fails_the_download_and_leaves_no_staged_file_that_passed`).
+  A downloader that goes on after its sink answered no has nothing more kept, and one
+  that hands over bytes and then says the file moved is refused
+  (`staging::a_downloader_that_goes_on_after_its_sink_answered_no_has_nothing_more_kept`,
+  `staging::a_downloader_that_hands_over_bytes_and_then_says_the_file_moved_is_refused`).
+- **A file is checked by its length and its hash, both:** fewer bytes than its size, a
+  byte beyond it, and a SHA-256 that is not the entry's each fail the download. The
+  hash is taken over the pieces as the sink keeps them. What the downloader says it
+  handed over is not asked. Publishing reads the file back before it trusts it (task
+  M2b)
+  (`staging::a_wrong_hash_fails_the_download_and_leaves_no_staged_file_that_passed`,
+  `staging::a_short_file_fails_the_download_and_leaves_no_staged_file_that_passed`).
 - **A file that moved** is asked for at the address it moved to only when
   `Entry::may_download_from` answers yes for that address's origin, and at most five
-  times for one file.
-- **A failed download removes the staging folder,** so no staged file that passed is
-  left behind. Which files passed is known only inside the install that staged them.
+  times for one file (`MOVES_LIMIT`)
+  (`staging::a_file_that_moved_is_asked_for_only_at_an_origin_the_entry_names`,
+  `staging::a_file_that_moves_more_than_five_times_is_refused`).
+- **A refused staging removes the staging folder,** whatever refused it: a
+  file, a fault, a cancellation, the file system. No staged file that passed is left
+  behind; which files passed is known only inside the staging that staged them
+  (`staging::a_download_that_fails_or_is_cancelled_fails_the_staging_and_leaves_nothing_staged`,
+  `staging::a_download_that_ends_as_cancelled_ends_the_staging_as_cancelled`).
+- **Each step of the file system refused, and a crash before each,** with what was not
+  durable lost each way the shim can lose it: the staging fails, and the next staging
+  of the model removes what was left and stages every file again, whole
+  (`staging::each_step_of_the_file_system_refused_fails_the_staging_without_a_path_and_the_next_stages`,
+  `staging::a_crash_at_any_event_of_staging_leaves_what_the_next_staging_removes_and_stages_whole`).
+  Nothing of a crashed staging is ever taken up again, so nothing rests on what a
+  crash leaves of a file.
 - **A refusal names the file by its name in the catalogue,** as `FileName::shown`
-  shows it, with fixed words and no path.
+  shows it, with fixed words and no path; a fault's own words, which are a server's,
+  are not kept
+  (`staging::a_refusal_names_the_file_by_its_catalogue_name_escaped_and_cut_with_no_path`).
+- **The installer looks again for a secret,** with its own secrets, in the model's
+  name and every file's, before it makes anything: an entry may have been made by a
+  constructor that was told of others. With one found nothing is made, asked or
+  written
+  (`staging::a_name_that_holds_a_secret_the_installer_was_told_of_never_becomes_a_name_on_the_disk`).
+- **What is in staging is not trusted, and nothing outside the directory is touched.**
+  A link where the staging folder belongs is removed, not followed
+  (`staging::a_link_where_staging_belongs_is_removed_and_never_followed`,
+  `staging::staging_touches_nothing_outside_the_models_directory`).
 
-The test kit's fake, `whizbang_testkit::downloads::FakeDownloader`, is code: it serves
-a few kilobytes from memory in pieces and fetches nothing. It keeps to the most it is
+The test kit's fake, `whizbang_testkit::downloads::FakeDownloader`, serves a few
+kilobytes from memory in pieces and fetches nothing. It keeps to the most it is
 asked for, or is told not to; answers that a file moved, and follows nothing; fails at
 once or after a stated count of bytes; stops at a barrier after a stated count of
 bytes and sees a cancellation there; counts a piece its sink answered no to; and keeps
@@ -622,6 +671,12 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   (`refusals::values_nested_past_what_the_reader_follows_are_refused_and_not_followed`).
 - **Names are ASCII.** A file whose maker named it with other letters is renamed in its
   catalogue entry.
+- **A link where one of the fixed folders belongs is followed.** `models/`, a model's
+  folder and `staging/` are made when they are not there and used when they are, and
+  the store's interface cannot say whether what is there is a folder or a link to
+  one. Whoever can put a link there can write the directory itself. The staging
+  folder inside them is removed and made again each time, so a link there is not
+  followed.
 - **A name that is one plain name on macOS and Linux may be none elsewhere.** A name
   that ends in a dot, and the names Windows keeps for devices (`con`, `nul`, `aux` and
   the like), are accepted: the platforms are macOS and Linux (`SPEC.md` section 1).
