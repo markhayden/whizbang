@@ -10,8 +10,9 @@ read, and a block that is shown as refused is refused with the sentence under it
 `config::examples::the_guides_env_file_is_read_with_its_config`).
 
 Nothing uses a config yet. The readers of the config and of the env file are built
-(checkpoint 1B, tasks C1 and C2); the commands that take them, and everything a config
-switches on, come with the tasks after. There is no default place for the file: it is
+(checkpoint 1B, tasks C1 and C2), and so is what a config offers with the kinds of
+backend a build has, which in the shipped binary is none; the commands that take a
+config, and everything it switches on, come with the tasks after. There is no default place for the file: it is
 the one a command is given, and a command given none has no backend.
 
 ## Backends
@@ -124,7 +125,9 @@ with no space before it, is part of the value; a comment has a line of its own. 
 file as plain UTF-8 with no byte-order mark, which some editors add and which is refused.
 A link to a file is followed, and what it leads to is read. Nothing is expanded, and the
 environment of your shell is not read: a key is in this file or it is not set. Only the variables your config names are used, each by
-the backend that names it. A key shorter than 8 bytes is refused, by the name of its
+the backend that names it. A backend that names a variable this file does not set is
+not ready, and a call that would use it is told which variable; and a config that names
+any variable is not used without an env file. A key shorter than 8 bytes is refused, by the name of its
 variable. Keep nothing but keys here: any value of 8 bytes or more is treated as a
 secret, and a config that holds the same text is refused.
 

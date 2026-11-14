@@ -16,6 +16,7 @@ use std::path::Path;
 
 use super::{CAPABILITIES, Config, ConfigRefused, VARIABLE_LIMIT};
 use crate::contract::{Capability, SECRET_MIN_BYTES, Secrets};
+use crate::egress::{Address, Credential, NotAllowed};
 
 /// The longest env file, in bytes. A longer one is refused from its length, before it
 /// is read.
@@ -432,6 +433,21 @@ impl KeyValue {
     pub fn expose(&self) -> &str {
         &self.0
     }
+
+    /// This credential as a request carries it (ADR 0012): under this header, and
+    /// bound to the origin of this address and to no other, so that a request to
+    /// another origin is refused it. A backend's kind makes it, for the address the
+    /// kind sends to, with a header's name that is the kind's own constant. The
+    /// refusal is the egress type's, and shows nothing: a header's name that is none or
+    /// holds a secret, a value that a header cannot carry.
+    pub fn carried_to(
+        &self,
+        address: &Address,
+        header: &str,
+        secrets: &Secrets,
+    ) -> Result<Credential, NotAllowed> {
+        Credential::new(address.origin().clone(), header, &self.0, secrets)
+    }
 }
 
 impl std::fmt::Debug for KeyValue {
@@ -447,6 +463,9 @@ pub enum LoadRefused {
     Env(EnvRefused),
     /// The config.
     Config(ConfigRefused),
+    /// The config names a variable a credential is in, and no env file was given
+    /// ([`Loaded::of_files`]).
+    NoEnvFile,
 }
 
 impl std::fmt::Display for LoadRefused {
@@ -454,6 +473,11 @@ impl std::fmt::Display for LoadRefused {
         match self {
             LoadRefused::Env(refused) => refused.fmt(f),
             LoadRefused::Config(refused) => refused.fmt(f),
+            LoadRefused::NoEnvFile => f.write_str(
+                "the config names a variable a credential is in, and no env file was \
+                 given: without one nothing is known to keep out of what is written, so \
+                 the config is not used; name the env file",
+            ),
         }
     }
 }
@@ -484,6 +508,22 @@ impl Loaded {
             config,
             credentials,
         })
+    }
+
+    /// Reads both files as [`Loaded::read`] does, for an executor that is to run under
+    /// what they say: each time it is called it reads both again, whole, and answers
+    /// what they say now, or why they are not read. It keeps nothing between two calls.
+    ///
+    /// With no env file, a config that names a variable is refused
+    /// ([`LoadRefused::NoEnvFile`]): a key pasted into such a config would be read and
+    /// said back, since nothing told its reader of one. A config that names no
+    /// variable is read with no env file.
+    pub fn of_files(config: &Path, env: Option<&Path>) -> Result<Loaded, LoadRefused> {
+        let loaded = Loaded::read(config, env)?;
+        if env.is_none() && !loaded.config.variables().is_empty() {
+            return Err(LoadRefused::NoEnvFile);
+        }
+        Ok(loaded)
     }
 
     pub fn config(&self) -> &Config {
