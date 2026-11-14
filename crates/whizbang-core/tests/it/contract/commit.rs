@@ -86,7 +86,7 @@ pub(super) fn the_mask() -> Mask {
     rect_mask(on("photo"))
 }
 
-fn the_place() -> whizbang_core::artifact::Location {
+pub(super) fn the_place() -> whizbang_core::artifact::Location {
     line(on("photo"))
 }
 

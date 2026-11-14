@@ -49,9 +49,10 @@ impl Clock for Ticking {
     }
 }
 
-type Body = Box<dyn Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync>;
+pub(super) type Body =
+    Box<dyn Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync>;
 
-struct Scripted(ActionDescriptor, Body);
+pub(super) struct Scripted(pub(super) ActionDescriptor, pub(super) Body);
 
 impl Action for Scripted {
     fn descriptor(&self) -> &ActionDescriptor {
@@ -66,7 +67,7 @@ impl Action for Scripted {
 /// An action of this name with these needs, whose run is whatever the test says. It
 /// takes an optional text, `judge`, which a need may name as the argument that chooses
 /// its backend.
-fn action(
+pub(super) fn action(
     name: &str,
     needs: Vec<Requirement>,
     body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
@@ -84,7 +85,7 @@ fn judging() -> Vec<Requirement> {
     vec![Requirement::new(Capability::Judge).chosen_by("judge")]
 }
 
-fn engine(
+pub(super) fn engine(
     world: &World,
     backends: impl Backends + 'static,
     held: Capabilities,
@@ -106,7 +107,7 @@ fn engine(
 
 /// The run's record, read from the store and held to the schema, and everything else
 /// the run holds there, by name.
-fn stored(world: &World, run: &RunId) -> (RunRecord, BTreeMap<String, Vec<u8>>) {
+pub(super) fn stored(world: &World, run: &RunId) -> (RunRecord, BTreeMap<String, Vec<u8>>) {
     let reader = Reader::open(&world.root(), world.fs.clone()).unwrap();
     let generation = reader.snapshot().unwrap();
     let entries = generation.run(run.as_str()).unwrap().entries();
@@ -133,7 +134,7 @@ fn asking(text: &str, tokens: u32) -> JudgeRequest {
     JudgeRequest::new("You judge.", vec![message], Vec::new(), controls).unwrap()
 }
 
-fn fill_request() -> FillRequest {
+pub(super) fn fill_request() -> FillRequest {
     let rgba = (0..24u8).flat_map(|at| [at, at, at, 255]).collect();
     let picture = Picture::new(CanonicalPixels::from_rgba(6, 4, rgba).unwrap()).unwrap();
     let mut plane = vec![0; 24];
