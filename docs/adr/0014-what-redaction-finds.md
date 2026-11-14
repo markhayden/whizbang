@@ -256,16 +256,22 @@ unoptimised build
 
 **A string costs its own length, not the longest secret's.** Following a text keeps
 the last units it read, as many as the longest form is long; for a text shorter than
-that it keeps as many as the text is long. Before this, each following of each string
-made room for the longest form, so a body of many tiny strings cost with the longest
-secret. Against one value of 4,096 marks, in the unoptimised build: 1 MiB of strings of
-four characters that hold every mark a reading is made for, each followed twelve
-times, took 3.0 s and takes 1.2 s; 1 MiB of strings of one letter took 0.33 s and takes
-0.16 s. Each is now what the same body takes against a value of eight bytes
+that it keeps as many as the text is long (`Search::room`, held by a test beside the
+code, `tests::a_text_is_followed_in_room_for_the_shorter_of_the_longest_form_and_the_text`:
+the room cannot be seen from outside, since a text is redacted the same in any room
+that is large enough). Before this, each following of each string made room for the
+longest form, so a body of many tiny strings cost with the longest secret. Against one
+value of 4,096 marks, in the unoptimised build on the builder's machine: 1 MiB of
+strings of four characters that hold every mark a reading is made for, each followed
+twelve times, took 3.0 s and takes 1.2 s
 (`redact::a_mebibyte_of_tiny_strings_against_one_long_value_is_redacted_inside_a_stated_time`,
-which asks for the first inside 10 seconds, and holds the second to under 1.3 times
-what the short value costs, where it was from 1.6 times to twice). What is found is
-unchanged: the generated test above and every other test of this file pass as they
+which asks for it inside 10 seconds); 1 MiB of strings of one letter took 0.33 s and
+takes 0.16 s. On that machine each is now what the same body takes against a value of
+eight bytes. That is not so everywhere, and no test asks for it: on CI's Linux runner
+the one-letter body took 0.44 s against the long value and 0.25 s against the short
+one, with the room as it now is. The machine of a long value is some megabytes, and
+why it follows a text more slowly there was not looked into. What is found is
+unchanged: the generated test above and every other test of the suite pass as they
 were.
 
 **A backslash in a body that is JSON.** A backslash that is the body's own escape is

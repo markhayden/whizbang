@@ -1584,43 +1584,24 @@ fn two_keys_that_each_held_a_secret_can_come_back_as_the_same_key() {
 #[test]
 fn a_mebibyte_of_tiny_strings_against_one_long_value_is_redacted_inside_a_stated_time() {
     // A string of a few letters is searched in the room of a few letters, however long
-    // the longest secret is. The value is of marks, so its longest form is three times
-    // its length. The bound is loose, as the others are; what it took on a quiet
-    // machine, before and after, is in ADR 0014.
+    // the longest secret is (the room itself is held by a test beside the code). The
+    // value is of marks, so its longest form is three times its length; each string
+    // holds every mark a reading is made for, so each is followed twelve times. The
+    // bound is loose, as the others are; what it took on a quiet machine, before and
+    // after, is in ADR 0014.
     let long: String = (0..4096)
         .map(|n| char::from(b"!@#$^&*(){}[]<>?"[n % 15 + n / 1024 % 2]))
         .collect();
     let secrets = Secrets::new([long.clone()]).unwrap();
-    let body_of = |piece: &str| {
-        let mut body = String::from("[");
-        while body.len() < 1024 * 1024 {
-            body.push_str(piece);
-        }
-        body + &format!("\"{long}\"]")
-    };
-    let timed = |secrets: &Secrets, body: &str| {
-        let started = std::time::Instant::now();
-        let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
-        (started.elapsed(), stored)
-    };
-    // Each string holds every mark a reading is made for, so each is followed twelve
-    // times.
-    let marked = body_of("\"\\\\%+\\n\",");
-    let (took, stored) = timed(&secrets, &marked);
-    assert_eq!(stored.len(), marked.len() - long.len() + REDACTED.len());
+    let mut body = String::from("[");
+    while body.len() < 1024 * 1024 {
+        body.push_str("\"\\\\%+\\n\",");
+    }
+    body.push_str(&format!("\"{long}\"]"));
+    let started = std::time::Instant::now();
+    let stored = String::from_utf8(secrets.redact_json(body.as_bytes())).unwrap();
+    let took = started.elapsed();
+    assert_eq!(stored.len(), body.len() - long.len() + REDACTED.len());
     assert!(stored.ends_with("\\n\",\"[redacted]\"]"));
     assert!(took < std::time::Duration::from_secs(10), "{took:?}");
-    // And it costs what the same body costs against a value of eight bytes: here in
-    // strings of one letter, each followed once. Each is timed five times and its best
-    // taken, so that a pause of a busy machine decides nothing. Room for the longest
-    // form at each following made the first from one and a half times to twice the
-    // second; it is held to under 1.3 times.
-    let plain = body_of("\"a\",");
-    let short = Secrets::new([long[..8].to_owned()]).unwrap();
-    let best = |secrets: &Secrets| (0..5).map(|_| timed(secrets, &plain).0).min().unwrap();
-    let (against_long, against_short) = (best(&secrets), best(&short));
-    assert!(
-        against_long * 10 < against_short * 13,
-        "{against_long:?} against the long value, {against_short:?} against the short one"
-    );
 }

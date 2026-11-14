@@ -352,6 +352,13 @@ impl Search {
         }
     }
 
+    /// How many units following a reading keeps: the last `longest` and one more; or
+    /// every unit, where the reading can give no more than `most` and that is fewer.
+    /// So a short text costs its own length, and not the longest secret's.
+    fn room(&self, most: usize) -> usize {
+        self.longest.min(most) + 1
+    }
+
     /// Follows one reading of the bytes, and notes each stretch of the bytes as they
     /// were given that a form covers: for a place in the reading, the longest form
     /// that ends there, and the longest wide one apart. With `base64_only`, base64
@@ -370,10 +377,8 @@ impl Search {
         base64_only: bool,
         found: &mut Found,
     ) {
-        // The byte and the start of each of the last `longest` units and one more; or
-        // of every unit, where the text is shorter than the longest form. So a short
-        // text costs its own length, and not the longest secret's.
-        let room = self.longest.min(most) + 1;
+        // The byte and the start of each of the last units.
+        let room = self.room(most);
         let mut last = vec![(0u8, 0usize); room];
         let mut state = 0;
         // The stretch noted at the unit before, when the unit after it may be its.
@@ -808,5 +813,29 @@ impl Secrets {
             at = end;
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::Secrets;
+
+    #[test]
+    fn a_text_is_followed_in_room_for_the_shorter_of_the_longest_form_and_the_text() {
+        // The room is not to be seen from outside: a text is redacted the same in any
+        // room that is large enough. So it is asked here. A value of 4,096 marks has a
+        // longest form of three times that, percent-encoded.
+        let long = "!@#$".repeat(1024);
+        let secrets = Secrets::new([long]).unwrap();
+        let search = secrets.search.as_ref().unwrap();
+        assert_eq!(search.longest, 3 * 4096);
+        assert_eq!(search.room(0), 1);
+        assert_eq!(search.room(1), 2);
+        assert_eq!(search.room(4096), 4097);
+        assert_eq!(search.room(3 * 4096), 3 * 4096 + 1);
+        assert_eq!(search.room(3 * 4096 + 1), 3 * 4096 + 1);
+        assert_eq!(search.room(usize::MAX), 3 * 4096 + 1);
     }
 }
