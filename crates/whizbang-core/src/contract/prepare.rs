@@ -657,6 +657,19 @@ pub enum Refusal {
     /// A wait from inside an action was given up because the run that waited was
     /// cancelled, or one above it was. The run that was waited for is as it was.
     WaitCancelled { run: RunId },
+    /// A call from inside an action whose run froze the actions it calls
+    /// ([`super::Context::freeze_calls`], ADR 0009), of an action that is not one of
+    /// them. No run was made.
+    NotOffered { action: String },
+    /// A call from inside an action whose run froze the actions it calls, that gives
+    /// as an input an artifact the run may not read: neither an input of the run's
+    /// own call nor an output that a run it called committed. Whether the store holds
+    /// such an artifact is not looked at. No run was made.
+    NotReadable {
+        action: String,
+        port: String,
+        id: ArtifactId,
+    },
 }
 
 impl Refusal {
@@ -688,6 +701,8 @@ impl Refusal {
             Refusal::IdInside { .. } => RefusalKind::IdInside,
             Refusal::WaitAbove { .. } => RefusalKind::WaitAbove,
             Refusal::WaitCancelled { .. } => RefusalKind::WaitCancelled,
+            Refusal::NotOffered { .. } => RefusalKind::NotOffered,
+            Refusal::NotReadable { .. } => RefusalKind::NotReadable,
         }
     }
 }
@@ -825,6 +840,16 @@ impl std::fmt::Display for Refusal {
             Refusal::SecretInRequestId => f.write_str(
                 "the request id holds something that must not be written: an id is stored \
                  as it is, so it cannot hold a secret",
+            ),
+            Refusal::NotOffered { action } => write!(
+                f,
+                "{action} was not admitted: the run that made the call froze the actions \
+                 it calls, and this is not one of them"
+            ),
+            Refusal::NotReadable { action, port, id } => write!(
+                f,
+                "{action} was not admitted: the input {port} is {id}, which the run that \
+                 made the call was not given and no run it called committed"
             ),
         }
     }

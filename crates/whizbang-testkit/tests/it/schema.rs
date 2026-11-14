@@ -84,6 +84,56 @@ fn a_schema_this_validator_cannot_hold_a_document_to_is_refused() {
 }
 
 #[test]
+fn a_value_fits_exactly_one_of_the_schemas_of_a_one_of() {
+    // The entries of the record's `judge` list are of two shapes, told apart by a word.
+    let schema = json!({ "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "n"],
+          "properties": { "kind": { "const": "turn" }, "n": { "type": "integer" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind"],
+          "properties": { "kind": { "const": "verdict" }, "why": { "type": "string" } } },
+    ] });
+    validate(&schema, &json!({ "kind": "turn", "n": 1 })).unwrap();
+    validate(&schema, &json!({ "kind": "verdict", "why": "x" })).unwrap();
+    for neither in [
+        json!({ "kind": "turn" }),
+        json!({ "kind": "verdict", "n": 1 }),
+        json!({ "kind": "other" }),
+        json!(7),
+    ] {
+        let error = validate(&schema, &neither).unwrap_err();
+        assert!(error.contains("fits 0 of the schemas"), "{error}");
+    }
+    // A value that fits two is refused as well: one, and no more.
+    let loose = json!({ "oneOf": [{ "type": "integer" }, { "minimum": 0 }] });
+    let error = validate(&loose, &json!(3)).unwrap_err();
+    assert!(error.contains("fits 2 of the schemas"), "{error}");
+    validate(&loose, &json!(-3)).unwrap();
+    // It takes a list of schemas, each read whole.
+    for (wrong, says) in [
+        (json!({ "oneOf": [] }), "oneOf takes a list of schemas"),
+        (json!({ "oneOf": {} }), "oneOf takes a list of schemas"),
+        (
+            json!({ "oneOf": [{ "pattern": "^a" }] }),
+            "#/oneOf/0: this validator does not know",
+        ),
+    ] {
+        let error = validate(&wrong, &json!(1)).unwrap_err();
+        assert!(error.contains(says), "{error}");
+    }
+}
+
+#[test]
+fn a_number_is_held_to_its_maximum_as_to_its_minimum() {
+    let schema = json!({ "type": "integer", "minimum": 0, "maximum": 4294967295_u64 });
+    validate(&schema, &json!(4294967295_u64)).unwrap();
+    validate(&schema, &json!(0)).unwrap();
+    let error = validate(&schema, &json!(4294967296_u64)).unwrap_err();
+    assert!(error.contains("is over 4294967295"), "{error}");
+    let error = validate(&json!({ "maximum": "nine" }), &json!(1)).unwrap_err();
+    assert!(error.contains("maximum takes a number"), "{error}");
+}
+
+#[test]
 fn a_length_is_counted_in_characters() {
     // Four letters of two bytes each are four characters, and eight bytes.
     let schema = json!({ "type": "string", "minLength": 4, "maxLength": 4 });
@@ -110,7 +160,7 @@ fn a_schema_is_read_whole_before_a_document_is_held_to_it() {
             "#/$defs/unused",
         ),
         (
-            json!({ "properties": { "list": { "items": { "oneOf": [] } } } }),
+            json!({ "properties": { "list": { "items": { "anyOf": [] } } } }),
             "#/properties/list/items",
         ),
     ] {

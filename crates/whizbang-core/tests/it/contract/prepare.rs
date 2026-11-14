@@ -9,15 +9,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use whizbang_core::artifact::{
     self, Artifact, ArtifactId, ArtifactType, Derivation, ImageRole, Mask, Source, UseCase,
 };
-use whizbang_core::capability::{Declaration, Filler, Judge, Roster, Segmenter};
+use whizbang_core::capability::{Declaration, Roster};
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Argument, Backends, Call, CallError, Capability, Count, Engine,
-    Executor, InputFault, InputPort, Kind, ModelIdentity, NoBackends, PreparedCall, Readiness,
-    Refusal, Registry, Requirement, Unavailable, Value, ValueType,
+    Action, ActionDescriptor, Argument, Backends, Call, CallError, Capabilities, Capability, Count,
+    Engine, Executor, InputFault, InputPort, Kind, ModelIdentity, NoBackends, PreparedCall,
+    Readiness, Refusal, Registry, Requirement, Unavailable, Value, ValueType,
 };
 use whizbang_core::identity::{Binding, Digest, Direction, Mapping, Projection, Space, Topology};
 use whizbang_core::store::{Reader, Store};
-use whizbang_testkit::capabilities::{FakeFiller, FakeJudge, FakeSegmenter, Paint};
+use whizbang_testkit::capabilities::{self, FakeFiller, FakeJudge, FakeSegmenter, Paint};
 use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::ledger::FakeLedger;
 use whizbang_testkit::scratch::Scratch;
@@ -1317,42 +1317,25 @@ fn prepare_asks_the_backends_what_is_there_and_once_for_each_need() {
 
 #[test]
 fn prepare_sends_no_capability_request() {
-    // The fakes count the requests they are sent. The backends prepare asks are built
-    // from what those same fakes declare, as a build makes its roster from its
-    // adapters; and preparing calls that are ready, not ready and refused sends none
-    // of them a request.
-    //
-    // As it stands this cannot fail. Prepare holds a roster made from copies of the
-    // fakes' declarations and never the fakes, so nothing prepare could do would reach
-    // one. It shows the shape of the claim, and becomes a test of it when the executor
-    // holds the fakes' handles: the row of `docs/carry-over.md` on the executor handing
-    // an action no capability has it rewritten then.
+    // The fakes count the requests they are sent, and the executor that prepares holds
+    // those very fakes: they are the backends it would hand a run's action (ADR 0009).
+    // Its roster is made from what they declare, as a build makes its roster from its
+    // adapters. Preparing calls that are ready, not ready and refused sends none of
+    // them a request: a preparation that asked a backend would be counted here.
     let segmenter = Arc::new(FakeSegmenter::new());
     let filler = Arc::new(FakeFiller::new(Paint::Inverse));
     let judge = Arc::new(FakeJudge::scripted(Vec::new()));
-    let roster = Roster::new()
-        .offer(
-            Capability::Segment,
-            "fake",
-            Segmenter::declaration(segmenter.as_ref()).clone(),
-        )
-        .unwrap()
-        .offer(
-            Capability::Fill,
-            "fake",
-            Filler::declaration(filler.as_ref()).clone(),
-        )
-        .unwrap()
-        .offer(
-            Capability::Judge,
-            "fake",
-            Judge::declaration(judge.as_ref()).clone(),
-        )
-        .unwrap()
-        .default_for(Capability::Segment, "fake")
-        .unwrap();
+    let roster = capabilities::roster(
+        Some(segmenter.as_ref()),
+        Some(filler.as_ref()),
+        Some(judge.as_ref()),
+    );
     let world = world();
-    let engine = world.engine(roster);
+    let held = Capabilities::none()
+        .with_segment(segmenter.clone())
+        .with_fill(filler.clone())
+        .with_judge(judge.clone());
+    let engine = world.engine(roster).with_capabilities(held);
 
     let ready = world.remove().argument("filler", Value::text("fake"));
     let prepared = engine.prepare(&ready).unwrap();

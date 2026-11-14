@@ -310,27 +310,34 @@ impl FillHandle {
     /// declares none. A fill of other dimensions than the request's image is a
     /// malformed answer.
     pub fn fill(&self, request: &FillRequest) -> Result<Painted, Fault> {
+        self.bounds.told(self.asked(request))
+    }
+
+    fn asked(&self, request: &FillRequest) -> Result<Painted, Fault> {
         self.bounds.before_sending(
             self.declaration(),
             request.prompt.as_ref().map(|_| feature::PROMPT),
         )?;
-        let painted = {
-            let _sent = self.bounds.sending()?;
-            self.backend.fill(request, &self.bounds)
-        }?;
-        let (expected, found) = (
-            (request.image.width(), request.image.height()),
-            (painted.width, painted.height),
-        );
-        if found != expected {
-            return Err(Unfit::WrongSize {
-                what: "the fill",
-                expected,
-                found,
-            }
-            .into());
-        }
-        Ok(painted)
+        self.bounds.send(
+            crate::contract::Capability::Fill,
+            self.declaration(),
+            || {
+                let painted = self.backend.fill(request, &self.bounds)?;
+                let (expected, found) = (
+                    (request.image.width(), request.image.height()),
+                    (painted.width, painted.height),
+                );
+                if found != expected {
+                    return Err(Unfit::WrongSize {
+                        what: "the fill",
+                        expected,
+                        found,
+                    }
+                    .into());
+                }
+                Ok(painted)
+            },
+        )
     }
 }
 

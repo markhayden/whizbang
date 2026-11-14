@@ -8,17 +8,17 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use crate::artifact::{self, Artifact, Contents};
-use crate::capability::Shown;
+use crate::capability::{EXCHANGES_MAX_BYTES, REQUESTS_LIMIT, Shown};
 use crate::identity::{DecodeLimits, Digest};
 use crate::store::{self, Store};
 
 use super::journal::Kept;
 use super::ledger::{Declined, Reservation, Step};
 use super::live::{self, LiveRun, Told};
-use super::nested::{Added, DESCENDANTS_LIMIT, Family, HeldOpen, Nested, Under};
+use super::nested::{Added, DESCENDANTS_LIMIT, Family, HeldOpen, Nested, Offer, Under};
 use super::prepare::prepare;
 use super::record::{
-    Diagnostic, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran, RunRecord,
+    Diagnostic, Inside, OUTPUTS_PREFIX, RECORD_KIND, RECORD_MAX_BYTES, RECORD_NAME, Ran, RunRecord,
     StoredRecordError,
 };
 use super::request::{Found, look_up, outcome_of};
@@ -127,6 +127,10 @@ pub struct Engine {
     capabilities: Capabilities,
     /// How many runs may be admitted under one run that nothing called.
     descendants: usize,
+    /// How many capability requests one run may send.
+    requests: usize,
+    /// How many bytes of exchanges with a judge one run may store.
+    exchanges: u64,
     /// For tests: what is done in a wait from inside an action, between its first
     /// look at the waiter's signal and its look at the run.
     before_watch: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -218,6 +222,8 @@ impl Engine {
             ledger: None,
             capabilities: Capabilities::none(),
             descendants: DESCENDANTS_LIMIT,
+            requests: REQUESTS_LIMIT,
+            exchanges: EXCHANGES_MAX_BYTES,
             before_watch: None,
             started_bound: STARTED_RUNS_DEFAULT,
             spawn: spawn_thread,
@@ -324,6 +330,23 @@ impl Engine {
     #[doc(hidden)]
     pub fn with_descendants_limit(mut self, limit: usize) -> Engine {
         self.descendants = limit;
+        self
+    }
+
+    /// For tests: the same executor, whose runs each send this many capability
+    /// requests at most, in place of [`REQUESTS_LIMIT`]. It is never more than that.
+    #[doc(hidden)]
+    pub fn with_requests_limit(mut self, limit: usize) -> Engine {
+        self.requests = limit.min(REQUESTS_LIMIT);
+        self
+    }
+
+    /// For tests: the same executor, whose runs each store this many bytes of
+    /// exchanges with a judge at most, in place of [`EXCHANGES_MAX_BYTES`]. It is
+    /// never more than that.
+    #[doc(hidden)]
+    pub fn with_exchanges_budget(mut self, bytes: u64) -> Engine {
+        self.exchanges = bytes.min(EXCHANGES_MAX_BYTES);
         self
     }
 
@@ -1154,6 +1177,8 @@ impl Engine {
         // admitted against, and handles that the context binds to that signal and
         // that deadline itself.
         // The executor in it admits a call under this run (ADR 0008, "Nested calls").
+        let offer = Offer::of(live.clone(), self.secrets.clone(), family.offer.clone());
+        let offer = Arc::new(offer);
         let under = Under {
             run: run.clone(),
             live: live.clone(),
@@ -1162,6 +1187,8 @@ impl Engine {
             tree: family.tree.clone(),
             allowance: family.allowance.clone(),
             deadline,
+            inputs: Arc::new(prepared.inputs().iter().map(|input| input.id()).collect()),
+            offer: offer.clone(),
         };
         let context = Context::new(
             live.signal().clone(),
@@ -1169,10 +1196,16 @@ impl Engine {
             kept.clone(),
             family.allowance.clone(),
             view,
-            self.capabilities.clone().timed_by(self.clock.clone()),
+            // The backends the call resolved, and no other (ADR 0009), with the
+            // executor's clock for their deadline.
+            self.capabilities
+                .resolved_for(&prepared)
+                .timed_by(self.clock.clone()),
             Arc::new(Nested::new(self.clone(), under, self.secrets.clone())),
         )
-        .with_diagnostics(kept.clone());
+        .with_diagnostics(kept.clone())
+        .recording(kept.clone(), self.requests, self.exchanges)
+        .offering(offer);
         live.nest().watch(context.requests().clone());
         // A panic in the action is caught: its run ends as any other does, with its
         // record and what it wrote, and the executor goes on (ADR 0008). The context
@@ -1208,9 +1241,11 @@ impl Engine {
             message: said(message),
         };
         let mut outputs = Vec::new();
+        let mut verdict = None;
         let mut outcome = match handed {
             None => Outcome::Cancelled,
             Some(Ok(Ok(produced))) => {
+                verdict = produced.verdict().cloned();
                 match held_to_ports(&prepared, action.descriptor(), produced, &self.secrets) {
                     Ok(held) => {
                         outputs = held;
@@ -1245,8 +1280,11 @@ impl Engine {
             .collect();
         // What the run's record says of the calls its action made: they are all over.
         let parent = family.parent.as_ref().map(|(run, _)| run.clone());
-        let inside = live.nest().inside(parent);
-        let record_of = |outcome: &Outcome| {
+        // A verdict is written only in the record of a run that completed: the record
+        // drops it for any other (ADR 0009).
+        let mut inside = live.nest().inside(parent);
+        inside.verdict = verdict;
+        let record_of = |outcome: &Outcome, inside: &Inside| {
             RunRecord::of(
                 Ran {
                     run: run.as_str(),
@@ -1263,22 +1301,44 @@ impl Engine {
                 &self.secrets,
             )
         };
-        let mut record = record_of(&outcome);
+        let mut record = record_of(&outcome, &inside);
         // A record lists every output, and one over the limit is refused on reading
         // (ADR 0005). A run whose outputs make such a record commits none of them: it
         // ends as an error, with a record that lists none.
+        //
+        // The same holds of a run with no output (ADR 0009): a record over the limit
+        // is not published as it is. The run ends as an error of the type `record`,
+        // and its record leaves out what it would have said of its capability
+        // requests, saying how many there were. What can still make a record too
+        // large is not the executor's to leave out: an argument's text, and the list
+        // of tens of thousands of diagnostics (`docs/carry-over.md`).
         let bytes = record.to_bytes().len() as u64;
-        if bytes > RECORD_MAX_BYTES && !outputs.is_empty() {
-            outcome = Outcome::Error {
-                kind: "output".to_owned(),
-                message: format!(
-                    "the action handed back {} artifacts, and the record that lists them \
-                     would be {bytes} bytes: a record is at most {RECORD_MAX_BYTES} bytes",
-                    outputs.len()
-                ),
+        if bytes > RECORD_MAX_BYTES {
+            let is_at_most = format!("a record is at most {RECORD_MAX_BYTES} bytes");
+            outcome = if outputs.is_empty() {
+                Outcome::Error {
+                    kind: "record".to_owned(),
+                    message: format!(
+                        "the run sent {} capability requests, and the record that lists \
+                         them would be {bytes} bytes: {is_at_most}",
+                        inside.asked.len()
+                    ),
+                }
+            } else {
+                Outcome::Error {
+                    kind: "output".to_owned(),
+                    message: format!(
+                        "the action handed back {} artifacts, and the record that lists \
+                         them would be {bytes} bytes: {is_at_most}",
+                        outputs.len()
+                    ),
+                }
             };
             outputs.clear();
-            record = record_of(&outcome);
+            inside.asked.clear();
+            inside.timed.clear();
+            inside.verdict = None;
+            record = record_of(&outcome, &inside);
         }
         let mut publication = store.begin().map_err(failed)?;
         publication.close_run(run.as_str()).map_err(failed)?;
@@ -1314,9 +1374,10 @@ impl Engine {
         // what it committed: before this run is over, which is what its caller waits
         // for.
         if let Some((_, parent)) = &family.parent {
+            let times = (start_ms, end_ms);
             parent
                 .nest()
-                .ended(&run, record.outcome().status, outcome.outputs());
+                .ended(&run, record.outcome().status, outcome.outputs(), times);
         }
         Ok(Finished::new(run, outcome))
     }
@@ -1390,11 +1451,26 @@ fn held_to_ports(
 /// when there were more. The secrets are taken out first, while the text is whole: a
 /// secret that the cut went through would no longer be found. They are looked for once
 /// more after the cut, in case the three dots completed one.
+///
+/// What comes back is never longer than [`MESSAGE_LIMIT`] characters and three dots,
+/// which is what a reader of a record takes: when the dots do complete a secret, they
+/// are left off, and the cut text, which holds none, is what is kept.
 pub(super) fn said(secrets: &Secrets, text: &str) -> String {
+    cut_to(secrets, text, MESSAGE_LIMIT, "...")
+}
+
+/// A text with the secrets taken out, and then its first `limit` characters, with
+/// `more` after them when there were more and `more` completes no secret.
+pub(super) fn cut_to(secrets: &Secrets, text: &str, limit: usize, more: &str) -> String {
     let whole = secrets.redact(text);
-    match whole.char_indices().nth(MESSAGE_LIMIT) {
-        Some((cut, _)) => secrets.redact(&format!("{}...", &whole[..cut])),
-        None => whole,
+    let Some((cut, _)) = whole.char_indices().nth(limit) else {
+        return whole;
+    };
+    let marked = format!("{}{more}", &whole[..cut]);
+    if secrets.redact(&marked) == marked {
+        marked
+    } else {
+        whole[..cut].to_owned()
     }
 }
 

@@ -410,14 +410,26 @@ impl SegmentHandle {
     /// image. The answer is checked after the backend built it: what a backend may
     /// build before that is its own to bound (`docs/carry-over.md`).
     pub fn segment(&self, request: &SegmentRequest) -> Result<SegmentResponse, Fault> {
+        self.bounds.told(self.asked(request))
+    }
+
+    fn asked(&self, request: &SegmentRequest) -> Result<SegmentResponse, Fault> {
         self.bounds.before_sending(
             self.declaration(),
             request.queries.iter().map(Query::feature),
         )?;
-        let response = {
-            let _sent = self.bounds.sending()?;
-            self.backend.segment(request, &self.bounds)
-        }?;
+        let capability = crate::contract::Capability::Segment;
+        self.bounds.send(capability, self.declaration(), || {
+            self.held(request, self.backend.segment(request, &self.bounds)?)
+        })
+    }
+
+    /// The backend's answer, held to the request.
+    fn held(
+        &self,
+        request: &SegmentRequest,
+        response: SegmentResponse,
+    ) -> Result<SegmentResponse, Fault> {
         let what = "the segmenter's answer";
         if response.answers.len() != request.queries.len() {
             return Err(Unfit::NotAllowed {

@@ -54,7 +54,7 @@ pub use engine::{
     BoundRefused, ConfigSource, Engine, Executor, STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT,
     Spawn, WHIZBANG_VERSION,
 };
-pub use journal::{Clock, JournalLine, SystemClock, journal_bytes, read_journal};
+pub use journal::{Clock, EXCHANGE_PREFIX, JournalLine, SystemClock, journal_bytes, read_journal};
 pub use ledger::{
     Declined, LEDGER_NAME_LIMIT, Ledger, RESERVATION_RECORD, RESERVATIONS_PREFIX, Reservation,
     SPEND_PREFIX, Step, reservations,
@@ -71,7 +71,7 @@ pub use record::{
     RUN_RECORD_SCHEMA, RecordError, RefusalKind, RunRecord, STEPS_LIMIT, is_diagnostic_name,
 };
 pub use redact::{REDACTED, SECRET_MIN_BYTES, SecretRefused, Secrets};
-pub use registry::{Action, Failure, Produced, RegistrationError, Registry};
+pub use registry::{Action, Failure, Produced, RegistrationError, Registry, Verdict};
 pub use request::{
     ADMISSION_RECORD, ADMITTED_NAME, Admission, Answer, Cancel, ENDING_RECORD, Earlier, Ending,
     REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, REQUESTS_PREFIX, Request, RequestId,

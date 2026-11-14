@@ -28,7 +28,7 @@ use whizbang_core::contract::{
 use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::store::{Reader, Store};
 use whizbang_testkit::barrier::Barriers;
-use whizbang_testkit::capabilities::{FakeFiller, Paint};
+use whizbang_testkit::capabilities::{FakeFiller, Paint, roster};
 use whizbang_testkit::fs_shim::Event;
 use whizbang_testkit::ledger::FakeLedger;
 use whizbang_testkit::schema::validate;
@@ -951,7 +951,7 @@ fn a_run_stays_open_while_a_capability_request_is_outstanding_and_ends_when_it_i
     let later: Noted<Option<FaultKind>> = noted();
     let asks = {
         let (barriers, later) = (barriers.clone(), later.clone());
-        act("asks", move |_, context| {
+        action("asks", &[Capability::Fill], move |_, context| {
             let fill = context.capabilities().fill().unwrap().clone();
             let (barriers_, later) = (barriers.clone(), later.clone());
             whizbang_testkit::threads::spawn(move || {
@@ -966,7 +966,8 @@ fn a_run_stays_open_while_a_capability_request_is_outstanding_and_ends_when_it_i
             Ok(Produced::nothing())
         })
     };
-    let executor = engine(store.clone(), vec![asks])
+    let offered = Arc::new(roster(None, Some(filler.as_ref()), None));
+    let executor = engine_on(store.clone(), offered, vec![asks])
         .with_capabilities(Capabilities::none().with_fill(filler.clone()));
     let Ok(Answer::Started(run)) = executor.start(&Request::new(Call::new("asks"))) else {
         panic!("the request was not started");

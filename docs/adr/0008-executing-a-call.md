@@ -47,6 +47,9 @@ Amended: 2026-11-13, with `grow` through the executor (task A9), the first comma
 runs an action. Added: "The first door". Changed, in "A panic in an action": a door now
 installs the hook; in "Cancellation", under a deadline in a run: a context says whether
 its deadline has passed, by the executor's clock.
+Amended: 2026-11-13, with ADR 0009 (task A11). Changed: a run is handed the backend its
+call resolved; capability requests are recorded; a run may freeze the actions its calls
+are held to, with two more refusals.
 Spec: section 3, "The execution contract", "What a run publishes", "Nested calls",
 "Storage" and "What every run records"; section 6, "Spend"
 
@@ -234,7 +237,8 @@ an executor that wrote a larger one would report a run whose repeat is then answ
 type, its message, a panic's message and the reason a run was invalid are each kept to
 their first 4,096 characters (`MESSAGE_LIMIT`), with three dots after them when there
 were more. The secrets are taken out first, from the whole text, and looked for once
-more after the cut. The outcome that is returned and the record hold the same cut text
+more after the cut. When the three dots themselves complete a secret they are left
+off, so that what is kept is never longer than the limit and three dots (ADR 0009). The outcome that is returned and the record hold the same cut text
 (`commit::what_an_action_or_a_panic_says_is_cut_and_its_record_is_read_back`,
 `commit::a_secret_across_the_place_a_message_is_cut_is_taken_out_before_the_cut`).
 
@@ -722,10 +726,8 @@ nothing, and a backend that holds a request open sees the signal in its bounds: 
 plan's test is built on that, with a fake filler that holds a request at a barrier
 (`cancel::while_an_action_is_in_blocking_work_a_second_caller_reads_its_status_and_cancels_it`,
 `cancel::each_runs_handles_are_bound_to_its_own_signal_and_deadline`). The executor
-hands every run a handle on every backend it was given, whatever the run's call
-resolved: choosing among several backends by the call's choice, and recording each
-request, come with the first action that asks a capability (task A11,
-`docs/carry-over.md`).
+hands a run a handle on the backend its call resolved for each capability it needs, and
+on no other, and each request is in the run's record (ADR 0009).
 
 A handle can be cloned, and nothing closes it when its run ends as it should: an
 action that keeps a handle, or a clone, past its run can still send through it, with
@@ -996,9 +998,8 @@ descendant. And it waits until every request its handles sent is accounted for.
 no change to a trait. A context's handles share one count (`Tally`). A handle counts a
 request just before it calls its backend, after every check that sends nothing, and
 accounts for it when the backend's call is over: answered, failed, or unwound by a
-panic. A request a backend still holds is outstanding. Nothing of a request is written
-to a record yet: that, with `models` and `time.durations`, comes with the first action
-that asks a capability (task A11).
+panic. A request a backend still holds is outstanding. Each request is kept for the
+run's record, in `models` and `time.durations` (ADR 0009).
 
 While it waits, the run is executing: `status` says `NotEnded { here: true }`, `wait`
 does not return, the store holds no record of it, and a `cancel` is accepted and
@@ -1073,9 +1074,13 @@ writer of its store).
 **What is not built.** A parent's record does not list a child whose admission became
 visible and was not confirmed: that child is abandoned, never ran, and names its
 parent in its own admission. What was taken for a child is not given back when it
-ends. Capability requests are counted and not recorded. The store in a context
-takes a snapshot of the current generation at every look once a child has committed
-(`docs/carry-over.md`).
+ends. The store in a context takes a snapshot of the current generation at every look
+once a child has committed (`docs/carry-over.md`).
+
+**A run may freeze the actions its calls are held to** (`Context::freeze_calls`, ADR
+0009): a call of any other action is then refused (`Refusal::NotOffered`), and so is a
+call that gives an input the run was not given and no run it called committed
+(`Refusal::NotReadable`). Each is recorded as any refusal inside a run is.
 
 ### The first door
 

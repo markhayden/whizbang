@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use clap::Subcommand;
 use whizbang_core::contract::Admission;
-use whizbang_core::contract::record::{self, ArgumentValue, RunRecord, StoredRecordError};
+use whizbang_core::contract::record::{self, ArgumentValue, Judged, RunRecord, StoredRecordError};
 use whizbang_core::contract::request::{StoredAdmissionError, admitted};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Generation, Kind, Reader};
@@ -363,7 +363,24 @@ fn text_of(record: &RunRecord) -> String {
             output.artifact
         ));
     }
-    line("models: none".to_owned());
+    // Each capability request, in the order they were sent, with how long it took.
+    line(format!("models: {}", count(record.models().len())));
+    for (at, model) in record.models().iter().enumerate() {
+        let ended = serde_json::to_value(model.ended).unwrap_or_default();
+        let took = record
+            .time()
+            .durations
+            .get(at)
+            .map_or(0, |duration| duration.ms);
+        line(format!(
+            "  {}\t{} {} {}\t{}\t{took} ms",
+            model.capability.name(),
+            shown(&model.backend),
+            shown(&model.model),
+            shown(&model.version),
+            ended.as_str().unwrap_or_default()
+        ));
+    }
     line(format!(
         "spend: {}; paid requests: none",
         reserved(record.spend().reserved_micros)
@@ -379,7 +396,34 @@ fn text_of(record: &RunRecord) -> String {
             step.status().map_or("not ended", |status| status.name())
         ));
     }
-    line("judge: none".to_owned());
+    // The judge's turns, and the verdict when the run concluded one. The whole of
+    // each exchange is the diagnostic the turn names.
+    line(format!("judge: {}", count(record.judge().len())));
+    for entry in record.judge() {
+        let word = |value: serde_json::Value| value.as_str().unwrap_or("none").to_owned();
+        match entry {
+            Judged::Turn {
+                exchange,
+                stop,
+                tool_calls,
+                excluded,
+                ..
+            } => line(format!(
+                "  turn\t{}\t{} tool calls\tleft out: {}\t{}",
+                word(serde_json::to_value(stop).unwrap_or_default()),
+                tool_calls,
+                word(serde_json::to_value(excluded).unwrap_or_default()),
+                exchange
+                    .as_deref()
+                    .map_or_else(|| "not kept".to_owned(), shown)
+            )),
+            Judged::Verdict { decision, why } => line(format!(
+                "  verdict\t{}\t{}",
+                word(serde_json::to_value(decision).unwrap_or_default()),
+                why.escape_debug()
+            )),
+        }
+    }
     line(format!(
         "diagnostics: {}",
         count(record.diagnostics().len())
