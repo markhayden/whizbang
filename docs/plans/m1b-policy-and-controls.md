@@ -1781,7 +1781,7 @@ with the two changed lines.
 
 **Depends on:** X3. Scripts only.
 
-- [ ] A push made with `GIT_DIR` and `GIT_WORK_TREE` set from another folder is refused,
+- [x] A push made with `GIT_DIR` and `GIT_WORK_TREE` set from another folder is refused,
       or what it published is scanned before a merge: `review-merge`'s range scan takes
       every branch the pull request's commits are on and the branch's name. Which of the
       two is the builder's finding, written in the row.

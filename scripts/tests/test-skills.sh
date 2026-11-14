@@ -168,6 +168,8 @@ check_kickoff() {
     'So first go through the two files against "Secrets and private data"' \
     'address. Then scan them (the commands below).' \
     'After any edit to either file, read and scan again.' \
+    "or a model's name that it knows (but for the folder \`.claude\` and the file" \
+    '`CLAUDE.md` of this repo, named as paths)' \
     '`check (macos-15)` and `check (ubuntu-22.04)`' 'says "no checks reported"' \
     'a run whose commit is the head lists all three' \
     'go back to step 4' 'hand back again with the new commit'; do
@@ -213,6 +215,7 @@ check_review_merge() {
     '- [ ] 6. With `WHIZBANG_WORDLIST` set, `just scan-range <base> <head>` passes: secrets,' \
     '- [ ] 7. The title and body. No scan sees them on the pull request, so save them to a file' \
     'and scan it (the commands below), then read them yourself' \
+    'folder `.claude` and the file `CLAUDE.md` of this repo, named as paths), a path that' \
     'a name it does not know is found only by reading, and so' 'lists. It lists each line that says "co-authored-by" or "generated with" and is not' \
     'refused: go through those.' 'lines it lists, and are gone through again,' \
     'The corrected files get every check of this step again, the scan and the' \
@@ -638,7 +641,6 @@ AGENTS.md: - **A worktree on a branch cut before a change to the hooks** runs th
 .claude/skills/kickoff/SKILL.md: - [ ] 3. `WHIZBANG_WORDLIST` is set in your shell: the path of a private list the owner
 .claude/skills/kickoff/SKILL.md: The path is never written into a hand-back, a pull request, a commit or a tracked file.
 .claude/skills/kickoff/SKILL.md: Never open, print, quote or copy the word list, and never pass on what it holds.
-.claude/skills/kickoff/SKILL.md: `GIT_WORK_TREE` set, runs no hook.
 .claude/skills/kickoff/SKILL.md: Never push with `--no-verify`, never force a push, and never push to `main`.
 .claude/skills/kickoff/SKILL.md: Never retry around the hook, and never use `--no-verify`.
 .claude/skills/kickoff/SKILL.md: Tell the orchestrator in the hand-back: which scan refused, the commit, path and
@@ -808,12 +810,12 @@ sentence() {
   tr '\n' ' ' <"$1" | tr -s ' ' | grep -F -e "$2" >/dev/null || { echo "$1 must say, as one run of words: $2"; return 1; }
 }
 kickoff=.claude/skills/kickoff/SKILL.md
-no_hook='Push the branch by name, from inside the worktree: a push made from another folder, with `GIT_DIR` and `GIT_WORK_TREE` set, runs no hook.'
+no_hook='Push the branch by name, from inside the worktree: a push made from another folder is scanned only when `GIT_DIR` and `GIT_WORK_TREE` both name the worktree, and is refused otherwise.'
 # Held to the end of its paragraph: the next words are the next step.
 no_value='Tell the orchestrator in the hand-back: which scan refused, the commit, path and line if it named them, and what you did, without the value. - [ ] 10. Write the pull request'
 expect_pass "kickoff: why the push is made from the worktree" sentence "$kickoff" "$no_hook"
 expect_pass "kickoff: a refused push is told without the value" sentence "$kickoff" "$no_value"
-sed 's/a push made from another folder, with `GIT_DIR` and$/when the scan is slow, make the push from another folder: with `GIT_DIR` and/' "$kickoff" >"$tmp/sentence.md"
+sed 's/a push made from another folder is scanned only$/when the scan is slow, make the push from another folder: it is scanned only/' "$kickoff" >"$tmp/sentence.md"
 cmp -s "$kickoff" "$tmp/sentence.md" && fail "the edit to the line before the fragment changed nothing"
 expect_fail "kickoff: the line before the fragment rewritten" "must say, as one run of words" sentence "$tmp/sentence.md" "$no_hook"
 sed 's/and what you did, without the value\.$/and what you did, with the value./' "$kickoff" >"$tmp/sentence.md"
