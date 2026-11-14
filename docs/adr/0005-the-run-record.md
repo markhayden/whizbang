@@ -1,6 +1,7 @@
 # 0005. The run record: one fixed shape with every group, written one way
 
-Status: accepted
+Status: accepted. Changed by ADR 0013: the record this build writes is `run/3`, and
+`run/2` is read as this record has it
 Date: 2026-11-12
 Amended: 2026-11-12, inside checkpoint 1A, with the code that runs an action and writes
 its run. Added: "Running an action, and writing its run". Changed: the sentences that said

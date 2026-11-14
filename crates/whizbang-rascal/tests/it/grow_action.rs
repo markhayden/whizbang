@@ -332,8 +332,8 @@ fn grow_commits_a_mask_whose_origin_names_the_action_its_arguments_and_its_input
     assert_eq!(record.outcome().status, Status::Completed);
     assert_eq!(
         (
-            record.asked().action.as_str(),
-            record.asked().version.as_str()
+            record.asked().action.as_deref().unwrap(),
+            record.asked().version.as_deref().unwrap()
         ),
         ("grow", "1.0.0")
     );

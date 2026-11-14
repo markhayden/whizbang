@@ -509,7 +509,7 @@ fn the_records_of_grow_completed_failed_and_cancelled_hold_what_the_spec_lists()
         assert_eq!(
             record["outcome"],
             json!({"status": status, "error": error, "invalid": null, "refusals": [],
-                   "refusals_omitted": 0}),
+                   "refusals_omitted": 0, "lost": []}),
             "{status}"
         );
         // Time: start and end; no step, call or request to give a duration.
@@ -551,7 +551,7 @@ fn the_records_of_grow_completed_failed_and_cancelled_hold_what_the_spec_lists()
         }
         // And nothing else: the eleven groups of the list, of which inputs and
         // outputs are two fields, and the record's kind.
-        assert_eq!(record["record"], "run/2");
+        assert_eq!(record["record"], "run/3");
         assert_eq!(record.as_object().unwrap().len(), 13, "{status}");
     }
 }
