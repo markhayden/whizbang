@@ -1764,7 +1764,7 @@ ends with `finished`, and is run by `just test-scripts`.
 
 **Depends on:** X1. Scripts and two skills.
 
-- [ ] One script scans the two files of a pull request's text for what is found today
+- [x] One script scans the two files of a pull request's text for what is found today
       only by reading: a bare agent or model name in a sentence, a value of the repo's
       local `.env`, a path that starts with `~`, and an attribution line behind a
       leading mark. `kickoff` and `review-merge` use it in place of their own commands.
@@ -1779,7 +1779,7 @@ with the two changed lines.
 
 **Depends on:** X3. Scripts only.
 
-- [ ] A push made with `GIT_DIR` and `GIT_WORK_TREE` set from another folder is refused,
+- [x] A push made with `GIT_DIR` and `GIT_WORK_TREE` set from another folder is refused,
       or what it published is scanned before a merge: `review-merge`'s range scan takes
       every branch the pull request's commits are on and the branch's name. Which of the
       two is the builder's finding, written in the row.
