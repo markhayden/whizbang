@@ -47,13 +47,14 @@ If the verdict names no commit, or a short one, ask the reviewer for the full co
 - [ ] 7. The title and body. No scan sees them on the pull request, so save them to a file
       and scan it (the commands below), then read them yourself: no attribution line, no
       agent or model name, no private path or address, and every claim true of the final
-      diff. Reading is the only check for a bare agent or model name in a sentence, a path
-      that starts with `~`, a value from the repo's local `.env`, and a credit line behind
-      a mark the copy keeps (a number, a `+`, a table bar): the scans of this step do not
-      find them, and the last `grep` of this step lists every line to look at.
+      diff. The scan refuses an agent's or a model's name that it knows, a path that
+      starts with `~`, a value from the repo's local `.env`, and a credit line behind any
+      mark that starts a line; a name it does not know is found only by reading. It also
+      lists each line that says "co-authored-by" or "generated with" and is not refused:
+      go through those.
       You may correct the title or body yourself: a change to the text does not move the
-      head. The corrected files get every check of this step again, the two scans, the
-      attribution check on the stripped copy and the `grep`, and are gone through again,
+      head. The corrected files get every check of this step again, the scan and the
+      lines it lists, and are gone through again,
       before they are put on the pull request; say what you changed in the hand-back.
       A correction that changes a claim about the code goes back to the builder.
 - [ ] 8. Files that grant permissions or check the pull request. List the changed files.
@@ -118,25 +119,19 @@ just scan-range <base> <head>
 
 # 7: the title in title.txt, the body in body.md, in a folder of their own. A variable
 # does not last between separate shell calls: run these in one, or note the paths.
-text=$(mktemp -d) && git init -q "$text"
+text=$(mktemp -d)
 gh pr view <pr> --json title --jq .title >"$text/title.txt"
 gh pr view <pr> --json body --jq .body >"$text/body.md"
 cat "$text/title.txt" "$text/body.md"          # read first
-repo=$PWD
-# The checks. After a correction to either file, all of them run again on the two files.
-(cd "$text" && "$repo/scripts/scan.sh")        # secrets and clean-room, over both files
-# The attribution check is made for commit messages: it skips a line that starts with #
-# and everything after a scissors line. So it is given a copy without the marks that
-# start a line. The copy is kept outside the scanned folder.
-# It prints nothing when it passes: exit 0 is the pass.
-plain=$(mktemp)
-cat "$text/title.txt" "$text/body.md" | sed 's/^[#*>[:space:]-]*//' >"$plain"
-scripts/scan.sh --message "$plain"
-# A second net: you go through every line it prints. No line, and exit 1, is the pass.
-grep -n -i -E 'co-authored-by|generated with' "$text/title.txt" "$text/body.md"
+# The check. After a correction to either file, it runs again on the two files.
+# One scan of the two files, run from inside the repo: secrets, the values of the local
+# .env among them; the clean-room scan; a credit line behind any mark that starts a line;
+# an agent's or a model's name; a path that starts with ~. It says where, never what.
+# Exit 0 is the pass. A line it prints that starts "to read:" is not refused: go through it.
+scripts/scan.sh --pr-text "$text/title.txt" "$text/body.md"
 # Only after a correction of your own, once the checks above pass on the corrected files.
 gh pr edit <pr> --title "$(cat "$text/title.txt")" --body-file "$text/body.md"
-rm -rf "$text" "$plain"
+rm -rf "$text"
 
 # 8
 gh pr diff <pr> --name-only

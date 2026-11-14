@@ -1734,7 +1734,7 @@ four clauses of the checkpoint's exit line.
 
 **Depends on:** B0. Scripts only.
 
-- [ ] `sk_shape` in `scripts/scan.sh` finds a key of its family wherever it starts, with
+- [x] `sk_shape` in `scripts/scan.sh` finds a key of its family wherever it starts, with
       what follows the prefix narrowed so that an ordinary hyphenated word is not a match.
 
 **Done when** `scripts/tests/scan/` holds a test for each and they pass: a key directly
@@ -1764,7 +1764,7 @@ ends with `finished`, and is run by `just test-scripts`.
 
 **Depends on:** X1. Scripts and two skills.
 
-- [ ] One script scans the two files of a pull request's text for what is found today
+- [x] One script scans the two files of a pull request's text for what is found today
       only by reading: a bare agent or model name in a sentence, a value of the repo's
       local `.env`, a path that starts with `~`, and an attribution line behind a
       leading mark. `kickoff` and `review-merge` use it in place of their own commands.
