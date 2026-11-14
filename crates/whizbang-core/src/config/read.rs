@@ -7,7 +7,7 @@
 //! The walk below is by hand, so that every sentence a refusal can hold is written here
 //! and none can quote a value.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::path::Path;
 
@@ -15,11 +15,12 @@ use toml::{Table, Value};
 
 use super::refused::shown;
 use super::{
-    ADDRESS_LIMIT, BACKENDS_LIMIT, Backend, CALL_CAP_LIMIT_MICROS, CAPABILITIES,
-    CONFIG_BYTES_LIMIT, Config, ConfigRefused, DataClass, Offered, RECIPIENTS_LIMIT, Recipient,
-    SETTING_TEXT_LIMIT, SETTINGS_LIMIT, Setting, TEXT_LIMIT, UPSTREAMS_LIMIT, VARIABLE_LIMIT,
+    Approval, BACKENDS_LIMIT, Backend, CALL_CAP_LIMIT_MICROS, CAPABILITIES, CONFIG_BYTES_LIMIT,
+    Config, ConfigRefused, Offered, RECIPIENTS_LIMIT, SETTING_TEXT_LIMIT, SETTINGS_LIMIT, Setting,
+    TEXT_LIMIT, VARIABLE_LIMIT,
 };
 use crate::contract::{Secrets, text};
+use crate::egress::{Account, Address, Classes, DataClass, NotAllowed, Origin, Recipient};
 
 type Read<T> = Result<T, ConfigRefused>;
 
@@ -65,6 +66,11 @@ impl Config {
     /// Reads a config from what this gives, as [`Config::read`] reads an opened file:
     /// no more than [`CONFIG_BYTES_LIMIT`] and one byte is asked of it, however much it
     /// has, and more than the limit is refused.
+    ///
+    /// It makes no check of what it reads from. That a path names a file, and the
+    /// file's length before it is opened, are [`Config::read`]'s to look at; a pipe or
+    /// a terminal handed here is read until it ends or the bound is reached, and can
+    /// block.
     pub fn read_from(from: impl std::io::Read, secrets: &Secrets) -> Result<Config, ConfigRefused> {
         let mut bytes = Vec::new();
         from.take(CONFIG_BYTES_LIMIT + 1)
@@ -300,16 +306,39 @@ impl<'a> At<'a> {
         Ok(name)
     }
 
-    /// An origin: `http` or `https`, a host and perhaps a port.
-    fn origin(&self, value: Value) -> Read<String> {
+    /// The refusal of what an egress type did not take. Its reason is fixed words; a
+    /// secret is the refusal of the whole file.
+    fn not_allowed(&self, why: NotAllowed) -> ConfigRefused {
+        match why {
+            NotAllowed::Secret => ConfigRefused::HoldsSecret,
+            why => self.refuse(format!(
+                "is refused: {why}; what is written there is not shown"
+            )),
+        }
+    }
+
+    /// An origin, as the egress types make one, with one rule of the file's own: there
+    /// is nothing after the port. A path would be dropped, and what a person wrote
+    /// there is not dropped without a word.
+    fn origin(&self, value: Value) -> Read<Origin> {
         let text = self.text(value)?;
-        if !is_origin(&text) {
+        let after = text.split_once("://").map_or("", |(_, after)| after);
+        if after.contains('/') {
             return Err(self.refuse(
-                "must be an origin: http:// or https://, a host in lower case, perhaps a \
-                 port, and nothing else; what is written there is not shown",
+                "must be an origin: http:// or https://, a host, perhaps a port, and \
+                 nothing after it; what is written there is not shown",
             ));
         }
-        Ok(text)
+        Origin::of(&text, self.secrets).map_err(|why| self.not_allowed(why))
+    }
+
+    /// A backend's address, as the egress types make one, with one rule of the file's
+    /// own: it has no query, since a query is where a key is written.
+    fn address(&self, value: Value) -> Read<Address> {
+        let text = self.text(value)?;
+        Origin::of(&text, self.secrets)
+            .and_then(|_| Address::of(&text, self.secrets))
+            .map_err(|why| self.not_allowed(why))
     }
 
     /// The refusal of the first key left in a table once the known ones were taken.
@@ -321,51 +350,6 @@ impl<'a> At<'a> {
             None => Ok(()),
         }
     }
-}
-
-/// Whether this is a scheme, a host and perhaps a port, and nothing else. A host is
-/// lower-case letters, digits and hyphens in parts with dots between them, 253
-/// characters at most; a port is 1 to 65535 with no leading zero.
-fn is_origin(text: &str) -> bool {
-    let Some(rest) = text
-        .strip_prefix("https://")
-        .or_else(|| text.strip_prefix("http://"))
-    else {
-        return false;
-    };
-    let (host, port) = match rest.split_once(':') {
-        Some((host, port)) => (host, Some(port)),
-        None => (rest, None),
-    };
-    let part = |part: &str| {
-        !part.is_empty()
-            && !part.starts_with('-')
-            && !part.ends_with('-')
-            && part
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-    };
-    let port = port.is_none_or(|port| {
-        port.len() <= 5
-            && !port.starts_with('0')
-            && port.bytes().all(|byte| byte.is_ascii_digit())
-            && port.parse::<u32>().is_ok_and(|port| port <= 65535)
-    });
-    host.len() <= 253 && host.split('.').all(part) && port
-}
-
-/// Whether this is an origin and perhaps a path, with nothing a credential is written
-/// in: no user, no password, no query and no fragment.
-fn is_address(text: &str) -> bool {
-    let after_scheme = text.find("://").map_or(0, |at| at + 3);
-    let (origin, path) = match text[after_scheme..].find('/') {
-        Some(at) => text.split_at(after_scheme + at),
-        None => (text, ""),
-    };
-    let path = path
-        .bytes()
-        .all(|byte| byte.is_ascii_graphic() && !b"?#\\".contains(&byte));
-    is_origin(origin) && path && text.len() <= ADDRESS_LIMIT
 }
 
 fn config(mut table: Table, secrets: &Secrets) -> Read<Config> {
@@ -479,17 +463,7 @@ fn backend(at: &At, mut table: Table) -> Read<Backend> {
         None => None,
     };
     let url = match take("url") {
-        Some((at, value)) => {
-            let text = at.text(value)?;
-            if !is_address(&text) {
-                return Err(at.refuse(format!(
-                    "must be an address: http:// or https://, a host in lower case, perhaps \
-                     a port and a path, with no user, password, query or fragment, \
-                     {ADDRESS_LIMIT} characters at most; what is written there is not shown"
-                )));
-            }
-            Some(text)
-        }
+        Some((at, value)) => Some(at.address(value)?),
         None => None,
     };
     let key_env = match take("key_env") {
@@ -572,58 +546,70 @@ fn call_cap(at: &At, value: &Value) -> Read<u64> {
     })
 }
 
-fn recipients(at: &At, value: Value) -> Read<BTreeMap<String, Recipient>> {
+fn recipients(at: &At, value: Value) -> Read<BTreeMap<String, Approval>> {
     let table = at.table(value)?;
     if table.len() > RECIPIENTS_LIMIT {
         return Err(at.refuse(format!("holds more than {RECIPIENTS_LIMIT} recipients")));
     }
-    let mut read = BTreeMap::new();
+    let mut read: BTreeMap<String, Approval> = BTreeMap::new();
     for (name, value) in table {
         let at = at.then(&name);
         if text::action_name(&name).is_err() {
             return Err(at.refuse(format!("is not a recipient's name: {NAME_RULE}")));
         }
-        read.insert(name, recipient(&at, at.table(value)?)?);
+        let approval = recipient(&at, at.table(value)?)?;
+        // One recipient is approved once: under two names it could be approved for
+        // two sets of classes, and which holds would be the reader's guess.
+        let same = |other: &Approval| {
+            other.origin() == approval.origin() && other.account() == approval.account()
+        };
+        if read.values().any(same) {
+            return Err(at.then("origin").refuse(
+                "is the origin, with the same account, of a recipient that is already \
+                 approved under another name",
+            ));
+        }
+        read.insert(name, approval);
     }
     Ok(read)
 }
 
-fn recipient(at: &At, mut table: Table) -> Read<Recipient> {
+fn recipient(at: &At, mut table: Table) -> Read<Approval> {
     let Some(origin) = table.remove("origin") else {
         return Err(at
             .then("origin")
             .refuse("is missing: a recipient has an origin"));
     };
-    let origin = at.then("origin").origin(origin)?;
-    let account = match table.remove("account") {
-        Some(value) => Some(at.then("account").plain(value, TEXT_LIMIT)?),
-        None => None,
-    };
-    let mut upstreams = BTreeSet::new();
+    let mut recipient = Recipient::new(at.then("origin").origin(origin)?);
+    let mut account = None;
+    if let Some(value) = table.remove("account") {
+        let at = at.then("account");
+        let text = at.text(value)?;
+        let made = Account::new(&text, at.secrets).map_err(|why| at.not_allowed(why))?;
+        recipient = recipient.with_account(made);
+        account = Some(text);
+    }
     if let Some(value) = table.remove("upstreams") {
         let at = at.then("upstreams");
         let Value::Array(items) = value else {
             return Err(at.wrong("a list of origins", &value));
         };
-        if items.len() > UPSTREAMS_LIMIT {
-            return Err(at.refuse(format!("holds more than {UPSTREAMS_LIMIT} origins")));
-        }
+        let mut upstreams = Vec::new();
         for item in items {
-            let upstream = at.origin(item)?;
-            if upstream == origin {
-                return Err(at.refuse("holds the recipient's own origin"));
-            }
-            if !upstreams.insert(upstream) {
-                return Err(at.refuse("holds one origin twice"));
-            }
+            upstreams.push(at.origin(item)?);
         }
+        // How many there may be, that none is given twice and that none is the
+        // recipient's own are the recipient's rules, held on origins and not on texts.
+        recipient = recipient
+            .forwarding_to(upstreams)
+            .map_err(|why| at.not_allowed(why))?;
     }
     let Some(value) = table.remove("classes") else {
         return Err(at.then("classes").refuse(
             "is missing: a recipient lists the classes of data it may receive, or none, as []",
         ));
     };
-    let mut classes = BTreeSet::new();
+    let mut classes = Classes::none();
     {
         let at = at.then("classes");
         let Value::Array(items) = value else {
@@ -633,13 +619,14 @@ fn recipient(at: &At, mut table: Table) -> Read<Recipient> {
             let name = at.text(item)?;
             let Some(class) = DataClass::ALL.iter().find(|class| class.name() == name) else {
                 return Err(at.refuse(
-                    "holds a class that is not known; the classes are derived_images, \
-                     evidence, prompts and source_images",
+                    "holds a class that is not known; the classes are source_images, \
+                     derived_images, prompts and evidence",
                 ));
             };
-            if !classes.insert(*class) {
+            if classes.holds(*class) {
                 return Err(at.refuse("holds one class twice"));
             }
+            classes = classes.with(*class);
         }
     }
     let probe = match table.remove("probe") {
@@ -648,10 +635,9 @@ fn recipient(at: &At, mut table: Table) -> Read<Recipient> {
         None => false,
     };
     at.unknown(&table, "origin, account, upstreams, classes and probe")?;
-    Ok(Recipient {
-        origin,
+    Ok(Approval {
+        recipient,
         account,
-        upstreams,
         classes,
         probe,
     })

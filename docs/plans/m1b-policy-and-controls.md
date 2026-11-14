@@ -591,7 +591,7 @@ half). **Size:** small.
 `Credential`, `redact_account`) and `http.rs` (`same_origin`); squint
 `crates/squint-core/src/provider.rs` (`recipient`); `SPEC.md` section 10, "Egress".
 
-- [ ] An ADR: a recipient (an endpoint's origin, the account used with it, the upstreams it
+- [x] An ADR: a recipient (an endpoint's origin, the account used with it, the upstreams it
       may forward to); the four classes of data (source images, derived images, prompts,
       evidence) and who states the class of each part of a request; that a part with no
       stated class needs every class approved; the interface through which data is sent,
@@ -602,9 +602,9 @@ half). **Size:** small.
       and no price has no bound and is refused as any paid request without one is; free
       for a backend with a recipient is said, never assumed); where a backend says who
       receives its requests.
-- [ ] The types and the three interfaces in `crates/whizbang-core/src/egress/`, and the
+- [x] The types and the three interfaces in `crates/whizbang-core/src/egress/`, and the
       recipient in a backend's declaration. A backend that names no recipient is local.
-- [ ] No enforcement in this task: the gate is E2.
+- [x] No enforcement in this task: the gate is E2.
 
 **Done when** these pass: a recipient cannot be made from an address with a user, a
 password, a query or a fragment in it, and its `{:?}` shows the origin and a cut account
@@ -622,12 +622,12 @@ is cut, and not shown (rule 4).
 
 **Depends on:** B2.
 
-- [ ] In `crates/whizbang-testkit/src/capabilities.rs`: each fake can be built with a price
+- [x] In `crates/whizbang-testkit/src/capabilities.rs`: each fake can be built with a price
       (free, a bound, an estimate only, a price by time), to report a charge with its
       answer (under the bound, none, over the bound), with a recipient, and to fail at
       a named stage. The fakes of 1A already stop at a named barrier and see the
       cancellation; nothing of that changes.
-- [ ] A fake that sends: it passes scripted hops (a redirect, an upload address, a returned
+- [x] A fake that sends: it passes scripted hops (a redirect, an upload address, a returned
       download address) through the sending interface of B2, and keeps what it was asked
       to send to each.
 
@@ -1781,7 +1781,7 @@ with the two changed lines.
 
 **Depends on:** X3. Scripts only.
 
-- [ ] A push made with `GIT_DIR` and `GIT_WORK_TREE` set from another folder is refused,
+- [x] A push made with `GIT_DIR` and `GIT_WORK_TREE` set from another folder is refused,
       or what it published is scanned before a merge: `review-merge`'s range scan takes
       every branch the pull request's commits are on and the branch's name. Which of the
       two is the builder's finding, written in the row.
@@ -1795,7 +1795,7 @@ a script, stops, and the gap goes to the owner to accept in a line of the row.
 
 **Depends on:** X4. Scripts only.
 
-- [ ] `scripts/scan.sh` and the other long scripts run from a function read whole before
+- [x] `scripts/scan.sh` and the other long scripts run from a function read whole before
       it starts, or from a copy.
 
 **Done when** a test edits the file during a run, at a barrier the test holds and not by

@@ -556,13 +556,18 @@ fn a_fill_that_is_taken_keeps_its_charge_and_a_fillers_fault_keeps_its_stage() {
 }
 
 #[test]
-fn known_a_fillers_cancelled_or_timed_out_fault_with_no_stage_is_unresolved() {
+fn a_fillers_own_fault_with_no_stage_is_unresolved_whatever_its_kind() {
     // The same kinds, made by the handle before it called its backend, are not sent
     // (above). A backend that returns one was called: it may have sent the request
-    // before it saw the signal, and only it knows. It can say; when it does not, the
-    // fault reads as unresolved.
+    // before it saw the signal, or before it found that it does not support what was
+    // asked, and only it knows. It can say; when it does not, the fault reads as
+    // unresolved. `unsupported` is among them: the kind is no proof that nothing left.
     let request = FillRequest::new(picture(), support(), None).unwrap();
-    for kind in [FaultKind::Cancelled, FaultKind::TimedOut] {
+    for kind in [
+        FaultKind::Cancelled,
+        FaultKind::TimedOut,
+        FaultKind::Unsupported,
+    ] {
         let stub = Stub::new(&[], Err(Fault::new(kind, "gave up")));
         let fault = FillHandle::new(stub.clone(), Cancellation::new())
             .fill(&request)

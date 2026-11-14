@@ -70,8 +70,9 @@ If one is missing, ask the orchestrator. Do not guess.
       prints nothing. The push of that same commit then needs no second run.
 - [ ] 8. Before every push: `just check` has passed on exactly the tree being pushed
       (step 7), then `just scan` passes. Push the branch by
-      name, from inside the worktree: a push made from another folder, with `GIT_DIR` and
-      `GIT_WORK_TREE` set, runs no hook.
+      name, from inside the worktree: a push made from another folder runs the hook of
+      the working tree git is then acting on (the one `git -C` or `GIT_WORK_TREE` names,
+      or else the folder git is run in), and is refused when that is no checkout of this repo.
       Never push with `--no-verify`, never force a push, and never push to `main`.
 - [ ] 9. If the push is refused, nothing reached origin. The secrets scan names each place
       it found as `<commit>:<path>:<line>`; the clean-room scan prints a count and names
@@ -100,7 +101,8 @@ If one is missing, ask the orchestrator. Do not guess.
       in `AGENTS.md`: no attribution line, no agent or model name, no private path or
       address. Then scan them (the commands below).
       After any edit to either file, read and scan again. The scan refuses an agent's
-      or a model's name that it knows, a path that starts with `~`, a value of the repo's
+      or a model's name that it knows (but for the folder `.claude` and the file
+      `CLAUDE.md` of this repo, named as paths), a path that starts with `~`, a value of the repo's
       local `.env`, and a credit line with nothing before it but marks that are not
       letters (a number, a sign, a table bar, a quote, a backtick, a box); a name it does
       not know is found only by reading, and so is a credit behind a mark made of letters

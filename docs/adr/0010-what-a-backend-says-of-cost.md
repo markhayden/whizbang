@@ -2,7 +2,8 @@
 
 Status: accepted. Changes ADR 0006 ("Declarations and features": a declaration may state
 a price; "Faults": a fault says how far its request got, and each response may carry a
-charge) and names ADR 0007 ("The estimate": what `Backends::bound` answers from)
+charge) and names ADR 0007 ("The estimate": what `Backends::bound` answers from).
+Changed by ADR 0012: a backend that names a recipient and states no price has no bound
 Date: 2026-11-13
 Amended: 2026-11-13, with task B1b, which this record said would add to it. Added: "How
 far a request got, and what it cost"; two consequences and two alternatives. Changed:
@@ -11,6 +12,20 @@ the title, which named the quote alone; the status, which now names ADR 0006's
 first pull request: a quote's amount is read as a bound or as an estimate's figure,
 by two accessors, in place of one that answered either; a limit is stated in the
 host's billing unit; and the limit that a roster's answer is of one request.
+Amended: 2026-11-13, with ADR 0012 (task B2). Changed: the limit that said a backend
+with no price answers nothing whoever receives its requests, which now holds for a
+local backend alone; and the status line, which names ADR 0012.
+Amended: 2026-11-14, from the review of the pull request for task B1b. Changed: a fault
+that states no stage reads as unresolved whatever its kind, `unsupported` too, which
+read as not sent and so could count a backend's own fault as free; the handles mark
+their own `unsupported` refusals; and the sentence on what an adapter does when in
+doubt, which was true of every kind but that one. Added: that a stage and a charge
+come through redaction, and through a wait stated after them; what no charge on an
+answered fault means. Named here, which an earlier line left out: the heading "Limits,
+each pinned" became "Limits of the quote and the price, each pinned" when task B1b
+added its own limits.
+Amended: 2026-11-14, with task B3. Added: a charge made of a whole number
+(`Charge::whole`).
 Spec: section 4, "Backends"; section 6, "Spend"
 
 ## Context
@@ -198,9 +213,10 @@ text.
   its adapter works out from its own limits on a request, or it states an estimate.
   Quoting from a request's shape comes with the first backend that needs it
   (`docs/carry-over.md`). No test pins this: there is no code to be wrong.
-- **A backend that states no price answers nothing,** whoever receives its requests.
-  That is the tag's behaviour, kept until task B2 decides which declarations go
-  together.
+- **A backend that states no price answered nothing,** whoever received its requests,
+  when this record was written. ADR 0012 decided which declarations go together: that
+  now holds for a local backend alone, and a backend that names a recipient and states
+  no price has no bound.
 
 ### How far a request got, and what it cost
 
@@ -224,7 +240,11 @@ number is not finite, is less than nothing, or is 2 to the power 64 or more, so 
 charge is the largest amount; and a fraction of the unit is rounded up, so that what is
 counted is never under what was charged
 (`charge::a_charge_cannot_be_made_negative_or_over_the_largest_amount`,
-`charge::a_charge_is_a_whole_count_of_the_unit_rounded_up`). A charge may be over the
+`charge::a_charge_is_a_whole_count_of_the_unit_rounded_up`). Whoever counts in whole
+millionths makes a charge of the whole number (`Charge::whole`), exactly: a float holds
+every whole number only up to 2 to the power 53, and `Charge::of_micros` rounds one
+past that as the float does
+(`charge::a_charge_of_a_whole_number_is_that_number_exactly`). A charge may be over the
 bound that was quoted: it is a fact about money already spent, and nothing here compares
 the two.
 
@@ -244,12 +264,13 @@ holds a charge (`charge::each_of_the_three_stages_can_be_read_from_a_fault`,
 `charge::a_kind_does_not_bind_a_stage_that_is_stated`).
 
 **A fault that states no stage** is every fault made before this task, and every fault
-an adapter makes with `Fault::new` alone. Its stage is read from its kind:
+an adapter makes with `Fault::new` alone. **It reads as unresolved, whatever its kind:**
 
 | Kind | Stage when none is stated | Why |
 |---|---|---|
-| `unsupported` | Not sent | The kind means that the request was not sent (ADR 0006) |
-| `cancelled`, `credential`, `rejected`, `unavailable`, `timed_out`, `malformed`, `too_large` | Unresolved | The kind does not say. `unavailable` is both a backend never reached and one that was sent the request and did not answer; a `credential` or a `rejected` answer usually costs nothing, but only the adapter that read it knows. Unresolved is the reading that never counts a charge as nothing |
+| Each of the eight: `cancelled`, `unsupported`, `credential`, `rejected`, `unavailable`, `timed_out`, `malformed`, `too_large` | Unresolved | No kind says how far a request got. `unavailable` is both a backend never reached and one that was sent the request and did not answer; a `credential` or a `rejected` answer usually costs nothing, but only the adapter that read it knows. `unsupported` means "it was not sent" where a handle makes it (ADR 0006), and a backend that returns it was called: it may have found out what it does not support after the request left. Unresolved is the reading that never counts a charge as nothing |
+
+No kind is read as not sent. A fault is not sent only when whoever made it says so.
 
 **That is the conservative reading, on purpose.** An unresolved request may have been
 charged, so it is counted at its bound; reading a fault as unresolved can count too
@@ -257,16 +278,16 @@ much and can never count too little. A fake or an adapter that knows better must
 the stage: `not_sent` when it knows that nothing left, `answered` when an answer settles
 the request. One that states nothing is charged for its silence, at the bound. One test
 goes through the eight kinds of ADR 0006's table
-(`charge::a_fault_that_states_no_stage_reads_as_not_sent_or_as_unresolved_by_its_kind`),
+(`charge::a_fault_that_states_no_stage_reads_as_unresolved_whatever_its_kind`),
 and a stage that is stated is the stage whatever the kind
 (`charge::a_kind_does_not_bind_a_stage_that_is_stated`).
 
 **The handle states the stage of the faults it makes itself.**
 
-- A fault a handle makes before it calls its backend is not sent: the handle says so
-  where the run was cancelled or its deadline had passed, and the kind says so
-  (`unsupported`) where the backend does not declare a feature the request needs or
-  the conversation holds another adapter's part
+- A fault a handle makes before it calls its backend is not sent, and the handle says
+  so of each: the run was cancelled, its deadline had passed, the backend does not
+  declare a feature the request needs, or the conversation holds another adapter's
+  part
   (`fill::a_request_the_handle_refuses_before_its_filler_is_called_is_not_sent`,
   `segment::a_request_the_handle_refuses_before_its_segmenter_is_called_is_not_sent`,
   `judge::a_request_the_handle_refuses_before_its_judge_is_called_is_not_sent`); and,
@@ -300,20 +321,31 @@ charge, and nothing else
 (`charge::debug_of_a_fault_and_of_a_response_shows_the_stage_and_the_charge`). Two
 faults are equal when their stage and their charge are too, and so are two responses
 (`charge::two_faults_that_differ_in_stage_or_in_charge_are_not_equal`). The stage and
-the charge are private fields, as ADR 0006 said a fault could gain.
+the charge are private fields, as ADR 0006 said a fault could gain. Neither is words:
+both come through unchanged when a handle takes a run's secrets out of a fault's
+sentence, and when a wait is stated after them
+(`asked::the_stage_and_the_charge_of_a_fault_reach_an_action_through_redaction`,
+`charge::a_wait_stated_after_a_stage_keeps_the_stage_and_the_charge`).
 
 Limits, each pinned:
 
 - **The stage and the charge are the adapter's word.** Nothing checks that a fault
   called not sent was not sent, or that a charge is what was charged. The rule for an
   adapter: `not_sent` only when no byte of the request was handed to anything outside
-  the process; when in doubt it states nothing, which reads as unresolved. The first
+  the process; when in doubt it states nothing, which reads as unresolved for a fault
+  of any kind. The first
   real adapter is held to it with a test (`docs/carry-over.md`). No test here pins it:
   there is no adapter.
-- **A fault a backend returns as `cancelled` or `timed_out` with no stage is
-  unresolved,** though the same kinds made by the handle are not sent: the backend was
-  called, and may have sent the request before it saw the signal
-  (`fill::known_a_fillers_cancelled_or_timed_out_fault_with_no_stage_is_unresolved`).
+- **A fault a backend returns as `cancelled`, `timed_out` or `unsupported` with no
+  stage is unresolved,** though the same kinds made by the handle are not sent: the
+  backend was called, and may have sent the request before it saw the signal or found
+  what it does not support
+  (`fill::a_fillers_own_fault_with_no_stage_is_unresolved_whatever_its_kind`,
+  `segment::a_segmenters_own_unsupported_fault_with_no_stage_is_unresolved`,
+  `judge::a_judges_own_unsupported_fault_with_no_stage_is_unresolved`).
+- **An answered fault with no charge is not a fault that cost nothing.** It says that
+  an answer settled the request and did not say what it cost: it settles at the bound.
+  An answer known to have cost nothing says a charge of nothing.
 - **A turn and a fault read back from data carry no charge and no stated stage.** The
   written form of a script and of an exchange (ADR 0009) has no place for either and
   is not changed here: what a request cost is the ledger's record, not the exchange's
@@ -345,8 +377,7 @@ Limits, each pinned:
 - The estimate of a prepared call can now change when a price does; admission already
   compares it (`Stale::Estimate`, ADR 0007).
 - Reversing this costs every backend that states a price. None exists but in tests.
-- A fault made with `Fault::new` alone, of any kind but `unsupported`, reads as
-  unresolved, and will be charged at its bound once a ledger settles it. An adapter
+- A fault made with `Fault::new` alone, of any kind, reads as unresolved, and will be charged at its bound once a ledger settles it. An adapter
   that knows better says so; one that says nothing errs upward.
 - The handles' own refusals are free by their stage, not by their kind: a ledger does
   not need to know which kinds a handle makes.
@@ -369,8 +400,8 @@ Limits, each pinned:
   are told apart. Turned down here: it changes ADR 0007's interface and every
   implementor for a case no config has yet, and the answer without it errs upward.
 - **Read the stage from the kind alone,** with `unavailable` split into two kinds.
-  Turned down: every kind but `unsupported` can be met before or after the request
-  left, so each would need splitting, and ADR 0006's eight kinds say whose fault it
+  Turned down: every kind can be met before or after the request left, so each would
+  need splitting, and ADR 0006's eight kinds say whose fault it
   was and whether to ask again, which is another question.
 - **Read a fault with no stage as not sent,** since most of 1A's faults were made
   before anything was sent. Turned down: the faults a handle makes are marked where

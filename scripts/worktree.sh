@@ -29,6 +29,9 @@
 # of GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR and GIT_INDEX_FILE set, since each makes git
 # act on another repo than the one it is run in. It sets no `EXIT` trap, so its own syntax
 # error is a failure.
+# The whole script is one function, read before any of it runs, so a change to this file
+# during a run does not change the run: see `main` in scripts/scan.sh.
+main() {
 set -euo pipefail
 export LC_ALL=C
 
@@ -106,8 +109,16 @@ case "$command" in
     check_slug "$slug"
     path="$parent/whizbang-$slug"
 
-    [ "$(git -C "$main" config --get core.hooksPath || true)" = scripts/hooks ] ||
-      die "the hooks are not installed: run \`just setup\`, then add the worktree; nothing was created"
+    # Installed as `just setup` installs them: the repository's own hooks folder holds a
+    # copy of scripts/hook-dispatch.sh under each hook's name, and no setting sends git
+    # anywhere else for its hooks.
+    for hook in pre-commit commit-msg pre-push; do
+      [ -f "$main/scripts/hook-dispatch.sh" ] && [ -x "$own/hooks/$hook" ] &&
+        cmp -s "$main/scripts/hook-dispatch.sh" "$own/hooks/$hook" ||
+        die "the hooks are not installed: run \`just setup\`, then add the worktree; nothing was created"
+    done
+    [ -z "$(git -C "$main" config --get core.hooksPath || true)" ] ||
+      die "the hooks are not installed: core.hooksPath is set, so git does not look where \`just setup\` puts them; run \`just setup\`, then add the worktree; nothing was created"
     check_path "$path"
     [ ! -e "$path" ] || die "$path is already there; nothing was created"
     if git -C "$main" show-ref --verify --quiet "refs/heads/$slug"; then
@@ -144,8 +155,8 @@ case "$command" in
     fi
     echo "worktree: $path on the new branch $slug, at origin/main $(git -C "$path" rev-parse HEAD)"
 
-    # The setup check. The hooks are found by a path relative to the worktree, so a worktree
-    # runs the hooks of its own branch.
+    # The setup check. An installed hook runs scripts/hooks/<name> of the working tree in
+    # use, so a worktree runs the hooks of its own branch.
     for hook in pre-commit commit-msg pre-push; do
       [ -x "$path/scripts/hooks/$hook" ] ||
         die "the worktree was made, but its hook scripts/hooks/$hook is missing or cannot run"
@@ -209,3 +220,5 @@ case "$command" in
 
   *) usage ;;
 esac
+}
+main "$@"; exit

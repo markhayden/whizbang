@@ -15,6 +15,9 @@
 #
 # --junit FILE prints the table for a saved result file and runs nothing; it exists for
 # scripts/tests/test-timing.sh.
+# The whole script is one function, read before any of it runs, so a change to this file
+# during a run does not change the run: see `main` in scripts/scan.sh.
+main() {
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -88,3 +91,5 @@ if awk -v t="$total" -v l="$limit" 'BEGIN { exit !(t + 0 > l + 0) }'; then
   echo "timing: review coverage first, then speed a test up or move it to another tier (SPEC.md section 13)" >&2
   exit 1
 fi
+}
+main "$@"; exit

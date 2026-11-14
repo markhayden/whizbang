@@ -203,13 +203,23 @@ while [ "$i" -lt "${#fault_names[@]}" ]; do
     # is the trap's; elsewhere the shell's own failure is kept.
     want="not 0"
     if [ "$(major "$sh")" = 3 ] || [ "$fault" = here-document ]; then want=70; fi
-    "$sh" -n "$tmp/faults/scan.sh" 2>/dev/null || fail "$sh: a parse does not find the fault ($fault)"
-    faulty "$sh" "scan.sh with a fault ($fault)" "$want" "$sh" "$tmp/faults/scan.sh" --message "$tmp/message"
-    faulty "$sh" "docs.sh with a fault ($fault)" "$want" "$sh" "$tmp/faults/docs.sh" --check
-    faulty "$sh" "heavy.sh with a fault ($fault)" "$want" \
+    # A script here is one function (below), and a here-document with no end swallows the
+    # end of the function: a parse finds that, and the script refuses to run, with 2. In a
+    # test file, which is no function, no parse finds it and the trap makes the 0 a 70.
+    script_want=$want
+    if [ "$fault" = here-document ]; then
+      "$sh" -n "$tmp/faults/scan.sh" 2>/dev/null && fail "$sh: a parse finds a here-document with no end in a script that is one function"
+      script_want=2
+    else
+      "$sh" -n "$tmp/faults/scan.sh" 2>/dev/null || fail "$sh: a parse does not find the fault ($fault)"
+    fi
+    "$sh" -n "$tmp/faults/a-test.sh" 2>/dev/null || fail "$sh: a parse does not find the fault in a test file ($fault)"
+    faulty "$sh" "scan.sh with a fault ($fault)" "$script_want" "$sh" "$tmp/faults/scan.sh" --message "$tmp/message"
+    faulty "$sh" "docs.sh with a fault ($fault)" "$script_want" "$sh" "$tmp/faults/docs.sh" --check
+    faulty "$sh" "heavy.sh with a fault ($fault)" "$script_want" \
       env WHIZBANG_HEAVY_LOCK="$tmp/faults/lock" "$sh" "$tmp/faults/heavy.sh" a-label echo "went on"
     [ ! -e "$tmp/faults/lock" ] || fail "$sh: heavy.sh with a fault ($fault) still releases the lock"
-    faulty "$sh" "check-crate-graph.sh with a fault ($fault)" "$want" "$sh" "$tmp/faults/check-crate-graph.sh"
+    faulty "$sh" "check-crate-graph.sh with a fault ($fault)" "$script_want" "$sh" "$tmp/faults/check-crate-graph.sh"
     faulty "$sh" "a test file with a fault ($fault)" "$want" "$sh" "$tmp/faults/a-test.sh"
   done
   i=$((i + 1))
@@ -282,6 +292,78 @@ case "$(check_rule "$tmp/joined-done.sh")" in
   *"is not alone on line"*) ;;
   *) fail "the rule finds done_ok=1 that shares its line" ;;
 esac
+
+# --- Every script under scripts/ that is not a test is one function, read whole before any
+# of it runs, so that a change to the file during a run does not change the run (the comment
+# above `main` in scripts/scan.sh; scripts/tests/scan/edited.sh edits the scan while it
+# runs). The form: after the first line, only comments, blank lines and the line that
+# parses the file come before the line `main() {`; the last two lines are `}` and
+# `main "$@"; exit`; and what is between is whole by itself, so the function ends where
+# the file says it does and no command stands outside it.
+last_line='main "$@"; exit'
+check_form() { # <file>: prints what is wrong with its form, if anything
+  local f=$1 start lines
+  lines=$(awk 'END { print NR }' "$f")
+  start=$(grep -n -x -F -e 'main() {' "$f" | head -n 1 | cut -d: -f1) || true
+  [ -n "$start" ] || { echo "$f has no line: main() {"; return 0; }
+  [ "$(grep -c -x -F -e 'main() {' "$f")" = 1 ] || echo "$f has more than one line: main() {"
+  [ "$(tail -n 1 "$f")" = "$last_line" ] || echo "$f: the last line is not: $last_line"
+  [ "$(grep -c -F -e 'main "$@"' "$f")" = 1 ] || echo "$f calls main in more than one place"
+  [ "$(sed -n "$((lines - 1))p" "$f")" = "}" ] || echo "$f: the line before the last is not the } that ends main"
+  sed -n "2,$((start - 1))p" "$f" | grep -v -E -e '^(#|[[:space:]]*$)' |
+    grep -v -E -e '^"\$BASH" -n "\$\{BASH_SOURCE\[0\]\}" \|\| \{ echo "[a-z -]+: \$\{BASH_SOURCE\[0\]\} has a syntax error; refusing to run" >&2; exit 2; \}$' >"$tmp/before-main" || true
+  [ ! -s "$tmp/before-main" ] || echo "$f has a command before main that is not the line that parses the file"
+  [ "$lines" -gt $((start + 2)) ] || { echo "$f: main is empty"; return 0; }
+  sed -n "$((start + 1)),$((lines - 2))p" "$f" >"$tmp/body"
+  "$BASH" -n "$tmp/body" 2>/dev/null || echo "$f: what is between main() { and the last } is not whole by itself: main ends early, or a command stands outside it"
+}
+# programs <folder>: the shell scripts under it that are run as programs: those with a
+# first line that names a shell, but for the tests.
+programs() {
+  local f first
+  while IFS= read -r -d '' f; do
+    first=
+    IFS= read -r first <"$f" || true
+    case "$first" in '#!'*sh | '#!'*sh' '*) printf '%s\n' "$f" ;; esac
+  done < <(find "$1" -type f ! -path "$1/tests/*" -print0)
+}
+programs scripts >"$tmp/programs"
+[ "$(wc -l <"$tmp/programs" | tr -d ' ')" -ge 15 ] || fail "the scripts and the hooks are found (at least 15 programs under scripts/)"
+for name in scan.sh heavy.sh thread-guard.sh worktree.sh docs.sh setup.sh hook-dispatch.sh hooks/pre-push hooks/commit-msg hooks/pre-commit; do
+  grep -q -x -F -e "scripts/$name" "$tmp/programs" || fail "scripts/$name is one of the programs held to the form"
+done
+while IFS= read -r f; do
+  problems=$(check_form "$f")
+  [ -z "$problems" ] || fail "$problems (see the comment above main in scripts/scan.sh)"
+done <"$tmp/programs"
+# A script with no first line that names a shell would not be held to it: there is none.
+while IFS= read -r -d '' f; do
+  IFS= read -r first <"$f" || true
+  case "$first" in '#!'*) ;; *) fail "$f is a script with no first line that names its shell, so nothing holds it to the form" ;; esac
+done < <(find scripts -type f -name '*.sh' ! -path 'scripts/tests/*' -print0)
+# The rule itself, on forms that break it.
+mkdir "$tmp/form"
+form_case() { # <name> <expected> <line...>
+  local name=$1 expected=$2
+  shift 2
+  printf '%s\n' "$@" >"$tmp/form/$name.sh"
+  case "$(check_form "$tmp/form/$name.sh")" in
+    *"$expected"*) ;;
+    *) check_form "$tmp/form/$name.sh" >&2; fail "the form rule, $name: expected: $expected" ;;
+  esac
+}
+guard='"$BASH" -n "${BASH_SOURCE[0]}" || { echo "a tool: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }'
+printf '%s\n' '#!/usr/bin/env bash' '# a comment' '' "$guard" '# another' 'main() {' 'set -euo pipefail' 'f() {' '  echo f' '}' 'f' '}' "$last_line" >"$tmp/form/good.sh"
+[ -z "$(check_form "$tmp/form/good.sh")" ] || { check_form "$tmp/form/good.sh" >&2; fail "the form rule passes a script of the form"; }
+form_case no-main "has no line: main() {" '#!/usr/bin/env bash' 'echo x'
+form_case before "has a command before main" '#!/usr/bin/env bash' 'set -euo pipefail' 'main() {' 'echo x' '}' "$last_line"
+form_case other-guard "has a command before main" '#!/usr/bin/env bash' '"$BASH" -n "${BASH_SOURCE[0]}" || echo "went on"' 'main() {' 'echo x' '}' "$last_line"
+form_case after "the last line is not" '#!/usr/bin/env bash' 'main() {' 'echo x' '}' "$last_line" 'echo after'
+form_case no-exit "the last line is not" '#!/usr/bin/env bash' 'main() {' 'echo x' '}' 'main "$@"'
+form_case two-lines "the last line is not" '#!/usr/bin/env bash' 'main() {' 'echo x' '}' 'main "$@"' 'exit'
+form_case outside "is not whole by itself" '#!/usr/bin/env bash' 'main() {' 'echo x' '}' 'echo outside' 'g() {' 'echo g' '}' "$last_line"
+form_case called-twice "calls main in more than one place" '#!/usr/bin/env bash' 'main() {' 'echo x' '}' 'main "$@"' 'g() {' 'echo g' '}' "$last_line"
+form_case empty "main is empty" '#!/usr/bin/env bash' 'main() {' '}' "$last_line"
 
 # --- Every search with git's grep, anywhere under scripts/, runs on one thread: on several
 # it has lost matches at random on CI's macOS runner (the comment above `search` in

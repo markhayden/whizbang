@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # The scans before every push, over what this push would publish. Git gives the remote's
 # name and address as arguments and one line per pushed ref on stdin; both go to the scan.
+# The whole script is one function, read before any of it runs, so a change to this file
+# during a run does not change the run: see `main` in scripts/scan.sh.
+main() {
 set -euo pipefail
 # First, parse the scan and the hooks: the bash that ships with macOS (3.2) exits 0 from a
 # script that stopped at a syntax error after setting an `EXIT` trap, as the scan does.
@@ -13,3 +16,5 @@ for f in "$root/scripts/scan.sh" "$root"/scripts/hooks/*; do
   "$BASH" -n "$f" || { echo "pre-push: ${f#"$root/"} has a syntax error; refusing the push" >&2; exit 1; }
 done
 exec "$root/scripts/scan.sh" --pre-push "$@"
+}
+main "$@"; exit

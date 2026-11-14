@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use crate::contract::{Backends, Capability, Estimate, ModelIdentity, Unavailable, text};
 
 use super::{Price, Quote, Shown};
+use crate::egress::Recipient;
 
 /// The rule of a name, as a refusal says it.
 const NAME_RULE: &str = "a name is a lower-case letter, then lower-case letters, digits, _ or -, \
@@ -42,6 +43,7 @@ pub struct Declaration {
     model: ModelIdentity,
     features: BTreeSet<String>,
     price: Option<Price>,
+    recipient: Option<Recipient>,
 }
 
 impl Declaration {
@@ -78,7 +80,39 @@ impl Declaration {
             model,
             features: declared,
             price: None,
+            recipient: None,
         })
+    }
+
+    /// The same declaration, naming who receives the backend's requests (ADR 0012).
+    /// Named again, the later recipient is the recipient.
+    pub fn sending_to(mut self, recipient: Recipient) -> Declaration {
+        self.recipient = Some(recipient);
+        self
+    }
+
+    /// Who receives the backend's requests, when anything leaves the machine.
+    pub fn recipient(&self) -> Option<&Recipient> {
+        self.recipient.as_ref()
+    }
+
+    /// Whether the backend is local: it names no recipient, so nothing it is asked
+    /// leaves the machine.
+    pub fn is_local(&self) -> bool {
+        self.recipient.is_none()
+    }
+
+    /// The most one request to the backend may cost (ADR 0012, "Which declarations go
+    /// together"): what its price comes to, when it states one; nothing, for a local
+    /// backend that states none; and for a backend that names a recipient and states
+    /// no price, the amount that is no bound. Free, for a backend with a recipient, is
+    /// said and never assumed.
+    pub fn most(&self) -> Estimate {
+        match (self.quote(), self.is_local()) {
+            (Some(quote), _) => quote.most(),
+            (None, true) => Estimate::default(),
+            (None, false) => Estimate::unbounded(),
+        }
     }
 
     /// The same declaration, stating this price (ADR 0010). Stated again, the later
@@ -441,14 +475,16 @@ impl Backends for Roster {
         }
     }
 
-    /// The most **one request** may cost when this model answers the capability: what
-    /// the price its backend declares comes to ([`Quote::most`]; ADR 0010). The trait
-    /// asks for the most one call's use can cost, and a roster does not know how many
-    /// requests a call sends: for a call that sends several, this answer is under,
-    /// and whoever reserves from it adds the per-call part. An estimate
-    /// only is the amount that is no bound. A backend that states no price, and a
-    /// model that nothing offered for the capability declares, answer nothing, as
-    /// before a declaration could state a price.
+    /// The most **one request** may cost when this model answers the capability
+    /// ([`Declaration::most`]; ADR 0010, ADR 0012): what the price its backend declares
+    /// comes to, with an estimate only as the amount that is no bound; nothing for a
+    /// local backend that states no price, and for a model that nothing offered for
+    /// the capability declares; and the amount that is no bound for a backend that
+    /// names a recipient and states no price.
+    ///
+    /// The trait asks for the most one call's use can cost, and a roster does not know
+    /// how many requests a call sends: for a call that sends several, this answer is
+    /// under, and whoever reserves from it adds the per-call part.
     ///
     /// The question names a model and not the backend a call chose, so two backends
     /// offered for one capability that declare one model are not told apart: the
@@ -459,8 +495,7 @@ impl Backends for Roster {
             .filter(|(offered, _, declaration)| {
                 *offered == capability && declaration.model() == model
             })
-            .filter_map(|(_, _, declaration)| declaration.quote())
-            .map(|quote| quote.most().micros())
+            .map(|(_, _, declaration)| declaration.most().micros())
             .max()
             .map_or_else(Estimate::default, Estimate::of_micros)
     }

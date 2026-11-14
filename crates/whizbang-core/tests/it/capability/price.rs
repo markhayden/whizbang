@@ -372,10 +372,10 @@ fn debug_of_each_new_type_shows_no_more_than_its_numbers() {
     // A declaration shows its price beside what it showed before.
     let shown = format!("{:?}", declared("m").priced(Price::free()));
     assert!(
-        shown.ends_with("price: Some(Price { stated: Free, most: None }) }"),
+        shown.contains("price: Some(Price { stated: Free, most: None })"),
         "{shown}"
     );
-    assert!(format!("{:?}", declared("m")).ends_with("price: None }"));
+    assert!(format!("{:?}", declared("m")).contains("price: None"));
 }
 
 #[test]

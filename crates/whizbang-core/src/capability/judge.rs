@@ -968,7 +968,8 @@ impl JudgeHandle {
                      backend is {backend}",
                     opaque.adapter
                 ),
-            ));
+            )
+            .not_sent());
         }
         let image = request.has_image().then_some(feature::IMAGE);
         let tool = (!request.tools.is_empty()).then_some(feature::TOOL);

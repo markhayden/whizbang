@@ -28,6 +28,23 @@ impl Charge {
         })
     }
 
+    /// A charge of this many whole millionths of a US dollar, exactly: for whoever
+    /// counts in whole numbers. A float holds every whole number only up to 2 to the
+    /// power 53, so a charge worked out in whole numbers is made here and not through
+    /// [`Charge::of_micros`]. Refused: the largest whole number there is, which is no
+    /// amount (ADR 0007).
+    pub fn whole(micros: u64) -> Result<Charge, Unfit> {
+        if micros == u64::MAX {
+            return Err(Unfit::OutOfRange {
+                what: "a charge",
+                at: None,
+                found: micros.to_string(),
+                allowed: "a whole number of millionths of a US dollar, under the largest there is",
+            });
+        }
+        Ok(Charge { micros })
+    }
+
     /// The charge, in millionths of a US dollar.
     pub fn micros(&self) -> u64 {
         self.micros

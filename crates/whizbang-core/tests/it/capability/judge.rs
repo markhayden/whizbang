@@ -967,3 +967,19 @@ fn a_turn_that_is_taken_keeps_its_charge_and_a_judges_fault_keeps_its_stage() {
         );
     }
 }
+
+#[test]
+fn a_judges_own_unsupported_fault_with_no_stage_is_unresolved() {
+    // The handle's own `unsupported`, made before the backend is called, is not sent
+    // (above). The same kind from a backend that was called is no proof of that.
+    let fault = Fault::new(FaultKind::Unsupported, "no such feature after all");
+    let stub = Stub::new(&[], Err(fault));
+    let handed = JudgeHandle::new(stub.clone(), Cancellation::new())
+        .send(&plain())
+        .unwrap_err();
+    assert_eq!(
+        (handed.kind(), handed.stage()),
+        (FaultKind::Unsupported, Stage::Unresolved)
+    );
+    assert_eq!(stub.sent(), 1);
+}
