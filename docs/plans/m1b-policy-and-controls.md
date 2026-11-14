@@ -1752,7 +1752,7 @@ small.
 
 **Depends on:** B0. Scripts only.
 
-- [ ] `scripts/tests/test-deny.sh`: in a throwaway copy of the workspace's manifests, a
+- [x] `scripts/tests/test-deny.sh`: in a throwaway copy of the workspace's manifests, a
       dependency from an unknown registry and one from a git source each fail
       `cargo deny check sources`.
 
