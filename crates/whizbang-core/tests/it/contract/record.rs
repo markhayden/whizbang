@@ -1369,6 +1369,18 @@ mod facts {
                 "{name}"
             );
         }
+        // A number that is not one cannot be written: it makes no setting.
+        for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(Setting::new("n", &Value::Number(number), &secrets).is_none());
+        }
+        assert!(Setting::new("n", &Value::Number(0.5), &secrets).is_some());
+        // A number is written as it is, so one whose digits are a secret the executor
+        // was told of makes no setting either.
+        let digits = Secrets::new(["12345678".to_owned(), "1234.5678".to_owned()]).unwrap();
+        assert!(Setting::new("n", &Value::Integer(12_345_678), &digits).is_none());
+        assert!(Setting::new("n", &Value::Integer(-12_345_678), &digits).is_none());
+        assert!(Setting::new("n", &Value::Number(1234.5678), &digits).is_none());
+        assert!(Setting::new("n", &Value::Integer(1_234_567), &digits).is_some());
         // The other kinds of value are kept as they are.
         let steps = Setting::new("backends.fill.steps", &Value::Integer(20), &secrets).unwrap();
         assert_eq!(
@@ -1496,6 +1508,18 @@ mod facts {
         let short = Account::new("abcd", &Secrets::none()).unwrap();
         let whole = Went::new(&upstream, Some(&short), prompts, Handed::Sent, &secrets);
         assert_eq!(whole.account(), Some("abcd"));
+        // An account of one to four characters is written whole, whatever its
+        // characters: three dots, or one that only ends in them, is such an account
+        // and not a cut one, and the record that holds it is read back.
+        let mut dotted = Facts::none();
+        for (at, name) in ["...", "a...", "....", "a..", "."].into_iter().enumerate() {
+            let short = Account::new(name, &Secrets::none()).unwrap();
+            let to = origin(&format!("https://h{at}.example.com"));
+            let went = Went::new(&to, Some(&short), prompts, Handed::Sent, &secrets);
+            assert_eq!(went.account(), Some(name));
+            assert!(dotted.went(went));
+        }
+        assert_eq!(with(dotted).egress().len(), 5);
         // An account that holds a secret the executor was told of is not written at
         // all, not even cut: the entry says where the data went and names no account.
         let holding = Account::new(&format!("acct_{key}"), &Secrets::none()).unwrap();
@@ -1557,10 +1581,10 @@ mod facts {
             admitted,
             end_ms: 5000,
         };
-        let interrupted = RunRecord::interrupted(left(Some(admitted)));
+        let interrupted = RunRecord::interrupted(left(Some(admitted))).unwrap();
         assert_eq!(interrupted.to_bytes(), record3::interrupted().as_bytes());
         assert_eq!(interrupted.outcome().lost, Lost::but_the_admission());
-        let unread = RunRecord::interrupted(left(None));
+        let unread = RunRecord::interrupted(left(None)).unwrap();
         assert_eq!(unread.to_bytes(), record3::unread().as_bytes());
         assert_eq!(unread.outcome().lost, Lost::ALL);
         assert_eq!(Lost::ALL.len(), 13);
@@ -1575,7 +1599,8 @@ mod facts {
                 reserved_micros: None,
                 start_ms: 1000,
             }))
-        });
+        })
+        .unwrap();
         assert_eq!(
             (early.time().start_ms, early.time().end_ms),
             (Some(1000), 1000)
@@ -1588,6 +1613,47 @@ mod facts {
             );
             assert_eq!(record.version(), "run/3");
         }
+    }
+
+    #[test]
+    fn a_record_of_a_run_a_dead_process_left_that_its_reader_would_refuse_is_not_made() {
+        // What an admission said was read from a store, and is not trusted to be
+        // what a record may hold: a record is made of it only when it is one.
+        let run = RunId::parse("1000-1").unwrap();
+        let admitted = |action: &'static str, version: &'static str, reserved| Admitted {
+            request: None,
+            parent: None,
+            action,
+            version,
+            reserved_micros: reserved,
+            start_ms: 1000,
+        };
+        let left = |whizbang: &'static str, admitted| Left {
+            run: &run,
+            whizbang,
+            admitted,
+            end_ms: 5000,
+        };
+        let made = |left| RunRecord::interrupted(left).is_some();
+        assert!(made(left(
+            "0.0.1",
+            Some(admitted("heal", "1.0.0", Some(5)))
+        )));
+        assert!(made(left("0.0.1", None)));
+        assert!(!made(left("", None)));
+        assert!(!made(left("", Some(admitted("heal", "1.0.0", None)))));
+        assert!(!made(left("0.0.1", Some(admitted("", "1.0.0", None)))));
+        assert!(!made(left("0.0.1", Some(admitted("heal", "", None)))));
+        assert!(!made(left(
+            "0.0.1",
+            Some(admitted("heal", "1.0.0", Some(u64::MAX)))
+        )));
+        // A parent that is the run itself is no parent.
+        let own = Admitted {
+            parent: Some(&run),
+            ..admitted("heal", "1.0.0", None)
+        };
+        assert!(!made(left("0.0.1", Some(own))));
     }
 
     #[test]

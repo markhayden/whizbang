@@ -294,7 +294,7 @@
             "required": ["name", "value"],
             "properties": {
               "name": { "type": "string", "minLength": 1, "maxLength": 128 },
-              "value": { "$ref": "#/$defs/value" }
+              "value": { "$ref": "#/$defs/setting_value" }
             }
           }
         },
@@ -345,48 +345,65 @@
           "type": "array",
           "maxItems": 256,
           "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["action", "kind", "why"],
-            "properties": {
-              "action": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
-              "kind": {
-                "enum": [
-                  "unknown_action",
-                  "invalid",
-                  "input",
-                  "not_ready",
-                  "read_only",
-                  "no_such_run",
-                  "conflict",
-                  "stale",
-                  "over_allowance",
-                  "no_bound",
-                  "secret_in_request_id",
-                  "not_a_request_id",
-                  "cancelled",
-                  "deadline_passed",
-                  "too_deep",
-                  "call_back",
-                  "over_caller",
-                  "caller_over",
-                  "too_many_calls",
-                  "tree_full",
-                  "too_many_started",
-                  "too_many_started_under",
-                  "id_inside",
-                  "wait_above",
-                  "wait_cancelled",
-                  "not_offered",
-                  "not_readable",
-                  "request_no_bound",
-                  "request_over_allowance",
-                  "request_not_approved",
-                  "request_not_ready"
-                ]
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["action", "kind", "why"],
+                "properties": {
+                  "action": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+                  "kind": {
+                    "enum": [
+                      "unknown_action",
+                      "invalid",
+                      "input",
+                      "not_ready",
+                      "read_only",
+                      "no_such_run",
+                      "conflict",
+                      "stale",
+                      "over_allowance",
+                      "no_bound",
+                      "secret_in_request_id",
+                      "not_a_request_id",
+                      "cancelled",
+                      "deadline_passed",
+                      "too_deep",
+                      "call_back",
+                      "over_caller",
+                      "caller_over",
+                      "too_many_calls",
+                      "tree_full",
+                      "too_many_started",
+                      "too_many_started_under",
+                      "id_inside",
+                      "wait_above",
+                      "wait_cancelled",
+                      "not_offered",
+                      "not_readable"
+                    ]
+                  },
+                  "why": { "type": "string", "minLength": 1, "maxLength": 512 }
+                }
               },
-              "why": { "type": "string", "minLength": 1, "maxLength": 512 }
-            }
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["action", "kind", "why"],
+                "properties": {
+                  "action": { "type": "null" },
+                  "kind": {
+                    "enum": [
+                      "request_no_bound",
+                      "request_over_allowance",
+                      "request_not_approved",
+                      "request_not_ready"
+                    ]
+                  },
+                  "why": { "type": "string", "minLength": 1, "maxLength": 512 }
+                }
+              }
+            ]
           }
         },
         "refusals_omitted": { "type": "integer", "minimum": 0 },
@@ -583,6 +600,18 @@
         }
       }
     },
-    "none": { "type": "array", "maxItems": 0 }
+    "none": { "type": "array", "maxItems": 0 },
+    "setting_value": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "number": { "type": "number" },
+        "integer": { "type": "integer" },
+        "boolean": { "type": "boolean" },
+        "text": { "type": "string", "maxLength": 256 }
+      }
+    }
   }
 }

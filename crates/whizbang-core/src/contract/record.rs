@@ -619,14 +619,31 @@ impl Setting {
     /// printable ASCII characters with no space, no `"` and no `\`, and holds no
     /// secret: one that does is refused and not shown, as is one that is not a name.
     /// A text has the secrets taken out while it is whole, and is then cut at
-    /// [`SETTING_TEXT_LIMIT`] characters.
+    /// [`SETTING_TEXT_LIMIT`] characters. A number or an integer is written as it is:
+    /// one that is not finite, or whose digits as they are written hold a secret,
+    /// makes no setting.
     pub fn new(name: &str, value: &Value, secrets: &Secrets) -> Option<Setting> {
         if secrets.redact(name) != name || !is_setting_name(name) {
             return None;
         }
+        // A number is written as it is, with nothing taken out of it: one that is not
+        // finite cannot be written at all, and one whose digits hold a secret would
+        // be written with it. Neither makes a setting.
+        let written = |digits: String| secrets.redact(&digits) == digits;
         let value = match value {
-            Value::Number(number) => ArgumentValue::Number(*number),
-            Value::Integer(number) => ArgumentValue::Integer(*number),
+            Value::Number(number) => {
+                let digits = serde_json::to_string(number).ok()?;
+                if !number.is_finite() || !written(digits) {
+                    return None;
+                }
+                ArgumentValue::Number(*number)
+            }
+            Value::Integer(number) => {
+                if !written(number.to_string()) {
+                    return None;
+                }
+                ArgumentValue::Integer(*number)
+            }
             Value::Boolean(boolean) => ArgumentValue::Boolean(*boolean),
             Value::Text(text) => {
                 ArgumentValue::Text(super::engine::cut_to(secrets, text, SETTING_TEXT_LIMIT, ""))
@@ -1091,14 +1108,17 @@ impl Went {
         let none = Secrets::none();
         let origin = Origin::of(&self.origin, &none);
         let written = origin.is_ok_and(|origin| origin.to_string() == self.origin);
+        // By its length, which is how `Account::shown` writes one: 1 to 4 characters
+        // is a whole account, whatever its characters, dots among them; exactly 7
+        // that end in three dots is a cut one, whose first four are an account's; and
+        // nothing else is either.
         let cut = self.account.as_ref().is_none_or(|shown| {
-            let whole = shown.strip_suffix("...").unwrap_or(shown);
-            let lengths = if whole.len() == shown.len() {
-                (1..=4).contains(&whole.len())
-            } else {
-                whole.len() == 4
+            let account = match shown.len() {
+                1..=4 => Some(shown.as_str()),
+                7 => shown.strip_suffix("..."),
+                _ => None,
             };
-            lengths && Account::new(whole, &none).is_ok()
+            account.is_some_and(|account| Account::new(account, &none).is_ok())
         });
         // The classes in their one order, each once.
         let ordered: Vec<Class> = self.classes().iter().map(Class::of).collect();
@@ -1755,14 +1775,18 @@ impl RunRecord {
     /// `interrupted`, made from the run's admission alone, or from its name alone when
     /// the admission could not be read, with everything else named as lost. The end
     /// is never before the start.
-    pub fn interrupted(left: Left<'_>) -> RunRecord {
+    ///
+    /// None when what it was given makes a record that the reader refuses: a version,
+    /// an action or an action's version that is empty, a parent that is the run
+    /// itself, or the largest amount as what was reserved, which is no amount.
+    pub fn interrupted(left: Left<'_>) -> Option<RunRecord> {
         let admitted = left.admitted.as_ref();
         let lost = match admitted {
             Some(_) => Lost::but_the_admission().to_vec(),
             None => Lost::ALL.to_vec(),
         };
         let start_ms = admitted.map(|admitted| admitted.start_ms);
-        RunRecord {
+        let record = RunRecord {
             record: RUN_RECORD.to_owned(),
             identity: Identity {
                 run: left.run.as_str().to_owned(),
@@ -1804,7 +1828,10 @@ impl RunRecord {
             steps: Vec::new(),
             judge: Vec::new(),
             diagnostics: Vec::new(),
-        }
+        };
+        // What the admission said was read from a store. A record its own reader
+        // would refuse is not made of it.
+        record.check().is_ok().then_some(record)
     }
 
     /// The record as it is stored: JSON on one line, then a newline.
@@ -2086,23 +2113,35 @@ impl RunRecord {
         {
             return refuse("the run ends before it starts");
         }
-        // The settings: in the order of their names, each once, each a name.
-        let settings = &self.asked.settings;
-        if settings.len() > SETTINGS_LIMIT
-            || !settings.is_sorted_by(|a, b| a.name < b.name)
+        // The count of each list is looked at before anything is compared within it:
+        // a list far over its bound is refused for its count, at once.
+        let (settings, paid, went) = (&self.asked.settings, &self.spend.requests, &self.egress);
+        if settings.len() > SETTINGS_LIMIT || paid.len() > PAID_LIMIT || went.len() > EGRESS_LIMIT {
+            return refuse(
+                "more than a record lists: 96 settings, 1024 paid requests, 128 entries \
+                 of where data went",
+            );
+        }
+        // The settings: in the order of their names, each once, each a name, with a
+        // text no longer than one is kept.
+        let long = |setting: &Setting| match &setting.value {
+            ArgumentValue::Text(text) => text.chars().count() > SETTING_TEXT_LIMIT,
+            _ => false,
+        };
+        if !settings.is_sorted_by(|a, b| a.name < b.name)
             || !settings
                 .iter()
                 .all(|setting| is_setting_name(&setting.name))
+            || settings.iter().any(long)
         {
             return refuse(
                 "the settings are not in the order of their names, each once, each \
-                 under a name of 1 to 128 printable ASCII characters, 96 at most",
+                 under a name of 1 to 128 printable ASCII characters, with a text of 256 \
+                 characters at most",
             );
         }
         // The paid requests: each one the record lists, in order, each once.
-        let paid = &self.spend.requests;
-        if paid.len() > PAID_LIMIT
-            || !paid.is_sorted_by(|a, b| a.request < b.request)
+        if !paid.is_sorted_by(|a, b| a.request < b.request)
             || paid
                 .iter()
                 .any(|paid| paid.request >= self.models.len() as u64 || !paid.holds())
@@ -2113,7 +2152,6 @@ impl RunRecord {
             );
         }
         // Where data went: each origin, account and outcome once.
-        let went = &self.egress;
         let twice = went.iter().enumerate().any(|(at, one)| {
             let same = |other: &Went| {
                 (&other.origin, &other.account, other.outcome)
@@ -2121,7 +2159,7 @@ impl RunRecord {
             };
             went[..at].iter().any(same)
         });
-        if went.len() > EGRESS_LIMIT || twice || !went.iter().all(Went::holds) {
+        if twice || !went.iter().all(Went::holds) {
             return refuse(
                 "an entry of where data went is not an origin written the one way, a \
                  cut account and classes in their order, each named once",
