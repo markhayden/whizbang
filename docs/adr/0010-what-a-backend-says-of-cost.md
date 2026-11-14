@@ -2,7 +2,8 @@
 
 Status: accepted. Changes ADR 0006 ("Declarations and features": a declaration may state
 a price; "Faults": a fault says how far its request got, and each response may carry a
-charge) and names ADR 0007 ("The estimate": what `Backends::bound` answers from)
+charge) and names ADR 0007 ("The estimate": what `Backends::bound` answers from).
+Changed by ADR 0012: a backend that names a recipient and states no price has no bound
 Date: 2026-11-13
 Amended: 2026-11-13, with task B1b, which this record said would add to it. Added: "How
 far a request got, and what it cost"; two consequences and two alternatives. Changed:
@@ -11,6 +12,9 @@ the title, which named the quote alone; the status, which now names ADR 0006's
 first pull request: a quote's amount is read as a bound or as an estimate's figure,
 by two accessors, in place of one that answered either; a limit is stated in the
 host's billing unit; and the limit that a roster's answer is of one request.
+Amended: 2026-11-13, with ADR 0012 (task B2). Changed: the limit that said a backend
+with no price answers nothing whoever receives its requests, which now holds for a
+local backend alone; and the status line, which names ADR 0012.
 Spec: section 4, "Backends"; section 6, "Spend"
 
 ## Context
@@ -198,9 +202,10 @@ text.
   its adapter works out from its own limits on a request, or it states an estimate.
   Quoting from a request's shape comes with the first backend that needs it
   (`docs/carry-over.md`). No test pins this: there is no code to be wrong.
-- **A backend that states no price answers nothing,** whoever receives its requests.
-  That is the tag's behaviour, kept until task B2 decides which declarations go
-  together.
+- **A backend that states no price answered nothing,** whoever received its requests,
+  when this record was written. ADR 0012 decided which declarations go together: that
+  now holds for a local backend alone, and a backend that names a recipient and states
+  no price has no bound.
 
 ### How far a request got, and what it cost
 

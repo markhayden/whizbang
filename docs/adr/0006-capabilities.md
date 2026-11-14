@@ -2,7 +2,8 @@
 
 Status: accepted. Changed by ADR 0010: a declaration may state a price, and a roster
 answers `Backends::bound` from it; a fault says how far its request got, and each
-response may carry a charge
+response may carry a charge. Changed by ADR 0012: a declaration may name who receives
+its backend's requests
 Date: 2026-11-12
 Amended: 2026-11-12, after the review of the first part, before it merged. Changed: what
 a fault's cleaning guarantees and what it does not find, with a rule for adapters; a
