@@ -15,15 +15,23 @@
 //! what was refused, and holds no path.
 
 mod catalogue;
+mod directory;
+mod hold;
+mod install;
 mod installation;
+mod inventory;
 mod json;
 mod name;
 mod refused;
+mod remove;
+mod stage;
+mod status;
 
 pub use catalogue::{
     CATALOGUE_FORMAT, CATALOGUE_MAX_BYTES, Catalogue, CatalogueFile, Entry, EntryParts,
     FEATURES_LIMIT, FILES_LIMIT, MODELS_LIMIT, ORIGINS_LIMIT,
 };
+pub use directory::ModelsDir;
 pub use installation::{
     INSTALLATION_FORMAT, INSTALLATION_MAX_BYTES, InstallationId, InstallationRecord, InstalledFile,
 };
@@ -32,3 +40,4 @@ pub use name::{
     REVISION_LIMIT, Revision, SHOWN_LIMIT,
 };
 pub use refused::{Refused, Rule, What};
+pub use stage::{FileRefused, MOVES_LIMIT, StageRefused, Staged, stage};
