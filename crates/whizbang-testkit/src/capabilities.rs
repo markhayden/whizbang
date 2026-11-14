@@ -2,6 +2,11 @@
 //! to find, a filler that can repaint the whole image, and a judge that plays a
 //! scripted transcript. No model runs, nothing is sent anywhere, and each fake counts
 //! the requests it was sent, so a test can show that something asked, or did not ask.
+//!
+//! Each can say what a real backend says of cost and of where its requests go (ADR
+//! 0010, ADR 0012): it can be built with a price and with a recipient, can report a
+//! charge with every answer, and can fail every request at a named stage. None of it
+//! spends or sends anything: a fake only says so.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,11 +15,12 @@ use std::time::Instant;
 
 use whizbang_core::capability::written::{Unread, read_script};
 use whizbang_core::capability::{
-    Asked, Bounds, Declaration, Fault, FaultKind, FillRequest, Filler, Instance, Judge,
-    JudgeRequest, Painted, Roster, SegmentRequest, SegmentResponse, Segmenter, Support, Turn,
-    feature,
+    Asked, Bounds, Charge, Declaration, Fault, FaultKind, FillRequest, Filler, Instance, Judge,
+    JudgeRequest, Painted, Price, Roster, SegmentRequest, SegmentResponse, Segmenter, Stage,
+    Support, Turn, feature,
 };
 use whizbang_core::contract::{Capability, ModelIdentity};
+use whizbang_core::egress::Recipient;
 
 use crate::barrier::Barriers;
 
@@ -66,6 +72,55 @@ pub fn roster(
         };
     }
     roster
+}
+
+/// The same declaration for other features, and for another model when one is given:
+/// what it said of its price and of its recipient stays.
+fn redeclared(old: &Declaration, model: Option<&str>, features: &[&str]) -> Declaration {
+    let model = model.unwrap_or(old.model().model());
+    let mut new = declaration(model, features);
+    if let Some(price) = old.price() {
+        new = new.priced(*price);
+    }
+    if let Some(recipient) = old.recipient() {
+        new = new.sending_to(recipient.clone());
+    }
+    new
+}
+
+/// A charge of this many millionths of a US dollar.
+fn charge(micros: u64) -> Charge {
+    match Charge::whole(micros) {
+        Ok(charge) => charge,
+        // A test wrote the number.
+        Err(why) => panic!("{why}"),
+    }
+}
+
+/// What a fake was told of money beside its declaration: the charge each of its
+/// answers reports, and the stage every request fails at.
+#[derive(Default)]
+struct Terms {
+    charge: Option<Charge>,
+    fails_at: Option<Stage>,
+}
+
+impl Terms {
+    /// The fault of a fake that was told to fail: `unavailable`, saying the stage it
+    /// was told. Told to fail as answered, the fault carries the charge the fake
+    /// reports, when it reports one: only an answer says what it cost.
+    fn failed(&self) -> Result<(), Fault> {
+        let Some(stage) = self.fails_at else {
+            return Ok(());
+        };
+        let words = format!("the fake was told to fail, {}", stage.name());
+        let fault = Fault::new(FaultKind::Unavailable, &words);
+        Err(match stage {
+            Stage::NotSent => fault.not_sent(),
+            Stage::Answered => fault.answered(self.charge),
+            Stage::Unresolved => fault.unresolved(),
+        })
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -127,10 +182,12 @@ impl Stop {
             deadline: bounds.deadline(),
         });
         if on_release {
+            // The request was open: nothing settles it, and the fake says so.
             return Err(Fault::new(
                 FaultKind::Cancelled,
                 "the run was cancelled while the request was open",
-            ));
+            )
+            .unresolved());
         }
         Ok(())
     }
@@ -175,6 +232,7 @@ pub struct FakeFiller {
     paint: Paint,
     requests: AtomicU64,
     stop: Option<Stop>,
+    terms: Terms,
 }
 
 impl FakeFiller {
@@ -184,12 +242,42 @@ impl FakeFiller {
             paint,
             requests: AtomicU64::new(0),
             stop: None,
+            terms: Terms::default(),
         }
     }
 
-    /// The same filler, declaring these features and no others.
+    /// The same filler, declaring these features and no others. What it states of its
+    /// price and its recipient stays.
     pub fn declaring(mut self, features: &[&str]) -> FakeFiller {
-        self.declaration = declaration("fake-filler", features);
+        self.declaration = redeclared(&self.declaration, None, features);
+        self
+    }
+
+    /// The same filler, stating this price (ADR 0010).
+    pub fn priced(mut self, price: Price) -> FakeFiller {
+        self.declaration = self.declaration.priced(price);
+        self
+    }
+
+    /// The same filler, naming who receives its requests (ADR 0012). Nothing is sent:
+    /// the fake only says so, as a remote backend's declaration would.
+    pub fn sending_to(mut self, recipient: Recipient) -> FakeFiller {
+        self.declaration = self.declaration.sending_to(recipient);
+        self
+    }
+
+    /// The same filler, reporting this charge, in millionths of a US dollar, with every
+    /// answer: under its bound, over it, as the test chooses. A fake that was not
+    /// told reports none.
+    pub fn charging(mut self, micros: u64) -> FakeFiller {
+        self.terms.charge = Some(charge(micros));
+        self
+    }
+
+    /// The same filler, which answers every request with a fault that says the request
+    /// got this far ([`Terms::failed`]). The request is counted first, as any is.
+    pub fn failing_at(mut self, stage: Stage) -> FakeFiller {
+        self.terms.fails_at = Some(stage);
         self
     }
 
@@ -222,6 +310,18 @@ impl Filler for FakeFiller {
     fn fill(&self, request: &FillRequest, bounds: &Bounds) -> Result<Painted, Fault> {
         self.requests.fetch_add(1, Ordering::SeqCst);
         held(&self.stop, bounds)?;
+        self.terms.failed()?;
+        let painted = self.painted(request)?;
+        Ok(match self.terms.charge {
+            Some(charge) => painted.charged(charge),
+            None => painted,
+        })
+    }
+}
+
+impl FakeFiller {
+    /// What the fake paints for a request.
+    fn painted(&self, request: &FillRequest) -> Result<Painted, Fault> {
         let image = request.image();
         let pixels = image.rgba().as_chunks::<4>().0.iter();
         let rgb: Vec<u8> = match &self.paint {
@@ -267,6 +367,7 @@ pub struct FakeSegmenter {
     requests: AtomicU64,
     stop: Option<Stop>,
     fails: Option<Fault>,
+    terms: Terms,
 }
 
 impl FakeSegmenter {
@@ -280,12 +381,13 @@ impl FakeSegmenter {
             requests: AtomicU64::new(0),
             stop: None,
             fails: None,
+            terms: Terms::default(),
         }
     }
 
     /// The same segmenter, declaring these features and no others.
     pub fn declaring(mut self, features: &[&str]) -> FakeSegmenter {
-        self.declaration = declaration("fake-segmenter", features);
+        self.declaration = redeclared(&self.declaration, None, features);
         self
     }
 
@@ -293,6 +395,34 @@ impl FakeSegmenter {
     /// box: left, top, right and bottom.
     pub fn finding(mut self, phrase: &str, bounds: [u32; 4]) -> FakeSegmenter {
         self.told.push((phrase.to_owned(), bounds));
+        self
+    }
+
+    /// The same segmenter, stating this price (ADR 0010).
+    pub fn priced(mut self, price: Price) -> FakeSegmenter {
+        self.declaration = self.declaration.priced(price);
+        self
+    }
+
+    /// The same segmenter, naming who receives its requests (ADR 0012). Nothing is sent:
+    /// the fake only says so, as a remote backend's declaration would.
+    pub fn sending_to(mut self, recipient: Recipient) -> FakeSegmenter {
+        self.declaration = self.declaration.sending_to(recipient);
+        self
+    }
+
+    /// The same segmenter, reporting this charge, in millionths of a US dollar, with every
+    /// answer: under its bound, over it, as the test chooses. A fake that was not
+    /// told reports none.
+    pub fn charging(mut self, micros: u64) -> FakeSegmenter {
+        self.terms.charge = Some(charge(micros));
+        self
+    }
+
+    /// The same segmenter, which answers every request with a fault that says the request
+    /// got this far ([`Terms::failed`]). The request is counted first, as any is.
+    pub fn failing_at(mut self, stage: Stage) -> FakeSegmenter {
+        self.terms.fails_at = Some(stage);
         self
     }
 
@@ -357,6 +487,7 @@ impl Segmenter for FakeSegmenter {
         if let Some(fault) = &self.fails {
             return Err(fault.clone());
         }
+        self.terms.failed()?;
         let (width, height) = (request.image().width(), request.image().height());
         let most = request.max_instances() as usize;
         let mut answers = Vec::new();
@@ -393,7 +524,11 @@ impl Segmenter for FakeSegmenter {
             };
             answers.push(found);
         }
-        Ok(SegmentResponse::new(answers))
+        let response = SegmentResponse::new(answers);
+        Ok(match self.terms.charge {
+            Some(charge) => response.charged(charge),
+            None => response,
+        })
     }
 }
 
@@ -414,6 +549,7 @@ pub struct FakeJudge {
     declaration: Declaration,
     played: Mutex<Played>,
     stop: Option<Stop>,
+    terms: Terms,
 }
 
 /// What is left of the script, and what was received, behind one lock.
@@ -435,6 +571,7 @@ impl FakeJudge {
                 received: Vec::new(),
             }),
             stop: None,
+            terms: Terms::default(),
         }
     }
 
@@ -449,7 +586,7 @@ impl FakeJudge {
     pub fn as_model(mut self, model: &str) -> FakeJudge {
         let features: Vec<String> = self.declaration.features().map(str::to_owned).collect();
         let features: Vec<&str> = features.iter().map(String::as_str).collect();
-        self.declaration = declaration(model, &features);
+        self.declaration = redeclared(&self.declaration, Some(model), &features);
         self
     }
 
@@ -461,7 +598,35 @@ impl FakeJudge {
 
     /// The same judge, declaring these features and no others.
     pub fn declaring(mut self, features: &[&str]) -> FakeJudge {
-        self.declaration = declaration("fake-judge", features);
+        self.declaration = redeclared(&self.declaration, None, features);
+        self
+    }
+
+    /// The same judge, stating this price (ADR 0010).
+    pub fn priced(mut self, price: Price) -> FakeJudge {
+        self.declaration = self.declaration.priced(price);
+        self
+    }
+
+    /// The same judge, naming who receives its requests (ADR 0012). Nothing is sent:
+    /// the fake only says so, as a remote backend's declaration would.
+    pub fn sending_to(mut self, recipient: Recipient) -> FakeJudge {
+        self.declaration = self.declaration.sending_to(recipient);
+        self
+    }
+
+    /// The same judge, reporting this charge, in millionths of a US dollar, with every
+    /// answer: under its bound, over it, as the test chooses. A fake that was not
+    /// told reports none.
+    pub fn charging(mut self, micros: u64) -> FakeJudge {
+        self.terms.charge = Some(charge(micros));
+        self
+    }
+
+    /// The same judge, which answers every request with a fault that says the request
+    /// got this far ([`Terms::failed`]). The request is counted first, as any is.
+    pub fn failing_at(mut self, stage: Stage) -> FakeJudge {
+        self.terms.fails_at = Some(stage);
         self
     }
 
@@ -511,11 +676,18 @@ impl Judge for FakeJudge {
         if self.stop.is_none() {
             played.received.push(request.clone());
         }
-        played.script.pop_front().unwrap_or_else(|| {
+        // A judge told to fail keeps the request and plays no entry of its script.
+        self.terms.failed()?;
+        let entry = played.script.pop_front().unwrap_or_else(|| {
             Err(Fault::new(
                 FaultKind::Malformed,
                 "the scripted transcript has no turn left",
-            ))
-        })
+            )
+            .unresolved())
+        });
+        match (entry, self.terms.charge) {
+            (Ok(turn), Some(charge)) => Ok(turn.charged(charge)),
+            (entry, _) => entry,
+        }
     }
 }

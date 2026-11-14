@@ -622,12 +622,12 @@ is cut, and not shown (rule 4).
 
 **Depends on:** B2.
 
-- [ ] In `crates/whizbang-testkit/src/capabilities.rs`: each fake can be built with a price
+- [x] In `crates/whizbang-testkit/src/capabilities.rs`: each fake can be built with a price
       (free, a bound, an estimate only, a price by time), to report a charge with its
       answer (under the bound, none, over the bound), with a recipient, and to fail at
       a named stage. The fakes of 1A already stop at a named barrier and see the
       cancellation; nothing of that changes.
-- [ ] A fake that sends: it passes scripted hops (a redirect, an upload address, a returned
+- [x] A fake that sends: it passes scripted hops (a redirect, an upload address, a returned
       download address) through the sending interface of B2, and keeps what it was asked
       to send to each.
 
