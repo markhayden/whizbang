@@ -517,13 +517,13 @@ are 1C's.
 
 **Depends on:** B0.
 
-- [ ] The edits to `SPEC.md` that this plan's reviewed decisions make, and no others: the
+- [x] The edits to `SPEC.md` that this plan's reviewed decisions make, and no others: the
       two sentences on the models directory; in section 3, that a run a dead process
       left is ended as interrupted with a record that declares what it does not know;
       in section 6, that such a run's reservation is charged in full unless every
       request under it is shown settled, that a damaged spend record freezes its
       reservation, and that a person may adjust such a charge by a new record.
-- [ ] The root files of "Strands": the module roots `spend/`, `config/` and `egress/` in
+- [x] The root files of "Strands": the module roots `spend/`, `config/` and `egress/` in
       the core with their test roots, the empty crate `whizbang-backends` in the workspace
       and in `scripts/crate-graph.txt`, the TOML reader as a dependency of the workspace,
       and the subcommand `spend` as a stub.

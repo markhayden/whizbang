@@ -7,4 +7,5 @@ mod executor;
 mod import;
 mod rascal;
 mod runs;
+mod spend;
 mod store;

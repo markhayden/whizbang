@@ -98,7 +98,7 @@ not yet needed.
 | Crate | Holds | May depend on |
 |---|---|---|
 | `whizbang-core` | Identities, artifacts, the store, config, spend; the execution contract; the request and response interfaces of each capability; the executor interface | nothing in the workspace |
-| `whizbang-backends` | Implementations of the capability interfaces: backend kinds, the pack client, provider adapters | core |
+| `whizbang-backends` | Implementations of the capability interfaces: backend kinds, the pack client, provider adapters; model installations | core |
 | `whizbang-rascal` | Rascal's operations and tasks | core |
 | `whizbang-squint` | Squint's rules, checklist, judge loop and Rust tools | core |
 | `whizbang-eval` | Sets, references, runs, statistics, gates | core |
@@ -228,8 +228,10 @@ derived from its image.
 
 ### Storage
 
-One owner for everything durable: the core's store. It holds runs, artifacts, evidence and the
-spend ledger. Whizbang starts with an empty store; nothing is migrated from the old tools.
+One owner for everything durable about runs: the core's store. It holds runs, artifacts,
+evidence and the spend ledger. Installed models are owned by the models directory, which is
+outside any store: weights are shared by every store on a machine. Whizbang starts with an
+empty store; nothing is migrated from the old tools.
 
 - **Retention.** Everything is kept until deleted. `whizbang store list|delete|prune` remove
   runs and what only they reference, with the caches and exports this store manages for them.
@@ -270,6 +272,9 @@ single source for debugging, for audit and for metrics, so nothing below is opti
 Diagnostics are kept for failed and cancelled runs exactly as for completed ones. Secrets are
 redacted before anything is written. Records and diagnostics are removed only by the store's
 delete and prune commands.
+
+A run that a dead process left cannot write its record. It is ended as an error of the kind
+`interrupted`, with a record that declares what it does not know.
 
 ### Metrics from ordinary runs
 
@@ -443,8 +448,10 @@ suite.
 - **Nested calls draw on the parent's reservation;** nothing is reserved twice.
 - **Settlement is per attempt.** A request whose cost is unknown is charged at its bound. A
   timeout does not prove a remote host stopped billing, so it is charged at its bound.
-- **After a crash,** every request that was dispatched and not settled is charged at its
-  bound and is never replayed automatically.
+- **After a crash,** nothing that was dispatched is replayed automatically. The reservation of
+  a run that a dead process left is charged in full, unless every request under it is shown
+  settled. A damaged spend record freezes its reservation. A person may adjust such a charge,
+  by a new record.
 - **Retries belong to the layer that issued the request,** and each is admitted like any other
   attempt.
 - **GPU time** on a self-hosted backend has a configured price per second. Its bound must
