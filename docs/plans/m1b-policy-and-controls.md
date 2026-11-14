@@ -1552,7 +1552,7 @@ only the chunks the test lists.
 `models/cache.py` and `tools/python/MODEL.md`; table-manners `CONTRACT.md` sections 3.5
 and 5.3 and `schemas/core/installable.json`.
 
-- [ ] An ADR: the models directory and its lock; a catalogue entry (files with their sizes
+- [x] An ADR: the models directory and its lock; a catalogue entry (files with their sizes
       and hashes, the origins they may be downloaded from, licence, features, and a
       revision); an installation and its record, which holds the catalogue's and the
       adapter's revisions; the installation's identity; the pointer that names the one in
