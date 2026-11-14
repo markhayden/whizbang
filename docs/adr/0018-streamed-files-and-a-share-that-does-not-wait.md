@@ -3,6 +3,12 @@
 Status: accepted. Names ADR 0017 ("Holds": the try at a share that it says the store's
 interface gains with task M5 is here, before that task; nothing of ADR 0017 is changed)
 Date: 2026-11-14
+Amended: 2026-11-14, after the review of its pull request. Changed: what a crash
+leaves of the bytes that were not synced is a test's choice of four (`Tail`); a
+streamed file that was removed or replaced and that a crash brings back is cut as any
+other, which the first form restored whole. Added under "Limits": how the try opens
+its file. Words: rule 2 says who removes a file that is not whole, and which tries
+are bounded by a thread and a timeout.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -67,7 +73,8 @@ only.
    name made durable by `Fs::sync_dir`, as the store publishes: there is no second
    way to put a file in place.
 2. Only a file that `finish` answered for is whole. A handle that was dropped, or
-   whose `finish` failed, leaves a file that is not.
+   whose `finish` failed, leaves a file that is not. The file stays under its name;
+   removing it is the caller's.
 3. **A call that fails breaks the handle:** every call after it fails, `finish`
    among them, whatever failed and however little
    (`fs::a_handle_that_answered_with_an_error_answers_nothing_more`). A file that was
@@ -130,9 +137,11 @@ And a share that a try was given stops `try_alone` and `hold_lock_file`, in its 
 process and in any other, until it is dropped
 (`fs::a_try_at_a_share_is_given_beside_shares_and_refused_while_one_has_the_file_alone`
 on both file systems; every cell, with the shim standing for one process and for two,
-`streams::a_try_at_a_share_is_given_or_refused_at_once_whoever_holds_the_file`). No
-test waits on a try: each is made on a thread and waited for ten seconds at most, so
-a try that waited fails the test and does not hang it.
+`streams::a_try_at_a_share_is_given_or_refused_at_once_whoever_holds_the_file`). In
+those two tests no try waits on a holder: each try that may be refused is made on a
+thread and waited for ten seconds at most, so a try that waited fails the test and
+does not hang it. The unit test beside the code tries only a file that nobody has
+alone.
 
 ### A file system that does not give them
 
@@ -166,14 +175,33 @@ interface refuses itself (a piece too long, a buffer that holds nothing) is no e
 A refused step breaks its handle, as an error of the real disk does
 (`streams::a_handle_whose_step_was_refused_answers_nothing_more`).
 
-**What a crash leaves of a streamed file is one outcome, the same every time.** If
-the file's name survives, which `Lost` decides as for any new file:
+**What a crash leaves of a streamed file is one outcome for each choice a test
+makes, the same every time.** If the file's name survives, which `Lost` decides as for
+any new file, every byte that a sync made durable is there, and what follows is the
+test's choice (`Tail`, set by `ShimFs::with_tail` or `ShimFs::set_tail`):
 
-- every byte that a sync made durable is there;
-- then the first half, rounded down, of the bytes appended since the last sync;
-- and nothing after.
+| `Tail` | What follows the synced bytes |
+|---|---|
+| `Half`, the default | The first half, rounded down, of the bytes appended since the last sync, and nothing after |
+| `Zeroed` | The file has its full length, and every byte appended since the last sync is zero |
+| `All` | All of the bytes appended since the last sync |
+| `None` | Nothing: the file ends where its last sync left it |
 
-So a file whose every byte was synced is whole, finished or not
+Each choice gives exactly that, for a file that stays, for one that was renamed, and
+for one that was removed or replaced and that the crash brings back
+(`streams::each_choice_of_tail_leaves_exactly_what_it_says_of_a_file_that_stays`,
+`streams::each_choice_of_tail_leaves_exactly_what_it_says_of_a_file_that_was_renamed`,
+`streams::each_choice_of_tail_leaves_exactly_what_it_says_of_a_file_that_was_removed_and_comes_back`).
+**A streamed file that a crash brings back is cut as any other:** a removal or a
+replacing rename that the crash undoes restores what the crash would have left of the
+file, not all that was appended to it, whether the file was removed by itself or with
+its folder (`streams::a_streamed_file_that_a_crash_brings_back_is_cut_as_any_other`);
+and a file renamed onto itself is still cut
+(`streams::a_streamed_file_renamed_onto_itself_is_still_cut_at_a_crash`). The choice
+is of streamed files only: a file whose `write_new` was interrupted is cut to half,
+as before.
+
+Under the default, a file whose every byte was synced is whole, finished or not
 (`streams::a_file_streamed_and_synced_is_whole_after_a_crash_finished_or_not`); a
 file never synced is the first half of itself, as a file whose `write_new` was
 interrupted is, and one byte not synced is lost
@@ -195,11 +223,15 @@ crash a handle fails and writes nothing, and a share a try was given is gone
 
 ### Limits, each stated
 
-- **The shim's cut is one outcome of many.** A real disk may keep all of what was
-  never synced, or none of it, or any prefix. The shim keeps half, so that a protocol
-  which trusts unsynced bytes meets a cut file; it does not show the disk that kept
-  everything, which is the disk without a crash, nor the one that kept none. A caller
-  that treats the synced length as a place to go on from is not tested by it.
+- **The shim's outcomes are four of many.** A real disk may keep all of what was never
+  synced, or none of it, or any prefix, or a file of the full length whose unsynced
+  part is zeros or other bytes. The shim shows half by default and, by a test's
+  choice, all, none, or the full length with the unsynced part zeroed; it does not
+  show other bytes there. A caller that decides by a file's length after a crash is
+  exposed only under the zeroed choice.
+- **The try opens its file as `share` does:** a link is followed and a pipe at the
+  name would make the opening wait. A lock file is made by whizbang and never
+  replaced (ADR 0017).
 - **The cut stands for a crash inside an append.** As an event an append happens whole
   or not at all; the cut falls where half of the unsynced bytes ends, inside a piece
   or between two. A refused append leaves nothing of its piece in the shim; on a real
@@ -265,10 +297,13 @@ crash a handle fails and writes nothing, and a share a try was given is gone
 - **Refuse a link by the flags of `open`.** Turned down for now: it needs a crate
   for the constants, which differ between Linux's architectures, or `unsafe`. The
   look and the comparison refuse every link without either.
-- **The shim choosing how much of the unsynced bytes to keep,** as it chooses which
-  names to lose. Turned down: `write_new`'s unsynced file has one outcome, half, and
-  nothing built so far reads unsynced bytes as a place to go on from. It is added
-  when something does.
+- **One outcome for the unsynced bytes, half,** as `write_new`'s unsynced file has.
+  It was the first form of this record and was turned down in review: an installer's
+  crash sweeps must be held to a file's hash and not to its length, and only a file
+  of the full length with its unsynced part zeroed shows the difference.
+- **The choice of tail inside `Lost`.** Turned down: `Lost` is given at every crash
+  in the store's tests, which would each be edited, and the tail is of content while
+  `Lost` is of names.
 - **The length of an open file, from its handle.** Turned down: the caller counts
   what it reads and stops one byte past what it expects, which bounds the reading
   whatever the file says of itself.
