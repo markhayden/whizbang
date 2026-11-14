@@ -695,16 +695,16 @@ dropped and changes no record.
 
 **Depends on:** B4b. The first section of the interfaces' ADR, which changes ADR 0007.
 
-- [ ] `AdmissionPart`, in the core: the executor holds a list of parts. Each is shown the
+- [x] `AdmissionPart`, in the core: the executor holds a list of parts. Each is shown the
       request, the preparation made at admission and the time, before each attempt at the
       admission's publication; it may refuse, with a refusal of its own kind, and it may
       add records among the run's names to that publication. A refusal by a part is a
       refusal after the look, so the id is looked up once more (ADR 0007).
-- [ ] Two things a part reads, added here because they are the executor's: a request may
+- [x] Two things a part reads, added here because they are the executor's: a request may
       carry a cap of its own, which is no part of its fingerprint; and a preparation
       carries the time it was made, from the executor's clock, beside `prepared/1` and
       not in it.
-- [ ] The executor calls its parts; with none it behaves as before. A fake part in the
+- [x] The executor calls its parts; with none it behaves as before. A fake part in the
       test kit that refuses, or adds a record, on demand.
 
 **Done when** these pass: a part's record is in the store with the run or not at all,

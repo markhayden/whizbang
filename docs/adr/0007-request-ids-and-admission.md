@@ -1,6 +1,9 @@
 # 0007. Request ids and admission: a run exists from the step that records its request
 
-Status: accepted
+Status: accepted. Changed by ADR 0015: the executor's parts are asked in each attempt at
+the admission's publication, before the ledger, and a refusal by one is a refusal after
+the look; a request may carry a cap, which is no part of its fingerprint; a preparation
+carries the time it was made, beside `prepared/1`
 Date: 2026-11-12
 Amended: 2026-11-12, with the second pull request of task A6. Added: "The estimate" and
 "A preparation handed to admission", which are built; the paragraph of "Admission" that
