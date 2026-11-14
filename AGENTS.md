@@ -230,7 +230,9 @@ names, and the title and body of a pull request.
   The repo holds manifests and public labels only.
 - **The clean-room scan** reports counts, never text. When it fails, find the cause by
   reading your own change, not by opening the list.
-- **Pull requests.** No scan sees a title or a body. Read them against these rules yourself
+- **Pull requests.** A title and a body are scanned only as two files given to
+  `scripts/scan.sh --pr-text` before they are posted (`kickoff`, `review-merge`); text that
+  is already on a pull request is seen by no scan. Read them against these rules yourself
   before you open or edit one. The builder, the reviewer and the orchestrator each do.
 - **A new place that receives data** (a service, a host, a provider) is the owner's
   decision.

@@ -23,9 +23,8 @@ pub enum ConfigRefused {
     HoldsSecret,
     /// The text is not TOML, first at this line. None of its words is shown.
     NotToml { line: usize },
-    /// A key is given twice, the second time at this line. The key is given from the
-    /// top of the file as far as the text tells it: the keys of the heading it stands
-    /// under, and its own.
+    /// A key is given twice, the second time at this line. The key is its last part,
+    /// without the table it is in.
     Twice { key: String, line: usize },
     /// A key is not known, is missing, or has a value that does not belong there. The
     /// key is given from the top of the file, with dots, and the reason holds fixed
