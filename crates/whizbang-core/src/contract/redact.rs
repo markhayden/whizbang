@@ -352,6 +352,13 @@ impl Search {
         }
     }
 
+    /// How many units following a reading keeps: the last `longest` and one more; or
+    /// every unit, where the reading can give no more than `most` and that is fewer.
+    /// So a short text costs its own length, and not the longest secret's.
+    fn room(&self, most: usize) -> usize {
+        self.longest.min(most) + 1
+    }
+
     /// Follows one reading of the bytes, and notes each stretch of the bytes as they
     /// were given that a form covers: for a place in the reading, the longest form
     /// that ends there, and the longest wide one apart. With `base64_only`, base64
@@ -360,9 +367,18 @@ impl Search {
     /// A base64 character at either edge that holds bits of the secret is the unit of
     /// the reading before the form, or after it, and its whole stretch is taken: so
     /// an edge written as an escape is taken whole, and not its last byte.
-    fn follow(&self, reading: impl Iterator<Item = Unit>, base64_only: bool, found: &mut Found) {
-        // The byte and the start of each of the last `longest` units and one more.
-        let room = self.longest + 1;
+    ///
+    /// `most` is the most units the reading can give: the length of the bytes it is a
+    /// reading of, since no reading gives more units than it was given bytes.
+    fn follow(
+        &self,
+        reading: impl Iterator<Item = Unit>,
+        most: usize,
+        base64_only: bool,
+        found: &mut Found,
+    ) {
+        // The byte and the start of each of the last units.
+        let room = self.room(most);
         let mut last = vec![(0u8, 0usize); room];
         let mut state = 0;
         // The stretch noted at the unit before, when the unit after it may be its.
@@ -623,32 +639,63 @@ impl Secrets {
         let holds = |byte: u8| bytes.contains(&byte);
         let (backslash, percents) = (holds(b'\\'), holds(b'%'));
         let mut found = Found::default();
-        search.follow(plain(), false, &mut found);
+        let most = bytes.len();
+        search.follow(plain(), most, false, &mut found);
         // A reading of one kind can bring out the marks of the other: a `%5C` is a
         // backslash once read, and a `\u0025` a `%`. So the second reading of each
         // pair is of the other kind too.
         if backslash {
-            search.follow(escapes(), false, &mut found);
-            search.follow(Read::new(escapes(), false, true, false), false, &mut found);
-            search.follow(Read::new(escapes(), true, false, false), false, &mut found);
+            search.follow(escapes(), most, false, &mut found);
+            search.follow(
+                Read::new(escapes(), false, true, false),
+                most,
+                false,
+                &mut found,
+            );
+            search.follow(
+                Read::new(escapes(), true, false, false),
+                most,
+                false,
+                &mut found,
+            );
         }
         if percents {
-            search.follow(percent(), false, &mut found);
-            search.follow(Read::new(percent(), true, false, false), false, &mut found);
-            search.follow(Read::new(percent(), false, true, false), false, &mut found);
+            search.follow(percent(), most, false, &mut found);
+            search.follow(
+                Read::new(percent(), true, false, false),
+                most,
+                false,
+                &mut found,
+            );
+            search.follow(
+                Read::new(percent(), false, true, false),
+                most,
+                false,
+                &mut found,
+            );
         }
         if backslash && percents {
-            search.follow(both(), false, &mut found);
-            search.follow(Read::new(both(), true, true, false), false, &mut found);
+            search.follow(both(), most, false, &mut found);
+            search.follow(
+                Read::new(both(), true, true, false),
+                most,
+                false,
+                &mut found,
+            );
         }
         if holds(b'+') {
-            search.follow(Read::new(plain(), true, false, true), false, &mut found);
+            search.follow(
+                Read::new(plain(), true, false, true),
+                most,
+                false,
+                &mut found,
+            );
         }
         if holds(b'\n') || holds(b'\r') {
-            search.follow(Unwrapped(plain()), true, &mut found);
+            search.follow(Unwrapped(plain()), most, true, &mut found);
         }
         if backslash {
-            search.follow(Unwrapped(escapes()), true, &mut found);
+            search.follow(Unwrapped(escapes()), most, true, &mut found);
         }
         // A secret of ASCII letters in UTF-16 of one byte order is also, one byte to
         // the side, the same secret in the other order, with a zero byte of the letter
@@ -703,8 +750,8 @@ impl Secrets {
     /// byte for byte as it was, and so is everything between the strings. A number,
     /// `true`, `false` or `null` that holds a secret becomes the string `"[redacted]"`.
     ///
-    /// A body that is not JSON, or is nested deeper than the reader of JSON goes, is
-    /// not refused: it is searched as bytes, as [`Secrets::redact_bytes`] searches.
+    /// A body that is not JSON is not refused: it is searched as bytes, as
+    /// [`Secrets::redact_bytes`] searches.
     pub fn redact_json(&self, body: &[u8]) -> Vec<u8> {
         if self.search.is_none() {
             return body.to_vec();
@@ -766,5 +813,29 @@ impl Secrets {
             at = end;
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::Secrets;
+
+    #[test]
+    fn a_text_is_followed_in_room_for_the_shorter_of_the_longest_form_and_the_text() {
+        // The room is not to be seen from outside: a text is redacted the same in any
+        // room that is large enough. So it is asked here. A value of 4,096 marks has a
+        // longest form of three times that, percent-encoded.
+        let long = "!@#$".repeat(1024);
+        let secrets = Secrets::new([long]).unwrap();
+        let search = secrets.search.as_ref().unwrap();
+        assert_eq!(search.longest, 3 * 4096);
+        assert_eq!(search.room(0), 1);
+        assert_eq!(search.room(1), 2);
+        assert_eq!(search.room(4096), 4097);
+        assert_eq!(search.room(3 * 4096), 3 * 4096 + 1);
+        assert_eq!(search.room(3 * 4096 + 1), 3 * 4096 + 1);
+        assert_eq!(search.room(usize::MAX), 3 * 4096 + 1);
     }
 }
