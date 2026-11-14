@@ -1,6 +1,6 @@
 //! What a request cost, and how far a failed one got (ADR 0010, "How far a request got,
-//! and what it cost"): a charge, the three stages a fault can say, and the stage a fault
-//! reads as when whoever made it said none.
+//! and what it cost"): a charge, the three stages a fault can say, and that a fault
+//! reads as unresolved when whoever made it said no stage.
 
 use whizbang_core::capability::written::{read_script, write_script};
 use whizbang_core::capability::{
@@ -100,6 +100,26 @@ fn each_of_the_three_stages_can_be_read_from_a_fault() {
 }
 
 #[test]
+fn a_wait_stated_after_a_stage_keeps_the_stage_and_the_charge() {
+    let fault = || Fault::new(FaultKind::Unavailable, "status 429");
+    let answered = fault().answered(Some(charge(55))).retry_after_ms(2000);
+    assert_eq!(
+        (answered.stage(), answered.charge(), answered.wait_ms()),
+        (Stage::Answered, Some(charge(55)), Some(2000))
+    );
+    let not_sent = fault().not_sent().retry_after_ms(2000);
+    assert_eq!(
+        (not_sent.stage(), not_sent.charge(), not_sent.wait_ms()),
+        (Stage::NotSent, None, Some(2000))
+    );
+    // In either order the fault is the same fault.
+    assert_eq!(
+        answered,
+        fault().retry_after_ms(2000).answered(Some(charge(55)))
+    );
+}
+
+#[test]
 fn only_an_answered_fault_holds_a_charge() {
     let answered = Fault::new(FaultKind::Rejected, "status 400").answered(Some(charge(9)));
     // Said again as another stage, the charge is gone with the stage it belonged to.
@@ -122,11 +142,11 @@ fn only_an_answered_fault_holds_a_charge() {
 }
 
 #[test]
-fn a_fault_that_states_no_stage_reads_as_not_sent_or_as_unresolved_by_its_kind() {
+fn a_fault_that_states_no_stage_reads_as_unresolved_whatever_its_kind() {
     // ADR 0006's table, kind by kind: every fault made before a fault could say.
     let by_kind = [
         (FaultKind::Cancelled, Stage::Unresolved),
-        (FaultKind::Unsupported, Stage::NotSent),
+        (FaultKind::Unsupported, Stage::Unresolved),
         (FaultKind::Credential, Stage::Unresolved),
         (FaultKind::Rejected, Stage::Unresolved),
         (FaultKind::Unavailable, Stage::Unresolved),
@@ -177,10 +197,12 @@ fn two_faults_that_differ_in_stage_or_in_charge_are_not_equal() {
         fault().answered(Some(charge(1))),
         fault().answered(Some(charge(1)))
     );
-    // A stage that is stated and the same stage read from the kind are one stage.
+    // A stage that is stated and the same stage read where none was are one stage.
     assert_eq!(fault(), fault().unresolved());
+    // No kind is read as not sent: only whoever knows that nothing left says so.
     let unsupported = || Fault::new(FaultKind::Unsupported, "no such feature");
-    assert_eq!(unsupported(), unsupported().not_sent());
+    assert_eq!(unsupported(), unsupported().unresolved());
+    assert_ne!(unsupported(), unsupported().not_sent());
 }
 
 #[test]
@@ -246,7 +268,7 @@ fn debug_of_a_fault_and_of_a_response_shows_the_stage_and_the_charge() {
 fn known_a_turn_and_a_fault_read_back_from_data_carry_no_charge_and_no_stated_stage() {
     // The written form of a script and of an exchange (ADR 0009) has no place for a
     // charge or a stage, and is not changed: what a request cost is the ledger's
-    // record. Read back, a turn has no charge and a fault reads by its kind.
+    // record. Read back, a turn has no charge and a fault states no stage.
     let script = [
         Ok(turn().charged(charge(77))),
         Err(Fault::new(FaultKind::Unavailable, "status 503").answered(Some(charge(3)))),
