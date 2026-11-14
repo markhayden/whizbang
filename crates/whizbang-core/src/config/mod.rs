@@ -5,14 +5,23 @@
 //! A [`Config`] is made by reading a file strictly ([`Config::read`], [`Config::parse`])
 //! or is the empty one ([`Config::empty`]); there is no other way to one, its fields are
 //! private, and it cannot be read from JSON or TOML by other code. Its digest
-//! ([`Config::digest`]) is of the settings and not of the file's bytes. Nothing is built
-//! from a config yet: the roster, the cap, the policy and the settings a run records are
-//! made from it by the later tasks of checkpoint 1B. The file is TOML, read with the
-//! `toml` crate, which this crate depends on for that and for nothing else.
+//! ([`Config::digest`]) is of the settings and not of the file's bytes. The file is
+//! TOML, read with the `toml` crate, which this crate depends on for that and for
+//! nothing else.
+//!
+//! From a config, the credentials of its env file and the kinds a build registers
+//! ([`Kinds`]), [`Offers::of`] makes what the config offers: a roster of the backends
+//! that are ready, and each that is not with its reason. [`Config::settings_of`] gives
+//! the settings a run records, and [`Loaded::of_files`] reads both files again each
+//! time it is asked. No executor is built over any of them yet: the source that
+//! answers a snapshot, the cap and the policy are the later tasks of checkpoint 1B.
 
 mod env;
+mod kinds;
+mod offers;
 mod read;
 mod refused;
+mod settings;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -25,7 +34,10 @@ pub use env::{
     Credentials, ENV_BYTES_LIMIT, ENV_VALUE_LIMIT, ENV_VARIABLES_LIMIT, EnvFile, EnvRefused,
     Handed, KeyValue, LoadRefused, Loaded,
 };
+pub use kinds::{KINDS_LIMIT, Kind, KindNotRegistered, KindRefused, Kinds, Table};
+pub use offers::{NotReady, Offers, Unanswered};
 pub use refused::{ConfigRefused, KEY_SHOWN_LIMIT};
+pub use settings::SettingsRefused;
 
 /// The longest config file, in bytes. A longer one is refused from its length, before
 /// it is read.

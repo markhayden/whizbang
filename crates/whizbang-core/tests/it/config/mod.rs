@@ -1,12 +1,17 @@
 //! The config (`SPEC.md` section 4; ADR 0011; plan 1B, tasks C1 to C5): the file and
 //! its strict reader (`file`), its digest (`digest`), and the examples of its guide and
-//! of its record (`examples`). Here, what was first: the TOML reader the workspace takes
+//! of its record (`examples`); the kinds of backend and what a config offers with them
+//! (`roster`), both files read again each time (`files`) and the settings a run records
+//! (`settings`). Here, what was first: the TOML reader the workspace takes
 //! (task B0b), shown to do the three things a strict reader of a config rests on.
 
 mod digest;
 mod env;
 mod examples;
 mod file;
+mod files;
+mod roster;
+mod settings;
 
 /// A made-up key: the shape of one, and the key of nothing. It is put together at run
 /// time, so that no file of the repository holds one whole.
