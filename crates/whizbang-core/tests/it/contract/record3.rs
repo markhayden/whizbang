@@ -629,6 +629,15 @@ fn what_the_schema_cannot_say_of_where_data_went_the_types_refuse() {
     refused("an account with a space", &|d| {
         went(d, "account", json!("a b"))
     });
+    // A cut account is seven characters that end in three dots: seven of another
+    // ending, and five or six of any, are neither a whole account nor a cut one.
+    refused("seven characters that were not cut", &|d| {
+        went(d, "account", json!("acct_4f"))
+    });
+    refused("five characters", &|d| went(d, "account", json!("abcde")));
+    refused("six characters that end in dots", &|d| {
+        went(d, "account", json!("abc..."))
+    });
     refused("one recipient and outcome twice", &|d| {
         let first = d["egress"][0].clone();
         d["egress"].as_array_mut().unwrap().push(first);
