@@ -484,15 +484,34 @@ temporary folder: no task below is run against a store or a models directory tha
 **Depends on:** the tag `m1a`. **Reads:** `docs/plans/m1a-note.md`; `docs/carry-over.md`.
 Nothing is left for it to decide: D8, D9 and D13 are settled above.
 
-- [ ] The carry-over rows that "Carry-over rows and their tasks" gives a new owner are
+- [x] The carry-over rows that "Carry-over rows and their tasks" gives a new owner are
       edited to say so, and the new rows it asks for are added.
-- [ ] If `main` has moved past the tag, each task's "Reads" and "Depends on" lines are
+- [x] If `main` has moved past the tag, each task's "Reads" and "Depends on" lines are
       read against what moved, and a line that no longer fits is corrected here. A
       correction that changes what is built gets the review rounds first.
 
 **Done when** every row of `docs/carry-over.md` that names 1B has the task or the owner
 that table gives it, and `just check` passes.
 **Size:** small. Documents only.
+
+**What the check found.** `main` was at commit f42623e: the tag `m1a` and two merges
+after it, both of documents (the wording of the 1A note, and this plan). No code, no
+script and no ADR moved, so every "Reads" and "Depends on" line was read against the
+tree of the tag. Each file, type, function, test and ADR section that a task names in
+this repo is there, and each file and name of an old repo is there at its commit in
+`docs/sources.toml`. Two lines of this plan were corrected, and neither changes what is
+built:
+
+- I5 said it depends on I4. The order table, which governs, says I4b; the line now says
+  so.
+- "Carry-over rows and their tasks" said that each new row is added by the task it
+  names, and B0's first box says B0 adds them. B0 added the four, and that paragraph now
+  says what the named task does with its row.
+
+Twenty-five rows of `docs/carry-over.md` named 1B, the twenty-five of that table. Each
+now names its tasks, or the owner the table gives it: the cost of a publication, in its
+own row and in the row on 256 calls, is milestone 2's, and installs that share a file
+are 1C's.
 
 ### B0b. Roots
 
@@ -911,7 +930,7 @@ need). **Size:** medium.
 
 ### I5. A policy before a send, and a checked send
 
-**Depends on:** I4. A section of the interfaces' ADR.
+**Depends on:** I4b. A section of the interfaces' ADR.
 
 - [ ] `DispatchPolicy`, in the core: a value the executor holds, asked whether a recipient
       may receive given classes of data, and whether it may be probed. The default
@@ -1833,11 +1852,12 @@ tag `m1a`: twenty-five rows.
 | A hold is judged live by its process id alone (R5) | M5 |
 | Untested cases around installs (R6) | M2b (a signal during a download), M5d (a removal racing an install), M6 (a reinstall between a call and its retry; a corrupt installation record) |
 
-New rows this plan asks for, added by the task named: a fuller record of what an
-interrupted run did, owner "none; reopen on need" (I4b); `whizbang models list|get|remove`
-and their guide, 1C (M6b); `whizbang backends status`, 1C (Z1); the real network client
-and the shipped catalogue, 1C (Z1). The row on what running an action does not do yet
-(milestone 2) keeps the bound on a ledger being asked again; 1B adds none.
+New rows this plan asks for, added by B0, each with the task that brings it in line
+with what was built: a fuller record of what an interrupted run did, owner "none; reopen
+on need" (I4b); `whizbang models list|get|remove` and their guide, 1C (M6b); `whizbang
+backends status`, 1C (Z1); the real network client and the shipped catalogue, 1C (Z1).
+The row on what running an action does not do yet (milestone 2) keeps the bound on a
+ledger being asked again; 1B adds none.
 
 ## Spend
 
