@@ -16,6 +16,7 @@ fn every_refusal_says_one_sentence_of_fixed_words() {
     for (what, name) in [
         (What::Catalogue, "the catalogue"),
         (What::Installation, "the installation record"),
+        (What::Status, "the status record"),
     ] {
         assert_eq!(what.to_string(), name);
         assert_eq!(
@@ -115,6 +116,8 @@ fn every_refusal_says_one_sentence_of_fixed_words() {
             "is not an address: the address has a fragment, and may have none",
         ),
         (Rule::Elsewhere, "is at an origin its model does not name"),
+        (Rule::State, "is not a state an install is in or ended in"),
+        (Rule::Progress, "counts more files staged than there are"),
     ];
     for (rule, sentence) in rules {
         assert_eq!(rule.to_string(), sentence);

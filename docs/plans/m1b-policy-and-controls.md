@@ -1618,7 +1618,8 @@ installation records. **Size:** medium.
 
 **Done when** these pass: two files are staged and verified; a wrong hash, a short file
 and a file one byte too long each fail the download and leave no staged file that passed;
-a download reads no more than the stated size, counted by the fake; a refusal names the
+a download keeps no more than the stated size, and for a file as stated is handed
+exactly its size, counted by the fake; a refusal names the
 file by its catalogue name, escaped and cut, with no path (rule 3).
 **Size:** small.
 
