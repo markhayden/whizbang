@@ -3,6 +3,8 @@
 Status: accepted. Names ADR 0011 (an `Approval`), ADR 0012 (a recipient) and ADR 0015
 ("A policy before a send, and a checked send"), and changes none of them
 Date: 2026-11-14
+Amended: 2026-11-14, with task E6. Added: "Nothing but pixels", and its rows in the
+table of what was read.
 Spec: section 10, "Egress"
 
 ## Context
@@ -34,6 +36,10 @@ Nothing of it is ported:
 | The account must start with the profile's prefix | Rewritten. An approval is of an origin and an account, and a backend's recipient is that approval's only when its origin, its account and its upstreams are the same, each compared whole |
 | `Consent` and its list of upstreams | Rewritten by ADR 0012 as `Recipient`, and by ADR 0011 as `Approval` |
 | `redact_account` | Rewritten by ADR 0012 as `Account::shown` |
+| `scan`, which searched a recorded request for a marker and walked JSON so that image bytes were left out | Rewritten as the check's look at each part of a request before it is handed over: a part that is the encoder's file is pixels and is not read as words, and every other part is |
+| `FORBIDDEN_MARKERS`: how a path starts (a person's folders, the temporary folders, a private folder, `C:` and a backslash, an address of a file) | Rewritten: the same starts, and a drive of any one letter |
+| `FORBIDDEN_MARKERS`: `fixtures/` | Dropped: squint's own folder of recordings |
+| `FORBIDDEN_MARKERS`: the names of metadata blocks (`Exif`, `eXIf`, the XMP and panorama marks) | Dropped as marks to search for. An image leaves as the encoder writes its pixels, which has no block to hold them, and an image file in any other form is refused whole |
 
 ## Decision
 
@@ -65,6 +71,11 @@ they make, or a refusal. It is the one way from a config to a policy.
   such a file (ADR 0011), and approvals that come from two files are held to the same
   rule, because which of the two held would be a guess
   (`gate::approvals_that_name_one_recipient_twice_or_more_than_a_policy_holds_make_no_policy`).
+  A recipient is compared as a recipient and not as a text: the same origin with its
+  host in capitals or with the scheme's own port written, and the same upstreams in
+  another order, is the same recipient, refused as named twice and approved as the
+  one a backend declares
+  (`gate::a_recipient_written_another_way_is_the_same_recipient_named_twice_and_the_one_approved`).
 
 ### Which approval a backend has
 
@@ -108,8 +119,10 @@ nothing: with two requests through one handle at once, the address an answer poi
 to would otherwise pass for a first one
 (`gate::a_request_that_was_answered_after_an_answer_pointed_elsewhere_does_not_make_the_next_address_a_first_one`).
 
-It holds nothing and counts nothing. A check is still asked for a sender that was kept
-past its run (ADR 0015), and being asked changes nothing.
+It holds nothing that changes and counts nothing. A check is still asked for a sender
+that was kept past its run (ADR 0015), and being asked changes nothing. What `{:?}`
+prints of it is its name and how many folders it keeps out, never one of them
+(`gate::what_is_printed_of_the_check_is_its_name_and_how_many_folders_it_keeps_out`).
 
 ### What the tests of the plan's task show, with this policy and this check
 
@@ -135,6 +148,90 @@ past its run (ADR 0015), and being asked changes nothing.
   in where its data went, as `refused`, with the origin and the account cut. Nothing of
   the address but its origin is in the store
   (`gate::a_run_whose_action_catches_the_refusal_and_completes_has_it_in_its_record_with_the_recipient_and_the_reason`).
+
+### Nothing but pixels
+
+Task E6. The code is `crates/whizbang-core/src/egress/pixels.rs`, the look at each
+part in `hops.rs`, and one accessor in `checked.rs` (`Hop::pieces`, which shows a check
+the pieces a request holds; the executor's questions and their order are as they
+were). The tests are in `crates/whizbang-core/tests/it/egress/pixels.rs`, named below
+as `pixels::…`, and three inside the crate, as `egress::pixels::tests::…`.
+
+`SPEC.md` section 10: "Before sending, image metadata is removed." Nothing is removed
+here, because nothing that could hold it is sent.
+
+**An image leaves as a picture, written by one encoder.** `Piece::picture(class,
+picture)` makes a piece from a `Picture` (ADR 0006), which is canonical pixels and has
+no place for metadata, a file name or a path. The bytes are a PNG of three chunks and
+no other: `IHDR`, one `IDAT`, `IEND`; eight bits a sample, red, green, blue and
+alpha, not interlaced; every row after the byte that says it is not filtered; the
+rows stored, not compressed, in blocks of 65,535 bytes. It is written in the core
+with no library, and there is one such file for a picture
+(`pixels::the_encoders_output_for_a_picture_holds_only_the_chunks_the_test_lists`,
+which also reads the pixels back with a decoder that is not whizbang's;
+`egress::pixels::tests::the_checksums_are_the_ones_png_and_zlib_name`).
+
+**An image imported with metadata is sent without it.** A PNG with a colour profile, a
+text chunk and an EXIF block, each holding a marker, is imported; an action that is
+given it asks a backend, which sends the picture; no marker is in any byte the sending
+fake was handed, and the pixels that left are the image's canonical pixels
+(`pixels::an_image_imported_with_an_exif_block_a_text_chunk_and_a_colour_profile_is_sent_and_no_marker_is_in_any_byte_the_fake_was_handed`).
+
+**The check looks at every part of a request, at every address,** after its rule for
+an answer that pointed elsewhere, and refuses in fixed words that show nothing of what
+it found (`pixels::every_part_of_a_request_is_looked_at`):
+
+1. **A part that is, byte for byte, a file the encoder writes is pixels,** and is not
+   read as words: pixels spell anything by chance
+   (`pixels::a_picture_as_the_encoder_writes_it_is_sent_whatever_its_pixels_spell`).
+   The reader takes the size from where the encoder writes it, holds the length that
+   size gives against the part's length before it reads on, and copies nothing.
+2. **Any other part that starts as an image file does is refused:** a PNG, a JPEG, a
+   GIF, a TIFF or a WebP. So a PNG with one chunk more, one byte more or fewer, an
+   interlaced header, a filtered row, a block that is not the encoder's or a wrong
+   checksum is not sent, in a part of any class
+   (`pixels::an_image_file_that_the_encoder_did_not_write_is_refused`).
+3. **A part, or the rest of an address, that holds a folder the check was told to keep
+   out is refused.** `SendCheck::keeping_out(folder)` is told the root of the
+   executor's store, as it is written; at most 8 (`KEPT_OUT_LIMIT`), and a path of
+   nothing is refused. What is printed of a check is how many it keeps out
+   (`pixels::a_check_keeps_out_a_bounded_number_of_folders_and_prints_none`).
+4. **A part that holds an absolute path is refused:** one of `/Users/`, `/home/`,
+   `/tmp/`, `/var/folders/`, `/private/` and `file://`, or a drive, which is one
+   letter, a colon and a backslash where the letter does not end a longer word or
+   number
+   (`pixels::a_body_that_holds_an_absolute_path_or_the_stores_root_is_refused_by_the_sending_interface`,
+   `pixels::words_that_hold_no_path_are_sent_as_they_are`).
+
+Limits of it, each pinned or stated:
+
+- **It errs toward refusing.** The rule goes by how a path starts. An address in a
+  prompt whose path starts as a home folder does, and a one-letter label before an
+  escaped line break, are refused as paths
+  (`pixels::known_words_that_only_look_like_a_path_are_refused_too`). A piece is the
+  words as they are, not as a wire format escapes them.
+- **A file name alone is not found,** nor a relative path, nor an absolute path under
+  a folder that is not in the list and was not given to `keeping_out`. That no file
+  name leaves is held by what a picture is, not by a search.
+- **A folder is found only as it was written to the check.** Another spelling of the
+  same folder (through a link, with another case) is not. The list of path starts is
+  not applied to an address, whose path is the recipient's: only the folders kept out
+  are.
+- **Another encoder's file that is the same bytes passes.** For pixels that do not
+  compress, an encoder that stores them writes the very file this one does; it holds
+  nothing but those pixels, and is sent. The test uses a picture of one colour, which
+  the other encoder compresses.
+- **An image inside other bytes is not seen:** an image in base64 inside words, or in
+  a container the list does not name. Adapters are trusted code (`SPEC.md` section
+  10); the type they are given for an image is `Piece::picture`.
+- **The file is not compressed,** so it is a little larger than four bytes a pixel.
+  Nothing real is sent in 1B. A compressing encoder before a real send is on
+  `docs/carry-over.md`; it changes one function and the reader beside it.
+- **A picture whose rows do not fit one chunk has no file** (`NotAllowed::TooLong`).
+  No picture within the limit of a capability's picture (50,000,000 pixels) is one, so
+  no test reaches the refusal through a picture; the sizes are tested without pixels
+  (`egress::pixels::tests::a_size_of_no_pixels_and_a_size_past_one_chunk_have_no_file`,
+  `egress::pixels::tests::pixels_that_are_not_of_the_size_have_no_file`).
 
 ### Limits, each pinned or stated
 
@@ -173,6 +270,10 @@ past its run (ADR 0015), and being asked changes nothing.
   `may_receive(recipient, classes)`, with the classes a capability's request holds
   before any piece is made; a request it refuses does not reach the checked sender.
 - **Task E3.** `SendCheck` is where a limit on a chain of answers goes.
+- **Tasks I6 and W1.** The check an executor is given is
+  `SendCheck::new().keeping_out(root)`, with the root of its store.
+- **A real sender (1C).** It puts the pieces of a request into a wire format itself.
+  A picture piece is already a whole PNG file.
 
 ## Consequences
 
@@ -195,6 +296,16 @@ past its run (ADR 0015), and being asked changes nothing.
 - **The upstreams of a backend a subset of its approval's.** Turned down for now:
   equality is ADR 0012's and ADR 0015's rule, and a looser one can be added when a
   backend needs it; a stricter one could not be added later without breaking a config.
+- **A mark on a piece that says it is pixels,** set by `Piece::picture` alone, in
+  place of reading the bytes again. Turned down for now: it changes ADR 0012's type,
+  and bytes that are read again need no trust in a mark. It costs one pass over each
+  picture at each address.
+- **The PNG encoder of the `image` library, which the core already holds.** Turned
+  down for now: its bytes depend on the versions of its compressor, which the core
+  does not pin (`docs/carry-over.md`, the row on one encoder in the core), and a
+  reader could not say "exactly what the encoder writes" of them without inflating.
+- **A general rule for an absolute path** (a slash after a space or a quote). Turned
+  down: it refuses the path of every address and every pointer in a tool's schema.
 - **A policy of the approvals that could be taken, with the rest left out.** Turned
   down: a config that is half applied is not the config a person wrote.
 - **The check asks the policy and the recipient again.** Turned down: the executor

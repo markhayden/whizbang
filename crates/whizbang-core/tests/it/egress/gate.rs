@@ -305,6 +305,53 @@ fn approvals_that_name_one_recipient_twice_or_more_than_a_policy_holds_make_no_p
     assert!(DispatchPolicy::from_approvals(&all).is_ok());
 }
 
+#[test]
+fn a_recipient_written_another_way_is_the_same_recipient_named_twice_and_the_one_approved() {
+    // One recipient written two ways: the host in capitals, the scheme's own port
+    // written, and the upstreams in the other order.
+    let plain = config(
+        "[egress.recipients.plain]\n\
+         origin = \"https://api.example.com\"\n\
+         account = \"acct_4f8a1c9e77\"\n\
+         upstreams = [\"https://uploads.example.net\", \"https://elsewhere.example.org\"]\n\
+         classes = [\"prompts\"]\n",
+    );
+    let other = config(
+        "[egress.recipients.other]\n\
+         origin = \"HTTPS://API.Example.COM:443\"\n\
+         account = \"acct_4f8a1c9e77\"\n\
+         upstreams = [\"https://ELSEWHERE.example.org:443\", \"https://uploads.example.net\"]\n\
+         classes = [\"evidence\"]\n",
+    );
+    let (first, second) = (approval(&plain, "plain"), approval(&other, "other"));
+    assert_eq!(first.recipient(), second.recipient());
+    // Across two files it is named twice, in either order.
+    assert_eq!(
+        DispatchPolicy::from_approvals([first, second]),
+        Err(NotAllowed::Twice)
+    );
+    assert_eq!(
+        DispatchPolicy::from_approvals([second, first]),
+        Err(NotAllowed::Twice)
+    );
+    assert_eq!(
+        NotAllowed::Twice.to_string(),
+        "an origin is named twice, or is the recipient's own, or a recipient is approved twice"
+    );
+    // And a backend that declares it the other way is the recipient the file approved.
+    let made = policy_of(&plain);
+    let declared = Recipient::new(origin("HTTPS://API.EXAMPLE.COM:443/"))
+        .with_account(account(ACCOUNT))
+        .forwarding_to(vec![
+            origin("https://Elsewhere.Example.org"),
+            origin("https://uploads.example.net:443"),
+        ])
+        .unwrap();
+    assert!(made.may_receive(&declared, prompts()));
+    assert!(policy_of(&other).may_receive(&declared, Classes::of(&[DataClass::Evidence])));
+    assert!(!made.may_receive(&declared, Classes::of(&[DataClass::Evidence])));
+}
+
 // --- the check behind a send, for a first address ---------------------------------------------
 
 #[test]
@@ -770,6 +817,9 @@ fn a_request_that_was_answered_after_an_answer_pointed_elsewhere_does_not_make_t
 }
 
 #[test]
-fn what_is_printed_of_the_check_is_its_name() {
-    assert_eq!(format!("{:?}", SendCheck::new()), "SendCheck");
+fn what_is_printed_of_the_check_is_its_name_and_how_many_folders_it_keeps_out() {
+    assert_eq!(
+        format!("{:?}", SendCheck::new()),
+        "SendCheck(0 folders kept out)"
+    );
 }

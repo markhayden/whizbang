@@ -1484,10 +1484,13 @@ these runs.
 - [x] The policy a config's `egress` table makes (I5's `DispatchPolicy`): which recipients
       may receive which classes of data.
 - [x] The check behind a `Sender` (I5) for the first address.
-      (Built before I3, so three parts of "Done when" below are not shown and are I3's
-      and S5's, with the gate's place: the fake backend counting none, the fake meter
-      having seen nothing, and no dispatch record. ADR 0019, "Limits";
-      `docs/carry-over.md`.)
+
+**Not done yet, though both boxes are true:** built before I3, so four parts of "Done
+when" below are not shown as the plan words them. The fake backend counting none and
+the fake meter having seen nothing are I3's, with the gate's place; no dispatch record
+is S5's; and "no other backend is asked" is shown only of an executor that has no
+fallback, and again at the gate's place by I3. ADR 0019, "Limits";
+`docs/carry-over.md`.
 
 **Done when** these pass, each with an executor a test builds with the policy: with the
 empty policy every request to a backend with a recipient is refused and the fake counts
@@ -1545,7 +1548,7 @@ marker credential is nowhere in the record (rule 4).
 **Depends on:** E2. **Reads:** squint `crates/squint-providers/src/privacy.rs` (`scan`,
 `FORBIDDEN_MARKERS`).
 
-- [ ] What leaves for a recipient holds no image metadata, no file name and no path. An
+- [x] What leaves for a recipient holds no image metadata, no file name and no path. An
       image is sent as a `Picture` (ADR 0006), which is canonical pixels and has no place
       for any; the sending interface takes a body made by whizbang's own encoder, which
       writes no ancillary data.
