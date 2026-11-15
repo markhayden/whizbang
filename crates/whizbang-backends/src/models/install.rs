@@ -479,16 +479,18 @@ impl<'a> Model<'a> {
         self.fs().exists(&self.folder.join("DRAINING"))
     }
 
-    /// Takes a draining mark off, under the directory's lock, and makes that
-    /// durable, for one who has just taken the model's lock: whoever set the mark
-    /// does not have that lock. With no mark nothing is locked and nothing changed.
+    /// Takes a draining mark off, under the directory's lock, for one who has just
+    /// taken the model's lock: whoever set the mark does not have that lock. With
+    /// no mark nothing is locked and nothing changed. It is given no sync of its
+    /// own: the install syncs the model's folder as its next step, before it
+    /// deletes anything, and a mark that a crash brings back is a stale mark again,
+    /// which the next to take the lock takes off.
     fn unmark(&self) -> Result<(), InstallRefused> {
         if !self.draining()? {
             return Ok(());
         }
         let _directory = self.dir.lock()?.ok_or(InstallRefused::DirectoryBusy)?;
         self.dir.remove(&self.folder.join("DRAINING"))?;
-        self.fs().sync_dir(&self.folder)?;
         Ok(())
     }
 

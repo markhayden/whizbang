@@ -1195,8 +1195,10 @@ another process by the mark alone.
   (`remove::a_removal_and_an_install_let_go_together_end_in_one_of_the_two_orders`).
 - **A mark left by a process that died is taken off by the next to take the model's
   lock.** An install, as its first change after it said `installing`, takes off a
-  mark it finds, under the directory's lock, and syncs: whoever set it does not
-  have the model's lock. It cannot tell a dead remover's mark from that of one
+  mark it finds, under the directory's lock: whoever set it does not have the
+  model's lock. The sync of the model's folder that follows is the one every
+  install makes before it deletes anything; a mark that a crash brings back is
+  a stale mark again. It cannot tell a dead remover's mark from that of one
   that is alive and trying for the lock, so **a removal sets its mark again**
   when it is gone: each time it is not given the lock, and once it has it, from
   when nobody takes it off but itself. A removal replaces whatever mark it finds

@@ -1137,7 +1137,8 @@ fn a_mark_left_by_a_process_that_died_is_taken_off_by_the_next_to_take_the_lock(
     };
     // The next to take the lock is an install, of the identity that is there: it
     // takes the mark off under the directory's lock, as its first change after the
-    // status, downloads nothing, and the next hold is given.
+    // status, downloads nothing, and the next hold is given. The sync that follows
+    // is the install's own, of the model's folder, before it deletes anything.
     dies();
     let fs = Arc::new(ShimFs::new());
     let fake = serving_both();
