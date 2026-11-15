@@ -494,6 +494,10 @@ fn backend(at: &At, mut table: Table, capability: &str, name: &str) -> Read<Back
             // backend's name and this key, and a record takes a name of no more
             // than its bound: a longer one is refused here, so that every config
             // that is read is one whose runs can record their settings.
+            // The length is counted in bytes and said as characters, here and in
+            // the record's bound. The two are the same only while a capability's
+            // name, a backend's name and a setting's key are ASCII, which the
+            // rules for each hold them to today.
             let recorded = setting_name(capability, name, &key).len();
             if recorded > SETTING_NAME_LIMIT {
                 return Err(at.refuse(format!(

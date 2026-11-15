@@ -544,6 +544,10 @@ impl Engine {
         match self.look_up(id, request.fingerprint())? {
             Found::Nothing => Err(refused.into()),
             Found::Same(earlier) => Ok(Answer::Repeat(earlier)),
+            // As in `begin`: the id is looked at once more before an answer names it.
+            Found::Other { .. } if self.secrets.now().redact(id.as_str()) != id.as_str() => {
+                Err(Refusal::SecretInRequestId.into())
+            }
             Found::Other { run } => Err(CallError::Refused(Refusal::Conflict {
                 request: id.clone(),
                 run,

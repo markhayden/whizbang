@@ -22,6 +22,13 @@ shown, and which count is one request's).
 Amended: 2026-11-14, with task E4. Added: "The run's recipients", and why a recipient
 is not approved, said in one of three sentences. Changed: the test of a backend that
 declares another account, which held the one sentence there was.
+Amended: 2026-11-14, after the reviews of tasks E3 and E4. Changed in "A download and a
+probe": a download's credential is the first request's at every address of its origin,
+where it was the one of the request before and was lost after an address at another
+origin; and each wrapper has a test of a signal set between two addresses. In "The
+run's recipients": the two sentences that said an origin "is approved", which is not
+so of one approved for probing alone. In "Consequences": the wrappers are not in use
+until 1C.
 Spec: section 10, "Egress"
 
 ## Context
@@ -265,6 +272,10 @@ since the address that answered was asked. A signal that is set is looked at bef
 each address, and a fault of the client behind comes back as it is
 (`chains::a_cancelled_download_asks_nothing_and_a_fault_of_the_downloader_is_handed_on`,
 `chains::a_probe_that_brings_a_credential_is_refused_and_a_cancelled_one_asks_nothing`).
+One that is set while the first address answers that it moved ends the call as
+`cancelled`, with no stage, and nothing is asked of the second address
+(`chains::a_download_cancelled_between_two_addresses_asks_nothing_of_the_second`,
+`chains::a_probe_cancelled_between_two_addresses_asks_nothing_of_the_second`).
 
 **A download is held to a list of origins it is handed:** the origins a catalogue's
 entry names for its files. `CheckedDownloader::new(downloader, origins)` takes 16 at
@@ -285,6 +296,10 @@ none (`chains::a_checked_download_holds_a_bounded_number_of_origins_and_prints_h
 - **A credential the request brings goes to the origin it is bound to and no other:**
   to a second address at that origin, and not to another origin of the list
   (`chains::a_downloads_credential_goes_to_the_origin_it_is_bound_to_and_no_other`).
+  It is the first request's credential that is looked at for each address, not that
+  of the request before: a download moved from its origin to another and back
+  carries it at the first address, not at the second, and again at the third
+  (`chains::a_downloads_credential_is_carried_again_at_its_origin_after_an_address_at_another`).
   The checked downloader holds no credential itself.
 - **Bytes and then another address are not followed,** even to an origin of the list:
   the fault is `malformed` (`chains::bytes_and_then_another_address_are_not_followed`).
@@ -398,10 +413,12 @@ recipient may receive, which is exactly when `may_receive` says yes:
 | `NotApproved` | When | The sentence |
 |---|---|---|
 | `Classes` | The policy names the recipient whole, and not for every class the request holds; or no approval names its origin | "the recipient is not approved for the classes of data the request holds" |
-| `Account` | An approval names its origin, and none names it with its account | "the recipient's origin is approved, but not with the account the backend declares" |
-| `Upstreams` | An approval names its origin and its account, with other upstreams | "the recipient's origin and account are approved, but not with the upstreams the backend declares" |
+| `Account` | An approval names its origin, and none names it with its account | "the recipient's origin is named by an approval, but not with the account the backend declares" |
+| `Upstreams` | An approval names its origin and its account, with other upstreams | "the recipient's origin and account are named by an approval, but not with the upstreams the backend declares" |
 
-An origin approved under several accounts is compared with all of them: one with the
+The two sentences say that an approval names the origin, not that the origin is
+approved: the approval may be for probing alone, which approves no data. An origin
+approved under several accounts is compared with all of them: one with the
 recipient's account makes it the upstreams, in whichever order they were approved. An
 account is compared whole, never by what is shown of it. No sentence holds an
 account, an origin or a class: the refusal's note names the origin and the classes, as
@@ -581,9 +598,10 @@ Limits of it, each pinned or stated:
   sends to a recipient the config approves for what the request holds, at its own
   origin and its upstreams, through five answers that point elsewhere at most,
   and nothing else.
-- A download client and a prober are wrapped, not trusted: a model's file comes only
-  from the origins its entry names, and a probe goes only to a recipient the config
-  approves for probing.
+- Once 1C wraps its download client and its prober, neither is trusted: a model's file
+  comes only from the origins its entry names, and a probe goes only to a recipient
+  the config approves for probing. Until then the installer's own check holds a
+  download, and nothing probes.
 - A config's `account` and `upstreams` are part of what is approved. Changing either in
   the file and not in the backend, or the other way, approves nothing.
 - Reversing this costs the tasks that make a snapshot of a config (C5) and the rest of

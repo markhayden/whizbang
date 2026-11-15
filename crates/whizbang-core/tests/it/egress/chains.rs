@@ -246,6 +246,70 @@ fn a_downloads_credential_goes_to_the_origin_it_is_bound_to_and_no_other() {
     assert_eq!(headers, [key.clone(), key, Vec::new()]);
 }
 
+#[test]
+fn a_downloads_credential_is_carried_again_at_its_origin_after_an_address_at_another() {
+    let first = address("https://weights.example.org/m/graph.onnx");
+    let mirror = address("https://mirror.example.net/g");
+    let back = address("https://weights.example.org/v2/graph.onnx");
+    let fake = Arc::new(
+        FakeDownloader::new()
+            .moved(&first, mirror.clone())
+            .moved(&mirror, back.clone())
+            .serving(&back, file()),
+    );
+    let request = asking(&first)
+        .with_credential(credential(WEIGHTS, "w"))
+        .unwrap();
+    let (ended, _) = download(&checked(&fake), &request);
+    assert_eq!(ended.unwrap(), Downloaded::Bytes(2500));
+    let key = vec![("x-api-key".to_owned(), made_up_key("w"))];
+    let headers: Vec<_> = fake
+        .requests()
+        .iter()
+        .map(|asked| asked.headers())
+        .collect();
+    // It is the first request's credential that is carried, not the one of the
+    // request before: to its own origin, not to the mirror, and to its own again.
+    assert_eq!(headers, [key.clone(), Vec::new(), key]);
+}
+
+/// A downloader that sets the signal it is handed while it answers that the file
+/// moved, to an origin of the list, and counts how often it was asked.
+struct CancelledWhileMoved(AtomicU32);
+
+impl Downloader for CancelledWhileMoved {
+    fn download(
+        &self,
+        _: &DownloadRequest,
+        cancellation: &Cancellation,
+        _: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<Downloaded, Fault> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        cancellation.cancel();
+        Ok(Downloaded::Moved(address("https://mirror.example.net/g")))
+    }
+}
+
+#[test]
+fn a_download_cancelled_between_two_addresses_asks_nothing_of_the_second() {
+    let inner = Arc::new(CancelledWhileMoved(AtomicU32::new(0)));
+    let through = CheckedDownloader::new(inner.clone(), &catalogue()).unwrap();
+    let first = address("https://weights.example.org/m/graph.onnx");
+    let (ended, kept) = download(&through, &asking(&first));
+    // The first address was asked, so the fault states no stage.
+    assert_eq!(
+        refused_as(&ended.unwrap_err()),
+        (
+            FaultKind::Cancelled,
+            Stage::Unresolved,
+            "the download was cancelled"
+        )
+    );
+    // The mirror is one of the origins, and nothing was asked of it.
+    assert_eq!(inner.0.load(Ordering::SeqCst), 1);
+    assert!(kept.is_empty());
+}
+
 /// A downloader that hands over a piece and then says the file moved: what none does.
 struct BytesThenMoved(AtomicU32);
 
@@ -550,6 +614,36 @@ fn a_probe_that_brings_a_credential_is_refused_and_a_cancelled_one_asks_nothing(
         probe(&through, "https://api.example.com/health").unwrap_err(),
         gone
     );
+}
+
+/// A prober that sets the signal it is handed while it answers that the recipient
+/// moved, within the recipient, and counts how often it was asked.
+struct CancelledWhilePointed(AtomicU32);
+
+impl Prober for CancelledWhilePointed {
+    fn probe(&self, _: &ProbeRequest, cancellation: &Cancellation) -> Result<Probed, Fault> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        cancellation.cancel();
+        pointed("https://api.example.com/v2/health")
+    }
+}
+
+#[test]
+fn a_probe_cancelled_between_two_addresses_asks_nothing_of_the_second() {
+    let inner = Arc::new(CancelledWhilePointed(AtomicU32::new(0)));
+    let through = CheckedProber::new(inner.clone(), policy(&probing()), recipient());
+    let fault = probe(&through, "https://api.example.com/health").unwrap_err();
+    // The first address was asked, so the fault states no stage.
+    assert_eq!(
+        refused_as(&fault),
+        (
+            FaultKind::Cancelled,
+            Stage::Unresolved,
+            "the probe was cancelled"
+        )
+    );
+    // The address it was pointed to is the recipient's own, and was not probed.
+    assert_eq!(inner.0.load(Ordering::SeqCst), 1);
 }
 
 #[test]
