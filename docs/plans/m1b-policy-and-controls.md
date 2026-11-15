@@ -1030,24 +1030,24 @@ command on it, with the crash proofs. A section of the interfaces' ADR, which ch
 0007 (the alternative it turned down for now) and says, as "Decisions" does, that
 recovery is lossy and pessimistic by intent.
 
-- [ ] One entry point opens a store to write. It takes the writer lock, runs recovery,
+- [x] One entry point opens a store to write. It takes the writer lock, runs recovery,
       and only then hands the writer out. Recovery is a list of parts (`RecoveryPart`),
       each shown the current generation and adding to one publication of names made
       once. The store module itself names nothing above it: the entry point is the
       contract's, over `Store::open`.
-- [ ] Three states, shared by everyone who asks for the same store value: initializing,
+- [x] Three states, shared by everyone who asks for the same store value: initializing,
       ready, failed. Whoever asks while it is initializing waits for the answer; nobody
       is handed a writer before it is ready. If recovery fails, the lock is let go, the
       store is handed out to read only, and the failure is said without a path: as
       nothing published when it failed before its publication was visible, and as
       published and not confirmed when the last sync failed. An open confirms the
       generation it finds before it is ready.
-- [ ] The executor, `store delete`, `store prune`, `store import` and the `spend`
+- [x] The executor, `store delete`, `store prune`, `store import` and the `spend`
       commands that write all open through it. A test holds the binary to no other way.
-- [ ] A store at its generation limit refuses a publication that adds names, recovery's
+- [x] A store at its generation limit refuses a publication that adds names, recovery's
       among them. Then the writer is handed out for deleting and pruning alone, which
       make the file smaller, and every other writing command is refused and told why.
-- [ ] With no part, recovery publishes nothing and the store opens as before.
+- [x] With no part, recovery publishes nothing and the store opens as before.
 
 **Done when** these pass: a fake part's records are published before the writer is
 handed out, all of the parts' records or none, shown by refusing each call of the
@@ -1065,12 +1065,44 @@ settles and ends nothing twice. Then:
 part's records once and whole (rule 2); a part that panics is a failed recovery.
 **Size:** medium.
 
+**Built in two pull requests, as planned** (I4, 2026-11-15). The first is the entry
+point and its states (`contract::Opening`; ADR 0015, "One way to a writer, with
+recovery before it", which names the test of each clause it shows): the first,
+second and fifth boxes. It shows, through the entry point and a fake part, every
+clause of "Done when" but three, which are the second pull request's with the third
+and fourth boxes: one test for each writing command on a store a killed process
+left; every writing command refused after a failed recovery, and at the limit every
+one but `store delete` and `store prune`; and `recover::a_crash_at_any_event…`.
+The second is those, with every writing command of the binary on the entry point
+(`wiring::opening`) and the test that holds the binary to it.
+
+**Reworded with the task** (I4, 2026-11-15). Four things are as the task found them.
+
+- "the `spend` commands that write all open through it". There is none: `whizbang
+  spend` is a stub that reads and writes nothing (task B0b). The test that holds the
+  binary to one way reads every source file of the binary, `spend.rs` among them, so
+  a `spend` command that opens a store any other way fails it.
+- "each writing command, run on a store a killed process left, recovers before it
+  changes anything, one test for each command". The binary's own list of parts is
+  empty until tasks I4b and S6, so the tests call each command as `main` does with a
+  fake part in the recovery (`store::run_with`, `rascal::run_with`): they are unit
+  tests of the binary, not runs of its process.
+
+- "An open confirms the generation it finds before it is ready." It does so by a
+  sync of the store's root, made by the entry point before any part is asked
+  (`Store::confirm`), and not inside `Store::open`: an open that is not through the
+  entry point confirms nothing, as before.
+- "two executors built at once over one store value". An executor is built over the
+  writer (`Engine::over`), and the store value that is shared is the `Opening`:
+  building an executor is asking the opening for its writer, and that is what the
+  test does. `Engine::over` is as it was.
+
 ### I4b. The interrupted record, and what readers say of it
 
 **Depends on:** I4. Two pull requests: the record and the recovery's part that writes it;
 then the readers. In the executor's files and `crates/whizbang/src/runs.rs`.
 
-- [ ] A recovery's part: every run that is admitted, has no record and is not open in
+- [x] A recovery's part: every run that is admitted, has no record and is not open in
       this process is ended with the record "What a crashed run is recovered to"
       describes, made from its admission alone, and for a request with an id its ending.
       A run whose admission cannot be read is ended with what its name gives. Its
@@ -1814,7 +1846,7 @@ approved, carries no user data, and its redirect off the recipient is refused.
 
 **Depends on:** E3.
 
-- [ ] Each send is noted where it is made, at the `Sender`, in the run's place for facts:
+- [x] Each send is noted where it is made, at the `Sender`, in the run's place for facts:
       the origin that was reached and the classes of data. A run's `egress` list is those
       notes. A send the gate or a hop's check refused is in the record as refused.
 
@@ -1827,6 +1859,13 @@ a process left after it had sent data is recovered as interrupted, with `egress`
 nothing as sent; a local run's list is empty; an account in the list is shown cut, and a
 marker credential is nowhere in the record (rule 4).
 **Carry-over:** the row on the record's empty lists (`egress`). **Size:** small.
+
+**Ticked with task I4b** (2026-11-15). The task was built before the recovery of a run
+a dead process left, and its box waited for one clause: "a run that a process left
+after it had sent data is recovered as interrupted, with `egress` named in
+`outcome.lost` and an empty list". Task I4b's first pull request shows it
+(`recipients::a_run_that_a_process_left_after_it_had_sent_data_is_recovered_as_interrupted_with_egress_named_as_lost_and_an_empty_list`;
+ADR 0019, "The run's recipients", names the test of every other clause).
 
 ### E6. Nothing but pixels
 

@@ -55,12 +55,12 @@
 
 use std::io::Read;
 use std::path::Path;
-use std::sync::Arc;
 
+use whizbang::wiring::{self, Make};
 use whizbang_core::artifact::{self, Artifact};
+use whizbang_core::contract::Recovery;
 use whizbang_core::identity::DecodeLimits;
-use whizbang_core::store::fs::RealFs;
-use whizbang_core::store::{Error, Store};
+use whizbang_core::store::Error;
 
 /// The most bytes the picture an image artifact holds may have: ADR 0001's limit on a
 /// file, which is the default of [`DecodeLimits`].
@@ -167,8 +167,14 @@ fn read_with(file: &Path, looked: &dyn Fn()) -> Result<Vec<u8>, String> {
 /// Reads and checks the file before the store is touched: a file that is refused creates
 /// nothing. The store must be there, like the store of every store command, unless
 /// `create` says to make one where there is none; what is printed then begins by saying
-/// that a store was created, when this process created it.
-pub fn import(file: &Path, root: &Path, create: bool) -> Result<String, String> {
+/// that a store was created, when this process created it. The store is opened through
+/// the one entry point, and recovered by `recovery` before anything is brought in.
+pub fn import(
+    file: &Path,
+    root: &Path,
+    create: bool,
+    recovery: Recovery,
+) -> Result<String, String> {
     let bytes = read(file)?;
     let artifact = Artifact::from_bytes(&bytes, &DecodeLimits::default())
         .map_err(|error| format!("{}: {error}", file.display()))?;
@@ -176,18 +182,18 @@ pub fn import(file: &Path, root: &Path, create: bool) -> Result<String, String> 
     let (kind, id) = (artifact.artifact_type(), artifact.id());
 
     let mut printed = String::new();
-    let store = if create {
-        let store = Store::open_in_existing_parent(root, Arc::new(RealFs))
-            .map_err(|error| error.to_string())?;
+    let opening = if create {
+        let opening =
+            wiring::opening(root, Make::TheRoot, recovery).map_err(|error| error.to_string())?;
         // The open says whether it made the store: it knows, having held the lock.
-        if store.created() {
+        if opening.created() {
             // On the standard output, which nothing else escapes.
             let shown = whizbang::door::printable(&root.display().to_string());
             printed.push_str(&format!("created a store at {shown}\n"));
         }
-        store
+        opening
     } else {
-        Store::open_existing(root, Arc::new(RealFs)).map_err(|error| match error {
+        wiring::opening(root, Make::Nothing, recovery).map_err(|error| match error {
             // Where a store could be made, say how.
             Error::Missing { .. } | Error::NotAStore { found: None, .. } => {
                 format!("{error}; pass --create to have one made there")
@@ -195,6 +201,9 @@ pub fn import(file: &Path, root: &Path, create: bool) -> Result<String, String> 
             other => other.to_string(),
         })?
     };
+    // The writer, once the store is recovered. A store that was made here and could
+    // not be recovered is still said to have been made.
+    let store = opening.writer().map_err(|why| format!("{printed}{why}"))?;
     let generation = store.snapshot().map_err(|error| error.to_string())?;
     if artifact::holds(&generation, kind, id) {
         printed.push_str(&format!("already there: {kind} {id}\n"));
