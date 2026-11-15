@@ -15,6 +15,18 @@
 //! - **Names:** a new file, a new directory, the new name of a rename and a removal, once
 //!   [`Fs::sync_dir`] ran on the directory that holds the name (for a rename, the directory
 //!   of the new name). Syncing any other directory does nothing for it.
+//! - **A name follows its folder.** A name that is not yet durable is a name of the
+//!   folder it is in, whatever that folder is called. When the folder is renamed, or a
+//!   folder above it is, the name is known by its new path from then on: a sync of the
+//!   folder under its new name makes it durable, and a crash loses it, or keeps it, as a
+//!   name of the folder as it is then called. So a folder renamed into place, with the
+//!   rename made durable by a sync of its parent and the folder itself never synced, is
+//!   in its place after a crash without the files that were made in it. A crash that
+//!   takes the rename back takes those names back with it: they are lost, or kept,
+//!   under the folder's old name. This holds for a new file, a new folder, a removal
+//!   and a rename inside the folder, at any depth, and through any number of renames.
+//!   The folder's own name is a name in its parent and does not move. A file whose
+//!   sync never ran follows the same way, and is cut under its new name.
 //!
 //! What a crash does with the rest is the caller's choice ([`Lost`]), because a real disk may
 //! keep more than was asked of it, and may keep one directory's names without another's, or
@@ -32,7 +44,10 @@
 //! rename that replaced the link, makes the link again, leading where it led, whether
 //! or not anything is there. Nothing else is modelled: every other call does with a
 //! link what the real file system does with it, and a file reached through a link is
-//! known to the shim by the name it was written under, not by the link's.
+//! known to the shim by the name it was written under, not by the link's. **So a test
+//! does not write a file piece by piece through a link to its folder:** the shim knows
+//! the file by the path it was given, removing the link forgets the file, and a crash
+//! then leaves all of it, whatever tail was chosen.
 //!
 //! # A file written piece by piece
 //!
@@ -115,7 +130,8 @@ pub enum Event {
 }
 
 /// What a crash loses. Under every choice, a file whose content was not synced is cut to
-/// half its length if its name survives; and of a file written piece by piece, the bytes
+/// half its length if its name survives, or if it was removed or replaced and the crash
+/// brings it back; and of a file written piece by piece, the bytes
 /// appended since its last sync are left as [`Tail`] says, which is their first half
 /// unless a test chose otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,13 +179,24 @@ pub enum Tail {
 
 /// A copy of what a path held, kept so that a crash can bring it back.
 enum Saved {
-    /// A file's bytes; and, for a file written piece by piece, how many of them a
-    /// sync had made durable, so that a crash which brings the file back leaves of it
-    /// what it would have left had the file stayed.
-    File(Vec<u8>, Option<u64>),
+    /// A file's bytes, and what a crash leaves of them, so that a crash which brings
+    /// the file back leaves of it what it would have left had the file stayed.
+    File(Vec<u8>, Kept),
     Dir(Vec<(PathBuf, Saved)>),
     /// A link, as where it leads: what is there was never read.
     Link(PathBuf),
+}
+
+/// What a crash leaves of a file's bytes.
+#[derive(Clone, Copy)]
+enum Kept {
+    /// All of them: the content was synced.
+    Whole,
+    /// The first half: the file was written whole and its sync never ran.
+    Half,
+    /// What [`Tail`] says of a file written piece by piece, this many of whose bytes
+    /// a sync made durable.
+    Stream(u64),
 }
 
 /// A change of names that no sync has made durable yet.
@@ -179,6 +206,10 @@ enum Pending {
         from: PathBuf,
         to: PathBuf,
         replaced: Option<Saved>,
+        /// The changes not yet durable, by their numbers, that were of names inside
+        /// what was renamed and so follow it: a crash that takes this rename back
+        /// takes them back under the old name too.
+        followed: Vec<u64>,
     },
     Removed {
         path: PathBuf,
@@ -201,6 +232,36 @@ impl Pending {
             Pending::Created(path) | Pending::Removed { path, .. } => path,
             Pending::Renamed { to, .. } => to,
         }
+    }
+
+    /// Takes the change along with a folder that was renamed from `from` to `to`:
+    /// each of its names that is inside the folder is that name under `to`. A name
+    /// that is the folder's own stays, since it is a name in the folder's parent,
+    /// which did not move. True when a name was changed.
+    fn follow(&mut self, from: &Path, to: &Path) -> bool {
+        let mut followed = false;
+        let mut take = |path: &mut PathBuf| {
+            if let Some(inside) = renamed_inside(path, from, to) {
+                *path = inside;
+                followed = true;
+            }
+        };
+        match self {
+            Pending::Created(path) | Pending::Removed { path, .. } => take(path),
+            Pending::Renamed { from, to, .. } => {
+                take(from);
+                take(to);
+            }
+        }
+        followed
+    }
+}
+
+/// `path` under its new name, when it is inside `from` and not `from` itself.
+fn renamed_inside(path: &Path, from: &Path, to: &Path) -> Option<PathBuf> {
+    match path.strip_prefix(from) {
+        Ok(rest) if !rest.as_os_str().is_empty() => Some(to.join(rest)),
+        _ => None,
     }
 }
 
@@ -270,8 +331,9 @@ struct State {
     next_stream: u64,
     /// What a crash leaves of a streamed file's unsynced bytes.
     tail: Tail,
-    /// Changes of names not yet durable, oldest first.
-    pending: Vec<Pending>,
+    /// Changes of names not yet durable, oldest first, each with a number of its own.
+    pending: Vec<(u64, Pending)>,
+    next_pending: u64,
     crash_before: Option<(usize, Lost)>,
     fail_before: Option<usize>,
     /// Refuse a call whose event matches, after letting this many such calls through.
@@ -416,6 +478,13 @@ impl ShimFs {
         self.lock().crash_named.clone()
     }
 
+    /// Notes a change of names that is not yet durable.
+    fn pend(state: &mut State, change: Pending) {
+        let number = state.next_pending;
+        state.next_pending += 1;
+        state.pending.push((number, change));
+    }
+
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -527,13 +596,13 @@ fn crash(state: &mut State, lost: Lost) {
     let pending = std::mem::take(&mut state.pending);
     let dirs: Vec<&Path> = pending
         .iter()
-        .filter_map(Pending::dir)
+        .filter_map(|(_, change)| change.dir())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
     let names: Vec<&Path> = pending
         .iter()
-        .map(Pending::name)
+        .map(|(_, change)| change.name())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
@@ -541,9 +610,11 @@ fn crash(state: &mut State, lost: Lost) {
     state.crash_names = names.len();
     state.crash_named = names.iter().map(|name| name.to_path_buf()).collect();
     let chosen = |mask: u64, i: Option<usize>| i.is_some_and(|i| i < 64 && mask >> i & 1 == 1);
+    // Whether a change is lost is decided by the name it has now: one that followed a
+    // renamed folder is lost, or kept, as a name of the folder under its new name.
     let loses: Vec<bool> = pending
         .iter()
-        .map(|change| match lost {
+        .map(|(_, change)| match lost {
             Lost::Unsynced => true,
             Lost::ContentOnly => false,
             Lost::Subset(mask) => chosen(
@@ -555,7 +626,14 @@ fn crash(state: &mut State, lost: Lost) {
             Lost::Names(mask) => chosen(mask, names.iter().position(|n| *n == change.name())),
         })
         .collect();
-    for (change, lost) in pending.into_iter().zip(loses).rev() {
+    // Newest first. The changes still to come are older, and are kept at hand: a
+    // rename that is taken back takes those that followed it back with it.
+    let mut older: Vec<(u64, Pending, bool)> = pending
+        .into_iter()
+        .zip(loses)
+        .map(|((number, change), lost)| (number, change, lost))
+        .collect();
+    while let Some((_, change, lost)) = older.pop() {
         if !lost {
             continue;
         }
@@ -563,11 +641,23 @@ fn crash(state: &mut State, lost: Lost) {
             Pending::Created(path) => {
                 let _ = RealFs.remove_all(&path);
             }
-            Pending::Renamed { from, to, replaced } => {
+            Pending::Renamed {
+                from,
+                to,
+                replaced,
+                followed,
+            } => {
                 // Back under its old name; or, when the directory it came from is durably
                 // gone, under no name at all.
                 if std::fs::rename(&to, &from).is_err() {
                     let _ = RealFs.remove_all(&to);
+                }
+                // What was inside it and not yet durable is inside it still, under
+                // the old name.
+                for (number, change, _) in &mut older {
+                    if followed.contains(number) {
+                        change.follow(&to, &from);
+                    }
                 }
                 if let Some(saved) = replaced {
                     restore(&to, &saved, tail);
@@ -618,9 +708,10 @@ fn link(leads_to: &Path, path: &Path) {
 #[cfg(not(unix))]
 fn link(_leads_to: &Path, _path: &Path) {}
 
-/// A copy of what is at `path`. A file written piece by piece is kept with how many
-/// of its bytes are durable, by its name in `streams`.
-fn save(path: &Path, streams: &BTreeMap<u64, Stream>) -> io::Result<Saved> {
+/// A copy of what is at `path`, each file with what a crash leaves of it: a file
+/// written piece by piece by its name among the streams, and a file whose sync never
+/// ran by its name among those.
+fn save(path: &Path, state: &State) -> io::Result<Saved> {
     let found = std::fs::symlink_metadata(path)?;
     if found.is_symlink() {
         // Not followed: removing a link, or replacing one, touches the link alone.
@@ -629,27 +720,32 @@ fn save(path: &Path, streams: &BTreeMap<u64, Stream>) -> io::Result<Saved> {
     if found.is_dir() {
         let mut entries = Vec::new();
         for entry in RealFs.list(path)? {
-            let saved = save(&entry, streams)?;
+            let saved = save(&entry, state)?;
             entries.push((entry, saved));
         }
         Ok(Saved::Dir(entries))
     } else {
-        let durable = streams
-            .values()
-            .find(|stream| stream.path == path)
-            .map(|stream| stream.durable);
-        Ok(Saved::File(std::fs::read(path)?, durable))
+        let stream = state.streams.values().find(|stream| stream.path == path);
+        let kept = match stream {
+            Some(stream) => Kept::Stream(stream.durable),
+            None if state.unsynced.contains(path) => Kept::Half,
+            None => Kept::Whole,
+        };
+        Ok(Saved::File(std::fs::read(path)?, kept))
     }
 }
 
-/// Puts a saved copy back, at a crash: a file written piece by piece as the crash
-/// would have left it.
+/// Puts a saved copy back, at a crash: each file as the crash would have left it had
+/// it stayed.
 fn restore(path: &Path, saved: &Saved, tail: Tail) {
     match saved {
-        Saved::File(bytes, None) => {
+        Saved::File(bytes, Kept::Whole) => {
             let _ = create(path, bytes);
         }
-        Saved::File(bytes, Some(durable)) => {
+        Saved::File(bytes, Kept::Half) => {
+            let _ = create(path, &bytes[..bytes.len() / 2]);
+        }
+        Saved::File(bytes, Kept::Stream(durable)) => {
             let length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
             let left = Left::of(length, *durable, tail);
             let mut bytes = bytes.clone();
@@ -663,8 +759,12 @@ fn restore(path: &Path, saved: &Saved, tail: Tail) {
         Saved::Link(leads_to) => link(leads_to, path),
         Saved::Dir(entries) => {
             let _ = RealFs.create_dir(path);
+            // By its last name, under the folder as it is named now: the folder may
+            // have followed a rename since the copy was made.
             for (entry, saved) in entries {
-                restore(entry, saved, tail);
+                if let Some(name) = entry.file_name() {
+                    restore(&path.join(name), saved, tail);
+                }
             }
         }
     }
@@ -675,7 +775,7 @@ impl Fs for ShimFs {
         let event = Event::CreateDir(path.to_path_buf());
         let mut state = self.next_event(&event)?;
         self.real.create_dir(path)?;
-        state.pending.push(Pending::Created(path.to_path_buf()));
+        Self::pend(&mut state, Pending::Created(path.to_path_buf()));
         state.events.push(event);
         Ok(())
     }
@@ -685,7 +785,7 @@ impl Fs for ShimFs {
         let mut state = self.next_event(&event)?;
         create(path, bytes)?;
         state.unsynced.insert(path.to_path_buf());
-        state.pending.push(Pending::Created(path.to_path_buf()));
+        Self::pend(&mut state, Pending::Created(path.to_path_buf()));
         state.events.push(event);
         drop(state);
         // The sync is an event of its own: a crash or a refusal here leaves the file
@@ -706,7 +806,9 @@ impl Fs for ShimFs {
                 path.display()
             )));
         }
-        state.pending.retain(|change| change.dir() != Some(path));
+        state
+            .pending
+            .retain(|(_, change)| change.dir() != Some(path));
         state.events.push(event);
         Ok(())
     }
@@ -723,15 +825,21 @@ impl Fs for ShimFs {
             ));
         }
         let replaced = match std::fs::symlink_metadata(to) {
-            Ok(_) => Some(save(to, &state.streams)?),
+            Ok(_) => Some(save(to, &state)?),
             Err(_) => None,
         };
         self.real.rename(from, to)?;
-        // A file is renamed only once its write has returned, so its content is synced;
-        // one that another thread is still writing keeps its state under its new name.
-        if state.unsynced.remove(from) {
-            state.unsynced.insert(to.to_path_buf());
+        // What was replaced is no more: its saved copy holds what a crash may bring
+        // back. A file whose sync never ran keeps that state under its new name,
+        // renamed itself or inside a folder that was.
+        if from != to {
+            state.unsynced.retain(|file| !file.starts_with(to));
         }
+        let unsynced = std::mem::take(&mut state.unsynced);
+        state.unsynced = unsynced
+            .into_iter()
+            .map(|file| renamed(&file, from, to).unwrap_or(file))
+            .collect();
         // A streamed file that was replaced is no more: its saved copy holds what a
         // crash may bring back. One that was renamed, or whose folder was, is the same
         // file under its new name; and one renamed onto itself was replaced by nothing.
@@ -745,11 +853,24 @@ impl Fs for ShimFs {
                 stream.path = path;
             }
         }
-        state.pending.push(Pending::Renamed {
-            from: from.to_path_buf(),
-            to: to.to_path_buf(),
-            replaced,
-        });
+        // A name inside a renamed folder that is not yet durable follows the folder:
+        // it is a name of the folder, whatever the folder is called, and becomes
+        // durable when the folder is synced under its new name.
+        let mut followed = Vec::new();
+        for (number, change) in &mut state.pending {
+            if change.follow(from, to) {
+                followed.push(*number);
+            }
+        }
+        Self::pend(
+            &mut state,
+            Pending::Renamed {
+                from: from.to_path_buf(),
+                to: to.to_path_buf(),
+                replaced,
+                followed,
+            },
+        );
         state.events.push(event);
         let onto = |name: &String| to.file_name().is_some_and(|last| last == name.as_str());
         if state
@@ -769,16 +890,19 @@ impl Fs for ShimFs {
     fn remove_all(&self, path: &Path) -> io::Result<()> {
         let event = Event::Remove(path.to_path_buf());
         let mut state = self.next_event(&event)?;
-        let saved = save(path, &state.streams)?;
+        let saved = save(path, &state)?;
         self.real.remove_all(path)?;
         state.unsynced.retain(|file| !file.starts_with(path));
         state
             .streams
             .retain(|_, stream| !stream.path.starts_with(path));
-        state.pending.push(Pending::Removed {
-            path: path.to_path_buf(),
-            saved,
-        });
+        Self::pend(
+            &mut state,
+            Pending::Removed {
+                path: path.to_path_buf(),
+                saved,
+            },
+        );
         state.events.push(event);
         Ok(())
     }
@@ -805,7 +929,7 @@ impl Fs for ShimFs {
             return Ok(None);
         };
         if !was_there {
-            state.pending.push(Pending::Created(path.to_path_buf()));
+            Self::pend(&mut state, Pending::Created(path.to_path_buf()));
         }
         state.events.push(event);
         state.lock_files.retain(|lock| Arc::strong_count(lock) > 1);
@@ -843,7 +967,7 @@ impl Fs for ShimFs {
                 durable: 0,
             },
         );
-        state.pending.push(Pending::Created(path.to_path_buf()));
+        Self::pend(&mut state, Pending::Created(path.to_path_buf()));
         state.events.push(event);
         Ok(Box::new(ShimNewFile {
             fs: self.same(),
