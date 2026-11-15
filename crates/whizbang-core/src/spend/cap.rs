@@ -18,7 +18,8 @@
 //! **What is compared** is the estimate of the preparation made at admission, which is
 //! what the admission would reserve. An estimate equal to the cap is admitted. One
 //! that has no bound ([`Estimate::is_unbounded`](crate::contract::Estimate::is_unbounded))
-//! is over every cap.
+//! is over every cap, the largest amount there is among them: under a cap, a call
+//! whose cost cannot be counted is not admitted.
 //!
 //! **A call from inside an action** is held to the same cap: it is shown with its
 //! caller's snapshot, and with a cap of its own when it came with one.
@@ -98,7 +99,10 @@ impl AdmissionPart for CallCap {
             }
             (Some(_), Some(own)) => (own, OVER_ITS_OWN_CAP),
         };
-        if asking.prepared().estimate().micros() > cap {
+        // The largest amount there is, as a cap, would be equal to a cost with no
+        // bound: such a cost is over it all the same.
+        let estimate = asking.prepared().estimate();
+        if estimate.is_unbounded() || estimate.micros() > cap {
             return Err(refused(RefusalKind::OverAllowance, over));
         }
         Ok(())

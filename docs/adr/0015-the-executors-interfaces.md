@@ -46,6 +46,10 @@ Amended: 2026-11-14, with the first half of task I7. Added: "An inventory". The
 lease, the other half of the task, waits for the wrappers of task I3 and is not here.
 Amended: 2026-11-15, with task S3. Changed under "One snapshot of the config", "What
 waits": the part that holds a call to the cap is built.
+Amended: 2026-11-15, with task S8. Changed under "A part in the admission", "Limits":
+the kinds the two parts that refuse are recorded under. And, as the review of task S3
+asked, under "One snapshot of the config": a snapshot prints whether it holds a cap,
+and not the cap.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -249,9 +253,13 @@ asked.
 **Limits, each stated.**
 
 - **A part's refusal has no kind of its own in a run's record.** `run/3` fixes the
-  kinds, so a part chooses one of them, and its own name is in the sentence only. A
-  part that finds no kind that fits needs a new version of the record
-  (`docs/carry-over.md`).
+  kinds, so a part chooses one of them, and its own name is in the sentence only. The
+  two parts that refuse each found one, and say why it fits where they are written:
+  the cap of one call is `over_allowance`, or `invalid` for a cap that is none (task
+  S3, `crates/whizbang-core/src/spend/cap.rs`), and the age of a preparation is
+  `stale` (task S8, `spend/age.rs`); each has a test of a call from inside an action
+  that it refused, in its caller's record. A part that finds no kind that fits needs
+  a new version of the record.
 - **The window before the publication is as it was.** Between a part's answer and the
   publication nothing holds still what the part judged on, as nothing holds the config
   (ADR 0007, "The window that is left"). A part whose answer depends on what the store
@@ -677,9 +685,11 @@ pairs are noted in the run's place for facts when the run starts, and are in its
 record (`snapshot::the_settings_of_a_runs_snapshot_are_in_its_record`). A config is a
 `Settings` (`Config::settings_of`, ADR 0011).
 
-**What a snapshot prints** is its digest, whether it holds backends and settings, its
+**What a snapshot prints** is its digest, whether it holds backends, settings and a
 cap, its policy as a policy prints itself, and how many secrets it brings
-(`snapshot::a_snapshot_prints_no_credential_no_secret_and_no_setting`).
+(`snapshot::a_snapshot_prints_no_credential_no_secret_and_no_setting`). The cap's
+amount is not printed: the config's reader does not look for a secret in a number
+(ADR 0011, "What the reader does not do"), so a cap could spell one.
 
 **The fake.** `FakeSource` answers the snapshot a test gave it, which the test swaps;
 refuses or panics when told to; counts how often it was asked; and can run a test's

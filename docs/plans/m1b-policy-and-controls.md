@@ -1208,7 +1208,8 @@ is held to the cap too; the two fixed vectors of `prepared/1` are as they were.
 `crates/whizbang-core/tests/it/spend/cap.rs`. A request's own cap of zero is refused; a
 snapshot whose cap is zero, which the config's reader never gives, is the part's
 failure and no refusal of the call. No refusal quotes an amount, so a cap that spells
-a secret is not shown. The part is given to an executor by whoever builds it: the
+a secret is not shown, and a snapshot prints only whether it holds a cap. A cost with
+no bound is refused under any cap. The part is given to an executor by whoever builds it: the
 binary's by task W1. The two vectors are held where they were, by
 `prepare::a_fingerprint_is_this_digest` and
 `prepare::a_fingerprint_with_one_of_everything_is_this_digest`, which did not change.)
@@ -1350,11 +1351,11 @@ restart, where the ledger is settled, the child is ended, and no parent is made.
 the stale refusals); table-manners `CONTRACT.md` section 4.5, "Binding a call to its
 estimate", and `schemas/core/estimate.json`. An admission's part, in `spend/`.
 
-- [ ] A preparation carries the time it was made, from the injected clock; I1's section
+- [x] A preparation carries the time it was made, from the injected clock; I1's section
       says where, beside the fingerprint and not in it. Admission refuses, as stale, a
       preparation a request came with that is an hour old or older, and one made at a
       time later than now.
-- [ ] The hour is a constant of the core. No environment variable or test build shortens
+- [x] The hour is a constant of the core. No environment variable or test build shortens
       it, as rascal's did: a test moves the clock.
 
 **Done when** these pass, with the clock moved by hand and no sleep (rule 6): a preparation
@@ -1363,6 +1364,16 @@ reservation; one made "after now", as a clock set back gives, is refused; the sa
 id sent again after the hour returns the first run and is not checked for age, because a
 repeated id is looked up first; preparing again after a refusal gives a preparation that
 is admitted; a request that came with no preparation is not checked for age.
+(Built: the part is `spend::PreparationAge`, the hour is `spend::PREPARATION_HOLDS_MS`,
+and the tests are `age::…` in `crates/whizbang-core/tests/it/spend/age.rs`. The
+refusal is the part's, `Refusal::ByPart` under the name `age`, of the kind `stale`:
+it is not `Refusal::Stale`, which says how a preparation differs. That a preparation
+carries its time, beside the fingerprint, is task I1's and is held by
+`part::a_requests_cap_and_a_preparations_time_reach_a_part_as_they_were_given`. That
+nothing shortens the hour is held by the part's type, which is empty
+(`age::the_hour_is_a_constant_and_the_part_holds_nothing_that_could_shorten_it`), and
+by every other test of the file, which reaches the hour by moving the clock. The part
+is given to an executor by whoever builds it: the binary's by task W1.)
 **Size:** small.
 
 ### S9. `whizbang spend status` and `reset`
