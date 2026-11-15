@@ -8,6 +8,7 @@ mod cap;
 mod fold;
 mod name;
 mod probe;
+mod quote;
 mod reading;
 mod record;
 mod reserve;
