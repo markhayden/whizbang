@@ -1228,9 +1228,9 @@ fn crashes_inside_the_admission_step(part: usize) {
     //
     // The ledger makes one name in the admission's publication and keeps no books:
     // what is swept is that publication, whole or absent, with a ledger's record in
-    // it. A ledger that makes its hold and its turn there, and closes its
-    // reservation when the run ends, is swept with the real one (plan 1B, task S2):
-    // each name more doubles the ways a crash can leave the names of one step.
+    // it. The real ledger, which makes its hold and its turn there, is swept the same
+    // way in `spend::reserve::a_crash_at_any_event…`: each name more doubles the
+    // ways a crash can leave the names of one step.
     let admitting = |world: &World, ledger: &Arc<Unjudging>, store: Arc<Store>| {
         engine_with(store, &world.runs, Priced::new(250_000)).with_ledger(ledger.clone())
     };
@@ -1384,15 +1384,15 @@ fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_fourth_steps_
 
 #[test]
 fn a_crash_at_any_event_of_an_admission_with_a_hold_and_its_turn_leaves_no_record_or_all_of_it() {
-    // The same step, through the real ledger, which makes two names in the admission's
-    // publication, as ADR 0016 has every ledger do: the hold and the next turn of its
-    // epoch. The owner allowed all there is before any of it. Power is lost before each call that changes the disk, from the request
-    // to the moment the action would start, under the fixed losses only: every name
-    // undone, every name kept, and two alternating choices of which directories and
-    // of which names lose theirs. The sweep above tries every choice there is, with a
-    // ledger that makes one name; that form with a ledger that makes its hold and its
-    // turn is the real ledger's to pass (plan 1B, task S2,
-    // `reserve::a_crash_at_any_event…`; `docs/carry-over.md`).
+    // The same step, through the real ledger, which makes two names in the
+    // admission's publication, as ADR 0016 has every ledger do: the hold and the next
+    // turn of its epoch. The owner allowed all there is before any of it. Power is
+    // lost before each call that changes the disk, from the request to the moment
+    // the action would start, under the fixed losses only: every name undone, every
+    // name kept, and two alternating choices of which directories and of which
+    // names lose theirs. Every choice there is, of an admission through the real
+    // ledger, is tried by `spend::reserve::a_crash_at_any_event…`, with a call of
+    // nothing: this is the one with an amount, under an allowance.
     const LOSSES: [Lost; 6] = [
         Lost::Unsynced,
         Lost::ContentOnly,
