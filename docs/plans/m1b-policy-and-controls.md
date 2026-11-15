@@ -1281,12 +1281,14 @@ real ledger is not the fake: an allowance is the owner's reset, which a test mak
 as its three names until task S9 builds the command, so the store holds those names
 and the epoch is 1; a store allows nothing until one is made; and no reservation is
 closed when its run ends, because the real ledger's `settle` is task S11's, so a
-reservation counts in full where the fake had released it. And "leaves the run,
-the id's record, the reservation and the ledger's record together or none" is
-shown, with every choice of what a crash loses, of a call of nothing in a store
-with no reset: the same publication, without a reset to publish before each of
-4,570 crashes. An admission of an amount is swept under six fixed losses
-(`admit::a_crash_at_any_event_of_an_admission_with_a_hold_and_its_turn_leaves_no_record_or_all_of_it`).
+reservation counts in full where the fake had released it.
+**The sweep took the place of two in `admit.rs`** (the orchestrator's ruling,
+2026-11-15): the every-choice sweep with a ledger of one name
+(`admit::a_crash_inside_the_admission_step_*`, four tests), which it holds all of and
+adds the ledger's names to, shown by mutants of the admission's publication that
+each sweep kills; and the sweep under six fixed losses with a hold and its turn,
+which showed nothing the new one does not once that had an amount under an
+allowance.
 Two things were added that the task did not name, each asked for by a review:
 a refusal of its own where the books need their owner
 (`Refusal::NeedsOwner`), and `Ledger::confirm` and `settle` without a default.

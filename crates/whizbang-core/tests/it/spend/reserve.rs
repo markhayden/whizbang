@@ -13,9 +13,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use whizbang_core::contract::{
-    ADMITTED_NAME, Call, CallError, Capability, Closing, Declined, Engine, Estimate, Executor,
-    Ledger, MadeName, NotJudged, Produced, Refusal, RefusalKind, Registry, Request, RequestId,
-    Reread, Reservation, RunId, RunState, Settled, Step,
+    ADMITTED_NAME, Action, Admission, Answer, Call, CallError, Capability, Closing, Declined,
+    Engine, Estimate, Executor, Ledger, MadeName, NotJudged, Produced, Refusal, RefusalKind,
+    Registry, Request, RequestId, Reread, Reservation, RunId, RunState, Settled, Step,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::spend::fold::State;
@@ -27,8 +27,8 @@ use whizbang_testkit::ledger::FakeLedger;
 use whizbang_testkit::scratch::Scratch;
 
 use super::support::{
-    Bounds, Counted, World, allow, books, counting, plant, plant_bytes, ran, reservation_bytes,
-    reserved, spend_names,
+    Bounds, Counted, Hand, World, allow, books, counting, plant, plant_bytes, ran,
+    reservation_bytes, reserved, spend_names,
 };
 use super::{amount, n, run};
 
@@ -743,7 +743,7 @@ fn confirmed_after(
             assert_eq!(repeat.run(), &made, "{label}");
             assert!(matches!(
                 repeat,
-                whizbang_core::contract::Answer::Repeat(ref earlier)
+                Answer::Repeat(ref earlier)
                     if matches!(earlier.state(), RunState::Ended(_))
             ));
             assert_eq!(world.ran(), 0, "{label}");
@@ -1101,40 +1101,77 @@ fn an_admission_that_judged_before_the_owners_reset_is_asked_again_under_the_new
 /// How many tests the sweep below is cut into.
 const PARTS: usize = 6;
 
+/// What the owner allowed in the store the sweep admits in, and what its call may
+/// cost.
+const ALLOWED: u64 = 1_000_000;
+const PRICE: u64 = 250_000;
+
+/// Copies a folder and all under it: a store that nothing has open.
+fn copy_all(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let (source, target) = (entry.path(), to.join(entry.file_name()));
+        if source.is_dir() {
+            copy_all(&source, &target);
+        } else {
+            std::fs::copy(&source, &target).unwrap();
+        }
+    }
+}
+
 /// Power is lost before each call that changes the disk during an admission through
 /// the real ledger, from the request to the moment the action starts. Each is tried
 /// with every way a disk can lose what was not yet durable: every name undone, every
 /// name kept, and every choice there is of which directories, and of which names,
 /// lose theirs. Whatever is left, the next writer finds the run, the id's record, the
 /// reservation, the ledger's hold and its turn there together, or none of them
-/// (rule 2).
+/// (rule 2); and the same request is then admitted and runs once, or is answered
+/// with the run that is there.
 ///
 /// **It is cut by the ways, not by the steps.** Half the crashes there are belong to
-/// three of the steps, where ten names are undecided at once. So each part goes
+/// a few of the steps, where nine names are undecided at once. So each part goes
 /// through every step, and takes every `PARTS`th of the ways a crash there can end
 /// from `part`; between them the parts try every way of every step. How many ways a
 /// step has is learnt from one crash at it, which every part makes.
 ///
-/// The call is one of nothing, in a store no reset was made in, which the ledger
-/// admits there: the publication is the one every admission makes, and no reset has
-/// to be published before each crash. An admission of an amount under an allowance
-/// is swept under fixed losses beside this
-/// (`admit::a_crash_at_any_event_of_an_admission_with_a_hold_and_its_turn_leaves_no_record_or_all_of_it`).
+/// The call may cost a quarter of a dollar, under an allowance of a dollar that the
+/// owner's reset made durable before any of it. That store is made once and copied
+/// for each crash, so that no reset is published before each of them.
 fn admissions_crashed(part: usize) {
+    // The store every crash starts from: the owner allowed a dollar, and nothing has
+    // it open.
+    let template = Scratch::new("reserve-crash-template");
+    {
+        let fs = Arc::new(ShimFs::new());
+        let store = Store::open(&template.path().join("store"), fs).unwrap();
+        assert_eq!(allow(&store, ALLOWED), 1);
+    }
+    let reset = [
+        "spend/epoch/1".to_owned(),
+        format!("spend/reset/1/{ALLOWED}"),
+        "spend/turn/0/1".to_owned(),
+    ];
     let scratch = |fs: ShimFs| {
         let dir = Scratch::new("reserve-crash");
+        copy_all(&template.path().join("store"), &dir.path().join("store"));
         let fs = Arc::new(fs);
         let store = Arc::new(Store::open(&dir.path().join("store"), fs.clone()).unwrap());
         (dir, fs, store)
     };
-    let admitting = |store: Arc<Store>, runs: &Arc<AtomicU64>, ledger: &Arc<Counted>| {
+    let over = |store: Arc<Store>, action: Arc<dyn Action>, ledger: &Arc<Counted>| {
         let mut registry = Registry::new();
+        registry.register(action).unwrap();
+        let backends = Arc::new(Bounds(Estimate::of_micros(PRICE)));
+        Engine::over(registry, backends, store, Digest::of_bytes(b""))
+            .with_clock(Hand::at(7000))
+            .with_ledger(ledger.clone())
+    };
+    let admitting = |store: Arc<Store>, runs: &Arc<AtomicU64>, ledger: &Arc<Counted>| {
         let paint = counting(runs, "paint", &[Capability::Fill], |_, _| {
             Ok(Produced::nothing())
         });
-        registry.register(paint).unwrap();
-        let backends = Arc::new(Bounds(Estimate::of_micros(0)));
-        Engine::over(registry, backends, store, Digest::of_bytes(b"")).with_ledger(ledger.clone())
+        over(store, paint, ledger)
     };
     // The calls that change the disk during one admission are found by running one.
     let (opened, steps) = {
@@ -1143,22 +1180,13 @@ fn admissions_crashed(part: usize) {
         let started = Arc::new(AtomicU64::new(0));
         let noting = {
             let (fs, started) = (fs.clone(), started.clone());
-            counting(
-                &Arc::new(AtomicU64::new(0)),
-                "paint",
-                &[Capability::Fill],
-                move |_, _| {
-                    started.store(fs.events().len() as u64, Ordering::SeqCst);
-                    Ok(Produced::nothing())
-                },
-            )
+            let runs = Arc::new(AtomicU64::new(0));
+            counting(&runs, "paint", &[Capability::Fill], move |_, _| {
+                started.store(fs.events().len() as u64, Ordering::SeqCst);
+                Ok(Produced::nothing())
+            })
         };
-        let mut registry = Registry::new();
-        registry.register(noting).unwrap();
-        let backends = Arc::new(Bounds(Estimate::of_micros(0)));
-        let engine = Engine::over(registry, backends, store, Digest::of_bytes(b""))
-            .with_ledger(Counted::new());
-        ran(engine.request(&asked("order-17")));
+        ran(over(store, noting, &Counted::new()).request(&asked("order-17")));
         (opened, started.load(Ordering::SeqCst) as usize - opened)
     };
     assert!(steps > 8, "{steps}");
@@ -1175,9 +1203,6 @@ fn admissions_crashed(part: usize) {
             if index % PARTS != part && index != 2 {
                 continue;
             }
-            // The three ways every step is given are followed by the same request
-            // again; the masks, which are most of the crashes, by a reading alone.
-            let followed = index < 3;
             crashes += 1;
             let at = format!("step {step}, {lost:?}");
             let (dir, fs, store) = scratch(ShimFs::new().crash_before(opened + step, lost));
@@ -1198,31 +1223,44 @@ fn admissions_crashed(part: usize) {
             }
             // The action started only where the admission was whole and durable, and
             // was confirmed: the last call of the step clears its staging away.
-            let admitted_here = runs.load(Ordering::SeqCst) == 1;
-            assert!(!admitted_here || step >= steps - 1, "{at}");
+            let ran_here = runs.load(Ordering::SeqCst);
+            assert!(
+                ran_here == 0 || (ran_here == 1 && step >= steps - 1),
+                "{at}"
+            );
             drop(engine);
 
-            // The next writer recovers the store, and reads what survived.
+            // The next writer recovers the store, and reads what survived: every
+            // name outside runs with its content, and every run with its names.
             let root = dir.path().join("store");
             let store = Arc::new(Store::open(&root, Arc::new(ShimFs::new())).unwrap());
             let generation = store.snapshot().unwrap();
+            let read = |name: &str| {
+                let entry = generation.get(name).unwrap();
+                assert_eq!(entry.kind, whizbang_core::store::Kind::Diagnostic, "{at}");
+                store.read(entry).unwrap()
+            };
             let names: Vec<&str> = generation.entries().keys().map(String::as_str).collect();
+            for name in &names {
+                read(name);
+            }
             let made: Vec<&String> = generation.runs().keys().collect();
             let folded = books(&store);
             match made.as_slice() {
                 [] => {
                     // Nothing: no id's record, no reservation, and neither the hold
-                    // nor its turn.
-                    assert_eq!(names, [] as [&str; 0], "{at}");
-                    assert!(!admitted_here, "{at}: an action ran unadmitted");
-                    assert_eq!(folded.next_turn(0), 1, "{at}");
-                    if followed {
-                        // The same request is admitted, and runs, once.
-                        let again = admitting(store.clone(), &runs, &ledger);
-                        ran(again.request(&asked("order-17")));
-                        assert_eq!(runs.load(Ordering::SeqCst), 1, "{at}");
-                        assert_eq!(reserved(&store).len(), 1, "{at}");
-                    }
+                    // nor its turn. No action had started.
+                    assert_eq!(names, reset, "{at}");
+                    assert_eq!(reserved(&store), [], "{at}");
+                    assert_eq!(ran_here, 0, "{at}: an action ran unadmitted");
+                    assert_eq!(folded.next_turn(1), 1, "{at}");
+                    assert_eq!(balance(&store, 1), (ALLOWED, exactly(0), ALLOWED), "{at}");
+                    // The same request is admitted, and runs, once.
+                    let again = admitting(store.clone(), &runs, &ledger);
+                    ran(again.request(&asked("order-17")));
+                    assert_eq!(runs.load(Ordering::SeqCst), 1, "{at}");
+                    assert_eq!(reserved(&store).len(), 1, "{at}");
+                    assert!(spend_names(&store).contains(&"spend/turn/1/1".to_owned()));
                     outcomes.insert("nothing");
                 }
                 [made_id] => {
@@ -1233,42 +1271,75 @@ fn admissions_crashed(part: usize) {
                         names,
                         [
                             "requests/order-17/admitted",
-                            format!("spend/held/0/{made_id}/0").as_str(),
+                            reset[0].as_str(),
+                            format!("spend/held/1/{made_id}/{PRICE}").as_str(),
                             format!("spend/reservations/{made_id}").as_str(),
-                            "spend/turn/0/1",
+                            reset[1].as_str(),
+                            reset[2].as_str(),
+                            "spend/turn/1/1",
                         ],
                         "{at}"
                     );
+                    let of = run(made_id);
+                    // The id's record names the run and says what was reserved; the
+                    // run holds the same admission and nothing else.
+                    let admission = Admission::from_bytes(&read(names[0])).unwrap();
+                    assert_eq!(admission.run(), &of, "{at}");
+                    assert_eq!(admission.reserved_micros(), Some(PRICE), "{at}");
                     let own = generation.run(made_id).unwrap();
                     let held: Vec<&String> = own.entries().keys().collect();
                     assert_eq!(held, [ADMITTED_NAME], "{at}");
-                    let of = run(made_id);
+                    let inside = own.get(ADMITTED_NAME).unwrap();
+                    assert_eq!(inside.digest, generation.get(names[0]).unwrap().digest);
+                    // The reservation is of that run and that request, for the
+                    // amount the admission says, and holds the admission's digest.
+                    let stored = Reservation::from_bytes(&read(names[3])).unwrap();
+                    assert_eq!(reserved(&store), std::slice::from_ref(&stored), "{at}");
+                    assert_eq!(stored.run(), &of, "{at}");
+                    assert_eq!(stored.request(), Some(&id("order-17")), "{at}");
+                    assert_eq!((stored.micros(), stored.start_ms()), (PRICE, 7000));
+                    assert_eq!(stored.admission(), inside.digest, "{at}");
+                    // The ledger's names: the hold and its turn, both there, each
+                    // the record its name says; the reservation is a set the ledger
+                    // could have written, open, and the record and one hold alone.
+                    let hold = Record::Hold {
+                        epoch: 1,
+                        run: of.clone(),
+                        reserved: amount(PRICE),
+                    };
+                    let turn = Record::Turn {
+                        epoch: 1,
+                        turn: n(1),
+                        by: TurnBy::Admission,
+                        run: Some(of.clone()),
+                    };
+                    assert_eq!(read(names[2]), hold.to_bytes(), "{at}");
+                    assert_eq!(read(names[6]), turn.to_bytes(), "{at}");
                     let standing = folded.reservation(&of).unwrap();
                     assert_eq!(standing.state(), State::Open, "{at}");
+                    assert!(standing.names().reachable(), "{at}");
                     assert!(!standing.names().damaged(), "{at}");
                     assert_eq!(standing.names().count(), 2, "{at}");
-                    assert!(!folded.needs_owner(0), "{at}");
-                    assert_eq!((folded.next_turn(0), folded.due(0)), (2, 1), "{at}");
-                    let stored = reserved(&store);
-                    assert_eq!(stored.len(), 1, "{at}");
-                    assert_eq!(stored[0].run(), &of, "{at}");
-                    assert_eq!(stored[0].request(), Some(&id("order-17")), "{at}");
-                    assert_eq!(
-                        stored[0].admission(),
-                        own.get(ADMITTED_NAME).unwrap().digest,
-                        "{at}"
-                    );
-                    if followed {
-                        // The same request is answered with that run: nothing runs,
-                        // and the ledger is not asked.
-                        let (before, asked_before) = (runs.load(Ordering::SeqCst), ledger.asked());
-                        let again = admitting(store.clone(), &runs, &ledger);
-                        let repeat = again.request(&asked("order-17")).unwrap();
-                        assert_eq!(repeat.run(), &of, "{at}");
-                        assert_eq!(runs.load(Ordering::SeqCst), before, "{at}");
-                        assert_eq!(ledger.asked(), asked_before, "{at}");
-                        assert_eq!(spend_names(&store).len(), 3, "{at}");
-                    }
+                    assert!(!folded.needs_owner(1), "{at}");
+                    assert_eq!((folded.next_turn(1), folded.due(1)), (2, 1), "{at}");
+                    assert!(folded.stands(&of, amount(PRICE)), "{at}");
+                    let left = ALLOWED - PRICE;
+                    assert_eq!(balance(&store, 1), (ALLOWED, exactly(PRICE), left), "{at}");
+                    // The same request is answered with that run, which did not end
+                    // and is not this process's: nothing runs, the ledger is not
+                    // asked, and nothing more is reserved.
+                    let (before, asked_before) = (runs.load(Ordering::SeqCst), ledger.asked());
+                    let again = admitting(store.clone(), &runs, &ledger);
+                    let earlier = match again.request(&asked("order-17")) {
+                        Ok(Answer::Repeat(earlier)) => earlier,
+                        other => panic!("{at}: not answered as a repeat: {other:?}"),
+                    };
+                    assert_eq!(earlier.run(), &of, "{at}");
+                    assert_eq!(earlier.state(), &RunState::NotEnded { here: false });
+                    assert_eq!(runs.load(Ordering::SeqCst), before, "{at}");
+                    assert_eq!(ledger.asked(), asked_before, "{at}");
+                    assert_eq!(reserved(&store), [stored], "{at}");
+                    assert_eq!(spend_names(&store).len(), 6, "{at}");
                     outcomes.insert("all of it");
                 }
                 more => panic!("{at}: {} runs", more.len()),
@@ -1278,13 +1349,13 @@ fn admissions_crashed(part: usize) {
     // Before the last step there is nothing, and at it there is all of it.
     let both: Vec<&str> = outcomes.into_iter().collect();
     assert_eq!(both, ["all of it", "nothing"]);
-    // The masks were not a formality: some step left several directories and ten
+    // The masks were not a formality: some step left several directories and nine
     // names undecided, and each choice was a crash, in one part or another.
     assert!(
-        most_dirs >= 2 && most_names >= 10,
+        most_dirs >= 2 && most_names >= 9,
         "{most_dirs} {most_names}"
     );
-    assert!(crashes > 700, "{crashes}");
+    assert!(crashes > 350, "{crashes}");
 }
 
 #[test]
