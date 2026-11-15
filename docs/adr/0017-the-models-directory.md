@@ -1286,7 +1286,9 @@ offers one local backend.
   It is compared with the names of the catalogue's entries, exactly, with no case
   folded and nothing cut; a name the catalogue does not hold opens nothing. The
   folder that is read is named from the catalogue's own entry, whose name is a
-  `ModelName`
+  `ModelName`; and an entry whose name holds a secret the inventory was told of,
+  in a catalogue made by a reader that was told of others, is not looked for on
+  the disk
   (`inventory::a_declared_name_is_looked_up_in_the_catalogue_and_never_used_as_a_path`).
 - **It holds no lock, and reads the pointer and the record it names,** as "The
   pointer" says of a reader with no lock. It makes nothing: asked of a model that

@@ -266,7 +266,22 @@ fn a_declared_name_is_looked_up_in_the_catalogue_and_never_used_as_a_path() {
         ]
     );
     touches_only(&events, root);
-    assert_eq!(format!("{asked:?}"), "Installations(1 models)");
+    assert_eq!(format!("{asked:?}"), "Installations(1 models)"); // A catalogue made by a reader that was told of other secrets than the
+    // inventory: a model's name that holds a secret the inventory was told of is
+    // not looked for on the disk, under that name or any other.
+    let named = Entry::new(parts(MARKER), &none()).unwrap();
+    let fs = Arc::new(ShimFs::new());
+    let asked = Installations::of(
+        ModelsDir::at(fs.clone(), root),
+        Catalogue::new(vec![named.clone()], &none()).unwrap(),
+        [(named.adapter().clone(), adapter())],
+        secrets(),
+    );
+    assert_eq!(
+        asked.look(MARKER),
+        Installed::NotReady(Unready::NotInCatalogue)
+    );
+    assert!(fs.events().is_empty(), "{:?}", fs.events());
 }
 
 #[test]
