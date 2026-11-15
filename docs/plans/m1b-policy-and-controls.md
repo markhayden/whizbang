@@ -112,6 +112,23 @@ the owner's own, given on 2026-11-13.
   command (S12); every other reservation and every unrelated paid call goes on. Damage
   to an admission or to any other record makes that run `interrupted`, with the
   unreadable part named.
+  **Kept, by the owner's choice, 2026-11-14, with ADR 0016.** The ADR's review rounds
+  had replaced this rule by a stricter one, under which one damaged spend record
+  stopped every admission and every dispatch in the store until a person's command,
+  because going on can count less than was spent where the names that stated the
+  money are the ones that are gone. The owner was told that and chose this rule: an
+  unrelated paid call that the rest of the allowance covers goes on. What it costs is
+  stated in the ADR as accepted limits, each with a named history and the exact
+  amount it is under by ("Limits", (a) and (b); histories 86 and 87). Two things are
+  restated with the ADR and change nothing of the choice. "At its full amount" is at
+  no less than that: a frozen reservation counts for the most its names can mean,
+  which is more, and counts so against every epoch's allowance. And a case this item
+  does not speak of is kept as an exception, to be put to the owner: where no amount
+  can be counted at all. With a frozen reservation that has no hold, or several, the
+  store takes no admission and no dispatch until the owner corrects it. In an epoch
+  whose turns are not those its publications took, nothing is admitted until the
+  owner resets, and nothing is dispatched under that epoch's reservations (ADR 0016,
+  "Epochs").
 - **A person corrects, by a new record.** `whizbang spend adjust` (S12) releases or
   changes the charge of a named interrupted or frozen reservation. It writes a spend
   record under a new name and never edits one. It is a command and nothing else, as
@@ -192,15 +209,22 @@ For a request with an id, the id's ending is made, so a repeat is answered.
 
 **It settles the money, never under.** "The ledger's invariants", below, is what it is
 held to, and I2's ADR the rule. In short, for every reservation that has no settlement and whose run is not
-open in this process (S6), run or no run:
+open in this process, nor waiting there for its admission to be confirmed (S6), run or no run:
 
-- if every spend record under it can be read, and every request dispatched under it has
-  a settlement, the tree is charged what those settlements say, and what the reservation
+- if its names are a set the ledger could have written, every spend record under it
+  can be read, and every request dispatched under it has a settlement with its whole
+  chain, the tree is charged what those settlements say, and what the reservation
   held beyond that is released; a tree that dispatched nothing is charged nothing,
   because a dispatch is durable before a request leaves;
-- otherwise it is charged, as interrupted, the larger of its full amount and what is
-  known against it: its readable settlements and the bounds of its dispatches that have
-  none;
+- otherwise, where its names are still a set the ledger could have written, it is
+  charged, as interrupted, the larger of its full amount and what is known against it:
+  its settlements and the bounds of its dispatches that have none;
+- and where they are not, it is frozen at the most its names can mean, which is more
+  (ADR 0016, "What a reservation counts for"). (These three as amended with ADR 0016,
+  2026-11-14: the first said "if every spend record under it can be read, and every
+  request dispatched under it has a settlement", the second "otherwise", and there
+  was no third. A settlement other hands made without its guard is readable and
+  releases nothing.)
 - a record under it that cannot be read also freezes it: nothing of it is released until
   a person's command.
 
@@ -246,7 +270,13 @@ task's case is restated with it.
 
 1. **Never under.** What the ledger counts as spent or held is never less than what its
    readable records show was charged, plus the bounds of what is dispatched and not
-   settled. Counting more is allowed where a rule says so; counting less never is.
+   settled. Counting more is allowed where a rule says so; counting less never is,
+   but for what a person's correction writes off (invariant 7): what is outstanding
+   under the reservation it corrects, and what a place without a whole settlement
+   says. (The exception: amended with ADR 0016, 2026-11-14, "A person's correction"
+   and limit (g). It is the owner's act, and its cost is stated there. The ADR's
+   other limits, (a) to (f), are of names that other hands made or lost and of what
+   no record shows.)
 2. **Debt is not forgotten.** A balance may be below nothing inside the ledger and inside
    an allowance; what can be spent is never reported below nothing; and every return (an
    unused bound, a child's remainder, a share handed back) pays the debt first.
@@ -255,6 +285,10 @@ task's case is restated with it.
 4. **Damage freezes one reservation.** A damaged entry freezes the reservation it belongs
    to, at an amount that can be read without the damaged content. It never stops the
    fold, recovery, or a call that has nothing to do with it.
+   (Kept as written, by the owner's choice, 2026-11-14: "Decisions", the item on a
+   damaged record. With ADR 0016 the amount is the most the reservation's names can
+   mean, which is no less than what its hold states; and where no hold states one,
+   nothing can be read, and the ADR's exception applies.)
 5. **Every amount the fold needs is in a name.** Holds, dispatches and settlements carry
    their amounts and their reservation in names the ledger makes, with a guard name where
    two must not take one place. The grammar is complete, strict and bounded, and parsed
@@ -262,8 +296,15 @@ task's case is restated with it.
    name, the turns, and the names of an allowance and a reset among them, and a reset has
    an epoch that ties each reservation to the reset it falls under. Nothing secret is in
    a name.
-6. **No admission on a stale balance.** An admission cannot be published on a balance
-   that a settlement over its bound has since changed.
+6. **No admission on a stale balance.** No admission stands, and nothing runs under
+   one, on a balance that a settlement over its bound has since changed. The ledger
+   itself never publishes one so: it is refused by the store and judged again. Where
+   other hands changed the names between its judgement and its publication it may be
+   published, and it then stands only if the names read after its publication are
+   sound and within the allowance. (Amended with ADR 0016, 2026-11-14, "An admission
+   is confirmed before anything runs under it" and limit (e). It was: "An admission
+   cannot be published on a balance that a settlement over its bound has since
+   changed.")
 7. **A person corrects by a new record,** never by editing one.
 
 ## Rules every task's tests follow
@@ -727,20 +768,27 @@ the one task that was I2 and S1 in earlier drafts.
 
 **First pull request: the design.**
 
-- [ ] An ADR, the ledger, which changes ADR 0007's interface and ADR 0008's allowance:
+- [x] An ADR, the ledger, which changes ADR 0007's interface and ADR 0008's allowance:
       every name under `spend/` and its grammar; the content of each record; what a
       reservation counts for in each state; what an allowance holds and how debt is
       paid; what an admission and a settlement each make so that neither is published
       on a stale balance; how a reset bounds what came before it.
-- [ ] A model of the fold in the test kit: pure, with no store. A history is a list of
+- [x] A model of the fold in the test kit: pure, with no store. A history is a list of
       events (an allowance set, a reset, an admission, a child's share, a dispatch, a
       settlement, an end, a crash with a recovery, damage to one entry, a deletion with
       a prune, an adjustment), and the model answers what is allowed, held, spent and
       left, for the store and for each reservation and run.
-- [ ] The table of histories, run as tests against the model: each history of "The
+- [x] The table of histories, run as tests against the model: each history of "The
       histories the reviews produced" below, by name, with the balances it must give;
       and generated histories, bounded and seeded, 4,096 of at most 24 events each from
       a seed written in the test, each checked against invariants 1 to 6.
+      (With ADR 0016, 2026-11-14, of invariant 4: after every event of every history
+      the checker holds that damage, a name made and a name lost change no
+      reservation but their own, and that a damaged reservation is frozen or
+      corrected. History 81 of the table, and
+      `spend::one_record_that_cannot_be_read_freezes_its_reservation_at_its_worst_and_stops_nothing_else`,
+      assert by name that a call the rest of the allowance covers is admitted beside
+      it.)
 
 **Done when** the model and the table agree on every named history; every invariant is
 asserted over every history, named and generated, and a generated history that breaks one
@@ -755,27 +803,68 @@ until it passes.
 - [ ] `Ledger::reserve` cannot return without having made its names: what it returns can
       only be had from `Step::make`. `Ledger::settle`, called inside the publication
       that ends a run nothing called; a failure of it is a failure of that publication.
+      **`Ledger::confirm`, and the confirmation in `Engine::admit`:** once an
+      admission's publication is durable the executor reads the generation again and
+      the ledger answers whether the admission stands, by the three conditions of the
+      ADR, the first as worded: its reservation is the record, one hold and nothing
+      else that names the run. Only then are the run's thread, its allowance and the
+      tree's tally made. One that does not stand is ended at once by the publication
+      that ends a run, with its reservation closed in it and, for a request with an
+      id, its ending made; its caller is refused with a reason of its own.
 - [ ] One parser of the ADR's grammar in the core, which every reader of a name under
       `spend/` uses. Reading reservations answers each entry by itself, sound or damaged.
+      **The recogniser replays what the ledger checked** (the ADR's table "What the
+      ledger can have written", its last row), and **the places of a frozen
+      reservation that hold no dispatch are counted and never walked**. **The three
+      shapes of a reading:** a number; "unknown, at least", of what a reservation and
+      an epoch count for; and of one run's spend, "unknown, at most" or "unknown" with
+      no most. **Every sum is of 128 bits and stops at the largest number,** in the
+      fold and in every reading of it, and no name under `spend/` makes a reader fail.
 - [ ] `Allowance` as the ADR has it: debited before a request, given back to, in debt
       where an overrun put it, and a child's remainder handed to its parent when the
-      child's end is durable and the parent still executes.
+      child's end is durable and the parent still executes. **Beside it, what the
+      process holds of each tree's reservation, in memory:** its amount and what the
+      requests sent under it took, kept as each is dispatched, answered and settled,
+      and asked at every dispatch at the moment it is published. **A dispatch's
+      refusals, each its own:** the run's allowance, the reservation by its names, a
+      frozen or closed reservation, an epoch that needs its owner, and the tree as
+      the process holds it.
 - [ ] The store's rule for a `put` under `requests/` and `spend/`, as the ADR decides.
 - [ ] The record types, written one way and read strictly, in
-      `crates/whizbang-core/src/spend/`; the test kit's fake ledger brought in line.
+      `crates/whizbang-core/src/spend/`, `spend-epoch/1`, a reset's guard, among them;
+      the test kit's fake ledger brought in line.
+
+**Amended with ADR 0016, 2026-11-14.** What is in bold in the five boxes was added, from
+the ADR's list "What the second part builds, as decided here", which the first pull
+request's review rounds made longer than these boxes were: a builder ticks none of them
+without it.
 
 **Done when** these pass: a ledger that returns from `reserve` without making its names
 does not compile, or is refused, as the ADR says which; each form of name parses to its
 parts and back, and one that breaks the grammar in each way the ADR lists is refused,
 shown escaped and cut; with one reservation's content damaged, the reading gives the
-others and that one as damaged with the amount its name states; a `settle` that fails
+others and that one as damaged with the amount its hold's name states (what it counts
+for is the fold's to say, and is no less: ADR 0016, 2026-11-14); a `settle` that fails
 leaves the run admitted and its caller told; an allowance in debt reports nothing to
 spend, and a return to it pays the debt first; an amount given back to an allowance whose
-run has entered its commit step is dropped; each record round-trips to the same bytes, is
+run has entered its commit step is dropped; an admission whose reservation has any
+name beside its record and its one hold when it is read back, one whose epoch or the
+newest needs its owner, and one of more than nothing whose epoch is over its allowance
+are each not confirmed, ended having run nothing, and their callers refused; a call of
+nothing in a store in debt is confirmed, and runs; an admission made beside a frozen
+reservation whose hold states its amount is confirmed; a dispatch is refused,
+each with its own reason, where its epoch needs its owner and where the tree's tally in
+memory does not cover it though the names do; each of the three shapes of a reading is
+answered, and sums of amounts near the largest number stop at it; a reservation whose
+names the ledger did not check into place is frozen (the model's history 74), and a
+name that names the largest place a number can say is folded without walking to it
+(amended with ADR 0016, 2026-11-14: this sentence's cases from "an admission whose
+reservation" to here, for the boxes as amended); each record round-trips to the same bytes, is
 refused over its bound from its entry's length before it is read, and with an unknown or
 a missing field, escaped, cut and without a path (rule 3); the pin test
-`known_a_name_that_was_made_can_still_be_replaced_by_put` is turned round, or kept with
-the reason; every test of `admit.rs`, `nested.rs` and `commit.rs` passes against the fake
+`known_a_name_that_was_made_can_still_be_replaced_by_put` is turned round (the ADR
+decided it: a `put` under `requests/` and `spend/` is refused; this said "or kept with
+the reason" until it was amended with ADR 0016, 2026-11-14); every test of `admit.rs`, `nested.rs` and `commit.rs` passes against the fake
 as changed; every claim of the ADR about code names its test (rule 5).
 **Carry-over:** the rows on "never removed" and `put`, and on the ledger (the token, the
 names). **Size:** medium, in two pull requests.
@@ -802,8 +891,11 @@ units for reading.
 13. A settlement at 12 over a bound of 5, then its content damaged, the run deleted and
     pruned: no less than 12.
 14. A reservation's content damaged, its run deleted and pruned, no request id: frozen at
-    the amount its name states.
-15. Reserve 10, every dispatch settled for 3 in all, then the reservation damaged: 10.
+    no less than the amount its hold's name states. Of a reservation of 10 the table
+    asserts 20: the amount, and the amount once more for the place its closing took.
+15. Reserve 10, every dispatch settled for 3 in all, then the reservation damaged: no
+    less than 10. The table asserts 27: the amount, the two bounds of 2, the two charges
+    of 1 and 2, and the amount once more for the place its closing took.
 16. Reserve 10, dispatch 5, settle at 6, the run still open: 10, not 6.
 17. A settlement that names no dispatch, and two dispatches at one place: that
     reservation frozen, the others as they were.
@@ -830,6 +922,14 @@ units for reading.
 36. A cancellation after dispatch, then an answer with a charge: that charge.
 37. A run abandoned in a live process: held in full until the process is gone.
 38. A store with no allowance: a call of nothing is admitted, a call over nothing is not.
+
+**Amended with ADR 0016, 2026-11-14.** History 14 said "frozen at the amount its name
+states" and history 15 ended ": 10". A frozen reservation counts for the most its names
+can mean, by a sum that gives no credit (ADR 0016, "What a reservation counts for"),
+which is more than its amount: the two are restated with the numbers the table asserts.
+Histories 13 and 17 read as they did and count more for the same reason: 32 where 13
+says "no less than 12", and in 17 both reservations that other hands touched are
+frozen and the third is as it was.
 
 ### I3. A wrapper around each request
 
@@ -1055,13 +1155,19 @@ an adjustment after an interruption and after a freeze; dispatches by a child un
 root's reservation; reserve 10, dispatch two of 5, one settles at 12, and then each of
 the run ending, the run interrupted, and an admission made in between, which sees 17
 counted while the second is unsettled; a reservation whose content is damaged and whose
-run is deleted and pruned, counted at the amount its name states; an allowance driven
+run is deleted and pruned, counted at no less than the amount its hold's name states,
+which by the ADR's sum is 20 for a reservation of 10 (history 14); an allowance driven
 below nothing by an overrun, which reads nothing left; a history
 with a record the fold cannot place (a settlement with no dispatch, two dispatches at one
-place) freezes the reservation its name gives and stops nothing else; reserve 10, settle
-every dispatch for 3 in all, damage the reservation's content: it counts 10; reserve 10,
+place) freezes the reservation its name gives and stops nothing else (history 17); reserve 10, settle
+every dispatch for 3 in all, damage the reservation's content: it counts 27 (history
+15); reserve 10,
 dispatch 5, settle at 6 with the run still open: it counts 10, not 6; the fold reads records through names only, shown with
 content in `objects/` that no name holds.
+**Amended with ADR 0016, 2026-11-14.** Two cases are restated with the ADR's numbers.
+The damaged reservation was "counted at the amount its name states", and the one
+damaged after it released "counts 10": a frozen reservation counts for the most its
+names can mean (20 and 27). "Stops nothing else" stands as it was written.
 **Size:** small.
 
 ### S2. Reserving at admission
@@ -1255,17 +1361,43 @@ is admitted; a request that came with no preparation is not checked for age.
 
 **Depends on:** S2. The store is named by `--store <dir>` (D8).
 
-- [ ] `whizbang spend status`: the allowance, what is reserved, what is spent, what is
-      unresolved, and the last reset. It reads only.
-- [ ] `whizbang spend reset --allowance <usd>`: writes a reset record. The records before
-      it stay.
+- [ ] `whizbang spend status`: of the newest epoch, the allowance, what is counted
+      against it, what is charged, what is held beyond that, what is unresolved, what
+      is left and the debt; and the last reset. Where a reservation's amount is
+      unknown it says "unknown, at least" and the number. Where the store needs its
+      owner it says so, and which: a frozen reservation whose amount is unknown, by
+      its run, or an epoch whose turns are not those its publications took. It reads
+      only.
+- [ ] `whizbang spend reset --allowance <usd>`: one publication of the reset's name,
+      its guard (`spend/epoch/<epoch>`) and the next turn of the epoch it closes. The
+      records before it stay. It opens the next epoch: a reservation made before it
+      counts against the epoch it was made in and no other, unless it is frozen, or
+      has no hold or several, and then it counts in every epoch. It does not stop a run
+      that is executing, which goes on drawing on its own reservation; and it does
+      not clear a frozen reservation.
 
 **Done when** these pass: `status` answers while another process holds the store to write;
 `reset` is refused while another writer holds the store, with the holder named; after a
 reset the earlier records are all still read and the balances start again from the new
 allowance; no call the executor accepts can change the allowance, shown by listing every
 registered action and every record kind an admission can write; `status` on a store whose
-ledger holds a damaged record says so escaped and cut, with no path (rule 3).
+ledger holds a damaged record says so escaped and cut, with no path (rule 3); where
+the record is one of a reservation it names the frozen reservation and what it counts
+for, where it is a reset or its guard that the epoch allows nothing, and a
+damaged turn, whose content is not read, changes nothing it says; a reset made while a
+reservation is frozen opens an epoch in which that reservation still counts, and one
+made where only an epoch's turns were wrong lets the next call be admitted; where a
+frozen reservation has no hold or several, `status` says that the store needs its
+owner, and a reset does not end that; a reset to
+nothing while a run executes leaves that run sending what it reserved, and the new
+epoch counting nothing (history 84); `status` says "unknown, at least" where a
+frozen reservation has no hold or several; a reset of an amount of the largest number, and
+one after the largest epoch a name can say, are refused.
+**Amended with ADR 0016, 2026-11-14.** Both boxes are restated as the ADR has a balance
+and a reset ("What a reservation counts for", the store's balance; "Epochs: what a
+reset bounds"), and the cases from "where the record is one of a reservation" on are
+added. The boxes were: "the allowance, what is reserved, what is spent, what is
+unresolved, and the last reset", and "writes a reset record".
 **Size:** small.
 
 ### S10. The run's spend lines
@@ -1322,13 +1454,21 @@ abandoned, keeps its reservation unsettled and is not counted as released.
 **Depends on:** S11b, I4b. Two pull requests: the recovery's part; then its crash and
 damage proofs. A recovery's part (I4), in `spend/`.
 
-- [ ] For every reservation that is not closed and whose run is not open in this process:
+- [ ] For every reservation that is not closed and whose run is not open in this process,
+      nor waiting there for its admission to be confirmed:
       it is closed as I2's ADR says. At its settlements, with
-      the rest released, when every record under it reads and every dispatch has its
-      settlement; otherwise as interrupted, at the larger of its amount and what is known
-      against it; and frozen as well when an entry under it is damaged.
+      the rest released, when its names are a set the ledger could have written, every
+      record under it reads and every dispatch has its settlement with its whole
+      chain; otherwise as interrupted, at the larger of its amount and what is known
+      against it; and where an entry under it is damaged, or its names are not such a
+      set, frozen, at the most its names can mean. (The conditions on its names and
+      the frozen amount: amended with ADR 0016, 2026-11-14.)
 - [ ] No other reservation and no unrelated call is refused because of a frozen or
       interrupted one.
+      (Kept as written, by the owner's choice, 2026-11-14: "Decisions". The one
+      exception is the ADR's, where no amount can be counted: a frozen reservation
+      that has no hold, or several, and an epoch whose turns are not those its
+      publications took.)
 
 **Done when** these pass: a process that died between dispatch and settlement leaves,
 after the next open to write, the reservation charged in full and nothing released; with reserve 10, two dispatches
@@ -1337,40 +1477,70 @@ that died after every request was settled and before the run ended is charged th
 settled total and the rest is released; one that dispatched nothing is charged nothing;
 the fake counts no second request in any of them; the same three after the run was
 deleted and the store pruned before the restart, and with the reservation's content
-damaged as well, where the amount is the one its name states; a run abandoned by a process that then
+damaged as well, where it is frozen at no less than the amount its hold's name states (the ADR's sum: history 14); a run abandoned by a process that then
 ended is settled by the same rule. Then: `settle_interrupted::a_crash_at_any_event…`,
 followed by another open, settles each reservation once (rule 2); with a damaged
 dispatch, a damaged settlement and a damaged reservation planted, one at a time, that
 reservation is frozen at no less than its full amount, every other is recovered, and a paid call that
-the rest of the allowance covers is admitted; no history in a table of twenty, each a
+the rest of the allowance covers is admitted (history 81); no history in a table of twenty, each a
 sequence of dispatches, settlements, damage and crashes, ends with less charged than its
 readable settlements say, or with a reservation both frozen and released.
+**Amended with ADR 0016, 2026-11-14.** The damaged reservation's amount was "the one
+its name states": that is the least it counts for. The case with damage planted stands
+as it was written, by the owner's choice.
 **Carry-over:** the row on settlement (a run that did not end). **Size:** medium.
 
 ### S12. A person's correction
 
 **Depends on:** S9, S6.
 
-- [ ] `whizbang spend adjust <run> --charge <usd>`: for a reservation that recovery
-      interrupted or froze, a new record that sets what it is charged, from its readable settlements, as the least, to
-      the larger of its full amount and what is known against it, and releases the rest. It names the reservation by its run, says
+- [ ] `whizbang spend adjust <run> --charge <usd>`: for a reservation that is closed
+      and is interrupted, frozen or already corrected, a new record that sets what it
+      is charged: from what its settlements with their whole chain say, as the least,
+      to the most its names can mean, as the most, which of a reservation the ledger
+      could have written is the largest of its full amount, what is known against it
+      and what any earlier adjustment of it said. It takes the reservation's next place and the next turn of its epoch, names
+      both, and carries a seal of every name the reservation has. It names the
+      reservation by its run, says
       who would be asked nothing (there is no user), and records the time. The records
-      it corrects stay. A reservation that is neither interrupted nor frozen is refused.
+      it corrects stay. A reservation that is not closed, or is released, is refused;
+      so is a charge that raises what the reservation counts for in the newest epoch
+      by more than is left there. **It writes off what is outstanding under the
+      reservation:** a request still in flight under it, or one a dead process left
+      with its provider, may yet be charged (ADR 0016, limit (g)).
       A reset closes the books before it: an adjustment of a reservation made before the
-      last reset is recorded and changes nothing the new allowance can spend.
+      last reset is recorded and changes nothing the new allowance can spend, but for
+      one that was frozen, or has no hold or several. A frozen one counted in every
+      epoch, and its adjustment ends the freeze. One with no hold or several goes on
+      counting in every epoch, at what its adjustment says. Neither leaves more to
+      spend than the reset set.
 - [ ] `spend status` lists the interrupted and the frozen reservations with their runs.
 
 **Done when** these pass: an interrupted reservation adjusted to a lower charge releases
 the difference and the next paid call can use it; a frozen one is unfrozen by its
 adjustment, and the damaged content is still in the store and still named; an adjustment
-below the reservation's readable settlements, one over what it counted for, of a settled reservation and of a run the store does not know
-are each refused; a second adjustment of the same reservation makes a second record and
-the fold takes the last; freeze, reset, then adjust to nothing leaves the new allowance
-as the reset set it; adjust, then reset starts from the reset's amount; an adjustment
+below what the reservation's settlements with their whole chain say, one over the most its names can mean, one that raises what it counts for in the newest epoch by more than is left there (a reservation of an earlier epoch with its one hold is raised whatever the newest has left: history 42), of a released reservation, of one that is not closed and of a run the store does not know
+are each refused; a second adjustment of the same reservation makes a second record,
+sealed over the first among the reservation's names, and the fold takes the one whose
+seal is of the names as they are, which is the last made; a name of the reservation
+made, lost or damaged after an adjustment ends it, and the reservation then counts for
+the larger of its amount, what is known and what any adjustment said, or is frozen;
+an adjustment of a frozen reservation whose amount was unknown ends the store's need
+of its owner for that reservation, and an epoch whose turns are wrong still needs its
+reset; freeze, reset, then adjust to nothing leaves the new allowance
+as the reset set it; adjust, then reset starts from the reset's amount, where the adjusted reservation has its one hold; an adjustment
 upward after the difference was spent is refused when the allowance cannot hold it; the command opens through I4's entry point, so it recovers
 first; its output and its refusals show names escaped and cut, and no path (rule 3);
 `adjust::a_crash_at_any_event…` leaves it done or not done (rule 2); no call the
 executor accepts can write an adjustment, shown as S9 shows it for a reset.
+**Amended with ADR 0016, 2026-11-14** ("A person's correction"). The box had the
+correction "for a reservation that recovery interrupted or froze", its amount "from
+its readable settlements, as the least, to the larger of its full amount and what is
+known against it", and refused "a reservation that is neither interrupted nor frozen";
+the cases had "the fold takes the last" of two adjustments. The ADR has a correction
+count only while its seal is of the reservation's names as they are, so "the last" is
+the one made over the other, and what follows a correction can end it. What a
+correction writes off is the ADR's limit (g), with histories 82 and 83.
 **Carry-over:** the row on the ledger (a damaged reservation). **Size:** small.
 
 ### C1. The config: its file, its shape, its digest
@@ -2220,13 +2390,42 @@ it: it changes no scope. What changed:
   file has a limit, so each publication 1B adds has a case at it (I4, S5, S5b); the
   binary has one door (I4). The test rules follow `AGENTS.md`, "Threads and processes".
 
+**Amended with ADR 0016, 2026-11-14, after building began.** Task I2's first pull
+request amends this plan where its ADR decides otherwise than the plan did, and marks
+each place where it stands. One thing was put to the owner and is not amended: the
+ADR's review rounds had a frozen reservation stop every admission and dispatch in the
+store, where this plan has every unrelated paid call go on. The owner chose the plan's
+rule, knowing that it can count less than was spent in the cases the ADR now states as
+accepted limits ("Decisions", the item on a damaged record). What is amended:
+invariants 1 and 6; the recovery summaries; task I2 (the five boxes and the cases of
+its second pull request, histories 14 and 15); the numbers of tasks S1b and S6; and
+tasks S9 and S12, restated as the ADR has a balance, a reset and a correction. None
+changes scope or order.
+
+The amendment was reviewed as a change to a plan is, by the independent review,
+read-only, with the ADR, the model and its tests in hand. Rounds 7 and 8 read the
+plan while it was amended toward the stricter rule; what they found of its other
+sentences was fixed and stands. Round 9 was the first on the owner's choice, and was
+also asked to list every history that under-counts and the limit it falls under.
+
+| Round | Date | Blockers | Follow-ups | What they were |
+|---|---|---|---|---|
+| 7 | 2026-11-14 | 8 | 1 | No under-count outside the ADR's limits. Sentences of the plan that differed from the ADR: invariants 1 and 6, the recovery summaries, an epoch's isolation in S9 and S12, S12's bounds, I2's case for a call of nothing, the `put` pin |
+| 8 | 2026-11-14 | 3 | 2 | No under-count. Three sentences more, in S9 and S12; two of wording |
+| 9 | 2026-11-14 | 6 | 4 | No under-count outside the limits: fifteen histories listed, each inside one. The bound the ADR stated for a correction's write-off was narrower than its meaning; two sentences where the plan and the ADR differed on the exception; three sentences of the ADR that still stated the stricter rule |
+| 10 | 2026-11-14 | 2 | 1 | No under-count outside the limits: sixteen histories listed, each inside one, its cost covered. One sentence of the ADR on an epoch's isolation, and one case of S12 on a correction upward |
+
+The rounds are numbered after the ADR's six. Every blocker was fixed; no round
+followed the tenth. ADR 0016, "Review rounds", has the same record.
+
+## Risks
 ## Risks
 
 | Risk | Effect | What we do |
 |---|---|---|
 | A store fills while 1B's publications add names | A settlement or a recovery is refused | Each has its case at the limit: nothing is released, the run is abandoned, and deleting still works (I4, S5, S5b) |
 | An interface fixed early does not fit the strand that implements it | A base task is reopened and a strand waits | Each interface is the outline a review gave after three rounds of the tasks it serves; its task ships a fake that the strand's tests are first written against; a misfit is changed by a base task, never worked around in a strand |
-| The ledger under-counts money on some path | The allowance is overspent without an error | Six rounds of prose review each found one; so I2 settles the arithmetic against an executable model, 38 named histories and 4,096 generated ones, each asserted against the invariants, and every later ledger task is held to the same table |
+| The ledger under-counts money on some path | The allowance is overspent without an error | Six rounds of prose review each found one; so I2 settles the arithmetic against an executable model, 38 named histories and 4,096 generated ones (as built with ADR 0016: 87 named, the plan's 38 among them, and six generated suites), each asserted against the invariants, and every later ledger task is held to the same table |
 | Recovery's losses are felt | Someone needs to know what an interrupted run did | It is in no record, by decision; the carry-over line says who reopens it |
 | The record's shapes are fixed in B4 before the strands that fill them | A second version, `run/4`, inside one checkpoint | B4 follows B1 to B3, which decide the quote, the stage and the recipient; a wrong shape is a new version, never an edit |
 | Crash sweeps multiply | The fast tier passes its three minutes | Rule 11; each task states its sweeps' times alone in its hand-back |
