@@ -114,6 +114,11 @@ impl Recovering<'_, '_> {
     /// Whether this process made the run and has it open ([`Store::made_here`]): a
     /// run that executes here, or that this process abandoned, is not one a dead
     /// process left, and a part leaves it alone.
+    ///
+    /// **Through the entry point it is always false, today:** a recovery runs once
+    /// for a store value, before anyone is handed its writer, so this process has
+    /// made no run in it yet. A part asks all the same, so that a recovery that is
+    /// ever run later in a process's life ends nothing the process is working on.
     pub fn open_here(&self, run: &str) -> bool {
         self.store.made_here(run)
     }

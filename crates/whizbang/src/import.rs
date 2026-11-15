@@ -183,8 +183,8 @@ pub fn import(
 
     let mut printed = String::new();
     let opening = if create {
-        let opening =
-            wiring::opening(root, Make::TheRoot, recovery).map_err(|error| error.to_string())?;
+        let opening = wiring::opening(root, Make::TheRoot, recovery)
+            .map_err(|error| wiring::not_opened(&error))?;
         // The open says whether it made the store: it knows, having held the lock.
         if opening.created() {
             // On the standard output, which nothing else escapes.
@@ -198,7 +198,7 @@ pub fn import(
             Error::Missing { .. } | Error::NotAStore { found: None, .. } => {
                 format!("{error}; pass --create to have one made there")
             }
-            other => other.to_string(),
+            other => wiring::not_opened(&other),
         })?
     };
     // The writer, once the store is recovered. A store that was made here and could

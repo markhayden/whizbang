@@ -1131,6 +1131,34 @@ need); the row on what running an action does not do yet (milestone 2), which sa
 nothing marks a run a dead process left: this task marks it, and corrects the row.
 **Size:** medium.
 
+**Built in two pull requests, as planned** (I4b, 2026-11-15). ADR 0015, "The
+interrupted record, and what readers say of it", names the test of each clause. The
+first is the part of the recovery (`contract::Interrupted`), wired into the binary,
+with the first box and the clauses of "Done when" up to the marker secret; it also
+shows the clause of task E4 that waited for it. The second is the readers, with the
+second box, the clauses after "Then:", and the crash sweep.
+
+**Reworded with the task** (I4b, 2026-11-15). Three things are as the task found them.
+
+- "a run that is executing in this process, and one this process abandoned, are left
+  alone" read as though a recovery could meet such a run. It cannot: a recovery runs
+  once for a store value, before this process is handed the writer and so before it
+  makes a run (task I4), and `Recovering::open_here` is always false through the
+  entry point. What "left alone" means, and what the test shows, is: **a run this
+  process makes after its store was recovered is not ended by that opening, however
+  often the opening is asked for its writer again; one that executes ends by itself,
+  and one this process abandoned stays admitted until the process is gone and is
+  ended by the next process's open.** The part still asks the store whether a run
+  is open here before it ends one, for a recovery that is ever run later in a
+  process's life; nothing reaches that line today, and no test shows it.
+- "A run whose admission cannot be read" is every run whose `admitted` name does
+  not read as the admission of that run, whatever the reason, a read that the file
+  system refused among them: failing the recovery for it would leave a store with
+  one damaged run without a writer.
+- The part ends a run and leaves its reservation as it was: "It settles the money"
+  is task S6's part of the same recovery, as "What a crashed run is recovered to"
+  divides them.
+
 ### I5. A policy before a send, and a checked send
 
 **Depends on:** I4b. A section of the interfaces' ADR.

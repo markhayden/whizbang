@@ -167,7 +167,8 @@ fn delete(root: &Path, runs: &[String], recovery: Recovery) -> Result<String, St
 /// since these two make the file smaller. A command that removes things makes no
 /// store where there is none, and completes none.
 fn remover(root: &Path, recovery: Recovery) -> Result<Remover, String> {
-    let opening = wiring::opening(root, Make::Nothing, recovery).map_err(|e| e.to_string())?;
+    let opening = wiring::opening(root, Make::Nothing, recovery)
+        .map_err(|error| wiring::not_opened(&error))?;
     opening.remover().map_err(|why| why.to_string())
 }
 
