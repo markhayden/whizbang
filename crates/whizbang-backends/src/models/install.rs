@@ -146,11 +146,16 @@ impl From<io::Error> for InstallRefused {
 /// - **A cancellation is asked for the last time when the staged files have been
 ///   read back.** From the rename of the staged folder on, the publication runs to
 ///   its end, and the answer is the installation.
+/// - An identity that is on the disk already and whole is not downloaded again: it
+///   is pointed to, after the folder that names it and the pointer are synced.
 /// - A refused install removes its staging under the model's lock, writes how it
-///   ended into the status record, and leaves the pointer naming what it named. One
-///   step is the exception: when the sync that makes the new pointer durable is
-///   refused, the install is refused and the pointer names the new installation,
-///   which is whole.
+///   ended into the status record, and leaves the pointer naming what it named; a
+///   repair refused after it cleared the pointer leaves the model not installed.
+///   One step is the exception: when the sync that makes the new pointer durable
+///   is refused, the install is refused and the pointer names the new
+///   installation, which is whole. Nothing is then deleted until a sync of the
+///   model's folder has passed, and asking again makes the pointer durable before
+///   it answers.
 pub fn install(
     dir: &ModelsDir,
     entry: &Entry,
@@ -173,21 +178,34 @@ pub fn install(
         secrets,
     };
     let files = record.files().len() as u64;
+    let hex = record.identity().hex();
     let mut done = 0;
     let ended = (|| {
         // What a publication that died left of its new pointer.
         dir.remove(&model.folder.join("CURRENT.new"))?;
-        model.clean()?;
-        model.say(State::Installing, 0, files)?;
-        stage_locked(dir, entry, downloader, cancellation, &mut |staged| {
-            done = staged as u64;
-            model.say(State::Installing, done, files)
-        })?;
-        model.publish(&record, cancellation)
+        model.clean(&hex)?;
+        // The same identity, on the disk already and whole: in use, superseded and
+        // held, or renamed in by an install that was refused before it could point
+        // to it. It is what would be staged: nothing is downloaded.
+        let there = model.installations().join(&hex);
+        let adopted = dir.fs().exists(&there)? && is_whole(dir, &there, &record)?;
+        if adopted {
+            dir.unstage(entry.name());
+            done = files;
+        } else {
+            model.say(State::Installing, 0, files)?;
+            stage_locked(dir, entry, downloader, cancellation, &mut |staged| {
+                done = staged as u64;
+                model.say(State::Installing, done, files)
+            })?;
+        }
+        model.publish(&record, cancellation, adopted)
     })();
     // Under the model's lock still: the staging a refused install left is removed
-    // here, and what the pointer does not name is deleted when no hold is on it.
-    // Neither changes what the install answers.
+    // here, and what the pointer does not name is deleted when no hold is on it,
+    // but for a folder of this identity: one that was renamed in and could not be
+    // pointed to is left, whole, for the next install of it. Neither changes what
+    // the install answers.
     let state = match &ended {
         Ok(()) => State::Installed,
         Err(InstallRefused::Cancelled) => State::Cancelled,
@@ -197,7 +215,7 @@ pub fn install(
         dir.unstage(entry.name());
     }
     let _ = model.say(state, done, files);
-    let _ = model.clean();
+    let _ = model.clean(&hex);
     ended.map(|()| record)
 }
 
@@ -253,39 +271,37 @@ impl Model<'_> {
         status::write(self.dir, self.name, &status)
     }
 
-    /// Publishes what is staged as the installation of this record.
+    /// Publishes the installation of this record: what is staged, or, when
+    /// `adopted`, the folder of its identity that is on the disk already and whole.
     fn publish(
         &self,
         record: &InstallationRecord,
         cancellation: &Cancellation,
+        adopted: bool,
     ) -> Result<(), InstallRefused> {
         let fs = self.fs();
         let incoming = self.dir.incoming(self.name);
-        // From the disk, not from the stream: what was staged is what is there now.
-        if let Some(name) = first_not_whole(fs, &incoming.join("files"), record.files())? {
-            return Err(InstallRefused::NotWhole { name });
-        }
-        if cancellation.is_cancelled() {
-            return Err(InstallRefused::Cancelled);
-        }
         let id = record.identity();
         let target = self.installations().join(id.hex());
+        if !adopted {
+            // From the disk, not from the stream: what was staged is what is there
+            // now.
+            if let Some(name) = first_not_whole(fs, &incoming.join("files"), record.files())? {
+                return Err(InstallRefused::NotWhole { name });
+            }
+            if cancellation.is_cancelled() {
+                return Err(InstallRefused::Cancelled);
+            }
+        }
         self.dir.ensure_dir(&self.installations())?;
         self.dir.ensure_dir(&self.holds())?;
-        let named = read_pointer(self.dir, &self.folder, self.secrets)? == Pointer::Names(id);
         // Step 1: the installation in its place, under its identity, durably.
-        let there = fs.exists(&target)?;
-        if there && is_whole(self.dir, &target, record)? {
-            // The same identity, installed before and whole: it is what was staged.
-            self.dir.remove(&incoming)?;
-            fs.sync_dir(&self.dir.staging(self.name))?;
-            if named {
-                return Ok(());
-            }
-        } else {
-            if there {
+        if !adopted {
+            if fs.exists(&target)? {
                 // The same identity, damaged. In use, this is a repair: the pointer
                 // is cleared first, so that no hold is given on what is deleted.
+                let named =
+                    read_pointer(self.dir, &self.folder, self.secrets)? == Pointer::Names(id);
                 if named {
                     self.clear_pointer()?;
                 }
@@ -299,9 +315,15 @@ impl Model<'_> {
             fs.write_new(&incoming.join("RECORD"), &record.to_bytes())?;
             fs.sync_dir(&incoming)?;
             fs.rename(&incoming, &target)?;
-            fs.sync_dir(&self.installations())?;
         }
-        // Step 2: the pointer.
+        // Synced for a folder that was found as for one renamed in now: whoever
+        // renamed it may have been refused this sync, and the pointer is about to
+        // name it durably.
+        fs.sync_dir(&self.installations())?;
+        // Step 2: the pointer. Written and synced again when it names this
+        // installation already: an earlier publication may have been refused the
+        // sync that makes it durable, and no install is reported done on the word
+        // of a name that is not.
         self.point_to(id, true)
     }
 
@@ -375,9 +397,18 @@ impl Model<'_> {
     /// With a pointer that cannot be read nothing is deleted: which installation is
     /// in use is then not known.
     ///
+    /// **Nothing is deleted on the word of a pointer that is not durable.** The
+    /// model's folder is synced first, and when that is refused nothing is deleted:
+    /// a pointer whose rename a crash can still undo may come back naming what was
+    /// superseded.
+    ///
+    /// A folder named `keep` is left: the identity being installed, which the
+    /// install adopts when it is whole and replaces when it is not.
+    ///
     /// The pointer is read without the directory's lock: it is changed only by one
     /// who holds the model's lock, which the caller does.
-    fn clean(&self) -> io::Result<()> {
+    fn clean(&self, keep: &str) -> io::Result<()> {
+        self.fs().sync_dir(&self.folder)?;
         let named = match read_pointer(self.dir, &self.folder, self.secrets)? {
             Pointer::Names(id) => Some(id.hex()),
             Pointer::None => None,
@@ -391,7 +422,7 @@ impl Model<'_> {
             let Some(name) = path.file_name() else {
                 continue;
             };
-            if named.as_deref().is_some_and(|named| name == named) {
+            if name == keep || named.as_deref().is_some_and(|named| name == named) {
                 continue;
             }
             // Whatever it is: an installation's folder, or a name this layout does
