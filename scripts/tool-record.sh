@@ -14,6 +14,9 @@
 # machine: when a run on a busy one changes the times alone, discard the change and run
 # this again. The test that writes the record runs through scripts/thread-guard.sh, as
 # every test run does.
+# The whole script is one function, read before any of it runs, so a change to this file
+# during a run does not change the run: see `main` in scripts/scan.sh.
+main() {
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -32,3 +35,5 @@ case "${1:-}" in
     ;;
 esac
 echo "tool-record: wrote docs/reference/tools/$1.md and docs/reference/tools/$1/"
+}
+main "$@"; exit

@@ -21,7 +21,7 @@ use whizbang_core::contract::{
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::Fs;
 use whizbang_core::store::{self, Reader, Store};
-use whizbang_testkit::fs_shim::{Lost, ShimFs};
+use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
 use whizbang_testkit::ledger::FakeLedger;
 use whizbang_testkit::part::{FakePart, Seen};
 use whizbang_testkit::scratch::Scratch;
@@ -1008,4 +1008,338 @@ fn a_part_that_adds_nothing_and_refuses_nothing_leaves_the_store_as_it_is_withou
         (number, outside, of_run, world.fs.events().len())
     };
     assert_eq!(names_of(true), names_of(false));
+}
+
+// --- what a part may hand back as a failure --------------------------------------------------------
+
+/// A part that fails with whatever error the test makes, each time it is asked.
+struct Failing<F>(F);
+
+impl<F> AdmissionPart for Failing<F>
+where
+    F: Fn() -> CallError + Send + Sync,
+{
+    fn name(&self) -> &'static str {
+        "odd"
+    }
+
+    fn look(&self, _: &Asking<'_>, _: &mut PartStep<'_, '_>) -> Result<(), PartDeclined> {
+        Err((self.0)().into())
+    }
+}
+
+#[test]
+fn whatever_a_part_fails_with_reaches_the_caller_as_the_parts_failure_with_no_secret_in_it() {
+    let key = made_up_key("");
+    let said = format!("it was told {key} and stopped");
+    let run = whizbang_core::contract::RunId::parse("7000-1").unwrap();
+    // Every error of the executor's that is not the store's, a refusal first: none
+    // of them is the part's to give, and none reaches the caller as it is.
+    let errors: Vec<(&str, CallError)> = vec![
+        (
+            "a refusal",
+            CallError::Refused(Refusal::NotARequestId { why: said.clone() }),
+        ),
+        ("the ledger's", CallError::Ledger { why: said.clone() }),
+        (
+            "a run not started",
+            CallError::NotStarted {
+                run,
+                why: said.clone(),
+            },
+        ),
+        (
+            "another part's",
+            CallError::Part {
+                part: "someone-else",
+                why: said.clone(),
+            },
+        ),
+    ];
+    for (which, error) in errors {
+        let world = World::new();
+        let store = world.store();
+        let ledger = Arc::new(FakeLedger::new());
+        let engine = world
+            .engine(store.clone())
+            .with_secrets(Secrets::new([key.clone()]).unwrap())
+            .with_ledger(ledger.clone())
+            .with_part(Arc::new(Failing(move || error.clone())));
+        let failed = engine.request(&asked("hello", "order-17")).unwrap_err();
+        let CallError::Part { part, why } = &failed else {
+            panic!("{which}: not a failure of the part: {failed:?}");
+        };
+        assert_eq!(
+            *part, "odd",
+            "{which}: the part that was asked, by its own name"
+        );
+        assert!(
+            why.contains("it was told [redacted] and stopped"),
+            "{which}: {why}"
+        );
+        // The sentence of a failure that was already one of this kind is as it was
+        // given, with nothing put before it: what a step answers is passed on so.
+        if which == "another part's" {
+            assert_eq!(why, "it was told [redacted] and stopped");
+        }
+        assert_eq!(failed.refusal(), None, "{which}");
+        let shown = format!("{failed} {failed:?}");
+        assert!(!shown.contains(&key), "{which}: {shown}");
+        assert!(
+            failed
+                .to_string()
+                .starts_with("a part of the admission failed (odd): "),
+            "{which}: {failed}"
+        );
+        assert_eq!(held(&world.root(), world.fs.clone()), (0, vec![], vec![]));
+        assert_eq!(ledger.asked(), 0, "{which}");
+        assert_eq!(world.ran(), 0, "{which}");
+    }
+
+    // A record that was not read stays that, for the caller to tell from a failure
+    // of the part; its sentence is cleaned the same way.
+    let world = World::new();
+    let unread = {
+        let said = said.clone();
+        move || CallError::Record {
+            what: "a record",
+            why: said.clone(),
+        }
+    };
+    let engine = world
+        .engine(world.store())
+        .with_secrets(Secrets::new([key.clone()]).unwrap())
+        .with_part(Arc::new(Failing(unread)));
+    assert_eq!(
+        engine.request(&asked("hello", "order-17")).unwrap_err(),
+        CallError::Record {
+            what: "a record",
+            why: "it was told [redacted] and stopped".to_owned(),
+        }
+    );
+
+    // A sentence is cut as a refusal's is, after its secrets were taken out whole: a
+    // secret that straddles the cut is not left in part.
+    let world = World::new();
+    let straddling = format!("{}{key}", "x".repeat(REFUSAL_WHY_LIMIT - 4));
+    let refusing = move || {
+        CallError::Refused(Refusal::NotARequestId {
+            why: straddling.clone(),
+        })
+    };
+    let engine = world
+        .engine(world.store())
+        .with_secrets(Secrets::new([key.clone()]).unwrap())
+        .with_part(Arc::new(Failing(refusing)));
+    let failed = engine.request(&asked("hello", "order-17")).unwrap_err();
+    let CallError::Part { why, .. } = &failed else {
+        panic!("not a failure of the part: {failed:?}");
+    };
+    assert!(why.chars().count() <= REFUSAL_WHY_LIMIT, "{}", why.len());
+    assert!(!why.contains(&key[..8]), "{why}");
+}
+
+#[test]
+fn a_store_failure_inside_a_part_reaches_the_caller_as_the_stores() {
+    // The part adds a record, and the store refuses to write it.
+    let world = World::new();
+    let store = world.store();
+    let engine = world.engine(store).with_part(noting());
+    world
+        .fs
+        .refuse_matching(0, |event| matches!(event, Event::Write(_)));
+    let failed = engine.request(&asked("hello", "order-17")).unwrap_err();
+    assert!(matches!(failed, CallError::Store(_)), "{failed:?}");
+    assert!(
+        failed.to_string().starts_with("the store failed: "),
+        "{failed}"
+    );
+    assert_eq!(world.ran(), 0);
+}
+
+#[test]
+fn a_parts_failure_is_returned_without_a_second_look_for_the_id() {
+    // A request looks its id up and finds nothing. While its parts look at it, the
+    // same request is admitted under the id by another executor over the store. A
+    // part then fails, with a refusal as what it hands back. A refusal would be
+    // answered by what the id says now, a repeat; a failure is not a judgement of the
+    // call, and is what the caller is told.
+    let world = World::new();
+    let store = world.store();
+    let winner = world.engine(store.clone());
+    let gate = Arc::new(FakePart::new("gate"));
+    let first = Arc::new(Mutex::new(None));
+    gate.when_asked({
+        let first = first.clone();
+        move || *first.lock().unwrap() = Some(winner.request(&asked("hello", "order-17")))
+    });
+    let refusing = || {
+        CallError::Refused(Refusal::NotARequestId {
+            why: "it is not one".to_owned(),
+        })
+    };
+    let loser = world
+        .engine(store)
+        .with_part(gate)
+        .with_part(Arc::new(Failing(refusing)));
+    let answer = loser.request(&asked("hello", "order-17"));
+    ran(first.lock().unwrap().take().unwrap());
+    assert_eq!(world.ran(), 1);
+    assert_eq!(
+        answer.unwrap_err(),
+        CallError::Part {
+            part: "odd",
+            why: "it is not one".to_owned(),
+        }
+    );
+}
+
+// --- a part that panics ----------------------------------------------------------------------------
+
+#[test]
+fn a_part_that_panics_leaves_the_store_as_it_was_and_the_same_request_is_admitted_after() {
+    let world = World::new();
+    let store = world.store();
+    let ledger = Arc::new(FakeLedger::new());
+    let part = noting();
+    let engine = world
+        .engine(store.clone())
+        .with_ledger(ledger.clone())
+        .with_part(part.clone());
+    let before = (held(&world.root(), world.fs.clone()), files(&world.root()));
+    part.when_asked(|| panic!("the part went wrong"));
+    let request = asked("hello", "order-17");
+    let panicked =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| engine.request(&request)));
+    assert!(panicked.is_err(), "the panic is the caller's to see");
+
+    // As it was: no generation, no run, no name, no file, and nothing reserved.
+    let after = (held(&world.root(), world.fs.clone()), files(&world.root()));
+    assert_eq!(after, before);
+    assert_eq!(ledger.asked(), 0);
+    assert_eq!(ledger.reservations(store.as_ref()).unwrap(), []);
+    assert_eq!(world.ran(), 0);
+    // Unlocked: the store publishes for whoever asks next.
+    let mut publication = store.begin().unwrap();
+    publication
+        .create("spend/after", store::Kind::Diagnostic, b"after")
+        .unwrap();
+    assert_eq!(publication.publish().unwrap().generation, 1);
+
+    // And the same request, under the same id, is admitted and runs.
+    let finished = ran(engine.request(&request));
+    assert_eq!(finished.outcome(), &Outcome::Completed { outputs: vec![] });
+    assert_eq!(world.ran(), 1);
+    assert_eq!(ledger.reservations(store.as_ref()).unwrap().len(), 1);
+    let (_, _, runs) = held(&world.root(), world.fs.clone());
+    assert_eq!(runs.len(), 1);
+    assert!(runs[0].1.iter().any(|(name, _)| name == NOTE));
+}
+
+#[test]
+fn a_part_that_panics_at_a_call_from_inside_an_action_ends_that_run_and_leaves_no_other() {
+    let world = World::new();
+    let store = world.store();
+    let ledger = Arc::new(FakeLedger::new());
+    let part = Arc::new(FakePart::new("gate"));
+    let panics = Arc::new(AtomicU64::new(1));
+    let outer = {
+        let (part, panics) = (part.clone(), panics.clone());
+        action("outer", &world.runs, move |_, context| {
+            // The next call the part sees is the one below: the first time, it panics.
+            if panics.swap(0, Ordering::SeqCst) == 1 {
+                part.when_asked(|| panic!("the part went wrong"));
+            }
+            context
+                .executor()
+                .submit(&Call::new("inner"))
+                .map_err(|error| Failure::error("inner", &error.to_string()))?;
+            Ok(Produced::nothing())
+        })
+    };
+    let ran_inside = Arc::new(AtomicU64::new(0));
+    let inner = action("inner", &ran_inside, |_, _| Ok(Produced::nothing()));
+    let engine = engine(store.clone(), vec![outer, inner])
+        .with_ledger(ledger.clone())
+        .with_part(part.clone());
+
+    // The panic is inside the action that made the call, so it ends that action's
+    // run as any panic of an action does. No run was made for the call.
+    let finished = engine.submit(&Call::new("outer")).unwrap();
+    let Outcome::Error { kind, .. } = finished.outcome() else {
+        panic!("not ended as an error: {:?}", finished.outcome());
+    };
+    assert_eq!(kind, "panic");
+    assert_eq!(ran_inside.load(Ordering::SeqCst), 0);
+    let generation = store.snapshot().unwrap();
+    assert_eq!(generation.runs().len(), 1, "the caller's run and no other");
+    assert!(generation.runs().contains_key(finished.run().as_str()));
+    // Nothing is reserved but what the caller's run reserved for itself.
+    let reserved = ledger.reservations(store.as_ref()).unwrap();
+    assert_eq!(reserved.len(), 1);
+    assert_eq!(reserved[0].run(), finished.run());
+    assert_eq!(part.asked(), 2);
+
+    // Unlocked, and the same call from inside an action is then admitted and runs.
+    let again = engine.submit(&Call::new("outer")).unwrap();
+    assert_eq!(again.outcome(), &Outcome::Completed { outputs: vec![] });
+    assert_eq!(ran_inside.load(Ordering::SeqCst), 1);
+    assert_eq!(store.snapshot().unwrap().runs().len(), 3);
+}
+
+#[test]
+fn an_action_that_catches_a_parts_panic_at_a_nested_call_keeps_its_full_allowance_and_a_second_call_runs()
+ {
+    let world = World::new();
+    let store = world.store();
+    let ledger = Arc::new(FakeLedger::new());
+    let part = Arc::new(FakePart::new("gate"));
+    let left = Arc::new(Mutex::new(Vec::new()));
+    let outer = {
+        let (part, left) = (part.clone(), left.clone());
+        action("outer", &world.runs, move |_, context| {
+            let allowance = context.allowance().clone();
+            let note = |left: &Mutex<Vec<Option<u64>>>| {
+                left.lock().unwrap().push(allowance.left_micros());
+            };
+            note(&left);
+            // The part panics at the call below, and the action catches the panic.
+            part.when_asked(|| panic!("the part went wrong"));
+            let call = || context.executor().submit(&Call::new("inner"));
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(call));
+            assert!(caught.is_err(), "the panic reached the action");
+            // What the call took from the allowance is back: all of it is there.
+            note(&left);
+            // And a second call, which needs all of it, is admitted and runs.
+            part.when_asked(|| {});
+            let finished = context
+                .executor()
+                .submit(&Call::new("inner"))
+                .map_err(|error| Failure::error("inner", &error.to_string()))?;
+            assert_eq!(finished.outcome(), &Outcome::Completed { outputs: vec![] });
+            note(&left);
+            Ok(Produced::nothing())
+        })
+    };
+    let ran_inside = Arc::new(AtomicU64::new(0));
+    let inner = action("inner", &ran_inside, |_, _| Ok(Produced::nothing()));
+    let engine = engine(store.clone(), vec![outer, inner])
+        .with_ledger(ledger.clone())
+        .with_part(part.clone());
+
+    let finished = engine.submit(&Call::new("outer")).unwrap();
+    assert_eq!(finished.outcome(), &Outcome::Completed { outputs: vec![] });
+    // The whole allowance before the call, the whole of it after the panic was
+    // caught, and none of it once the second call had taken its share.
+    assert_eq!(
+        *left.lock().unwrap(),
+        [Some(250_000), Some(250_000), Some(0)]
+    );
+    assert_eq!(ran_inside.load(Ordering::SeqCst), 1);
+    // The caller's run and the second call's: the call that panicked left none.
+    assert_eq!(store.snapshot().unwrap().runs().len(), 2);
+    assert_eq!(ledger.reservations(store.as_ref()).unwrap().len(), 1);
+    // The part was asked for the caller, for the call that panicked and for the
+    // second.
+    assert_eq!(part.asked(), 3);
 }

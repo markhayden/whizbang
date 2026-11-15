@@ -114,11 +114,11 @@ handed=$(RUSTC_WRAPPER="$tmp/runner.sh" CARGO_BUILD_RUSTC_WRAPPER="$tmp/runner.s
 for name in RUSTC_WRAPPER CARGO_BUILD_RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER \
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER NEXTEST_PROFILE NEXTEST_TARGET_RUNNER RUSTFLAGS CARGO_ENCODED_RUSTFLAGS \
   CARGO_BUILD_RUSTFLAGS RUSTC CARGO_BUILD_RUSTC RUSTDOC CARGO_ALIAS_NEXTEST; do
-  printf '%s\n' "$handed" | grep -q -x -F "$name" && fail "the command is not handed $name"
+  printf '%s\n' "$handed" | grep -x -F "$name" >/dev/null && fail "the command is not handed $name"
 done
-printf '%s\n' "$handed" | grep -q -x -F 'WHIZBANG_KEPT_NAME' || fail "the rest of the environment is handed on"
-printf '%s\n' "$handed" | grep -q -F 'a-value-that-is-not-printed' && fail "what the command would be handed is printed by name, never by value"
-printf '%s\n' "$handed" | grep -q '=' && fail "no value of the environment is printed"
+printf '%s\n' "$handed" | grep -x -F 'WHIZBANG_KEPT_NAME' >/dev/null || fail "the rest of the environment is handed on"
+printf '%s\n' "$handed" | grep -F 'a-value-that-is-not-printed' >/dev/null && fail "what the command would be handed is printed by name, never by value"
+printf '%s\n' "$handed" | grep '=' >/dev/null && fail "no value of the environment is printed"
 
 # It runs from this repo, whatever folder it was started in, so a config beside the caller
 # is not read.

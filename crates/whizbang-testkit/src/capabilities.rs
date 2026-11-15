@@ -20,7 +20,7 @@ use whizbang_core::capability::{
     Support, Turn, feature,
 };
 use whizbang_core::contract::{Capability, ModelIdentity};
-use whizbang_core::egress::Recipient;
+use whizbang_core::egress::{Address, Outgoing, Piece, Recipient};
 
 use crate::barrier::Barriers;
 
@@ -233,7 +233,13 @@ pub struct FakeFiller {
     requests: AtomicU64,
     stop: Option<Stop>,
     terms: Terms,
+    /// What it sends, and where to first, before it paints: when it was told to.
+    posts: Option<(Address, Vec<Piece>)>,
 }
+
+/// The most addresses a fake that sends goes on to, one after another, when each
+/// answer points to the next.
+pub const FAKE_MOVES_LIMIT: usize = 8;
 
 impl FakeFiller {
     pub fn new(paint: Paint) -> FakeFiller {
@@ -243,7 +249,19 @@ impl FakeFiller {
             requests: AtomicU64::new(0),
             stop: None,
             terms: Terms::default(),
+            posts: None,
         }
+    }
+
+    /// The same filler, which for every request sends these pieces to this address
+    /// before it paints, through the sender its request's bounds hand it and through
+    /// nothing else (ADR 0015). An answer that points elsewhere is followed: the same
+    /// pieces are sent to the address it names, [`FAKE_MOVES_LIMIT`] times at most. A
+    /// fault of the sender is the request's fault, and nothing is painted; any answer
+    /// is taken, whatever its status.
+    pub fn posting(mut self, to: Address, pieces: Vec<Piece>) -> FakeFiller {
+        self.posts = Some((to, pieces));
+        self
     }
 
     /// The same filler, declaring these features and no others. What it states of its
@@ -281,7 +299,9 @@ impl FakeFiller {
         self
     }
 
-    /// How many requests it was sent, answered or not.
+    /// How many requests it was sent, answered or not: how many times the backend was
+    /// called. A request it was told to fail is counted, at whatever stage it says it
+    /// failed, `not_sent` among them: the count is of calls, not of what left.
     pub fn requests(&self) -> u64 {
         self.requests.load(Ordering::SeqCst)
     }
@@ -311,6 +331,18 @@ impl Filler for FakeFiller {
         self.requests.fetch_add(1, Ordering::SeqCst);
         held(&self.stop, bounds)?;
         self.terms.failed()?;
+        if let Some((to, pieces)) = &self.posts {
+            let mut to = to.clone();
+            for _ in 0..=FAKE_MOVES_LIMIT {
+                let outgoing = Outgoing::new(to.clone(), pieces.clone())
+                    .map_err(|why| Fault::new(FaultKind::TooLarge, &why.to_string()).not_sent())?;
+                let reply = bounds.sender().send(&outgoing, bounds)?;
+                match reply.moved_to() {
+                    Some(next) => to = next.clone(),
+                    None => break,
+                }
+            }
+        }
         let painted = self.painted(request)?;
         Ok(match self.terms.charge {
             Some(charge) => painted.charged(charge),
@@ -385,7 +417,8 @@ impl FakeSegmenter {
         }
     }
 
-    /// The same segmenter, declaring these features and no others.
+    /// The same segmenter, declaring these features and no others. What it states of
+    /// its price and its recipient stays.
     pub fn declaring(mut self, features: &[&str]) -> FakeSegmenter {
         self.declaration = redeclared(&self.declaration, None, features);
         self
@@ -426,7 +459,9 @@ impl FakeSegmenter {
         self
     }
 
-    /// How many requests it was sent, answered or not. A batch is one request.
+    /// How many requests it was sent, answered or not: how many times the backend was
+    /// called, a request it was told to fail as `not_sent` among them. A batch is one
+    /// request.
     pub fn requests(&self) -> u64 {
         self.requests.load(Ordering::SeqCst)
     }
@@ -596,7 +631,9 @@ impl FakeJudge {
         self
     }
 
-    /// The same judge, declaring these features and no others.
+    /// The same judge, declaring these features and no others. The model stays, the
+    /// one given by [`FakeJudge::as_model`] included, and so do what it states of its
+    /// price and its recipient.
     pub fn declaring(mut self, features: &[&str]) -> FakeJudge {
         self.declaration = redeclared(&self.declaration, None, features);
         self
@@ -616,8 +653,9 @@ impl FakeJudge {
     }
 
     /// The same judge, reporting this charge, in millionths of a US dollar, with every
-    /// answer: under its bound, over it, as the test chooses. A fake that was not
-    /// told reports none.
+    /// answer: under its bound, over it, as the test chooses. It replaces the charge a
+    /// scripted turn carries of its own. A fake that was not told reports none, and
+    /// plays each turn with the charge the script gave it.
     pub fn charging(mut self, micros: u64) -> FakeJudge {
         self.terms.charge = Some(charge(micros));
         self
@@ -630,7 +668,8 @@ impl FakeJudge {
         self
     }
 
-    /// How many requests it was sent, answered or not.
+    /// How many requests it was sent, answered or not: how many times the backend was
+    /// called, a request it was told to fail as `not_sent` among them.
     pub fn requests(&self) -> u64 {
         lock(&self.played).received.len() as u64
     }

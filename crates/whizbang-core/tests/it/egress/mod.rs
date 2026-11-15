@@ -2,4 +2,7 @@
 //! recipients, classes of data, and the checks before data leaves. A root only, so
 //! far: each task adds its module here.
 
+mod gate;
+mod pixels;
+mod support;
 mod ways_out;

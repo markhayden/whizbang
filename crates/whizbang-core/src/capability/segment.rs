@@ -410,6 +410,16 @@ impl SegmentHandle {
         self
     }
 
+    /// The same handle, whose backend sends through this and nothing else: the checked
+    /// sender the executor made for it (ADR 0015).
+    pub(crate) fn sending_through(
+        mut self,
+        sender: Arc<dyn crate::egress::Sender>,
+    ) -> SegmentHandle {
+        self.bounds.sending_through(sender);
+        self
+    }
+
     /// The same handle, holding its deadline to this clock in place of the machine's.
     pub(crate) fn timed_by(mut self, clock: Arc<dyn crate::contract::Clock>) -> SegmentHandle {
         self.bounds.timed_by(clock);

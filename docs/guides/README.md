@@ -1,8 +1,14 @@
 # Guides
 
-One page per door and per "how to add" task (`SPEC.md` section 12). None is written yet: a
-guide ships with the milestone that makes its subject work, and is listed here until then.
-Milestones are those of `SPEC.md` section 16.
+One page per door and per "how to add" task (`SPEC.md` section 12), and one for the config
+file. A guide ships with the milestone that makes its subject work, and is listed here until
+then. Milestones are those of `SPEC.md` section 16.
+
+## Written
+
+| Guide | Covers | Since |
+|---|---|---|
+| [The config file](config.md) | Writing the one TOML file that chooses backends, caps a call's spend and approves recipients, and the env file that holds the keys | Checkpoint 1B |
 
 ## Doors
 

@@ -12,6 +12,13 @@ credential's constructor is told the secrets; a recipient's upstreams are kept i
 order, and equality does not depend on the order they were given in; what a sink's
 "no" means. Added: "For later tasks"; a limit on the rest of an address, pinned.
 Amended: 2026-11-14, with task B3. Added: "The fakes".
+Amended: 2026-11-14, with task C2, after the config's reader was built on these types.
+Changed: an address is looked at for a secret a third time, as it is written, its folded
+origin and then the rest. Lowering the host, or leaving out a port that is the scheme's
+own, can join a host and a path into a secret that neither the text as given nor the
+origin alone holds (`https://HOST/Path` or `https://host:443/Path` for a secret
+`host/Path`); such an address is refused as one that holds a secret
+(`ways_out::a_secret_that_folding_an_address_makes_across_its_host_and_its_path_is_refused`).
 Spec: section 4, "Backends"; section 6, "Spend"; section 10, "Egress"
 
 ## Context

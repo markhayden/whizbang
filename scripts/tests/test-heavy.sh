@@ -58,7 +58,7 @@ echo "gone" >"$tmp/lock/label"
 expect_pass "a stale lock is taken over" "$heavy" after-stale true
 grep -q -F 'stale lock' "$tmp/out" || { cat "$tmp/out"; fail "taking over a stale lock is reported"; }
 [ ! -e "$tmp/lock" ] || fail "the lock is released after a takeover"
-ls "$tmp" | grep -q 'lock\.stale' && fail "the moved stale lock is deleted"
+ls "$tmp" | grep 'lock\.stale' >/dev/null && fail "the moved stale lock is deleted"
 
 # --- A lock directory with no process id (its maker died before writing one) is stale once
 # it has been seen that way for the grace period, and not before.

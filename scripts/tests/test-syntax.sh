@@ -203,13 +203,23 @@ while [ "$i" -lt "${#fault_names[@]}" ]; do
     # is the trap's; elsewhere the shell's own failure is kept.
     want="not 0"
     if [ "$(major "$sh")" = 3 ] || [ "$fault" = here-document ]; then want=70; fi
-    "$sh" -n "$tmp/faults/scan.sh" 2>/dev/null || fail "$sh: a parse does not find the fault ($fault)"
-    faulty "$sh" "scan.sh with a fault ($fault)" "$want" "$sh" "$tmp/faults/scan.sh" --message "$tmp/message"
-    faulty "$sh" "docs.sh with a fault ($fault)" "$want" "$sh" "$tmp/faults/docs.sh" --check
-    faulty "$sh" "heavy.sh with a fault ($fault)" "$want" \
+    # A script here is one function (below), and a here-document with no end swallows the
+    # end of the function: a parse finds that, and the script refuses to run, with 2. In a
+    # test file, which is no function, no parse finds it and the trap makes the 0 a 70.
+    script_want=$want
+    if [ "$fault" = here-document ]; then
+      "$sh" -n "$tmp/faults/scan.sh" 2>/dev/null && fail "$sh: a parse finds a here-document with no end in a script that is one function"
+      script_want=2
+    else
+      "$sh" -n "$tmp/faults/scan.sh" 2>/dev/null || fail "$sh: a parse does not find the fault ($fault)"
+    fi
+    "$sh" -n "$tmp/faults/a-test.sh" 2>/dev/null || fail "$sh: a parse does not find the fault in a test file ($fault)"
+    faulty "$sh" "scan.sh with a fault ($fault)" "$script_want" "$sh" "$tmp/faults/scan.sh" --message "$tmp/message"
+    faulty "$sh" "docs.sh with a fault ($fault)" "$script_want" "$sh" "$tmp/faults/docs.sh" --check
+    faulty "$sh" "heavy.sh with a fault ($fault)" "$script_want" \
       env WHIZBANG_HEAVY_LOCK="$tmp/faults/lock" "$sh" "$tmp/faults/heavy.sh" a-label echo "went on"
     [ ! -e "$tmp/faults/lock" ] || fail "$sh: heavy.sh with a fault ($fault) still releases the lock"
-    faulty "$sh" "check-crate-graph.sh with a fault ($fault)" "$want" "$sh" "$tmp/faults/check-crate-graph.sh"
+    faulty "$sh" "check-crate-graph.sh with a fault ($fault)" "$script_want" "$sh" "$tmp/faults/check-crate-graph.sh"
     faulty "$sh" "a test file with a fault ($fault)" "$want" "$sh" "$tmp/faults/a-test.sh"
   done
   i=$((i + 1))
@@ -243,8 +253,8 @@ check_rule() { # <file>: prints what is wrong with it, if anything
   [ -n "$guard_line" ] && [ "$guard_line" -lt "$trap_line" ] ||
     echo "$f sets an EXIT trap without parsing itself first (see the top of scripts/scan.sh)"
   [ "$(grep -c -E '^[[:space:]]*trap .*EXIT' "$f")" = 1 ] || echo "$f sets more than one EXIT trap"
-  sed -n "${trap_line}p" "$f" | grep -q -F -e "trap 'rc=\$?; " || echo "$f: the EXIT trap does not start by keeping the status"
-  { sed -n "${trap_line}p" "$f" | grep -F -e "$trap_test" | grep -q -F -e "$trap_end"; } ||
+  sed -n "${trap_line}p" "$f" | grep -F -e "trap 'rc=\$?; " >/dev/null || echo "$f: the EXIT trap does not start by keeping the status"
+  { sed -n "${trap_line}p" "$f" | grep -F -e "$trap_test" | grep -F -e "$trap_end" >/dev/null; } ||
     echo "$f: the EXIT trap does not turn an unmeant exit of 0 into 70 (see the top of scripts/scan.sh)"
   [ "$(sed -n "$((trap_line - 1))p" "$f")" = "done_ok=0" ] || echo "$f: done_ok=0 is not on the line before the EXIT trap"
   # done_ok=1 only where the script is about to end as it meant to: the next line is an
@@ -282,6 +292,143 @@ case "$(check_rule "$tmp/joined-done.sh")" in
   *"is not alone on line"*) ;;
   *) fail "the rule finds done_ok=1 that shares its line" ;;
 esac
+
+# --- Every script under scripts/ that is not a test is one function, read whole before any
+# of it runs, so that a change to the file during a run does not change the run (the comment
+# above `main` in scripts/scan.sh; scripts/tests/scan/edited.sh edits the scan while it
+# runs). The form: after the first line, only comments, blank lines and the line that
+# parses the file come before the line `main() {`; the last two lines are `}` and
+# `main "$@"; exit`; and what is between is whole by itself, so the function ends where
+# the file says it does and no command stands outside it.
+last_line='main "$@"; exit'
+check_form() { # <file>: prints what is wrong with its form, if anything
+  local f=$1 start lines
+  lines=$(awk 'END { print NR }' "$f")
+  start=$(grep -n -x -F -e 'main() {' "$f" | head -n 1 | cut -d: -f1) || true
+  [ -n "$start" ] || { echo "$f has no line: main() {"; return 0; }
+  [ "$(grep -c -x -F -e 'main() {' "$f")" = 1 ] || echo "$f has more than one line: main() {"
+  [ "$(tail -n 1 "$f")" = "$last_line" ] || echo "$f: the last line is not: $last_line"
+  [ "$(grep -c -F -e 'main "$@"' "$f")" = 1 ] || echo "$f calls main in more than one place"
+  [ "$(sed -n "$((lines - 1))p" "$f")" = "}" ] || echo "$f: the line before the last is not the } that ends main"
+  # What stands between the first line and main, when anything does.
+  : >"$tmp/before-main"
+  if [ "$start" -gt 2 ]; then
+    sed -n "2,$((start - 1))p" "$f" | grep -v -E -e '^(#|[[:space:]]*$)' |
+      grep -v -E -e '^"\$BASH" -n "\$\{BASH_SOURCE\[0\]\}" \|\| \{ echo "[a-z -]+: \$\{BASH_SOURCE\[0\]\} has a syntax error; refusing to run" >&2; exit 2; \}$' >"$tmp/before-main" || true
+  fi
+  [ ! -s "$tmp/before-main" ] || echo "$f has a command before main that is not the line that parses the file"
+  [ "$lines" -gt $((start + 2)) ] || { echo "$f: main is empty"; return 0; }
+  sed -n "$((start + 1)),$((lines - 2))p" "$f" >"$tmp/body"
+  "$BASH" -n "$tmp/body" 2>/dev/null || echo "$f: what is between main() { and the last } is not whole by itself: main ends early, or a command stands outside it"
+  # A return at the level of main would end the script by its last line with whatever
+  # status the return gave, past the lines that were to follow. Inside a function of the
+  # script it is that function's: a function starts at a line `name() {`, at the margin or
+  # indented, and ends at a `}` with the same indent, or is one line. Text between single
+  # quotes that runs over lines (an awk or perl program) is not the script's: a line with
+  # an odd number of single quotes opens or closes it. This reads the text, not the
+  # program: quoting it does not follow can hide a return, or show one that is not there.
+  # Known to pass unseen: a return after a line with one apostrophe in it (in a string in
+  # double quotes, or after a command on the line of a comment), which is taken for the
+  # start of quoted text; a return after a function of the script whose closing brace has
+  # more on its line (`} >/dev/null`, `};`), which is taken to be still inside it; a
+  # return with nothing before it in a case arm (`x)return 0;;`); and one run by `eval`.
+  awk '
+    function quotes(line,   n) { n = gsub(/\047/, "", line); return n % 2 }
+    /^[[:space:]]*#/ && !quoted { next }
+    {
+      was = quoted
+      if (quotes($0)) quoted = !quoted
+      if (was) next
+    }
+    inside { if ($0 == ends) inside = 0; next }
+    /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*\(\) \{/ {
+      if ($0 !~ /\}[[:space:]]*(#.*)?$/) { match($0, /^[[:space:]]*/); ends = substr($0, 1, RLENGTH) "}"; inside = 1 }
+      next
+    }
+    /(^|[[:space:];&|{(])return([[:space:];]|$)/ { found = 1 }
+    END { exit !found }' "$tmp/body" && echo "$f has a return at the level of main"
+  return 0
+}
+# programs <folder>: the shell scripts under it that are run as programs: those with a
+# first line that names a shell, but for the tests.
+programs() {
+  local f first
+  while IFS= read -r -d '' f; do
+    first=
+    IFS= read -r first <"$f" || true
+    case "$first" in '#!'*sh | '#!'*sh' '*) printf '%s\n' "$f" ;; esac
+  done < <(find "$1" -type f ! -path "$1/tests/*" -print0)
+}
+# unnamed_shell <folder>: the files under it that should be programs and have no first
+# line that names a shell, so that nothing would hold them to the form: any file among
+# the hooks, whatever its name, and any file named as a shell script, but for the tests.
+unnamed_shell() {
+  local f first
+  while IFS= read -r -d '' f; do
+    first=
+    IFS= read -r first <"$f" || true
+    case "$first" in '#!'*sh | '#!'*sh' '*) ;; *) printf '%s\n' "$f" ;; esac
+  done < <(find "$1" -type f ! -path "$1/tests/*" \( -path "$1/hooks/*" -o -name '*.sh' -o -name '*.bash' \) -print0)
+}
+programs scripts >"$tmp/programs"
+[ "$(wc -l <"$tmp/programs" | tr -d ' ')" -ge 15 ] || fail "the scripts and the hooks are found (at least 15 programs under scripts/)"
+for name in scan.sh heavy.sh thread-guard.sh worktree.sh docs.sh setup.sh hook-dispatch.sh hooks/pre-push hooks/commit-msg hooks/pre-commit; do
+  grep -x -F -e "scripts/$name" "$tmp/programs" >/dev/null || fail "scripts/$name is one of the programs held to the form"
+done
+# The runner of these tests is held to it too: its last lines are read after every test
+# has run, which is when a file is most likely to have changed under it.
+echo "scripts/tests/run.sh" >>"$tmp/programs"
+while IFS= read -r f; do
+  problems=$(check_form "$f")
+  [ -z "$problems" ] || fail "$problems (see the comment above main in scripts/scan.sh)"
+done <"$tmp/programs"
+found=$(unnamed_shell scripts)
+[ -z "$found" ] || fail "a script or a hook with no first line that names its shell, so nothing holds it to the form: $found"
+# The rule itself, on forms that break it. Each planted form breaks it in the ways named
+# and in no other: the lines it prints are counted.
+mkdir "$tmp/form"
+form_case() { # <name> <lines expected> <expected text> <line...>
+  local name=$1 count=$2 expected=$3 got
+  shift 3
+  printf '%s\n' "$@" >"$tmp/form/$name.sh"
+  got=$(check_form "$tmp/form/$name.sh")
+  case "$got" in
+    *"$expected"*) ;;
+    *) printf '%s\n' "$got" >&2; fail "the form rule, $name: expected: $expected" ;;
+  esac
+  [ "$(printf '%s\n' "$got" | grep -c .)" = "$count" ] || { printf '%s\n' "$got" >&2; fail "the form rule, $name: expected $count problems and no other"; }
+}
+guard='"$BASH" -n "${BASH_SOURCE[0]}" || { echo "a tool: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }'
+top=('#!/usr/bin/env bash' '# a comment' '')
+printf '%s\n' "${top[@]}" "$guard" '# another' 'main() {' 'set -euo pipefail' 'f() {' '  echo f' '  return 0' '}' 'g() { return 1; }' 'f' 'if g; then' '  echo g' 'fi' '}' "$last_line" >"$tmp/form/good.sh"
+[ -z "$(check_form "$tmp/form/good.sh")" ] || { check_form "$tmp/form/good.sh" >&2; fail "the form rule passes a script of the form"; }
+# With main on the second line, nothing stands before it.
+printf '%s\n' '#!/usr/bin/env bash' 'main() {' 'echo x' '}' "$last_line" >"$tmp/form/second-line.sh"
+[ -z "$(check_form "$tmp/form/second-line.sh")" ] || { check_form "$tmp/form/second-line.sh" >&2; fail "the form rule passes a script whose main is on its second line"; }
+form_case no-main 1 "has no line: main() {" "${top[@]}" 'echo x'
+form_case before 1 "has a command before main" "${top[@]}" 'set -euo pipefail' 'main() {' 'echo x' '}' "$last_line"
+form_case other-guard 1 "has a command before main" "${top[@]}" '"$BASH" -n "${BASH_SOURCE[0]}" || echo "went on"' 'main() {' 'echo x' '}' "$last_line"
+form_case no-exit 1 "the last line is not" "${top[@]}" 'main() {' 'echo x' '}' 'main "$@"'
+form_case outside 1 "is not whole by itself" "${top[@]}" 'main() {' 'echo x' '}' 'echo outside' 'g() {' 'echo g' '}' "$last_line"
+form_case empty 1 "main is empty" "${top[@]}" 'main() {' '}' "$last_line"
+form_case twice 1 "has more than one line: main() {" "${top[@]}" 'main() {' 'echo x' 'main() {' 'echo y' '}' '}' "$last_line"
+form_case return 1 "has a return at the level of main" "${top[@]}" 'main() {' 'echo x' 'return 0' 'echo y' '}' "$last_line"
+form_case return-inside 1 "has a return at the level of main" "${top[@]}" 'main() {' 'f() {' '  return 0' '}' 'if f; then' '  return 3' 'fi' '}' "$last_line"
+# A command after the last line, and the call and the exit on two lines, each move the
+# last line, the line before it and the end of main at once: three problems, all meant.
+form_case after 3 "the last line is not" "${top[@]}" 'main() {' 'echo x' '}' "$last_line" 'echo after'
+form_case two-lines 3 "the last line is not" "${top[@]}" 'main() {' 'echo x' '}' 'main "$@"' 'exit'
+# A second call of main stands outside it: two problems.
+form_case called-twice 2 "calls main in more than one place" "${top[@]}" 'main() {' 'echo x' '}' 'main "$@"' 'g() {' 'echo g' '}' "$last_line"
+# A hook, or a file named as a script, with no first line that names a shell is found.
+mkdir -p "$tmp/unnamed/hooks" "$tmp/unnamed/tests"
+printf '%s\n' '#!/usr/bin/env bash' 'main() {' 'echo x' '}' "$last_line" >"$tmp/unnamed/hooks/pre-push"
+printf '%s\n' 'echo "a hook with no first line"' >"$tmp/unnamed/hooks/post-merge"
+printf '%s\n' 'echo "a script with no first line"' >"$tmp/unnamed/tool.sh"
+printf '%s\n' 'echo "sourced by the tests"' >"$tmp/unnamed/tests/lib.sh"
+printf '%s\n' 'some notes' >"$tmp/unnamed/notes.txt"
+[ "$(unnamed_shell "$tmp/unnamed" | sort | tr '\n' ' ')" = "$tmp/unnamed/hooks/post-merge $tmp/unnamed/tool.sh " ] ||
+  { unnamed_shell "$tmp/unnamed" >&2; fail "a hook and a script with no first line that names a shell are found, and nothing else"; }
 
 # --- Every search with git's grep, anywhere under scripts/, runs on one thread: on several
 # it has lost matches at random on CI's macOS runner (the comment above `search` in
@@ -324,8 +471,61 @@ printf '%s\n' "\$GIT $search_word -n x" "\"\$tool\" $search_word -n x" "\${GIT} 
 printf '%s\n' "\$GIT ${one_thread}$search_word -n x" "$tool \\" "  ${one_thread}$search_word -n x" \
   "\$words | $search_word x" "echo \"\$out\" | $search_word -q x" >"$tmp/threads/better.sh"
 [ "$(unthreaded "$tmp/threads" | wc -l | tr -d ' ')" = 9 ] || { unthreaded "$tmp/threads" >&2; fail "the rule finds nine searches not on one thread"; }
-unthreaded "$tmp/threads" | grep -q -F "better.sh" && fail "the rule passes a variable, and a line that goes on, on one thread"
-unthreaded "$tmp/threads" | grep -q -F "good.sh" && fail "the rule passes searches on one thread and what is not a search"
+unthreaded "$tmp/threads" | grep -F "better.sh" >/dev/null && fail "the rule passes a variable, and a line that goes on, on one thread"
+unthreaded "$tmp/threads" | grep -F "good.sh" >/dev/null && fail "the rule passes searches on one thread and what is not a search"
+
+# --- No search after a pipe is told to be quiet, anywhere under scripts/. With `pipefail`,
+# a quiet search stops at its first match; the command before it can then be killed while
+# it is still writing, and the pipeline fails though there was a match. It happened on the
+# Linux runner and not on macOS (AGENTS.md, "Gotchas"). The output goes to /dev/null
+# instead, and the search reads its input to the end. The words are put together here so
+# that these lines are not themselves taken for one.
+quiet_flag="-q"
+# quiet_after_pipe <folder>: the lines under it where a pipe (not `||`) leads into the
+# search with a quiet option: a short option with q in it, or one of the two long ones,
+# anywhere after the search's name on the line. A line that ends in a pipe or a backslash
+# goes on in the next. A comment is not a command. The pipe may be the one that carries
+# errors too (`|&`), and the search may have variables set in front of it or be run
+# through `command` or `env`.
+#
+# What it does not find, each a way to write the same thing: the search on the line after
+# a pipe and a comment; the search by a path, with a backslash before its name or with
+# its name in quotes; inside `{ }` or `( )` after the pipe; after `if` or `!`; through
+# `command` or `env` with an option of their own (`command -p`, `env -i`) or one after the
+# other (`env A=b command`); and with a variable in front whose quoted value holds a
+# space. And the
+# same hazard from another reader that ends early is not looked for at all: `head -n 1`,
+# a search told to stop at its first match with `-m 1`, another search tool told to be
+# quiet, an awk that exits at its first line. docs/carry-over.md has the row.
+quiet_after_pipe() {
+  local f
+  while IFS= read -r -d '' f; do
+    sed -e ':more' -e '/[|\\]$/{' -e 'N' -e 's/\\\n[[:space:]]*/ /' -e 's/|\n[[:space:]]*/| /' -e 'b more' -e '}' "$f" |
+      { grep -n -E -e "(^|[^|])\\|&?[[:space:]]*([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*((command|env)[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*[ef]?${search_word}[[:space:]]([^#]*[[:space:]])?(-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)([[:space:];)}]|\$)" || true; } |
+      { grep -v -E -e "^[0-9]+:[[:space:]]*#" || true; } | sed "s|^|$f:|"
+  done < <(find "$1" -type f -print0)
+  return 0
+}
+found=$(quiet_after_pipe scripts)
+[ -z "$found" ] || fail "a $search_word $quiet_flag after a pipe (send the output to /dev/null instead; AGENTS.md, Gotchas): $found"
+# The rule itself, on lines that break it and lines that do not.
+mkdir "$tmp/quiet"
+printf '%s\n' "echo x | $search_word $quiet_flag x" "  ls | $search_word -F $quiet_flag -e x && echo found" \
+  "if printf x | $search_word -${quiet_flag#-}F x; then" "ls | $search_word -Fx${quiet_flag#-} x || exit 1" \
+  "echo x | $search_word --quiet x" "echo x | $search_word -e x --silent" "cat f | sort | e$search_word $quiet_flag 'a|b'" \
+  "ls |" "  $search_word $quiet_flag x" "ls | \\" "  $search_word $quiet_flag x" "{ ls | $search_word -c x | $search_word $quiet_flag 1; } || true" \
+  "ls|$search_word $quiet_flag x" "ls 2>&1 |& $search_word $quiet_flag x" "ls | LC_ALL=C $search_word $quiet_flag x" \
+  "ls | command $search_word $quiet_flag x" "ls | env LC_ALL=C A=b $search_word $quiet_flag x" "ls | A=b command $search_word $quiet_flag x" >"$tmp/quiet/bad.sh"
+printf '%s\n' "$search_word $quiet_flag x file" "ls | $search_word x >/dev/null" "true || $search_word $quiet_flag x file" \
+  "# ls | $search_word $quiet_flag x" "  # echo x | $search_word $quiet_flag x" "ls | sort $quiet_flag" "ls | $search_word -c x" \
+  "[ -n x ] || $search_word $quiet_flag -F x file || echo no" "ls | $search_word -e quiet x" >"$tmp/quiet/good.sh"
+[ "$(quiet_after_pipe "$tmp/quiet" | wc -l | tr -d ' ')" = 16 ] || { quiet_after_pipe "$tmp/quiet" >&2; fail "the rule finds sixteen quiet searches after a pipe"; }
+quiet_after_pipe "$tmp/quiet" | grep -F "good.sh" >/dev/null && fail "the rule passes a quiet search of a file, a search that is not quiet, and a comment"
+# A planted one among this repo's scripts is found, and named.
+cp -R scripts "$tmp/quiet-scripts"
+printf 'ls | %s %s x\n' "$search_word" "$quiet_flag" >>"$tmp/quiet-scripts/timing.sh"
+[ "$(quiet_after_pipe "$tmp/quiet-scripts" | wc -l | tr -d ' ')" = 1 ] || { quiet_after_pipe "$tmp/quiet-scripts" >&2; fail "a planted quiet search after a pipe is the one line found"; }
+quiet_after_pipe "$tmp/quiet-scripts" | grep -F "quiet-scripts/timing.sh:" >/dev/null || fail "the planted line is named by its file"
 
 # --- run.sh: the syntax check comes before any test, and a test file passes only when it
 # printed its last line.

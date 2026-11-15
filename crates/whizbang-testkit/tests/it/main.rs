@@ -5,6 +5,8 @@ mod capabilities;
 mod echo;
 mod fs_shim;
 mod priced;
+mod renamed;
 mod schema;
 mod sending;
 mod spend;
+mod streams;

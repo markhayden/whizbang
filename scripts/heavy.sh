@@ -29,6 +29,9 @@
 # moving it. The tests use all three.
 # Parse the whole file first: see the top of scripts/scan.sh.
 "$BASH" -n "${BASH_SOURCE[0]}" || { echo "heavy: ${BASH_SOURCE[0]} has a syntax error; refusing to run" >&2; exit 2; }
+# The whole script is one function, read before any of it runs, so a change to this file
+# during a run does not change the run: see `main` in scripts/scan.sh.
+main() {
 set -euo pipefail
 
 if [ $# -lt 2 ]; then
@@ -114,3 +117,5 @@ status=0
 echo "heavy: [$label] finished with status $status" >&2
 done_ok=1
 exit "$status"
+}
+main "$@"; exit

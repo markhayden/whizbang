@@ -20,7 +20,7 @@ grep -q -E '^ +run: just search-canary$' .github/workflows/ci.yml ||
 grep -q -x -F "    WHIZBANG_CANARY_SECONDS=30 bash scripts/tests/scan/canary.sh" justfile ||
   fail "the justfile must run the search canary for 30 seconds"
 case "$seconds" in '' | *[!0-9]*) fail "WHIZBANG_CANARY_SECONDS must be a whole number of seconds" ;; esac
-grep -B1 -E '^ +run: just search-canary$' .github/workflows/ci.yml | grep -q -F "if: matrix.os == 'macos-15'" ||
+grep -B1 -E '^ +run: just search-canary$' .github/workflows/ci.yml | grep -F "if: matrix.os == 'macos-15'" >/dev/null ||
   fail ".github/workflows/ci.yml must run the search canary on macos-15"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE

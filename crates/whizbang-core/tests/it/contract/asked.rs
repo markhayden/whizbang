@@ -49,9 +49,10 @@ impl Clock for Ticking {
     }
 }
 
-type Body = Box<dyn Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync>;
+pub(super) type Body =
+    Box<dyn Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync>;
 
-struct Scripted(ActionDescriptor, Body);
+pub(super) struct Scripted(pub(super) ActionDescriptor, pub(super) Body);
 
 impl Action for Scripted {
     fn descriptor(&self) -> &ActionDescriptor {

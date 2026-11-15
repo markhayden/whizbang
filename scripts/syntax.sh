@@ -13,6 +13,9 @@
 # then exits 0 if the script has set an `EXIT` trap. A broken scan would pass, and a test
 # file that stopped half-way would be reported as passing. `scripts/tests/run.sh` runs
 # this before any test. This script sets no trap, so its own syntax error is a failure.
+# The whole script is one function, read before any of it runs, so a change to this file
+# during a run does not change the run: see `main` in scripts/scan.sh.
+main() {
 set -uo pipefail
 
 dir=${1:-}
@@ -61,3 +64,5 @@ if [ "$broken" -gt 0 ]; then
 fi
 [ "$checked" -gt 0 ] || { echo "syntax: no shell script under $dir" >&2; exit 1; }
 echo "syntax: ok ($checked shell scripts under $dir)"
+}
+main "$@"; exit

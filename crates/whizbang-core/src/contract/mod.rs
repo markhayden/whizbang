@@ -73,8 +73,8 @@ pub use part::{
 };
 pub use prepare::{
     ARGUMENTS_TEXT_MAX_BYTES, Backends, CallError, Estimate, INPUTS_LIMIT, InputFault, Missing,
-    ModelIdentity, Need, NoBackends, PreparedCall, Readiness, Refusal, ResolvedInput, Stale,
-    StoreFailure, Unavailable,
+    ModelIdentity, Need, NoBackends, NotJudged, PreparedCall, Readiness, Refusal, ResolvedInput,
+    Stale, StoreFailure, Unavailable,
 };
 pub use record::{
     DIAGNOSTIC_NAME_LIMIT, DIAGNOSTICS_LIMIT, RECORD_MAX_BYTES, REFUSAL_WHY_LIMIT, REFUSALS_LIMIT,

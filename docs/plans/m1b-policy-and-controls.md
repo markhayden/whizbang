@@ -945,7 +945,10 @@ nothing marks a run a dead process left: this task marks it, and corrects the ro
 - [ ] `DispatchPolicy`, in the core: a value the executor holds, asked whether a recipient
       may receive given classes of data, and whether it may be probed. The default
       approves nothing. The gate's place in I3's order is given this policy.
-- [ ] `Sender`, the sending interface of B2, as the executor hands it to a backend: every
+      (Built before I2 to I4b, but for its last sentence: the policy is there, the
+      executor holds it and the checked sender asks it; the gate's place is task I3's,
+      which gives it this policy and ticks this box: `docs/carry-over.md`.)
+- [x] `Sender`, the sending interface of B2, as the executor hands it to a backend: every
       origin it is asked to reach goes through one check before data is handed over, and
       what was handed over is noted in the run's place for facts. The check is E2's and
       E3's; here it is a default that refuses everything, and a fake.
@@ -1364,14 +1367,14 @@ executor accepts can write an adjustment, shown as S9 shows it for a reset.
 `docs/adr/0004-toml-config.md` and `schemas/config-v1.json`; rascal
 `crates/rascal-core/src/config.rs` and `schemas/rascal/config-v1.json`.
 
-- [ ] An ADR: one TOML file; where it is found; its tables (`backends`, `spend`, `egress`,
+- [x] An ADR: one TOML file; where it is found; its tables (`backends`, `spend`, `egress`,
       `models`, and `tools`, which is refused until milestone 2 gives it a shape); how
       several named backends of one capability and a default are written, with the example
       of `SPEC.md` section 4 either read as it stands or corrected in this pull request;
       that a credential is named by its variable and never held; the digest, of the
       settings and not of the file's bytes, and exactly what enters it; which settings a
       run records.
-- [ ] The type and its strict reader in `crates/whizbang-core/src/config/`, and
+- [x] The type and its strict reader in `crates/whizbang-core/src/config/`, and
       `docs/guides/config.md`. Nothing is built from a config yet.
 
 **Done when** these pass: the spec's example is read to the backends it shows; an unknown
@@ -1390,11 +1393,11 @@ example in the guide is read by a test (rule 5).
 **Depends on:** C1. **Reads:** squint `crates/squint-core/src/env.rs` and
 `crates/squint-providers/src/privacy.rs` (`credential`); `.env.example` of squint.
 
-- [ ] An env file is read for the variables the config names and no others. A value in
+- [x] An env file is read for the variables the config names and no others. A value in
       single or double quotes has them taken off; a value shorter than the least a secret
       may be is refused, naming the variable and never the value or its length beyond what
       ADR 0005 allows.
-- [ ] The secrets the executor redacts are every credential the config names that has a
+- [x] The secrets the executor redacts are every credential the config names that has a
       value. A credential is handed only to the backend whose table names it.
 
 **Done when** these pass: a quoted value, a value with a trailing line break and an
@@ -1413,10 +1416,10 @@ variable named, the least length). **Size:** small.
 
 **Depends on:** B0b. **Reads:** squint `crates/squint-core/src/artifacts.rs` (`redact`).
 
-- [ ] An ADR, which changes ADR 0005's "What redaction does not find": for each form the
+- [x] An ADR, which changes ADR 0005's "What redaction does not find": for each form the
       pin test lists (base64; a `\u00XX` escape; UTF-16 in either byte order; each of the
       five other forms of percent-encoding), found, or accepted with the reason.
-- [ ] The forms that are found, in `crates/whizbang-core/src/contract/redact.rs`, each with
+- [x] The forms that are found, in `crates/whizbang-core/src/contract/redact.rs`, each with
       its pin test turned round. A body known to be JSON is redacted as JSON: each string
       is decoded, searched and written again, so no escape can hide a secret or be broken
       by the marker.
@@ -1473,9 +1476,16 @@ these runs.
 **Depends on:** I5. **Reads:** squint `crates/squint-providers/src/privacy.rs`
 (`consent`).
 
-- [ ] The policy a config's `egress` table makes (I5's `DispatchPolicy`): which recipients
+- [x] The policy a config's `egress` table makes (I5's `DispatchPolicy`): which recipients
       may receive which classes of data.
-- [ ] The check behind a `Sender` (I5) for the first address.
+- [x] The check behind a `Sender` (I5) for the first address.
+
+**Not done yet, though both boxes are true:** built before I3, so four parts of "Done
+when" below are not shown as the plan words them. The fake backend counting none and
+the fake meter having seen nothing are I3's, with the gate's place; no dispatch record
+is S5's; and "no other backend is asked" is shown only of an executor that has no
+fallback, and again at the gate's place by I3. ADR 0019, "Limits";
+`docs/carry-over.md`.
 
 **Done when** these pass, each with an executor a test builds with the policy: with the
 empty policy every request to a backend with a recipient is refused and the fake counts
@@ -1533,7 +1543,7 @@ marker credential is nowhere in the record (rule 4).
 **Depends on:** E2. **Reads:** squint `crates/squint-providers/src/privacy.rs` (`scan`,
 `FORBIDDEN_MARKERS`).
 
-- [ ] What leaves for a recipient holds no image metadata, no file name and no path. An
+- [x] What leaves for a recipient holds no image metadata, no file name and no path. An
       image is sent as a `Picture` (ADR 0006), which is canonical pixels and has no place
       for any; the sending interface takes a body made by whizbang's own encoder, which
       writes no ancillary data.
@@ -1552,13 +1562,13 @@ only the chunks the test lists.
 `models/cache.py` and `tools/python/MODEL.md`; table-manners `CONTRACT.md` sections 3.5
 and 5.3 and `schemas/core/installable.json`.
 
-- [ ] An ADR: the models directory and its lock; a catalogue entry (files with their sizes
+- [x] An ADR: the models directory and its lock; a catalogue entry (files with their sizes
       and hashes, the origins they may be downloaded from, licence, features, and a
       revision); an installation and its record, which holds the catalogue's and the
       adapter's revisions; the installation's identity; the pointer that names the one in
       use; holds as file locks. It edits nothing in `SPEC.md`: the two sentences named
       under "Decisions" are B0b's.
-- [ ] The catalogue and the installation record are added to `whizbang-backends`, the
+- [x] The catalogue and the installation record are added to `whizbang-backends`, the
       crate B0b made, as types read strictly. Nothing installs yet.
 
 **Done when** these pass: a catalogue and an installation record each round-trip; each is
@@ -1577,10 +1587,10 @@ installation records. **Size:** medium.
 **Depends on:** M1. **Reads:** rascal `tools/python/src/rascal_tools/installer.py` (`get`,
 `_copy_bounded`, `model_lock`); rascal `crates/rascal-testkit/src/fake_install.rs`.
 
-- [ ] `crates/whizbang-testkit/src/downloads.rs`: a fake of the download interface that
+- [x] `crates/whizbang-testkit/src/downloads.rs`: a fake of the download interface that
       serves bytes from memory, can stop at a barrier after a stated count of bytes, serve
       wrong bytes, serve too many, or fail.
-- [ ] Each file of a catalogue entry is downloaded into staging under the model's lock,
+- [x] Each file of a catalogue entry is downloaded into staging under the model's lock,
       stopped at its stated size and checked by hash. The modules of the installer are
       laid out as "Strands" says. Nothing is published yet.
 
@@ -1781,7 +1791,7 @@ with the two changed lines.
 
 **Depends on:** X3. Scripts only.
 
-- [ ] A push made with `GIT_DIR` and `GIT_WORK_TREE` set from another folder is refused,
+- [x] A push made with `GIT_DIR` and `GIT_WORK_TREE` set from another folder is refused,
       or what it published is scanned before a merge: `review-merge`'s range scan takes
       every branch the pull request's commits are on and the branch's name. Which of the
       two is the builder's finding, written in the row.
@@ -1795,7 +1805,7 @@ a script, stops, and the gap goes to the owner to accept in a line of the row.
 
 **Depends on:** X4. Scripts only.
 
-- [ ] `scripts/scan.sh` and the other long scripts run from a function read whole before
+- [x] `scripts/scan.sh` and the other long scripts run from a function read whole before
       it starts, or from a copy.
 
 **Done when** a test edits the file during a run, at a barrier the test holds and not by
@@ -1807,7 +1817,7 @@ holds each long script to the form.
 
 **Depends on:** X5. Scripts only.
 
-- [ ] The sixteen lines under `scripts/` that end a pipe with `grep -q` send the output
+- [x] The sixteen lines under `scripts/` that end a pipe with `grep -q` send the output
       to `/dev/null` instead, and `scripts/tests/test-syntax.sh` refuses a new one.
 
 **Done when** no script under `scripts/` has the pattern, a planted one fails the test,

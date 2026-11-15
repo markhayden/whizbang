@@ -1,0 +1,90 @@
+//! The examples of the config's guide and of its record are read by the reader they
+//! describe (plan 1B, "Rules every task's tests follow", 5): a block fenced as `toml`
+//! is read, and a block fenced as `toml refused` is refused with exactly the sentence
+//! in the `text` block that follows it.
+
+use whizbang_core::config::{Config, EnvFile};
+use whizbang_core::contract::Secrets;
+
+/// The fenced blocks of a Markdown page, each as the word after its fence and its lines.
+fn blocks(page: &str) -> Vec<(String, String)> {
+    let mut blocks = Vec::new();
+    let mut open: Option<(String, String)> = None;
+    for line in page.lines() {
+        match (&mut open, line.strip_prefix("```")) {
+            (None, Some(info)) => open = Some((info.trim().to_owned(), String::new())),
+            (Some(_), Some(_)) => blocks.extend(open.take()),
+            (Some((_, body)), None) => {
+                body.push_str(line);
+                body.push('\n');
+            }
+            (None, None) => {}
+        }
+    }
+    assert!(open.is_none(), "a block is not closed");
+    blocks
+}
+
+/// Reads every example of a page, and says how many were read and how many refused.
+fn read_the_examples_of(page: &str) -> (usize, usize) {
+    let none = Secrets::none();
+    let blocks = blocks(page);
+    let (mut read, mut refused) = (0, 0);
+    for (index, (info, body)) in blocks.iter().enumerate() {
+        match info.as_str() {
+            "toml" => {
+                if let Err(why) = Config::parse(body.as_bytes(), &none) {
+                    panic!("an example is refused: {why}\n{body}");
+                }
+                read += 1;
+            }
+            "toml refused" => {
+                let Err(why) = Config::parse(body.as_bytes(), &none) else {
+                    panic!("an example that the page says is refused is read:\n{body}");
+                };
+                let (next, sentence) = blocks.get(index + 1).expect("a block follows");
+                assert_eq!(next, "text", "the sentence follows the example:\n{body}");
+                // The page breaks a long sentence over lines.
+                let sentence = sentence.split_whitespace().collect::<Vec<_>>().join(" ");
+                assert_eq!(why.to_string(), sentence, "{body}");
+                refused += 1;
+            }
+            _ => {}
+        }
+    }
+    (read, refused)
+}
+
+#[test]
+fn every_example_in_the_guide_and_in_the_record_is_read() {
+    let guide = include_str!("../../../../../docs/guides/config.md");
+    let record = include_str!("../../../../../docs/adr/0011-the-config-file.md");
+    // The counts are held, so that an example whose fence was mistyped, and which this
+    // test would then pass over, is missed here.
+    assert_eq!(read_the_examples_of(guide), (4, 5));
+    assert_eq!(read_the_examples_of(record), (3, 0));
+}
+
+#[test]
+fn the_guides_first_example_is_the_specs() {
+    // The guide opens with the example of `SPEC.md` section 4, as the spec has it.
+    let guide = include_str!("../../../../../docs/guides/config.md");
+    let first = &blocks(guide)[0];
+    assert_eq!(first.0, "toml");
+    assert_eq!(first.1, super::the_specs_example());
+}
+
+#[test]
+fn the_guides_env_file_is_read_with_its_config() {
+    // The guide's one env file sets the two variables its first config names, and the
+    // keys in it are made up.
+    let guide = include_str!("../../../../../docs/guides/config.md");
+    let blocks = blocks(guide);
+    let files: Vec<_> = blocks.iter().filter(|(info, _)| info == "env").collect();
+    assert_eq!(files.len(), 1);
+    let env = EnvFile::parse(files[0].1.as_bytes()).unwrap();
+    let config = Config::parse(blocks[0].1.as_bytes(), &env.secrets()).unwrap();
+    let credentials = env.credentials(&config).unwrap();
+    assert_eq!(credentials.missing().count(), 0);
+    assert_eq!(format!("{:?}", credentials.secrets()), "Secrets(2)");
+}

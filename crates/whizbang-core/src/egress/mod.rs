@@ -1,21 +1,32 @@
 //! Egress (`SPEC.md` section 10, "Egress"; ADR 0012): where data may go.
 //!
-//! This is the ways out, and no more: who a recipient is, the four classes of data, and
+//! This is the ways out: who a recipient is, the four classes of data, and
 //! the three interfaces through which anything leaves the machine, for data, for a
-//! model's file and for a probe. **Nothing here refuses a request for where it goes.**
-//! The checks that deny by default are built on these types by the egress strand of
-//! checkpoint 1B (`docs/plans/`).
+//! model's file and for a probe; and, since ADR 0015, the policy an executor holds and
+//! the checked send it hands a backend (`policy.rs`, `checked.rs`). The policy and the
+//! check an executor has until it is given others approve nothing. What a config makes
+//! of the policy (`approvals.rs`), the check behind a send (`hops.rs`) and the one
+//! encoder an image leaves through (`pixels.rs`) are the egress strand's (ADR 0019).
 //!
 //! Every type has private fields and is made through a constructor that checks it. None
 //! is deserialised. A constructor that takes a text from outside the build is told the
 //! executor's secrets, and looks at the whole text for one before it parses, cuts or
 //! bounds it: a text that holds a secret is refused whole and nothing of it is shown.
 
+mod approvals;
+mod checked;
 mod classes;
+mod hops;
+mod pixels;
+mod policy;
 mod recipient;
 mod ways;
 
+pub(crate) use checked::NoWayOut;
+pub use checked::{CREDENTIALS_LIMIT, Denied, Hop, HopCheck, NoHop, Ways};
 pub use classes::{Classes, DataClass};
+pub use hops::{KEPT_OUT_LIMIT, SendCheck};
+pub use policy::{APPROVED_LIMIT, DispatchPolicy};
 pub use recipient::{
     ACCOUNT_LIMIT, ADDRESS_MAX_BYTES, Account, Address, Credential, Origin, Recipient,
     UPSTREAM_LIMIT,
@@ -54,7 +65,8 @@ pub enum NotAllowed {
     Name,
     /// More of something than may be held.
     TooMany,
-    /// An origin is named twice, or is the recipient's own.
+    /// An origin is named twice, or is the recipient's own, or a recipient is approved
+    /// twice.
     Twice,
     /// A credential is bound to another origin than the request's address.
     Elsewhere,
@@ -88,7 +100,10 @@ impl std::fmt::Display for NotAllowed {
                  no double quote and no backslash"
             }
             NotAllowed::TooMany => "there are more than may be held",
-            NotAllowed::Twice => "an origin is named twice, or is the recipient's own",
+            NotAllowed::Twice => {
+                "an origin is named twice, or is the recipient's own, or a recipient is \
+                 approved twice"
+            }
             NotAllowed::Elsewhere => {
                 "the credential is bound to another origin than the one the request goes to"
             }

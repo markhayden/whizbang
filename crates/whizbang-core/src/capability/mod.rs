@@ -18,6 +18,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use crate::contract::{Cancellation, Capability, Clock, ModelIdentity};
+use crate::egress::{NoWayOut, Sender};
 use crate::identity::{CanonicalPixels, PixelDigest};
 
 mod charge;
@@ -232,6 +233,9 @@ pub struct Bounds {
     /// What tells the time the deadline is held to, when it is not the machine's: the
     /// clock of the executor that made the run (ADR 0008, "A deadline in a run").
     clock: Option<Arc<dyn Clock>>,
+    /// The way out the executor made for this backend and this run (ADR 0015), when
+    /// an executor made the handle.
+    sender: Option<Arc<dyn Sender>>,
 }
 
 impl std::fmt::Debug for Bounds {
@@ -579,6 +583,26 @@ impl Bounds {
             deadline: None,
             tally: None,
             clock: None,
+            sender: None,
+        }
+    }
+
+    /// Sends through this: the checked sender the executor made for the backend.
+    pub(crate) fn sending_through(&mut self, sender: Arc<dyn Sender>) {
+        self.sender = Some(sender);
+    }
+
+    /// The one way data leaves for a backend (ADR 0015, "A policy before a send, and a
+    /// checked send"): every address it is asked to reach is held to the recipient the
+    /// backend declared, to the executor's policy and to its check before anything is
+    /// handed over, the credential of the origin is attached by it and by nothing
+    /// else, and what it hands over is noted in the run's record. A backend sends
+    /// through this and holds no sender and no credential of its own. A handle that
+    /// no executor made sends nothing.
+    pub fn sender(&self) -> &dyn Sender {
+        match &self.sender {
+            Some(sender) => sender.as_ref(),
+            None => &NoWayOut,
         }
     }
 
