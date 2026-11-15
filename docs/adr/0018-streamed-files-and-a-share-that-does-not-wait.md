@@ -261,7 +261,9 @@ shim leaves when a crash keeps every name.
   (`renamed::a_file_in_a_renamed_folder_fares_by_its_new_name_under_each_way_of_losing_names`).
 - **A crash that takes the rename back takes the names back with it:** they are
   lost, or kept, under the folder's old name. The file is never left under the new
-  name of a folder that went back.
+  name of a folder that went back. Only what followed the rename goes back with it:
+  a change that was already of a name inside the folder the rename replaced stays
+  that folder's (`renamed::a_rename_taken_back_takes_back_only_what_followed_it`).
 - **At any depth and through any number of renames**
   (`renamed::a_file_two_folders_down_follows_the_rename_of_the_folder_at_the_top`,
   `renamed::a_file_follows_a_folder_that_is_renamed_twice`,

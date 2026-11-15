@@ -857,11 +857,9 @@ impl Fs for ShimFs {
         // it is a name of the folder, whatever the folder is called, and becomes
         // durable when the folder is synced under its new name.
         let mut followed = Vec::new();
-        if from != to {
-            for (number, change) in &mut state.pending {
-                if change.follow(from, to) {
-                    followed.push(*number);
-                }
+        for (number, change) in &mut state.pending {
+            if change.follow(from, to) {
+                followed.push(*number);
             }
         }
         Self::pend(

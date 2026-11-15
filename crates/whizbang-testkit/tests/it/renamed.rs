@@ -315,6 +315,44 @@ fn a_file_follows_a_folder_renamed_over_an_empty_folder() {
 }
 
 #[test]
+fn a_rename_taken_back_takes_back_only_what_followed_it() {
+    // The folder `b` held a file, durably, which was removed, and the removal is not
+    // durable. `a` is then renamed over the empty `b`. A crash takes the rename back:
+    // `a` is `a` again, the folder it replaced is there again, and the file removed
+    // from that folder comes back into it, not into `a`. That holds with the file of
+    // `a` durable, when nothing followed the rename, and with it not durable, when
+    // the file followed the rename, goes back with it and is lost.
+    let durable: Names<'_> = &[
+        ("a", None),
+        ("a/f", Some(WHOLE)),
+        ("b", None),
+        ("b/g", Some(b"of b")),
+    ];
+    let cases: [(bool, Names<'_>); 2] = [
+        (true, durable),
+        (false, &[("a", None), ("b", None), ("b/g", Some(b"of b"))]),
+    ];
+    for (synced, leaves) in cases {
+        let steps = move |fs: &dyn Fs, root: &Path| {
+            let (a, b) = (root.join("a"), root.join("b"));
+            fs.create_dir(&a)?;
+            fs.create_dir(&b)?;
+            fs.write_new(&b.join("g"), b"of b")?;
+            fs.sync_dir(root)?;
+            fs.sync_dir(&b)?;
+            fs.write_new(&a.join("f"), WHOLE)?;
+            if synced {
+                fs.sync_dir(&a)?;
+            }
+            fs.remove_all(&b.join("g"))?;
+            fs.rename(&a, &b)
+        };
+        assert_eq!(kept(&steps), expected(FILE_IN_B), "{synced}");
+        assert_eq!(left(&steps, Lost::Unsynced), expected(leaves), "{synced}");
+    }
+}
+
+#[test]
 fn a_whole_file_and_a_streamed_file_in_one_renamed_folder_each_fare_by_their_own_rule() {
     // A file written whole, and one streamed with six bytes synced and ten not.
     fn steps(fs: &dyn Fs, root: &Path, before: bool, parent: bool) -> io::Result<()> {
