@@ -421,6 +421,43 @@ fn a_backend_that_is_refused_at_the_gates_place_is_not_called() {
 }
 
 #[test]
+fn a_recipient_approved_for_prompts_only_that_is_sent_a_picture_and_no_prompt_is_refused_after_its_backend_was_called()
+ {
+    // The request holds no prompt, and a picture has no class at a handle: the gate
+    // knows nothing to refuse, and lets the request by. The piece its backend then
+    // makes states its class, and the checked sender holds it to the policy.
+    let sender = Arc::new(FakeSender::scripted(vec![ok()]));
+    let filler = remote(recipient(), &format!("{API}/v1/fill"), a_source_image());
+    let ran = run_one(
+        filler.clone(),
+        ways(&sender, &approving(&["prompts"])),
+        Secrets::none(),
+    );
+    assert_eq!(filler.requests(), 1, "the backend was called, once");
+    assert_eq!(sender.requests(), 0, "nothing was handed to the sender");
+    let fault = ran.fault.clone().unwrap();
+    assert_eq!(
+        refused_as(&fault),
+        (FaultKind::Rejected, Stage::NotSent, NOT_APPROVED)
+    );
+    // One refusal, the sender's and not the gate's: it names the images.
+    assert_eq!(
+        ran.refused(),
+        [(
+            RefusalKind::RequestNotApproved,
+            format!(
+                "nothing was sent to {API}: {NOT_APPROVED} (the classes of data the request \
+                 holds: source_images)"
+            )
+        )]
+    );
+    assert_eq!(
+        ran.went(),
+        [entry(API, Some(ACCOUNT_CUT), source(), Handed::Refused)]
+    );
+}
+
+#[test]
 fn a_recipient_approved_for_prompts_and_not_for_source_images_is_refused_a_source_image_and_sent_a_prompt_alone()
  {
     let table = approving(&["prompts"]);
