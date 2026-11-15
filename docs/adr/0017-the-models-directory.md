@@ -664,7 +664,11 @@ touched to the end
    folder, with its `RECORD` and its `files/`, is renamed to
    `installations/<64 hex digits>`. Nothing names it yet.
 6. `installations/` is synced, for a folder renamed in now and for one found
-   whole: whoever renamed that one may have been refused this sync.
+   whole: whoever renamed that one may have been refused this sync. So are the
+   directory and `models/`, which name `models/` and the model's folder: a folder
+   that was found made was made by one who may have been refused the sync of its
+   name
+   (`publishing::an_install_answers_only_when_the_folders_that_name_the_model_are_durable`).
 7. Under the directory's lock: the draining mark is read, and with one set nothing
    more is published (the install is refused; task M5d makes it stop sooner); the
    identity's hold file is made if it is not there, and `holds/` synced, whether the

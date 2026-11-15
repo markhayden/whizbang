@@ -1525,3 +1525,31 @@ fn asking_again_after_the_pointers_sync_was_refused_makes_the_pointer_durable_be
         assert_eq!(installations(root), [next.identity().hex()], "{at}");
     }
 }
+
+#[test]
+fn an_install_answers_only_when_the_folders_that_name_the_model_are_durable() {
+    // A first install is refused the sync that makes `models/` durable, or the one
+    // that makes the model's folder durable; both folders are there. Asked again,
+    // the install finds them made. It answers only after their names were synced: a
+    // crash that loses every name that was not leaves the model installed.
+    let clean = events_after(&[], &second());
+    let syncs: Vec<usize> = (0..clean.len())
+        .filter(|at| matches!(clean[*at], Event::SyncDir(_)))
+        .take(2)
+        .collect();
+    assert_eq!(syncs, [1, 3]);
+    let next = record_of(&second());
+    for refused in syncs {
+        let scratch = Scratch::new("publish-names");
+        let root = scratch.path();
+        let fs = Arc::new(ShimFs::new().fail_before(refused));
+        installing(&fs, root, &second(), &serving_both()).unwrap_err();
+        assert_eq!(
+            installing(&fs, root, &second(), &serving_both()).unwrap(),
+            next
+        );
+        fs.crash(Lost::Unsynced);
+        assert_eq!(reading(root), Current::Installed(next.clone()), "{refused}");
+        is_whole(root, &next);
+    }
+}

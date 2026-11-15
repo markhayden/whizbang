@@ -124,6 +124,14 @@ impl ModelsDir {
         Ok(Read::Bytes(bytes))
     }
 
+    /// Makes durable the names that lead to a model's folder: `models/` in the
+    /// directory, and the model's folder in `models/`. A folder that was found made
+    /// was made by one who may have been refused the sync of its name.
+    pub(super) fn sync_names(&self) -> io::Result<()> {
+        self.fs.sync_dir(&self.root)?;
+        self.fs.sync_dir(&self.models())
+    }
+
     /// Makes a folder that may be there already, and makes its name durable when it
     /// was made. It is made and not looked for first: of two who make it at once, one
     /// makes it and the other finds it made.
