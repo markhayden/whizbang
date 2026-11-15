@@ -11,9 +11,9 @@ use whizbang_core::capability::{
     InstalledRoster, Inventory, NoInventory, Painted, Place, Price, Roster, Stage, Unready,
 };
 use whizbang_core::contract::{
-    Answer, Backends, Call, CallError, Capabilities, Capability, Engine, Estimate, Executor,
-    ModelIdentity, Produced, Readiness, Refusal, RefusalKind, Request, Requirement, Secrets, Stale,
-    Unavailable, Value,
+    Answer, Around, Backends, Call, CallError, Capabilities, Capability, Engine, Estimate,
+    Executor, ModelIdentity, Open, Produced, Readiness, Refusal, RefusalKind, Request, Requirement,
+    Secrets, Stale, Stop, Unavailable, Value, Wrapped,
 };
 use whizbang_core::egress::{Origin, Recipient};
 use whizbang_core::identity::Digest;
@@ -585,6 +585,36 @@ fn a_lease_is_let_go_when_its_request_ends_by_an_answer_a_fault_and_a_panic() {
             }
         }
     }
+}
+
+/// What stands in a place and panics before a request leaves.
+struct PanicsBefore;
+
+impl Around for PanicsBefore {
+    fn before(&self, _: &Wrapped<'_>) -> Result<Box<dyn Open>, Stop> {
+        panic!("the meter went wrong")
+    }
+}
+
+#[test]
+fn a_lease_is_let_go_when_the_place_after_it_panics_before_the_request_leaves() {
+    // The lease's place let the request by and holds something for it; the
+    // meter's place then panics. What the lease's place held is dropped, never
+    // told how the request ended, and the backend is not asked.
+    let world = World::new();
+    let filler = Arc::new(FakeFiller::new(Paint::Inverse));
+    let inventory = Arc::new(FakeInventory::new());
+    inventory.install("fake-filler", b"a filler, whole");
+    let (lease, meter) = places();
+    let (executor, _) = leased(&world, filler.clone(), &inventory, (&lease, &meter), || {});
+    let executor = executor.with_wrapper(Place::Meter, Arc::new(PanicsBefore));
+    let _ = executor.submit(&Call::new("paints"));
+    let saw = lease.saw();
+    assert!(
+        matches!(saw.as_slice(), [Saw::Before(_), Saw::Dropped]),
+        "{saw:?}"
+    );
+    assert_eq!(filler.requests(), 0);
 }
 
 #[test]

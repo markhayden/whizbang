@@ -1,6 +1,6 @@
 //! A fake of what stands in a place between a handle and its backend (ADR 0015, "A
-//! wrapper around each request"). It holds no policy: it refuses, fails or stops at a
-//! barrier when a test tells it to, and keeps what it saw.
+//! wrapper around each request"). It holds no policy: it refuses, fails, panics or
+//! stops at a barrier when a test tells it to, and keeps what it saw.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -44,6 +44,7 @@ pub struct Request {
 struct Told {
     refuse: Option<(RefusalKind, String)>,
     fail_after: Option<String>,
+    panic_after: Option<String>,
     /// The barriers it stops at, before a request and after one.
     before: Option<(Barriers, String)>,
     after: Option<(Barriers, String)>,
@@ -98,6 +99,12 @@ impl FakeWrapper {
     /// From now on it fails, saying this, once a request it let through is over.
     pub fn fail_after(&self, why: &str) {
         self.told().fail_after = Some(why.to_owned());
+    }
+
+    /// From now on it panics, with this text, once a request it let through is
+    /// over: after it has kept how the request ended.
+    pub fn panic_after(&self, text: &str) {
+        self.told().panic_after = Some(text.to_owned());
     }
 
     /// From now on it stops at this barrier before it answers for a request.
@@ -182,12 +189,19 @@ impl Open for Held {
             Ended::Answered(charge) => Saw::Answered(charge.map(|charge| charge.micros())),
             Ended::Faulted(fault) => Saw::Faulted(fault.kind(), fault.stage()),
         });
-        let (fail, stop) = {
+        let (fail, stop, panics) = {
             let told = self.wrapper.told();
-            (told.fail_after.clone(), told.after.clone())
+            (
+                told.fail_after.clone(),
+                told.after.clone(),
+                told.panic_after.clone(),
+            )
         };
         if let Some((barriers, name)) = stop {
             barriers.stop_at(&name);
+        }
+        if let Some(text) = panics {
+            panic!("{text}");
         }
         match fail {
             Some(why) => Err(why),

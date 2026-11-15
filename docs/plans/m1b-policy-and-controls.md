@@ -1184,7 +1184,8 @@ recorded, not the one current at the request. (Built: the first part, as
 with ADR 0015, "An inventory". The other three, after task I3, each with the fake in
 the lease's place and a fake meter after it:
 `inventory::a_request_whose_lease_is_refused_reaches_neither_the_meters_place_nor_the_backend`,
-`inventory::a_lease_is_let_go_when_its_request_ends_by_an_answer_a_fault_and_a_panic`,
+`inventory::a_lease_is_let_go_when_its_request_ends_by_an_answer_a_fault_and_a_panic`
+(and `…when_the_place_after_it_panics_before_the_request_leaves`),
 `inventory::the_lease_is_asked_for_the_identity_the_admission_recorded_not_the_one_current_at_the_request`.
 The pin of the first half, a run handed no backend for a local model over an
 inventory, is turned round:
