@@ -13,11 +13,11 @@ use whizbang_core::contract::record::{self, Status};
 use whizbang_core::contract::request::{StoredAdmissionError, admitted};
 use whizbang_core::contract::{
     ADMITTED_NAME, Action, ActionDescriptor, Admission, Answer, Argument, Backends, Call,
-    CallError, Capability, Clock, Context, Declined, Ending, Engine, Estimate, Executor, Failure,
-    Kind, Ledger, MadeName, ModelIdentity, NoBackends, NotJudged, Outcome, PreparedCall, Produced,
-    REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, Refusal, Registry, Request, RequestId,
-    RequestRecordError, Requirement, Reservation, RunState, Secrets, Step, Unavailable, Value,
-    ValueType, request_fingerprint, reservations,
+    CallError, Capability, Clock, Closing, Context, Declined, Ending, Engine, Estimate, Executor,
+    Failure, Kind, Ledger, MadeName, ModelIdentity, NoBackends, NotJudged, Outcome, PreparedCall,
+    Produced, REQUEST_ID_LIMIT, REQUEST_RECORD_MAX_BYTES, Refusal, Registry, Request, RequestId,
+    RequestRecordError, Requirement, Reread, Reservation, RunState, Secrets, Settled, Step,
+    Unavailable, Value, ValueType, request_fingerprint, reservations,
 };
 use whizbang_core::contract::{
     ConfigSource, InputFault, InputPort, Readiness, Snapshot, SourceRefused, Stale,
@@ -27,8 +27,9 @@ use whizbang_core::store::fs::{Fs, RealFs};
 use whizbang_core::store::{self, Reader, Store};
 use whizbang_testkit::echo::Echo;
 use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
-use whizbang_testkit::ledger::FakeLedger;
 use whizbang_testkit::scratch::Scratch;
+
+use crate::spend::support as real;
 
 use super::execute::Taker;
 use super::redact::made_up_key;
@@ -1216,285 +1217,12 @@ fn a_run_whose_end_could_not_be_written_is_answered_as_not_ended_here() {
 }
 
 // --- a crash inside the admission step -----------------------------------------------------------
-
-/// Crashes inside the admission step, at every fourth of its steps from `part`: the
-/// whole takes eight seconds, and more on a busy machine, against a limit of thirty,
-/// so it is four tests, which between them try every step and every mask.
-fn crashes_inside_the_admission_step(part: usize) {
-    // An executor with a ledger admits a call that may cost a quarter of a dollar. The
-    // calls that change the disk during one admission are found by running one: from
-    // the request to the moment the action starts.
-    //
-    // The ledger makes one name in the admission's publication and keeps no books:
-    // what is swept is that publication, whole or absent, with a ledger's record in
-    // it. A ledger that makes its hold and its turn there, and closes its
-    // reservation when the run ends, is swept with the real one (plan 1B, task S2):
-    // each name more doubles the ways a crash can leave the names of one step.
-    let admitting = |world: &World, ledger: &Arc<Unjudging>, store: Arc<Store>| {
-        engine_with(store, &world.runs, Priced::new(250_000)).with_ledger(ledger.clone())
-    };
-    let (opened, steps) = {
-        let world = World::new();
-        let store = world.store();
-        let opened = world.fs.events().len();
-        let started = Arc::new(AtomicU64::new(0));
-        let noting = {
-            let (fs, started) = (world.fs.clone(), started.clone());
-            paint_with(&world.runs, move |_, _| {
-                started.store(fs.events().len() as u64, Ordering::SeqCst);
-                Ok(Produced::nothing())
-            })
-        };
-        let mut registry = Registry::new();
-        registry.register(noting).unwrap();
-        let engine = Engine::over(registry, Priced::new(250_000), store, Digest::of_bytes(b""))
-            .with_ledger(Arc::new(Unjudging::default()));
-        ran(engine.request(&asked("hello", "order-17")));
-        (opened, started.load(Ordering::SeqCst) as usize - opened)
-    };
-    assert!(steps > 8, "{steps}");
-
-    // Power is lost before each of them in turn, with each way a disk can lose what
-    // was not yet durable: every name undone, every name kept, and every choice there
-    // is of which directories, and of which names, lose theirs. How many directories
-    // and names a crash at a step leaves undecided is learnt from the first crash
-    // there, and every mask over them is then tried. Whatever is left, the id's
-    // record, the run and the reservation are there together or none of them is.
-    let mut outcomes = std::collections::BTreeSet::new();
-    let (mut most_dirs, mut most_names, mut crashes) = (0, 0, 0);
-    for step in (0..=steps).filter(|step| step % 4 == part) {
-        let mut ways = vec![Lost::Unsynced, Lost::ContentOnly, Lost::Subset(0)];
-        let mut next = 0;
-        while next < ways.len() {
-            let lost = &ways[next].clone();
-            next += 1;
-            crashes += 1;
-            let world = World::on(ShimFs::new().crash_before(opened + step, *lost));
-            let ledger = Arc::new(Unjudging::default());
-            let engine = admitting(&world, &ledger, world.store());
-            let answer = engine.request(&asked("hello", "order-17"));
-            assert!(
-                matches!(answer, Err(CallError::Store(_))),
-                "step {step}: {answer:?}"
-            );
-            if *lost == Lost::Subset(0) {
-                let (dirs, names) = (world.fs.crash_choices(), world.fs.crash_names());
-                assert!(dirs <= 10 && names <= 10, "step {step}: {dirs} {names}");
-                ways.extend((1..1u64 << dirs).map(Lost::Subset));
-                ways.extend((0..1u64 << names).map(Lost::Names));
-                most_dirs = most_dirs.max(dirs);
-                most_names = most_names.max(names);
-            }
-            // The action started only where the admission was whole and durable: the
-            // last call of the step clears its staging away, and the admission does
-            // not depend on it.
-            let admitted_here = world.ran() == 1;
-            assert!(!admitted_here || step >= steps - 1, "step {step}");
-            drop(engine);
-
-            // The next writer recovers the store, and reads what survived: whatever
-            // is on the disk after a crash is durable.
-            let fs: Arc<dyn Fs> = Arc::new(ShimFs::new());
-            let store = Arc::new(Store::open(&world.root(), fs.clone()).unwrap());
-            let (_, names, runs) = held(&world.root(), fs.clone());
-            let reserved_in = |store: &Store| {
-                let generation = store.snapshot().unwrap();
-                reservations(&generation, |entry| store.read(entry)).unwrap()
-            };
-            let reserved = reserved_in(&store);
-            let at = format!("step {step}, {lost:?}");
-            match (names.as_slice(), runs.as_slice()) {
-                ([], []) => {
-                    // Nothing: no id's record, no run, no reservation. No action had
-                    // started, and the same request is admitted and runs, once.
-                    assert_eq!(reserved, [], "{at}");
-                    assert!(!admitted_here, "{at}: an action ran unadmitted");
-                    let again = admitting(&world, &ledger, store.clone());
-                    ran(again.request(&asked("hello", "order-17")));
-                    assert_eq!(world.ran(), 1, "{at}");
-                    assert_eq!(reserved_in(&store).len(), 1);
-                    outcomes.insert("nothing");
-                }
-                ([(name, bytes), (reservation, stored), (turn, _)], [(run, held)]) => {
-                    // All of it: the id's record names the run, the run holds the same
-                    // admission, the reservation is of that run and that request, for
-                    // the amount the admission says, and the same request is answered
-                    // with that run and reserves nothing more.
-                    assert_eq!(name, "requests/order-17/admitted", "{at}");
-                    let admission = Admission::from_bytes(bytes).unwrap();
-                    assert_eq!(admission.run().as_str(), run, "{at}");
-                    assert_eq!(admission.reserved_micros(), Some(250_000), "{at}");
-                    assert_eq!(held, &[ADMITTED_NAME.to_owned()], "{at}");
-                    assert_eq!(turn, "spend/turn/9/1", "{at}");
-                    assert_eq!(reservation, &format!("spend/reservations/{run}"), "{at}");
-                    let stored = Reservation::from_bytes(stored).unwrap();
-                    assert_eq!(reserved, std::slice::from_ref(&stored), "{at}");
-                    assert_eq!(stored.run().as_str(), run, "{at}");
-                    assert_eq!(stored.request(), Some(&id("order-17")), "{at}");
-                    assert_eq!((stored.micros(), stored.start_ms()), (250_000, 7000));
-                    let (before, asked_before) = (world.ran(), ledger.0.load(Ordering::SeqCst));
-                    let again = admitting(&world, &ledger, store.clone());
-                    let earlier = repeat(again.request(&asked("hello", "order-17")));
-                    assert_eq!(world.ran(), before, "{at}");
-                    assert_eq!(earlier.run().as_str(), run);
-                    assert_eq!(earlier.state(), &RunState::NotEnded { here: false });
-                    assert_eq!(ledger.0.load(Ordering::SeqCst), asked_before, "{at}");
-                    assert_eq!(reserved_in(&store), reserved);
-                    outcomes.insert("all of it");
-                }
-                other => panic!("{at}: a part of an admission: {other:?}"),
-            }
-        }
-    }
-    // Before the last step there is nothing, and at it there is all of it.
-    assert!(outcomes.contains("nothing"), "{outcomes:?}");
-    assert!(
-        steps % 4 != part || outcomes.contains("all of it"),
-        "{outcomes:?}"
-    );
-    // The masks were not a formality: some step left several directories and several
-    // names undecided, and each of their choices was a crash of its own.
-    assert!(
-        most_dirs >= 2 && most_names >= 4,
-        "{most_dirs} {most_names}"
-    );
-    assert!(crashes > 200, "{crashes}");
-}
-
-#[test]
-fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_first_steps_of_four() {
-    crashes_inside_the_admission_step(0);
-}
-
-#[test]
-fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_second_steps_of_four() {
-    crashes_inside_the_admission_step(1);
-}
-
-#[test]
-fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_third_steps_of_four() {
-    crashes_inside_the_admission_step(2);
-}
-
-#[test]
-fn a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_fourth_steps_of_four() {
-    crashes_inside_the_admission_step(3);
-}
-
-#[test]
-fn a_crash_at_any_event_of_an_admission_with_a_hold_and_its_turn_leaves_no_record_or_all_of_it() {
-    // The same step, through a ledger that makes two names in the admission's
-    // publication, as ADR 0016 has every ledger do: the hold and the next turn of its
-    // epoch. Power is lost before each call that changes the disk, from the request
-    // to the moment the action would start, under the fixed losses only: every name
-    // undone, every name kept, and two alternating choices of which directories and
-    // of which names lose theirs. The sweep above tries every choice there is, with a
-    // ledger that makes one name; that form with a ledger that makes its hold and its
-    // turn is the real ledger's to pass (plan 1B, task S2,
-    // `reserve::a_crash_at_any_event…`; `docs/carry-over.md`).
-    const LOSSES: [Lost; 6] = [
-        Lost::Unsynced,
-        Lost::ContentOnly,
-        Lost::Subset(0x5555_5555_5555_5555),
-        Lost::Subset(0xAAAA_AAAA_AAAA_AAAA),
-        Lost::Names(0x5555_5555_5555_5555),
-        Lost::Names(0xAAAA_AAAA_AAAA_AAAA),
-    ];
-    let admitting = |world: &World, store: Arc<Store>| {
-        engine_with(store, &world.runs, Priced::new(250_000))
-            .with_ledger(Arc::new(FakeLedger::new()))
-    };
-    let (opened, steps) = {
-        let world = World::new();
-        let store = world.store();
-        let opened = world.fs.events().len();
-        let started = Arc::new(AtomicU64::new(0));
-        let noting = {
-            let (fs, started) = (world.fs.clone(), started.clone());
-            paint_with(&world.runs, move |_, _| {
-                started.store(fs.events().len() as u64, Ordering::SeqCst);
-                Ok(Produced::nothing())
-            })
-        };
-        let mut registry = Registry::new();
-        registry.register(noting).unwrap();
-        let engine = Engine::over(registry, Priced::new(250_000), store, Digest::of_bytes(b""))
-            .with_ledger(Arc::new(FakeLedger::new()));
-        ran(engine.request(&asked("hello", "order-17")));
-        (opened, started.load(Ordering::SeqCst) as usize - opened)
-    };
-    assert!(steps > 8, "{steps}");
-
-    let mut outcomes = std::collections::BTreeSet::new();
-    for step in 0..=steps {
-        for lost in LOSSES {
-            let at = format!("step {step}, {lost:?}");
-            let world = World::on(ShimFs::new().crash_before(opened + step, lost));
-            let engine = admitting(&world, world.store());
-            let answer = engine.request(&asked("hello", "order-17"));
-            assert!(
-                matches!(answer, Err(CallError::Store(_))),
-                "{at}: {answer:?}"
-            );
-            // The action started only where the admission was whole and durable, and
-            // was confirmed: the last call of the step clears its staging away, and
-            // the admission does not depend on it.
-            let admitted_here = world.ran() == 1;
-            assert!(!admitted_here || step >= steps - 1, "{at}");
-            drop(engine);
-
-            // The next writer recovers the store, and reads what survived.
-            let fs: Arc<dyn Fs> = Arc::new(ShimFs::new());
-            let store = Arc::new(Store::open(&world.root(), fs.clone()).unwrap());
-            let (_, names, runs) = held(&world.root(), fs.clone());
-            let named: Vec<&str> = names.iter().map(|(name, _)| name.as_str()).collect();
-            match runs.as_slice() {
-                [] => {
-                    // Nothing: no id's record, no reservation, and neither the hold
-                    // nor its turn. The same request is admitted and runs, once.
-                    assert_eq!(named, [] as [&str; 0], "{at}");
-                    assert!(!admitted_here, "{at}: an action ran unadmitted");
-                    ran(admitting(&world, store.clone()).request(&asked("hello", "order-17")));
-                    assert_eq!(world.ran(), 1, "{at}");
-                    outcomes.insert("nothing");
-                }
-                [(run, of_run)] => {
-                    // All of it: the id's record, the hold and its turn, and the
-                    // reservation, each as the ledger and the executor wrote it.
-                    assert_eq!(
-                        named,
-                        [
-                            "requests/order-17/admitted",
-                            format!("spend/held/0/{run}/250000").as_str(),
-                            format!("spend/reservations/{run}").as_str(),
-                            "spend/turn/0/1",
-                        ],
-                        "{at}"
-                    );
-                    assert_eq!(of_run, &[ADMITTED_NAME.to_owned()], "{at}");
-                    let generation = store.snapshot().unwrap();
-                    let reading =
-                        whizbang_core::spend::Reading::of(&generation, |entry| store.read(entry));
-                    let id = whizbang_core::contract::RunId::parse(run).unwrap();
-                    let reservation = &reading.reservations[&id];
-                    assert!(reservation.reachable() && !reservation.closed(), "{at}");
-                    assert_eq!(reading.epochs.len(), 1, "{at}");
-                    assert!(reading.epochs.iter().all(|(_, hurt)| !hurt), "{at}");
-                    // The same request is answered with that run, and nothing runs.
-                    let before = world.ran();
-                    let again = admitting(&world, store.clone());
-                    let earlier = repeat(again.request(&asked("hello", "order-17")));
-                    assert_eq!(earlier.run().as_str(), run, "{at}");
-                    assert_eq!(world.ran(), before, "{at}");
-                    outcomes.insert("all");
-                }
-                more => panic!("{at}: {} runs", more.len()),
-            }
-        }
-    }
-    let both: Vec<&str> = outcomes.into_iter().collect();
-    assert_eq!(both, ["all", "nothing"]);
-}
+//
+// The sweep that loses power before each step of an admission, under every choice of
+// what the disk loses, is `spend::reserve::a_crash_at_any_event_of_an_admission_…`,
+// with the real ledger, which makes its hold and its turn in that publication
+// (plan 1B, task S2). It holds what the sweep that was here held, with a ledger of
+// one name, and what the ledger's names add.
 
 // --- what is stored is not trusted ---------------------------------------------------------------
 
@@ -1740,13 +1468,14 @@ fn retouch(runs: &Arc<AtomicU64>) -> Arc<dyn Action> {
 }
 
 /// A world with two photographs in its store, and an executor with `retouch` over
-/// backends and a config the test can change, and a ledger that counts.
+/// backends and a config the test can change, and the real ledger, counted, in a store
+/// whose owner allowed all there is.
 struct Shop {
     world: World,
     store: Arc<Store>,
     backends: Arc<Priced>,
     config: Arc<Config>,
-    ledger: Arc<FakeLedger>,
+    ledger: Arc<real::Counted>,
     engine: Engine,
     photo: ArtifactId,
     other: ArtifactId,
@@ -1766,7 +1495,8 @@ fn shop() -> Shop {
     publication.publish().unwrap();
     let backends = Priced::new(250_000);
     let config = Arc::new(Config(Mutex::new(Digest::of_bytes(b"config"))));
-    let ledger = Arc::new(FakeLedger::new());
+    real::allow(&store, NO_LIMIT);
+    let ledger = real::Counted::new();
     let mut registry = Registry::new();
     registry.register(retouch(&world.runs)).unwrap();
     let engine = Engine::over(
@@ -1809,7 +1539,7 @@ impl Shop {
 
     /// What was reserved: the reservations the store names.
     fn reserved(&self) -> Vec<Reservation> {
-        self.ledger.reservations(self.store.as_ref()).unwrap()
+        real::reserved(&self.store)
     }
 
     /// The request is refused as stale for this reason, and nothing came of it: no run,
@@ -1868,8 +1598,8 @@ fn prepare_returns_an_estimate_with_readiness_and_it_is_not_in_the_fingerprint()
     shop.backends.bound.store(u64::MAX, Ordering::SeqCst);
     let most = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
     assert_eq!(most.estimate().micros(), u64::MAX);
-    // Preparing wrote nothing.
-    assert_eq!(shop.state(), (1, 2, 0));
+    // Preparing wrote nothing: the photographs and the owner's reset are all there is.
+    assert_eq!(shop.state(), (2, 5, 0));
 }
 
 #[test]
@@ -2326,6 +2056,11 @@ fn a_repeat_that_races_the_end_of_its_run_is_not_told_the_run_will_never_end() {
 
 // --- the reservation -----------------------------------------------------------------------------
 
+/// The largest amount there is: what a test's owner allows where no call is to be
+/// declined for the allowance. Every allowance here is the owner's reset, as its
+/// names have it (`spend::support::allow`): the real ledger knows no other.
+const NO_LIMIT: u64 = u64::MAX - 1;
+
 const RESERVATION: &str = concat!(
     r#"{"record":"reservation/1","run":"7000-1","request":"order-17","#,
     r#""admission":"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","#,
@@ -2487,7 +2222,8 @@ fn reservations_in_objects(root: &Path) -> Vec<Reservation> {
 #[test]
 fn admission_reserves_the_estimate_in_the_step_that_makes_the_run_and_the_ids_record() {
     let shop = shop();
-    assert_eq!(shop.state(), (1, 2, 0));
+    // The photographs, and then the owner's reset: two generations, and five names.
+    assert_eq!(shop.state(), (2, 5, 0));
     let prepared = shop.engine.prepare(&shop.call(shop.photo)).unwrap();
     assert_eq!(prepared.estimate().micros(), 500_000);
     assert_eq!((shop.ledger.asked(), shop.reserved()), (0, vec![]));
@@ -2504,7 +2240,7 @@ fn admission_reserves_the_estimate_in_the_step_that_makes_the_run_and_the_ids_re
     let reader = Reader::open(&shop.world.root(), shop.world.fs.clone()).unwrap();
     let admitted_at = Reader::open(&shop.world.root(), shop.world.fs.clone()).unwrap();
     let generation = admitted_at.snapshot().unwrap();
-    assert_eq!(generation.number(), 3);
+    assert_eq!(generation.number(), 4);
     let names: Vec<&str> = generation
         .entries()
         .keys()
@@ -2517,23 +2253,34 @@ fn admission_reserves_the_estimate_in_the_step_that_makes_the_run_and_the_ids_re
         [
             "requests/order-17/admitted",
             "requests/order-17/ended",
-            format!("spend/closed/{run}/released").as_str(),
-            format!("spend/held/0/{run}/500000").as_str(),
-            format!("spend/place/{run}/1").as_str(),
+            "spend/epoch/1",
+            format!("spend/held/1/{run}/500000").as_str(),
             reservation_name.as_str(),
+            format!("spend/reset/1/{NO_LIMIT}").as_str(),
             "spend/turn/0/1",
-            "spend/turn/0/2",
+            "spend/turn/1/1",
         ]
     );
-    // Generation 2, the admission's, is still on the disk: it holds the run with its
-    // admission alone, and every name but those the end made: the ending, and the
-    // reservation's closing with its place and its turn.
+    // Generation 3, the admission's, is still on the disk: it holds the run with its
+    // admission alone, and every name but the one the end made, the ending. The real
+    // ledger closes no reservation yet (plan 1B, task S11), so the end made no other.
+    let third = std::fs::read(shop.world.root().join("generations").join("3.json")).unwrap();
+    let third: serde_json::Value = serde_json::from_slice(&third).unwrap();
+    for name in names
+        .iter()
+        .filter(|name| **name != "requests/order-17/ended")
+    {
+        assert!(third["entries"].get(*name).is_some(), "{name}: {third}");
+    }
+    assert!(third["entries"].get(names[1]).is_none(), "{third}");
+    // Generation 2 is the owner's reset, with its three names and none of the
+    // admission's; and the first had none of them.
     let second = std::fs::read(shop.world.root().join("generations").join("2.json")).unwrap();
     let second: serde_json::Value = serde_json::from_slice(&second).unwrap();
-    for name in [names[0], names[3], names[5], names[6]] {
+    for name in [names[2], names[5], names[6]] {
         assert!(second["entries"].get(name).is_some(), "{name}: {second}");
     }
-    for name in [names[1], names[2], names[4], names[7]] {
+    for name in [names[0], names[1], names[3], names[4], names[7]] {
         assert!(second["entries"].get(name).is_none(), "{name}: {second}");
     }
     let first = std::fs::read(shop.world.root().join("generations").join("1.json")).unwrap();
@@ -2577,8 +2324,8 @@ fn admission_reserves_the_estimate_in_the_step_that_makes_the_run_and_the_ids_re
 #[test]
 fn a_call_the_ledger_declines_is_refused_with_no_run_and_its_id_stays_free() {
     let shop = shop();
-    // The call may cost half a dollar, and forty cents may be reserved.
-    shop.ledger.allow(Some(400_000));
+    // The call may cost half a dollar, and the owner resets to forty cents.
+    real::allow(&shop.store, 400_000);
     let request = Request::new(shop.call(shop.photo)).with_id(id("order-17"));
     let before = (shop.state(), files(&shop.world.root()).len());
     let refused = shop.engine.request(&request).unwrap_err();
@@ -2611,12 +2358,12 @@ fn a_call_the_ledger_declines_is_refused_with_no_run_and_its_id_stays_free() {
 
     // The id is free: with a dollar and twenty cents allowed, the same request is
     // admitted under it, and a second call too. A third is refused for what is left.
-    shop.ledger.allow(Some(1_200_000));
+    real::allow(&shop.store, 1_200_000);
     let first = ran(shop.engine.request(&request));
     let second = shop.engine.submit(&shop.call(shop.other)).unwrap();
-    // Both runs ended having sent nothing, and their reservations were closed and
-    // released. A dollar that is still held elsewhere leaves twenty cents.
-    held_elsewhere(&shop.store, &shop.ledger, "9-9", 1_000_000);
+    // Both runs ended having sent nothing. The real ledger closes no reservation yet
+    // (plan 1B, task S11): each stays open and counts in full, which leaves twenty
+    // cents of the dollar and twenty.
     let refused = shop.engine.submit(&shop.call(shop.photo)).unwrap_err();
     assert_eq!(
         refused.refusal(),
@@ -2646,7 +2393,8 @@ fn two_simultaneous_requests_with_one_id_make_one_reservation() {
     let world = World::new();
     let store = world.store();
     let clock = Arc::new(Together::new(2));
-    let ledger = Arc::new(FakeLedger::new());
+    real::allow(&store, NO_LIMIT);
+    let ledger = real::Counted::new();
     // Each waits inside the ledger too, so that both reservations are staged before
     // either admission is published.
     let both = Arc::new(Waiting::new(ledger.clone(), 2));
@@ -2673,7 +2421,7 @@ fn two_simultaneous_requests_with_one_id_make_one_reservation() {
     assert_eq!(world.ran(), 1);
     // Asked twice; one reservation, of the run that was made.
     assert_eq!(ledger.asked(), 2);
-    let reserved = ledger.reservations(store.as_ref()).unwrap();
+    let reserved = real::reserved(&store);
     assert_eq!(reserved.len(), 1, "{reserved:?}");
     assert_eq!(reserved[0].run(), made[0].run());
     assert_eq!(reserved[0].request(), Some(&id("order-17")));
@@ -2693,20 +2441,20 @@ fn two_simultaneous_requests_with_one_id_make_one_reservation() {
     );
     store.prune().unwrap();
     assert_eq!(reservations_in_objects(&world.root()), reserved);
-    assert_eq!(ledger.reservations(store.as_ref()).unwrap(), reserved);
+    assert_eq!(real::reserved(&store), reserved);
 }
 
 /// A ledger that holds the first callers, once the ledger behind it has answered each,
 /// until as many are there as the barrier takes: each has judged, and staged what it
 /// adds, on a generation in which none of the others has reserved.
 struct Waiting {
-    inner: Arc<FakeLedger>,
+    inner: Arc<real::Counted>,
     barrier: Barrier,
     left: Mutex<usize>,
 }
 
 impl Waiting {
-    fn new(inner: Arc<FakeLedger>, callers: usize) -> Waiting {
+    fn new(inner: Arc<real::Counted>, callers: usize) -> Waiting {
         Waiting {
             inner,
             barrier: Barrier::new(callers),
@@ -2733,18 +2481,27 @@ impl Ledger for Waiting {
         }
         answer
     }
+
+    fn confirm(&self, reservation: &Reservation, reading: &Reread<'_>) -> Result<bool, NotJudged> {
+        self.inner.confirm(reservation, reading)
+    }
+
+    fn settle(&self, closing: &Closing<'_>, step: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
+        self.inner.settle(closing, step)
+    }
 }
 
 #[test]
 fn two_simultaneous_admissions_cannot_both_take_the_last_of_the_allowance() {
-    // Two requests under two ids, each for a quarter of a dollar, and forty cents may
-    // be reserved. Each asks the ledger on a generation in which nothing is reserved,
+    // Two requests under two ids, each for a quarter of a dollar, and the owner allowed
+    // forty cents. Each asks the ledger on a generation in which nothing is reserved,
     // and each is told yes. Both cannot be published: the ledger made the same name in
     // both, the store refuses the later whole, and the executor asks the ledger again,
     // on the generation as it is then. That one is declined.
     let world = World::new();
     let store = world.store();
-    let ledger = Arc::new(FakeLedger::with_allowance(400_000));
+    real::allow(&store, 400_000);
+    let ledger = real::Counted::new();
     let both = Arc::new(Waiting::new(ledger.clone(), 2));
     let engines: Vec<Engine> = (0..2)
         .map(|_| {
@@ -2771,16 +2528,17 @@ fn two_simultaneous_admissions_cannot_both_take_the_last_of_the_allowance() {
         })
     );
     assert_eq!(ledger.asked(), 3);
-    let reserved = ledger.reservations(store.as_ref()).unwrap();
+    let reserved = real::reserved(&store);
     assert_eq!(reserved.len(), 1);
     assert_eq!(reserved[0].run(), made[0].run());
     assert_eq!(world.ran(), 1);
-    // One run, one id's two records, the ledger's hold and turn and the reservation:
-    // the refused request left no name, and its id is free. The ledger here is asked
-    // to reserve and for nothing else, so the reservation is not closed when its run
-    // ends, and counts in full when the other request is judged again.
+    // One run, one id's two records, the ledger's hold and turn and the reservation,
+    // beside the three names of the owner's reset: the refused request left no name,
+    // and its id is free. The real ledger closes no reservation yet (plan 1B, task
+    // S11), so the one that was made counts in full when the other request is judged
+    // again, whether or not its run has ended by then.
     let (_, names, runs) = held(&world.root(), world.fs.clone());
-    assert_eq!((names.len(), runs.len()), (5, 1), "{names:?}");
+    assert_eq!((names.len(), runs.len()), (8, 1), "{names:?}");
     let taken = made[0].run();
     let free = answers.iter().position(|a| a.is_err()).unwrap();
     let free = ["order-17", "order-18"][free];
@@ -2798,7 +2556,8 @@ fn a_run_that_is_named_again_has_one_reservation_which_names_its_final_run() {
     let root = dir.path().join("store");
     let (fs, store) = Taker::store(&root, 3);
     let runs = Arc::new(AtomicU64::new(0));
-    let ledger = Arc::new(FakeLedger::new());
+    real::allow(&store, NO_LIMIT);
+    let ledger = real::Counted::new();
     let engine =
         engine_with(store.clone(), &runs, Priced::new(250_000)).with_ledger(ledger.clone());
     let finished = ran(engine.request(&asked("hello", "order-17")));
@@ -2807,7 +2566,7 @@ fn a_run_that_is_named_again_has_one_reservation_which_names_its_final_run() {
     assert!(!taken.iter().any(|id| id == finished.run().as_str()));
     assert_eq!(ledger.asked(), 4);
 
-    let reserved = ledger.reservations(store.as_ref()).unwrap();
+    let reserved = real::reserved(&store);
     assert_eq!(reserved.len(), 1, "{reserved:?}");
     assert_eq!(reserved[0].run(), finished.run());
     let generation = store.snapshot().unwrap();
@@ -2835,12 +2594,12 @@ fn a_run_that_is_named_again_has_one_reservation_which_names_its_final_run() {
     assert_eq!(
         spend,
         [
-            &format!("spend/closed/{}/released", finished.run()),
-            &format!("spend/held/0/{}/250000", finished.run()),
-            &format!("spend/place/{}/1", finished.run()),
+            "spend/epoch/1",
+            &format!("spend/held/1/{}/250000", finished.run()),
             &format!("spend/reservations/{}", finished.run()),
+            &format!("spend/reset/1/{NO_LIMIT}"),
             "spend/turn/0/1",
-            "spend/turn/0/2",
+            "spend/turn/1/1",
         ]
     );
     // The three refused attempts each left a reservation in the store's content, of an
@@ -2865,7 +2624,8 @@ fn a_run_that_is_named_eight_times_and_given_up_reserves_nothing() {
     let root = dir.path().join("store");
     let (fs, store) = Taker::store(&root, 8);
     let runs = Arc::new(AtomicU64::new(0));
-    let ledger = Arc::new(FakeLedger::new());
+    real::allow(&store, NO_LIMIT);
+    let ledger = real::Counted::new();
     let engine =
         engine_with(store.clone(), &runs, Priced::new(250_000)).with_ledger(ledger.clone());
     let refused = engine.request(&asked("hello", "order-17")).unwrap_err();
@@ -2875,16 +2635,17 @@ fn a_run_that_is_named_eight_times_and_given_up_reserves_nothing() {
     assert!(matches!(failure.cause(), store::Error::RunExists { .. }));
     assert_eq!(fs.taken().len(), 8);
     assert_eq!(ledger.asked(), 8);
-    assert_eq!(ledger.reservations(store.as_ref()).unwrap(), []);
+    assert_eq!(real::reserved(&store), []);
     assert_eq!(runs.load(Ordering::SeqCst), 0);
-    // Nothing outside the eight runs of other hands: no id's record, no name of spend.
+    // Nothing outside the eight runs of other hands: no id's record, and no name of
+    // spend but the three of the owner's reset.
     let generation = store.snapshot().unwrap();
-    assert_eq!(generation.entries().len(), 0);
+    assert_eq!(generation.entries().len(), 3);
     assert_eq!(generation.runs().len(), 8);
     assert_eq!(reservations_in_objects(&root).len(), 8);
     // The id is free, and the request is admitted under it once ids are.
     let finished = ran(engine.request(&asked("hello", "order-17")));
-    let reserved = ledger.reservations(store.as_ref()).unwrap();
+    let reserved = real::reserved(&store);
     assert_eq!(reserved.len(), 1);
     assert_eq!(reserved[0].run(), finished.run());
 }
@@ -3011,14 +2772,14 @@ fn a_reservation_stays_when_its_run_fails_and_when_its_run_is_deleted_and_pruned
     // and it names its run, so that whatever settles it can find it.
     let world = World::new();
     let store = world.store();
-    let ledger = Arc::new(FakeLedger::new());
-    let engine =
-        engine_with(store.clone(), &world.runs, Priced::new(250_000)).with_ledger(ledger.clone());
+    real::allow(&store, NO_LIMIT);
+    let engine = engine_with(store.clone(), &world.runs, Priced::new(250_000))
+        .with_ledger(real::Counted::new());
     let failing = Request::new(call("hello").argument("fail", Value::text("no paint left")))
         .with_id(id("order-17"));
     let failed = ran(engine.request(&failing));
     assert_eq!(failed.outcome().name(), "error");
-    let reserved = ledger.reservations(store.as_ref()).unwrap();
+    let reserved = real::reserved(&store);
     assert_eq!(reserved.len(), 1);
     assert_eq!(reserved[0].run(), failed.run());
     assert_eq!(reserved[0].micros(), 250_000);
@@ -3031,7 +2792,7 @@ fn a_reservation_stays_when_its_run_fails_and_when_its_run_is_deleted_and_pruned
 
     store.delete(&[failed.run().as_str()]).unwrap();
     store.prune().unwrap();
-    assert_eq!(ledger.reservations(store.as_ref()).unwrap(), reserved);
+    assert_eq!(real::reserved(&store), reserved);
     // From the id: the id's record names the run, and the run's id names the
     // reservation.
     let generation = store.snapshot().unwrap();
@@ -3049,7 +2810,8 @@ fn a_reservation_stays_when_its_run_fails_and_when_its_run_is_deleted_and_pruned
 #[test]
 fn a_run_whose_process_died_keeps_its_reservation() {
     let world = World::new();
-    let ledger = Arc::new(FakeLedger::new());
+    let store = world.store();
+    real::allow(&store, NO_LIMIT);
     let dying = {
         let fs = world.fs.clone();
         paint_with(&world.runs, move |_, _| {
@@ -3059,13 +2821,8 @@ fn a_run_whose_process_died_keeps_its_reservation() {
     };
     let mut registry = Registry::new();
     registry.register(dying).unwrap();
-    let engine = Engine::over(
-        registry,
-        Priced::new(250_000),
-        world.store(),
-        Digest::of_bytes(b""),
-    )
-    .with_ledger(ledger.clone());
+    let engine = Engine::over(registry, Priced::new(250_000), store, Digest::of_bytes(b""))
+        .with_ledger(real::Counted::new());
     assert!(matches!(
         engine.request(&asked("hello", "order-17")),
         Err(CallError::Store(_))
@@ -3073,7 +2830,7 @@ fn a_run_whose_process_died_keeps_its_reservation() {
     drop(engine);
     let fs: Arc<dyn Fs> = Arc::new(RealFs);
     let store = Arc::new(Store::open(&world.root(), fs).unwrap());
-    let reserved = ledger.reservations(store.as_ref()).unwrap();
+    let reserved = real::reserved(&store);
     assert_eq!(reserved.len(), 1);
     // The run is there, admitted and never ended, and it is the reservation's: it
     // holds the admission the reservation names.
@@ -3123,19 +2880,24 @@ fn a_stored_reservation_that_is_not_one_is_refused_and_nothing_is_admitted() {
             .create(name, store::Kind::Diagnostic, &bytes)
             .unwrap();
         publication.publish().unwrap();
-        let ledger = Arc::new(FakeLedger::new());
+        real::allow(&store, NO_LIMIT);
         let engine = engine_with(store.clone(), &world.runs, Priced::new(250_000))
-            .with_ledger(ledger.clone());
+            .with_ledger(real::Counted::new());
         let before = held(&world.root(), world.fs.clone());
         // A reader of reservations refuses it, with what it is.
-        let refused = ledger.reservations(store.as_ref()).unwrap_err();
+        let read = |store: &Store| {
+            let generation = store.snapshot().unwrap();
+            reservations(&generation, |entry| store.read(entry))
+        };
+        let refused = read(&store).unwrap_err();
         let CallError::Record { what, why } = &refused else {
             panic!("{name:?}: {refused:?}");
         };
         // And nothing is admitted beside it. It does not make the ledger fail: a
         // damaged record freezes its own reservation (ADR 0016). This one has no
         // hold, so no name states its amount, and no call is admitted until its
-        // owner corrects it; a call is declined, and told that nothing is left.
+        // owner corrects it; a call is declined, and told that the books need
+        // their owner.
         // A text that names no run where a reservation's run is named belongs to
         // no reservation: it changes no balance, and the call beside it runs.
         if name.contains('\u{1b}') {
@@ -3145,10 +2907,9 @@ fn a_stored_reservation_that_is_not_one_is_refused_and_nothing_is_admitted() {
         let declined = engine.request(&asked("hello", "order-17")).unwrap_err();
         assert_eq!(
             declined.refusal(),
-            Some(&Refusal::OverAllowance {
+            Some(&Refusal::NeedsOwner {
                 action: "paint".to_owned(),
-                asked_micros: 250_000,
-                left_micros: 0,
+                epoch: 1,
             }),
             "{name:?}"
         );
@@ -3162,7 +2923,7 @@ fn a_stored_reservation_that_is_not_one_is_refused_and_nothing_is_admitted() {
         // Nothing was admitted, and the id is free.
         assert_eq!(held(&world.root(), world.fs.clone()), before);
         assert_eq!(world.ran(), 0);
-        assert_eq!(ledger.reservations(store.as_ref()).unwrap_err(), refused);
+        assert_eq!(read(&store).unwrap_err(), refused);
         // One that is too large is refused by its length in the store's entry: its
         // content is never read.
         if says == "1025 bytes" {
@@ -3194,42 +2955,41 @@ impl Ledger for Unjudging {
         let asked = self.0.fetch_add(1, Ordering::SeqCst) + 1;
         Ok(step.make(&format!("spend/turn/9/{asked}"), b"x")?)
     }
+    // It keeps no books of names: every admission stands, and it closes nothing.
+    fn confirm(&self, _: &Reservation, _: &Reread<'_>) -> Result<bool, NotJudged> {
+        Ok(true)
+    }
+
+    fn settle(&self, _: &Closing<'_>, _: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
+        Ok(Settled::Nothing)
+    }
 }
 
-/// Other hands leave a reservation of this much that is held in full: its hold and the
-/// next turn, with no record. It is frozen, its one hold states its amount, and it
-/// counts for that (ADR 0016). A reservation the ledger made is closed when its run
-/// ends, and one of a run that used nothing then counts for nothing; this is what
-/// stands for money that is still held.
-fn held_elsewhere(store: &Store, ledger: &FakeLedger, run: &str, micros: u64) {
+/// Other hands leave a reservation of this much that is held in full, in the newest
+/// epoch: its hold and the next turn, with no record. It is frozen, its one hold
+/// states its amount, and it counts for that (ADR 0016).
+fn held_elsewhere(store: &Store, run: &str, micros: u64) {
     use std::num::NonZeroU64;
     use whizbang_core::spend::{Amount, Record, TurnBy};
     let run = whizbang_core::contract::RunId::parse(run).unwrap();
-    let turn = ledger.books_of(store).unwrap().folded.next_turn(0);
-    let records = [
-        Record::Hold {
-            epoch: 0,
-            run: run.clone(),
-            reserved: Amount::new(micros).unwrap(),
-        },
-        Record::Turn {
-            epoch: 0,
-            turn: NonZeroU64::new(turn).unwrap(),
-            by: TurnBy::Admission,
-            run: Some(run),
-        },
-    ];
-    let mut publication = store.begin().unwrap();
-    for record in &records {
-        publication
-            .create(
-                &record.name().to_string(),
-                store::Kind::Diagnostic,
-                &record.to_bytes(),
-            )
-            .unwrap();
-    }
-    publication.publish().unwrap();
+    let folded = real::books(store);
+    let epoch = folded.epoch();
+    real::plant(
+        store,
+        &[
+            Record::Hold {
+                epoch,
+                run: run.clone(),
+                reserved: Amount::new(micros).unwrap(),
+            },
+            Record::Turn {
+                epoch,
+                turn: NonZeroU64::new(folded.next_turn(epoch)).unwrap(),
+                by: TurnBy::Admission,
+                run: Some(run),
+            },
+        ],
+    );
 }
 
 /// A ledger that does what the test says with the step.
@@ -3245,6 +3005,14 @@ where
         step: &mut Step<'_, '_>,
     ) -> Result<MadeName, Declined> {
         (self.0)(reservation, step)
+    }
+    // It keeps no books of names: every admission stands, and it closes nothing.
+    fn confirm(&self, _: &Reservation, _: &Reread<'_>) -> Result<bool, NotJudged> {
+        Ok(true)
+    }
+
+    fn settle(&self, _: &Closing<'_>, _: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
+        Ok(Settled::Nothing)
     }
 }
 
@@ -3389,22 +3157,21 @@ fn a_call_whose_cost_has_no_bound_is_not_admitted_and_the_ledger_is_not_asked() 
         Err(CallError::Refused(Refusal::NoBound { .. }))
     ));
     assert_eq!(shop.ledger.asked(), 0);
-    // The fake ledger does not add past the largest amount either: with all but one
-    // millionth reserved, a call for two is declined for the one that is left.
-    shop.ledger.allow(Some(u64::MAX));
+    // The ledger does not add past the largest amount either. The owner allowed the
+    // largest amount there is; with all but two millionths of it reserved, a call
+    // for four is declined for the two that are left.
     shop.backends
         .bound
-        .store((u64::MAX - 1) / 2, Ordering::SeqCst);
+        .store((NO_LIMIT - 2) / 2, Ordering::SeqCst);
     shop.engine.submit(&shop.call(shop.photo)).unwrap();
-    held_elsewhere(&shop.store, &shop.ledger, "9-9", u64::MAX - 1);
-    shop.backends.bound.store(1, Ordering::SeqCst);
+    shop.backends.bound.store(2, Ordering::SeqCst);
     let refused = shop.engine.submit(&shop.call(shop.photo)).unwrap_err();
     assert_eq!(
         refused.refusal(),
         Some(&Refusal::OverAllowance {
             action: "retouch".to_owned(),
-            asked_micros: 2,
-            left_micros: 1,
+            asked_micros: 4,
+            left_micros: 2,
         })
     );
 }
@@ -3526,7 +3293,8 @@ fn a_refusal_of_a_request_whose_id_was_taken_meanwhile_is_answered_from_the_id()
     let race = |text: &'static str| {
         let world = World::new();
         let store = world.store();
-        let ledger = Arc::new(FakeLedger::with_allowance(400_000));
+        real::allow(&store, 400_000);
+        let ledger = real::Counted::new();
         let priced = |store: &Arc<Store>| {
             engine_with(store.clone(), &world.runs, Priced::new(250_000))
                 .with_ledger(ledger.clone())
@@ -3542,7 +3310,7 @@ fn a_refusal_of_a_request_whose_id_was_taken_meanwhile_is_answered_from_the_id()
         let loser = priced(&store).with_clock(Arc::new(Hooked(Mutex::new(Some(hook)))));
         let answer = loser.request(&asked(text, "order-17"));
         let first = ran(first.lock().unwrap().take().unwrap());
-        assert_eq!(ledger.reservations(store.as_ref()).unwrap().len(), 1);
+        assert_eq!(real::reserved(&store).len(), 1);
         assert_eq!(world.ran(), 1);
         (answer, first)
     };
@@ -3616,7 +3384,7 @@ fn a_run_is_not_named_with_an_id_whose_reservation_is_still_there() {
 }
 
 #[test]
-fn a_ledgers_name_is_two_hundred_characters_at_most_and_the_fake_does_not_add_past_the_largest() {
+fn a_ledgers_name_is_two_hundred_characters_at_most_and_the_ledger_does_not_add_past_the_largest() {
     // The longest name the grammar has is under the limit, and is made; a text over
     // the limit is no name, whatever it would be.
     let made = |length: usize| {
@@ -3646,21 +3414,18 @@ fn a_ledgers_name_is_two_hundred_characters_at_most_and_the_fake_does_not_add_pa
     ran(made(200));
     assert!(matches!(made(201), Err(CallError::Ledger { .. })));
 
-    // Two reservations of one under the largest amount, made with no limit. Their sum
-    // is past the largest amount: it stops there, and under an allowance of the
-    // largest amount nothing is left, not what a sum that wrapped would leave.
+    // Two reservations of one under the largest amount: one the ledger made, under an
+    // allowance of that much, and one that other hands hold beside it. Their sum is
+    // past the largest amount: it stops there, and nothing is left, not what a sum
+    // that wrapped would leave.
     let world = World::new();
     let store = world.store();
-    let ledger = Arc::new(FakeLedger::new());
-    let backends = Priced::new(u64::MAX - 1);
+    real::allow(&store, NO_LIMIT);
+    let backends = Priced::new(NO_LIMIT);
     let engine =
-        engine_with(store.clone(), &world.runs, backends.clone()).with_ledger(ledger.clone());
+        engine_with(store.clone(), &world.runs, backends.clone()).with_ledger(real::Counted::new());
     engine.submit(&call("one")).unwrap();
-    engine.submit(&call("two")).unwrap();
-    // Each was closed when its run ended; two such amounts that are still held:
-    held_elsewhere(&store, &ledger, "9-8", u64::MAX - 1);
-    held_elsewhere(&store, &ledger, "9-9", u64::MAX - 1);
-    ledger.allow(Some(u64::MAX));
+    held_elsewhere(&store, "9-9", NO_LIMIT);
     backends.bound.store(1, Ordering::SeqCst);
     assert_eq!(
         engine.submit(&call("three")).unwrap_err().refusal(),

@@ -13,6 +13,8 @@ second pull request of its task on: what a ledger's names are, and their grammar
 ledger cannot return from `reserve` without having made its names, and takes part in
 the publication that ends a run; a `put` under `requests/` or `spend/` is refused
 Date: 2026-11-12
+Amended: 2026-11-15, with task S2 of checkpoint 1B: the sweep of a crash inside the
+admission's publication is run with the real ledger, and is named anew ("Admission").
 Amended: 2026-11-12, with the second pull request of task A6. Added: "The estimate" and
 "A preparation handed to admission", which are built; the paragraph of "Admission" that
 listed the second part now lists only what is still to come, the ledger and the
@@ -278,8 +280,13 @@ way the test kit's disk can lose what was not yet durable: every name undone, ev
 name kept, and every choice of which directories, and of which names, lose theirs. How
 many directories and names a crash leaves undecided is read from the first crash at
 each step, and every mask over them is then a crash of its own
-(`admit::a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_first_steps_of_four`
-and the three tests beside it, each a quarter of the steps).
+(`spend::reserve::a_crash_at_any_event_of_an_admission_through_the_real_ledger_leaves_all_of_it_or_none_1_of_6`
+and the five tests beside it, each a sixth of the ways of every step; the admission
+is made through the real ledger, whose hold and turn are in the same publication.
+Until task S2 of checkpoint 1B it was
+`admit::a_crash_inside_the_admission_step_leaves_no_record_or_all_of_it_first_steps_of_four`
+and three beside it, with a ledger of the test's that made one name; what those
+held, the new ones hold).
 
 The action runs only after the publication is durable. A refusal, and a call that is
 not ready, happen before it and record no id: the id stays free for the request once it
