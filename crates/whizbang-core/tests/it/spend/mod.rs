@@ -5,6 +5,7 @@
 
 mod age;
 mod cap;
+mod fold;
 mod name;
 mod reading;
 mod record;

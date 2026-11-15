@@ -84,8 +84,8 @@ fn every_named_history_gives_the_balances_it_must_and_keeps_every_invariant() {
     assert!(broken.is_empty(), "{}", broken.join("\n"));
     // The plan's 38, in its order and under its numbers, then this record's own, and
     // from 43 those of its review rounds: 87 with the pull request's review, and 88
-    // from the follow-ups of its last round.
-    assert!(table.len() >= 88, "{}", table.len());
+    // from the follow-ups of its last round; 89 is task S1b's, with the real fold.
+    assert!(table.len() >= 89, "{}", table.len());
     for (at, history) in table.iter().enumerate() {
         let number = format!("{:02} ", at + 1);
         assert!(history.name.starts_with(&number), "{}", history.name);
