@@ -361,7 +361,8 @@ fn an_image_file_that_the_encoder_did_not_write_is_refused() {
     let ours = Piece::picture(DataClass::SourceImages, &picture).unwrap();
     let ours = ours.bytes().to_vec();
     // A picture of one colour as another encoder writes it: compressed, where the
-    // encoder here stores. (Pixels that do not compress, some other encoders store
+    // encoder here stores. (Pixels that do not compress, the `image` library at the
+    // pinned version stores too, and other encoders may: some other encoders store
     // too, and their file is then the very bytes the encoder here writes.)
     let flat = picture_of(32, 32, vec![90; 32 * 32 * 4]);
     let stored = Piece::picture(DataClass::SourceImages, &flat).unwrap();
@@ -451,9 +452,34 @@ fn an_image_file_that_the_encoder_did_not_write_is_refused() {
         "a filtered row in a later block".to_owned(),
         set(&larger, row_55, 1, true),
     ));
+    // A row that says it is filtered, where it is not the first.
+    cases.push((
+        "a filtered second row".to_owned(),
+        set(&ours, 48 + 25, 1, true),
+    ));
+    // A stream that says it was compressed another way, with the chunk's checksum
+    // written again.
+    cases.push((
+        "a stream that starts another way".to_owned(),
+        set(&ours, 42, 0x9c, false),
+    ));
+    // A block after the last one, of nothing, with the chunk's length and checksum
+    // written again: on a picture whose rows fill their one block exactly, so that
+    // the block that was added starts where a second block would.
+    let full = Piece::picture(DataClass::SourceImages, &patterned(64, 255)).unwrap();
+    let mut longer = full.bytes().to_vec();
+    let at = longer.len() - 20;
+    longer.splice(at..at, [0, 0, 0, 0xff, 0xff]);
+    let length = u32::from_be_bytes(longer[33..37].try_into().unwrap()) + 5;
+    longer[33..37].copy_from_slice(&length.to_be_bytes());
+    let longer = set(&longer, 28, 0, false);
+    assert_eq!(names(&longer), ["IHDR", "IDAT", "IEND"]);
+    cases.push(("a block after the last".to_owned(), longer));
     // And files of other kinds, by how each starts.
-    let starts: [&[u8]; 6] = [
+    let starts: [&[u8]; 8] = [
         b"\xff\xd8\xff\xe0\x00\x10JFIF\x00",
+        b"\xff\xd8\xff\xe1\x00\x10Exif\x00",
+        b"\xff\xd8\xff\xdb\x00\x43\x00\x01",
         b"GIF89a\x01\x00\x01\x00",
         b"GIF87a\x01\x00\x01\x00",
         b"II*\x00\x08\x00\x00\x00",
@@ -609,6 +635,33 @@ fn a_body_that_holds_an_absolute_path_or_the_stores_root_is_refused_by_the_sendi
         assert_eq!(sender.requests(), 0);
         assert!(!holds(&ran.store, &kept));
     }
+    // A folder told with a slash or a backslash after it is kept out where it is
+    // written bare, in a part and in an address.
+    let back = '\\';
+    for told in [
+        format!("{kept}/"),
+        format!("{kept}//"),
+        format!("{kept}{back}"),
+    ] {
+        let check = SendCheck::new().keeping_out(Path::new(&told)).unwrap();
+        let bare = posting(vec![words(DataClass::Prompts, &format!("it is in {kept}"))]);
+        let filler = FakeFiller::new(Paint::Inverse).sending_to(recipient());
+        let to = address(&format!("{API}/v1/fill?from={kept}"));
+        let in_the_address = Arc::new(filler.posting(to, a_prompt()));
+        let fillers: [Arc<FakeFiller>; 2] = [bare, in_the_address];
+        for filler in fillers {
+            let ran = run_one(filler, ways(&sender, check.clone()), Secrets::none());
+            let fault = ran.fault.clone().unwrap_or_else(|| panic!("{told}: sent"));
+            assert_eq!(fault.sentence(), KEPT_OUT, "{told}");
+            assert_eq!(sender.requests(), 0);
+        }
+    }
+    // A folder that is one slash is kept as it is, and is not a path of nothing.
+    assert!(SendCheck::new().keeping_out(Path::new("/")).is_ok());
+    assert_eq!(
+        SendCheck::new().keeping_out(Path::new("")).map(|_| ()),
+        Err(NotAllowed::Empty)
+    );
     // The same parts with a check that was told of no folder: sent.
     let ran = run_one(
         posting(vec![words(

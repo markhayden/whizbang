@@ -111,7 +111,9 @@ fn starts_as_an_image(bytes: &[u8]) -> bool {
 ///   that is, is pixels, and is not read as words;
 /// - a part, or an address, that holds the path of a folder the check was told to
 ///   keep out ([`SendCheck::keeping_out`]): the store's root;
-/// - a part that holds an absolute path.
+/// - a part that holds an absolute path, by how one starts: a person's folders, the
+///   temporary folders, an address of a file, or a drive (the list is `ROOTS`; ADR
+///   0019 has what is not found).
 ///
 /// It holds nothing that changes and counts nothing: asked for a run that is over,
 /// or twice for one request, it changes nothing. What `{:?}` prints is how many
@@ -129,10 +131,17 @@ impl SendCheck {
     }
 
     /// The same check, which also refuses a request that holds this folder's path,
-    /// as it is written here: the root of the executor's store. Refused: a path of
+    /// as it is written here: the root of the executor's store. Slashes and
+    /// backslashes at its end are left off, while more than one byte remains, so
+    /// that the folder is found where it is written bare. Refused: a path of
     /// nothing, and one more folder than [`KEPT_OUT_LIMIT`].
     pub fn keeping_out(mut self, folder: &Path) -> Result<SendCheck, NotAllowed> {
-        let written = folder.as_os_str().as_encoded_bytes();
+        let mut written = folder.as_os_str().as_encoded_bytes();
+        while let [bare @ .., b'/' | b'\\'] = written
+            && !bare.is_empty()
+        {
+            written = bare;
+        }
         if written.is_empty() {
             return Err(NotAllowed::Empty);
         }

@@ -1,15 +1,18 @@
 # 0019. The gate: a config's approvals as the executor's policy, and the check behind a send
 
-Status: accepted. Names ADR 0011 (an `Approval`) and ADR 0012 (a recipient). Changes
-ADR 0015 ("A policy before a send, and a checked send": a check is shown the pieces a
-request holds, and a third count, of the moves of one request, which a request's
-bounds carry)
+Status: accepted. Names ADR 0011 (an `Approval`), ADR 0012 (a recipient) and ADR 0015
+("A policy before a send, and a checked send"), and changes none of them but for two
+accessors on ADR 0015's `Hop`: `Hop::pieces`, the pieces a request holds, and
+`Hop::request_moves`, the moves of one request, which are counted in the bounds each
+request is handed
 Date: 2026-11-14
 Amended: 2026-11-14, with task E6. Added: "Nothing but pixels", and its rows in the
 table of what was read.
 Amended: 2026-11-14, with task E3, its first pull request. Added: "Every hop". Changed:
 the check's rule for an answer that points elsewhere, which was that nothing is
-followed, and the two tests that held it.
+followed, and the two tests that held it; and, after the review of task E6, the limits
+of "Nothing but pixels", a folder kept out with a slash at its end, and the most bytes
+of the encoder's one chunk.
 Spec: section 10, "Egress"
 
 ## Context
@@ -275,20 +278,26 @@ Limits of it, each pinned or stated:
   escaped line break, are refused as paths
   (`pixels::known_words_that_only_look_like_a_path_are_refused_too`). A piece is the
   words as they are, not as a wire format escapes them.
-- **A file name alone is not found,** nor a relative path, nor an absolute path under
-  a folder that is not in the list and was not given to `keeping_out`. That no file
-  name leaves is held by what a picture is, not by a search.
+- **A file name alone is not found,** nor a relative path, nor a path from a home
+  written as `~`, nor an absolute path that starts any other way: under a folder that
+  is not in the list and was not given to `keeping_out`, on a drive written with a
+  forward slash, on a share, in another case, or in an encoded form (percent-encoded,
+  JSON's `\/`, UTF-16). That no file name leaves is held by what a picture is, not by
+  a search.
 - **A folder is found only as it was written to the check.** Another spelling of the
-  same folder (through a link, with another case) is not. The list of path starts is
+  same folder (through a link, with another case, percent-encoded as an address writes a space, or
+  with the slashes escaped as JSON may) is not. The list of path starts is
   not applied to an address, whose path is the recipient's: only the folders kept out
   are.
 - **Another encoder's file that is the same bytes passes.** For pixels that do not
   compress, an encoder that stores them writes the very file this one does; it holds
   nothing but those pixels, and is sent. The test uses a picture of one colour, which
   the other encoder compresses.
-- **An image inside other bytes is not seen:** an image in base64 inside words, or in
-  a container the list does not name. Adapters are trusted code (`SPEC.md` section
-  10); the type they are given for an image is `Piece::picture`.
+- **An image inside other bytes, or cut across parts, is not seen:** an image in
+  base64 inside words, after any byte in a part, in a container the list does not
+  name (a BMP), or cut so that no part starts as an image file does. Adapters are
+  trusted code (`SPEC.md` section 10); the type they are given for an image is
+  `Piece::picture`.
 - **The file is not compressed,** so it is a little larger than four bytes a pixel.
   Nothing real is sent in 1B. A compressing encoder before a real send is on
   `docs/carry-over.md`; it changes one function and the reader beside it.
@@ -331,7 +340,14 @@ Limits of it, each pinned or stated:
   `may_receive(recipient, classes)`, with the classes a capability's request holds
   before any piece is made; a request it refuses does not reach the checked sender.
 - **Tasks I6 and W1.** The check an executor is given is
-  `SendCheck::new().keeping_out(root)`, with the root of its store.
+  `SendCheck::new().keeping_out(root)`, with the root of its store. Give it the root
+  as an absolute path, and its canonical spelling too when that differs. A relative
+  root such as `.` refuses any part that holds a dot. A root that holds a space or a
+  backslash can never be found in an address. Slashes at the end of the root are left
+  off, so the folder is found where it is written bare
+  (`pixels::a_body_that_holds_an_absolute_path_or_the_stores_root_is_refused_by_the_sending_interface`).
+  The list of path starts is not applied to an address: a home path in a query is
+  sent.
 - **A real sender (1C).** It puts the pieces of a request into a wire format itself.
   A picture piece is already a whole PNG file.
 
