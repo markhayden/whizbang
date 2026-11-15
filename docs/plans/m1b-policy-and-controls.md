@@ -1671,10 +1671,10 @@ medium.
 attach) and `crates/rascal-mask/tests/it/install_controls.rs`; table-manners
 `CONTRACT.md` section 5.3.
 
-- [ ] A second request for a model that is installing attaches, from the same process or
-      another: it waits on the install's lock, reads progress from the status record, and
-      ends with the same result.
-- [ ] An install can be cancelled between files and inside one, by the request that
+- [x] A second request for a model that is installing attaches, from the same process or
+      another: it tries for a share of the install's lock until it is given one, is shown
+      progress from the status record between two tries, and ends as the install ended.
+- [x] An install can be cancelled between files and inside one, by the request that
       started it. A cancelled install leaves what was installed before. An attached
       request that goes away cancels nothing.
 
@@ -1687,6 +1687,15 @@ a cancel while the fake is stopped mid-file ends the install as cancelled, remov
 staging and leaves the previous installation named; a cancel after the pointer was
 replaced returns the installed result; an attached request that goes away does not cancel
 the install.
+**Reworded with the task** (ADR 0017, "Attaching and cancelling"). The first box said
+that the request "waits on the install's lock, reads progress from the status record, and
+ends with the same result". A request blocked on a lock can show no progress and cannot
+leave: it sees neither the status record nor its own cancellation until the install is
+over. So it tries for a share of the lock, which answers at once, and tries again; between
+two tries it calls `watch`, which its caller gave it, once. Nothing in the library sleeps:
+the caller paces the tries in `watch`. And "the same result" is how the install ended, as
+its status record says it: installed with the same installation, cancelled, or failed,
+without the installer's reason.
 **Size:** medium.
 
 ### M5. Holds
