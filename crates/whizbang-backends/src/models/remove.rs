@@ -153,8 +153,10 @@ impl Removed {
 /// `patience` of this clock has passed, and clears its pointer.
 ///
 /// - **A folder of the model's layout that is a link is refused**
-///   ([`RemoveRefused::Linked`]): looked for before the mark and again under the
-///   model's lock, before anything is listed. Nothing is deleted through it.
+///   ([`RemoveRefused::Linked`]): looked for before the mark, again under the
+///   model's lock before anything is listed, again when the holds have been
+///   waited for and before the pointer is cleared, and once more just before
+///   the deleting. Nothing is deleted through it.
 /// - **The mark comes first,** under the directory's lock, when none is there. A
 ///   mark is the removal's own when it made it or has the model's lock, and only
 ///   its own mark is taken off at the end. A model with no folder
@@ -348,6 +350,9 @@ fn drain(
                 }
             }
         }
+        // Looked at again: the look under the lock is as old as the wait for the
+        // holds was long. Nothing is decided for a model whose layout has a link.
+        dir.unlinked(name)?;
         // The decision, with every hold file this removal's alone: under the
         // directory's lock the pointer is taken away, and that is made durable.
         let directory = dir.lock()?.ok_or(RemoveRefused::DirectoryBusy)?;
@@ -358,6 +363,8 @@ fn drain(
         // The deleting, now that the cleared pointer is durable and while every
         // hold file is still this removal's: everything under `installations/`,
         // a link itself and not what it leads to. And what an install left staged.
+        // And once more, just before the deleting.
+        dir.unlinked(name)?;
         let installations = model.installations();
         for name in &names {
             dir.remove(&installations.join(name))?;
