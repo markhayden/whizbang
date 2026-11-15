@@ -404,10 +404,9 @@ impl<'a> Model<'a> {
     }
 
     /// Removes the staging folder an install left, when there is one, and syncs.
-    /// Nothing is looked for or removed through a folder of the layout that is a
-    /// link.
+    /// Nothing is removed through a folder of the layout that is a link: the
+    /// directory's own unstaging looks, and removes nothing then.
     pub(super) fn unstage(&self) -> io::Result<()> {
-        self.dir.unlinked(self.name)?;
         if self.fs().exists(&self.dir.incoming(self.name))? {
             self.dir.unstage(self.name);
         }

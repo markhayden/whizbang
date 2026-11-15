@@ -1,13 +1,10 @@
 //! `whizbang rascal grow`: wiring from arguments to the door (`whizbang::door`), which
 //! runs the action through the executor.
 
-use std::sync::Arc;
-
 use clap::Subcommand;
 use whizbang::door::{self, GrowAsked};
-use whizbang::wiring;
-use whizbang_core::store::Store;
-use whizbang_core::store::fs::RealFs;
+use whizbang::wiring::{self, Make};
+use whizbang_core::contract::Recovery;
 
 use crate::store::Where;
 
@@ -50,6 +47,11 @@ pub enum Command {
 
 /// Runs a rascal command: what to print on success, or the complaint.
 pub fn run(command: &Command) -> Result<String, String> {
+    run_with(command, wiring::recovery())
+}
+
+/// The same, with the store recovered by this before the executor is built over it.
+pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String> {
     match command {
         Command::Grow {
             mask,
@@ -58,11 +60,14 @@ pub fn run(command: &Command) -> Result<String, String> {
             at,
             request_id,
         } => {
-            // A command that runs an action makes no store where there is none.
-            let store = Store::open_existing(at.root(), Arc::new(RealFs))
-                .map_err(|error| error.to_string())?;
+            // A command that runs an action makes no store where there is none. The
+            // executor is built over the writer, which the one entry point hands out
+            // once the store is recovered.
+            let opening = wiring::opening(at.root(), Make::Nothing, recovery)
+                .map_err(|error| wiring::not_opened(&error))?;
+            let store = opening.writer().map_err(|why| why.to_string())?;
             let registry = wiring::registry()?;
-            let executor = wiring::runner(registry, Arc::new(store));
+            let executor = wiring::runner(registry, store);
             let asked = GrowAsked {
                 mask,
                 px: *px,
