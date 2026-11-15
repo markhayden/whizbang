@@ -1195,7 +1195,7 @@ record; a nested call asks the ledger nothing.
 and `crates/rascal-mask/src/describe.rs` (`common_properties`, `max_spend_usd`);
 table-manners `CONTRACT.md` section 4.5. An admission's part, in `spend/`.
 
-- [ ] A cap on what one call may reserve, from the snapshot (C5 reads it from the config;
+- [x] A cap on what one call may reserve, from the snapshot (C5 reads it from the config;
       until then a test gives it). A request may carry a lower cap of its own; I1's
       section says where a request carries it.
 
@@ -1204,6 +1204,14 @@ exists; a call's own cap lowers the cap for that call; a call's own cap above th
 configured one is refused, not lowered; a cap of zero is refused as not a cap; a refusal
 by the cap makes no run and no reservation and leaves the request's id free; a nested call
 is held to the cap too; the two fixed vectors of `prepared/1` are as they were.
+(Built: the part is `spend::CallCap`, and its tests are `cap::…` in
+`crates/whizbang-core/tests/it/spend/cap.rs`. A request's own cap of zero is refused; a
+snapshot whose cap is zero, which the config's reader never gives, is the part's
+failure and no refusal of the call. No refusal quotes an amount, so a cap that spells
+a secret is not shown. The part is given to an executor by whoever builds it: the
+binary's by task W1. The two vectors are held where they were, by
+`prepare::a_fingerprint_is_this_digest` and
+`prepare::a_fingerprint_with_one_of_everything_is_this_digest`, which did not change.)
 **Carry-over:** the row on `max_spend_usd`. **Size:** small.
 
 ### S4. Quotes: a bound, or no dispatch
@@ -1649,17 +1657,15 @@ the key; the key, escaped and cut, is still asked for, of the reader's refusal.
 
 **Depends on:** C4, C3, S3, E2.
 
-- [ ] The snapshot carries the per-call cap (S3), the egress policy (E2), the secrets (C2,
+- [x] The snapshot carries the per-call cap (S3), the egress policy (E2), the secrets (C2,
       C3) and the settings a run records, each read from the config.
 
-**Not ticked, though the box is true:** built before S3, so the first part of "Done
-when" below is not shown as the plan words it. The snapshot of the source over the files
-carries all four, and a cap lowered in the file is the cap the next admission is shown;
-the call over it is refused by a part of the test's own, which stands where S3's will
+**Ticked with task S3.** The task was built before S3, and its cap's clause was then
+shown with a part of the test's own. That test now gives its executor S3's part
+(`spend::CallCap`): a call over the cap the file was lowered to is refused by it, with
+no run
 (`source::a_cap_lowered_in_the_config_is_the_cap_the_next_admission_is_held_to_on_one_executor`).
-The box is ticked by the pull request that shows the same with S3's part, or by S3's.
-The other four parts are shown. ADR 0011, "The source over both files";
-`docs/carry-over.md`.
+ADR 0011, "The source over both files".
 
 **Done when** these pass, each on one executor across a change of the file: a cap lowered
 in the config refuses the next call that is over it; a recipient taken out of the `egress`
