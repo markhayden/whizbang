@@ -156,6 +156,14 @@ tests) is not changed by them. The default of `try_share` is an error, never `No
 `None` says that somebody has the file alone
 (`fs::a_file_system_without_the_new_calls_says_so_and_touches_nothing`).
 
+A fourth call came later with the same default, for the models directory:
+`Fs::is_link(path)`, which says whether the name itself is a symbolic link, without
+following it, and answers no for a name that nothing has (ADR 0017, "A folder of
+the layout that is a link";
+`fs::a_link_is_seen_at_its_own_name_whatever_it_leads_to_and_nothing_else_is_one`).
+Its default is the same error, never "no link". On the test kit's disk it is a
+look, as `exists` is, and no event.
+
 ### What an error says
 
 No error of these calls names a path: one from the system is the system's, which

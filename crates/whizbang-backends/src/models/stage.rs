@@ -18,6 +18,7 @@ use whizbang_core::egress::{DownloadRequest, Downloaded, Downloader};
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::{LockFile, NewFile, PIECE_MAX_BYTES};
 
+use super::directory::{LINKED, is_linked};
 use super::name::holds_secret;
 use super::{CatalogueFile, Entry, InstalledFile, ModelName, ModelsDir};
 
@@ -74,6 +75,10 @@ pub enum StageRefused {
     Draining,
     /// One file was not staged. `name` is what [`super::FileName::shown`] shows of it.
     File { name: String, why: FileRefused },
+    /// A folder of the model's layout is a link: `models/`, the model's folder, its
+    /// `installations/`, `staging/` or `holds/`. Nothing is made, listed or deleted
+    /// through it.
+    Linked,
     /// The file system refused. The kind of failure, and no path.
     Disk(io::ErrorKind),
 }
@@ -88,6 +93,7 @@ impl std::fmt::Display for StageRefused {
                 f.write_str("the model is being removed, and nothing of it is staged")
             }
             StageRefused::File { name, why } => write!(f, "the file `{name}` {why}"),
+            StageRefused::Linked => f.write_str(LINKED),
             StageRefused::Disk(kind) => {
                 let why = match kind {
                     io::ErrorKind::PermissionDenied => "permission is denied",
@@ -104,6 +110,9 @@ impl std::error::Error for StageRefused {}
 
 impl From<io::Error> for StageRefused {
     fn from(error: io::Error) -> StageRefused {
+        if is_linked(&error) {
+            return StageRefused::Linked;
+        }
         StageRefused::Disk(error.kind())
     }
 }
@@ -147,6 +156,9 @@ impl Staged {
 ///   told of others. With one found, nothing is made on the disk.
 /// - The model's lock is taken without waiting; held by another, the answer is
 ///   [`StageRefused::Busy`] and nothing is touched.
+/// - A folder of the model's layout that is a link is refused, before the lock and
+///   again before anything is removed ([`StageRefused::Linked`]): nothing is made,
+///   listed or deleted through it.
 /// - What an earlier staging left is removed, whatever it is, and not looked at.
 /// - Where the cancellation is asked once the lock is held, before each file, at
 ///   each piece and after each answer of the downloader, the model's draining mark
@@ -196,6 +208,9 @@ pub(super) fn lock_model(
     if cancellation.is_cancelled() {
         return Err(StageRefused::Cancelled);
     }
+    // Before anything is made: a folder of the layout that is a link is not gone
+    // through, to make a folder or a lock file any more than to delete.
+    dir.unlinked(entry.name())?;
     let model = dir.model(entry.name());
     dir.ensure_dir(&dir.models())?;
     dir.ensure_dir(&model)?;
@@ -249,6 +264,8 @@ pub(super) fn stage_locked(
         cancellation,
     };
     let done = (|| {
+        // Looked at again before what an earlier staging left is removed.
+        dir.unlinked(entry.name())?;
         dir.remove(&incoming)?;
         dir.ensure_dir(&staging)?;
         fs.create_dir(&incoming)?;

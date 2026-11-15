@@ -75,6 +75,12 @@ smoke:
     target/release/whizbang describe --json > /dev/null
     target/release/whizbang describe --json --pretty > /dev/null
 
+# The example on `Ledger` that must not compile (ADR 0016): it fails with the one error it
+# is there for and with no other, and compiles without the line that causes it
+# (scripts/compile-fail.sh). It builds the core and runs no test.
+compile-fail:
+    scripts/compile-fail.sh
+
 # The secrets scan and the clean-room scan, over the working tree. A push runs them over
 # what it would publish (scripts/hooks/pre-push).
 scan:
@@ -103,4 +109,4 @@ scan-range-secrets base head:
     scripts/scan.sh --secrets-only --range "$1" "$2"
 
 # What a pull request runs.
-ci: check deny-advisories smoke scan-secrets
+ci: check deny-advisories smoke compile-fail scan-secrets

@@ -10,7 +10,11 @@
 //! model is not installed. Past the deadline it answers that the model is held, has
 //! changed no pointer, and takes the mark off.
 //!
-//! So far the removal ends at the decision: nothing is deleted yet (task M5c).
+//! Then, with the hold files still its own, it deletes every installation of the
+//! model and syncs the deleting. A removal that died or was refused after it
+//! cleared the pointer is finished by the next to take the model's lock: an
+//! install, or a removal, which finds no pointer, says that the model is not
+//! installed, and deletes what no pointer names.
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -21,7 +25,7 @@ use std::time::{Duration, Instant};
 use whizbang_core::contract::{Clock, Secrets};
 use whizbang_core::store::fs::Held;
 
-use super::directory::Read;
+use super::directory::{LINKED, Read, is_linked};
 use super::install::{Model, Pointer};
 use super::json::{self, Object};
 use super::name::holds_secret;
@@ -97,6 +101,9 @@ pub enum RemoveRefused {
     Held,
     /// The directory's lock was not let go by whoever has it.
     DirectoryBusy,
+    /// A folder of the model's layout is a link. Nothing is listed or deleted
+    /// through it, and nothing was changed.
+    Linked,
     /// The file system refused. The kind of failure, and no path.
     Disk(io::ErrorKind),
 }
@@ -111,6 +118,7 @@ impl std::fmt::Display for RemoveRefused {
             RemoveRefused::DirectoryBusy => {
                 "the models directory is locked by another, which did not let it go"
             }
+            RemoveRefused::Linked => LINKED,
             RemoveRefused::Disk(_) => "the models directory could not be read or written",
         })
     }
@@ -120,6 +128,9 @@ impl std::error::Error for RemoveRefused {}
 
 impl From<io::Error> for RemoveRefused {
     fn from(error: io::Error) -> RemoveRefused {
+        if is_linked(&error) {
+            return RemoveRefused::Linked;
+        }
         RemoveRefused::Disk(error.kind())
     }
 }
@@ -141,6 +152,9 @@ impl Removed {
 /// Removes a model: marks it as draining, waits for the holds on it until
 /// `patience` of this clock has passed, and clears its pointer.
 ///
+/// - **A folder of the model's layout that is a link is refused**
+///   ([`RemoveRefused::Linked`]): looked for before the mark and again under the
+///   model's lock, before anything is listed. Nothing is deleted through it.
 /// - **The mark comes first,** under the directory's lock, when none is there. A
 ///   mark is the removal's own when it made it or has the model's lock, and only
 ///   its own mark is taken off at the end. A model with no folder
@@ -159,6 +173,9 @@ impl Removed {
 ///   changed.
 /// - **The decision is the pointer,** cleared under the directory's lock while
 ///   every hold file is the removal's alone, and synced.
+/// - **Then the files are deleted:** every folder under `installations/`, with the
+///   hold files still the removal's alone, and the deleting synced. A removal that
+///   finds no pointer deletes what a removal before it left.
 /// - **The mark is taken off at the end,** however the removal ended, under the
 ///   directory's lock, and the model's folder synced.
 pub fn remove(
@@ -172,6 +189,9 @@ pub fn remove(
     if holds_secret(model.as_str(), secrets) {
         return Err(RemoveRefused::HoldsSecret);
     }
+    // Before the mark, which is written in the model's folder: a folder of the
+    // layout that is a link is not gone through, to write any more than to delete.
+    dir.unlinked(model)?;
     let folder = dir.model(model);
     if !dir.fs().exists(&folder)? {
         return Err(RemoveRefused::NotInstalled);
@@ -256,6 +276,9 @@ fn drain(
         *own |= mark_if_none(dir, &folder)?;
         pause();
     };
+    // Looked at again under the lock, which may have been waited for: nothing is
+    // listed or deleted through a folder of the layout that is a link.
+    dir.unlinked(name)?;
     // And with the lock the mark is this removal's own, whoever made it: what is
     // there and is no mark as it is written is replaced.
     if !matches!(draining(dir, name, secrets), Ok(true)) {
@@ -279,7 +302,15 @@ fn drain(
         // not installed.
         fs.sync_dir(&dir.model(name))?;
         let was = match model.named()? {
-            Pointer::None => return Err(RemoveRefused::NotInstalled),
+            Pointer::None => {
+                // What a removal that was interrupted after it cleared the pointer
+                // left, and what a dead install left: deleted as every install
+                // deletes what no pointer names, each folder when no hold is on
+                // it, after the sync above.
+                model.clean("")?;
+                model.unstage()?;
+                return Err(RemoveRefused::NotInstalled);
+            }
             Pointer::Names(id) => Some(id),
             Pointer::Damaged => None,
         };
@@ -296,7 +327,7 @@ fn drain(
         };
         names.extend(was.map(|id| OsString::from(id.hex())));
         let mut alone: Vec<Box<dyn Held>> = Vec::new();
-        for name in names {
+        for name in &names {
             let file = model.holds().join(name);
             loop {
                 match fs.try_alone(&file) {
@@ -324,6 +355,17 @@ fn drain(
         gone = true;
         fs.sync_dir(&dir.model(name))?;
         drop(directory);
+        // The deleting, now that the cleared pointer is durable and while every
+        // hold file is still this removal's: everything under `installations/`,
+        // a link itself and not what it leads to. And what an install left staged.
+        let installations = model.installations();
+        for name in &names {
+            dir.remove(&installations.join(name))?;
+        }
+        if fs.exists(&installations)? {
+            fs.sync_dir(&installations)?;
+        }
+        model.unstage()?;
         drop(alone);
         Ok(Removed { was })
     })();
