@@ -1140,6 +1140,72 @@ fn a_mark_of_draining_stops_the_publication_before_a_hold_file_or_a_pointer_is_m
 }
 
 #[test]
+fn a_held_repair_that_could_not_put_the_pointer_back_leaves_the_model_not_installed_and_the_next_is_refused_as_held()
+ {
+    // A held repair takes the directory's lock twice: to clear the pointer, and to
+    // put it back. The second is not given: refused by the file system, or held by
+    // another until the tries run out.
+    for busy in [false, true] {
+        let scratch = Scratch::new("publish-held-repair");
+        let root = scratch.path();
+        let record = installed(root, &first());
+        let folder = folder_of(root, &record);
+        flip(&folder.join("files/graph.onnx"), 9);
+        let hold = held(root, &record);
+        let locks = {
+            let fs = Arc::new(ShimFs::new());
+            let refused = installing(&fs, root, &first(), &serving_both()).unwrap_err();
+            assert_eq!(refused, InstallRefused::Held);
+            let events = fs.events();
+            let locks: Vec<usize> = (0..events.len())
+                .filter(|at| events[*at] == Event::Lock(root.join("LOCK")))
+                .collect();
+            assert_eq!(locks.len(), 2);
+            locks
+        };
+        let fs = Arc::new(ShimFs::new());
+        let other = Arc::new(Mutex::new(None));
+        let refused = if busy {
+            let (keep, lock) = (other.clone(), root.join("LOCK"));
+            fs.pause_before(locks[1], move || {
+                *keep.lock().unwrap() = RealFs.hold_lock_file(&lock, true).unwrap();
+            });
+            let refused = installing(&fs, root, &first(), &serving_both()).unwrap_err();
+            assert!(other.lock().unwrap().take().is_some());
+            assert_eq!(refused, InstallRefused::DirectoryBusy);
+            refused
+        } else {
+            fs.refuse_before(locks[1]);
+            installing(&fs, root, &first(), &serving_both()).unwrap_err()
+        };
+        assert!(
+            matches!(
+                refused,
+                InstallRefused::Disk(_) | InstallRefused::DirectoryBusy
+            ),
+            "{refused:?}"
+        );
+        // No pointer names the damaged folder, which the run still holds.
+        assert_eq!(reading(root), Current::NotInstalled, "busy {busy}");
+        assert!(folder.exists() && hold_file_of(root, &record).exists());
+        assert_eq!(said(root).map(|said| said.0), Some(State::Failed));
+        assert!(!incoming(root).exists());
+        // The next install of that identity is refused as held, and changes
+        // nothing, until the run lets the folder go.
+        let refused =
+            installing(&Arc::new(ShimFs::new()), root, &first(), &serving_both()).unwrap_err();
+        assert_eq!(refused, InstallRefused::Held, "busy {busy}");
+        assert_eq!(reading(root), Current::NotInstalled, "busy {busy}");
+        assert!(folder.exists());
+        drop(hold);
+        assert_eq!(installed(root, &first()), record, "busy {busy}");
+        assert_eq!(reading(root), Current::Installed(record.clone()));
+        is_whole(root, &record);
+        assert_eq!(installations(root), [record.identity().hex()]);
+    }
+}
+
+#[test]
 fn one_install_of_a_model_runs_at_a_time_and_the_other_is_busy_and_touches_nothing() {
     let scratch = Scratch::new("publish-busy");
     let root = scratch.path();
