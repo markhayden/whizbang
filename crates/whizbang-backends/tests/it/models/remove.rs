@@ -680,6 +680,18 @@ fn a_crash_at_any_event_of_a_removal_leaves_the_model_installed_or_not_installed
         }
         // The status is not durable, and is never half a record.
         let _ = said(root);
+        // A limit, pinned: a mark that the crash left stays, and while it does no
+        // hold on the model is given, though its installation is named and whole.
+        if let Current::Installed(record) = &now {
+            let asked = hold(&holds_over(root), record).map(|_| ());
+            let left = tiny(root).join("DRAINING").exists();
+            let expected = if left {
+                Err(HoldRefused::Draining)
+            } else {
+                Ok(())
+            };
+            assert_eq!(asked, expected, "{at}");
+        }
         // The next removal finds a mark, or none, and ends with the model not
         // installed and no mark; and the model installs again.
         let again = removed(root);
@@ -1087,6 +1099,7 @@ fn with_a_removal_stopped_after_it_read_the_pointer_an_install_is_busy_and_touch
     assert_eq!(reading(&root), Current::Installed(record.clone()));
     // And a second removal, with no patience, is busy and leaves the first one's
     // mark as it found it: set.
+    assert!(marked(&root));
     let again = removing(
         Arc::new(RealFs),
         &root,
@@ -1095,6 +1108,7 @@ fn with_a_removal_stopped_after_it_read_the_pointer_an_install_is_busy_and_touch
         &mut never,
     );
     assert_eq!(again, Err(RemoveRefused::Busy));
+    assert!(marked(&root));
     barriers.release("read");
     let removed = remover.join().unwrap().unwrap();
     assert_eq!(removed.installation(), Some(record.identity()));
@@ -1647,4 +1661,145 @@ fn a_removal_that_finds_no_pointer_leaves_a_folder_a_run_still_holds_and_deletes
     // Free, and synced: deleted.
     assert_eq!(removed(root), Err(RemoveRefused::NotInstalled));
     assert!(installations(root).is_empty());
+}
+
+#[test]
+fn a_second_removal_that_is_busy_leaves_the_mark_of_the_one_that_has_the_lock_and_no_hold_is_given_meanwhile()
+ {
+    // Removal A has the model's lock and waits for a hold. Removal B of the same
+    // model, with patience or with none, ends busy: it never had the model's lock,
+    // and the mark it found is not its own to take off. A hold asked for before, in
+    // between and after is refused as draining, throughout A's wait.
+    let scratch = Scratch::new("remove-two");
+    let root = scratch.path();
+    let record = installed(root, &second());
+    let holds = holds_over(root);
+    let held = hold(&holds, &record).unwrap();
+    let barriers = Barriers::new();
+    let clock = Arc::new(Hand::new());
+    let a = removal_on_a_thread(root, &barriers, &clock);
+    barriers.arrived("try", 1);
+    let draining = || {
+        assert!(marked(root));
+        assert_eq!(hold(&holds, &record).unwrap_err(), HoldRefused::Draining);
+    };
+    draining();
+    let b = removing(
+        Arc::new(RealFs),
+        root,
+        &Hand::new(),
+        Duration::ZERO,
+        &mut never,
+    );
+    assert_eq!(b, Err(RemoveRefused::Busy));
+    draining();
+    let patient = Hand::new();
+    let mut pauses = 0;
+    let b = removing(Arc::new(RealFs), root, &patient, 2 * SECOND, &mut || {
+        pauses += 1;
+        draining();
+        patient.advance(SECOND);
+    });
+    assert_eq!(b, Err(RemoveRefused::Busy));
+    assert_eq!(pauses, 2);
+    draining();
+    assert_eq!(said(root), Some((State::Removing, 0, 0)));
+    held.let_go();
+    barriers.open("try");
+    assert!(a.join().unwrap().is_ok());
+    assert!(!marked(root));
+    assert_eq!(reading(root), Current::NotInstalled);
+}
+
+#[test]
+fn a_removal_that_waits_for_a_hold_sets_its_mark_again_when_it_is_gone() {
+    // A removal has the model's lock and waits for a hold. Its mark is taken off
+    // under it, as a second removal that made the mark first and then ended busy
+    // takes its own off. At its next try the removal sets the mark again.
+    let scratch = Scratch::new("remove-mark-in-wait");
+    let root = scratch.path();
+    let record = installed(root, &second());
+    let holds = holds_over(root);
+    let held = hold(&holds, &record).unwrap();
+    let barriers = Barriers::new();
+    let clock = Arc::new(Hand::new());
+    let remover = removal_on_a_thread(root, &barriers, &clock);
+    barriers.arrived("try", 1);
+    assert_eq!(said(root), Some((State::Removing, 0, 0)));
+    std::fs::remove_file(tiny(root).join("DRAINING")).unwrap();
+    barriers.release("try");
+    barriers.arrived("try", 2);
+    assert!(marked(root));
+    assert_eq!(hold(&holds, &record).unwrap_err(), HoldRefused::Draining);
+    held.let_go();
+    barriers.open("try");
+    assert!(remover.join().unwrap().is_ok());
+    assert!(!marked(root));
+}
+
+#[test]
+fn a_removal_that_made_the_mark_and_never_had_the_lock_takes_its_own_mark_off_and_no_other() {
+    // Busy behind an install, with no mark there before: the mark is the
+    // removal's own, and it takes it off, so the install is not stopped by a mark
+    // nobody stands behind. (Held by `remove::a_removal_of_a_model_that_is_
+    // installing_…` too, whose install goes on.) Busy with a mark already there, as
+    // a dead remover leaves one: it is left as it was found.
+    let scratch = Scratch::new("remove-own-mark");
+    let root = scratch.path();
+    installed(root, &second());
+    let lock = RealFs
+        .hold_lock_file(&tiny(root).join("LOCK"), false)
+        .unwrap();
+    assert!(lock.is_some());
+    let busy = || {
+        removing(
+            Arc::new(RealFs),
+            root,
+            &Hand::new(),
+            Duration::ZERO,
+            &mut never,
+        )
+    };
+    assert_eq!(busy(), Err(RemoveRefused::Busy));
+    assert!(!tiny(root).join("DRAINING").exists());
+    std::fs::write(tiny(root).join("DRAINING"), b"").unwrap();
+    assert_eq!(busy(), Err(RemoveRefused::Busy));
+    assert_eq!(std::fs::read(tiny(root).join("DRAINING")).unwrap(), b"");
+    drop(lock);
+    // With the lock, a removal makes whatever is there its own mark, and takes it
+    // off at its end.
+    assert!(removed(root).is_ok());
+    assert!(!tiny(root).join("DRAINING").exists());
+}
+
+#[test]
+fn a_removal_waits_for_a_hold_on_the_installation_the_pointer_names_though_its_folder_is_gone() {
+    // The pointer names an installation whose folder is not on the disk: damage.
+    // A hold is given on what the pointer names, so a run may hold it; the removal
+    // waits for that hold file all the same.
+    let scratch = Scratch::new("remove-no-folder");
+    let root = scratch.path();
+    let record = installed(root, &second());
+    let holds = holds_over(root);
+    let held = hold(&holds, &record).unwrap();
+    std::fs::remove_dir_all(
+        tiny(root)
+            .join("installations")
+            .join(record.identity().hex()),
+    )
+    .unwrap();
+    let clock = Hand::new();
+    let refused = removing(Arc::new(RealFs), root, &clock, SECOND, &mut || {
+        clock.advance(SECOND);
+    });
+    assert_eq!(refused, Err(RemoveRefused::Held));
+    assert_eq!(count(&holds, &record), 1);
+    let mut pauses = 0;
+    let removed = removing(Arc::new(RealFs), root, &Hand::new(), SECOND, &mut || {
+        pauses += 1;
+        held.let_go();
+    });
+    assert_eq!(removed.unwrap().installation(), Some(record.identity()));
+    assert_eq!(pauses, 1);
+    assert_eq!(reading(root), Current::NotInstalled);
 }

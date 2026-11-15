@@ -1,5 +1,5 @@
 //! What the tests of the spend strand's parts are made of: a store on a scratch
-//! folder, a clock that stands where a test put it, backends that state a bound, a config's
+//! folder, a clock a test moves by hand, backends that state a bound, a config's
 //! source a test swaps, and actions that do what a test says.
 
 use std::path::PathBuf;
@@ -21,12 +21,16 @@ use whizbang_testkit::source::FakeSource;
 /// What one request to a model may cost under [`Bounds::quarter`], in millionths.
 pub const QUARTER: u64 = 250_000;
 
-/// A clock that says what it was made with.
+/// A clock a test moves by hand.
 pub struct Hand(AtomicU64);
 
 impl Hand {
     pub fn at(ms: u64) -> Arc<Hand> {
         Arc::new(Hand(AtomicU64::new(ms)))
+    }
+
+    pub fn set(&self, ms: u64) {
+        self.0.store(ms, Ordering::SeqCst);
     }
 }
 
@@ -79,8 +83,8 @@ impl Action for Scripted {
     }
 }
 
-/// A store on a scratch folder, a source of the config a test swaps, a clock, and a
-/// count of the actions that ran.
+/// A store on a scratch folder, a source of the config a test swaps, a clock it moves,
+/// and a count of the actions that ran.
 pub struct World {
     dir: Scratch,
     pub fs: Arc<ShimFs>,

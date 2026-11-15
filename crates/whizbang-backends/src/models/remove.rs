@@ -145,7 +145,9 @@ impl Removed {
 /// Removes a model: marks it as draining, waits for the holds on it until
 /// `patience` of this clock has passed, and clears its pointer.
 ///
-/// - **The mark comes first,** under the directory's lock. A model with no folder
+/// - **The mark comes first,** under the directory's lock, when none is there. A
+///   mark is the removal's own when it made it or has the model's lock, and only
+///   its own mark is taken off at the end. A model with no folder
 ///   was never installed: it is not marked, and nothing is made.
 /// - **The model's lock is tried for until the deadline;** `pause` is called once
 ///   between two tries, and nothing here sleeps. Not given by then, the answer is
@@ -183,11 +185,16 @@ pub fn remove(
     }
     // A wait too long for the clock to count is a wait with no end.
     let deadline = clock.now().checked_add(patience);
-    set_mark(dir, &folder)?;
-    let ended = drain(dir, model, clock, deadline, secrets, pause);
+    // Whether the mark is this removal's own: it made it where none was, or it has
+    // the model's lock. A mark it found is another's, of the removal that has the
+    // lock or of a remover that died, and is left when this one ends busy.
+    let mut own = mark_if_none(dir, &folder)?;
+    let ended = drain(dir, model, clock, deadline, secrets, pause, &mut own);
     // However it ended. A mark that cannot be taken off now is taken off by the
-    // next removal of the model; it does not change what this one answers.
-    let _ = clear_mark(dir, &folder);
+    // next to take the model's lock; it does not change what this one answers.
+    if own {
+        let _ = clear_mark(dir, &folder);
+    }
     ended
 }
 
@@ -206,12 +213,20 @@ fn set_mark(dir: &ModelsDir, folder: &Path) -> Result<(), RemoveRefused> {
     Ok(())
 }
 
-/// Sets the model's mark again when it is gone.
-fn ensure_mark(dir: &ModelsDir, folder: &Path) -> Result<(), RemoveRefused> {
-    if dir.fs().exists(&folder.join("DRAINING"))? {
-        return Ok(());
+/// Sets the model's mark when nothing is at its name, and says whether it did.
+/// Looked for again under the directory's lock: of two removals that begin
+/// together, one makes the mark and the other finds it.
+fn mark_if_none(dir: &ModelsDir, folder: &Path) -> Result<bool, RemoveRefused> {
+    let mark = folder.join("DRAINING");
+    if dir.fs().exists(&mark)? {
+        return Ok(false);
     }
-    set_mark(dir, folder)
+    let _directory = dir.lock()?.ok_or(RemoveRefused::DirectoryBusy)?;
+    if dir.fs().exists(&mark)? {
+        return Ok(false);
+    }
+    dir.fs().write_new(&mark, &Mark.to_bytes())?;
+    Ok(true)
 }
 
 /// Takes the model's mark off, under the directory's lock, and makes that durable.
@@ -231,6 +246,7 @@ fn drain(
     deadline: Option<Instant>,
     secrets: &Secrets,
     pause: &mut dyn FnMut(),
+    own: &mut bool,
 ) -> Result<Removed, RemoveRefused> {
     let fs = dir.fs();
     let lock = dir.model(name).join("LOCK");
@@ -244,11 +260,15 @@ fn drain(
         }
         // Whoever has the lock may have taken the mark off as one a dead remover
         // left: it is set again, so that an install that is running reads it.
-        ensure_mark(dir, &folder)?;
+        *own |= mark_if_none(dir, &folder)?;
         pause();
     };
-    // And with the lock: from here nobody takes the mark off but this removal.
-    ensure_mark(dir, &folder)?;
+    // And with the lock the mark is this removal's own, whoever made it: what is
+    // there and is no mark as it is written is replaced.
+    if !matches!(draining(dir, name, secrets), Ok(true)) {
+        set_mark(dir, &folder)?;
+    }
+    *own = true;
     let model = Model::of(dir, name, secrets);
     // What the status said before: a removal that changes no pointer puts it back.
     let before = status::status(dir, name, secrets).ok().flatten();
@@ -300,7 +320,12 @@ fn drain(
                         break;
                     }
                     Ok(None) if past(clock, deadline) => return Err(RemoveRefused::Held),
-                    Ok(None) => pause(),
+                    Ok(None) => {
+                        // A second removal that made the mark before this one began
+                        // takes it off when it ends busy: it is set again.
+                        mark_if_none(dir, &folder)?;
+                        pause();
+                    }
                     // No hold file: nothing was ever held there.
                     Err(error) if error.kind() == io::ErrorKind::NotFound => break,
                     Err(error) => return Err(error.into()),
