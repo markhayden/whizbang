@@ -1332,11 +1332,12 @@ executor writes and a clock. For each request:
 (`Allowance::dispatch`), and the names of its own reservation, read alone
 (`spend::Names::of_run`, which reads the content of no other reservation's names). A
 reservation with a closing, or whose names are not a set the ledger could have
-written, takes no dispatch
-(`spend::meter::a_reservation_whose_names_read_as_frozen_or_closed_takes_no_dispatch`),
-and neither does one whose names leave less than the bound: a dispatch that did not
-fit would itself freeze the reservation ("What the ledger can have written", the
-last row). It folds nothing, so it does not know an epoch that needs its owner.
+written, takes no dispatch,
+and neither does one whose names leave less than the bound, whatever the run's
+allowance has: a dispatch that did not fit would itself freeze the reservation
+("What the ledger can have written", the last row)
+(`spend::meter::a_reservation_whose_names_read_as_frozen_or_closed_or_leave_too_little_takes_no_dispatch`,
+for all three). It folds nothing, so it does not know an epoch that needs its owner.
 
 **Decided while it was built.**
 

@@ -372,7 +372,7 @@ fn a_backend_that_panics_under_the_meter_leaves_the_run_abandoned_and_its_reques
 }
 
 #[test]
-fn a_reservation_whose_names_read_as_frozen_or_closed_takes_no_dispatch() {
+fn a_reservation_whose_names_read_as_frozen_or_closed_or_leave_too_little_takes_no_dispatch() {
     type Hands = Box<dyn Fn(&World, &RunId) + Send + Sync>;
     let closes: Hands = Box::new(|world, run| {
         let place = NonZeroU64::new(1).unwrap();
@@ -399,9 +399,33 @@ fn a_reservation_whose_names_read_as_frozen_or_closed_takes_no_dispatch() {
     let strays: Hands = Box::new(|world, run| {
         plant_bytes(&world.store, &[(format!("spend/place/{run}/x"), vec![])]);
     });
+    // A dispatch of the whole amount that the process did not make: the names are a
+    // set the ledger writes, and leave nothing, though the run's allowance does.
+    let spends: Hands = Box::new(|world, run| {
+        let place = NonZeroU64::new(1).unwrap();
+        plant(
+            &world.store,
+            &[
+                Record::Place {
+                    run: run.clone(),
+                    place,
+                    by: whizbang_core::spend::PlaceBy::Dispatch,
+                },
+                Record::Dispatch {
+                    run: run.clone(),
+                    place,
+                    by: run.clone(),
+                    request: 0,
+                    bound: super::amount(PRICE),
+                    at_ms: 0,
+                },
+            ],
+        );
+    });
     for (label, hands, says) in [
         ("meter-closed", closes, "its reservation is closed"),
         ("meter-frozen", strays, "its reservation is frozen"),
+        ("meter-spent", spends, "its reservation has 0 millionths"),
     ] {
         let world = Arc::new(World::new(label));
         allow(&world.store, 1_000_000);
@@ -430,13 +454,12 @@ fn a_reservation_whose_names_read_as_frozen_or_closed_takes_no_dispatch() {
         let run = ran(engine.request(&call())).run().clone();
         assert_eq!(seen.lock().unwrap()[0].stage(), Stage::NotSent, "{label}");
         assert_eq!(filler.requests(), 0, "{label}");
+        // No dispatch of the meter's: the one name there is, where there is one,
+        // is the one that was planted.
         let dispatched = format!("spend/dispatched/{run}/");
-        assert!(
-            !spend_names(&world.store)
-                .iter()
-                .any(|name| name.starts_with(&dispatched)),
-            "{label}"
-        );
+        let names = spend_names(&world.store);
+        let made = names.iter().filter(|name| name.starts_with(&dispatched));
+        assert_eq!(made.count(), usize::from(label == "meter-spent"), "{label}");
         let record = world.record(&run);
         let why = record.outcome().refusals[0].why().to_owned();
         assert!(why.contains(says), "{label}: {why}");
