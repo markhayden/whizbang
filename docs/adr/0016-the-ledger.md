@@ -49,9 +49,9 @@ Amended: 2026-11-15, with task S2: the real ledger in the core ("The real ledger
 `confirm` and `settle` have no default; a refusal of its own where the books need
 their owner at admission; `Folded::stands` holds the amount to the hold.
 Amended: 2026-11-15, by the owner's decision on what cost control is for: the generated
-suites were made smaller, to about a quarter ("The invariants, and what holds them" and
-"The real fold" have the sizes). What the code does is as it was; the counts under
-"Review rounds" are of the suites as they were then.
+suites were made smaller, to about a quarter ("The invariants, and what holds them",
+"The real fold" and "The real ledger" have the sizes). What the code does is as it
+was; the counts under "Review rounds" are of the suites as they were then.
 Spec: section 6, "Spend"; section 3, "Storage"
 
 ## Context
@@ -1268,9 +1268,9 @@ hold's amount and of another.
 
 **One name changed alone, against the real fold.** The model's suite of one name
 lost, damaged or made alone is held by the model's fold. A sample of it is held by
-the real one: 96 whole books from each of two seeds, every name lost alone, every
+the real one: 24 whole books from each of two seeds, every name lost alone, every
 name damaged alone, and names of every form made alone, each folded and compared
-with the model as after an event of a history; over 10,000 changes and over 3,000
+with the model as after an event of a history; over 2,500 changes and over 750
 frozen reservations for each seed
 (`spend::fold::one_name_lost_damaged_or_made_alone_in_whole_books_folds_to_what_the_model_gives`,
 `…_alone_folds_to_what_the_model_gives_from_another_seed`).
