@@ -83,8 +83,8 @@ fn every_named_history_gives_the_balances_it_must_and_keeps_every_invariant() {
         .collect();
     assert!(broken.is_empty(), "{}", broken.join("\n"));
     // The plan's 38, in its order and under its numbers, then this record's own, and
-    // from 43 those of its review rounds.
-    assert!(table.len() >= 64, "{}", table.len());
+    // from 43 those of its review rounds: 85 with the pull request's review.
+    assert!(table.len() >= 85, "{}", table.len());
     for (at, history) in table.iter().enumerate() {
         let number = format!("{:02} ", at + 1);
         assert!(history.name.starts_with(&number), "{}", history.name);
@@ -4037,4 +4037,375 @@ fn every_generated_history_of_two_admissions_that_wait_together_keeps_every_inva
     assert!(all.not_confirmed > 150, "{all:?}");
     assert!(all.admitted > 1_500, "{all:?}");
     assert_eq!(generated_paired(SEED, 7), generated_paired(SEED, 7));
+}
+
+/// The history of the table under this number, run through the checker: the books it
+/// leaves, having given all it must.
+fn named(number: u32) -> Books {
+    let prefix = format!("{number:02} ");
+    let table = histories();
+    let history = table.iter().find(|one| one.name.starts_with(&prefix));
+    let history = history.unwrap_or_else(|| panic!("no history {number}"));
+    history.verify().unwrap_or_else(|why| panic!("{why}"))
+}
+
+#[test]
+fn an_admission_is_confirmed_only_where_its_reservation_is_the_record_and_one_hold_and_nothing_else()
+ {
+    // History 80, (B). Between the publication and the reading other hands make a
+    // place and a dispatch of 3 under the reservation. The names are a set the
+    // ledger could have written, and the reservation reads as open, within its
+    // allowance, in an epoch that needs nobody: but nothing runs under an admission
+    // before it is confirmed, so no such names are the ledger's, and it does not
+    // stand.
+    let books = named(80);
+    assert!(!books.confirmed(Run(1)));
+    assert!(books.executing_runs().is_empty());
+    assert!(!books.balance().needs_owner);
+    assert_eq!(
+        made_since(&books, 4),
+        [
+            "spend/turn/1/2",
+            "spend/place/7000-1/2",
+            "spend/closed/7000-1/held",
+        ]
+    );
+    // Each other name that can name the run, made alone between the publication
+    // and the reading, and none of them leaves an admission that stands. With no
+    // name made it stands.
+    let place = |place| Name::Place { run: Run(1), place };
+    let sent = Name::Dispatched {
+        run: Run(1),
+        place: 1,
+        by: Run(1),
+        micros: 0,
+    };
+    let more = [
+        vec![place(1)],
+        vec![place(1), sent.clone()],
+        vec![sent],
+        vec![Name::Settling {
+            run: Run(1),
+            place: 1,
+        }],
+        vec![Name::Stray {
+            run: Run(1),
+            count: 1,
+        }],
+        vec![Name::Held {
+            epoch: 1,
+            run: Run(1),
+            micros: 3,
+        }],
+        vec![Name::Closed {
+            run: Run(1),
+            released: true,
+        }],
+    ];
+    for names in more {
+        let mut events = vec![reset(20), publish(1, 10)];
+        events.extend(names.iter().cloned().map(Event::Plant));
+        events.push(confirm(1));
+        let (books, outcomes) =
+            run_checked(&events).unwrap_or_else(|why| panic!("{names:?}: {why}"));
+        let last = outcomes.last().unwrap();
+        assert_eq!(*last, Outcome::Refused(Why::NotConfirmed), "{names:?}");
+        assert!(!books.confirmed(Run(1)), "{names:?}");
+        // Backed out, it counts for no less than it reserved.
+        assert!(books.reservation(Run(1)).unwrap().counts >= 10, "{names:?}");
+    }
+    let (books, outcomes) = run_checked(&[reset(20), publish(1, 10), confirm(1)]).unwrap();
+    assert_eq!(outcomes[2], Outcome::Done);
+    assert!(books.confirmed(Run(1)));
+}
+
+#[test]
+fn one_record_that_cannot_be_read_stops_every_admission_and_every_dispatch_until_its_owner_corrects_it()
+ {
+    // History 81, (J): the plan's invariant 4 as ADR 0016 amended it. One dispatch's
+    // record cannot be read. Its reservation counts 25 where 10 were reserved, and
+    // an admission of 5, which the 5 left of 30 would cover, and one of nothing are
+    // both refused: the store needs its owner.
+    let books = named(81);
+    let balance = books.balance();
+    assert_eq!(
+        (balance.allowed, balance.counted, balance.left),
+        (30, 25, 0)
+    );
+    assert!(balance.needs_owner);
+    // And no dispatch under another reservation, one of nothing among them; what
+    // was dispatched is still settled, and a run still ends.
+    let damaged = Name::Dispatched {
+        run: Run(1),
+        place: 1,
+        by: Run(1),
+        micros: 5,
+    };
+    let mut events = vec![
+        reset(30),
+        admit(1, 10),
+        dispatch(1, 5),
+        second(admit(2, 5)),
+        second(dispatch(2, 1)),
+        Event::Damage(damaged),
+        second(dispatch(2, 0)),
+        second(settle(2, 1, 1)),
+        second(Event::End { run: Run(2) }),
+        Event::Crash,
+        Event::Recover,
+        admit(3, 0),
+    ];
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[6], Outcome::Refused(Why::NeedsOwner));
+    assert!(outcomes[7..11].iter().all(|one| *one == Outcome::Done));
+    assert_eq!(outcomes[11], Outcome::Refused(Why::NeedsOwner));
+    assert_eq!(books.reservation(Run(2)).unwrap().state, State::Released);
+    // The owner's correction of that reservation ends it: the call the rest of the
+    // allowance covers is then admitted.
+    events.extend([
+        Event::Adjust {
+            run: Run(1),
+            micros: 10,
+        },
+        admit(3, 5),
+        admit(4, 15),
+    ]);
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert!(outcomes[12..14].iter().all(|one| *one == Outcome::Done));
+    assert_eq!(
+        outcomes[14],
+        Outcome::Refused(Why::OverAllowance { left: 14 })
+    );
+    assert!(!books.balance().needs_owner);
+}
+
+#[test]
+fn a_correction_writes_off_a_request_in_flight_and_what_it_then_costs_is_past_the_cap() {
+    // History 82, (A). The owner's correction to nothing of a reservation that
+    // another process's recovery closed while its request of 10 was in flight; 10
+    // more are admitted, sent and settled; the first request is then settled at 10.
+    // 20 are counted against 10. At the second admission 10 were counted and 20
+    // committed: the correction wrote the first 10 off.
+    let books = named(82);
+    let balance = books.balance();
+    assert_eq!(
+        (balance.allowed, balance.counted, balance.debt, balance.left),
+        (10, 20, 10, 0)
+    );
+    assert_eq!(books.really(Run(1)), Some((1, 10, 10)));
+    assert_eq!(books.really(Run(2)), Some((1, 10, 10)));
+    // History 83, (A2). The first process dies with the provider's answer instead.
+    // No name states that charge, the reservation stays corrected at nothing, and
+    // the books count 10 where the two requests really took 20.
+    let books = named(83);
+    let balance = books.balance();
+    assert_eq!(
+        (balance.allowed, balance.counted, balance.debt),
+        (10, 10, 0)
+    );
+    assert_eq!(books.really(Run(1)), Some((1, 10, 10)));
+    assert_eq!(books.really(Run(2)), Some((1, 10, 10)));
+    let first = books.reservation(Run(1)).unwrap();
+    assert_eq!(
+        (first.state, first.counts, first.outstanding),
+        (State::Adjusted, 0, 10)
+    );
+    // What is written off is bounded: no more than was outstanding under the
+    // corrected reservation. With 4 of the 10 settled, a correction cannot go under
+    // 4, and 6 are written off.
+    let events = [
+        reset(10),
+        admit(1, 10),
+        dispatch(1, 4),
+        settle(1, 1, 4),
+        dispatch(1, 6),
+        second(Event::Recover),
+        second(Event::Adjust {
+            run: Run(1),
+            micros: 3,
+        }),
+        second(Event::Adjust {
+            run: Run(1),
+            micros: 4,
+        }),
+        second(admit(2, 7)),
+        second(admit(2, 6)),
+    ];
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(
+        outcomes[6],
+        Outcome::Refused(Why::BelowSettled { settled: 4 })
+    );
+    assert_eq!(
+        outcomes[8],
+        Outcome::Refused(Why::OverAllowance { left: 6 })
+    );
+    assert_eq!(outcomes[9], Outcome::Done);
+    assert_eq!(books.balance().counted, 10);
+}
+
+#[test]
+fn a_reset_does_not_stop_the_open_reservations_of_the_epoch_it_closes() {
+    // History 84, (G). The owner resets to nothing while three reservations of 10
+    // are open. Each still sends all it reserved: 30 are dispatched after the
+    // reset, under the old epoch, and the new epoch counts nothing.
+    let books = named(84);
+    let folded = books.fold();
+    let (old, new) = (folded.balance_of(1), folded.balance_of(2));
+    assert_eq!((old.allowed, old.counted, old.debt), (30, 30, 0));
+    assert_eq!((new.allowed, new.counted, new.left), (0, 0, 0));
+    assert!(!old.needs_owner && !new.needs_owner);
+    assert_eq!(books.executing_runs(), [Run(1), Run(2), Run(3)]);
+}
+
+#[test]
+fn a_request_of_nothing_is_placed_under_a_reservation_over_its_amount_and_in_a_store_in_debt() {
+    // History 85, (H). With no allowance, calls of nothing are admitted. A request
+    // of nothing is placed, whatever its reservation and the store already owe: it
+    // asks for nothing. Whatever it is charged is over its bound, and is debt.
+    let books = named(85);
+    let balance = books.balance();
+    assert_eq!(
+        (balance.allowed, balance.counted, balance.debt),
+        (0, 12, 12)
+    );
+    let first = books.reservation(Run(1)).unwrap();
+    assert_eq!((first.amount, first.counts, first.left()), (0, 7, 0));
+    assert_eq!(books.spendable(Run(1)), Some(0));
+    assert_eq!(books.tree_left(Run(1)), Some(0));
+}
+
+#[test]
+fn the_largest_number_is_no_amount_at_any_entry_and_nothing_is_published_with_it() {
+    // The grammar has no name for an amount of the largest number there is (ADR
+    // 0007): a reset, an admission, a dispatch, a provider's charge, a settlement
+    // and a correction that state it are each refused, and make no name.
+    let none = u64::MAX;
+    let most = u64::MAX - 1;
+    let before = [reset(most), admit(1, most), dispatch(1, 0)];
+    let stated = [
+        reset(none),
+        admit(2, none),
+        publish(2, none),
+        dispatch(1, none),
+        Event::Charge {
+            root: Run(1),
+            place: 1,
+            micros: none,
+        },
+        settle(1, 1, none),
+        Event::Adjust {
+            run: Run(1),
+            micros: none,
+        },
+        late(2, admit(2, none)),
+        second(reset(none)),
+        child(1, 2, none),
+        Event::Take {
+            run: Run(1),
+            micros: none,
+        },
+        Event::GiveBack {
+            run: Run(1),
+            micros: none,
+        },
+    ];
+    for event in stated {
+        let mut events = before.to_vec();
+        events.push(event.clone());
+        let (books, outcomes) =
+            run_checked(&events).unwrap_or_else(|why| panic!("{event:?}: {why}"));
+        assert_eq!(outcomes[3], Outcome::Refused(Why::NoAmount), "{event:?}");
+        assert!(made_since(&books, 3).is_empty(), "{event:?}");
+    }
+    // One less is an amount, at each.
+    let events = [
+        reset(most),
+        admit(1, most),
+        dispatch(1, most),
+        settle(1, 1, most),
+        Event::Crash,
+        Event::Recover,
+        reset(most),
+    ];
+    let (_, outcomes) = run_checked(&events).unwrap();
+    assert!(
+        outcomes
+            .iter()
+            .all(|one| !matches!(one, Outcome::Refused(_)))
+    );
+    // A settlement of an answer the process holds states the answer's charge, which
+    // was refused when it was given: the request is settled as the caller says.
+    let events = [
+        reset(10),
+        admit(1, 10),
+        dispatch(1, 5),
+        Event::Charge {
+            root: Run(1),
+            place: 1,
+            micros: none,
+        },
+        settle(1, 1, 5),
+    ];
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[3], Outcome::Refused(Why::NoAmount));
+    assert_eq!(outcomes[4], Outcome::Done);
+    assert_eq!(books.reservation(Run(1)).unwrap().charged, 5);
+}
+
+#[test]
+fn a_closed_reservation_has_nothing_left_for_a_dispatch_whatever_its_state_reads() {
+    // What a dispatch may still take is asked of a reservation as it is folded:
+    // nothing of one that any closing names, of whatever state.
+    let open = [reset(30), admit(1, 10), dispatch(1, 3)];
+    let (books, _) = run_checked(&open).unwrap();
+    let standing = books.reservation(Run(1)).unwrap();
+    assert_eq!(
+        (standing.state, standing.closed, standing.left()),
+        (State::Open, false, 7)
+    );
+    // The answer does not rest on the state alone: the same reservation with a
+    // closing named has nothing left.
+    let closed = Standing {
+        closed: true,
+        ..standing
+    };
+    assert_eq!(closed.left(), 0);
+    // Every reservation of every named history, after every event: closed, or of
+    // any state but open, it has nothing left.
+    for history in histories() {
+        let mut books = Books::new();
+        for event in &history.events {
+            books.apply(event);
+            for (run, one) in &books.fold().reservations {
+                let none = one.closed || one.state != State::Open;
+                assert!(!none || one.left() == 0, "{}: {run}", history.name);
+            }
+        }
+    }
+    // Closed as released, as held, and corrected.
+    for (events, state) in [
+        (vec![Event::Crash, Event::Recover], State::Interrupted),
+        (
+            vec![settle(1, 1, 1), Event::End { run: Run(1) }],
+            State::Released,
+        ),
+        (
+            vec![
+                Event::Crash,
+                Event::Recover,
+                Event::Adjust {
+                    run: Run(1),
+                    micros: 0,
+                },
+            ],
+            State::Adjusted,
+        ),
+    ] {
+        let mut all = open.to_vec();
+        all.extend(events);
+        let (books, _) = run_checked(&all).unwrap();
+        let one = books.reservation(Run(1)).unwrap();
+        assert_eq!((one.state, one.closed, one.left()), (state, true, 0));
+    }
 }

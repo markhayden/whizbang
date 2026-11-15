@@ -314,6 +314,9 @@ pub struct Standing {
     pub corrections: u64,
     /// Whether its names, corrections aside, are a set the ledger could have written.
     pub reachable: bool,
+    /// How many names name its run, of any form: two, the record and one hold, where
+    /// the admission's publication made them and nothing was made under it since.
+    pub names: u64,
     /// What it counts for against the allowance of each epoch it counts in.
     pub counts: u128,
     /// It is frozen and its holds are not exactly one: the ledger's own hold may be
@@ -365,9 +368,10 @@ impl Standing {
         u128::from(self.amount.max(self.corrections)).max(named)
     }
 
-    /// What a dispatch under it may still take: nothing unless it is open.
+    /// What a dispatch under it may still take: nothing unless it is open, and
+    /// nothing once any closing names it, whatever its state reads.
     pub fn left(&self) -> u64 {
-        if self.state != State::Open {
+        if self.closed || self.state != State::Open {
             return 0;
         }
         u64::try_from(u128::from(self.amount).saturating_sub(self.known())).unwrap_or(u64::MAX)
@@ -957,6 +961,7 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
             unexplained,
             corrections: corrections.unwrap_or(0),
             reachable: base,
+            names: of.all.len() as u64,
             counts: 0,
             unknown: false,
             state: State::Open,
@@ -982,15 +987,21 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
 
 /// Whether an admission that was published stands, on a reading of the names made
 /// after its publication (ADR 0016, "An admission is confirmed"): its reservation
-/// is a set the ledger could have written, and open; neither the epoch it fell
+/// is a set the ledger could have written, and open, and is the record, one hold
+/// and nothing else that names the run; neither the epoch it fell
 /// under nor the newest needs its owner, which a frozen reservation anywhere makes
 /// every epoch do; and that epoch is not over its allowance with this reservation
 /// counted in full. A call of nothing adds nothing to what is counted, and is not
 /// held to a debt that was there before it, as it is not when it is judged.
+///
+/// Nothing is done under a reservation before it is confirmed, so a place, a
+/// dispatch or a settlement under it at that reading is not the ledger's, though
+/// the set may be one the ledger could have written later.
 pub fn stands(folded: &Folded, run: Run, micros: u64) -> bool {
     let own = folded.reservations.get(&run);
+    // Reachable, it has the record and one hold: with two names, it has no other.
     let Some(epoch) = own
-        .filter(|one| one.state == State::Open)
+        .filter(|one| one.state == State::Open && one.names == 2)
         .and_then(|one| one.epoch)
     else {
         return false;
@@ -1076,6 +1087,36 @@ pub enum Event {
 }
 
 impl Event {
+    /// The amount the event states, when it states one: an allowance, a
+    /// reservation, a share, a bound, a charge or a correction.
+    fn amount(&self) -> Option<u64> {
+        match self {
+            Event::Reset { micros }
+            | Event::Admit { micros, .. }
+            | Event::Publish { micros, .. }
+            | Event::Child { micros, .. }
+            | Event::Take { micros, .. }
+            | Event::GiveBack { micros, .. }
+            | Event::Dispatch { micros, .. }
+            | Event::Charge { micros, .. }
+            | Event::Adjust { micros, .. } => Some(*micros),
+            Event::Settle { how, .. } => match how {
+                How::Answered(charge) => *charge,
+                How::NotSent | How::Unresolved => None,
+            },
+            Event::Second(inner) | Event::Stale { event: inner, .. } => inner.amount(),
+            Event::Confirm { .. }
+            | Event::End { .. }
+            | Event::Abandon { .. }
+            | Event::Crash
+            | Event::Recover
+            | Event::Damage(_)
+            | Event::Plant(_)
+            | Event::Remove(_)
+            | Event::DeletePrune { .. } => None,
+        }
+    }
+
     /// The event with what wraps it taken off: whether it happens in the second
     /// process, and when it was judged, if that was earlier.
     fn plain(&self) -> (bool, Option<usize>, &Event) {
@@ -1153,6 +1194,9 @@ pub enum Why {
     },
     /// No such name.
     NoSuchName,
+    /// The amount stated is the largest number there is, which is no amount: no
+    /// name states it (ADR 0007).
+    NoAmount,
 }
 
 /// What became of an event.
@@ -1900,6 +1944,11 @@ impl Books {
 
     fn applied(&mut self, event: &Event) -> Outcome {
         let refused = |why| Outcome::Refused(why);
+        // The largest number there is is no amount: whatever states it is refused
+        // before anything is judged, and makes no name.
+        if event.amount() == Some(u64::MAX) {
+            return refused(Why::NoAmount);
+        }
         match event {
             Event::Second(event) => {
                 self.switch();
@@ -2540,7 +2589,7 @@ impl Books {
         let (own, damaged) = self.own(root);
         // The owner's correction stands while the names are those it left: it
         // writes off what is outstanding, and what a place says that other hands
-        // touched. That is its meaning, and no limit.
+        // touched. That is its meaning, and what it can cost is limit (g).
         let corrected = truth.corrected.as_ref() == Some(&(own.clone(), damaged));
         let hurt = |place: u64| {
             let here = |name: &Name| name.of() == Some(root) && name.place() == Some(place);
@@ -2606,8 +2655,8 @@ impl Books {
     /// never released later; and every name is one the grammar reads back. What is
     /// of two states is held where an event is done ([`Books::checked`]).
     ///
-    /// What it leaves out is what ADR 0016 lists against its limits (a) to (e), and
-    /// nothing else; of an admission that stands, nothing. Under limit (c) it also holds the books to saying what they
+    /// What it leaves out is what ADR 0016 lists against its limits (a) to (e) and
+    /// (g), and nothing else; of an admission that stands, nothing. Under limit (c) it also holds the books to saying what they
     /// cannot say: a reservation whose own hold is lost, frozen with no hold or
     /// with several, counts "unknown, at least".
     pub fn check(&mut self) -> Result<(), String> {
@@ -3015,7 +3064,17 @@ impl Books {
             // And the reading made after its publication was sound and within the
             // allowance: the names as they are, with its own among them.
             // Written here apart from the rule the ledger confirms by.
-            let own = after.reservations.get(&run);
+            // Its own reservation: the record and one hold, neither damaged, and
+            // no other name that names the run, read here from the names
+            // themselves.
+            let (names, damaged) = books.own(run);
+            let record = |name: &Name| matches!(name, Name::Reservation(_));
+            let hold = |name: &Name| matches!(name, Name::Held { .. });
+            let bare = damaged.is_empty()
+                && names.iter().filter(|name| record(name)).count() == 1
+                && names.iter().filter(|name| hold(name)).count() == 1
+                && names.iter().all(|name| record(name) || hold(name));
+            let own = after.reservations.get(&run).filter(|_| bare);
             let open = |one: &&Standing| one.reachable && !one.closed && one.corrections == 0;
             let fell = own.filter(open).and_then(|one| one.epoch);
             let fell = fell.map(|epoch| after.balance_of(epoch));
@@ -3474,7 +3533,8 @@ fn again(outcome: Outcome) -> Outcome {
 }
 
 /// The table of histories. The first 38 are the histories the six review rounds of
-/// the plan for checkpoint 1B produced, in the plan's order and under its numbers.
+/// the plan for checkpoint 1B produced, in the plan's order and under its numbers;
+/// 14 and 15 are worded as the plan was amended with ADR 0016.
 /// Amounts are whole units, for reading; the unit is a millionth of a US dollar.
 /// A later ledger task adds its histories after them.
 pub fn histories() -> Vec<History> {
@@ -3701,7 +3761,7 @@ pub fn histories() -> Vec<History> {
     );
     add(
         "14 a reservation's content damaged, its run deleted and pruned, no request id: \
-         frozen at the amount its name states",
+         frozen at no less than the amount its hold's name states",
         vec![
             reset(20),
             admit(1, 10),
@@ -3714,7 +3774,8 @@ pub fn histories() -> Vec<History> {
         vec![],
     );
     add(
-        "15 reserve 10, every dispatch settled for 3 in all, then the reservation damaged: 10",
+        "15 reserve 10, every dispatch settled for 3 in all, then the reservation damaged: \
+         no less than 10",
         vec![
             reset(20),
             admit(1, 10),
@@ -5268,6 +5329,199 @@ pub fn histories() -> Vec<History> {
             Must::TreeLeft(r(1), 0),
         ],
         vec![(3, Must::NeedsOwner), (3, Must::TreeLeft(r(1), 10))],
+    );
+    // What the review of the record as the sixth round left it asked for, each by
+    // the letter it was given under.
+    add(
+        "80 (B) a place and a dispatch made under an admission between its publication \
+         and its reading: its reservation is no longer the record and one hold, and \
+         it is not confirmed",
+        vec![
+            reset(20),
+            publish(1, 10),
+            Event::Plant(Name::Place {
+                run: r(1),
+                place: 1,
+            }),
+            Event::Plant(sent(1, 3)),
+            confirm(1),
+            dispatch(1, 1),
+        ],
+        vec![
+            came(4, refused(Why::NotConfirmed)),
+            came(5, refused(Why::NotExecuting)),
+            // A dispatch is named under it and not settled: its closing releases
+            // nothing.
+            Must::Closed(r(1)),
+            state(r(1), State::Interrupted),
+            Counts(r(1), 10),
+            Counted(10),
+            Left(10),
+            Must::NothingExecutes,
+        ],
+        vec![(3, state(r(1), State::Open)), (3, Counts(r(1), 10))],
+    );
+    add(
+        "81 (J) one record that cannot be read: its reservation is frozen, and no \
+         other call is admitted, a call of nothing among them, though the rest of \
+         the allowance would cover it",
+        vec![
+            reset(30),
+            admit(1, 10),
+            dispatch(1, 5),
+            Event::Damage(sent(1, 5)),
+            Event::Crash,
+            Event::Recover,
+            admit(2, 5),
+            admit(3, 0),
+        ],
+        vec![
+            came(6, refused(Why::NeedsOwner)),
+            came(7, refused(Why::NeedsOwner)),
+            state(r(1), State::Frozen),
+            // The amount, the bound, and the amount for the closing's place.
+            Counts(r(1), 25),
+            Counted(25),
+            Left(0),
+            Must::NeedsOwner,
+            Absent(r(2)),
+            Absent(r(3)),
+        ],
+        vec![(3, Counts(r(1), 15)), (3, Must::NeedsOwner)],
+    );
+    // A request of 10 is in flight under a reservation of 10, which is all of the
+    // allowance. A second process recovers the store, which closes the reservation
+    // with nothing released though its run is alive; the owner corrects it to
+    // nothing, which writes off what is outstanding; and 10 more are admitted.
+    let written_off = || {
+        vec![
+            reset(10),
+            admit(1, 10),
+            dispatch(1, 10),
+            second(Event::Recover),
+            second(adjust(1, 0)),
+            second(admit(2, 10)),
+            second(dispatch(2, 10)),
+            second(settle(2, 1, charged(10))),
+        ]
+    };
+    add(
+        "82 (A) a correction to nothing of a reservation whose request is still in \
+         flight, 10 more admitted and spent, and the request then settled at 10: 20 \
+         counted against 10",
+        with(written_off(), vec![settle(1, 1, charged(10))]),
+        vec![
+            came(8, Outcome::Done),
+            // The settlement ended the correction: the reservation counts again.
+            state(r(1), State::Interrupted),
+            Counts(r(1), 10),
+            Counts(r(2), 10),
+            Allowed(10),
+            Counted(20),
+            Debt(10),
+            Left(0),
+        ],
+        vec![
+            (3, state(r(1), State::Interrupted)),
+            (3, Counts(r(1), 10)),
+            (4, state(r(1), State::Adjusted)),
+            (4, Counts(r(1), 0)),
+            (4, Left(10)),
+            // The second admission: 10 counted, while 20 are committed.
+            (5, Counted(10)),
+            (5, Debt(0)),
+        ],
+    );
+    add(
+        "83 (A2) the same, and the process that sent the request dies with the \
+         provider's answer: the reservation stays corrected at nothing, and 10 are \
+         counted where 20 were charged",
+        with(
+            written_off(),
+            vec![
+                Event::Charge {
+                    root: r(1),
+                    place: 1,
+                    micros: 10,
+                },
+                Event::Crash,
+            ],
+        ),
+        vec![
+            state(r(1), State::Adjusted),
+            Counts(r(1), 0),
+            Counts(r(2), 10),
+            Allowed(10),
+            Counted(10),
+            Debt(0),
+            Left(0),
+        ],
+        vec![],
+    );
+    add(
+        "84 (G) a reset to nothing while three reservations of 10 are open: each still \
+         sends all it reserved, and the new epoch counts nothing",
+        vec![
+            reset(30),
+            admit(1, 10),
+            admit(2, 10),
+            admit(3, 10),
+            reset(0),
+            dispatch(1, 10),
+            dispatch(2, 10),
+            dispatch(3, 10),
+            admit(4, 1),
+        ],
+        vec![
+            came(5, Outcome::Placed(1)),
+            came(6, Outcome::Placed(1)),
+            came(7, Outcome::Placed(1)),
+            came(8, refused(Why::OverAllowance { left: 0 })),
+            Epoch(2),
+            Allowed(0),
+            Counted(0),
+            Debt(0),
+            Left(0),
+            EpochOf(r(1), 1),
+            Outstanding(r(1), 10),
+            Outstanding(r(2), 10),
+            Outstanding(r(3), 10),
+        ],
+        vec![(3, Counted(30)), (3, Left(0))],
+    );
+    add(
+        "85 (H) calls of nothing in a store with no allowance: each is admitted, a \
+         request of nothing is placed under a reservation over its amount and in a \
+         store in debt, and every charge is debt",
+        vec![
+            admit(1, 0),
+            dispatch(1, 0),
+            settle(1, 1, charged(7)),
+            dispatch(1, 0),
+            dispatch(1, 1),
+            admit(2, 0),
+            dispatch(2, 0),
+            settle(2, 1, charged(5)),
+        ],
+        vec![
+            came(0, Outcome::Done),
+            came(1, Outcome::Placed(1)),
+            // The charge over its bound took the second place.
+            came(3, Outcome::Placed(3)),
+            came(4, refused(Why::OverRun { left: 0 })),
+            came(5, Outcome::Done),
+            came(6, Outcome::Placed(1)),
+            Epoch(0),
+            Allowed(0),
+            Counts(r(1), 7),
+            Counts(r(2), 5),
+            Counted(12),
+            Debt(12),
+            Left(0),
+            Owes(r(1), 7),
+            Owes(r(2), 5),
+        ],
+        vec![(2, Debt(7)), (2, Owes(r(1), 7))],
     );
     table
 }
