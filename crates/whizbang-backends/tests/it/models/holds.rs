@@ -23,22 +23,22 @@ use super::staging::names_under;
 use super::{MARKER, model, none, secrets};
 
 /// The holds of a process of its own over this directory, on the real file system.
-fn holds_over(root: &Path) -> Holds {
+pub(super) fn holds_over(root: &Path) -> Holds {
     Holds::over(ModelsDir::at(Arc::new(RealFs), root))
 }
 
 /// A hold on this installation of the model `tiny`.
-fn hold(holds: &Holds, record: &InstallationRecord) -> Result<Hold, HoldRefused> {
+pub(super) fn hold(holds: &Holds, record: &InstallationRecord) -> Result<Hold, HoldRefused> {
     holds.hold(&model("tiny"), record.identity(), &none())
 }
 
-fn count(holds: &Holds, record: &InstallationRecord) -> usize {
+pub(super) fn count(holds: &Holds, record: &InstallationRecord) -> usize {
     holds.count(&model("tiny"), record.identity())
 }
 
 /// The installation's hold file taken alone by another process, by one try: nothing
 /// when a hold is on it. This is how whoever deletes an installation's folder asks.
-fn alone(root: &Path, record: &InstallationRecord) -> Option<Box<dyn Held>> {
+pub(super) fn alone(root: &Path, record: &InstallationRecord) -> Option<Box<dyn Held>> {
     RealFs.try_alone(&hold_file_of(root, record)).unwrap()
 }
 
