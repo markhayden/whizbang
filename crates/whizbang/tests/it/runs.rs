@@ -848,7 +848,17 @@ fn a_run_a_killed_process_left_is_ended_by_the_next_writing_command_and_then_sho
         .unwrap();
     assert_eq!(pruned.status.code(), Some(0));
     // The run is ended: an error, interrupted, with what its admission said and
-    // everything else named as lost.
+    // everything else named as lost. `runs list` says so in its line.
+    let listed = whizbang(&["list"], &root);
+    let line: Vec<&str> = listed.text().lines().nth(1).unwrap().split('\t').collect();
+    assert_eq!(
+        line[..3],
+        [
+            run.as_str(),
+            "error, interrupted (everything but what its admission says is lost)",
+            "boom 1.2.3"
+        ]
+    );
     let shown = whizbang(&["show", &run], &root);
     assert_eq!(shown.code, Some(0), "{}", shown.err);
     let text = shown.text();
