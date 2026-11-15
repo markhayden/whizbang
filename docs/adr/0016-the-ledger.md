@@ -1203,7 +1203,7 @@ hold's amount and of another.
 
 **One name changed alone, against the real fold.** The model's suite of one name
 lost, damaged or made alone is held by the model's fold. A sample of it is held by
-the real one: 256 whole books from each of two seeds, every name lost alone, every
+the real one: 96 whole books from each of two seeds, every name lost alone, every
 name damaged alone, and names of every form made alone, each folded and compared
 with the model as after an event of a history; over 10,000 changes and over 3,000
 frozen reservations for each seed
