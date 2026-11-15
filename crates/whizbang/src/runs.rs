@@ -125,9 +125,10 @@ fn list(root: &Path) -> Result<String, String> {
                 let unknown = || "unknown".to_owned();
                 let (asked, time) = (record.asked(), record.time());
                 format!(
-                    "{}\t{}\t{} {}\t{}\t{}{}",
+                    "{}\t{}{}\t{} {}\t{}\t{}{}",
                     shown(id),
                     record.outcome().status.name(),
+                    lost_in_a_line(&record),
                     asked.action.as_deref().map_or_else(unknown, shown),
                     asked.version.as_deref().map_or_else(unknown, shown),
                     time.start_ms.map_or_else(unknown, utc),
@@ -163,6 +164,22 @@ fn list(root: &Path) -> Result<String, String> {
         text.push('\n');
     }
     Ok(text)
+}
+
+/// What a line of `runs list` says after the status of a run whose record has lost
+/// something (ADR 0013, "What is lost"): that it was interrupted, and how much is
+/// lost. Nothing for a run that ended by itself. It goes by `outcome.lost`, as every
+/// reader does, and never by the error's kind: an action may call its own error
+/// `interrupted`, and nothing of that run is lost.
+fn lost_in_a_line(record: &RunRecord) -> &'static str {
+    let lost = &record.outcome().lost;
+    if lost.is_empty() {
+        ""
+    } else if lost.contains(&Lost::Admission) {
+        ", interrupted (everything is lost, its admission too)"
+    } else {
+        ", interrupted (everything but what its admission says is lost)"
+    }
 }
 
 /// The run a caller means by `given`, for every command that takes a run: `runs show`

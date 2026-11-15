@@ -32,6 +32,9 @@ until 1C.
 Amended: 2026-11-15, with task I3 (ADR 0015, "A wrapper around each request"). Changed
 under "Limits": a refused backend is no longer called, the pin that held that it was is
 turned round, and what the gate's place knows of a request's classes.
+Amended: 2026-11-15, with task I4b (ADR 0015). Changed in "The run's recipients": a
+run that a process left after it had sent data is shown recovered, and the limit
+that said it was not is restated.
 Spec: section 10, "Egress"
 
 ## Context
@@ -441,12 +444,14 @@ executor writes it to the shape those tests read.
 
 Limits of it, each stated:
 
-- **A run that a process left after it had sent data is not shown here.** The plan
-  asks that it is recovered as interrupted, with `egress` named in `outcome.lost` and
-  an empty list. The record of such a run and what readers print of it are built and
-  tested (ADR 0013, "What is lost"); the recovery that makes it is task I4b's and is
-  not built, so no test can leave a run and recover it. The task's box is not ticked
-  for that one clause (`docs/carry-over.md`).
+- **A run that a process left after it had sent data** is recovered as interrupted,
+  with `egress` named in `outcome.lost` and an empty list: where its data went was
+  noted in the memory of the process that died, and recovery reconstructs nothing.
+  The recovery that makes the record is task I4b's (ADR 0015, "The interrupted
+  record, and what readers say of it"), and with it the clause is shown, through an
+  executor and the sending fake
+  (`recipients::a_run_that_a_process_left_after_it_had_sent_data_is_recovered_as_interrupted_with_egress_named_as_lost_and_an_empty_list`).
+  So a list that is empty says "nowhere" only where `outcome.lost` does not name it.
 - **The list says where data went, to four characters of an account** (ADR 0013): two
   accounts at one origin that start with the same four characters are one entry.
 - **An unnamed origin is said as the classes are.** A backend whose origin no

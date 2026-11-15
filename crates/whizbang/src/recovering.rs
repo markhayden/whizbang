@@ -123,6 +123,33 @@ fn grow(root: &Path, mask: &str) -> rascal::Command {
     }
 }
 
+/// The same command on another store a killed process left, with the recovery this
+/// build is wired with (`wiring::recovery`) in place of the fake: when the command
+/// has run, every left run it did not delete is ended, with its record. The runs'
+/// admissions here are not ones this build reads, so each is ended from its name.
+fn with_the_builds_own_recovery(
+    label: &str,
+    command: impl FnOnce(&Path, &Path, &str) -> Result<String, String>,
+) {
+    let dir = Scratch::new(label);
+    let (root, file, mask) = left(&dir);
+    command(&root, &file, &mask).unwrap();
+    let reader = Reader::open(&root, Arc::new(RealFs)).unwrap();
+    let generation = reader.snapshot().unwrap();
+    let kept: Vec<&str> = LEFT
+        .iter()
+        .copied()
+        .filter(|run| generation.run(run).is_some())
+        .collect();
+    assert!(!kept.is_empty());
+    for run in kept {
+        let stored = whizbang_core::contract::record::stored(&generation, run, |e| reader.read(e));
+        let record = stored.unwrap().unwrap();
+        let error = record.outcome().error.as_ref().unwrap();
+        assert_eq!(error.kind, "interrupted", "{run}");
+    }
+}
+
 /// The part was asked once, was shown the store as the killed process left it, and
 /// made its three names there.
 fn recovered_first(part: &FakeRecovery, found: u64) {
@@ -147,6 +174,9 @@ fn store_delete_on_a_store_a_killed_process_left_recovers_before_it_deletes() {
         held(&root),
         (found + 2, true, vec![(LEFT[1].to_owned(), true)])
     );
+    with_the_builds_own_recovery("recovering-delete-own", |root, _, _| {
+        store::run_with(&delete(root, LEFT[0]), wiring::recovery())
+    });
 }
 
 #[test]
@@ -167,6 +197,9 @@ fn store_prune_on_a_store_a_killed_process_left_recovers_before_it_prunes() {
     assert_eq!(held(&root), (found + 1, true, marked));
     let generations = root.join("generations");
     assert!(!generations.join(format!("{found}.json")).exists());
+    with_the_builds_own_recovery("recovering-prune-own", |root, _, _| {
+        store::run_with(&prune(root), wiring::recovery())
+    });
 }
 
 #[test]
@@ -195,6 +228,9 @@ fn store_import_on_a_store_a_killed_process_left_recovers_before_it_imports() {
     recovered_first(&part, found);
     let marked = LEFT.iter().map(|run| ((*run).to_owned(), true)).collect();
     assert_eq!(held(&root), (found + 2, true, marked));
+    with_the_builds_own_recovery("recovering-import-own", |root, _, _| {
+        store::run_with(&import(root, &file), wiring::recovery())
+    });
 }
 
 #[test]
@@ -216,6 +252,9 @@ fn rascal_grow_on_a_store_a_killed_process_left_recovers_before_its_run_is_admit
     for run in LEFT {
         assert!(runs.contains(&(run.to_owned(), true)), "{runs:?}");
     }
+    with_the_builds_own_recovery("recovering-grow-own", |root, _, mask| {
+        rascal::run_with(&grow(root, mask), wiring::recovery())
+    });
 }
 
 // --- after a recovery that failed --------------------------------------------------------------

@@ -16,6 +16,7 @@ mod descriptor;
 mod execute;
 mod facts;
 mod fixtures;
+mod interrupted;
 mod inventory;
 mod ledger;
 mod nested;
