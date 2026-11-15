@@ -9,7 +9,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use whizbang_core::artifact::Contents;
-use whizbang_core::contract::{Action, Engine, NoBackends, Opening, Recovery, Registry};
+use whizbang_core::contract::{
+    Action, Engine, Interrupted, NoBackends, Opening, Recovery, Registry,
+};
 use whizbang_core::description::Description;
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::RealFs;
@@ -58,11 +60,11 @@ pub fn runner(registry: Registry, store: Arc<Store>) -> Engine {
 
 /// What recovers a store before this build is handed its writer (ADR 0015, "One way
 /// to a writer, with recovery before it"): the parts, in the order they are asked.
-/// There is none yet. The part that ends a run a dead process left is task I4b's,
-/// and the one that settles what such a run reserved is task S6's; each is added
-/// here.
+/// One, so far: the part that ends every run a dead process left, as interrupted
+/// (ADR 0015, "The interrupted record, and what readers say of it"). The one that
+/// settles what such a run reserved is task S6's, and is added here.
 pub fn recovery() -> Recovery {
-    Recovery::none()
+    Recovery::none().with_part(Arc::new(Interrupted))
 }
 
 /// Whether a command that opens a store to write makes one where there is none.

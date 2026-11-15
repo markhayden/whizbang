@@ -800,6 +800,106 @@ fn a_run_that_was_admitted_and_did_not_end_is_listed_and_shown_as_such() {
 }
 
 #[test]
+fn a_run_a_killed_process_left_is_ended_by_the_next_writing_command_and_then_shown_as_interrupted()
+{
+    // A process loses power while its action runs: the run stays as it was admitted.
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let id = RequestId::parse("order-17").unwrap();
+    {
+        let fs = Arc::new(ShimFs::new());
+        let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+        let mut registry = whizbang::wiring::registry().expect("the registry builds");
+        let boom = whizbang_core::contract::Kind::Primitive;
+        let boom = ActionDescriptor::draft("boom", "1.2.3", boom, "A test action.");
+        registry
+            .register(Arc::new(Boom(boom.build().unwrap(), fs)))
+            .unwrap();
+        let executor = whizbang::wiring::runner(registry, store);
+        let left = executor.request(&Request::new(Call::new("boom")).with_id(id));
+        assert!(matches!(left, Err(CallError::Store(_))), "{left:?}");
+    }
+    // A command that reads ends nothing: the run is listed as it was left, by
+    // whichever reader, however often.
+    for _ in 0..2 {
+        let listed = whizbang(&["list"], &root);
+        assert!(
+            listed.text().contains("\tadmitted, not ended\t"),
+            "{}",
+            listed.text()
+        );
+    }
+    let run = whizbang(&["list"], &root);
+    let run = run
+        .text()
+        .lines()
+        .nth(1)
+        .unwrap()
+        .split('\t')
+        .next()
+        .unwrap()
+        .to_owned();
+    // The next command that opens the store to write recovers it first: here, a
+    // prune, by the real binary, with the recovery the binary is wired with.
+    let pruned = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+        .args(["store", "prune", "--store"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert_eq!(pruned.status.code(), Some(0));
+    // The run is ended: an error, interrupted, with what its admission said and
+    // everything else named as lost.
+    let shown = whizbang(&["show", &run], &root);
+    assert_eq!(shown.code, Some(0), "{}", shown.err);
+    let text = shown.text();
+    for line in [
+        format!("run: {run}"),
+        "request: order-17".to_owned(),
+        "action: boom 1.2.3".to_owned(),
+        "status: error".to_owned(),
+        "error: interrupted: the process that ran it ended before the run did".to_owned(),
+        "lost: arguments, settings, inputs, refusals, durations, models, requests, egress, \
+         steps, judge, diagnostics, version"
+            .to_owned(),
+        "egress: unknown".to_owned(),
+    ] {
+        has_line(text, &line);
+    }
+    let json = whizbang(&["show", &run, "--json"], &root);
+    let document: serde_json::Value = serde_json::from_slice(&json.out).unwrap();
+    let schema: serde_json::Value = serde_json::from_str(RUN_RECORD_SCHEMA).unwrap();
+    validate(&schema, &document).unwrap();
+    assert_eq!(document["outcome"]["error"]["kind"], "interrupted");
+    // Its record is the one made from its admission alone.
+    let admission = whizbang(&["show", &run, "--diagnostic", "admitted"], &root);
+    let admission = Admission::from_bytes(&admission.out).unwrap();
+    let made = RunRecord::interrupted(Left {
+        run: admission.run(),
+        whizbang: document["identity"]["whizbang"].as_str().unwrap(),
+        admitted: Some(Admitted {
+            request: admission.request(),
+            parent: admission.parent(),
+            action: admission.action(),
+            version: admission.version(),
+            reserved_micros: admission.reserved_micros(),
+            start_ms: admission.start_ms(),
+        }),
+        end_ms: document["time"]["end_ms"].as_u64().unwrap(),
+    });
+    let stored = whizbang(&["show", &run, "--diagnostic", "record"], &root);
+    assert_eq!(stored.out, made.unwrap().to_bytes());
+    // A second writing command finds it ended, and ends nothing twice.
+    let before = whizbang(&["show", &run, "--json"], &root).out;
+    let again = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+        .args(["store", "prune", "--store"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert_eq!(again.status.code(), Some(0));
+    assert_eq!(whizbang(&["show", &run, "--json"], &root).out, before);
+}
+
+#[test]
 fn a_run_shows_the_request_id_it_was_made_for() {
     let dir = Scratch::new("runs");
     let root = dir.path().join("store");
