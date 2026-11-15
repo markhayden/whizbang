@@ -1803,3 +1803,78 @@ fn a_removal_waits_for_a_hold_on_the_installation_the_pointer_names_though_its_f
     assert_eq!(pauses, 1);
     assert_eq!(reading(root), Current::NotInstalled);
 }
+
+#[test]
+fn a_removal_that_made_its_mark_again_while_it_tried_for_the_lock_takes_it_off_when_it_ends_busy() {
+    // A mark is there before the removal begins, so it is not the removal's own.
+    // The holder of the model's lock takes it off, as an install does with one it
+    // finds; the removal, not given the lock, makes the mark again: now it is its
+    // own, and when its deadline comes it takes it off.
+    let scratch = Scratch::new("remove-remade-mark");
+    let root = scratch.path();
+    installed(root, &second());
+    let mark = tiny(root).join("DRAINING");
+    std::fs::write(&mark, b"").unwrap();
+    let lock = RealFs
+        .hold_lock_file(&tiny(root).join("LOCK"), false)
+        .unwrap();
+    assert!(lock.is_some());
+    let barriers = Barriers::new();
+    let clock = Arc::new(Hand::new());
+    let remover = removal_on_a_thread(root, &barriers, &clock);
+    barriers.arrived("try", 1);
+    assert_eq!(std::fs::read(&mark).unwrap(), b"");
+    std::fs::remove_file(&mark).unwrap();
+    barriers.release("try");
+    barriers.arrived("try", 2);
+    assert!(marked(root));
+    clock.advance(60 * SECOND);
+    barriers.release("try");
+    assert_eq!(remover.join().unwrap(), Err(RemoveRefused::Busy));
+    assert!(!mark.exists());
+    drop(lock);
+}
+
+#[test]
+fn of_two_removals_the_one_that_made_the_mark_and_ends_busy_takes_it_off_and_the_one_with_the_lock_sets_it_again()
+ {
+    // Removal B begins first and makes the mark; the model's lock is another's, so
+    // B waits. The lock is let go and removal A takes it: the mark it found is its
+    // own from then, and it waits for a hold. B's deadline comes: B ends busy and
+    // takes off the mark it made. That is the window: no mark, under a removal
+    // that waits. At A's next try the mark is there again.
+    let scratch = Scratch::new("remove-two-in-order");
+    let root = scratch.path();
+    let record = installed(root, &second());
+    let holds = holds_over(root);
+    let held = hold(&holds, &record).unwrap();
+    let lock = RealFs
+        .hold_lock_file(&tiny(root).join("LOCK"), false)
+        .unwrap();
+    assert!(lock.is_some());
+    let (b_tries, b_clock) = (Barriers::new(), Arc::new(Hand::new()));
+    let b = removal_on_a_thread(root, &b_tries, &b_clock);
+    b_tries.arrived("try", 1);
+    assert!(marked(root));
+    drop(lock);
+    let (a_tries, a_clock) = (Barriers::new(), Arc::new(Hand::new()));
+    let a = removal_on_a_thread(root, &a_tries, &a_clock);
+    a_tries.arrived("try", 1);
+    assert_eq!(said(root), Some((State::Removing, 0, 0)));
+    assert!(marked(root));
+    // B's deadline comes while A has the lock.
+    b_clock.advance(60 * SECOND);
+    b_tries.release("try");
+    assert_eq!(b.join().unwrap(), Err(RemoveRefused::Busy));
+    assert!(!tiny(root).join("DRAINING").exists());
+    // A's next try sets the mark again, and no hold is given from then.
+    a_tries.release("try");
+    a_tries.arrived("try", 2);
+    assert!(marked(root));
+    assert_eq!(hold(&holds, &record).unwrap_err(), HoldRefused::Draining);
+    held.let_go();
+    a_tries.open("try");
+    assert!(a.join().unwrap().is_ok());
+    assert!(!marked(root));
+    assert_eq!(reading(root), Current::NotInstalled);
+}

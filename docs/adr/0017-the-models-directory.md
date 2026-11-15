@@ -1110,7 +1110,8 @@ and the deleting (task M5c). In this order:
    mark of the removal that has the lock, or of a remover that died, and is not
    this one's to take off
    (`remove::a_second_removal_that_is_busy_leaves_the_mark_of_the_one_that_has_the_lock_and_no_hold_is_given_meanwhile`,
-   `remove::a_removal_that_made_the_mark_and_never_had_the_lock_takes_its_own_mark_off_and_no_other`). **Past the deadline the removal
+   `remove::a_removal_that_made_the_mark_and_never_had_the_lock_takes_its_own_mark_off_and_no_other`,
+   `remove::a_removal_that_made_its_mark_again_while_it_tried_for_the_lock_takes_it_off_when_it_ends_busy`). **Past the deadline the removal
    answers busy** (`RemoveRefused::Held`): it has changed no pointer, it lets go the
    hold files it had, puts the status back and takes the mark off, and the next hold
    is given.
@@ -1232,7 +1233,8 @@ another process by the mark alone.
   take the mark off: a second removal that made the mark first, before this one
   began, and then ended busy takes off what it made; this one sets it again at
   its next try
-  (`remove::a_removal_that_waits_for_a_hold_sets_its_mark_again_when_it_is_gone`)
+  (`remove::a_removal_that_waits_for_a_hold_sets_its_mark_again_when_it_is_gone`,
+  `remove::of_two_removals_the_one_that_made_the_mark_and_ends_busy_takes_it_off_and_the_one_with_the_lock_sets_it_again`)
   (`remove::a_mark_left_by_a_process_that_died_is_taken_off_by_the_next_to_take_the_lock`,
   `remove::a_removal_that_is_not_given_the_models_lock_sets_its_mark_again_and_again_when_it_is`).
 - **The two cases of draining with the hold in a real second process:** kept past
