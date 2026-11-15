@@ -418,6 +418,13 @@ impl Roster {
         Ok(self)
     }
 
+    /// Every backend on offer, with its capability, in the order they were offered.
+    pub(super) fn offered(&self) -> impl Iterator<Item = (Capability, &Declaration)> {
+        self.offers
+            .iter()
+            .map(|(capability, _, declaration)| (*capability, declaration))
+    }
+
     fn find(&self, capability: Capability, name: &str) -> Option<Resolved<'_>> {
         self.offers
             .iter()

@@ -42,6 +42,8 @@ shown (`Hop::pieces`, `Hop::request_moves`), and that a third count is one reque
 and under "Consequences", the one line in each handle that the egress strand edited.
 Amended: 2026-11-14, with task E4. Changed under "A policy before a send, and a checked
 send": the fourth question says why (ADR 0019, "The run's recipients").
+Amended: 2026-11-14, with the first half of task I7. Added: "An inventory". The
+lease, the other half of the task, waits for the wrappers of task I3 and is not here.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -721,6 +723,119 @@ hook while it is asked.
   before its action ran. Nothing reaches that: the pairs were held to the same rules,
   with the same secrets, at admission. No test holds it.
 
+### An inventory
+
+Task I7, its first half. The code is `crates/whizbang-core/src/capability/inventory.rs`;
+the fake is `FakeInventory` in `crates/whizbang-testkit/src/inventory.rs`. The tests are
+in `crates/whizbang-core/tests/it/contract/inventory.rs`, named below as `inventory::…`.
+**The lease, the task's other half, is not built:** it stands in a place of task I3's
+order, and task I3 is not built ("What waits", below). No file of the executor changed.
+
+A local backend, one that names no recipient (`Declaration::is_local`), answers with a
+model that is on this machine or is not, and the models directory (ADR 0017) is where
+that is known. Prepare asks `Backends`, which is answered from what is configured. This
+section is what stands between the two.
+
+**`Inventory` has one question, `look(model)`,** asked by the name a backend declares
+for its model, and two answers (`Installed`):
+
+- **ready, under an installation** (`Installation`): the installation's identity, which
+  is a digest and nothing else. Its text is `sha256:` and 64 lower-case hex digits, as
+  ADR 0017 writes an installation's identity, so the type has no place for a path, a
+  file's name, a time or any text read from a disk
+  (`inventory::an_identity_is_a_digest_as_text_and_is_a_version_a_declaration_takes`);
+- **not ready, and why** (`Unready`): not installed, out of date, damaged, or not in the
+  catalogue. Each is fixed words with nothing in it. **There is no fifth:** an inventory
+  that cannot tell, or cannot read what it found, has `Damaged` to say and no way to say
+  ready without an identity. What is half installed is not installed or is damaged; which
+  of the two is the inventory's own (task M6, ADR 0017).
+
+**A roster over an inventory** (`InstalledRoster::over`) is a `Backends`. It resolves a
+call as its roster does (ADR 0006), and what the roster refuses it says as the roster
+says it, without asking the inventory
+(`inventory::what_the_roster_refuses_is_said_as_the_roster_says_it_and_the_inventory_is_not_asked`).
+Then, of the one backend that was picked:
+
+- **One that names a recipient is answered as declared,** and the inventory is not
+  asked (`inventory::a_backend_that_names_a_recipient_is_not_asked_of_the_inventory`).
+- **A local one is looked up,** by its model's name, and no other model is
+  (`inventory::the_inventory_is_asked_about_the_model_of_the_backend_the_call_resolved_and_no_other`).
+- **Not ready makes the backend not ready,** with the reason: the call is prepared as
+  not ready and is refused at admission as `Refusal::NotReady`, with no run. No other
+  backend answers in its place. The sentence names the capability and the backend by
+  the name the roster offers it under, and then the reason: nothing of the model
+  (`inventory::a_roster_over_the_fake_inventory_prepares_a_model_that_is_not_ready_as_not_ready_with_the_reason`).
+- **Ready is answered under the installation's identity, as the model's version:** the
+  backend and the model as declared, and the identity's text in place of the version
+  the backend declared. That is "the version in what a preparation saw" (the plan; ADR
+  0017, "The identity of an installation"), and it is in the preparation's fingerprint
+  (`inventory::a_local_model_that_is_ready_is_prepared_under_the_identity_of_its_installation`).
+  So an installation replaced, removed or damaged after a call was prepared makes that
+  preparation `Stale::Model` at admission, by ADR 0007's rule and with no code of this
+  task, and the same installation back makes it good again
+  (`inventory::an_installation_replaced_or_removed_under_a_prepared_call_makes_the_preparation_stale`).
+
+**The default, `NoInventory`, knows no model:** every model is not in its catalogue, so
+no local backend is ready under it, and a backend that names a recipient is as it was
+(`inventory::under_the_default_inventory_no_local_model_is_ready_and_a_backend_that_is_not_local_is_as_it_was`).
+**Nothing is put over an inventory unless it is asked for:** a `Roster` alone, what a
+config offers (`Offers`) and the binary are as they were, and no test of an earlier
+task changed.
+
+**What one request may cost** (`Backends::bound`) is asked with the model as it was
+prepared, so a local model comes under its installation's identity, which no
+declaration holds. A local backend is therefore matched by its backend and its model,
+whatever the version, and the inventory is not asked a second time; a backend that
+names a recipient is matched by all three, as a roster matches it. Where two local
+backends of one capability declare one backend and one model, the answer is the larger
+of theirs: over, never under
+(`inventory::a_local_backend_that_states_a_price_is_bound_by_it_under_its_installations_identity`).
+
+**The fake.** `FakeInventory` is told which model is ready, under the installation
+whose identity is the digest of the bytes a test gives, and which is not and why; it
+can forget a model; and it keeps the name it was asked about, each time. A model it
+was told nothing of is not in its catalogue
+(`inventory::a_model_the_inventory_was_told_nothing_of_is_not_in_the_catalogue_and_is_never_ready`).
+
+**What waits.**
+
+- **The lease** (the second box of task I7, and the last three parts of its "Done
+  when"): a lease on the installation the run was admitted with, taken before a request
+  to a local model leaves and let go when it is over. Its place is in task I3's order.
+- **A run is handed no backend for a local model over an inventory.** An executor hands
+  a run the backend that declares the model its call resolved, by backend, model and
+  version (ADR 0009, `Capabilities::resolved_for`). The identity of an installation
+  is a version no backend declares. So today a call for a local model
+  over an inventory is prepared, is ready and is admitted, and its action finds no
+  handle; no request reaches a local model that no lease holds
+  (`inventory::known_a_run_admitted_for_a_local_model_over_an_inventory_is_handed_no_backend_for_it`).
+  The task that builds the lease hands the run its backend, with the identity the
+  admission recorded, and turns that pin round (`docs/carry-over.md`).
+- **Nothing puts what a config offers over an inventory.** `InstalledRoster` takes a
+  `Roster` and is not an `Offered`, so no snapshot of a config holds one, and
+  `Snapshot::handed` matches a backend by its version too. `Offers` (ADR 0011) and the
+  binary's wiring (task W1) are not changed here.
+- **The inventory over the models directory** is task M6's.
+
+**Limits, each stated.**
+
+- **Every local backend is looked up.** A local backend whose model was never one to
+  install is not ready over any inventory that does not know it. No backend that ships
+  is local yet; the first is checkpoint 1C's.
+- **The inventory is asked by the model's name alone.** Two local backends that declare
+  one model name are one model to it, whatever backend each declares.
+- **An inventory is asked at each preparation and not held still.** Between the answer
+  and the admission's publication the installation can change, as the config can (ADR
+  0007, "The window that is left"). The lease is what holds a request to the
+  installation the admission recorded.
+- **An identity is trusted to be an installation's.** The type holds it to a digest; it
+  does not know whether an installation of that identity exists.
+- **An inventory that panics** unwinds to whoever prepared the call. Prepare holds
+  nothing and writes nothing. No test holds it.
+- **The sentence is not looked at for a secret here.** It is made of a capability's
+  name, a name the roster took, and fixed words, and is handed on as every reason of
+  a `Backends` is.
+
 ## Consequences
 
 - `Refusal` and `CallError` each have one more kind, and `Request` and `PreparedCall`
@@ -743,6 +858,9 @@ hook while it is asked.
   no schema; a run's `asked.settings` is filled where a snapshot gives settings.
 - The config strand builds a `ConfigSource` from the file and edits neither the
   executor nor a handle (tasks C4 and C5).
+- A roster may stand over an `Inventory`, and a local model is then prepared under
+  its installation's identity. The models strand implements `Inventory` (task M6) and
+  edits no file of the core. Nothing stored changes.
 - Reversing it costs the parts that were written against it.
 
 ## Alternatives

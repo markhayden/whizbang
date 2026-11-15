@@ -25,6 +25,7 @@ mod charge;
 mod declare;
 mod fault;
 mod fill;
+mod inventory;
 mod judge;
 mod price;
 mod segment;
@@ -37,6 +38,7 @@ pub use declare::{
 };
 pub use fault::{FAULT_LIMIT, Fault, FaultKind};
 pub use fill::{FillHandle, FillRequest, Filler, PROMPT_LIMIT, Painted, Support};
+pub use inventory::{Installation, Installed, InstalledRoster, Inventory, NoInventory, Unready};
 pub(crate) use judge::Judged;
 pub use judge::{
     CONVERSATION_LIMIT, Controls, DESCRIPTION_LIMIT, Excluded, Judge, JudgeHandle, JudgeRequest,
