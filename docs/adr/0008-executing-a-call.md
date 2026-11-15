@@ -948,8 +948,9 @@ still: a config that changes in that window is not seen by that admission. That 
 is accepted: the preparation is of the config it read, the record names its digest, and
 the next request sees the change.
 
-**What is not built.** Nothing bounds what a run keeps in memory, and nothing marks a
-run that a dead process left.
+**What is not built.** Nothing bounds what a run keeps in memory. (A run that a dead
+process left is marked by the next open to write: ADR 0015, "The interrupted record,
+and what readers say of it".)
 
 ### Nested calls
 

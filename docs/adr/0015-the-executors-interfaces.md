@@ -61,6 +61,13 @@ segmenter through the places, of a repeat of an abandoned run's request, and of 
 gate's sentence; and why the path without a snapshot is left as it is.
 Amended: 2026-11-15, with task I4. Added: "One way to a writer, with recovery before
 it". ADR 0007 is amended with it (the alternative it turned down for now).
+Amended: 2026-11-15, with task I4b. Added: "The interrupted record, and what readers
+say of it". ADR 0019 is amended with it ("The run's recipients": the limit that
+waited for the recovery).
+Amended: 2026-11-15, after the review of task I4b. Changed under "The interrupted
+record, and what readers say of it", "Limits": the fall back to the name that no test
+reaches, a run whose record cannot be made at all, and an admission the file system
+refused to read, as decided.
 Amended: 2026-11-15, with the second half of task I7. Added under "An inventory":
 "The backend a run is handed, and the lease's place". Changed there: "What waits"
 and two limits.
@@ -1105,7 +1112,8 @@ what may have been spent at the most it can have been. What makes that cheap is 
 it is one publication of names made once, by parts that each look at what is there
 and add only what is missing, so that a crash inside it leaves it not done, and done
 twice it changes nothing. This section is the frame; what is recovered is each
-part's (the interrupted run: task I4b; the money: task S6).
+part's (the interrupted run: task I4b; the money: the spend strand's, if it keeps a
+part in the recovery).
 
 **One entry point opens a store to write** (`contract::Opening`, over `Store::open`
 and its two siblings, which it mirrors: `open`, `open_in_existing_parent`,
@@ -1217,6 +1225,13 @@ to `…_part_4_of_4`, in the group of crash sweeps).
   binary's own sources, line by line, for the calls by their names: a call made
   through another name for the type is not found, and the crates the binary calls
   are not read.
+- **What the scan of the binary's sources does not find.** It refuses the names
+  `Store::open`, `Store>::open` and `Store ::` in a line of code, a `Store` brought
+  in under another name, and a glob of the store module. A call through a type
+  alias, a trait or a function pointer made elsewhere is not found.
+- **`store import --create` on a store that cannot be recovered** says "created a
+  store at …" inside its complaint, on purpose: the store was made, by this
+  process, before its recovery failed, and the caller is told so with the reason.
 - **Tests and the test kit may open a store directly** (`Store::open`): the scan
   reads the binary's sources and nothing else, and a test that builds a store by
   hand, or that wants a writer with no recovery, is not held to the entry point.
@@ -1230,8 +1245,8 @@ to `…_part_4_of_4`, in the group of crash sweeps).
   another opening of the store, in another process or in this one, since a second
   opening in one process is refused like any second writer
   (`recovering::a_store_another_opening_holds_refuses_every_writing_command_in_words_true_of_this_process_and_of_another`).
-- **The binary's list of parts is empty** until tasks I4b and S6 add theirs: every
-  command recovers nothing yet, and confirms the generation it finds.
+- **The binary's list of parts** (`wiring::recovery`) held nothing when this task
+  was built; task I4b gave it the part that ends an interrupted run.
 - **The writer that is handed out is the store,** whole: nothing keeps whoever holds
   it from publishing anything. `Remover` narrows it for the one case that needs it.
 - **Recovery runs on the thread of the first to ask,** and is not cancelled: a part
@@ -1245,11 +1260,148 @@ to `…_part_4_of_4`, in the group of crash sweeps).
   no path; what it writes itself is cut and not otherwise changed, and a door
   escapes it when it prints it.
 
+### The interrupted record, and what readers say of it
+
+Task I4b. The record is ADR 0013's ("What is lost", `RunRecord::interrupted`); this
+is who makes it and when. Tests named `interrupted::` are in
+`crates/whizbang-core/tests/it/contract/interrupted.rs`.
+
+**A part of the recovery** (`contract::Interrupted`, a `RecoveryPart`) ends every run
+that was admitted, has no record and is not open in this process: a run with the name
+`admitted` and without the name `record`, under an id this build gives a run. It adds
+the run's record to the recovery's one publication, among the run's own names, and
+reconstructs nothing: the record is made from the run's admission alone, and is the
+bytes `RunRecord::interrupted` makes of it, with the time of the recovery as the
+run's end and the version that recovers as the version
+(`interrupted::a_run_a_killed_process_left_is_ended_after_the_next_open_to_write_with_a_record_that_holds_exactly_the_admissions_facts_and_names_every_other_group_as_lost`,
+which holds the record to the schema of `run/3`). A child and its parent, both left,
+are each ended from its own admission
+(`interrupted::a_child_and_its_parent_both_left_are_both_ended_each_from_its_own_admission`).
+
+**For a request with an id, its ending is made** (`requests/<id>/ended`, ADR 0007),
+in the same publication: an error, at the time of the recovery. It is made only
+where the id's own record is the run's admission, by the digest of its content, as a
+look-up holds a run to its id; and not where the id has an ending already
+(`interrupted::the_ending_of_a_request_is_made_for_the_run_that_holds_the_ids_own_admission_and_for_no_other`).
+
+**A run whose admission cannot be read is ended with what its name gives:** its id,
+and `admission` among what is lost. That covers content that is no admission, the
+admission of another run, one over the bound of a request's record, content that is
+gone from the disk, and an admission that reads and would make a record its own
+reader refuses. It is never a failure of the recovery: a store with one damaged run
+would have no writer at all. No ending is made for it, since the id was in the
+admission; the id stays taken, and the same request and a different request under
+it are each answered with the error of a record that is not read
+(`CallError::Record`), never as a repeat and never as free. Nothing the recovery
+writes or says holds anything of the admission, a marker secret planted in it among
+it
+(`interrupted::a_run_with_a_damaged_admission_is_ended_from_its_name_alone_and_names_the_admission_as_lost_and_a_marker_secret_in_it_is_in_nothing_the_recovery_wrote`,
+`interrupted::a_run_whose_admissions_content_is_gone_from_the_disk_is_ended_from_its_name_alone`).
+
+**What is left alone.** A run that has its record, ended by itself or by an earlier
+recovery, so that a recovery run twice makes nothing the second time; a run with no
+admission, which other hands made; and a run under an id that is no id of a run
+(`interrupted::a_run_that_ended_and_a_run_that_was_never_admitted_are_left_as_they_are_and_recovery_run_twice_changes_nothing`).
+And a run of this process: recovery runs once for a store value, before this process
+is handed the writer and so before it makes a run, and is not run again by an
+opening that is asked again. A run that executes here goes on and ends by itself; a
+run this process abandoned stays admitted until the process is gone, and the next
+open ends it
+(`interrupted::a_run_that_is_executing_in_this_process_and_one_this_process_abandoned_are_left_alone`).
+The part also asks the store whether a run is open here (`Recovering::open_here`)
+before it ends one; nothing reaches that through the entry point, since no run is
+open when a recovery runs.
+
+**The money is not this part's.** A run that was left, or that a wrapper's failure
+abandoned (above), keeps its reservation as it was: open, counted in full, nothing
+released. Closing it, as held unless every dispatch under it is shown settled (ADR
+0016), would be the ledger's own part of the recovery, if the spend strand keeps
+one. This part makes no name
+under `spend/`
+(`interrupted::a_run_that_a_wrappers_failure_abandoned_is_ended_at_the_next_open_and_its_reservation_is_left_open`;
+`docs/carry-over.md` has the row that names this test for the spend strand).
+
+**Where a run's data went is lost with the rest.** A run that sent data and was then
+left is recovered with `egress` named in `outcome.lost` and an empty list, which is
+the clause of task E4 that waited for this
+(`recipients::a_run_that_a_process_left_after_it_had_sent_data_is_recovered_as_interrupted_with_egress_named_as_lost_and_an_empty_list`,
+through an executor and the sending fake).
+
+**The binary's recovery has this part** (`wiring::recovery`), so every writing
+command ends what a killed process left before it changes anything
+(`runs::a_run_a_killed_process_left_is_ended_by_the_next_writing_command_and_then_shown_as_interrupted`,
+in the binary's tests, through the real binary).
+
+**What readers say of such a run** follows from its having a record, and needed no
+code in the executor: a run with a record has ended.
+
+- **A repeat of its request** is answered `Ended`, with the error `interrupted`, by
+  `request` and by `start`, by an executor that writes the store and by one that
+  only reads it; nothing runs, and another request under the id is a conflict.
+- **`status` and `wait`** say the same, and `wait` does not wait: the run is in no
+  process's table of open runs.
+- **`cancel`** answers `NotAccepted(Ended)`
+  (`interrupted::a_repeat_of_the_request_of_an_interrupted_run_is_ended_with_the_error_interrupted_and_status_and_wait_say_the_same_and_cancel_is_not_accepted`).
+- **Where the admission could not be read,** the questions by the run's id are
+  answered so, and a request under its request id with the error of a record that
+  is not read
+  (`interrupted::the_questions_by_its_id_of_a_run_whose_admission_could_not_be_read_are_answered_as_interrupted`,
+  and the test of a damaged admission above).
+- **`runs list`** shows it as ended in error, and says after the status that it was
+  interrupted and how much is lost: `error, interrupted (everything but what its
+  admission says is lost)`, or `error, interrupted (everything is lost, its
+  admission too)`, with `unknown` for an action, a start and a duration that the
+  admission would have given. **`runs show`** prints the error, the line `lost:`
+  with every group, and `unknown` for each group that is lost (ADR 0013). Both go by
+  `outcome.lost` and not by the error's kind, so a run whose action called its own
+  error `interrupted` is not said to have lost anything; and both print what an
+  admission said escaped
+  (`runs::runs_list_and_runs_show_show_an_interrupted_run_as_ended_in_error_interrupted_with_what_is_lost_escaped`,
+  in the binary's tests, with `runs::runs_show_says_unknown_for_every_group_a_record_has_lost_and_never_none`).
+
+**A crash inside the recovery that ends a run.** Power lost before each step of it,
+with every way the test kit's disk can lose what was not yet durable, leaves the run
+as it was left or ended with its record and its request's ending both; the next open
+ends it if it was not, with the one record its admission makes, and the open after
+that publishes nothing: the run is ended once
+(`interrupted::a_crash_at_any_event_of_the_recovery_of_an_interrupted_run_followed_by_another_open_ends_the_run_once_part_1_of_4`
+to `…_part_4_of_4`, in the group of crash sweeps).
+
+**Limits, each stated.**
+
+- **Interrupted does not say that the process is dead.** A run is ended because no
+  record is there and this process did not make it. One writer holds a store at a
+  time, so the process that made it no longer holds the store; whether a backend it
+  asked is still working, nothing here knows.
+- **A run whose record was published and not confirmed** has its record: it ended
+  by itself, and is left as it ended.
+- **The end is the time of the recovery,** which can be long after the process
+  died: `time.end_ms` less `time.start_ms` is not how long the run worked.
+- **An admission that cannot be read today is lost for good in the record,** though
+  its bytes stay in the store: a read that failed for a passing reason is not tried
+  again, since the run then has its record.
+- **An admission the file system refused to read is treated as one that cannot be
+  read:** the run is ended from its name alone, so that one unreadable run never
+  leaves a store without a writer; the cost is that a passing read error loses the
+  admission's facts in the record for good.
+- **The fall back to the name, for an admission that reads, has no test,** because
+  the case cannot be made through a store. `RunRecord::interrupted` refuses an
+  admission for four things: an action that is empty, an action's version that is
+  empty, a parent that is the run itself, and the largest amount as what was
+  reserved. `Admission::from_bytes`, the only way a stored admission is read,
+  refuses each of the four first, and `request::admitted` refuses an admission that
+  names another run than the one it is under. So a change of that line to one that
+  skips the run fails no test. The line is kept for a reader of admissions that
+  takes more than the record's does.
+- **A run whose record cannot be made from its name alone either is skipped, and
+  nothing says so:** it stays admitted for good, and every later recovery skips it
+  again.
+
 ## Consequences
 
 - A store is opened to write through `Opening`, and its first sync is the
   confirmation of the generation it found. A strand adds what it recovers as a
-  `RecoveryPart` and edits neither the entry point nor the store (tasks I4b, S6).
+  `RecoveryPart` and edits neither the entry point nor the store (task I4b).
   Nothing stored changes by the frame itself.
 - `Refusal` and `CallError` each have one more kind, and `Request` and `PreparedCall`
   one more thing they carry. Nothing stored changes: no record, no fingerprint, no

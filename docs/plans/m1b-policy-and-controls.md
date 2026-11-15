@@ -1215,7 +1215,7 @@ The second is those, with every writing command of the binary on the entry point
 **Depends on:** I4. Two pull requests: the record and the recovery's part that writes it;
 then the readers. In the executor's files and `crates/whizbang/src/runs.rs`.
 
-- [ ] A recovery's part: every run that is admitted, has no record and is not open in
+- [x] A recovery's part: every run that is admitted, has no record and is not open in
       this process is ended with the record "What a crashed run is recovered to"
       describes, made from its admission alone, and for a request with an id its ending.
       A run whose admission cannot be read is ended with what its name gives. Its
@@ -1223,7 +1223,7 @@ then the readers. In the executor's files and `crates/whizbang/src/runs.rs`.
       with the error of an unreadable record (ADR 0007's `CallError::Record`), never as
       a repeat and never as free: the fingerprint that tells a repeat from a conflict
       was in the admission.
-- [ ] What each reader answers of such a run, as that section lists: `runs list`, `runs
+- [x] What each reader answers of such a run, as that section lists: `runs list`, `runs
       show`, a repeat, `status`, `wait`, `cancel`.
 
 **Done when** these pass: a run a killed process left is ended, after the next open to
@@ -1243,6 +1243,34 @@ next open; the new row on a fuller record of interrupted runs (owner: none; reop
 need); the row on what running an action does not do yet (milestone 2), which says that
 nothing marks a run a dead process left: this task marks it, and corrects the row.
 **Size:** medium.
+
+**Built in two pull requests, as planned** (I4b, 2026-11-15). ADR 0015, "The
+interrupted record, and what readers say of it", names the test of each clause. The
+first is the part of the recovery (`contract::Interrupted`), wired into the binary,
+with the first box and the clauses of "Done when" up to the marker secret; it also
+shows the clause of task E4 that waited for it. The second is the readers, with the
+second box, the clauses after "Then:", and the crash sweep.
+
+**Reworded with the task** (I4b, 2026-11-15). Three things are as the task found them.
+
+- "a run that is executing in this process, and one this process abandoned, are left
+  alone" read as though a recovery could meet such a run. It cannot: a recovery runs
+  once for a store value, before this process is handed the writer and so before it
+  makes a run (task I4), and `Recovering::open_here` is always false through the
+  entry point. What "left alone" means, and what the test shows, is: **a run this
+  process makes after its store was recovered is not ended by that opening, however
+  often the opening is asked for its writer again; one that executes ends by itself,
+  and one this process abandoned stays admitted until the process is gone and is
+  ended by the next process's open.** The part still asks the store whether a run
+  is open here before it ends one, for a recovery that is ever run later in a
+  process's life; nothing reaches that line today, and no test shows it.
+- "A run whose admission cannot be read" is every run whose `admitted` name does
+  not read as the admission of that run, whatever the reason, a read that the file
+  system refused among them: failing the recovery for it would leave a store with
+  one damaged run without a writer.
+- The part ends a run and leaves its reservation as it was: "It settles the money"
+  is the spend strand's part of the same recovery, if it keeps one, as "What a
+  crashed run is recovered to" divides them.
 
 ### I5. A policy before a send, and a checked send
 
@@ -1491,12 +1519,12 @@ binary's by task W1. The two vectors are held where they were, by
 **Kept as written, 2026-11-15** ("Decisions", the last item): one pull request at the
 ordinary bar.
 
-- [ ] A wrapper in `spend/` around any `Backends`. The roster already answers
+- [x] A wrapper in `spend/` around any `Backends`. The roster already answers
       `Backends::bound` with the quote of one request, from the price a backend declares
       (B1, ADR 0010); the wrapper delegates to it and adds the per-call part, so that
       the bound a backend states for a need covers every request the call sends it. The
       roster's own file is not changed.
-- [ ] The check a request is held to when it is about to be sent, against what its run
+- [x] The check a request is held to when it is about to be sent, against what its run
       has left: a function of `spend/` that S5's meter calls.
 
 **Done when** these pass: a call that needs a backend offering only an estimate is refused
@@ -1971,7 +1999,7 @@ approved, carries no user data, and its redirect off the recipient is refused.
 
 **Depends on:** E3.
 
-- [ ] Each send is noted where it is made, at the `Sender`, in the run's place for facts:
+- [x] Each send is noted where it is made, at the `Sender`, in the run's place for facts:
       the origin that was reached and the classes of data. A run's `egress` list is those
       notes. A send the gate or a hop's check refused is in the record as refused.
 
@@ -1984,6 +2012,13 @@ a process left after it had sent data is recovered as interrupted, with `egress`
 nothing as sent; a local run's list is empty; an account in the list is shown cut, and a
 marker credential is nowhere in the record (rule 4).
 **Carry-over:** the row on the record's empty lists (`egress`). **Size:** small.
+
+**Ticked with task I4b** (2026-11-15). The task was built before the recovery of a run
+a dead process left, and its box waited for one clause: "a run that a process left
+after it had sent data is recovered as interrupted, with `egress` named in
+`outcome.lost` and an empty list". Task I4b's first pull request shows it
+(`recipients::a_run_that_a_process_left_after_it_had_sent_data_is_recovered_as_interrupted_with_egress_named_as_lost_and_an_empty_list`;
+ADR 0019, "The run's recipients", names the test of every other clause).
 
 ### E6. Nothing but pixels
 

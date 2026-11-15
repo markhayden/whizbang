@@ -169,6 +169,11 @@ impl World {
     pub(super) fn store(&self) -> Arc<Store> {
         Arc::new(Store::open(&self.root(), self.fs.clone()).unwrap())
     }
+
+    /// The file system under the world's store, for a test that has it lose power.
+    pub(super) fn fs(&self) -> Arc<ShimFs> {
+        self.fs.clone()
+    }
 }
 
 /// An executor over the world's store, with these backends on offer and held.

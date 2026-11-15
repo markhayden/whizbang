@@ -112,6 +112,68 @@ fn a_run_that_sent_a_prompt_and_a_derived_image_to_one_recipient_lists_it_once_w
 }
 
 #[test]
+fn a_run_that_a_process_left_after_it_had_sent_data_is_recovered_as_interrupted_with_egress_named_as_lost_and_an_empty_list()
+ {
+    use whizbang_core::contract::record::{INTERRUPTED, Lost, RunRecord, Status};
+    use whizbang_core::contract::{
+        Call, CallError, Capabilities, Capability, Executor, Interrupted, Opening, Produced,
+        Recovery, Requirement,
+    };
+    use whizbang_testkit::capabilities::roster;
+    use whizbang_testkit::fs_shim::{Lost as Gone, ShimFs};
+
+    use super::support::{World, action, engine, fill_request};
+
+    // The run sends a prompt, which is handed over, and then its process loses
+    // power: nothing of its end is written, and what it noted of the send was in
+    // memory alone.
+    let sender = Arc::new(FakeSender::scripted(vec![ok()]));
+    let filler = sends(&[(&format!("{API}/v1/words"), a_prompt())]);
+    let world = World::new();
+    let asks = {
+        let fs = world.fs();
+        let needs = vec![Requirement::new(Capability::Fill)];
+        action("asks", needs, move |_, context| {
+            let fill = context.capabilities().fill().unwrap();
+            fill.fill(&fill_request()).unwrap();
+            fs.crash(Gone::Unsynced);
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(
+        &world,
+        roster(None, Some(filler.as_ref()), None),
+        Capabilities::none().with_fill(filler.clone()),
+        vec![asks],
+    )
+    .with_ways(ways(&sender, policy(&approving(&["prompts"]))));
+    let left = executor.submit(&Call::new("asks"));
+    assert!(matches!(left, Err(CallError::Store(_))), "{left:?}");
+    assert_eq!(sender.requests(), 1, "the data was handed over");
+    drop(executor);
+
+    // The next process opens the store to write, which recovers it.
+    let fs = Arc::new(ShimFs::new());
+    let part: Arc<dyn whizbang_core::contract::RecoveryPart> = Arc::new(Interrupted);
+    let recovery = Recovery::none().with_part(part);
+    let opening = Opening::open(&world.root(), fs, recovery).unwrap();
+    let store = opening.writer().unwrap();
+    let generation = store.snapshot().unwrap();
+    let [(_, run)] = generation.runs().iter().collect::<Vec<_>>()[..] else {
+        panic!("one run was left");
+    };
+    let record = RunRecord::from_bytes(&store.read(&run.entries()["record"]).unwrap()).unwrap();
+    // Interrupted: where its data went is not known, which the record says by
+    // naming `egress` as lost. Its list is empty, and does not mean "nowhere".
+    let outcome = record.outcome();
+    assert_eq!(outcome.status, Status::Error);
+    assert_eq!(outcome.error.as_ref().unwrap().kind, INTERRUPTED);
+    assert!(outcome.lost.contains(&Lost::Egress), "{:?}", outcome.lost);
+    assert_eq!(record.egress(), []);
+    assert!(!holds(&record.to_bytes(), API));
+}
+
+#[test]
 fn a_run_whose_request_went_on_to_an_approved_upstream_lists_it_as_reached_and_one_that_was_not_reached_is_not_listed()
  {
     // A recipient that may forward to two origins, approved with both.
