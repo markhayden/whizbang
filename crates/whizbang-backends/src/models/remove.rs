@@ -199,6 +199,14 @@ fn set_mark(dir: &ModelsDir, folder: &Path) -> Result<(), RemoveRefused> {
     Ok(())
 }
 
+/// Sets the model's mark again when it is gone.
+fn ensure_mark(dir: &ModelsDir, folder: &Path) -> Result<(), RemoveRefused> {
+    if dir.fs().exists(&folder.join("DRAINING"))? {
+        return Ok(());
+    }
+    set_mark(dir, folder)
+}
+
 /// Takes the model's mark off, under the directory's lock, and makes that durable.
 fn clear_mark(dir: &ModelsDir, folder: &Path) -> Result<(), RemoveRefused> {
     let _directory = dir.lock()?.ok_or(RemoveRefused::DirectoryBusy)?;
@@ -219,6 +227,7 @@ fn drain(
 ) -> Result<Removed, RemoveRefused> {
     let fs = dir.fs();
     let lock = dir.model(name).join("LOCK");
+    let folder = dir.model(name);
     let _lock = loop {
         if let Some(lock) = fs.hold_lock_file(&lock, true)? {
             break lock;
@@ -226,8 +235,13 @@ fn drain(
         if past(clock, deadline) {
             return Err(RemoveRefused::Busy);
         }
+        // Whoever has the lock may have taken the mark off as one a dead remover
+        // left: it is set again, so that an install that is running reads it.
+        ensure_mark(dir, &folder)?;
         pause();
     };
+    // And with the lock: from here nobody takes the mark off but this removal.
+    ensure_mark(dir, &folder)?;
     let model = Model::of(dir, name, secrets);
     // What the status said before: a removal that changes no pointer puts it back.
     let before = status::status(dir, name, secrets).ok().flatten();

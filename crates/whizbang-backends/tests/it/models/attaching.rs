@@ -880,20 +880,20 @@ fn a_cancel_while_the_download_is_stopped_inside_a_file_ends_the_install_as_canc
 /// A downloader that looks at no cancellation and at no answer of its sink: it hands
 /// each file over in two pieces, come what may, and runs what it was given once,
 /// after the first piece of the graph.
-struct Deaf {
+pub(super) struct Deaf {
     asked: Mutex<Vec<String>>,
     between: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl Deaf {
-    fn doing(between: impl FnOnce() + Send + 'static) -> Deaf {
+    pub(super) fn doing(between: impl FnOnce() + Send + 'static) -> Deaf {
         Deaf {
             asked: Mutex::new(Vec::new()),
             between: Mutex::new(Some(Box::new(between))),
         }
     }
 
-    fn asked(&self) -> Vec<String> {
+    pub(super) fn asked(&self) -> Vec<String> {
         self.asked.lock().unwrap().clone()
     }
 }

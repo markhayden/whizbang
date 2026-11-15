@@ -64,6 +64,10 @@ attached is answered busy after a removal and after an install of another identi
 before it clears the pointer, where this record said that it clears the pointer
 first and puts it back, and it waits for the holds on every installation of the
 model that is on the disk ("Removal", with the reason; "Three kinds of lock").
+Amended: 2026-11-15, with task M5d. Added, in code and under "Removal": an install
+reads the mark where it asks its cancellation and stops as draining; whoever takes
+the model's lock to install takes off a mark it finds, and a removal sets its own
+again; what "does not go on beside it" means. Tests named `remove::…`.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -133,7 +137,8 @@ installation record with its identity.
 | Attaching to an install; cancelling one | Code, with the tests named (task M3) |
 | Holds | Code, with the tests named (task M5) |
 | Removal to its decision, inside one process; the mark | Code, with the tests named (task M5b) |
-| Removal against an install and across processes; the deleting of a removed model's files | Decided, not built: tasks M5d, M5c |
+| Removal against an install and across processes | Code, with the tests named (task M5d) |
+| The deleting of a removed model's files | Decided, not built: task M5c |
 
 ### The directory
 
@@ -632,7 +637,8 @@ An install stages through the same code under a lock it took itself, and publish
   (`staging::a_download_that_fails_or_is_cancelled_fails_the_staging_and_leaves_nothing_staged`,
   `staging::a_download_that_ends_as_cancelled_ends_the_staging_as_cancelled`).
 - **A cancellation is asked before the lock is taken, before each file, at each
-  piece, and after each answer of the downloader** (task M3). The sink answers no
+  piece, and after each answer of the downloader** (task M3), and at the last three
+  the model's draining mark is read too (task M5d; "Removal"). The sink answers no
   to a piece that comes after a cancel, whether or not the downloader asks the
   cancellation itself; and when the downloader has answered, with bytes or with
   another address, a cancel ends the staging as cancelled before a move is followed
@@ -1041,9 +1047,8 @@ a share in the first
 ### Removal
 
 Code up to the decision, inside one process (task M5b: `remove.rs`, `remove`; tests
-named `remove::…`). *Decided, not built:* what an install does when it meets the
-mark and what the next to take the lock does with one a dead remover left (task
-M5d), and the deleting (task M5c). In this order:
+named `remove::…`), and against an install and across processes (task M5d, below).
+*Decided, not built:* the deleting (task M5c). In this order:
 
 1. **The draining mark comes first.** It is set under the directory's lock, before
    the removal has the model's lock, and whatever was at its name is replaced. From
@@ -1110,7 +1115,7 @@ M5d), and the deleting (task M5c). In this order:
   touches nothing; a removal that finds an install running has changed nothing but
   the mark when its deadline comes, and takes it off
   (`remove::a_removal_and_an_install_in_one_process_do_not_go_on_beside_each_other`).
-  That the install stops for the mark is task M5d's.
+  And an install that is downloading stops for the mark (below).
 - **Each step refused, and a crash before each** (the removal has some twenty
   events): the model is installed, whole, with its status as it was, or it is not
   installed; a removal that answered has made that durable; and the next removal
@@ -1143,9 +1148,62 @@ still stops them; and a removal replaces whatever is there with its own
 The mark is given no sync when it is set: a crash that loses it leaves the model as
 its pointer says.
 
-A mark left by a process that died is taken off by the next to take the model's
-lock, which also finishes a removal that had cleared the pointer (tasks M5d and M5c).
-Until task M5d only a removal takes one off.
+**Against an install, and across processes** (task M5d). Nothing here reads a
+process id, and nothing is signalled (rascal's R3): a removal reaches an install in
+another process by the mark alone.
+
+- **An install stops for the mark.** Once it has the model's lock, an install reads
+  the mark wherever it asks its cancellation: before each file, at each piece, and
+  after each answer of the downloader. With one set it ends as
+  `InstallRefused::Draining`, removes its staging, says `failed`, and lets the
+  model's lock go; the piece that came after the mark is not kept, whatever the
+  downloader does. It leaves the mark, which is the remover's. The mark is read
+  there as there or not there, without the directory's lock: stopping is always
+  safe, and what a publication decides from is read under that lock, at its end
+  (`remove::an_install_stops_for_a_mark_before_each_file_and_at_each_piece_whatever_the_downloader_does`).
+- **A removal of a model that is installing cancels the install,** in its own
+  process or another, and then goes on, of what was installed before: that is
+  removed, and nothing of the install is left. When the removal's deadline comes
+  first it is busy, what was installed before is kept, named and whole, and the
+  install goes on. Never half of either
+  (`remove::a_removal_of_a_model_that_is_installing_cancels_the_install_and_what_was_installed_before_is_removed_or_kept`,
+  `remove::a_removal_cancels_an_install_that_runs_in_a_second_process`).
+- **What "does not go on beside it" means** (the plan's task M5d left it to this
+  task). With an install stopped after it took the model's lock and read the
+  pointer, a removal sets its mark and tries for the lock: it changes nothing else,
+  and at its deadline it is busy and takes the mark off; if the install is let go
+  sooner, the install stops for the mark and the removal goes on. With a removal
+  stopped there, an install is busy and touches nothing, and so is a second
+  removal. So: busy, or stopped by the mark; in no case do two act on the model
+  (`remove::with_an_install_stopped_after_it_read_the_pointer_a_removal_does_not_go_on_beside_it`,
+  `remove::with_a_removal_stopped_after_it_read_the_pointer_an_install_is_busy_and_touches_nothing`).
+  Each stopped before its first step and let go together, they end in one of the
+  two orders: the install whole and then removed; or the removal of what was
+  there, and the install after it whole, or stopped for the mark, or busy
+  (`remove::a_removal_and_an_install_let_go_together_end_in_one_of_the_two_orders`).
+- **A mark left by a process that died is taken off by the next to take the model's
+  lock.** An install, as its first change after it said `installing`, takes off a
+  mark it finds, under the directory's lock, and syncs: whoever set it does not
+  have the model's lock. It cannot tell a dead remover's mark from that of one
+  that is alive and trying for the lock, so **a removal sets its mark again**
+  when it is gone: each time it is not given the lock, and once it has it, from
+  when nobody takes it off but itself. A removal replaces whatever mark it finds
+  with its own and takes it off at its end
+  (`remove::a_mark_left_by_a_process_that_died_is_taken_off_by_the_next_to_take_the_lock`,
+  `remove::a_removal_that_is_not_given_the_models_lock_sets_its_mark_again_and_again_when_it_is`).
+- **The two cases of draining with the hold in a real second process:** kept past
+  the deadline, busy; let go, the removal goes on
+  (`remove::the_two_cases_of_a_removal_with_the_hold_in_a_real_second_process`).
+- **Limits.** Between an install taking a live remover's mark off and the remover
+  setting it again, a hold can be given; the remover then waits for it as for any
+  other. An install that is reading back what it staged, or reading an identity it
+  found on the disk, asks neither its cancellation nor the mark until it is done:
+  the mark stops it at the publication, under the directory's lock. And an
+  install that stopped for a mark whose remover then died is not started again by
+  anything here: it is asked for again.
+
+A removal that had cleared the pointer and died before it deleted is finished by the
+next to take the lock (task M5c).
 
 ### What a refusal says
 
@@ -1232,8 +1290,8 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   can be refused: the removal answers as it ended, and the mark stays. So does the
   mark of a remover that died. While it is there no hold on the model is given and
   no install of it publishes, though its pointer may name an installation that is
-  whole. The next removal of the model takes it off; from task M5d, so does the
-  next install.
+  whole. The next removal of the model takes it off, and so does the next install
+  (task M5d).
 - **A reader that holds no lock does not read the files.** `current` answers from the
   pointer and the record; that the files are whole is held when they are published
   and when the same identity is published again.
@@ -1301,11 +1359,9 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   is read the same way. Built ("Removal"). A stale mark stops every publication of
   the model, and every hold on it, until a removal of the model or the task that
   has the next to take the lock take one off (M5d).
-- **M5d, from task M5b:** `remove` sets its mark once, before it has the model's
-  lock. An install that starts while a removal waits for that lock, and takes a
-  stale mark off, takes a live one off with it: the removal sets its mark again
-  when it is not given the lock, and when it is. An install reads the mark where
-  it asks its cancellation, without the directory's lock: stopping is always safe.
+- **M5d, from task M5b:** an install that takes a stale mark off takes a live one
+  off with it, so a removal sets its mark again; an install reads the mark where
+  it asks its cancellation. Built ("Removal").
 - **M5c, from task M5b:** the hold files a removal has alone when it clears the
   pointer are the ones it deletes under; it lets them go only after the deleting
   and its sync. A removal that finds no pointer still deletes what no pointer

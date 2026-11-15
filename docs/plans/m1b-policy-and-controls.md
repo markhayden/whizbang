@@ -1756,6 +1756,10 @@ after each read the pointer and released together". No test can stop both there:
 install and a removal each read the pointer to decide from only under the model's lock,
 which one of them has at a time. What the other does while one is stopped there (busy,
 or stopped by the mark) is this task's to say.
+**Built** (ADR 0017, "Removal": against an install, and across processes), each clause
+by a test named `models::remove::…`. What the other does: a removal beside a stopped
+install sets its mark and is busy at its deadline, or the install, let go, stops for the
+mark; an install beside a stopped removal is busy. This task has no box of its own.
 **Carry-over:** rascal's R3 (a process id read from a file is signalled); of R6, a
 removal racing an install. **Size:** small.
 
