@@ -3,7 +3,8 @@
 Status: accepted. Changed by ADR 0015: the executor's parts are asked in each attempt at
 the admission's publication, before the ledger, and a refusal by one is a refusal after
 the look; a request may carry a cap, which is no part of its fingerprint; a preparation
-carries the time it was made, beside `prepared/1`
+carries the time it was made, beside `prepared/1`; and `ConfigSource` answers a snapshot
+of the config or a refusal, where it answered a digest ("One snapshot of the config")
 Date: 2026-11-12
 Amended: 2026-11-12, with the second pull request of task A6. Added: "The estimate" and
 "A preparation handed to admission", which are built; the paragraph of "Admission" that
@@ -477,7 +478,8 @@ gap:
   Nothing can be stale where nothing was shown. Whether a door must always hand over a
   preparation is the door's decision.
 - **The config is read when a call is prepared,** each time, through `ConfigSource`,
-  and so at admission (`Engine::with_config`). An executor built with a digest alone
+  and so at admission (`Engine::with_config`). Since ADR 0015 the source answers a
+  snapshot, of which the digest is one part, and may refuse. An executor built with a digest alone
   has a config that never changes, which is what the binary has until there is a config.
 - **The window that is left.** Between the second preparation and the admission's
   publication nothing holds the config or the backends still (accepted: ADR 0008, "The

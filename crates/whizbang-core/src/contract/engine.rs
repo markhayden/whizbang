@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use crate::artifact::{self, Artifact, Contents};
 use crate::capability::{EXCHANGES_MAX_BYTES, REQUESTS_LIMIT, Shown};
+use crate::egress::Ways;
 use crate::identity::{DecodeLimits, Digest};
 use crate::store::{self, Store};
 
@@ -24,12 +25,13 @@ use super::record::{
     RunRecord, StoredRecordError,
 };
 use super::request::{Found, look_up, outcome_of};
+use super::snapshot::Known;
 use super::{
     ADMITTED_NAME, Action, ActionDescriptor, Admission, AdmissionPart, Answer, Backends, Call,
-    CallError, Cancel, Cancellation, Capabilities, Clock, Committed, Context, Ending, Estimate,
-    Failure, Finished, Ledger, MESSAGE_LIMIT, Outcome, PreparedCall, Produced, Readiness, Refusal,
-    Registry, Request, RequestId, RunFacts, RunId, RunState, Secrets, Stale, StoreFailure,
-    SystemClock, Watched, request_fingerprint,
+    CallError, Cancel, Cancellation, Capabilities, Clock, Committed, ConfigSource, Context, Ending,
+    Estimate, Failure, Finished, Ledger, MESSAGE_LIMIT, Outcome, PreparedCall, Produced, Readiness,
+    Refusal, Registry, Request, RequestId, RunFacts, RunId, RunState, Secrets, Snapshot, Stale,
+    StoreFailure, SystemClock, Value, Watched, request_fingerprint,
 };
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
@@ -122,13 +124,17 @@ pub struct Engine {
     config: Arc<dyn ConfigSource>,
     limits: DecodeLimits,
     clock: Arc<dyn Clock>,
-    secrets: Secrets,
+    /// The secrets it was built with and those of every snapshot of the config it has
+    /// taken, which every clone of it shares (ADR 0015).
+    secrets: Known,
     /// The ledger that takes part in admission, when this executor was given one.
     ledger: Option<Arc<dyn Ledger>>,
     /// The parts of every admission, in the order they were given (ADR 0015).
     parts: Vec<Arc<dyn AdmissionPart>>,
     /// The backends each run's capability handles are made over.
     capabilities: Capabilities,
+    /// The ways out: what each handle's checked sender is made of (ADR 0015).
+    ways: Ways,
     /// How many runs may be admitted under one run that nothing called.
     descendants: usize,
     /// How many capability requests one run may send.
@@ -190,19 +196,6 @@ fn spawn_thread(name: String, work: Box<dyn FnOnce() + Send + 'static>) -> std::
     std::thread::Builder::new().name(name).spawn(work).map(drop)
 }
 
-/// Where the executor reads the digest of the config. It is asked every time a call is
-/// prepared, so a config that changed between a preparation and its admission is seen
-/// at admission. A digest is a config that never changes.
-pub trait ConfigSource: Send + Sync {
-    fn digest(&self) -> Digest;
-}
-
-impl ConfigSource for Digest {
-    fn digest(&self) -> Digest {
-        *self
-    }
-}
-
 /// The version of whizbang a record is written with: this crate's, which the workspace
 /// shares.
 pub const WHIZBANG_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -225,10 +218,11 @@ impl Engine {
             config: Arc::new(config),
             limits: DecodeLimits::default(),
             clock: Arc::new(SystemClock),
-            secrets: Secrets::none(),
+            secrets: Known::default(),
             ledger: None,
             parts: Vec::new(),
             capabilities: Capabilities::none(),
+            ways: Ways::none(),
             descendants: DESCENDANTS_LIMIT,
             requests: REQUESTS_LIMIT,
             exchanges: EXCHANGES_MAX_BYTES,
@@ -253,8 +247,13 @@ impl Engine {
         engine
     }
 
-    /// The same executor, under a config that is read each time a call is prepared, at
-    /// admission too, instead of the one digest it was built with.
+    /// The same executor, under a config that is asked for a snapshot each time a call
+    /// is prepared, at admission too, instead of the one digest it was built with (ADR
+    /// 0015, "One snapshot of the config"). A run is admitted under one snapshot and
+    /// executes under it, with every run it calls. A snapshot that holds backends, a
+    /// policy or credentials is used in place of what the executor was built with
+    /// ([`Engine::over`], [`Engine::with_capabilities`], [`Engine::with_ways`]); the
+    /// secrets of every snapshot are kept beside those it was built with.
     pub fn with_config(mut self, config: Arc<dyn ConfigSource>) -> Engine {
         self.config = config;
         self
@@ -266,9 +265,10 @@ impl Engine {
         self
     }
 
-    /// The same executor, taking these secrets out of everything it writes.
+    /// The same executor, taking these secrets out of everything it writes, and with
+    /// them those of every snapshot of the config it takes from here on.
     pub fn with_secrets(mut self, secrets: Secrets) -> Engine {
-        self.secrets = secrets;
+        self.secrets = Known::of(secrets);
         self
     }
 
@@ -291,6 +291,17 @@ impl Engine {
     /// backends, bound to that run's cancellation and deadline.
     pub fn with_capabilities(mut self, capabilities: Capabilities) -> Engine {
         self.capabilities = capabilities;
+        self
+    }
+
+    /// The same executor, whose backends send through these ways out and no other
+    /// (ADR 0015, "A policy before a send, and a checked send"): each backend of each
+    /// run is handed a sender that holds every address to the recipient the backend
+    /// declared, to this policy and to this check, before anything is handed over.
+    /// Without this nothing is sent: there is no sender, and the policy and the
+    /// check approve nothing.
+    pub fn with_ways(mut self, ways: Ways) -> Engine {
+        self.ways = ways;
         self
     }
 
@@ -416,7 +427,8 @@ const MAX_NAMINGS: u32 = 8;
 
 impl Executor for Engine {
     fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError> {
-        let prepared = self.prepare_from(call, self.contents.as_ref())?;
+        let taken = self.take()?;
+        let prepared = self.prepare_from(call, self.contents.as_ref(), &taken.snapshot)?;
         // A preparation carries the time it was made, beside its fingerprint and not
         // in it (ADR 0015): the clock is read once it is made, and for no refusal.
         Ok(prepared.made_at(self.clock.now_ms()))
@@ -433,7 +445,7 @@ impl Executor for Engine {
 
     fn request_id(&self, text: &str) -> Result<RequestId, CallError> {
         // Before the text is parsed: a refusal of text that is no id shows the text.
-        if self.secrets.redact(text) != text {
+        if self.secrets.now().redact(text) != text {
             return Err(Refusal::SecretInRequestId.into());
         }
         RequestId::parse(text).map_err(|why| Refusal::NotARequestId { why }.into())
@@ -526,7 +538,7 @@ impl Engine {
         let Some(id) = request.id() else {
             return Err(refused.into());
         };
-        if self.secrets.redact(id.as_str()) != id.as_str() {
+        if self.secrets.now().redact(id.as_str()) != id.as_str() {
             return Err(Refusal::SecretInRequestId.into());
         }
         match self.look_up(id, request.fingerprint())? {
@@ -555,7 +567,7 @@ impl Engine {
         // An id is written as it is, in a name of the store and in two records. One
         // that redaction would change holds a secret, and is refused without being
         // shown.
-        if self.secrets.redact(id.as_str()) != id.as_str() {
+        if self.secrets.now().redact(id.as_str()) != id.as_str() {
             return Err(Refusal::SecretInRequestId.into());
         }
         // The id is looked up here, before anything else: a repeated id answers with the
@@ -565,6 +577,12 @@ impl Engine {
         let answer = |found: Found| match found {
             Found::Nothing => None,
             Found::Same(earlier) => Some(Ok(Err(Answer::Repeat(earlier)))),
+            // The answer to a conflict names the id. A snapshot taken since the id
+            // was looked at, by this admission or by another call, may have brought
+            // a key the id holds (ADR 0015): it is looked for before the id is given.
+            Found::Other { .. } if self.secrets.now().redact(id.as_str()) != id.as_str() => {
+                Some(Err(Refusal::SecretInRequestId.into()))
+            }
             Found::Other { run } => Some(Err(CallError::Refused(Refusal::Conflict {
                 request: id.clone(),
                 run,
@@ -650,7 +668,7 @@ impl Engine {
         // end cannot be written is the run abandoned, by the guard it carries (ADR
         // 0008, "A run with nothing behind it"). Either way nothing waits for it, and
         // the caller is told what happened, which is not a judgement of the call.
-        let why = said(&self.secrets, &error.to_string());
+        let why = said(&self.secrets.now(), &error.to_string());
         let admitted = cell.lock().unwrap_or_else(PoisonError::into_inner).take();
         if let Some(admitted) = admitted {
             let message = format!(
@@ -679,9 +697,34 @@ pub(super) struct Admitted {
     /// The generation the run was admitted against, held until this is dropped.
     view: Arc<Pinned>,
     deadline: Option<Instant>,
+    /// What the run executes under (ADR 0015, "One snapshot of the config").
+    under: Held,
     /// Says that the executor is done with the run, when this is dropped. Executing
     /// the run takes it out, to drop it after everything else the run held.
     over: Option<Over>,
+}
+
+/// What a run was admitted under and executes under, whatever the config's source
+/// answers afterwards: the snapshot of the config, what was made of it for this run
+/// at its admission, and the secrets known then. It is kept in memory with the run
+/// and nowhere else.
+struct Held {
+    snapshot: Snapshot,
+    /// The executor's secrets as of the admission, the snapshot's among them: what
+    /// is taken out of everything the run writes.
+    secrets: Secrets,
+    /// The backends the snapshot made that the call resolved, by name; none for a
+    /// snapshot that holds no backends, whose run is handed those the executor was
+    /// built with.
+    handed: Option<Capabilities>,
+    /// The settings the run records.
+    settings: Vec<(String, Value)>,
+}
+
+/// A snapshot the executor has taken, with every secret it knows from then on.
+struct Taken {
+    snapshot: Snapshot,
+    secrets: Secrets,
 }
 
 /// What bounds a request from outside: the signal it is cancelled by, and its deadline
@@ -861,6 +904,16 @@ impl Engine {
         under: Option<&Under>,
     ) -> Result<Admitted, Stopped> {
         self.still_wanted(call.action(), bounded)?;
+        // The one snapshot of the config this admission is made under (ADR 0015): the
+        // call is prepared under it, every part is shown it, and the run executes
+        // under it. It is taken before anything is held, so a source that refuses, or
+        // panics, leaves nothing behind. Its secrets are known from here on.
+        let Taken { snapshot, secrets } = self.take()?;
+        // The id was looked at for a secret before this snapshot was taken: a key the
+        // snapshot brought is looked for now, before the id is written anywhere.
+        if asked.is_some_and(|(id, _)| secrets.redact(id.as_str()) != id.as_str()) {
+            return Err(CallError::Refused(Refusal::SecretInRequestId).into());
+        }
         let added = Arc::new(Added::default());
         // The generation the run is admitted against is held from here, before the
         // call is prepared, until the executor is done with the run: the inputs are
@@ -885,8 +938,8 @@ impl Engine {
             }))
         };
         let prepared = match &view {
-            Some(view) => self.prepare_from(call, view.as_ref()),
-            None => self.prepare_from(call, self.contents.as_ref()),
+            Some(view) => self.prepare_from(call, view.as_ref(), &snapshot),
+            None => self.prepare_from(call, self.contents.as_ref(), &snapshot),
         };
         let prepared = match (prepared, expected) {
             (Ok(prepared), _) => prepared,
@@ -920,6 +973,24 @@ impl Engine {
             .into());
         };
         let failed = |error| CallError::Store(StoreFailure::new(error));
+        // What the run will execute under is made of the snapshot here, before
+        // anything is taken or staged for the call (ADR 0015): the backends it is
+        // handed, by the name its call resolved, and the settings it records. A
+        // snapshot that resolved a model it holds no backend for is one no run is
+        // admitted under, and settings a record would not take are not left out: the
+        // first is a refusal, the second a failure, and neither makes a run.
+        let handed = snapshot.handed(&prepared).map_err(|missing| {
+            CallError::Refused(Refusal::NotReady {
+                action: prepared.action().to_owned(),
+                missing,
+            })
+        })?;
+        let settings = snapshot.settings(&prepared, &secrets).map_err(|failure| {
+            failure.into_error(
+                |why| part::sentence(&secrets, why),
+                |why| CallError::Config { why },
+            )
+        })?;
 
         // Admission: one publication makes the run, with its admission among its
         // names, and, for a request with an id, makes the id's record outside runs.
@@ -970,7 +1041,7 @@ impl Engine {
         // What the run keeps while it executes is made before the run is, and attached
         // to it in the store's table of open runs by the publication that makes it: so
         // whoever sees the run in a snapshot finds it there (ADR 0008, "Status").
-        let kept = Arc::new(Kept::new(self.clock.clone(), self.secrets.clone()));
+        let kept = Arc::new(Kept::new(self.clock.clone(), secrets.clone()));
         let live = Arc::new(LiveRun::new(kept.clone(), bounded.signal.clone(), added));
         let mut over = Over {
             place: None,
@@ -1015,12 +1086,12 @@ impl Engine {
                 prepared: &prepared,
                 now_ms: start_ms,
                 parent: parent.as_ref(),
+                snapshot: &snapshot,
             };
             let mut added = BTreeSet::new();
             for part in &self.parts {
                 let name = part.name();
-                let mut step =
-                    PartStep::new(&mut publication, &run, &self.secrets, name, &mut added);
+                let mut step = PartStep::new(&mut publication, &run, &secrets, name, &mut added);
                 match part.look(&asking, &mut step) {
                     Ok(()) => {}
                     Err(PartDeclined::Refused(refusal)) => {
@@ -1028,7 +1099,7 @@ impl Engine {
                             action: prepared.action().to_owned(),
                             part: name,
                             kind: refusal.kind(),
-                            why: part::sentence(&self.secrets, refusal.why()),
+                            why: part::sentence(&secrets, refusal.why()),
                         })
                         .into());
                     }
@@ -1038,7 +1109,7 @@ impl Engine {
                     // back, so it gets no second look for the id.
                     Err(PartDeclined::Failed(failure)) => {
                         let failed = failure.into_error(
-                            |why| part::sentence(&self.secrets, why),
+                            |why| part::sentence(&secrets, why),
                             |why| CallError::Part { part: name, why },
                         );
                         return Err(failed.into());
@@ -1066,7 +1137,7 @@ impl Engine {
                     &mut publication,
                     &generation,
                     self.contents.as_ref(),
-                    &self.secrets,
+                    &secrets,
                 );
                 match ledger.reserve(&reservation, &mut step) {
                     Ok(()) => {}
@@ -1082,7 +1153,7 @@ impl Engine {
                     // that is cleaned, and never a refusal.
                     Err(Declined::Failed(failure)) => {
                         let failed = failure.into_error(
-                            |why| part::sentence(&self.secrets, why),
+                            |why| part::sentence(&secrets, why),
                             |why| CallError::Ledger { why },
                         );
                         return Err(failed.into());
@@ -1175,8 +1246,55 @@ impl Engine {
             store: store.clone(),
             view,
             deadline: bounded.deadline,
+            under: Held {
+                snapshot,
+                secrets,
+                handed,
+                settings,
+            },
             over: Some(over),
         })
+    }
+
+    /// Asks the config's source for a snapshot, and takes its secrets in with those
+    /// the executor knows (ADR 0015, "One snapshot of the config"). A source that
+    /// refuses, and secrets that would be more than the executor keeps, are a
+    /// failure and no judgement of a call: nothing was looked at under a config. No
+    /// lock of the executor's is held while the source is asked.
+    fn take(&self) -> Result<Taken, CallError> {
+        let snapshot = self
+            .config
+            .snapshot()
+            .map_err(|refused| CallError::Config {
+                why: refused.said(&self.secrets.now()),
+            })?;
+        let Some(secrets) = self.secrets.with(snapshot.secrets()) else {
+            return Err(CallError::Config {
+                why: format!(
+                    "the config adds secrets that would make more than the {} an executor \
+                     keeps over every config it has read, and none is let go",
+                    super::SECRETS_KEPT_LIMIT
+                ),
+            });
+        };
+        // A recipient whose own origin is a secret could never be sent to: said
+        // here, once, and not by every send of every run. The secrets are known
+        // all the same.
+        if snapshot.names_a_secret_origin(&secrets) {
+            return Err(CallError::Config {
+                why: super::SECRET_ORIGIN_APPROVED.to_owned(),
+            });
+        }
+        Ok(Taken { snapshot, secrets })
+    }
+
+    /// This executor under one snapshot for good: what the executor in a run's
+    /// context is, so that a call from inside an action is prepared and admitted
+    /// under the snapshot of the run that made it, and the source is not asked.
+    fn under(&self, snapshot: &Snapshot) -> Engine {
+        let mut engine = self.clone();
+        engine.config = Arc::new(snapshot.clone());
+        engine
     }
 
     /// Refuses a request whose signal is set or whose deadline has passed, by this
@@ -1192,11 +1310,14 @@ impl Engine {
         Ok(())
     }
 
-    /// Prepares a call against this read of the store.
+    /// Prepares a call against this read of the store, under this snapshot of the
+    /// config: its digest, and its backends when it holds some, asked as they answer
+    /// prepare, so that one that is not ready is answered with its reason.
     fn prepare_from(
         &self,
         call: &Call,
         contents: &(dyn Contents + Send + Sync),
+        snapshot: &Snapshot,
     ) -> Result<PreparedCall, CallError> {
         let Some(action) = self.registry.get(call.action()) else {
             return Err(CallError::Refused(Refusal::UnknownAction {
@@ -1207,8 +1328,8 @@ impl Engine {
             action.descriptor(),
             call,
             contents,
-            self.backends.as_ref(),
-            self.config.digest(),
+            snapshot.backends().unwrap_or(self.backends.as_ref()),
+            snapshot.digest(),
             &self.limits,
         )
     }
@@ -1258,15 +1379,19 @@ impl Engine {
             store,
             view,
             deadline,
+            under: held,
             over: _,
         } = admitted;
+        // The run writes without the secrets known at its admission, those of its
+        // snapshot among them, from its first note to its record.
+        let secrets = &held.secrets;
         let request = request.as_ref();
         let failed = |error| CallError::Store(StoreFailure::new(error));
         // The context is the run's: its signal, its deadline, the generation it was
         // admitted against, and handles that the context binds to that signal and
         // that deadline itself.
         // The executor in it admits a call under this run (ADR 0008, "Nested calls").
-        let offer = Offer::of(live.clone(), self.secrets.clone(), family.offer.clone());
+        let offer = Offer::of(live.clone(), secrets.clone(), family.offer.clone());
         let offer = Arc::new(offer);
         let under = Under {
             run: run.clone(),
@@ -1282,10 +1407,33 @@ impl Engine {
         // The run's place for facts (ADR 0013): what another module notes of the run
         // while it executes. A refusal of a request goes with the run's other
         // refusals, in one order and within one bound.
-        let facts = RunFacts::of_a_run(self.secrets.clone(), {
+        let facts = RunFacts::of_a_run(secrets.clone(), {
             let live = live.clone();
             Box::new(move |refused| live.nest().refused(refused))
         });
+        // The settings the run ran under, which its snapshot gave at admission and
+        // which were held there to what a record takes, with these same secrets. One
+        // that is not taken all the same is not left out in silence: the action is
+        // not run, and the run ends as an error that says so.
+        let recorded = held
+            .settings
+            .iter()
+            .all(|(n, value)| facts.setting(n, value));
+        let unrecorded = "a setting the run was admitted with could not be noted for its \
+                          record, so its action was not run";
+        let unstarted = match (unstarted, recorded) {
+            (None, false) => Some(unrecorded),
+            (unstarted, _) => unstarted,
+        };
+        // The backends of the run's snapshot that its call resolved, and the ways out
+        // under that snapshot's policy, with its credentials: those of the admission,
+        // whatever the source answers now. A snapshot that holds neither leaves the
+        // run what the executor was built with.
+        let capabilities = match held.handed {
+            Some(handed) => handed,
+            None => self.capabilities.resolved_for(&prepared),
+        };
+        let ways = held.snapshot.ways(&self.ways);
         let context = Context::new(
             live.signal().clone(),
             deadline,
@@ -1294,10 +1442,18 @@ impl Engine {
             view,
             // The backends the call resolved, and no other (ADR 0009), with the
             // executor's clock for their deadline.
-            self.capabilities
-                .resolved_for(&prepared)
-                .timed_by(self.clock.clone()),
-            Arc::new(Nested::new(self.clone(), under, self.secrets.clone())),
+            capabilities
+                .timed_by(self.clock.clone())
+                // And a way out for each, checked, which notes what it hands over in
+                // the run's place for facts (ADR 0015).
+                .sending_through(ways, facts.clone()),
+            // The executor in the context is under the run's snapshot: what the run
+            // calls is prepared and admitted under it.
+            Arc::new(Nested::new(
+                self.under(&held.snapshot),
+                under,
+                secrets.clone(),
+            )),
         )
         .with_diagnostics(kept.clone())
         .recording(kept.clone(), self.requests, self.exchanges)
@@ -1332,7 +1488,7 @@ impl Engine {
         // The outcome is made here, from what the action handed back, with the secrets
         // taken out: what is reported holds none, as what is written holds none. And
         // each of its texts is cut to a length a record can hold ([`MESSAGE_LIMIT`]).
-        let said = |text: &str| said(&self.secrets, text);
+        let said = |text: &str| said(secrets, text);
         let error = |kind: &str, message: &str| Outcome::Error {
             kind: said(kind),
             message: said(message),
@@ -1343,7 +1499,7 @@ impl Engine {
             None => Outcome::Cancelled,
             Some(Ok(Ok(produced))) => {
                 verdict = produced.verdict().cloned();
-                match held_to_ports(&prepared, action.descriptor(), produced, &self.secrets) {
+                match held_to_ports(&prepared, action.descriptor(), produced, secrets) {
                     Ok(held) => {
                         outputs = held;
                         Outcome::Completed {
@@ -1420,7 +1576,7 @@ impl Engine {
                     inside: inside.clone(),
                     facts: noted.clone(),
                 },
-                &self.secrets,
+                secrets,
             )
         };
         let mut record = record_of(&outcome, &inside, &noted);

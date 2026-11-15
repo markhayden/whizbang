@@ -498,11 +498,22 @@ impl Loaded {
     /// of every value of the env file that could be a secret; then the credentials the
     /// config names, from the same env file. With no env file no variable is set.
     pub fn read(config: &Path, env: Option<&Path>) -> Result<Loaded, LoadRefused> {
+        Loaded::read_knowing(config, env, &Secrets::none())
+    }
+
+    /// [`Loaded::read`], with the config's reader told of these secrets beside the
+    /// values of the env file.
+    fn read_knowing(
+        config: &Path,
+        env: Option<&Path>,
+        earlier: &Secrets,
+    ) -> Result<Loaded, LoadRefused> {
         let env = match env {
             Some(path) => EnvFile::read(path).map_err(LoadRefused::Env)?,
             None => EnvFile::empty(),
         };
-        let config = Config::read(config, &env.secrets()).map_err(LoadRefused::Config)?;
+        let told = earlier.joined(&env.secrets());
+        let config = Config::read(config, &told).map_err(LoadRefused::Config)?;
         let credentials = env.credentials(&config).map_err(LoadRefused::Env)?;
         Ok(Loaded {
             config,
@@ -519,7 +530,20 @@ impl Loaded {
     /// said back, since nothing told its reader of one. A config that names no
     /// variable is read with no env file.
     pub fn of_files(config: &Path, env: Option<&Path>) -> Result<Loaded, LoadRefused> {
-        let loaded = Loaded::read(config, env)?;
+        Loaded::of_files_knowing(config, env, &Secrets::none())
+    }
+
+    /// [`Loaded::of_files`], for a reader that has read these files before and kept
+    /// the credentials of those readings: the config's reader is told of them beside
+    /// the values of the env file as it is now, so a config that holds a key which
+    /// was since taken out of the env file is refused whole
+    /// ([`ConfigRefused::HoldsSecret`]) and nothing of it is said back.
+    pub fn of_files_knowing(
+        config: &Path,
+        env: Option<&Path>,
+        earlier: &Secrets,
+    ) -> Result<Loaded, LoadRefused> {
+        let loaded = Loaded::read_knowing(config, env, earlier)?;
         if env.is_none() && !loaded.config.variables().is_empty() {
             return Err(LoadRefused::NoEnvFile);
         }

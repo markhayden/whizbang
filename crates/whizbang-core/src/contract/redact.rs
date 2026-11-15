@@ -605,6 +605,22 @@ impl Secrets {
         })
     }
 
+    /// How many secrets these are.
+    pub fn count(&self) -> usize {
+        self.values.len()
+    }
+
+    /// These secrets and those: every value of either, and nothing else. When these
+    /// hold every one of those already, they are what comes back, as they are.
+    pub fn joined(&self, more: &Secrets) -> Secrets {
+        if more.values.is_subset(&self.values) {
+            return self.clone();
+        }
+        let values: BTreeSet<String> = self.values.union(&more.values).cloned().collect();
+        let search = Some(Arc::new(Search::new(&values)));
+        Secrets { values, search }
+    }
+
     /// The bytes with every stretch that holds a secret, in any of its forms, replaced by
     /// [`REDACTED`]. The encoding does not matter: bytes that are not UTF-8, as a body cut
     /// in the middle of a character is not, are searched like any others. What comes

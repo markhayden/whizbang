@@ -2,8 +2,8 @@
 
 Status: accepted. Names ADR 0001 (the encoding its digest uses), ADR 0005 ("Redaction":
 the secrets a reader is told of), ADR 0006 ("Resolution": what a capability's default
-is), ADR 0007 (`ConfigSource`, which answers this digest once task C4 builds a source
-over the file) and ADR 0012 (an origin, an address, an account, a recipient and the
+is), ADR 0007 and ADR 0015 (`ConfigSource`, which the source over both files is) and
+ADR 0012 (an origin, an address, an account, a recipient and the
 classes of data, which the reader makes by that record's rules)
 Date: 2026-11-13
 Amended: 2026-11-13, inside checkpoint 1B, with the second part of task C1. Added: "The
@@ -32,6 +32,24 @@ time"; and under "Which settings a run records", the function that makes them an
 it refuses. Changed in "The env file": a variable the file does not set makes the
 backend that names it not ready, where this record had left that to the backend; and
 the paragraphs that said nothing was made of a config.
+Amended: 2026-11-14, a seventh note, with task I6 (ADR 0015, "One snapshot of the
+config"). Changed in "Kinds": a kind makes a backend (`Kind::make`), where it declared
+one, and its sentence is cleaned and cut where it is kept. In "What a config offers":
+a kind that makes a backend of another capability; what is offered holds the backends
+that were made; two backends that declare one model are settled; and a key read as a
+variable's name. In "Both files, each time": what a config read with no secrets
+protects, the order of the refusals, and what still waits. Under "Which settings a run
+records": a host written in capitals; a config is a snapshot's `Settings`.
+Amended: 2026-11-14, an eighth note, with the rest of task C4. Added: "The source over
+both files". Decided in "The digest": it covers nothing of the env file, and why.
+Changed: `Loaded::of_files` and `Offers::of` each have a second form for a reader that
+kept the credentials of earlier readings; and the paragraphs that said no source read
+a config for an executor.
+Amended: 2026-11-14, a ninth note, with task C5. Added in "The source over both files":
+the cap, the policy and the settings in the snapshot, and what an upstream that holds
+a secret meets. Changed in "What the file holds" and "Which settings a run records": a
+backend's name and a setting's key are held together to the name a record takes, where
+this record let a config be read whose runs could not record their settings.
 Spec: section 4, "Backends" (config, resolution, credentials); section 6, "Spend";
 section 10, "Egress"
 
@@ -64,17 +82,18 @@ a key pasted where it does not belong.
 
 The code is `crates/whizbang-core/src/config/`; its tests are
 `crates/whizbang-core/tests/it/config/` (`file`, `digest`, `env`, `examples`, `roster`,
-`files`, `settings`), and a test named below is in that folder. No command takes a
-config at this head, and no executor is built over one. What is made from a config is
-what needs no snapshot of it: what it offers ("What a config offers"), both files read
-again on each ask ("Both files, each time"), and the settings a run records. The source
-an executor asks, which answers a snapshot, and the cap and the policy read from it are
-the rest of tasks C4 and C5 of the plan, and wait for the tasks they stand on.
+`files`, `settings`, `source`), and a test named below is in that folder. No command
+takes a config at this head. What is made from a config is what a snapshot of it holds
+(ADR 0015, "One snapshot of the config"): what it offers ("What a config offers"), with
+the backends made, and the settings a run records; both files are read again on each
+ask ("Both files, each time"); and the source an executor asks makes a snapshot of them
+("The source over both files"), with the cap, the policy and the settings the config
+gives.
 
 This record was brought in two parts, because the task came to more than one pull
 request's worth: first the file, its shape and how it is read; then "The digest". The
-executor is still built with the digest of no bytes until task C4 gives it a source over
-the file.
+binary's executor is still built with the digest of no bytes until task W1 gives it the
+source over the files.
 
 ### Where the file is
 
@@ -146,7 +165,23 @@ A backend has these keys and no others:
 | `provider` | The service it is reached through | A name |
 | `url` | Its address | An address as ADR 0012 has one, and, the file's own rule, with no query |
 | `key_env`, `token_env` | The variable its key, or its token, is in | A variable's name |
-| `settings` | A table of the kind's own settings | 32 at most; a key is a name without `-`; a value is a plain text of 1,024 characters at most, a whole number, or true or false |
+| `settings` | A table of the kind's own settings | 32 at most; a key is a name without `-`; a value is a plain text of 1,024 characters at most, a whole number, or true or false; and the name the setting is recorded under, `backends.<capability>.<name>.settings.<key>`, is 128 characters at most |
+
+**A backend's name and a setting's key are held together to what a record takes.** A
+run records a setting under `backends.<capability>.<name>.settings.<key>` ("Which
+settings a run records"), and a record takes a name of 128 characters
+(`SETTING_NAME_LIMIT`, ADR 0013). A name and a key of 64 each would come to 152 for
+`fill`, 153 for `judge` and 155 for `segment`. So a setting whose recorded name is
+longer than the record's bound is refused where the config is read, naming the key and
+saying by how many characters the two are too long: a name and a key may be 104
+together for `fill`, 103 for `judge` and 101 for `segment`. The reader and the function
+that makes a run's settings make the name with one function and hold it to the
+record's one constant, so the two cannot part; the short form's backend is named
+`default`, which every key fits
+(`settings::the_longest_names_a_config_can_hold_are_recorded_and_one_character_more_is_refused_where_the_config_is_read`).
+The record's bound stands because it is the record's: `run/3` states it in its schema
+and its ADR, a record is read by other tools than this one, and a name that long is
+two names of 64 characters, which nothing needs.
 
 What a kind makes of `model`, `provider`, `url` and `settings`, and which it requires,
 is the kind's, when a kind exists (task C4). A setting's value is never a number with a
@@ -490,11 +525,44 @@ What follows from hashing what was read:
   to the same bytes (`digest::a_change_to_any_setting_changes_the_digest`,
   `digest::where_one_text_ends_and_the_next_begins_is_in_the_digest`).
 - **No secret is in it.** A variable is in the digest by its name. Its value is in no
-  config, so a key that is rotated under the same variable changes no digest; what a
-  changed key does to a call is task C5's
+  config, so a key that is rotated under the same variable changes no digest
   (`digest::a_variable_is_in_the_digest_by_its_name_and_a_value_by_nothing`). A key the
   reader was not told of, written as a model or into a setting's text, is read like any
   text and hashed with the rest; the digest does not show it.
+- **Nothing of the env file is in it, and that stands.** Task I6 pinned what follows
+  and left the question to task C4: a call prepared before a key is rotated is admitted
+  after it, with the new key and no `Stale::Config`
+  (`snapshot::known_a_key_rotated_in_the_env_file_gives_a_new_backend_under_the_same_digest_and_no_stale_config`,
+  in `tests/it/contract/`, left as it was). Decided with the source over the files, for
+  four reasons:
+  - **A key is not a setting.** The digest says which settings a run was made under,
+    and a prepared call's fingerprint holds what was asked and what answers it: the
+    model, its version, its bound. A rotated key changes none of those. A caller told
+    that its preparation is stale because a key changed would prepare the same call
+    again and be shown the same thing.
+  - **The digest is written down.** It is in every run's record (`asked.config`) and
+    in every prepared call a caller keeps, which leave the machine. Whatever of the
+    env file went into it could be tested against it by anyone who holds a record: a
+    guess at a key, hashed with the config that is in the same record's settings,
+    either matches or does not. A long random key survives that; the reader takes a
+    value of 8 bytes, and a short token would not. A hash with a secret of the
+    machine's own mixed in would close that, and would give two machines with one
+    config two digests, which "The digest" turned down for the file's bytes.
+  - **What is in the env file and is not a key is in the config already.** Which
+    variables are named is hashed, by name. The one other thing a call depends on is
+    whether a variable is set, which is whether its backend is ready; and that is
+    asked again at every admission, of the files as they are then. A call prepared
+    while its variable was set and admitted after it was taken out is refused, as
+    stale by its model when the request says what it expects and as not ready when it
+    does not, under the same digest and with no run
+    (`source::a_variable_taken_out_of_the_env_file_after_a_call_was_prepared_refuses_the_call_under_the_same_digest`).
+  - **Nothing runs with a stale key.** A backend is made for each snapshot, with the
+    key of that reading, and a run is handed the backend of the snapshot it was
+    admitted under; so the run after a rotation sends the new key, with or without a
+    change of digest.
+
+  What this costs: a record does not say which key a run used, nor that one was
+  rotated between two runs.
 - **An origin is hashed as an origin writes itself** (ADR 0012): the scheme and the
   host in lower case, and the port only when it is not the scheme's own. A backend's
   address is its origin so written and then its path as the file gave it. So
@@ -510,10 +578,11 @@ is a new kind, `config/2`, and every digest changes with it.
 
 ### Which settings a run records
 
-`asked.settings` of a run record (ADR 0005) is decided here and filled by task C5; no
-code at this head fills it. `Config::settings_of` makes them, from the names of the
-backends a call resolved and the executor's secrets, and nothing calls it yet. A run
-records, as names and values sorted by name:
+`asked.settings` of a run record (ADR 0005) is decided here. `Config::settings_of` makes
+them, from the names of the backends a call resolved and the executor's secrets. A
+config is the `Settings` of a snapshot (ADR 0015): a run admitted under a snapshot that
+was given one records them, and the source over both files gives every snapshot its
+config. A run records, as names and values sorted by name:
 
 - for each backend its call resolved, `backends.<capability>.<name>.kind`, and `.model`,
   `.provider` and `.url` where the file gives them, and each of its settings as
@@ -525,7 +594,8 @@ resolve, or the `egress` table: where data went is the record's `egress` group, 
 config's digest in `asked.config` stands for the rest
 (`settings::the_settings_of_a_run_are_the_resolved_backends_and_the_cap_sorted_by_name`).
 A `url` is the address as the config keeps it: its origin as an origin writes itself,
-and its path as the file gave it.
+and its path as the file gave it. A key the reader was not told of, written as the host
+in capitals, is kept in lower case, which redaction does not find.
 
 **Each pair is one a record takes** (ADR 0013, "A setting"), made as a record makes a
 setting: a text has the secrets taken out while it is whole and is then cut at the 256
@@ -539,9 +609,12 @@ What a record would not take is never left out in silence: the whole is refused
 - a whole number whose digits, as they are written, hold a secret, the cap among them;
 - a name that holds a secret, also across a key of the file and a word the name is made
   with, which is not shown;
-- a name longer than the 128 characters a record takes. A capability's name, a
-  backend's name of 64 characters and a setting's key of 64 come to more: the config's
-  reader takes both, and the two bounds do not yet agree (`docs/carry-over.md`).
+- a name longer than the 128 characters a record takes. No config that was read gives
+  one, since the reader refuses a backend's name and a setting's key that are too long
+  together ("What the file holds"); the refusal is kept, and held by a test inside
+  `config/settings.rs` on a config made by hand
+  (`tests::a_name_longer_than_a_record_takes_is_refused_and_shown_cut_should_a_config_ever_hold_one`,
+  which is what the test above held of such a name until the reader refused it).
 
 A backend that is named and is not one the config gives is refused without its name,
 which did not come from the config
@@ -561,12 +634,19 @@ shown (`roster::a_kind_is_registered_once_by_a_name_and_a_build_has_no_more_than
 The core names no kind, and the shipped binary registers none: no network client is
 built at this checkpoint. The test kit has a fake (`whizbang_testkit::kinds::FakeKind`).
 
-A kind is shown one backend at a time (`Kind::declare`, of a `Table`): the capability,
-the name, the backend's table, and the credentials that table names. It answers what
-the backend declares (ADR 0006: its model and features; ADR 0010: its price; ADR 0012:
-who receives its requests), or why it does not take the table (`KindRefused`): a
-sentence that is the kind's own and fixed, or the egress types' refusal of a
-credential. Neither has room for a value of a config or of an env file.
+A kind is shown one backend at a time (`Kind::make`, of a `Table`): the capability,
+the name, the backend's table, and the credentials that table names. It makes the
+backend (`Made`: a segmenter, a filler or a judge), which says of itself what it
+declares (ADR 0006: its model and features; ADR 0010: its price; ADR 0012: who
+receives its requests); or it answers why it does not take the table (`KindRefused`): a
+sentence that is the kind's own, or the egress types' refusal of a credential. Both
+are meant to be fixed words: the sentence is a constant in the kind's code. The type
+does not enforce that against a kind that leaks a made text; what a config offers
+(`Offers::of`) replaces a sentence that holds a secret of that config's credentials
+with fixed words and cuts it. The backend's own key is among those secrets: the whole sentence is looked at first, one that holds a
+secret is replaced with `KIND_SENTENCE_WITHHELD`, and any other is cut at 256
+characters (`KIND_SENTENCE_LIMIT`)
+(`roster::a_kinds_sentence_that_holds_its_backends_key_is_replaced_with_fixed_words_and_a_long_one_is_cut`).
 
 **A credential leaves a kind bound to one origin.** `KeyValue::carried_to` makes the
 `Credential` of ADR 0012 from a key, the address the kind sends to, and a header's name
@@ -582,9 +662,11 @@ header may not, as a letter outside ASCII, is the egress type's refusal, and the
 backend is not ready
 (`roster::a_credential_that_cannot_be_carried_makes_its_backend_not_ready_and_shows_nothing`).
 
-A kind declares a backend and does not yet make one: what answers a request, built by
-the same call so that a model a call resolved is always held, comes with the snapshot
-(plan 1B, task I6).
+A kind makes the backend and does not declare it apart: what a config offers of a
+backend is what the backend that was made declares, so a model a call resolved is
+always held (ADR 0015, "One snapshot of the config"). A backend is made each time a
+config is offered, from the table and from nothing else: nothing is sent, and nothing
+is read from a disk.
 
 ### What a config offers
 
@@ -610,21 +692,31 @@ file's default; the short form is one backend named `default`, which is the defa
   - **it names a variable the env file does not set.** This record had left that to the
     backend; it is decided here, for every kind. The reason names the variable, the
     key's first when neither is set, and its kind is not asked
-    (`roster::a_variable_the_env_file_does_not_set_makes_its_backend_not_ready_naming_the_variable`).
+    (`roster::a_variable_the_env_file_does_not_set_makes_its_backend_not_ready_naming_the_variable`);
+  - **its kind made a backend of another capability** than the one its table is under
+    (`roster::a_kind_that_makes_a_backend_of_another_capability_makes_its_backend_not_ready`).
 - **A reason is fixed words, the capability's name and, for a variable, its name.** It
   holds no backend's name, no kind's name, no setting and no value: a variable's name
-  kept the rule of one and was looked at for a secret when the config was read.
+  kept the rule of one and was looked at for a secret when the config was read. A key
+  that is read as a variable's name ("What the reader does not do") is said as one.
   `Offers` prints how many backends are ready and how many are not.
+- **What is offered holds each ready backend, made,** under its capability and its
+  name, and is what a snapshot holds as its backends (`Offered`, ADR 0015)
+  (`roster::what_a_config_offers_holds_each_ready_backend_made_under_its_name_and_no_other`).
+  Two offers are equal when they offer the same; the backends they made are not
+  compared, since a backend has no equality and each reading makes its own
+  (`roster::two_offers_are_equal_when_they_offer_the_same_whatever_backends_they_made`).
 - **The roster alone knows only the ready ones.** Asked without the offers around it,
   it tells a call that chose a backend that is not ready that none of that name is
   offered, and a call that chose none where the default is not ready that there is no
   default. Neither is answered by another backend; the reason is the offers' to give.
 
-Two backends of one capability that declare one model are both offered, and an
-executor that picks a backend by its model would not tell them apart: that is the
-snapshot's to settle (task I6; the row is on `docs/carry-over.md`;
-`roster::two_backends_of_one_capability_that_declare_one_model_are_both_offered` pins
-it).
+Two backends of one capability that declare one model are both offered
+(`roster::two_backends_of_one_capability_that_declare_one_model_are_both_offered`). A
+run under a snapshot is handed its backend by the name its call resolved, never by its
+model, so the two are told apart (ADR 0015;
+`snapshot::two_backends_of_one_capability_that_declare_one_model_are_told_apart_by_name`,
+in `tests/it/contract/`).
 
 ### Both files, each time
 
@@ -639,19 +731,171 @@ hands out, with the secrets of that reading
 **With no env file, a config that names a variable is refused** (`LoadRefused::NoEnvFile`),
 in a fixed sentence that says the env file is needed. Nothing is protected without one:
 a key pasted into such a config would be read, and said back, since nothing told its
-reader of one. A config that names no variable is read with no env file. `Loaded::read`
+reader of one. A config that names no variable is read with no env file. Such a config
+is read with no secrets: a key pasted into it is not known, and is kept out of what a
+run records only if the executor's secrets hold it. A config that is itself refused is
+refused as `Loaded::read` refuses it, before this. `Loaded::read`
 is as it was, and reads such a config with every variable missing: the refusal is this
 reader's
 (`files::with_no_env_file_a_config_that_names_a_variable_is_refused_and_one_that_names_none_is_read`).
 
-**What is not built here, and waits:** the `ConfigSource` over this function, which
-answers a snapshot (the roster and the backends it is of, the cap, the policy, the
-secrets and the settings) and a refusal; a call refused as stale when the config
-changed between its preparation and its admission; a run that goes on under the
-snapshot it was admitted with; and the secrets of an earlier reading kept for as long
-as the executor lives. Each needs the snapshot (task I6). The dispatch policy read
-from `egress` needs the gate (tasks I5 and E2), and the cap of one call, the admission
-part that holds a call to it (task S3).
+**For a reader that kept what it read before,** `Loaded::of_files_knowing` takes the
+secrets of earlier readings too, and tells the config's reader of them beside the
+values of the env file as it is now. The source over both files is that reader.
+
+### The source over both files
+
+`Files` (`config/source.rs`; tests `source::`, each through an executor a test builds
+over the source) is the `ConfigSource` of ADR 0015 over a config file, its env file
+and the kinds of a build. It is made with the two paths and the kinds, and reads
+nothing until it is asked. Each time it is asked it reads both files again, whole
+(`Loaded::of_files_knowing`), and answers one snapshot of what they say, or a refusal.
+
+**What the snapshot holds:**
+
+| Of the snapshot | Is |
+|---|---|
+| The digest | The config's ("The digest") |
+| The backends | What the config offers with the build's kinds ("What a config offers"): each ready backend made, each that is not with its reason |
+| The secrets | Every credential the config names that has a value, of that reading, given in one set (`Snapshot::with_secrets` replaces what a snapshot held, so they are given once) |
+| The cap of one call | `spend.call_cap_usd`, in millionths, when the file gives one; none when it does not |
+| The policy | What the `egress` table's approvals make (`DispatchPolicy::from_approvals`, ADR 0019). Always given: a file that names no recipient gives the policy that approves nothing, and the executor's own policy is never used for a run under this source |
+| What makes a run's settings | The config ("Which settings a run records") |
+
+The snapshot holds no credential for a recipient (`Snapshot::with_credential`): a kind
+makes a `Credential` and has no way to hand it to the snapshot ("What waits").
+
+- **A roster resolves as ADR 0006 says, through the executor.** With two backends of
+  one capability and a default, a call that names none is prepared against the
+  default and its run is handed the default; one that names the other is handed the
+  other; a name the file does not give is answered by nothing
+  (`source::two_backends_of_one_capability_and_a_default_resolve_a_choice_and_the_default_over_the_files`).
+  A backend whose kind the build does not have is not ready with that reason, as the
+  default and as a call's choice, and a backend beside it that is ready and declares
+  the same model answers neither
+  (`source::a_backend_whose_kind_this_build_does_not_have_is_not_ready_with_the_reason_and_never_another`).
+- **A backend changed in the file between a preparation and its admission is
+  `Stale::Config`,** on the same executor, and the call prepared again is admitted
+  (`source::a_backend_changed_in_the_file_between_prepare_and_admission_is_a_stale_config`).
+- **A run goes on under the snapshot it was admitted with.** A run that rewrites the
+  config while it executes is still answered by the backend made at its admission,
+  and so is the run it calls, which is prepared under the first config's digest; the
+  files are read once for the two. The next run is admitted under the file as it is
+  then
+  (`source::a_run_that_was_admitted_goes_on_under_its_snapshot_though_the_file_changed_while_it_ran`).
+- **A file that cannot be read as what it is fails the call, in fixed words.** The
+  source's refusal is a `SourceRefused` (ADR 0015), so the call fails as
+  `CallError::Config` with no run, a request's id is not taken, and the call after the
+  file is put right is admitted
+  (`source::a_config_that_does_not_parse_fails_the_next_call_in_fixed_words_with_no_run_and_the_call_after_it_is_put_right_is_admitted`,
+  `source::an_env_file_that_cannot_be_read_as_one_fails_the_next_call_and_put_right_it_is_admitted`,
+  `source::a_source_that_names_no_env_file_refuses_a_config_that_names_a_variable`).
+  There is one sentence for each kind of refusal of either reader
+  (`SourceRefused::from` a `LoadRefused`). It names the file as "the config" or "the
+  env file" and holds nothing a refusal took from a file or from the system: no key,
+  no variable's name, no number of a line, no limit and no path
+  (`source::every_refusal_of_either_file_is_said_in_fixed_words_that_quote_nothing_of_it`).
+- **The key is named by the reader, to whoever loads the config.** `Files::load` reads
+  both files as the source does and answers the readers' own refusal ("What a refusal
+  says"): the key from the top of the file, escaped and cut, or the line of the env
+  file, and no path. A command that loads a config shows that; a call is told the
+  fixed sentence. Task C4's "Done when" asked that the call name the key; ADR 0015
+  ruled that a source's reason is fixed words, and the task's words were changed with
+  this.
+- **The source keeps the credentials of every reading,** for as long as it lives, as
+  the executor does (ADR 0015), and may be told of secrets from the start
+  (`Files::knowing`). It reads a config with them: a config that holds a key which
+  was since rotated out of the env file is refused whole as `HoldsSecret`, where the
+  env file as it is now would have let it be read and said back. And a kind is handed
+  them, and its sentence is looked at with them (`Offers::knowing`): a kind lives
+  across readings, and a sentence that holds a key it was shown before is replaced
+  (`source::a_config_that_holds_a_key_of_an_earlier_reading_is_not_used_and_a_kinds_sentence_that_holds_one_is_not_shown`).
+  So the reason a call is given for a backend that is not ready holds no key the
+  source has read, where it was cleaned with the keys of one reading.
+- **It keeps 4,096 at most** (`SECRETS_KEPT_LIMIT`, the executor's bound). A reading
+  that would add one over that is refused in fixed words, nothing of it is kept and
+  none is let go; the bound is on what readings add, so a source told of more from
+  the start answers a reading that adds none
+  (`source::a_reading_that_would_bring_more_keys_than_a_source_keeps_is_refused_and_none_is_let_go`).
+- **It prints** whether an env file is named, how many kinds it holds and how many
+  secrets it knows: no path and no key (`source::a_source_prints_no_path_and_no_key`).
+
+What follows is task C5's, each on one executor across a change of the file.
+
+- **A cap lowered in the file is the cap the next admission is shown.** The executor
+  holds no call to a cap (ADR 0015): the part that does is task S3's, which is not
+  built. With a part of the test's own in its place, which refuses a call whose
+  estimate is over the cap of the snapshot it is shown, a call of 1.5 dollars is
+  admitted under a cap of 2, refused with no run once the file says 1, and admitted
+  again under 1.5 and under no cap
+  (`source::a_cap_lowered_in_the_config_is_the_cap_the_next_admission_is_held_to_on_one_executor`).
+- **A recipient taken out of the `egress` table is refused on the next call.** A run
+  whose backend sends a prompt is let through while the table approves its recipient
+  for prompts; once the recipient is gone from the file, and again once it is there
+  for another class only, the next run's send is refused before anything is handed
+  over, and its record says so. The executor in that test was built with a policy
+  that approves the recipient for everything: the config's stands in its place
+  (`source::a_recipient_taken_out_of_the_egress_table_is_refused_on_the_next_call_on_one_executor`).
+- **A credential rotated in the env file is the one the next call's backend is
+  handed,** by a call that was prepared before the rotation and is not stale ("The
+  digest"). Both keys are taken out of everything written after it: the run's
+  journal, a diagnostic it writes and its record, and each is refused in a request's
+  id
+  (`source::a_credential_rotated_in_the_env_file_is_the_one_the_next_calls_backend_is_handed_and_both_are_taken_out_of_what_is_written_after`).
+- **A run's `asked.settings` are what "Which settings a run records" says,** of the
+  backend its call resolved and the cap, and a setting changed in the file is what
+  the next run records. No credential, no start of one, no name of a variable, and
+  nothing of the `egress` table is in any byte the store holds after those runs
+  (`source::a_runs_settings_are_those_of_the_backend_its_call_resolved_and_the_cap_and_hold_no_credential_and_no_variables_name`).
+  Each of the four tests reads a made-up key from its env file and ends by looking
+  for it, and for its first 14 characters, in every file of the store.
+- **A setting a record would not take fails the admission.** What
+  `Config::settings_of` refuses is `CallError::Config` in that refusal's words, with
+  no run and the request's id not taken: a cap whose millionths are the digits of a
+  key, written with a decimal point so that the reader does not find it ("What the
+  reader does not do"), names the setting and not the number; with the cap put
+  right the same request runs
+  (`source::a_setting_a_record_would_not_take_fails_the_admission_naming_the_setting_and_never_its_value`).
+- **An upstream that holds a secret is refused where the config is read, for every
+  secret the source knows.** The config's reader looks for the secrets it was told
+  of over the file's bytes and makes each origin with them (ADR 0012), and the
+  source tells it of every credential it has read and of those it was told of from
+  the start (`Files::knowing`); such a config is `HoldsSecret`, and the call fails
+  with no run. ADR 0015 had left an upstream to
+  each send, where it is still refused for a secret the executor knows and the
+  source does not: an executor and its source are to be given the same secrets, by
+  whatever builds them (task W1)
+  (`source::an_upstream_that_holds_a_secret_the_source_knows_is_refused_where_the_config_is_read`).
+
+**Limits, each stated.**
+
+- **The secrets a source keeps are in memory.** A new process knows the env file as it
+  is and nothing before it: a config that holds a key rotated out before the process
+  started is read.
+- **Only credentials are kept:** the values of variables the config named at some
+  reading. A value of the env file under a name no backend used is known to the
+  config's reader while it is in the file, and to nobody after it is taken out.
+- **Two asks at once each read the files for themselves.** One that began before the
+  other kept its credentials reads the config without them; the one after reads with
+  them.
+- **The two files are read one after the other,** the env file first, and not as
+  one thing: an env file written again after it was read is not seen by that ask.
+- **Every ask reads both files and makes every backend,** for a preparation as for an
+  admission (ADR 0015). Nothing is kept from one ask for the next but the secrets.
+
+**What waits.**
+
+- **The part that holds a call to the cap** (task S3). The snapshot carries the cap;
+  nothing but a test's part reads it.
+- **A recipient's credential in the snapshot.** The executor attaches a credential
+  only from its ways (ADR 0015, "A policy before a send, and a checked send"), and a
+  snapshot's ways are given one by `Snapshot::with_credential`. A kind makes the
+  `Credential` (`KeyValue::carried_to`) and hands back a backend and nothing else, so
+  the source has none to give: a backend made from a config sends with no credential
+  until a kind can hand one over. No kind sends anything at this checkpoint; it is
+  for the first kind that does (`docs/carry-over.md`).
+- **The binary's executor built over this source** (task W1), with the same secrets
+  given to both.
 
 ### What the reader does not do
 

@@ -9,6 +9,11 @@ streamed file that was removed or replaced and that a crash brings back is cut a
 other, which the first form restored whole. Added under "Limits": how the try opens
 its file. Added under "The shim": removing a link, which the shim followed. Words: rule 2 says who removes a file that is not whole, and which tries
 are bounded by a thread and a timeout.
+Amended: 2026-11-14, a second time, with a pull request of its own. Added under "The
+shim": a name that is not durable follows a rename of its folder, which the shim did
+not do, so that a file made in a folder that was then renamed survived a crash that
+should have lost it; and a file whose sync never ran, removed or replaced and brought
+back by a crash, comes back cut to half.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -231,6 +236,57 @@ the removal makes the link again
 (`streams::a_removed_link_that_a_crash_brings_back_is_the_link_again_and_its_target_is_never_touched`).
 The shim makes no link and models nothing else of one.
 
+**A name that is not durable follows a rename of its folder.** A name that no sync
+has made durable is a name of the folder it is in, whatever that folder is called.
+The shim kept such a name by the path it was made under, so when the folder was
+renamed and the rename made durable, a crash looked for the name under the old path,
+found nothing, and left the file in the renamed folder: no sweep could show a folder
+renamed into place without its files. Now, when a folder is renamed, every change
+inside it that is not yet durable is known by its new path from then on: a new file, a
+new folder, a removal, a rename, at any depth. The tests are in
+`crates/whizbang-testkit/tests/it/renamed.rs`, named `renamed::…`, and each sequence
+is also run on the real file system with no crash, where what is left is what the
+shim leaves when a crash keeps every name.
+
+- **A sync of the folder under its new name makes the name durable,** as a sync under
+  its old name before the rename does. A sync of the parent makes the rename durable
+  and nothing inside the folder. So with a file made in `a`, `a` renamed to `b`, and
+  a crash that loses every name not durable: nothing synced, `a` is there without the
+  file; `a` synced before, or `b` after, the file is in `a`; the parent synced, `b`
+  is there without the file; the parent and either of the others, the file is in `b`
+  (`renamed::a_file_in_a_renamed_folder_is_lost_under_its_new_name_unless_its_folder_was_synced`).
+- **A crash loses the name, or keeps it, as a name of the folder as it is then
+  called:** the folder that `Lost::Subset` counts and the name that `Lost::Names`
+  counts are the new ones, and `ShimFs::crash_named` gives the new path
+  (`renamed::a_file_in_a_renamed_folder_fares_by_its_new_name_under_each_way_of_losing_names`).
+- **A crash that takes the rename back takes the names back with it:** they are
+  lost, or kept, under the folder's old name. The file is never left under the new
+  name of a folder that went back. Only what followed the rename goes back with it:
+  a change that was already of a name inside the folder the rename replaced stays
+  that folder's (`renamed::a_rename_taken_back_takes_back_only_what_followed_it`).
+- **At any depth and through any number of renames**
+  (`renamed::a_file_two_folders_down_follows_the_rename_of_the_folder_at_the_top`,
+  `renamed::a_file_follows_a_folder_that_is_renamed_twice`,
+  `renamed::a_file_follows_a_folder_renamed_over_an_empty_folder`), and for a removal
+  and a rename inside the folder as for a new file: a removed folder that a crash
+  brings back comes back with what was in it, under the new name
+  (`renamed::a_rename_and_a_removal_inside_a_folder_follow_the_folders_rename`).
+- **Content follows as names do.** A file written whole and a streamed file in one
+  renamed folder each fare by their own rule, the streamed one by the chosen `Tail`
+  (`renamed::a_whole_file_and_a_streamed_file_in_one_renamed_folder_each_fare_by_their_own_rule`);
+  a file whose sync never ran is cut under its new name
+  (`renamed::a_file_whose_sync_was_refused_is_still_cut_after_its_folder_is_renamed`).
+- **The folder's own name does not move.** It is a name in the folder's parent. So
+  a file that is itself renamed, as the store publishes one, fares as before
+  (`renamed::a_renamed_file_keeps_the_fate_of_its_own_names_as_before`), and no
+  crash sweep of the store changed.
+
+**A file whose sync never ran, brought back.** A file whose `write_new` was refused
+its sync, then removed, by itself or with its folder, or replaced by a rename over
+it, comes back cut to half when a crash undoes that, as the same file is cut when it
+stays; and a whole file renamed over such a file is not cut for the one it replaced
+(`renamed::a_file_whose_sync_was_refused_comes_back_cut_to_half_when_a_crash_undoes_its_removal`).
+
 ### Limits, each stated
 
 - **The shim's outcomes are four of many.** A real disk may keep all of what was never
@@ -239,6 +295,14 @@ The shim makes no link and models nothing else of one.
   choice, all, none, or the full length with the unsynced part zeroed; it does not
   show other bytes there. A caller that decides by a file's length after a crash is
   exposed only under the zeroed choice.
+- **A streamed file is not written through a link to its folder,** in a test: the
+  shim knows the file by the path it was given, removing the link forgets the file,
+  and a crash then leaves all of it, whatever tail was chosen. The shim's description
+  says so (`docs/carry-over.md`).
+- **Names inside the folder a rename replaced.** A rename over an empty folder
+  replaces it. A change inside that folder that was not yet durable when it was
+  replaced (a file made in it and removed again) is kept by its path, which is now
+  the path of the folder that took its place. No test here makes one.
 - **The try opens its file as `share` does:** a link is followed and a pipe at the
   name would make the opening wait. A lock file is made by whizbang and never
   replaced (ADR 0017).

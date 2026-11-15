@@ -194,6 +194,54 @@ fn a_refusal_of_a_request_is_in_the_runs_refusals_within_their_bound() {
 }
 
 #[test]
+fn an_origin_that_holds_a_secret_is_not_listed_and_refused_sends_take_half_the_list() {
+    let world = World::new();
+    let host = "keyhost-0123456789abcdef.example.com";
+    let seen: Arc<Mutex<Vec<bool>>> = Arc::default();
+    let notes = {
+        let seen = seen.clone();
+        action("notes", Vec::new(), move |_, context| {
+            let facts = context.facts();
+            // An origin is written whole: one that holds a secret is not taken,
+            // sent or refused.
+            let secret = origin(&format!("https://{host}"));
+            let mut taken = vec![
+                facts.went(&secret, None, prompts(), Handed::Sent),
+                facts.went(&secret, None, prompts(), Handed::Refused),
+            ];
+            // Of 65 refused sends, each to another origin, 64 are taken; one that is
+            // listed already still gains classes; and a send is taken after them.
+            for at in 0..65 {
+                let to = origin(&format!("https://host-{at}.example.org"));
+                taken.push(facts.went(&to, None, prompts(), Handed::Refused));
+            }
+            let first = origin("https://host-0.example.org");
+            taken.push(facts.went(&first, None, Classes::all(), Handed::Refused));
+            taken.push(facts.went(&first, None, prompts(), Handed::Sent));
+            seen.lock().unwrap().extend(taken);
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(
+        &world,
+        roster(None, None, None),
+        Capabilities::none(),
+        vec![notes],
+    )
+    .with_secrets(Secrets::new([host.to_owned()]).unwrap());
+    let finished = executor.submit(&Call::new("notes")).unwrap();
+    let mut expected = vec![false, false];
+    expected.extend([true; 64]);
+    expected.extend([false, true, true]);
+    assert_eq!(*seen.lock().unwrap(), expected);
+    let (record, names) = stored(&world, finished.run());
+    assert_eq!(record.egress().len(), 65);
+    assert_eq!(record.egress()[0].classes(), Classes::all());
+    let written = String::from_utf8(names["record"].clone()).unwrap();
+    assert!(!written.contains("keyhost"), "{written}");
+}
+
+#[test]
 fn an_account_and_a_settings_value_are_redacted_when_they_are_noted() {
     let world = World::new();
     let key = made_up_key("Z");
@@ -300,15 +348,20 @@ fn fills_every_list(requests: usize) -> Arc<dyn whizbang_core::contract::Action>
             }
             let label = "a".repeat(63);
             let host = |at: usize| format!("{label}.{label}.{label}.{at:03}{}", "b".repeat(58));
+            // Half the list is all that refused sends may take, and what was sent
+            // may take all that is left.
             for at in 0..EGRESS_LIMIT {
                 let to = origin(&format!("https://{}:65535", host(at)));
-                assert!(
-                    facts.went(&to, None, Classes::all(), Handed::Refused),
-                    "{at}"
-                );
+                let outcome = if at < EGRESS_LIMIT / 2 {
+                    Handed::Refused
+                } else {
+                    Handed::Sent
+                };
+                assert!(facts.went(&to, None, Classes::all(), outcome), "{at}");
             }
             let more = origin(&format!("https://{}:65535", host(EGRESS_LIMIT)));
             assert!(!facts.went(&more, None, Classes::all(), Handed::Refused));
+            assert!(!facts.went(&more, None, Classes::all(), Handed::Sent));
             Ok(Produced::nothing())
         },
     )
@@ -629,4 +682,59 @@ fn a_clone_that_notes_from_another_thread_while_the_run_ends_is_in_the_record_or
         yes
     );
     assert!(record.asked().settings.is_empty());
+}
+
+#[test]
+fn a_note_of_a_send_that_is_taken_back_leaves_an_entry_noted_before_it_with_its_own_classes() {
+    // The run notes `sent` for an origin and an account itself, for prompts. A send
+    // to the same origin under the same account, of a source image, is then noted
+    // before it is handed over, fails with nothing sent, and its note is taken
+    // back. The entry is still listed, with the classes of the first note alone.
+    use whizbang_core::capability::{Fault, FaultKind};
+    use whizbang_core::egress::{Address, DispatchPolicy, Piece, Recipient, Ways};
+    use whizbang_testkit::sending::{FakeCheck, FakeSender};
+    let world = World::new();
+    let at = origin("https://api.example.com");
+    let who = account("acct_4f8a1c9e77");
+    let recipient = Recipient::new(at.clone()).with_account(who.clone());
+    let images = Classes::of(&[DataClass::SourceImages]);
+    let to = Address::of("https://api.example.com/v1", &Secrets::none()).unwrap();
+    let piece = vec![Piece::of(DataClass::SourceImages, b"pixels".to_vec())];
+    let filler = FakeFiller::new(Paint::Inverse).sending_to(recipient.clone());
+    let filler = Arc::new(filler.posting(to, piece));
+    let fault = Fault::new(FaultKind::Unavailable, "the test failed it").not_sent();
+    let sender = Arc::new(FakeSender::scripted(vec![Err(fault)]));
+    let policy = DispatchPolicy::none().approving(recipient, images).unwrap();
+    let ways = Ways::through(sender.clone())
+        .checked_by(Arc::new(FakeCheck::approving()))
+        .under(policy);
+    let asks = {
+        let (at, who) = (at.clone(), who.clone());
+        let needs = vec![Requirement::new(Capability::Fill)];
+        action("asks", needs, move |_, context| {
+            assert!(
+                context
+                    .facts()
+                    .went(&at, Some(&who), prompts(), Handed::Sent)
+            );
+            let fill = context.capabilities().fill().unwrap();
+            fill.fill(&fill_request()).unwrap_err();
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(
+        &world,
+        roster(None, Some(filler.as_ref()), None),
+        Capabilities::none().with_fill(filler.clone()),
+        vec![asks],
+    )
+    .with_ways(ways);
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(sender.requests(), 1);
+    let (record, _) = stored(&world, finished.run());
+    assert_eq!(record.egress().len(), 1);
+    let went = &record.egress()[0];
+    assert_eq!(went.origin(), "https://api.example.com");
+    assert_eq!(went.outcome(), Handed::Sent);
+    assert_eq!(went.classes(), prompts());
 }

@@ -7,11 +7,14 @@ use std::sync::Arc;
 
 use whizbang_core::capability::{Declaration, Roster, Unresolved, feature};
 use whizbang_core::config::{
-    Config, Credentials, EnvFile, KINDS_LIMIT, KindNotRegistered, KindRefused, Kinds, NotReady,
-    Offers, Unanswered,
+    Config, Credentials, EnvFile, KIND_SENTENCE_LIMIT, KIND_SENTENCE_WITHHELD, KINDS_LIMIT, Kind,
+    KindNotRegistered, KindRefused, Kinds, NotReady, Offers, Table, Unanswered,
 };
-use whizbang_core::contract::{Backends, Capability, Estimate, ModelIdentity, Secrets};
+use whizbang_core::contract::{
+    Backends, Capability, Estimate, Made, ModelIdentity, Offered, Secrets,
+};
 use whizbang_core::egress::{Address, NotAllowed, Outgoing, Recipient};
+use whizbang_testkit::capabilities::{FakeFiller, Paint};
 use whizbang_testkit::kinds::{
     FAKE_KEY_HEADER, FAKE_NO_ADDRESS, FAKE_SETTING_NOT_TEXT, FAKE_TOKEN_HEADER,
     FAKE_UNKNOWN_SETTING, FakeKind,
@@ -757,4 +760,186 @@ url = "https://b.example"
         second.declaration().recipient()
     );
     assert_eq!((first.name(), second.name()), ("first", "second"));
+}
+
+// --- a kind makes the backend (ADR 0015, "One snapshot of the config") -----------------------
+
+const KEYED: &str = r#"
+[backends.fill]
+kind = "fake"
+key_env = "FILL_KEY"
+url = "https://a.example/v1"
+"#;
+
+/// Why the one backend of `KEYED` is not ready, with a fake kind that refuses every
+/// table in these words, and everything the offers say and print of it.
+fn kept_of(sentence: String, key: &str) -> (NotReady, String) {
+    let (config, credentials) = read(KEYED, &format!("FILL_KEY={key}\n"));
+    let (kinds, fakes) = kinds(&["fake"]);
+    // The type takes fixed words, and a kind can leak a made text all the same.
+    fakes[0].refuse_with(Box::leak(sentence.into_boxed_str()));
+    let offers = Offers::of(&config, &credentials, &kinds).unwrap();
+    let why = offers
+        .not_ready(Capability::Fill, "default")
+        .unwrap()
+        .clone();
+    let unanswered = offers.resolve(Capability::Fill, None, &[]).unwrap_err();
+    let all = format!("{} {} {offers:?}", said(&why), said(&unanswered));
+    (why, all)
+}
+
+#[test]
+fn a_kinds_sentence_that_holds_its_backends_key_is_replaced_with_fixed_words_and_a_long_one_is_cut()
+{
+    let key = made_up_key("K");
+    let table = |why: &NotReady| match why {
+        NotReady::Refused(KindRefused::Table(sentence)) => *sentence,
+        other => panic!("{other:?}"),
+    };
+    // The key, whole, at the head of the sentence, and past where a sentence is cut:
+    // the look is over the whole sentence, before the cut.
+    for sentence in [
+        format!("the key {key} was not taken"),
+        format!("{}{key}", "w".repeat(300)),
+        format!("{}{key}", "w".repeat(KIND_SENTENCE_LIMIT - 10)),
+    ] {
+        let (why, all) = kept_of(sentence, &key);
+        assert_eq!(table(&why), KIND_SENTENCE_WITHHELD);
+        assert!(!all.contains(&key) && !all.contains(&key[..12]), "{all}");
+    }
+    // A sentence that holds no secret is kept, its first 256 characters: counted in
+    // characters, so the cut is never inside one.
+    assert_eq!(KIND_SENTENCE_LIMIT, 256);
+    for (sentence, kept) in [
+        ("w".repeat(256), "w".repeat(256)),
+        ("w".repeat(257), "w".repeat(256)),
+        ("é".repeat(300), "é".repeat(256)),
+        ("short words".to_owned(), "short words".to_owned()),
+    ] {
+        let (why, _) = kept_of(sentence, &key);
+        assert_eq!(table(&why), kept);
+    }
+    // The egress types' refusal of a credential is fixed words of theirs, and is kept
+    // as it is.
+    assert!(KIND_SENTENCE_WITHHELD.chars().count() <= KIND_SENTENCE_LIMIT);
+}
+
+/// A kind that makes a filler whatever capability its table is under.
+struct Crossed;
+
+impl Kind for Crossed {
+    fn name(&self) -> &str {
+        "crossed"
+    }
+
+    fn make(&self, _: &Table<'_>) -> Result<Made, KindRefused> {
+        Ok(Made::Fill(Arc::new(FakeFiller::new(Paint::Inverse))))
+    }
+}
+
+#[test]
+fn a_kind_that_makes_a_backend_of_another_capability_makes_its_backend_not_ready() {
+    let text = "[backends.judge]\nkind = \"crossed\"\n\n[backends.fill]\nkind = \"crossed\"\n";
+    let (config, credentials) = read(text, "");
+    let mut kinds = Kinds::new();
+    kinds.register(Arc::new(Crossed)).unwrap();
+    let offers = Offers::of(&config, &credentials, &kinds).unwrap();
+    // Under `fill` the filler is what the table asked for.
+    assert!(offers.resolve(Capability::Fill, None, &[]).is_ok());
+    assert!(Offered::made(&offers, Capability::Fill, "default").is_some());
+    // Under `judge` it is not: the backend is not ready, nothing of it is in the
+    // roster, and no run could be handed it.
+    assert_eq!(
+        offers.not_ready(Capability::Judge, "default"),
+        Some(&NotReady::OtherCapability)
+    );
+    let unanswered = offers.resolve(Capability::Judge, None, &[]).unwrap_err();
+    assert_eq!(
+        unanswered.to_string(),
+        "the default judge backend is not ready: its kind made a backend of another capability"
+    );
+    assert!(Offered::made(&offers, Capability::Judge, "default").is_none());
+    assert!(
+        offers
+            .roster()
+            .resolve(Capability::Judge, None, &[])
+            .is_err()
+    );
+}
+
+#[test]
+fn what_a_config_offers_holds_each_ready_backend_made_under_its_name_and_no_other() {
+    let (config, credentials) = read(SEVERAL, "");
+    let (kinds, fakes) = kinds(&["fake"]);
+    let offers = Offers::of(&config, &credentials, &kinds).unwrap();
+    // One backend was made for each table, in the one walk that offered it, and the
+    // roster's entry is what that backend declares.
+    assert_eq!(fakes[0].made().len(), 6);
+    for (capability, name, model) in [
+        (Capability::Fill, "bria", "bria-erase"),
+        (Capability::Fill, "lama", "lama"),
+        (Capability::Judge, "two", "judge-two"),
+        (Capability::Segment, "default", "sam"),
+    ] {
+        let made = Offered::made(&offers, capability, name).unwrap();
+        assert_eq!(made.capability(), capability);
+        assert_eq!(made.declaration().model().model(), model);
+        let resolved = offers.resolve(capability, Some(name), &[]).unwrap();
+        assert_eq!(resolved.declaration(), made.declaration());
+        assert_eq!(format!("{made:?}"), format!("Made({})", capability.name()));
+    }
+    // A name that is not offered, and a name of another capability, are held by none.
+    assert!(Offered::made(&offers, Capability::Fill, "nobody").is_none());
+    assert!(Offered::made(&offers, Capability::Judge, "bria").is_none());
+    assert!(Offered::made(&offers, Capability::Segment, "lama").is_none());
+    // The default is the file's.
+    assert_eq!(Offered::default_of(&offers, Capability::Fill), Some("bria"));
+    assert_eq!(Offered::default_of(&offers, Capability::Judge), None);
+}
+
+#[test]
+fn two_offers_are_equal_when_they_offer_the_same_whatever_backends_they_made() {
+    // Equality is of what is offered: the roster, each backend that is not ready
+    // with its reason, and the defaults. Each walk makes backends of its own, which
+    // have no equality and are never the same ones, so they are left out: two
+    // readings of one config are equal, as two readings of one file should be.
+    let (config, credentials) = read(SEVERAL, "");
+    let (kinds, _) = kinds(&["fake"]);
+    let one = Offers::of(&config, &credentials, &kinds).unwrap();
+    let two = Offers::of(&config, &credentials, &kinds).unwrap();
+    assert_eq!(one, two);
+    let fill = |offers: &Offers| match Offered::made(offers, Capability::Fill, "lama") {
+        Some(Made::Fill(filler)) => filler,
+        other => panic!("{other:?}"),
+    };
+    assert!(!Arc::ptr_eq(&fill(&one), &fill(&two)));
+    // A clone holds the same backends.
+    assert!(Arc::ptr_eq(&fill(&one), &fill(&one.clone())));
+    // Another default, another model, and a backend that is not ready for another
+    // reason are each another thing offered.
+    for other in [
+        SEVERAL.replace("default = \"bria\"", "default = \"lama\""),
+        SEVERAL.replace("model = \"zeta\"", "model = \"zeta-2\""),
+        SEVERAL.replace(
+            "model = \"zeta\"",
+            "model = \"zeta\"\nkey_env = \"ZETA_KEY\"",
+        ),
+    ] {
+        let (config, credentials) = read(&other, "");
+        assert_ne!(one, Offers::of(&config, &credentials, &kinds).unwrap());
+    }
+    let missing = SEVERAL.replace(
+        "model = \"zeta\"",
+        "model = \"zeta\"\nkey_env = \"ZETA_KEY\"",
+    );
+    let unknown = SEVERAL.replace(
+        "[backends.fill.zeta]\nkind = \"fake\"",
+        "[backends.fill.zeta]\nkind = \"other\"",
+    );
+    let (missing, none) = read(&missing, "");
+    let (unknown, nothing) = read(&unknown, "");
+    assert_ne!(
+        Offers::of(&missing, &none, &kinds).unwrap(),
+        Offers::of(&unknown, &nothing, &kinds).unwrap()
+    );
 }
