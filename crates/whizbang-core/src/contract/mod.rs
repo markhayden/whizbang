@@ -91,6 +91,6 @@ pub use request::{
 };
 pub use run::{Committed, Finished, MESSAGE_LIMIT, Outcome, RUN_ID_LIMIT, RunId};
 pub use snapshot::{
-    ConfigSource, Made, Offered, SECRETS_KEPT_LIMIT, SOURCE_WHY_LIMIT, SOURCE_WHY_WITHHELD,
-    Settings, Snapshot, SourceRefused,
+    ConfigSource, Made, Offered, SECRET_ORIGIN_APPROVED, SECRETS_KEPT_LIMIT, SOURCE_WHY_LIMIT,
+    SOURCE_WHY_WITHHELD, Settings, Snapshot, SourceRefused,
 };

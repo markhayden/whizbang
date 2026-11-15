@@ -98,8 +98,8 @@ impl FakeKind {
         }
     }
 
-    /// From now on it refuses every table with this sentence, after it has made
-    /// what it would have made.
+    /// From now on it refuses every table it would have taken with this sentence,
+    /// after it has kept what it was shown, and makes no backend.
     pub fn refuse_with(&self, why: &'static str) {
         *self.refusing.lock().unwrap_or_else(PoisonError::into_inner) = Some(why);
     }

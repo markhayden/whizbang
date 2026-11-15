@@ -31,6 +31,11 @@ pub const SECRETS_KEPT_LIMIT: usize = 4096;
 /// The longest reason of a source that is passed on, in characters.
 pub const SOURCE_WHY_LIMIT: usize = 256;
 
+/// What is said of a snapshot whose policy names a recipient at an origin that holds
+/// a secret.
+pub const SECRET_ORIGIN_APPROVED: &str = "the config approves a recipient whose origin holds a secret, so nothing could be \
+     sent to it; the origin is not shown";
+
 /// What is said in place of a source's reason that holds a secret.
 pub const SOURCE_WHY_WITHHELD: &str =
     "the config's source refused, and its reason is not shown: it held a secret";
@@ -279,6 +284,21 @@ impl Snapshot {
 
     pub(super) fn secrets(&self) -> &Secrets {
         &self.secrets
+    }
+
+    /// Whether the snapshot's policy names a recipient whose own origin, as it is
+    /// written, holds one of these secrets. A record writes an origin whole, so
+    /// every send to such a recipient would be refused where it is made (ADR 0015,
+    /// "A policy before a send, and a checked send"): the config is one no run can
+    /// use as it reads.
+    pub(super) fn names_a_secret_origin(&self, secrets: &Secrets) -> bool {
+        let Some(policy) = self.policy() else {
+            return false;
+        };
+        policy.recipients().any(|recipient| {
+            let written = recipient.origin().to_string();
+            secrets.redact(&written) != written
+        })
     }
 
     /// What prepare asks about capabilities under this snapshot, when it holds

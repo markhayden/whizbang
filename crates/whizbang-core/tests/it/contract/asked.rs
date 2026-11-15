@@ -251,7 +251,7 @@ fn a_call_that_resolved_a_model_its_snapshot_does_not_hold_is_refused_and_not_ha
         refused,
         CallError::Refused(Refusal::NotReady { .. })
     ));
-    assert_eq!(*ran.lock().unwrap(), []);
+    assert!(ran.lock().unwrap().is_empty());
     assert_eq!(held.requests(), 0);
 }
 

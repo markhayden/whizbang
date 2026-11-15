@@ -4,24 +4,26 @@
 //! makes each snapshot, from a config and an env file it writes as text, or by hand.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use whizbang_core::capability::{Declaration, Fault};
+use whizbang_core::capability::{Declaration, Fault, FaultKind, Stage};
 use whizbang_core::config::{Config, EnvFile, Kind, KindRefused, Kinds, Offers, Table};
-use whizbang_core::contract::record::Status;
+use whizbang_core::contract::record::{Handed, Status};
 use whizbang_core::contract::{
     AdmissionPart, Answer, Asking, Backends, Call, CallError, Capabilities, Capability,
     ConfigSource, Engine, Estimate, Executor, Failure, Made, ModelIdentity, NoBackends, NotJudged,
-    Offered, PartDeclined, PartStep, Produced, Readiness, Refusal, Request, Requirement,
-    SECRETS_KEPT_LIMIT, SOURCE_WHY_LIMIT, SOURCE_WHY_WITHHELD, Secrets, Settings, Snapshot,
-    SourceRefused, Stale, Unavailable, Value,
+    Offered, PartDeclined, PartStep, Produced, Readiness, Refusal, RefusalKind, Request,
+    Requirement, SECRET_ORIGIN_APPROVED, SECRETS_KEPT_LIMIT, SOURCE_WHY_LIMIT, SOURCE_WHY_WITHHELD,
+    Secrets, Settings, Snapshot, SourceRefused, Stale, Unavailable, Value,
 };
 use whizbang_core::egress::{
-    Address, Classes, Credential, DataClass, DispatchPolicy, Origin, Piece, Recipient, Reply, Ways,
+    Account, Address, Classes, Credential, DataClass, DispatchPolicy, Origin, Piece, Recipient,
+    Reply, Ways,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::store::Reader;
-use whizbang_testkit::capabilities::{FakeFiller, Paint};
+use whizbang_testkit::capabilities::{FakeFiller, FakeJudge, Paint, roster};
 use whizbang_testkit::kinds::{FakeKind, MadeFake};
 use whizbang_testkit::sending::{FakeCheck, FakeSender};
 use whizbang_testkit::source::FakeSource;
@@ -99,9 +101,13 @@ fn fake_kinds() -> (Arc<FakeKind>, Kinds) {
     (kind, kinds)
 }
 
+/// What a part was shown at one asking: the action, the snapshot's digest and cap,
+/// the digest the call was prepared under, and whether the snapshot holds a policy.
+type Sight = (String, Digest, Option<Estimate>, Digest, bool);
+
 /// A part that keeps what it was shown of the snapshot, for each action.
 #[derive(Default)]
-struct Sees(Mutex<Vec<(String, Digest, Option<Estimate>, Digest, bool)>>);
+struct Sees(Mutex<Vec<Sight>>);
 
 impl AdmissionPart for Sees {
     fn name(&self) -> &'static str {
@@ -201,6 +207,37 @@ fn a_source_that_refuses_fails_the_call_with_no_run_and_the_call_after_it_is_put
 }
 
 #[test]
+fn a_sources_refusal_is_a_failure_and_is_returned_without_a_second_look_for_the_id() {
+    // Another request is admitted under the id while the source is asked, and the
+    // source then refuses. A refusal of a call would be followed by a second look
+    // for the id, which would now answer a conflict; a source that refused judged
+    // no call, and what it said is what comes back.
+    let world = World::new();
+    let source = Arc::new(FakeSource::of(Snapshot::of(digest("one"))));
+    let executor = under(&world, &source, vec![nothing("does"), nothing("other")]);
+    let id = executor.request_id("request-1").unwrap();
+    source.when_asked({
+        let (source, executor, id) = (source.clone(), executor.clone(), id.clone());
+        move || {
+            let other = Request::new(Call::new("other")).with_id(id);
+            assert!(matches!(executor.request(&other), Ok(Answer::Ran(_))));
+            source.refuse("the config is not one this build reads");
+        }
+    });
+    // The first look finds the id free; the admission asks the source.
+    let failed = executor
+        .request(&Request::new(Call::new("does")).with_id(id))
+        .unwrap_err();
+    assert_eq!(
+        failed,
+        CallError::Config {
+            why: "the config is not one this build reads".to_owned()
+        }
+    );
+    assert_eq!(runs(&world), 1);
+}
+
+#[test]
 fn a_sources_reason_that_holds_a_secret_is_replaced_and_a_long_one_is_cut() {
     let world = World::new();
     let key = made_up_key("S");
@@ -295,7 +332,22 @@ fn a_snapshot_is_taken_once_for_an_admission_and_every_part_is_shown_it() {
 /// A kind whose backends are fillers that send a prompt to their table's address,
 /// and name that origin as their recipient. It keeps each filler it made.
 #[derive(Default)]
-struct Posts(Mutex<Vec<Arc<FakeFiller>>>);
+struct Posts {
+    made: Mutex<Vec<Arc<FakeFiller>>>,
+    /// The account its backends' recipient is under, when a test gave one.
+    account: Option<Account>,
+}
+
+impl Posts {
+    /// The recipient a backend at this origin names.
+    fn recipient(&self, origin: &Origin) -> Recipient {
+        let recipient = Recipient::new(origin.clone());
+        match &self.account {
+            Some(account) => recipient.with_account(account.clone()),
+            None => recipient,
+        }
+    }
+}
 
 impl Kind for Posts {
     fn name(&self) -> &str {
@@ -309,13 +361,13 @@ impl Kind for Posts {
         let model = table.backend().model().unwrap_or("m");
         let declaration = Declaration::new(ModelIdentity::new("posts", model, "1"), &[])
             .map_err(|_| KindRefused::Table("a posting backend cannot declare that model"))?
-            .sending_to(Recipient::new(address.origin().clone()));
+            .sending_to(self.recipient(address.origin()));
         let prompt = vec![Piece::of(DataClass::Prompts, b"a red door".to_vec())];
         let filler = FakeFiller::new(Paint::Inverse)
             .declared_as(declaration)
             .posting(address.clone(), prompt);
         let filler = Arc::new(filler);
-        self.0.lock().unwrap().push(filler.clone());
+        self.made.lock().unwrap().push(filler.clone());
         Ok(Made::Fill(filler))
     }
 }
@@ -385,7 +437,7 @@ fn a_run_goes_on_under_the_snapshot_it_was_admitted_with_though_the_source_was_s
     let finished = executor.submit(&Call::new("asks")).unwrap();
     assert_eq!(finished.outcome().name(), "completed");
     // The backend of the first snapshot answered, and no other.
-    let made = posts.0.lock().unwrap().clone();
+    let made = posts.made.lock().unwrap().clone();
     assert_eq!(made.len(), 2);
     assert_eq!((made[0].requests(), made[1].requests()), (1, 0));
     // The send was held to the first snapshot's policy, and carried its credential.
@@ -438,6 +490,146 @@ fn a_call_from_inside_an_action_is_prepared_under_its_callers_snapshot_too() {
     assert_eq!(finished.outcome().name(), "completed");
     assert_eq!(*seen.lock().unwrap(), [digest("one")]);
     assert_eq!((source.asked(), runs(&world)), (1, 2));
+}
+
+#[test]
+fn a_run_and_the_run_it_calls_are_refused_what_their_snapshot_refuses_though_the_source_now_approves_it()
+ {
+    let world = World::new();
+    let posts = Arc::new(Posts::default());
+    let mut kinds = Kinds::new();
+    kinds.register(posts.clone()).unwrap();
+    let config = |model: &str| {
+        format!("[backends.fill]\nkind = \"posts\"\nmodel = \"{model}\"\nurl = \"{API}/v1\"\n")
+    };
+    // The first config approves nobody; the second approves the recipient.
+    let prompts = Classes::of(&[DataClass::Prompts]);
+    let first = snapshot_of(&config("one"), "", &kinds).sending_under(DispatchPolicy::none());
+    let second = snapshot_of(&config("two"), "", &kinds)
+        .sending_under(DispatchPolicy::none().approving(there(), prompts).unwrap());
+    let source = Arc::new(FakeSource::of(first));
+    let sender = Arc::new(FakeSender::scripted(vec![ok(), ok()]));
+    let faults = Arc::new(Mutex::new(Vec::new()));
+    let swapped = Arc::new(Mutex::new(Some(second)));
+    let needs = || vec![Requirement::new(Capability::Fill)];
+    let asks = {
+        let (source, swapped, faults) = (source.clone(), swapped.clone(), faults.clone());
+        action("asks", needs(), move |_, context| {
+            // The config changes while the run executes: it now approves the send.
+            if let Some(second) = swapped.lock().unwrap().take() {
+                source.swap(second);
+            }
+            let fill = context.capabilities().fill().unwrap();
+            let fault = fill.fill(&fill_request()).err();
+            faults.lock().unwrap().push(("asks", fault));
+            context.executor().submit(&Call::new("inner")).unwrap();
+            Ok(Produced::nothing())
+        })
+    };
+    let inner = {
+        let faults = faults.clone();
+        action("inner", needs(), move |_, context| {
+            let fill = context.capabilities().fill().unwrap();
+            let fault = fill.fill(&fill_request()).err();
+            faults.lock().unwrap().push(("inner", fault));
+            Ok(Produced::nothing())
+        })
+    };
+    let ways = Ways::through(sender.clone()).checked_by(Arc::new(FakeCheck::approving()));
+    let executor = under(&world, &source, vec![asks, inner]).with_ways(ways);
+
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    // Neither the run nor the run it called was let through: both were admitted
+    // under the first snapshot, whose policy approves nobody, and both asked its
+    // backend.
+    assert_eq!(sender.requests(), 0, "nothing was handed over");
+    let made = posts.made.lock().unwrap().clone();
+    assert_eq!(made.len(), 2);
+    assert_eq!((made[0].requests(), made[1].requests()), (2, 0));
+    let refused: Vec<_> = faults.lock().unwrap().drain(..).collect();
+    assert_eq!(refused.len(), 2);
+    for (who, fault) in &refused {
+        let fault = fault
+            .as_ref()
+            .unwrap_or_else(|| panic!("{who} was answered"));
+        assert_eq!(
+            (fault.kind(), fault.stage()),
+            (FaultKind::Rejected, Stage::NotSent)
+        );
+    }
+    let (record, _) = stored(&world, finished.run());
+    assert_eq!(record.egress().len(), 1);
+    assert_eq!(record.egress()[0].outcome(), Handed::Refused);
+    assert_eq!(source.asked(), 1);
+
+    // The next run and the run it calls are admitted under the second, and send.
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(sender.requests(), 2);
+    assert_eq!((made[0].requests(), made[1].requests()), (2, 2));
+    assert!(
+        faults
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(_, fault)| fault.is_none())
+    );
+    let (record, _) = stored(&world, finished.run());
+    assert_eq!(record.egress()[0].outcome(), Handed::Sent);
+}
+
+/// A kind whose `make` panics while it is told to.
+struct Breaks(AtomicBool);
+
+impl Kind for Breaks {
+    fn name(&self) -> &str {
+        "breaks"
+    }
+
+    fn make(&self, _: &Table<'_>) -> Result<Made, KindRefused> {
+        assert!(!self.0.load(Ordering::SeqCst), "the kind went wrong");
+        Ok(Made::Fill(Arc::new(FakeFiller::new(Paint::Inverse))))
+    }
+}
+
+/// A source that makes a snapshot of its config each time it is asked, its backends
+/// among it, as a source over a file does.
+struct Reads(&'static str, Kinds);
+
+impl ConfigSource for Reads {
+    fn snapshot(&self) -> Result<Snapshot, SourceRefused> {
+        Ok(snapshot_of(self.0, "", &self.1))
+    }
+}
+
+#[test]
+fn a_kind_that_panics_while_a_snapshot_is_made_leaves_nothing_behind_and_the_next_request_is_served()
+ {
+    let world = World::new();
+    let breaks = Arc::new(Breaks(AtomicBool::new(true)));
+    let mut kinds = Kinds::new();
+    kinds.register(breaks.clone()).unwrap();
+    let source = Arc::new(Reads("[backends.fill]\nkind = \"breaks\"\n", kinds));
+    let executor =
+        engine(&world, NoBackends, Capabilities::none(), vec![chooses()]).with_config(source);
+    let id = executor.request_id("request-1").unwrap();
+    let request = Request::new(Call::new("asks")).with_id(id);
+    let unwound = catch_unwind(AssertUnwindSafe(|| executor.request(&request)));
+    assert!(unwound.is_err());
+    let unwound = catch_unwind(AssertUnwindSafe(|| executor.start(&request)));
+    assert!(unwound.is_err());
+    let unwound = catch_unwind(AssertUnwindSafe(|| executor.prepare(&Call::new("asks"))));
+    assert!(unwound.is_err());
+    assert_eq!(runs(&world), 0);
+    // Nothing was half-admitted and the store is not locked: the same request runs
+    // under its id.
+    breaks.0.store(false, Ordering::SeqCst);
+    let Ok(Answer::Ran(finished)) = executor.request(&request) else {
+        panic!("the request did not run");
+    };
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(runs(&world), 1);
 }
 
 // --- the secrets -----------------------------------------------------------------------------
@@ -512,6 +704,231 @@ fn a_request_id_that_holds_a_key_its_admissions_snapshot_brings_is_refused_and_w
     let mut store = Vec::new();
     every_byte_under(&world.root(), &mut store);
     assert!(!holds(&store, &key));
+}
+
+#[test]
+fn a_request_id_taken_while_its_admissions_snapshot_was_read_is_not_shown_when_the_snapshot_brings_its_key()
+ {
+    // Another request is admitted under the id while the source is asked for this
+    // admission's snapshot, and that snapshot brings the key the id holds. The look
+    // after a refusal would answer a conflict, which names the id: an id that holds
+    // a secret is refused without that look, as it is before the first one.
+    let world = World::new();
+    let key = made_up_key("R");
+    let source = Arc::new(FakeSource::of(Snapshot::of(digest("one"))));
+    let executor = under(&world, &source, vec![nothing("does"), nothing("other")]);
+    let id = executor.request_id(&key).unwrap();
+    source.when_asked({
+        let (source, executor, id, key) =
+            (source.clone(), executor.clone(), id.clone(), key.clone());
+        move || {
+            let other = Request::new(Call::new("other")).with_id(id);
+            assert!(matches!(executor.request(&other), Ok(Answer::Ran(_))));
+            let brings = Secrets::new([key]).unwrap();
+            source.swap(Snapshot::of(digest("one")).with_secrets(brings));
+        }
+    });
+    let refused = executor
+        .request(&Request::new(Call::new("does")).with_id(id))
+        .unwrap_err();
+    assert_eq!(refused, CallError::Refused(Refusal::SecretInRequestId));
+    assert!(!format!("{refused:?} {refused}").contains(&key[..12]));
+    assert_eq!(runs(&world), 1);
+}
+
+#[test]
+fn an_origin_that_holds_a_secret_of_an_earlier_snapshot_is_not_sent_to_and_is_in_no_file() {
+    // The executor's own policy approves a recipient at a host, its check lets every
+    // address through, and it holds a filler that sends there. The host is a secret
+    // of the first snapshot alone. A run admitted under a later snapshot, which
+    // brings no secret, has a place for facts made with every secret the executor
+    // knew at its admission: the destination cannot be listed, so nothing is sent.
+    let world = World::new();
+    let host = format!("keyhost-{}.example.com", "0123456789abcdef");
+    let at = Origin::of(&format!("https://{host}"), &Secrets::none()).unwrap();
+    let to = Address::of(&format!("https://{host}/v1"), &Secrets::none()).unwrap();
+    let prompt = vec![Piece::of(DataClass::Prompts, b"a red door".to_vec())];
+    let filler = FakeFiller::new(Paint::Inverse).sending_to(Recipient::new(at.clone()));
+    let filler = Arc::new(filler.posting(to, prompt));
+    let early = Snapshot::of(digest("early")).with_secrets(Secrets::new([host.clone()]).unwrap());
+    let source = Arc::new(FakeSource::of(early));
+    let sender = Arc::new(FakeSender::scripted(vec![ok()]));
+    let answered = Arc::new(Mutex::new(None));
+    let asks = {
+        let answered = answered.clone();
+        let needs = vec![Requirement::new(Capability::Fill)];
+        action("asks", needs, move |_, context| {
+            let fill = context.capabilities().fill().unwrap();
+            *answered.lock().unwrap() = fill.fill(&fill_request()).err();
+            Ok(Produced::nothing())
+        })
+    };
+    let policy = DispatchPolicy::none()
+        .approving(Recipient::new(at), Classes::of(&[DataClass::Prompts]))
+        .unwrap();
+    let ways = Ways::through(sender.clone())
+        .checked_by(Arc::new(FakeCheck::approving()))
+        .under(policy);
+    let executor = engine(
+        &world,
+        roster(None, Some(filler.as_ref()), None),
+        Capabilities::none().with_fill(filler.clone()),
+        vec![asks, nothing("does")],
+    )
+    .with_config(source.clone())
+    .with_ways(ways);
+    executor.submit(&Call::new("does")).unwrap();
+    source.swap(Snapshot::of(digest("later")));
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!((filler.requests(), sender.requests()), (1, 0));
+    let fault: Fault = answered.lock().unwrap().take().unwrap();
+    assert_eq!(
+        (fault.kind(), fault.stage()),
+        (FaultKind::Rejected, Stage::NotSent)
+    );
+    let (record, _) = stored(&world, finished.run());
+    assert_eq!(record.asked().config, Some(digest("later")));
+    assert_eq!(record.egress().len(), 0);
+    let refusals = &record.outcome().refusals;
+    assert_eq!(refusals.len(), 1);
+    assert_eq!(refusals[0].kind(), RefusalKind::RequestNotApproved);
+    let mut store = Vec::new();
+    every_byte_under(&world.root(), &mut store);
+    assert!(!holds(&store, "keyhost"));
+}
+
+#[test]
+fn a_snapshot_that_approves_a_recipient_whose_origin_is_a_secret_is_not_taken() {
+    // Every send to such a recipient would be refused where it is made. It is said
+    // once, where the snapshot is taken, in fixed words that show no origin: the
+    // secret may be the snapshot's own or one of a snapshot before.
+    let world = World::new();
+    let host = format!("keyhost-{}.example.com", "0123456789abcdef");
+    let at = Origin::of(&format!("https://{host}"), &Secrets::none()).unwrap();
+    let knows = Secrets::new([host.clone()]).unwrap();
+    let approving = |origin: &Origin, probe: bool| {
+        let recipient = Recipient::new(origin.clone());
+        let policy = match probe {
+            true => DispatchPolicy::none().approving_probes_of(recipient),
+            false => {
+                DispatchPolicy::none().approving(recipient, Classes::of(&[DataClass::Prompts]))
+            }
+        };
+        Snapshot::of(digest("approves")).sending_under(policy.unwrap())
+    };
+    let source = Arc::new(FakeSource::of(Snapshot::of(digest("one"))));
+    let executor = under(&world, &source, vec![nothing("does")]);
+    let failed = CallError::Config {
+        why: SECRET_ORIGIN_APPROVED.to_owned(),
+    };
+    assert!(!SECRET_ORIGIN_APPROVED.contains("keyhost"));
+    // Before the executor knows the secret, the same snapshot is taken.
+    source.swap(approving(&at, false));
+    executor.submit(&Call::new("does")).unwrap();
+    // Its own secret; then a secret of an earlier snapshot, for a probe alone.
+    source.swap(approving(&at, false).with_secrets(knows));
+    assert_eq!(executor.submit(&Call::new("does")), Err(failed.clone()));
+    assert_eq!(executor.prepare(&Call::new("does")), Err(failed.clone()));
+    source.swap(approving(&at, true));
+    assert_eq!(executor.submit(&Call::new("does")), Err(failed.clone()));
+    assert_eq!(runs(&world), 1);
+    // A recipient elsewhere, and a secret origin as an upstream alone, are taken.
+    let elsewhere = Origin::of(API, &Secrets::none()).unwrap();
+    source.swap(approving(&elsewhere, false));
+    executor.submit(&Call::new("does")).unwrap();
+    let forwards = Recipient::new(elsewhere).forwarding_to(vec![at]).unwrap();
+    let policy = DispatchPolicy::none().approving(forwards, Classes::of(&[DataClass::Prompts]));
+    source.swap(Snapshot::of(digest("forwards")).sending_under(policy.unwrap()));
+    executor.submit(&Call::new("does")).unwrap();
+    assert_eq!(runs(&world), 3);
+}
+
+#[test]
+fn the_keys_of_two_snapshots_are_both_taken_out_of_everything_a_later_run_writes() {
+    // The record, the journal, a diagnostic, a refusal and where the data went: a run
+    // admitted under the second snapshot writes none of the first one's key, nor of
+    // its own.
+    let world = World::new();
+    let (old, new) = (made_up_key("O"), made_up_key("N"));
+    // The recipient's account holds the first snapshot's key.
+    let account = Account::new(&format!("acct-{old}"), &Secrets::none()).unwrap();
+    let posts = Arc::new(Posts {
+        account: Some(account),
+        ..Posts::default()
+    });
+    let mut kinds = Kinds::new();
+    kinds.register(posts.clone()).unwrap();
+    let with = |key: &str| Secrets::new([key.to_owned()]).unwrap();
+    let source = Arc::new(FakeSource::of(
+        Snapshot::of(digest("old")).with_secrets(with(&old)),
+    ));
+    let sender = Arc::new(FakeSender::scripted(vec![ok()]));
+    let tells = {
+        let (old, new) = (old.clone(), new.clone());
+        let needs = vec![Requirement::new(Capability::Fill)];
+        action("tells", needs, move |_, context| {
+            let said = format!("{old} and {new}");
+            context.events().progress(&format!("using {said}"));
+            let written = context.diagnostics().write("keys.txt", said.as_bytes());
+            written.map_err(|why| Failure::error("write", &why))?;
+            // Two calls that are refused, one in words that hold the first key and
+            // one in words that hold the second.
+            for key in [&old, &new] {
+                let gone = Call::new(&format!("gone-{key}"));
+                assert!(context.executor().submit(&gone).is_err());
+            }
+            let fill = context.capabilities().fill().unwrap();
+            let sent = fill.fill(&fill_request());
+            sent.map_err(|fault| Failure::error("fault", fault.sentence()))?;
+            Err(Failure::error("told", &format!("the keys are {said}")))
+        })
+    };
+    let ways = Ways::through(sender.clone()).checked_by(Arc::new(FakeCheck::approving()));
+    let executor = under(&world, &source, vec![tells, nothing("does")]).with_ways(ways);
+    executor.submit(&Call::new("does")).unwrap();
+    // The key is rotated: the next snapshot brings the new one alone.
+    let config = format!("[backends.fill]\nkind = \"posts\"\nurl = \"{API}/v1\"\n");
+    let recipient = posts.recipient(&Origin::of(API, &Secrets::none()).unwrap());
+    let policy = DispatchPolicy::none()
+        .approving(recipient, Classes::of(&[DataClass::Prompts]))
+        .unwrap();
+    let later = snapshot_of(&config, "", &kinds)
+        .with_secrets(with(&new))
+        .sending_under(policy);
+    source.swap(later);
+    let finished = executor.submit(&Call::new("tells")).unwrap();
+    let whizbang_core::contract::Outcome::Error { message, .. } = finished.outcome() else {
+        panic!("not an error");
+    };
+    assert_eq!(message, "the keys are [redacted] and [redacted]");
+    assert_eq!(sender.requests(), 1);
+    let (record, _) = stored(&world, finished.run());
+    // Where the data went: an account that holds a secret is not written at all,
+    // not even cut, and this one holds the key of the snapshot before.
+    assert_eq!(record.egress().len(), 1);
+    assert_eq!(record.egress()[0].outcome(), Handed::Sent);
+    assert_eq!(record.egress()[0].account(), None);
+    // The refusals of the calls it made: a refusal that holds a secret is not
+    // quoted, whichever snapshot the secret came with.
+    let refusals = &record.outcome().refusals;
+    assert_eq!(refusals.len(), 2);
+    for refused in refusals {
+        assert_eq!(
+            refused.why(),
+            "the call held something that must not be written, so its refusal is not quoted"
+        );
+    }
+    let mut store = Vec::new();
+    every_byte_under(&world.root(), &mut store);
+    for key in [&old, &new] {
+        assert!(!holds(&store, key), "a key is in the store");
+        assert!(
+            !holds(&store, &key[..14]),
+            "the start of a key is in the store"
+        );
+    }
+    assert!(holds(&store, "using [redacted] and [redacted]"));
 }
 
 #[test]
@@ -692,6 +1109,31 @@ impl Offered for Other {
     }
 }
 
+/// The same, holding a backend that declares the model resolved and answers another
+/// capability.
+struct Crossing(Arc<FakeJudge>);
+
+impl Backends for Crossing {
+    fn resolve(
+        &self,
+        capability: Capability,
+        choice: Option<&str>,
+        features: &[String],
+    ) -> Result<ModelIdentity, Unavailable> {
+        Hollow.resolve(capability, choice, features)
+    }
+}
+
+impl Offered for Crossing {
+    fn default_of(&self, _: Capability) -> Option<&str> {
+        Some("default")
+    }
+
+    fn made(&self, _: Capability, _: &str) -> Option<Made> {
+        Some(Made::Judge(self.0.clone()))
+    }
+}
+
 #[test]
 fn a_call_cannot_resolve_a_model_its_snapshot_holds_no_backend_for() {
     let world = World::new();
@@ -703,9 +1145,12 @@ fn a_call_cannot_resolve_a_model_its_snapshot_holds_no_backend_for() {
     // backends is not helped out with it.
     let held = Capabilities::none().with_fill(filler.clone());
     let executor = engine(&world, NoBackends, held, vec![chooses()]).with_config(source.clone());
+    let hollow = Declaration::new(ModelIdentity::new("hollow", "m", "1"), &[]).unwrap();
+    let judge = Arc::new(FakeJudge::scripted(Vec::new()).declared_as(hollow));
     for offered in [
         Arc::new(Hollow) as Arc<dyn Offered>,
         Arc::new(Other(filler.clone())),
+        Arc::new(Crossing(judge.clone())),
     ] {
         source.swap(Snapshot::of(digest("hollow")).offering(offered));
         // It prepares as ready: the roster resolved a model.
@@ -725,6 +1170,7 @@ fn a_call_cannot_resolve_a_model_its_snapshot_holds_no_backend_for() {
         );
     }
     assert_eq!((runs(&world), filler.requests()), (0, 0));
+    assert_eq!(judge.requests(), 0);
 }
 
 // --- the settings ----------------------------------------------------------------------------
@@ -757,7 +1203,7 @@ fn the_settings_of_a_runs_snapshot_are_in_its_record() {
 #[test]
 fn settings_a_record_would_not_take_fail_the_admission_with_no_run() {
     let world = World::new();
-    let (kind, kinds) = fake_kinds();
+    let (_, kinds) = fake_kinds();
     // A backend's name of 64 characters and a setting's key of 64 make a name longer
     // than a record takes: the config's reader takes both.
     let (name, key) = ("n".repeat(64), "k".repeat(64));
@@ -765,10 +1211,8 @@ fn settings_a_record_would_not_take_fail_the_admission_with_no_run() {
         "[backends.fill]\ndefault = \"{name}\"\n\n[backends.fill.{name}]\nkind = \"fake\"\n\n\
          [backends.fill.{name}.settings]\n{key} = \"x\"\n"
     );
-    // The fake kind does not take the setting, so the backends are another kind's.
-    drop(kind);
-    let mut kinds_too = kinds.clone();
-    kinds_too.register(Arc::new(Posts::default())).unwrap();
+    // The fake kind does not take the setting, so the config is read and no backend
+    // is made of it: the backends of the snapshot are those of another config.
     let env = EnvFile::parse(b"").unwrap();
     let read = Config::parse(config.as_bytes(), &env.secrets()).unwrap();
     let ready = "[backends.fill]\nkind = \"fake\"\n";
@@ -796,7 +1240,7 @@ fn settings_a_record_would_not_take_fail_the_admission_with_no_run() {
     for (pairs, says, hides) in [
         (
             vec![pair("a.b"), pair("a.b")],
-            "the setting a.b is given twice",
+            "the setting \"a.b\" is given twice",
             "",
         ),
         (
@@ -836,7 +1280,6 @@ fn settings_a_record_would_not_take_fail_the_admission_with_no_run() {
     source.swap(offers);
     assert!(matches!(executor.request(&request), Ok(Answer::Ran(_))));
     assert_eq!(runs(&world), 1);
-    drop(kinds_too);
 }
 
 /// The settings of a config, asked for the backend named with 64 characters whatever

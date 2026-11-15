@@ -593,6 +593,12 @@ impl Engine {
             // ready, or fit the allowance, because the request under its id was
             // admitted. The id is looked up once more, and what it says is the
             // answer; a refusal stands only when the id is still not taken.
+            // But for an id that holds a secret its admission's snapshot brought (ADR
+            // 0015): it is refused as it is before the first look, since the answer
+            // to a conflict names the id.
+            Err(Stopped::Refused(error @ CallError::Refused(Refusal::SecretInRequestId))) => {
+                Err(error)
+            }
             Err(Stopped::Refused(error @ CallError::Refused(_))) => {
                 answer(self.look_up(id, fingerprint)?).unwrap_or(Err(error))
             }
@@ -1271,6 +1277,14 @@ impl Engine {
                 ),
             });
         };
+        // A recipient whose own origin is a secret could never be sent to: said
+        // here, once, and not by every send of every run. The secrets are known
+        // all the same.
+        if snapshot.names_a_secret_origin(&secrets) {
+            return Err(CallError::Config {
+                why: super::SECRET_ORIGIN_APPROVED.to_owned(),
+            });
+        }
         Ok(Taken { snapshot, secrets })
     }
 
