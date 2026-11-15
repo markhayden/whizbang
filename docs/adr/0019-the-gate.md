@@ -29,6 +29,9 @@ origin; and each wrapper has a test of a signal set between two addresses. In "T
 run's recipients": the two sentences that said an origin "is approved", which is not
 so of one approved for probing alone. In "Consequences": the wrappers are not in use
 until 1C.
+Amended: 2026-11-15, with task I3 (ADR 0015, "A wrapper around each request"). Changed
+under "Limits": a refused backend is no longer called, the pin that held that it was is
+turned round, and what the gate's place knows of a request's classes.
 Spec: section 10, "Egress"
 
 ## Context
@@ -546,19 +549,24 @@ Limits of it, each pinned or stated:
 
 ### Limits, each pinned or stated
 
-- **A refused backend is still called.** The plan refuses a request at the gate's
-  place, before its backend is called and before the meter's place sees it. That place
-  is task I3's and is not built (ADR 0015, "Limits"). So three things the plan's task
-  asks are not shown here, and are task I3's to show (`docs/carry-over.md`): that the
-  backend's own count of requests is none; that a fake meter in the place after the
-  gate saw nothing; and that a refused request has no dispatch record. What is shown is
-  that nothing is handed to a sender, and that the fault states no charge. The pin
-  `gate::known_until_the_gates_place_is_built_a_backend_that_is_refused_was_still_called`
-  holds what is so today, and task I3 turns it round.
-- **"No other backend is asked" is shown of the executor as it is,** which has no
-  fallback to take: a run is handed the backend its call resolved (ADR 0009). The test
-  holds that a refusal adds none. It cannot show that a backend refused at the gate's
-  place is not replaced, since there is no such place yet.
+- **A refused backend was still called, and is not now.** The plan refuses a request
+  at the gate's place, before its backend is called and before the meter's place sees
+  it. That place was task I3's, and until it was built a pin here held that a refused
+  backend was called once and could only not send. It is built (ADR 0015, "A wrapper
+  around each request"): the backend's own count of requests is none and no other
+  backend is asked in its place
+  (`gate::a_backend_that_is_refused_at_the_gates_place_is_not_called`), and a fake in
+  the meter's place saw nothing
+  (`around::with_the_default_policy_a_backend_that_names_a_recipient_is_refused_at_the_gates_place_and_one_that_names_none_is_sent`).
+  One thing the plan's task asks is still not shown: that a refused request has no
+  dispatch record, which no request has until the meter (task S5;
+  `docs/carry-over.md`).
+- **The gate's place knows a prompt and no other class.** What a request holds
+  before any piece is made is less than what its backend then hands over: a picture
+  has no class at a handle. So a recipient approved for prompts and not for source
+  images is refused a source image by the checked sender, after its backend was
+  called, as the test of it here has it; the gate's place refuses first what it can
+  know (ADR 0015, "What a request is said to hold, before any piece is made").
 - **A class is what whoever built the piece stated** (ADR 0012). Nothing here knows a
   source image from a derived one.
 - **Nothing here reads a config or gives an executor its policy.** That is tasks I6

@@ -493,8 +493,13 @@ fn a_config_that_does_not_parse_fails_the_next_call_in_fixed_words_with_no_run_a
 #[test]
 fn an_env_file_that_cannot_be_read_as_one_fails_the_next_call_and_put_right_it_is_admitted() {
     let key = made_up_key("-env");
-    let config =
-        format!("[backends.fill]\nkind = \"fake\"\nkey_env = \"FILL_KEY\"\nurl = \"{API}/v1\"\n");
+    // The backend names the origin of its address as its recipient, and the config
+    // approves it: a request to a recipient that no approval names is refused before
+    // its backend is called (ADR 0015, "A wrapper around each request").
+    let config = format!(
+        "[backends.fill]\nkind = \"fake\"\nkey_env = \"FILL_KEY\"\nurl = \"{API}/v1\"\n\
+         [egress.recipients.api]\norigin = \"{API}\"\nclasses = [\"prompts\"]\n"
+    );
     let env = format!("FILL_KEY={key}\n");
     let world = World::new(&config, Some(&env));
     let executor = world.executor(vec![asks()]);

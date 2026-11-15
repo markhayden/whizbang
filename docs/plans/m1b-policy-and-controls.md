@@ -981,20 +981,20 @@ frozen and the third is as it was.
 **Depends on:** I2. A section of the interfaces' ADR, which changes ADR 0006 and names
 ADR 0009, whose tally records each request.
 
-- [ ] `Around`, in the core: what stands between a handle and its backend. For each
+- [x] `Around`, in the core: what stands between a handle and its backend. For each
       request it is told the run, the run at the root of its tree, the backend's
       declaration and quote, the classes of data the request holds, and the run's
       allowance and place for facts. Before the request it may refuse, with a fault and a
       refusal to note; after it, it is handed the answer or the fault.
-- [ ] The order is fixed in `Context::new`: the handle's own checks (ADR 0006), then the
+- [x] The order is fixed in `Context::new`: the handle's own checks (ADR 0006), then the
       tally, then the wrappers in three named places (the gate, the lease, the meter),
       then the backend. The tally is outside them, so a request is outstanding, and its
       run and every run above it not terminal, until the last wrapper has returned.
-- [ ] What a wrapper's failure means: a wrapper that fails after the backend was
+- [x] What a wrapper's failure means: a wrapper that fails after the backend was
       called, and a backend that panics, do not account for the request as free. The
       run is abandoned (ADR 0008), with the failure, and nothing of it is released; the
       tally lets go only so that the run can reach that state.
-- [ ] Each place is empty by default. A fake wrapper in the test kit records what it saw
+- [x] Each place is empty by default. A fake wrapper in the test kit records what it saw
       and can refuse or stop at a barrier.
 
 **Done when** these pass: three fake wrappers see a request in the stated order, and none
@@ -1006,6 +1006,22 @@ backend answered, and a backend that panics under a wrapper, each leave the run 
 and not ended; with
 no wrapper, every test of `cancel.rs` and `nested.rs` passes unchanged.
 **Size:** small.
+
+**Reworded with the task** (I3, 2026-11-15). Two things are as the task found them
+and not as the boxes word them; ADR 0015, "A wrapper around each request", names the
+test of each clause above.
+
+- "Each place is empty by default." The lease's and the meter's are. The gate's holds
+  the gate of the run's policy when nothing else was put there, because task I5 gives
+  that place the policy ("The gate's place in I3's order is given this policy") and
+  its "Done when" has a request refused there under the default policy. A wrapper a
+  test puts in the gate's place stands in for it.
+- "a backend that panics under a wrapper" leaves the run abandoned where a wrapper
+  *holds something* for the request (`Open::holds`): a debit, a hold, a record that
+  the request's end would account for. Under the gate alone, which holds nothing, a
+  backend's panic is what it was, the fault of one run that ends as an error; that
+  is what keeps "with no wrapper, every test of `cancel.rs` and `nested.rs` passes
+  unchanged", since the gate's place is never empty.
 
 ### I4. One way to a writer, with recovery before it
 
@@ -1087,12 +1103,12 @@ nothing marks a run a dead process left: this task marks it, and corrects the ro
 
 **Depends on:** I4b. A section of the interfaces' ADR.
 
-- [ ] `DispatchPolicy`, in the core: a value the executor holds, asked whether a recipient
+- [x] `DispatchPolicy`, in the core: a value the executor holds, asked whether a recipient
       may receive given classes of data, and whether it may be probed. The default
       approves nothing. The gate's place in I3's order is given this policy.
-      (Built before I2 to I4b, but for its last sentence: the policy is there, the
-      executor holds it and the checked sender asks it; the gate's place is task I3's,
-      which gives it this policy and ticks this box: `docs/carry-over.md`.)
+      (Built before I2 to I4b, but for its last sentence, which task I3 built and
+      ticked this box with: ADR 0015, "A wrapper around each request";
+      `around::with_the_default_policy_a_backend_that_names_a_recipient_is_refused_at_the_gates_place_and_one_that_names_none_is_sent`.)
 - [x] `Sender`, the sending interface of B2, as the executor hands it to a backend: every
       origin it is asked to reach goes through one check before data is handed over, and
       what was handed over is noted in the run's place for facts. The check is E2's and
@@ -1149,7 +1165,8 @@ whose old body stands under a new name.)
       order, a lease on the installation the run was admitted with is taken, and let go
       when the request is over. A lease that cannot be had is a fault and a noted
       refusal; nothing is dispatched.
-      (Not built: its place is task I3's, which is not built. `docs/carry-over.md`.)
+      (Not built. Its place is there, and empty: ADR 0015, "A wrapper around each
+      request"; `docs/carry-over.md`.)
 - [ ] Defaults that know no model, and a fake inventory in the test kit.
       (Built of it, before task I3: the default inventory, `NoInventory`, and the fake,
       `FakeInventory`. The lease's default is not, so the box is not ticked.)
@@ -1748,12 +1765,12 @@ these runs.
       may receive which classes of data.
 - [x] The check behind a `Sender` (I5) for the first address.
 
-**Not done yet, though both boxes are true:** built before I3, so four parts of "Done
-when" below are not shown as the plan words them. The fake backend counting none and
-the fake meter having seen nothing are I3's, with the gate's place; no dispatch record
-is S5's; and "no other backend is asked" is shown only of an executor that has no
-fallback, and again at the gate's place by I3. ADR 0019, "Limits";
-`docs/carry-over.md`.
+**Not done yet, though both boxes are true:** one part of "Done when" below is not
+shown, because no request has a dispatch record until the meter: "a refused request
+has no dispatch record" is task S5's (`docs/carry-over.md`). The other three that
+waited for the gate's place were shown with task I3: the fake backend counts none, a
+fake in the meter's place saw nothing, and no other backend is asked in a refused
+one's place (ADR 0019, "Limits"; ADR 0015, "A wrapper around each request").
 
 **Done when** these pass, each with an executor a test builds with the policy: with the
 empty policy every request to a backend with a recipient is refused and the fake counts

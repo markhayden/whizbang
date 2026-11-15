@@ -46,7 +46,10 @@ mod run;
 mod snapshot;
 pub mod text;
 
-pub use crate::capability::{FillHandle, JudgeHandle, SegmentHandle};
+pub use crate::capability::{
+    Around, Ended, FillHandle, JudgeHandle, Nothing, Open, Place, Places, SegmentHandle, Stop,
+    Wrapped,
+};
 pub use call::Call;
 pub use context::{
     Allowance, Cancellation, Capabilities, Context, Diagnostics, Dispatched, Events, Handles,
