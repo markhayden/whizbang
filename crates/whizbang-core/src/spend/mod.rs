@@ -6,3 +6,5 @@
 //! dispatch before a request leaves and settles each attempt. Until those tasks merge,
 //! the executor's interface to a ledger is `contract::Ledger` and nothing implements it
 //! outside the test kit.
+
+pub mod fold;
