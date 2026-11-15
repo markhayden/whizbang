@@ -1195,7 +1195,7 @@ record; a nested call asks the ledger nothing.
 and `crates/rascal-mask/src/describe.rs` (`common_properties`, `max_spend_usd`);
 table-manners `CONTRACT.md` section 4.5. An admission's part, in `spend/`.
 
-- [ ] A cap on what one call may reserve, from the snapshot (C5 reads it from the config;
+- [x] A cap on what one call may reserve, from the snapshot (C5 reads it from the config;
       until then a test gives it). A request may carry a lower cap of its own; I1's
       section says where a request carries it.
 
@@ -1204,6 +1204,15 @@ exists; a call's own cap lowers the cap for that call; a call's own cap above th
 configured one is refused, not lowered; a cap of zero is refused as not a cap; a refusal
 by the cap makes no run and no reservation and leaves the request's id free; a nested call
 is held to the cap too; the two fixed vectors of `prepared/1` are as they were.
+(Built: the part is `spend::CallCap`, and its tests are `cap::…` in
+`crates/whizbang-core/tests/it/spend/cap.rs`. A request's own cap of zero is refused; a
+snapshot whose cap is zero, which the config's reader never gives, is the part's
+failure and no refusal of the call. No refusal quotes an amount, so a cap that spells
+a secret is not shown, and a snapshot prints only whether it holds a cap. A cost with
+no bound is refused under any cap. The part is given to an executor by whoever builds it: the
+binary's by task W1. The two vectors are held where they were, by
+`prepare::a_fingerprint_is_this_digest` and
+`prepare::a_fingerprint_with_one_of_everything_is_this_digest`, which did not change.)
 **Carry-over:** the row on `max_spend_usd`. **Size:** small.
 
 ### S4. Quotes: a bound, or no dispatch
@@ -1342,11 +1351,11 @@ restart, where the ledger is settled, the child is ended, and no parent is made.
 the stale refusals); table-manners `CONTRACT.md` section 4.5, "Binding a call to its
 estimate", and `schemas/core/estimate.json`. An admission's part, in `spend/`.
 
-- [ ] A preparation carries the time it was made, from the injected clock; I1's section
+- [x] A preparation carries the time it was made, from the injected clock; I1's section
       says where, beside the fingerprint and not in it. Admission refuses, as stale, a
       preparation a request came with that is an hour old or older, and one made at a
       time later than now.
-- [ ] The hour is a constant of the core. No environment variable or test build shortens
+- [x] The hour is a constant of the core. No environment variable or test build shortens
       it, as rascal's did: a test moves the clock.
 
 **Done when** these pass, with the clock moved by hand and no sleep (rule 6): a preparation
@@ -1355,6 +1364,16 @@ reservation; one made "after now", as a clock set back gives, is refused; the sa
 id sent again after the hour returns the first run and is not checked for age, because a
 repeated id is looked up first; preparing again after a refusal gives a preparation that
 is admitted; a request that came with no preparation is not checked for age.
+(Built: the part is `spend::PreparationAge`, the hour is `spend::PREPARATION_HOLDS_MS`,
+and the tests are `age::…` in `crates/whizbang-core/tests/it/spend/age.rs`. The
+refusal is the part's, `Refusal::ByPart` under the name `age`, of the kind `stale`:
+it is not `Refusal::Stale`, which says how a preparation differs. That a preparation
+carries its time, beside the fingerprint, is task I1's and is held by
+`part::a_requests_cap_and_a_preparations_time_reach_a_part_as_they_were_given`. That
+nothing shortens the hour is held by the part's type, which is empty
+(`age::the_hour_is_a_constant_and_the_part_holds_nothing_that_could_shorten_it`), and
+by every other test of the file, which reaches the hour by moving the clock. The part
+is given to an executor by whoever builds it: the binary's by task W1.)
 **Size:** small.
 
 ### S9. `whizbang spend status` and `reset`
@@ -1649,17 +1668,15 @@ the key; the key, escaped and cut, is still asked for, of the reader's refusal.
 
 **Depends on:** C4, C3, S3, E2.
 
-- [ ] The snapshot carries the per-call cap (S3), the egress policy (E2), the secrets (C2,
+- [x] The snapshot carries the per-call cap (S3), the egress policy (E2), the secrets (C2,
       C3) and the settings a run records, each read from the config.
 
-**Not ticked, though the box is true:** built before S3, so the first part of "Done
-when" below is not shown as the plan words it. The snapshot of the source over the files
-carries all four, and a cap lowered in the file is the cap the next admission is shown;
-the call over it is refused by a part of the test's own, which stands where S3's will
+**Ticked with task S3.** The task was built before S3, and its cap's clause was then
+shown with a part of the test's own. That test now gives its executor S3's part
+(`spend::CallCap`): a call over the cap the file was lowered to is refused by it, with
+no run
 (`source::a_cap_lowered_in_the_config_is_the_cap_the_next_admission_is_held_to_on_one_executor`).
-The box is ticked by the pull request that shows the same with S3's part, or by S3's.
-The other four parts are shown. ADR 0011, "The source over both files";
-`docs/carry-over.md`.
+ADR 0011, "The source over both files".
 
 **Done when** these pass, each on one executor across a change of the file: a cap lowered
 in the config refuses the next call that is over it; a recipient taken out of the `egress`
@@ -1889,7 +1906,8 @@ a hold let go twice is let go once.
 (`remove`) and `crates/rascal-mask/src/install.rs` (`uninstall`).
 
 - [x] Removal, inside one process: under the directory's lock the model is marked as
-      draining, so new holds are refused and waiting ones cancelled; the holds are waited
+      draining, so new holds are refused, and one that was refused and is asked for again
+      is refused as draining (no hold waits: the note below); the holds are waited
       for until a deadline of the injected clock; then the removal goes on (M5c), or it
       answers busy and the mark is taken off. Here "goes on" ends at the decision: the
       pointer is cleared and nothing is deleted yet.
