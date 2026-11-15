@@ -14,7 +14,8 @@ publication that changes what is left, in the epoch it changes; a correction tha
 names its place and its turn and is sealed over the names it was made over; and what a
 run sent, known or not. And after the third: what a frozen reservation counts for
 is one sum with no credits, in every epoch, and it stops admissions until the owner
-acts. And after the hunt over other seeds that followed: a reservation with no hold,
+acts (superseded by the owner's choice, in the amendment below this one: it stops
+them only where its amount is unknown). And after the hunt over other seeds that followed: a reservation with no hold,
 or with more than one, falls under no one epoch when its owner has corrected it
 either. And after the fourth: the amount of a reservation whose own hold is lost is
 unknown, and the books say so; an epoch that needs its owner takes no dispatch
@@ -160,7 +161,7 @@ A name under `spend/` is one of these forms, to the character, and no other:
   0007). `<stage>` is `not_sent`, `answered` or `unresolved` (ADR 0010). `<seal>` is
   a digest in lower-case digits of base sixteen, of a fixed length: sixteen in the
   model, whose digest is not a cryptographic one, and in the core the first 32 of a
-  SHA-256 (second part). A name is at
+  SHA-256 ("The seal, in the core", below). A name is at
   most 200 characters, in the alphabet `Step::make` takes.
 - **The largest number is refused where it comes in.** No name states it as an amount,
   so nothing that would is published: a reset, an admission, a share, a dispatch, a
@@ -173,7 +174,49 @@ A name under `spend/` is one of these forms, to the character, and no other:
   read back to the same value; a number with a leading zero, a sign or a space, a
   segment too many or too few, a word of another case and a name of no form are not
   names (`spend::a_name_is_written_one_way_and_read_back_strictly`). The core has one
-  parser of it, which every reader of a name under `spend/` uses (second part).
+  parser of it, which every reader of a name under `spend/` uses: `spend::Name`, whose
+  `parse` reads exactly what its `Display` writes
+  (`spend::name::each_form_of_name_parses_to_its_parts_and_is_written_back_the_same`,
+  `spend::name::a_name_that_breaks_the_grammar_in_each_way_is_refused_and_shown_escaped_and_cut`;
+  tests named `spend::name::`, `spend::record::` and `spend::reading::` are the
+  core's, in `crates/whizbang-core/tests/it/spend/`, and every other `spend::` test
+  named in this record is the model's).
+
+**The seal, in the core.** A correction is sealed over every other name of its
+reservation, the guard of its own place aside. The seal is the first 32 digits, of
+base sixteen and in lower case, of the SHA-256 of those names: each as its text, then
+`!` when its content is damaged, then a newline, the lines in the order of their
+bytes. A name of no form that belongs to the reservation is among them, as its text,
+and is never marked as damaged: its content says nothing
+(`spend::name::a_seal_is_the_first_32_digits_of_a_sha_256_of_the_names_in_their_order`,
+which holds a fixed vector;
+`spend::reading::a_correction_is_given_with_what_its_seal_has_to_be_and_whether_it_is_at_its_place`).
+
+**A name of no form.** A text under `spend/` that the parser refuses is not ignored
+where it can be placed, and is placed by the position of its segments alone:
+
+| The text begins | And | It belongs to | What it does |
+|---|---|---|---|
+| `reservations`, `place`, `dispatched`, `settling`, `settled`, `closed` or `adjusted` | Its second segment is a run id | That run's reservation | It is a name the ledger could not have written: the reservation is frozen (the model's `Stray`). Where the run has no other name, it is a frozen reservation with no hold, and the store needs its owner |
+| `held` | Its third segment is a run id | The same | The same |
+| `reset` or `epoch` | Its second segment is a number | That epoch | The epoch is there, and its allowance is not whole: it allows nothing, as with a reset that lost its guard, until the owner resets |
+| `turn` | Its second segment is a number | That epoch | A turn no publication took: the epoch needs its owner |
+| Anything else | | Nothing | It changes no balance, and a fold reports it |
+
+The model has `Stray` for the first two rows and is silent on the rest. The third and
+fourth rows are the side that cannot count less: a garbled reset, guard or turn is
+read as one more name in its epoch that the ledger did not make, never as nothing,
+so a name garbled in place of a real one leaves that epoch allowing nothing or
+needing its owner, as the loss of the real name alone would or more. They add no
+refusal for the whole store: each stops its own epoch, by the rule there already is
+for a reset without its guard and for a turn that no publication took. A segment
+elsewhere that happens to be a run id places nothing: a run id is lower-case letters,
+digits, `_` and `-`, so nearly any segment is one. The parser answers which row a
+text is under (`spend::Belongs`;
+`spend::name::a_name_of_no_form_belongs_to_a_reservation_or_an_epoch_by_the_place_of_its_segments`);
+the reading sorts the first two rows into their reservation
+(`spend::reading::with_one_reservations_content_damaged_the_reading_gives_the_others_and_that_one_as_damaged`),
+and what the last three do to a balance is the fold's (task S1b).
 
 **Why two names where one would seem to do.** A name that carries an amount cannot
 keep two writers from one place: two dispatches that chose the place `n` with different
@@ -818,11 +861,12 @@ Every name that can make a store stop was then sorted by what can still be count
 
 | What is there | What can be counted | What the store does |
 |---|---|---|
-| A frozen reservation with exactly one hold: a record that cannot be read; a name of no form; a name made, or lost, of a form that takes no turn (the record, a place, a dispatch, a settlement) | The most its names can mean, which is no less than its amount and every bound and charge still named | Goes on. Nothing is dispatched under that reservation; everything else is admitted and dispatched as the allowance covers it |
+| A frozen reservation with exactly one hold: a record that cannot be read; a name of no form; a name made, or lost, of a form that takes no turn (the record, a place, a dispatch, a settlement), where what is left is not a set the ledger could have written | The most its names can mean, which is no less than its amount and every bound and charge still named | Goes on. Nothing is dispatched under that reservation; everything else is admitted and dispatched as the allowance covers it |
 | The same, where the name lost is a settlement over its bound | The amount, the bound and the amount again for the place the charge took: less than the charge, where the charge was more | Goes on. Accepted limit (b): history 87 |
 | The same, where its one hold is one that other hands made in the place of the ledger's | What that hold states, and what the other names say | Goes on. Accepted limit (a): history 86 |
+| Names made under an open reservation that leave a set the ledger could have written: a dispatch made with its place, within what the reservation has left | What the names say: the reservation is not frozen, and the dispatch counts as one the ledger placed | Goes on, and nothing is refused under that reservation. Limit (a), a forged set that the recogniser takes: it is not the first row |
 | A frozen reservation with no hold, or with several: the hold lost; a second hold made; a name made for a run that has no reservation | Nothing that can be trusted: "unknown, at least" | The store needs its owner, in every epoch, until that reservation is corrected. Kept as an exception; history 67 |
-| An epoch whose turns are not those its publications took: a turn lost or made; a name that takes a turn (a hold, a settlement's guard, a closing, a correction) lost, or made without one | Whatever the name that is gone stated is counted nowhere, and no name says what it was | That epoch needs its owner: no admission until a reset, no dispatch under its reservations. Kept as an exception; histories 61 and 70 |
+| An epoch whose turns are not those its publications took: a turn lost or made; a name that takes a turn (a hold, a settlement's guard, a closing, a correction) lost, or made without one | Whatever the name that is gone stated is counted nowhere, and no name says what it was | That epoch needs its owner: no admission until a reset, no dispatch under its reservations. Kept as an exception; histories 61 and 70. **It holds that one epoch and no other:** after a reset, a name lost from the epoch it closed leaves the new epoch admitting in full (limit (d); history 88) |
 
 The first three rows are the owner's choice. In the first, going on does not count
 less than was spent. In the second and third it can, and each is an accepted limit,
@@ -842,8 +886,9 @@ history is long, 78 and 79 the sixth round's, one trace in its two forms, and 80
 87 those of the review of the pull request and of the owner's choice that followed:
 names made under an admission before its reading (80), the plan's invariant 4 (81),
 what a correction writes off (82 and 83), a reset under open reservations (84),
-requests of nothing (85), and the two limits accepted with invariant 4 (86 and 87).
-That is 87 named histories. The generated histories, in six suites, are 4,096 of at most 24 events each, from a seed written
+requests of nothing (85), and the two limits accepted with invariant 4 (86 and 87);
+and 88, from the follow-ups of that review: a loss in an epoch a reset has closed.
+That is 88 named histories. The generated histories, in six suites, are 4,096 of at most 24 events each, from a seed written
 in the test, and 4,096 more of another shape: books the ledger alone wrote, then one to
 six things other hands do, then one to four things the ledger and its processes do
 (`spend::every_generated_history_of_whole_books_then_other_hands_keeps_every_invariant`); one that breaks an invariant is printed with the seed and its number.
@@ -1071,6 +1116,10 @@ so that neither can be taken for covered.
   what the charge was over the frozen sum can be reserved again (history 87, in the
   table above). Invariant 1
   is of what the records show.
+  **What this limit can cost has no bound.** A charge over a bound has no bound of
+  its own: a provider that charges more than it quoted can charge anything, and a
+  charge that no name states is under by all of it beyond what the reservation's
+  other names still count.
 - **(c) When the ledger's own hold of a reservation is lost, its amount is unknown,
   whatever holds other hands leave in its place.** The amount was in that name
   alone. The reservation counts for what its names say, in every epoch; a request
@@ -1096,6 +1145,17 @@ so that neither can be taken for covered.
   turn is lost with it. What is believed is the count. A dispatch that follows is
   still held to what its process holds of the tree, while that process lives
   (history 73).
+  **The turns stop one epoch, and a reset opens another.** An epoch whose turns are
+  not those its publications took needs its owner, and that is of that epoch alone.
+  Reset to 20; a reservation of 10 sends a request of 5 that is settled at 12; the
+  owner resets to 20 again. Other hands then take away that settlement, its guard
+  and the place it took, and leave its turn. The old epoch has a turn more than its
+  names account for and needs its owner; its reservation reads as open, at 10, where
+  12 were spent. The new epoch's turns start again and are whole: it reads nothing
+  counted and admits its full 20 (history 88;
+  `spend::the_limits_accepted_with_a_frozen_reservation_that_stops_nothing_else_each_count_exactly_this_much_less`).
+  Nothing is under in the new epoch, whose allowance the owner set after the charge;
+  the old epoch's books are under by 2, which is this limit and limit (b).
   **What this limit can cost has no bound either.** Every name of a reservation lost
   is all that it spent, and every name under `spend/` lost is all the store spent and
   its allowance with it: an empty store allows nothing, and counts nothing.
