@@ -14,7 +14,7 @@ use whizbang_core::contract::{
     MadeName, NotJudged, Produced, Refusal, Reread, Reservation, RunId, RunState, Settled, Step,
 };
 use whizbang_core::spend::fold::State;
-use whizbang_core::spend::{ClosedBy, Record, StoreLedger, Sum, TurnBy};
+use whizbang_core::spend::{ClosedBy, PlaceBy, Record, StoreLedger, Sum, TurnBy};
 use whizbang_core::store::GENERATION_MAX_BYTES;
 use whizbang_testkit::barrier::Barriers;
 
@@ -22,7 +22,7 @@ use super::meter::{
     Asked, PRICE, asks, call, dispatch_names, fill_request, metered, metered_with, priced,
 };
 use super::settle::Filling;
-use super::support::{Counted, Said, World, allow, books, ran, spend_names};
+use super::support::{Counted, Said, World, allow, books, plant, ran, reserved, spend_names};
 
 /// The closings the store holds, by their names.
 fn closed(world: &World) -> Vec<String> {
@@ -322,6 +322,49 @@ fn a_nested_calls_end_settles_nothing_in_the_ledger() {
     assert_eq!(ledger.settled(), 1);
     assert_eq!(closed(&world), [format!("spend/closed/{run}/released")]);
     assert_eq!(stands(&world, &run), (State::Released, 100_000, 900_000));
+}
+
+#[test]
+fn a_reservation_that_a_closing_already_names_is_left_as_it_is_when_its_run_ends() {
+    let world = Arc::new(World::new("close-twice"));
+    allow(&world.store, 1_000_000);
+    // While the run executes, other hands close its reservation with nothing
+    // released, as a second process over the store would.
+    let action = {
+        let world = world.clone();
+        world
+            .clone()
+            .action("asks", &[Capability::Fill], move |_, _| {
+                // The one run of this store is the action's own.
+                let run = reserved(&world.store)[0].run().clone();
+                plant(
+                    &world.store,
+                    &[
+                        Record::Closing {
+                            run: run.clone(),
+                            released: false,
+                            by: ClosedBy::Recovery,
+                            charged: Sum::ZERO,
+                            unresolved: Sum::ZERO,
+                            at_ms: 0,
+                        },
+                        Record::Place {
+                            run,
+                            place: super::n(1),
+                            by: PlaceBy::Closing,
+                        },
+                    ],
+                );
+                Ok(Produced::nothing())
+            })
+    };
+    let engine = metered(&world, Arc::new(priced()), 1, vec![action]);
+    let run = ran(engine.request(&call())).run().clone();
+    // One closing, the one that was there: the run's end made no second, which
+    // would have released what the first held.
+    assert_eq!(closed(&world), [format!("spend/closed/{run}/held")]);
+    assert_eq!(closing(&world, &run).1, ClosedBy::Recovery);
+    assert!(!spend_names(&world.store).contains(&format!("spend/place/{run}/2")));
 }
 
 /// A ledger that admits with no hold: it makes the epoch's next turn and nothing

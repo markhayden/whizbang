@@ -1464,6 +1464,9 @@ reservation's next place, and the next turn of each epoch a hold of it names
   abandonment marks the child alone.
 - The end of a nested call asks the ledger nothing and closes nothing
   (`spend::close::a_nested_calls_end_settles_nothing_in_the_ledger`).
+- A reservation that other hands closed while its run executed gets no second
+  closing at the run's end, which would release what the first held
+  (`spend::close::a_reservation_that_a_closing_already_names_is_left_as_it_is_when_its_run_ends`).
 
 **Decided while it was built.**
 

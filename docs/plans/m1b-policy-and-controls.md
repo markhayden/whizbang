@@ -1849,9 +1849,11 @@ with no settlement, as a child's failed settlement leaves one,
 `a_root_with_a_dispatch_that_has_no_settlement_ends_closed_as_interrupted_with_nothing_released`;
 a nested call's end, `a_nested_calls_end_settles_nothing_in_the_ledger`. Of the box and
 not of "Done when": a tree charged more than was reserved,
-`a_tree_charged_more_than_was_reserved_is_closed_at_what_it_was_charged`; and a
+`a_tree_charged_more_than_was_reserved_is_closed_at_what_it_was_charged`; a
 reservation with no hold, which takes no turn,
-`a_reservation_with_no_hold_is_closed_as_interrupted_and_takes_no_turn`.
+`a_reservation_with_no_hold_is_closed_as_interrupted_and_takes_no_turn`; and one that
+a closing already names, which gets no second,
+`a_reservation_that_a_closing_already_names_is_left_as_it_is_when_its_run_ends`.
 The tests of an admission that need a reservation to go on counting after a run that
 does nothing has ended (`spend::reserve::`, `admit.rs`, the binary's tests of `spend
 status`) leave it open, with a ledger that reserves and confirms as the real one and
