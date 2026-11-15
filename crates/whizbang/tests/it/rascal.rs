@@ -7,6 +7,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use whizbang::door::{self, GrowAsked};
+use whizbang::wiring::Over;
 use whizbang_core::artifact::{self, Artifact, ArtifactId, ArtifactType, Mask, Source, UseCase};
 use whizbang_core::artifact::{Origin, Step};
 use whizbang_core::contract::{
@@ -436,6 +437,117 @@ fn a_request_id_of_one_dot_or_two_is_a_name_in_the_store_and_never_a_path() {
 }
 
 #[test]
+fn grow_runs_under_the_config_its_flag_names_and_under_the_empty_config_with_none() {
+    // The config is named by `--config`, as the store is by `--store` (ADR 0011,
+    // "Where the file is"). A run records the digest of the config it ran under: the
+    // empty config's when no file is named, and the file's own when one is.
+    let dir = Scratch::new("rascal");
+    let (store, input) = imported(&dir);
+    let shown = |run: &str| {
+        let root = store.to_str().unwrap();
+        let (code, out, err) = whizbang(&["runs", "show", run, "--store", root]);
+        assert_eq!(code, 0, "{err}");
+        out
+    };
+    let (code, out, err) = grow(&store, &["--mask", &input, "--px", "8"]);
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    let empty = whizbang_core::config::Config::empty().digest();
+    let text = shown(&printed(&out).0);
+    assert!(text.contains(&format!("\nconfig: {empty}\n")), "{text}");
+    assert!(text.contains("\nsettings: none\n"), "{text}");
+    // A config that caps one call: `grow` needs no backend and costs nothing, so it
+    // runs, and its run records the cap among its settings.
+    let config = dir.path().join("whizbang.toml");
+    let said = "[spend]\ncall_cap_usd = 0.5\n";
+    std::fs::write(&config, said).unwrap();
+    let digest = whizbang_core::config::Config::parse(said.as_bytes(), &Secrets::none());
+    let digest = digest.unwrap().digest();
+    assert_ne!(digest, empty);
+    let named = [
+        "--mask",
+        &input,
+        "--px",
+        "9",
+        "--config",
+        config.to_str().unwrap(),
+    ];
+    let (code, out, err) = grow(&store, &named);
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    let text = shown(&printed(&out).0);
+    assert!(text.contains(&format!("\nconfig: {digest}\n")), "{text}");
+    assert!(
+        text.contains("\nsettings: 1\n  spend.call_cap_micros = 500000\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_config_grow_cannot_use_is_said_with_its_key_and_no_path_before_the_store_is_opened() {
+    let dir = Scratch::new("rascal");
+    let (store, input) = imported(&dir);
+    let before = tree(&store);
+    let config = dir.path().join("whizbang.toml");
+    let env = dir.path().join("keys.env");
+    let run = |more: &[&str]| {
+        let mut args = vec!["--mask", input.as_str(), "--px", "8"];
+        args.extend(more);
+        let (code, out, err) = grow(&store, &args);
+        assert_eq!((code, out.as_str()), (1, ""), "{err}");
+        // No path of the config, of the env file or of the store is in a complaint
+        // about a config, and nothing was made in the store.
+        assert!(!err.contains(dir.path().to_str().unwrap()), "{err}");
+        assert_eq!(tree(&store), before);
+        err
+    };
+    let named = ["--config", config.to_str().unwrap()];
+    // A file that is not there.
+    let err = run(&named);
+    assert!(
+        err.starts_with("whizbang: the config cannot be used: "),
+        "{err}"
+    );
+    // A key the reader does not know is named, as the reader names it.
+    std::fs::write(&config, "[spend]\ncall_cap = 1\n").unwrap();
+    let err = run(&named);
+    assert!(
+        err.contains("the config cannot be used: ") && err.contains("call_cap"),
+        "{err}"
+    );
+    // A config that names a variable is not used without an env file, and with one
+    // that does not parse the line is numbered and not shown.
+    let key = made_up_key();
+    std::fs::write(
+        &config,
+        "[backends.fill]\nkind = \"fake\"\nkey_env = \"FAKE_KEY\"\n",
+    )
+    .unwrap();
+    let err = run(&named);
+    assert!(err.contains("name the env file"), "{err}");
+    std::fs::write(&env, format!("FAKE_KEY={key}\nnot an assignment\n")).unwrap();
+    let both = [named[0], named[1], "--env-file", env.to_str().unwrap()];
+    let err = run(&both);
+    assert!(
+        err.contains("the config cannot be used: line 2 of the env file"),
+        "{err}"
+    );
+    assert!(!err.contains(&key), "{err}");
+    // The env file is named only beside a config: the parser says so.
+    let (code, _, err) = grow(&store, &["--mask", &input, "--px", "8", both[2], both[3]]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("--config"), "{err}");
+    // With both files good the config is used: its one backend is of a kind this
+    // build does not have, which `grow` does not need.
+    std::fs::write(&env, format!("FAKE_KEY={key}\n")).unwrap();
+    let (code, out, err) = grow(
+        &store,
+        &[
+            "--mask", &input, "--px", "8", both[0], both[1], both[2], both[3],
+        ],
+    );
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+}
+
+#[test]
 fn the_help_of_grow_states_its_arguments_and_its_exit_codes() {
     let (code, help, _) = whizbang(&["rascal", "grow", "--help"]);
     assert_eq!(code, 0);
@@ -444,6 +556,8 @@ fn the_help_of_grow_states_its_arguments_and_its_exit_codes() {
         "--px <PX>",
         "--down-px <DOWN_PX>",
         "--store <DIR>",
+        "--config <FILE>",
+        "--env-file <FILE>",
         "--request-id <ID>",
         "from 0 to 10000",
         "Exit codes:",
@@ -487,7 +601,8 @@ fn runner(dir: &Scratch, action: Arc<dyn Action>, secrets: Secrets) -> (Engine, 
     publication.publish().unwrap();
     let mut registry = whizbang_core::contract::Registry::new();
     registry.register(action).unwrap();
-    let engine = whizbang::wiring::runner(registry, store).with_secrets(secrets);
+    let over = Over::nothing().knowing(secrets);
+    let engine = whizbang::wiring::runner(registry, store, &over).unwrap();
     (engine, id.0.to_string())
 }
 

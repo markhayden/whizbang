@@ -615,7 +615,7 @@ fn the_records_of_request_ids_are_left_by_delete_and_prune_and_still_answer() {
         let store = Arc::new(Store::open(root, Arc::new(RealFs)).unwrap());
         let mut registry = whizbang::wiring::registry().expect("the registry builds");
         registry.register(Arc::new(Echo::new())).unwrap();
-        whizbang::wiring::runner(registry, store).with_ledger(Arc::new(FakeLedger::new()))
+        crate::runner(registry, store).with_ledger(Arc::new(FakeLedger::new()))
     };
     let records = |root: &Path| -> Vec<(String, Vec<u8>)> {
         let reader = Reader::open(root, Arc::new(RealFs)).unwrap();

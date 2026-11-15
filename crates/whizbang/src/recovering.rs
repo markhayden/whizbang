@@ -119,6 +119,7 @@ fn grow(root: &Path, mask: &str) -> rascal::Command {
         px: 1.0,
         down_px: None,
         at: Where::at(root),
+        under: rascal::Under::default(),
         request_id: None,
     }
 }

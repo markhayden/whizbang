@@ -58,6 +58,10 @@ they are.
 Amended: 2026-11-15, an eleventh note, with task S3. Changed in "The source over both
 files": the cap's clause is shown with the part that holds a call to the cap, where a
 part of the test's own stood for it.
+Amended: 2026-11-15, a twelfth note, with task W1 (ADR 0015, "The binary wired"). The
+two flags exist; the binary's executor is built over the source, with the same
+secrets given to both; and under "The source over both files", "Limits": reading the
+env file a second time was considered and is not done, with why.
 Spec: section 4, "Backends" (config, resolution, credentials); section 6, "Spend";
 section 10, "Egress"
 
@@ -100,17 +104,18 @@ gives.
 
 This record was brought in two parts, because the task came to more than one pull
 request's worth: first the file, its shape and how it is read; then "The digest". The
-binary's executor is still built with the digest of no bytes until task W1 gives it the
-source over the files.
+binary's executor was built with the digest of no bytes until task W1 gave it the
+source over the files (ADR 0015, "The binary wired").
 
 ### Where the file is
 
 One TOML file, named on the command line by `--config <file>`, as the store is named by
 `--store`. There is no default place: no file in the working folder, none in a user's
 folder, and no variable that names one. A command given no config has the empty config:
-no backend, no cap, no recipient (`Config::empty`). The flag itself comes with the task
-that wires the binary; the reader takes a path (`Config::read`) or bytes
-(`Config::parse`).
+no backend, no cap, no recipient (`Config::empty`). The flag came with the task that
+wired the binary (`whizbang rascal grow --config <file>`; ADR 0015, "The binary
+wired"), and a run under no config records the empty config's digest; the reader takes
+a path (`Config::read`) or bytes (`Config::parse`).
 
 ### What the file holds
 
@@ -360,7 +365,8 @@ file and the reason.
 ### The env file
 
 The values are in one env file, which git ignores and nothing here writes. It is named
-on the command line as the config is; that flag comes with the binary's wiring too. The
+on the command line as the config is, by `--env-file <file>`, which is taken only
+beside `--config` and came with the binary's wiring too. The
 code is `config/env.rs`, and its tests are `env::`.
 
 **The order, and the way in.** `Loaded::read` takes both paths, the config's and the
@@ -894,14 +900,23 @@ What follows is task C5's, each on one executor across a change of the file.
   for one ask, be read as its old value bound to its new recipient; the same pairing
   is on the disk whenever the config is saved before the env file. A variable that
   changes recipient is given a new name.
+  **Considered with task W1, and left so: the source does not read the env file a
+  second time and refuse the ask when it changed.** A second reading would rule out
+  only a pairing that was never on the disk at one moment. The pairing that matters,
+  an old value beside a new recipient, is on the disk for as long as one file is
+  saved before the other, and a source that read both files twice would read it
+  twice and use it. Two files cannot be saved as one thing, so the rule stays the
+  one above: a variable that changes recipient is given a new name. The second
+  reading would also cost every preparation and every admission one more read of a
+  file, and add a refusal that a person who is editing the env file meets at random.
 - **Every ask reads both files and makes every backend,** for a preparation as for an
   admission (ADR 0015). Nothing is kept from one ask for the next but the secrets.
 
 **What waits.**
 
-- **The part that holds a call to the cap in the binary.** The part is built (task
-  S3, `spend::CallCap`) and reads the snapshot's cap; the binary's executor is given
-  it by the wiring (task W1).
+- **The part that holds a call to the cap in the binary** waited for the wiring and
+  is there: the binary's executor is given `spend::CallCap` (task W1; ADR 0015, "The
+  binary wired").
 - **A recipient's credential in the snapshot.** The executor attaches a credential
   only from its ways (ADR 0015, "A policy before a send, and a checked send"), and a
   snapshot's ways are given one by `Snapshot::with_credential`. A kind makes the
@@ -909,8 +924,8 @@ What follows is task C5's, each on one executor across a change of the file.
   the source has none to give: a backend made from a config sends with no credential
   until a kind can hand one over. No kind sends anything at this checkpoint; it is
   for the first kind that does (`docs/carry-over.md`).
-- **The binary's executor built over this source** (task W1), with the same secrets
-  given to both.
+- **The binary's executor built over this source,** with the same secrets given to
+  both, waited for the wiring and is built (task W1; ADR 0015, "The binary wired").
 
 ### What the reader does not do
 

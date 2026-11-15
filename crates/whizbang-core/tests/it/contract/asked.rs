@@ -836,6 +836,91 @@ fn a_secret_in_what_a_judge_was_sent_or_answered_is_in_nothing_the_run_stores() 
 }
 
 #[test]
+fn an_exchange_with_a_judge_is_stored_as_json_after_a_secret_at_the_edge_of_an_escape_was_taken_out()
+ {
+    // A body known to be JSON is redacted as JSON where it is written (ADR 0014, "A
+    // JSON body"), and the one body the executor writes knowing that is an exchange
+    // with a judge. The secret here begins with the letter an escape ends in. After a
+    // line break, which JSON writes as a backslash and that letter, the bytes of the
+    // body hold the secret's letters and the text does not; after a backslash the
+    // text holds the secret. Searched as bytes, the first is left with a backslash
+    // before the marker, which is no JSON.
+    let world = World::new();
+    let secret = format!("n{}", made_up_key("EDGE"));
+    let secrets = Secrets::new([secret.clone()]).unwrap();
+    let after_a_break = format!("first line\n{}", &secret[1..]);
+    let after_a_backslash = format!("a path\\{secret}");
+    let turn = Turn::new(
+        vec![Part::Text(after_a_backslash.clone())],
+        StopReason::EndTurn,
+        None,
+        None,
+    )
+    .unwrap();
+    let judge = Arc::new(FakeJudge::scripted(vec![Ok(turn)]));
+    let asks = {
+        let (after_a_break, after_a_backslash) = (after_a_break.clone(), after_a_backslash.clone());
+        action("asks", judging(), move |_, context| {
+            let judge = context.capabilities().judge().unwrap();
+            let message = vec![Part::Text(after_a_break.clone())];
+            let message = Message::new(Role::User, message).unwrap();
+            let controls = Controls::new(64).unwrap();
+            let request = JudgeRequest::new("You judge.", vec![message], Vec::new(), controls);
+            judge.send(&request.unwrap()).unwrap();
+            // What an action writes under a name of its own is bytes to the
+            // executor, whatever they are, and is searched as bytes, as it was.
+            let plain = format!("not json: {after_a_backslash}");
+            let written = context.diagnostics();
+            written.write("notes.txt", plain.as_bytes()).unwrap();
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(
+        &world,
+        roster(None, None, Some(judge.as_ref())),
+        Capabilities::none().with_judge(judge.clone()),
+        vec![asks],
+    )
+    .with_secrets(secrets);
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let (_, names) = stored(&world, finished.run());
+    // The exchange is JSON, with what was sent whole and the answer's secret out.
+    let exchange: Json = serde_json::from_slice(&names["diagnostics/exchange-0001"])
+        .expect("the stored exchange is JSON");
+    assert_eq!(
+        exchange["messages"][0]["parts"][0]["text"],
+        json!(after_a_break)
+    );
+    assert_eq!(
+        exchange["answer"]["turn"]["parts"][0]["text"],
+        json!("a path\\[redacted]")
+    );
+    assert_eq!(
+        names["diagnostics/notes.txt"],
+        b"not json: a path\\[redacted]"
+    );
+    // What was sent never held the secret as a text: its letters stand in the
+    // stored bytes only where the escape of the line break gives the first. What
+    // was answered did hold it, and no text of the stored exchange does.
+    assert!(!after_a_break.contains(&secret) && after_a_backslash.contains(&secret));
+    fn texts(value: &Json, found: &mut Vec<String>) {
+        match value {
+            Json::String(text) => found.push(text.clone()),
+            Json::Array(values) => values.iter().for_each(|value| texts(value, found)),
+            Json::Object(fields) => fields.iter().for_each(|(key, value)| {
+                found.push(key.clone());
+                texts(value, found);
+            }),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    texts(&exchange, &mut found);
+    assert!(found.len() > 5 && !found.iter().any(|text| text.contains(&secret)));
+}
+
+#[test]
 fn an_action_cannot_write_a_diagnostic_under_an_exchanges_name() {
     let world = World::new();
     let writes = action("writes", Vec::new(), |_, context| {

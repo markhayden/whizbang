@@ -1175,13 +1175,38 @@ impl Diagnostic {
     /// must be a plain one ([`is_diagnostic_name`]); in the run it is `diagnostics/` and
     /// that name. The digest and the length are of what is stored.
     ///
-    /// This and [`Diagnostic::journal`] are the two ways to make one, beside reading a
-    /// stored record: a diagnostic that a record lists was redacted when it was made.
+    /// This, [`Diagnostic::written_json`] and [`Diagnostic::journal`] are the ways to
+    /// make one, beside reading a stored record: a diagnostic that a record lists was
+    /// redacted when it was made.
     pub fn written(
         name: &str,
         content: &[u8],
         secrets: &Secrets,
     ) -> Result<(Diagnostic, Vec<u8>), String> {
+        Diagnostic::named(name, secrets)?;
+        let stored = secrets.redact_bytes(content);
+        let diagnostic = Diagnostic::naming(format!("{DIAGNOSTICS_PREFIX}{name}"), &stored);
+        Ok((diagnostic, stored))
+    }
+
+    /// [`Diagnostic::written`], of a body its writer knows to be JSON: the secrets
+    /// are taken out of each string of it, so that what is stored is still JSON
+    /// ([`Secrets::redact_json`], ADR 0014, "A JSON body"). Searched as bytes, such a
+    /// body can be left with a backslash before the marker, which is no JSON. The
+    /// executor writes one such body: an exchange with a judge.
+    pub fn written_json(
+        name: &str,
+        body: &[u8],
+        secrets: &Secrets,
+    ) -> Result<(Diagnostic, Vec<u8>), String> {
+        Diagnostic::named(name, secrets)?;
+        let stored = secrets.redact_json(body);
+        let diagnostic = Diagnostic::naming(format!("{DIAGNOSTICS_PREFIX}{name}"), &stored);
+        Ok((diagnostic, stored))
+    }
+
+    /// Whether this is a name a diagnostic may be written under, or why not.
+    fn named(name: &str, secrets: &Secrets) -> Result<(), String> {
         // A name is a key in the store, written as it is: one that holds a secret is
         // refused, and the refusal does not show it.
         if secrets.redact(name) != name {
@@ -1199,9 +1224,7 @@ impl Diagnostic {
                  characters at most"
             ));
         }
-        let stored = secrets.redact_bytes(content);
-        let diagnostic = Diagnostic::naming(format!("{DIAGNOSTICS_PREFIX}{name}"), &stored);
-        Ok((diagnostic, stored))
+        Ok(())
     }
 
     fn naming(name: String, stored: &[u8]) -> Diagnostic {

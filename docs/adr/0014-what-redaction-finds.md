@@ -19,6 +19,8 @@ backslash; a text shorter than the longest form is followed in its own room. Add
 there: a string whose bytes are not UTF-8; what a string of tiny strings costs. Added,
 under "Consequences": two keys that come back as one, and a number that comes back as
 a string.
+Amended: 2026-11-15, with task W1 of checkpoint 1B. Changed under "A JSON body": one
+writer hands its body to `redact_json`, the keeping of an exchange with a judge.
 Spec: section 3, "What every run records" ("Secrets are redacted before anything is
 written"); section 10, "Egress" ("Credentials and tokens are redacted from logs, events,
 journals, results and errors")
@@ -294,9 +296,19 @@ across two strings, or across a string and what is between strings, is in no one
 string. Searched as bytes it would be found, and the body broken; here the body is kept
 and the secret, which no one value held, is not found.
 
-**Nothing calls it yet.** The writers of a body known to be JSON are the executor's,
-and they redact as bytes at this head. Changing them is a change to the executor's
-files and is on `docs/carry-over.md`.
+**One writer calls it: an exchange with a judge** (with task W1 of checkpoint 1B, which
+took the row off `docs/carry-over.md`). A handle writes an exchange as JSON, and the
+executor keeps it through `Diagnostic::written_json`, which redacts it as JSON: an
+exchange in which the letters of a secret stood after a line break's escape was
+stored with a backslash before the marker, and could not be read back as one
+(`asked::an_exchange_with_a_judge_is_stored_as_json_after_a_secret_at_the_edge_of_an_escape_was_taken_out`).
+So what this section does not find holds for a stored exchange from here on: a secret
+that stands across two of its strings. Nothing else the executor writes is a body it
+knows to be JSON and searches whole. A record and an admission are made of fields
+that are each cleaned as a text before the document is written; a journal is lines
+whose messages were cleaned the same way; and what an action writes under a name of
+its own is bytes to the executor, whatever they are, and is searched as bytes, as it
+was (the same test, its last lines).
 
 ### What is accepted
 
@@ -354,8 +366,9 @@ Two things that are not misses, pinned in the same test:
 - A stored body in which a number became a string may not be read back by a reader
   that expects the number; that is taken over leaving the digits
   (`redact::a_number_that_holds_a_secret_becomes_a_string_and_the_body_is_still_json`).
-- `docs/carry-over.md`: the row on what redaction does not find is cut down to the one
-  thing left, that nothing hands a JSON body to `redact_json` yet.
+- `docs/carry-over.md`: the row on what redaction does not find was cut down to the one
+  thing left, that nothing handed a JSON body to `redact_json`, and is gone since an
+  exchange with a judge is ("A JSON body").
 
 ## Alternatives
 

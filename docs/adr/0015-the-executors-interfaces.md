@@ -71,6 +71,9 @@ refused to read, as decided.
 Amended: 2026-11-15, with the second half of task I7. Added under "An inventory":
 "The backend a run is handed, and the lease's place". Changed there: "What waits"
 and two limits.
+Amended: 2026-11-15, with the first part of task W1. Added: "The binary wired". Changed
+where a section said what waited for that task: the parts, the cap, and the path
+through a snapshot.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -265,7 +268,8 @@ the two fingerprints are held where they were, unchanged:
 (`admit::…`), and a part that adds nothing and refuses nothing leaves the store, and
 the calls made of the file system, as they are without one
 (`part::a_part_that_adds_nothing_and_refuses_nothing_leaves_the_store_as_it_is_without_one`).
-The binary's executor has no part until the wiring (task W1).
+The binary's executor had no part until its wiring, and has two since ("The binary
+wired").
 
 **The fake.** `FakePart` refuses, fails or adds a record when a test tells it to, keeps
 what it was shown each time it was asked (`Seen`), and can run a test's hook while it is
@@ -727,7 +731,7 @@ hook while it is asked.
   says what it refuses, under which kind of a record, and why no refusal quotes an
   amount; its tests are `cap::…` in `crates/whizbang-core/tests/it/spend/cap.rs`). An
   executor holds calls to the cap only when it is given the part; the binary's is
-  given it by its wiring (task W1).
+  given it by its wiring ("The binary wired").
 - **The gate's place** is given the policy of the run's snapshot, as the checked
   sender is: both are made of the ways the run executes under ("A wrapper around
   each request").
@@ -1096,11 +1100,9 @@ reserves, and it is kept: reserving the largest cannot reserve too little
   finds no handle. The path through a snapshot refuses such a call as not ready
   (`Snapshot::handed`). It is left so for now: an executor built by hand is a test's,
   many of whose actions need a capability and never ask for it. The binary's executor
-  is on this path too, today: it is built with no backends at all
-  (`crates/whizbang/src/wiring.rs`, `NoBackends`) and no snapshot. That it goes through
-  a snapshot is task W1's plan and not yet so; `docs/carry-over.md` has the row that
-  holds the binary to the snapshot path, with a test that a call with no backend to
-  hand is refused as not ready.
+  was on this path too until its wiring, and is not since: it asks a source of
+  snapshots, and every snapshot it is answered holds backends, those a config offers
+  or none at all ("The binary wired").
 - **The gate knows a prompt and no other class,** as above.
 
 ### One way to a writer, with recovery before it
@@ -1401,6 +1403,84 @@ to `…_part_4_of_4`, in the group of crash sweeps).
 - **A run whose record cannot be made from its name alone either is skipped, and
   nothing says so:** it stays admitted for good, and every later recovery skips it
   again.
+
+### The binary wired
+
+Task W1, in parts. The code is `crates/whizbang/src/wiring.rs`; the tests are the
+binary's, named `wired::` (`crates/whizbang/tests/it/wired.rs`) and `rascal::`, each
+through the function that builds the binary's executor, with the test kit's fakes
+behind it, and the real binary reading what a run left. This section says what the
+binary's executor is built with; it adds no interface. **This part: the source of the
+config, the secrets, and the parts of an admission.** The ledger with the meter, and
+the inventory with the lease, are the parts after it.
+
+**What an executor of this build is built over** is one value, `wiring::Over`: the
+config file and the env file as the command line names them (`--config`,
+`--env-file`, on `whizbang rascal grow`), the kinds of backend, and the secrets it is
+told of from the start. `wiring::runner` and `wiring::executor` take it, and nothing
+else gives either executor a source, a secret or a part.
+
+- **The source is always one that answers snapshots which hold backends.** With a
+  config named it is the source over both files (`config::Files`, ADR 0011), which
+  reads both again at each ask. With none it is one snapshot of the empty config:
+  that config's digest, what it offers, which is nothing, the policy that approves
+  nothing, and no setting. So the executor is built with no backend of its own
+  (`NoBackends`) and never asks or hands over any but a snapshot's: **a call with no
+  backend to hand is refused as not ready, before admission, with no run**
+  (`wired::with_no_config_the_binarys_executor_is_under_the_empty_config_and_a_call_with_no_backend_to_hand_is_refused_as_not_ready_with_no_run`).
+  A backend whose kind the build does not have is not ready with that reason, and the
+  build registers no kind (`wiring::kinds`)
+  (`wired::a_backend_of_a_kind_this_build_does_not_have_is_not_ready_through_the_binarys_wiring_and_says_why`).
+  With a kind a test registers, a run is handed the backend that kind made of the
+  config's table, and `whizbang runs show` prints the config's digest, the settings
+  and the model
+  (`wired::under_a_config_a_run_is_handed_the_backend_its_kind_made_and_runs_show_prints_the_configs_digest_the_settings_and_the_model`).
+- **The digest of a run under no config is the empty config's,**
+  `sha256:9d60a543…` (ADR 0011, "The digest"), where it was the digest of no bytes.
+  Nothing else of such a run changed: no backend, no cap, no recipient, no setting
+  (`rascal::grow_runs_under_the_config_its_flag_names_and_under_the_empty_config_with_none`).
+- **The secrets are given once, to both** (`Over::knowing`): to the executor
+  (`Engine::with_secrets`) and to the source (`Files::knowing`), by the one function
+  that builds an executor. An executor told of a secret takes it out of what it
+  writes, and its source refuses a config that holds it; told of none, both read that
+  config (`wired::the_binarys_source_and_its_executor_are_told_of_the_same_secrets`).
+  A key of the env file is the executor's from the first call on
+  (`wired::a_key_of_the_env_file_is_taken_out_of_what_a_run_under_the_binarys_executor_writes`).
+  The binary itself tells neither of a secret: the env file is where its secrets are.
+- **The parts of an admission are two, asked in this order:** the age of the
+  preparation a request came with (`spend::PreparationAge`), then the cap of one call
+  (`spend::CallCap`). A preparation that is too old is refused as stale before its
+  estimate, which is as old, is held to a cap
+  (`wired::a_request_that_comes_with_a_preparation_an_hour_old_is_refused_as_stale_by_the_binarys_executor`,
+  `wired::a_call_over_the_cap_of_the_binarys_config_is_refused_before_a_run_exists`).
+  **Neither writes a record into an admission,** so what the parts of this build add
+  to a tree of runs is nothing
+  (`wired::the_parts_the_binary_is_wired_with_add_no_record_to_an_admission`).
+- **The policy is the config's `egress` table and nothing else.** The source gives
+  every snapshot a policy, and under no config it is the one that approves nothing: a
+  backend that names a recipient the table does not approve is refused at the gate's
+  place, before it is called, and one the table approves is let through
+  (`wired::a_recipient_the_config_does_not_approve_is_refused_at_the_gate_and_one_its_egress_table_approves_is_let_through`).
+- **A command says what its config's reader says, before it opens its store**
+  (`wiring::loaded`, which is `Files::load`): the key, escaped and cut, or the line
+  of the env file, and never a path. A call is told the source's fixed words (ADR
+  0011, "The source over both files")
+  (`rascal::a_config_grow_cannot_use_is_said_with_its_key_and_no_path_before_the_store_is_opened`).
+
+**Limits, each stated.**
+
+- **The binary's ways out have no sender, and the check that approves no address.**
+  No network client is in the build (the plan, "Decisions"), so nothing can be sent
+  whatever the policy approves, and the check of ADR 0019 over a sender
+  (`SendCheck::new().keeping_out(root)`) is given with the first sender
+  (`docs/carry-over.md`, checkpoint 1C).
+- **A snapshot holds no credential for a recipient** (ADR 0011, "What waits").
+- **The config is read once more by a command than by its call:** `wiring::loaded`
+  reads both files, and the admission reads them again. A file changed between the
+  two is used as it is at the admission, or refused there in the source's words.
+- **`--env-file` is taken only beside `--config`.** The parser refuses it alone.
+- **The read-only executor (`wiring::executor`) is given the same source, secrets and
+  parts,** and admits nothing; no command builds it yet.
 
 ## Consequences
 
