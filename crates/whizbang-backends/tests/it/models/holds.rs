@@ -57,7 +57,7 @@ fn child_holds_the_model_until_it_is_told() {
     say("let go");
 }
 
-const CHILD: &str = "models::holds::child_holds_the_model_until_it_is_told";
+pub(super) const CHILD: &str = "models::holds::child_holds_the_model_until_it_is_told";
 
 #[test]
 fn two_holds_in_one_process_and_one_in_a_real_second_process_are_all_given() {

@@ -1087,14 +1087,28 @@ fn a_directory_whose_lock_is_not_let_go_refuses_the_publication_and_names_what_i
     }
 }
 
+/// The event at which an install first takes the directory's lock.
+fn first_lock_of_the_directory(events: &[Event]) -> usize {
+    index_of(
+        events,
+        |event| matches!(event, Event::Lock(p) if !p.ends_with("tiny/LOCK")),
+    )
+}
+
 #[test]
 fn a_mark_of_draining_stops_the_publication_before_a_hold_file_or_a_pointer_is_made() {
     let scratch = Scratch::new("publish-draining");
     let root = scratch.path();
     let before = installed(root, &first());
-    // The mark's content is task M5b's: here it is there, or it is not.
-    std::fs::write(tiny(root).join("DRAINING"), b"").unwrap();
+    // The mark is set when every file is staged and read back, just before the
+    // directory's lock is taken to point: a download would have stopped for one
+    // set earlier (task M5d), and one that is there when the install starts is
+    // taken off as a dead remover's. It is read as there or not there.
+    let mark = tiny(root).join("DRAINING");
+    let pointing = first_lock_of_the_directory(&events_after(&[&first()], &second()));
     let fs = Arc::new(ShimFs::new());
+    let set = mark.clone();
+    fs.pause_before(pointing, move || std::fs::write(&set, b"").unwrap());
     let refused = installing(&fs, root, &second(), &serving_both()).unwrap_err();
     assert_eq!(refused, InstallRefused::Draining);
     assert_eq!(reading(root), Current::Installed(before.clone()));
@@ -1109,15 +1123,34 @@ fn a_mark_of_draining_stops_the_publication_before_a_hold_file_or_a_pointer_is_m
     );
     assert_eq!(said(root), Some((State::Failed, 2, 2)));
     assert!(!incoming(root).exists());
-    // A repair is a publication too: with the mark set, the damaged installation
-    // in use is left as it is, pointer and folder, for the removal to find.
+    // A repair is a publication too: with the mark set before it clears the
+    // pointer, the damaged installation in use is left as it is, pointer and
+    // folder, for the removal to find.
+    let damaged = |root: &Path| {
+        let before = installed(root, &first());
+        flip(&folder_of(root, &before).join("files/graph.onnx"), 0);
+        before
+    };
+    let clearing = {
+        let scratch = Scratch::new("publish-draining-events");
+        damaged(scratch.path());
+        let fs = Arc::new(ShimFs::new());
+        installing(&fs, scratch.path(), &first(), &serving_both()).unwrap();
+        first_lock_of_the_directory(&fs.events())
+    };
+    let scratch = Scratch::new("publish-draining-repair");
+    let root = scratch.path();
+    let before = damaged(root);
     let folder = folder_of(root, &before);
-    flip(&folder.join("files/graph.onnx"), 0);
+    let mark = tiny(root).join("DRAINING");
+    let fs = Arc::new(ShimFs::new());
+    let set = mark.clone();
+    fs.pause_before(clearing, move || std::fs::write(&set, b"").unwrap());
     let refused = installing(&fs, root, &first(), &serving_both()).unwrap_err();
     assert_eq!(refused, InstallRefused::Draining);
     assert_eq!(reading(root), Current::Installed(before.clone()));
     assert!(folder.join("files/graph.onnx").exists());
-    std::fs::remove_file(tiny(root).join("DRAINING")).unwrap();
+    std::fs::remove_file(&mark).unwrap();
     // The mark set after a repair cleared the pointer, with the installation held:
     // the pointer is put back, mark or no mark, so that no reader finds the model
     // with neither. A held repair takes the directory's lock twice, to clear the

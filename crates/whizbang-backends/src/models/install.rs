@@ -53,7 +53,8 @@ pub enum InstallRefused {
     NotWhole { name: String },
     /// An installation of the same identity is on the disk, damaged, and held.
     Held,
-    /// The model is being removed: nothing is published.
+    /// The model is being removed: its mark was set while the install ran. The
+    /// download stopped for it, or nothing was published.
     Draining,
     /// The directory's lock was not let go by whoever has it.
     DirectoryBusy,
@@ -110,6 +111,7 @@ impl From<StageRefused> for InstallRefused {
             StageRefused::HoldsSecret => InstallRefused::HoldsSecret,
             StageRefused::Busy => InstallRefused::Busy,
             StageRefused::Cancelled => InstallRefused::Cancelled,
+            StageRefused::Draining => InstallRefused::Draining,
             StageRefused::File { name, why } => InstallRefused::File { name, why },
             StageRefused::Disk(kind) => InstallRefused::Disk(kind),
         }
@@ -211,6 +213,10 @@ pub fn install(
         // Before anything else: whoever looks while the lock is held is shown an
         // install that is running.
         say(State::Installing, 0)?;
+        // A mark that is there now was left by a remover that died, or is one
+        // whose remover does not have the model's lock: it is taken off, and a
+        // remover that is alive sets its own again.
+        model.unmark()?;
         // What a publication that died left of its new pointer.
         dir.remove(&model.folder.join("CURRENT.new"))?;
         model.clean(&hex)?;
@@ -463,6 +469,21 @@ impl<'a> Model<'a> {
     /// a publication.
     fn draining(&self) -> io::Result<bool> {
         self.fs().exists(&self.folder.join("DRAINING"))
+    }
+
+    /// Takes a draining mark off, under the directory's lock, for one who has just
+    /// taken the model's lock: whoever set the mark does not have that lock. With
+    /// no mark nothing is locked and nothing changed. It is given no sync of its
+    /// own: the install syncs the model's folder as its next step, before it
+    /// deletes anything, and a mark that a crash brings back is a stale mark again,
+    /// which the next to take the lock takes off.
+    fn unmark(&self) -> Result<(), InstallRefused> {
+        if !self.draining()? {
+            return Ok(());
+        }
+        let _directory = self.dir.lock()?.ok_or(InstallRefused::DirectoryBusy)?;
+        self.dir.remove(&self.folder.join("DRAINING"))?;
+        Ok(())
     }
 
     /// Under the directory's lock: reads the draining mark, when the pointer is to

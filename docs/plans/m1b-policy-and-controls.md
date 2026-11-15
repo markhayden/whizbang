@@ -1906,7 +1906,8 @@ a hold let go twice is let go once.
 (`remove`) and `crates/rascal-mask/src/install.rs` (`uninstall`).
 
 - [x] Removal, inside one process: under the directory's lock the model is marked as
-      draining, so new holds are refused and waiting ones cancelled; the holds are waited
+      draining, so new holds are refused, and one that was refused and is asked for again
+      is refused as draining (no hold waits: the note below); the holds are waited
       for until a deadline of the injected clock; then the removal goes on (M5c), or it
       answers busy and the mark is taken off. Here "goes on" ends at the decision: the
       pointer is cleared and nothing is deleted yet.
@@ -1943,6 +1944,10 @@ after each read the pointer and released together". No test can stop both there:
 install and a removal each read the pointer to decide from only under the model's lock,
 which one of them has at a time. What the other does while one is stopped there (busy,
 or stopped by the mark) is this task's to say.
+**Built** (ADR 0017, "Removal": against an install, and across processes), each clause
+by a test named `models::remove::…`. What the other does: a removal beside a stopped
+install sets its mark and is busy at its deadline, or the install, let go, stops for the
+mark; an install beside a stopped removal is busy. This task has no box of its own.
 **Carry-over:** rascal's R3 (a process id read from a file is signalled); of R6, a
 removal racing an install. **Size:** small.
 
