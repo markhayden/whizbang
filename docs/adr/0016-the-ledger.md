@@ -1289,6 +1289,75 @@ counts in full: over, and never under
 (`an_admission_is_held_to_the_epoch_it_fell_under_when_a_reset_came_before_its_reading`,
 its last lines). The binary's executor is given the ledger by task W1.
 
+### The meter (task S5)
+
+As the plan has it after the strand was cut down ("The strand cut down"): one pull
+request, ordinary tests, no sweep and no race of its own. Tests named `spend::meter::`
+are in `crates/whizbang-core/tests/it/spend/meter.rs`, each through an executor built
+with the real ledger and the meter.
+
+**`spend::Meter` stands in the meter's place** (ADR 0015, "A wrapper around each
+request"; `Engine::with_wrapper(Place::Meter, …)`). It is built with the store its
+executor writes and a clock. For each request:
+
+- It asks `spend::request_bound` (task S4) of the declaration of the request's own
+  backend and what the run has left. A request that is not paid, to a local backend
+  that states no price or to one that says it is free, passes with nothing held and
+  nothing recorded (`spend::meter::a_free_request_to_a_local_backend_makes_no_record`).
+  A request to a backend with no enforceable bound is refused, whether or not
+  anything was reserved for its run
+  (`spend::meter::a_request_to_a_backend_with_no_bound_is_refused_by_the_meter_whether_or_not_its_run_reserved`).
+  A bounded request of a run nothing was reserved for passes unrecorded: it has no
+  reservation to be recorded under (the same test).
+- It debits the bound with `Allowance::dispatch`, whose `publish` is the dispatch's
+  publication: the next `place` under the root's reservation and `dispatched/…` at
+  it, with the time. Only when that is durable is the backend called
+  (`spend::meter::the_backend_stopped_at_its_barrier_finds_its_own_dispatch_durable_before_it_was_called`,
+  which reads the store's folder with a reader of its own while the backend holds
+  the request).
+- A request over what its run has left is refused, is not sent and has no dispatch,
+  and the refusal is in its run's record with what and why
+  (`spend::meter::a_request_over_what_its_run_has_left_is_refused_unsent_with_no_dispatch_and_is_in_its_runs_record`).
+  A request the gate refused never reaches the meter and has no dispatch
+  (`spend::meter::a_request_the_gate_refused_has_no_dispatch_record`).
+- A dispatch whose publication the store refuses, as at its generation limit, sends
+  nothing, and its debit is undone
+  (`spend::meter::a_dispatch_the_store_refuses_at_its_generation_limit_sends_nothing_and_its_debit_is_undone`).
+- Once it has debited it holds something for the request, so a backend's panic under
+  it leaves the run abandoned, with the dispatch durable and unsettled: counted at
+  its bound
+  (`spend::meter::a_backend_that_panics_under_the_meter_leaves_the_run_abandoned_and_its_request_counted_at_its_bound`).
+
+**What it judges by.** The allowance and the tree's tally, under the tree's lock
+(`Allowance::dispatch`), and the names of its own reservation, read alone
+(`spend::Names::of_run`, which reads the content of no other reservation's names). A
+reservation with a closing, or whose names are not a set the ledger could have
+written, takes no dispatch,
+and neither does one whose names leave less than the bound, whatever the run's
+allowance has: a dispatch that did not fit would itself freeze the reservation
+("What the ledger can have written", the last row)
+(`spend::meter::a_reservation_whose_names_read_as_frozen_or_closed_or_leave_too_little_takes_no_dispatch`,
+for all three). It folds nothing, so it does not know an epoch that needs its owner.
+
+**Decided while it was built.**
+
+- **A place taken meanwhile is chosen again,** 64 times at most: another dispatch of
+  the tree published first, and the store refused this one whole.
+- **Every refusal of the ledger's is recorded as `request_over_allowance`.** A record
+  has four kinds for a request that was not sent (ADR 0013), and none for a
+  reservation that is closed or frozen, or a store that refused the publication. The
+  sentence says which.
+- **`request` in a dispatch's record is the request's place among the paid requests
+  its run dispatched,** from 0, as the reservation's names count them. A wrapper is
+  not told a request's place among all the requests of its run; when it is (task
+  S10 needs it for the run's spend lines), the meter writes that.
+- **A request sent after its run's action came back does not reach the meter:** the
+  handle's tally refuses it first (ADR 0015). `Allowance::dispatch` called by an
+  action itself, outside any wrapper, is not refused there (`docs/carry-over.md`).
+- **Nothing is settled yet.** A request that ended stays counted at its bound, in the
+  process and in the books, until task S5b; and nothing puts the meter in the
+  binary's executor until task W1.
+
 ### Limits, each stated
 
 - **The model is not the ledger.** It publishes names in memory; no test of it touches
