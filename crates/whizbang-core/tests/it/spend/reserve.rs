@@ -6,8 +6,8 @@
 //! Then its proofs: two executors over one store, held inside the ledger; and a crash
 //! before every step of an admission, with every choice of what the disk loses.
 //!
-//! An allowance is the owner's reset. There is no command for one yet (task S9), so a
-//! test makes the names a reset makes (`support::allow`).
+//! An allowance is the owner's reset, which a test makes as the command does
+//! (`support::allow`, which is `spend::reset`).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -478,8 +478,7 @@ fn an_epoch_whose_turns_are_not_its_publications_admits_nothing_until_a_reset() 
     assert_eq!(
         refused.to_string(),
         "paint was not admitted: the ledger's books of epoch 1 need their owner, and nothing \
-         is admitted until the owner resets the allowance or corrects the reservation whose \
-         amount no name states"
+         is admitted until the owner resets the allowance (whizbang spend reset)"
     );
     // The record's kind for it is the allowance's: `run/3` has none of its own.
     assert_eq!(
@@ -507,7 +506,10 @@ fn an_epoch_whose_turns_are_not_its_publications_admits_nothing_until_a_reset() 
 }
 
 #[test]
-fn a_frozen_reservation_whose_amount_no_name_states_stops_every_admission_and_a_reset_too() {
+fn a_frozen_reservation_whose_amount_no_name_states_counts_nowhere_and_stops_no_admission() {
+    // Restated with the spend strand cut down (2026-11-15; ADR 0016, "The strand
+    // cut down"). It was `..._stops_every_admission_and_a_reset_too`: every call
+    // was told that the books need their owner, before a reset and after it.
     let world = World::new("reserve-unknown");
     let ledger = Counted::new();
     allow(&world.store, 1_000_000);
@@ -520,24 +522,36 @@ fn a_frozen_reservation_whose_amount_no_name_states_stops_every_admission_and_a_
             by: whizbang_core::spend::PlaceBy::Dispatch,
         }],
     );
+    let stray = |store: &Store| {
+        let folded = books(store);
+        let one = folded.reservation(&run("9-9")).unwrap();
+        let nowhere = !folded.resets().keys().any(|epoch| one.counts_in(*epoch));
+        (one.state(), one.counted(), nowhere)
+    };
+    assert_eq!(
+        stray(&world.store),
+        (State::Frozen, Count::AtLeast(Sum::ZERO), true)
+    );
+    // It counts against no allowance and stops nothing: the call is admitted, and
+    // is all that the epoch counts.
     let engine = painting(&world, 250_000, ledger.clone());
-    let before = world.held();
+    ran(engine.request(&asked("order-1")));
     assert_eq!(
-        engine.request(&asked("order-1")).unwrap_err(),
-        needs_owner(1)
+        balance(&world.store, 1),
+        (1_000_000, exactly(250_000), 750_000)
     );
-    assert_eq!(world.held(), before);
-    // A reset does not end it: only the owner's correction of that reservation does.
+    // After a reset too.
     assert_eq!(allow(&world.store, 1_000_000), 2);
+    ran(engine.request(&asked("order-2")));
+    assert_eq!((world.ran(), reserved(&world.store).len()), (2, 2));
     assert_eq!(
-        engine.request(&asked("order-1")).unwrap_err(),
-        needs_owner(2)
+        balance(&world.store, 2),
+        (1_000_000, exactly(250_000), 750_000)
     );
-    assert_eq!((world.ran(), reserved(&world.store).len()), (0, 0));
-    assert!(matches!(
-        books(&world.store).balance().counted,
-        Count::AtLeast(_)
-    ));
+    assert_eq!(
+        stray(&world.store),
+        (State::Frozen, Count::AtLeast(Sum::ZERO), true)
+    );
 }
 
 /// A reservation of 10 that other hands, or an earlier process, left in epoch 1, as

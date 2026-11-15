@@ -82,10 +82,14 @@ fn the_binary_opens_a_store_to_write_in_one_place_and_through_the_entry_point() 
         2,
         "one for each way a command opens a store"
     );
-    // Each writing command asks that function: the store's, the importer and the
-    // one that runs an action. `spend` writes nothing yet; when it does, the lines
-    // above hold it to the same way.
-    for (name, asks) in [("store.rs", 1), ("import.rs", 2), ("rascal.rs", 1)] {
+    // Each writing command asks that function: the store's, the importer, the one
+    // that runs an action, and the owner's reset of an allowance.
+    for (name, asks) in [
+        ("store.rs", 1),
+        ("import.rs", 2),
+        ("rascal.rs", 1),
+        ("spend.rs", 1),
+    ] {
         let text = &sources.iter().find(|(file, _)| file == name).unwrap().1;
         let asked = code(text).filter(|line| line.contains("wiring::opening("));
         assert_eq!(asked.count(), asks, "{name}");

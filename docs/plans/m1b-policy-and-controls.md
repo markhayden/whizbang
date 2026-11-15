@@ -431,6 +431,9 @@ task is not done while one that applies to it has no test.
    is parsed, escaped or cut, and one that holds a secret is refused and not shown.
 5. **A document says what the head does.** An ADR, a guide or a help text added by a task
    names, for each thing it claims the code does, the test that shows it.
+   (For the six spend tasks kept on 2026-11-15, S4, S5, S5b, S9, S10 and S11, a
+   mapping of the task's acceptance clauses to its tests suffices: under the task's
+   "As built", in the plan, and not sentence by sentence in an ADR or a help text.)
 6. **No sleeps.** A test waits on a barrier or an event. Time comes from the injected
    clock (`Clock`), which a test moves by hand.
 7. **Threads only through the test kit** (`AGENTS.md`, "Threads and processes"). A test
@@ -1645,7 +1648,7 @@ clears the books, and this task changes the fold so that it clears all of them. 
 reset no longer leaves a frozen reservation counting, and no state of a reservation
 makes the store wait for a command that is not built. The text as it stood is in this file at commit a9029d7.
 
-- [ ] **A reset closes the books.** In the fold (`spend/fold.rs`) and in the model
+- [x] **A reset closes the books.** In the fold (`spend/fold.rs`) and in the model
       (`crates/whizbang-testkit/src/spend.rs`) two rules change, and nothing else of
       either. `counts_in`: a reservation counts against an epoch only when one of
       its holds names that epoch; a frozen reservation no longer counts in every
@@ -1660,7 +1663,7 @@ makes the store wait for a command that is not built. The text as it stood is in
       So is the model's checker, where it holds a reservation to an epoch its hold
       no longer names: that is a stated limit of the ADR from now on ("The strand
       cut down").
-- [ ] `whizbang spend status`: of the newest epoch, the allowance, what is counted
+- [x] `whizbang spend status`: of the newest epoch, the allowance, what is counted
       against it, what is charged, what is held beyond that, what is unresolved, what
       is left and the debt; and the last reset. It lists each reservation that counts
       there and that no run's end closed as released, with its run, what it counts
@@ -1668,7 +1671,7 @@ makes the store wait for a command that is not built. The text as it stood is in
       what counts nowhere: a reservation with no hold, as "unknown, at least" and the
       number, and any name under `spend/` that the fold can place nowhere. Where the
       epoch admits nothing until a reset, it says so. It reads only.
-- [ ] `whizbang spend reset --allowance <usd>`: one publication of the reset's name,
+- [x] `whizbang spend reset --allowance <usd>`: one publication of the reset's name,
       its guard (`spend/epoch/<epoch>`) and the next turn of the epoch it closes. The
       records before it stay, and nothing they hold in the epochs before it counts
       in the epoch it opens. A hold that names the epoch it opens, which only other
@@ -1691,6 +1694,64 @@ there and is named by `status`, and after one more reset the next call is admitt
 reset of an amount of the largest number, one after the largest epoch a name can
 say, and one in a store at its generation limit are refused and say why.
 **Size:** small.
+**As built, 2026-11-15.** The reset is `spend::reset` in the core
+(`crates/whizbang-core/src/spend/reset.rs`), and the commands are
+`crates/whizbang/src/spend.rs`. Each clause above, and its test; those named
+`spending::…` are the binary's own (`crates/whizbang/src/spending.rs`), each over a
+store that an executor with the real ledger wrote:
+
+- The model and the real fold agree on every named and every generated history:
+  `spend::fold::every_named_history_written_into_a_store_folds_to_what_the_model_gives_and_to_what_it_must`
+  and the seven `spend::fold::every_generated_history_…` of the core, with the two
+  of one name changed. What the two rules moved is listed in ADR 0016, "The strand
+  cut down", under "As built with task S9": histories 45, 67, 68, 69 and 78 beside
+  31 and 65, nine tests of the model, five of the core, three rows of the checker,
+  and two counts of what the generated histories reach.
+- A store that holds each of the four in turn, named by `status`, with no second
+  request counted and a call admitted after a `reset`:
+  `spending::an_open_reservation_a_dead_process_left_with_a_dispatch_is_named_and_a_reset_clears_it`,
+  `spending::a_frozen_reservation_is_named_with_what_it_counts_for_and_a_reset_clears_it`,
+  `spending::a_reservation_with_no_hold_is_named_as_unknown_and_counts_nowhere`,
+  `spending::an_epoch_whose_turns_are_wrong_is_named_and_a_reset_opens_one_that_admits`.
+- `status` answers while the store is held, and `reset` is refused with the holder
+  named:
+  `spending::status_answers_while_another_opening_holds_the_store_and_reset_is_refused_with_the_holder_named`.
+- After a reset the earlier records are read and the balances start again:
+  `spending::after_a_reset_the_earlier_records_are_all_still_read_and_the_balances_start_again`.
+- A damaged record, said escaped and cut, with no path:
+  `spending::status_names_a_damaged_record_and_a_text_of_no_form_escaped_and_cut_with_no_path`.
+- `reset` is no registered action: `spending::reset_is_a_command_and_no_registered_action`.
+- A hold planted for the epoch a reset then opens:
+  `spending::a_hold_planted_for_the_epoch_a_reset_then_opens_counts_there_and_the_next_reset_passes_it`.
+- The three refusals:
+  `spending::an_allowance_is_dollars_as_digits_and_anything_else_is_refused_before_a_store_is_opened`
+  (the largest number) and
+  `spending::a_reset_after_the_largest_epoch_and_one_at_the_generation_limit_are_refused_and_say_why`.
+- `reset` opens the store through the one entry point and recovers it first:
+  `spending::spend_reset_on_a_store_a_killed_process_left_recovers_before_it_resets`,
+  and `writer::the_binary_opens_a_store_to_write_in_one_place_and_through_the_entry_point`
+  now counts `spend.rs`.
+- The command line and the exit codes, through the binary: `spend::…` in
+  `crates/whizbang/tests/it/spend.rs`.
+
+**Reworded with the task.** "the fake counts no second request" is shown as: the
+action a test registers, which stands for a paid request, runs once before the state
+is made, not at all for `status`, for `reset` or for the call that is refused, and
+once more for the call the new allowance admits. No fake backend is sent a request
+in these tests, because no meter is built yet (tasks S5 and S5b): what a run a dead
+process left had dispatched is planted as its names.
+"an open reservation of a run a dead process left" is listed by `status` as "open":
+the books do not say whether a run's process is alive, and `status` reads only the
+books. "with the holder named" is the store's own sentence, which names the writer
+by the line it wrote in the lock, or "another process" before it has written one.
+**Added with the task** (the orchestrator's brief, from the owner's wish to see what
+things cost): `whizbang spend status --run <run>` shows one run, from the fold's
+reading and with no new machinery: what was reserved for it, what it counts for, what
+was charged and is outstanding under it, and what the requests it sent were charged
+and still hold, under its own reservation or under that of the run at the root of
+its tree (`spending::status_of_one_run_says_what_was_reserved_what_its_requests_were_charged_and_what_they_hold`).
+`status` also lists frozen reservations that count in earlier epochs alone, and the
+earlier epochs whose turns are wrong.
 
 ### S10. The run's spend lines
 

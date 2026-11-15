@@ -2846,7 +2846,7 @@ fn a_run_whose_process_died_keeps_its_reservation() {
 // --- a stored reservation is not trusted, and neither is a ledger --------------------------------
 
 #[test]
-fn a_stored_reservation_that_is_not_one_is_refused_and_nothing_is_admitted() {
+fn a_stored_reservation_that_is_not_one_is_refused_by_its_reader_and_stops_no_call_beside_it() {
     type Planted = (&'static str, Vec<u8>, &'static str);
     let good = RESERVATION.replace("7000-1", "1-1");
     let cases: Vec<Planted> = vec![
@@ -2883,7 +2883,6 @@ fn a_stored_reservation_that_is_not_one_is_refused_and_nothing_is_admitted() {
         real::allow(&store, NO_LIMIT);
         let engine = engine_with(store.clone(), &world.runs, Priced::new(250_000))
             .with_ledger(real::Counted::new());
-        let before = held(&world.root(), world.fs.clone());
         // A reader of reservations refuses it, with what it is.
         let read = |store: &Store| {
             let generation = store.snapshot().unwrap();
@@ -2893,26 +2892,20 @@ fn a_stored_reservation_that_is_not_one_is_refused_and_nothing_is_admitted() {
         let CallError::Record { what, why } = &refused else {
             panic!("{name:?}: {refused:?}");
         };
-        // And nothing is admitted beside it. It does not make the ledger fail: a
+        // And it stops no call beside it. It does not make the ledger fail: a
         // damaged record freezes its own reservation (ADR 0016). This one has no
-        // hold, so no name states its amount, and no call is admitted until its
-        // owner corrects it; a call is declined, and told that the books need
-        // their owner.
+        // hold, so no name states its amount: it counts against no epoch's
+        // allowance, `whizbang spend status` names it, and the call beside it
+        // runs. (Restated with the spend strand cut down, 2026-11-15; ADR 0016,
+        // "The strand cut down". It was: no call is admitted until its owner
+        // corrects it, and a call is told that the books need their owner.)
         // A text that names no run where a reservation's run is named belongs to
-        // no reservation: it changes no balance, and the call beside it runs.
+        // no reservation: it changes no balance either.
+        ran(engine.request(&asked("hello", "order-17")));
+        assert_eq!(world.ran(), 1, "{name:?}");
         if name.contains('\u{1b}') {
-            ran(engine.request(&asked("hello", "order-17")));
             continue;
         }
-        let declined = engine.request(&asked("hello", "order-17")).unwrap_err();
-        assert_eq!(
-            declined.refusal(),
-            Some(&Refusal::NeedsOwner {
-                action: "paint".to_owned(),
-                epoch: 1,
-            }),
-            "{name:?}"
-        );
         assert_eq!(*what, "a reservation");
         assert!(why.contains(says), "{name:?}: {why}");
         // The sentence and what `{:?}` prints hold no control character and no path.
@@ -2920,9 +2913,7 @@ fn a_stored_reservation_that_is_not_one_is_refused_and_nothing_is_admitted() {
         assert!(!said.chars().any(char::is_control), "{said:?}");
         assert!(!said.contains(world.root().to_str().unwrap()), "{said}");
         assert!(said.len() < 1200, "{}", said.len());
-        // Nothing was admitted, and the id is free.
-        assert_eq!(held(&world.root(), world.fs.clone()), before);
-        assert_eq!(world.ran(), 0);
+        // Its reader refuses it still, in the same words.
         assert_eq!(read(&store).unwrap_err(), refused);
         // One that is too large is refused by its length in the store's entry: its
         // content is never read.

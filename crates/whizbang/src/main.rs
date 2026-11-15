@@ -6,6 +6,8 @@ mod rascal;
 mod recovering;
 mod runs;
 mod spend;
+#[cfg(test)]
+mod spending;
 mod store;
 
 use std::process::ExitCode;
@@ -51,11 +53,12 @@ enum Command {
         #[command(subcommand)]
         command: rascal::Command,
     },
-    /// Spend: a store's allowance. Not built yet: it says so and exits 1.
-    ///
-    /// It takes no argument. Its commands, status and reset, arrive with later tasks
-    /// of checkpoint 1B.
-    Spend,
+    /// Spend: a store's allowance, what is counted against it, and the owner's
+    /// reset, which sets the allowance and clears the books.
+    Spend {
+        #[command(subcommand)]
+        command: spend::Command,
+    },
 }
 
 fn describe(json: bool, pretty: bool) -> Result<String, String> {
@@ -151,7 +154,7 @@ fn main() -> ExitCode {
             Ok(text) => emit(text.as_bytes()),
             Err(complaint) => complain(&complaint),
         },
-        Command::Spend => match spend::run() {
+        Command::Spend { command } => match spend::run(&command) {
             Ok(text) => emit(text.as_bytes()),
             Err(complaint) => complain(&complaint),
         },

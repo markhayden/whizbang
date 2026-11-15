@@ -6,9 +6,12 @@
 //! reading of them: each entry by itself, sound or damaged, and what the names of one
 //! reservation say, with the recogniser and the most they can mean ([`reading`]). The
 //! fold across reservations is [`fold`]: epochs, turns, states, balances and one run's
-//! spend. The real ledger, the meter, recovery and the commands are the spend strand's
-//! tasks (plan 1B, S2 to S12), each of which adds its module here. The executor's
-//! interface to a ledger is `contract::Ledger`.
+//! spend. The real ledger ([`StoreLedger`]) and the owner's reset ([`reset()`]) are here;
+//! the meter and the closing at a run's end are the spend strand's tasks that are
+//! left (plan 1B, S4 to S11, as cut down on 2026-11-15), each of which adds its
+//! module here. Nothing here recovers a reservation and nothing corrects one: the
+//! tasks that were to, S6 and S12, are cut. The executor's interface to a ledger is
+//! `contract::Ledger`.
 //!
 //! Beside the books are two parts in the admission (`contract::AdmissionPart`), which
 //! an executor is given ([`crate::contract::Engine::with_part`]): [`CallCap`], the cap
@@ -21,6 +24,7 @@ mod ledger;
 pub mod name;
 pub mod reading;
 pub mod record;
+mod reset;
 
 pub use age::{AGE_PART, MADE_AFTER_NOW, PREPARATION_HOLDS_MS, PreparationAge, TOO_OLD};
 pub use cap::{
@@ -34,3 +38,4 @@ pub use reading::{
     stage_allows,
 };
 pub use record::{ClosedBy, PlaceBy, Record, SPEND_RECORD_MAX_BYTES, SpendRecordError, TurnBy};
+pub use reset::{NotReset, Opened, reset};

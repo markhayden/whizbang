@@ -823,12 +823,11 @@ pub enum Refusal {
         left_micros: u64,
     },
     /// The call is ready, and the ledger admits nothing: the books of `epoch`, the
-    /// newest, need their owner (ADR 0016, "Epochs: what a reset bounds"). Its turns
-    /// are not those its publications took, or a reservation is frozen and no name
-    /// can be trusted for its amount. Until the owner resets the allowance, or
-    /// corrects that reservation, no call is admitted, one that costs nothing among
-    /// them. No run was made, nothing was reserved, and the request's id is not
-    /// taken by this request.
+    /// newest, need their owner (ADR 0016, "Epochs: what a reset bounds", and "The
+    /// strand cut down"). Its turns are not those its publications took. Until the
+    /// owner resets the allowance (`whizbang spend reset`), no call is admitted, one
+    /// that costs nothing among them. No run was made, nothing was reserved, and the
+    /// request's id is not taken by this request.
     NeedsOwner { action: String, epoch: u64 },
     /// The call is ready, and what it may cost has no bound that can be counted: its
     /// estimate is the largest amount there is ([`Estimate::is_unbounded`]). An
@@ -1077,8 +1076,8 @@ impl std::fmt::Display for Refusal {
             Refusal::NeedsOwner { action, epoch } => write!(
                 f,
                 "{action} was not admitted: the ledger's books of epoch {epoch} need their \
-                 owner, and nothing is admitted until the owner resets the allowance or \
-                 corrects the reservation whose amount no name states"
+                 owner, and nothing is admitted until the owner resets the allowance \
+                 (whizbang spend reset)"
             ),
             Refusal::NoBound { action } => write!(
                 f,
