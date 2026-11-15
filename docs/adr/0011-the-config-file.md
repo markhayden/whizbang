@@ -61,7 +61,8 @@ part of the test's own stood for it.
 Amended: 2026-11-15, a twelfth note, with task W1 (ADR 0015, "The binary wired"). The
 two flags exist; the binary's executor is built over the source, with the same
 secrets given to both; and under "The source over both files", "Limits": reading the
-env file a second time was considered and is not done, with why.
+env file a second time was considered and is not done, with why. And under "What a
+config offers": over an inventory.
 Spec: section 4, "Backends" (config, resolution, credentials); section 6, "Spend";
 section 10, "Egress"
 
@@ -724,6 +725,14 @@ file's default; the short form is one backend named `default`, which is the defa
   it tells a call that chose a backend that is not ready that none of that name is
   offered, and a call that chose none where the default is not ready that there is no
   default. Neither is answered by another backend; the reason is the offers' to give.
+
+**Over an inventory** (`Offers::over`, `Files::over`; with task W1, ADR 0015, "What a
+config offers, over an inventory"): where prepare asks, a local backend that is ready
+is answered under the identity of its model's installation, or is not ready for the
+inventory's reason; a reason above comes first. A backend that names a recipient and
+declares an installation's identity as its version is not ready, with an inventory or
+without (ADR 0015, "One rule for a backend that names a recipient and declares an
+identity").
 
 Two backends of one capability that declare one model are both offered
 (`roster::two_backends_of_one_capability_that_declare_one_model_are_both_offered`). A

@@ -12,8 +12,8 @@ use whizbang_core::capability::{
 };
 use whizbang_core::contract::{
     Answer, Around, Backends, Call, CallError, Capabilities, Capability, Engine, Estimate,
-    Executor, ModelIdentity, Open, Produced, Readiness, Refusal, RefusalKind, Request, Requirement,
-    Secrets, Stale, Stop, Unavailable, Value, Wrapped,
+    Executor, Made, ModelIdentity, NoBackends, Offered, Open, Produced, Readiness, Refusal,
+    RefusalKind, Request, Requirement, Secrets, Snapshot, Stale, Stop, Unavailable, Value, Wrapped,
 };
 use whizbang_core::egress::{Origin, Recipient};
 use whizbang_core::identity::Digest;
@@ -879,4 +879,168 @@ fn of_two_local_backends_of_one_model_the_one_that_declares_the_identity_itself_
         .with_fill(last.clone());
     assert_eq!(asked(held), [installation.to_string()]);
     assert_eq!((first.requests(), last.requests()), (1, 0));
+}
+
+// --- one rule on every path (plan 1B, task W1) -------------------------------------------------
+
+/// What a backend that names a recipient and declares an identity is refused with,
+/// wherever it is resolved.
+const AWAY_UNDER_AN_IDENTITY: &str = "the fill backend away names a recipient, and declares \
+                                      the identity of an installation as its version";
+
+#[test]
+fn a_roster_alone_does_not_resolve_a_backend_that_names_a_recipient_and_declares_an_identity_either()
+ {
+    // A roster over an inventory refuses such a backend (above). A roster alone
+    // resolved it, its call was admitted, and its run was handed nothing, with no
+    // reason said: the executor takes such a version for a local model's. It is one
+    // rule now: refused where it is resolved, in the same words.
+    let installation = Installation::of(Digest::of_bytes(b"a filler, whole"));
+    let declared = ModelIdentity::new("fake", "hosted-fill", &installation.to_string());
+    let declaration = Declaration::new(declared, &[]).unwrap();
+    let away = FakeFiller::new(Paint::Inverse).declared_as(declaration.sending_to(elsewhere()));
+    let away = Arc::new(away);
+    let roster = Roster::new()
+        .offer(Capability::Fill, "away", away.declaration().clone())
+        .unwrap()
+        .default_for(Capability::Fill, "away")
+        .unwrap();
+    let refused = Backends::resolve(&roster, Capability::Fill, None, &[]).unwrap_err();
+    assert_eq!(refused.why(), AWAY_UNDER_AN_IDENTITY);
+    // The roster's own answer, which names the backend that was picked, is as it was:
+    // the rule is where a model is resolved for a call.
+    assert!(roster.resolve(Capability::Fill, None, &[]).is_ok());
+    // Through an executor: prepared as not ready, refused at admission, no run.
+    let world = World::new();
+    let ran = Arc::new(AtomicUsize::new(0));
+    let paints = action("paints", vec![Requirement::new(Capability::Fill)], {
+        let ran = ran.clone();
+        move |_, _| {
+            ran.fetch_add(1, Ordering::SeqCst);
+            Ok(Produced::nothing())
+        }
+    });
+    let held = Capabilities::none().with_fill(away.clone());
+    let executor = engine(&world, roster, held, vec![paints]);
+    let prepared = executor.prepare(&Call::new("paints")).unwrap();
+    let Readiness::NotReady(missing) = prepared.readiness() else {
+        panic!("the call is ready: {prepared:?}");
+    };
+    assert_eq!(missing[0].why(), AWAY_UNDER_AN_IDENTITY);
+    let refused = executor.submit(&Call::new("paints"));
+    assert!(
+        matches!(refused, Err(CallError::Refused(Refusal::NotReady { .. }))),
+        "{refused:?}"
+    );
+    assert_eq!((runs(&world), ran.load(Ordering::SeqCst)), (0, 0));
+    assert_eq!(away.requests(), 0);
+}
+
+/// What one snapshot offers, for a test: every need of a filler is resolved as one
+/// model, whatever any backend declares, and the backend under every name is this
+/// one.
+struct Resolving(ModelIdentity, Arc<FakeFiller>);
+
+impl Backends for Resolving {
+    fn resolve(
+        &self,
+        _: Capability,
+        _: Option<&str>,
+        _: &[String],
+    ) -> Result<ModelIdentity, Unavailable> {
+        Ok(self.0.clone())
+    }
+}
+
+impl Offered for Resolving {
+    fn default_of(&self, capability: Capability) -> Option<&str> {
+        (capability == Capability::Fill).then_some("here")
+    }
+
+    fn made(&self, capability: Capability, _: &str) -> Option<Made> {
+        (capability == Capability::Fill).then(|| Made::Fill(self.1.clone()))
+    }
+}
+
+#[test]
+fn a_run_under_a_snapshot_is_handed_the_backend_the_executors_own_match_would_hand_it() {
+    // A snapshot that holds backends hands a run the backend under the name its call
+    // resolved, when that backend answers the model that was resolved. Whether it
+    // does is the executor's own match (ADR 0015, "The backend a run is handed"):
+    // by all three texts, but for a version that is an installation's identity,
+    // which is a local model's. Each case: the model the call resolved, the backend
+    // under the name, and whether the run is handed it, with the version every
+    // place is then told.
+    let installation = Installation::of(Digest::of_bytes(b"a filler, whole"));
+    let identity = installation.to_string();
+    let under = |version: &str| ModelIdentity::new("fake", "fake-filler", version);
+    let filler = |version: &str, away: bool| {
+        let declared = Declaration::new(under(version), &[]).unwrap();
+        let declared = match away {
+            true => declared.sending_to(elsewhere()),
+            false => declared,
+        };
+        Arc::new(FakeFiller::new(Paint::Inverse).declared_as(declared))
+    };
+    let cases = [
+        // A local backend, whatever version it declares, under the identity.
+        (under(&identity), filler("1", false), Some(identity.clone())),
+        // A local backend that declares the identity itself, as it is.
+        (
+            under(&identity),
+            filler(&identity, false),
+            Some(identity.clone()),
+        ),
+        // A backend that names a recipient is never handed for an identity, though
+        // it declare the very three texts.
+        (under(&identity), filler(&identity, true), None),
+        (under(&identity), filler("1", true), None),
+        // Any other version is matched by all three, local or not.
+        (under("1"), filler("1", true), Some("1".to_owned())),
+        (under("1"), filler("1", false), Some("1".to_owned())),
+        (under("2"), filler("1", false), None),
+        (under("2"), filler("1", true), None),
+    ];
+    for (at, (resolved, backend, handed)) in cases.into_iter().enumerate() {
+        let world = World::new();
+        let got = Arc::new(AtomicUsize::new(0));
+        let paints = action("paints", vec![Requirement::new(Capability::Fill)], {
+            let got = got.clone();
+            move |_, context| {
+                let fill = context.capabilities().fill().expect("a filler is handed");
+                got.fetch_add(1, Ordering::SeqCst);
+                // A backend that names a recipient is refused its request at the
+                // gate, under the policy that approves nothing: it was handed.
+                let _ = fill.fill(&fill_request());
+                Ok(Produced::nothing())
+            }
+        });
+        let offered: Arc<dyn Offered> = Arc::new(Resolving(resolved.clone(), backend.clone()));
+        let snapshot = Snapshot::of(Digest::of_bytes(b"a config")).offering(offered);
+        let lease = FakeWrapper::new("lease");
+        let executor = engine(&world, NoBackends, Capabilities::none(), vec![paints])
+            .with_config(Arc::new(snapshot))
+            .with_wrapper(Place::Lease, Arc::new(lease.clone()));
+        let answer = executor.submit(&Call::new("paints"));
+        let local = backend.declaration().is_local();
+        match handed {
+            Some(version) => {
+                let finished = answer.unwrap_or_else(|error| panic!("case {at}: {error:?}"));
+                assert_eq!(finished.outcome().name(), "completed", "case {at}");
+                assert_eq!(got.load(Ordering::SeqCst), 1, "case {at}");
+                // A local backend is asked, and the lease's place is told the
+                // version it was handed under.
+                if local {
+                    assert_eq!(backend.requests(), 1, "case {at}");
+                    assert_eq!(versions(&lease), [version], "case {at}");
+                }
+            }
+            None => {
+                let refused = matches!(answer, Err(CallError::Refused(Refusal::NotReady { .. })));
+                assert!(refused, "case {at}: {answer:?}");
+                assert_eq!((runs(&world), backend.requests()), (0, 0), "case {at}");
+                assert_eq!(got.load(Ordering::SeqCst), 0, "case {at}");
+            }
+        }
+    }
 }

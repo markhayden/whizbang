@@ -10,8 +10,9 @@
 //! backend ever answers in its place.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use crate::capability::{Resolved, Roster, RosterError, Unresolved};
+use crate::capability::{InstalledRoster, Inventory, Resolved, Roster, RosterError, Unresolved};
 use crate::contract::{
     Backends, Capability, Estimate, Made, ModelIdentity, Offered, Secrets, Unavailable,
 };
@@ -114,6 +115,11 @@ pub struct Offers {
     ready: usize,
     /// The backends that are ready, made, by the capability's name and the backend's.
     made: BTreeMap<(&'static str, String), Made>,
+    /// The roster over an inventory, when these offers were put over one
+    /// ([`Offers::over`]): what prepare is then answered by. Two offers over two
+    /// inventories that offer the same are equal: what is installed is not what a
+    /// config offers.
+    installed: Option<InstalledRoster>,
 }
 
 impl PartialEq for Offers {
@@ -177,6 +183,7 @@ impl Offers {
             defaults: BTreeMap::new(),
             ready: 0,
             made: BTreeMap::new(),
+            installed: None,
         };
         for capability in CAPABILITIES {
             for (name, backend) in config.backends(capability) {
@@ -233,6 +240,24 @@ impl Offers {
             }
         }
         Ok(offers)
+    }
+
+    /// The same offers, with the models of their local backends looked up in this
+    /// inventory, as a roster over an inventory looks them up ([`InstalledRoster`];
+    /// ADR 0015, "An inventory"), where prepare asks ([`Backends`]). A local backend
+    /// whose model is ready is answered under the identity of its installation, as
+    /// its version, and one whose model is not is not ready, with the reason. A
+    /// backend that is not ready for a reason of the config's keeps that reason, and
+    /// the inventory is not asked about it; nor is it asked about a backend that
+    /// names a recipient. What a need may cost is found under an installation's
+    /// identity, which no declaration holds.
+    ///
+    /// The backends that were made are as they were: a run is handed the one under
+    /// the name its call resolved, declaring the identity it was admitted under
+    /// (ADR 0015, "The backend a run is handed, and the lease's place").
+    pub fn over(mut self, inventory: Arc<dyn Inventory>) -> Offers {
+        self.installed = Some(InstalledRoster::over(self.roster.clone(), inventory));
+        self
     }
 
     /// The backends that are ready, and the default of each capability whose default
@@ -296,21 +321,35 @@ impl std::fmt::Debug for Offers {
 }
 
 impl Backends for Offers {
+    /// The model that answers the capability for a call. A backend that is offered
+    /// and is not ready is answered with its reason first. Then the roster of the
+    /// ready backends is asked, as prepare asks one: over an inventory when these
+    /// offers were put over one ([`Offers::over`]), and alone otherwise. Either way a
+    /// backend that names a recipient and declares the identity of an installation
+    /// as its version is not resolved, and the reason says so.
     fn resolve(
         &self,
         capability: Capability,
         choice: Option<&str>,
         features: &[String],
     ) -> Result<ModelIdentity, Unavailable> {
-        match Offers::resolve(self, capability, choice, features) {
-            Ok(resolved) => Ok(resolved.declaration().model().clone()),
-            Err(unanswered) => Err(Unavailable::new(&unanswered.to_string())),
+        if let Err(unanswered) = Offers::resolve(self, capability, choice, features) {
+            return Err(Unavailable::new(&unanswered.to_string()));
+        }
+        match &self.installed {
+            Some(installed) => installed.resolve(capability, choice, features),
+            None => Backends::resolve(&self.roster, capability, choice, features),
         }
     }
 
-    /// What the roster of the ready backends answers ([`Roster`]'s `bound`).
+    /// What the roster of the ready backends answers ([`Roster`]'s `bound`), or the
+    /// roster over the inventory, which finds a local backend under the identity of
+    /// its installation ([`InstalledRoster`]'s).
     fn bound(&self, capability: Capability, model: &ModelIdentity) -> Estimate {
-        self.roster.bound(capability, model)
+        match &self.installed {
+            Some(installed) => installed.bound(capability, model),
+            None => self.roster.bound(capability, model),
+        }
     }
 }
 

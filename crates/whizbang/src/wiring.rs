@@ -9,7 +9,9 @@ use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use whizbang_backends::models::{Installations, Lease};
 use whizbang_core::artifact::Contents;
+use whizbang_core::capability::{Inventory, NoInventory};
 use whizbang_core::config::{Config, Credentials, Files, Kinds, Offers};
 use whizbang_core::contract::{
     Action, ConfigSource, Engine, Interrupted, NoBackends, Opening, Place, Recovery, Registry,
@@ -75,6 +77,7 @@ pub struct Over {
     env: Option<PathBuf>,
     kinds: Kinds,
     secrets: Secrets,
+    installed: Option<Arc<Installations>>,
 }
 
 impl Over {
@@ -115,6 +118,17 @@ impl Over {
         self.secrets = secrets;
         self
     }
+
+    /// The same, with what is installed in a models directory (ADR 0017, "The
+    /// inventory"): the inventory a local backend's model is looked up in, and the
+    /// holds a lease is taken from. The inventory is told its secrets by whoever
+    /// makes it. No command names a models directory yet: the catalogue that an
+    /// inventory is of comes with the first local model (checkpoint 1C), so the
+    /// binary gives none and a test gives one over a scratch folder.
+    pub fn installed(mut self, installed: Arc<Installations>) -> Over {
+        self.installed = Some(installed);
+        self
+    }
 }
 
 impl std::fmt::Debug for Over {
@@ -124,6 +138,7 @@ impl std::fmt::Debug for Over {
             .field("env_file", &self.env.is_some())
             .field("kinds", &self.kinds)
             .field("secrets", &self.secrets)
+            .field("models", &self.installed.is_some())
             .finish()
     }
 }
@@ -134,7 +149,21 @@ impl Over {
     fn files(&self) -> Option<Files> {
         let config = self.config.as_deref()?;
         let files = Files::new(config, self.env.as_deref(), self.kinds.clone());
-        Some(files.knowing(self.secrets.clone()))
+        Some(files.knowing(self.secrets.clone()).over(self.inventory()))
+    }
+
+    /// What is installed, as readiness asks it (ADR 0015, "An inventory"): the
+    /// models directory this was given ([`Over::installed`]), or the inventory that
+    /// knows no model. **What a config offers always stands over one of the two,**
+    /// so a local backend is prepared under the identity of an installation or is
+    /// not ready: under no models directory no local backend is ready, and none is
+    /// ever answered as its kind declared it, with nothing known of what is
+    /// installed and no lease to hold it.
+    fn inventory(&self) -> Arc<dyn Inventory> {
+        match &self.installed {
+            Some(installed) => installed.clone(),
+            None => Arc::new(NoInventory),
+        }
     }
 
     /// Where an executor built over this reads its config (ADR 0015, "One snapshot
@@ -157,7 +186,8 @@ impl Over {
         }
         let empty = Config::empty();
         let offers = Offers::of(&empty, &Credentials::none(), &self.kinds)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?
+            .over(self.inventory());
         let snapshot = Snapshot::of(empty.digest())
             .offering(Arc::new(offers))
             .sending_under(DispatchPolicy::none())
@@ -251,14 +281,29 @@ pub fn executor(
 /// bounded request of a run that reserved nothing passes unmetered; with the ledger
 /// alone nothing a run sends is charged to what it reserved.
 ///
+/// And the lease (`models::Lease`; ADR 0017, "The lease"), in the lease's place,
+/// over the models directory this was given ([`Over::installed`]): before a request
+/// to a local model leaves it takes a hold on the installation the run was admitted
+/// with, and lets it go when the request is over.
+///
 /// What comes back otherwise is why the executor could not be built.
 pub fn runner(registry: Registry, store: Arc<Store>, over: &Over) -> Result<Engine, String> {
     let digest = Config::empty().digest();
     let meter = Meter::new(store.clone(), Arc::new(SystemClock));
     let engine = Engine::over(registry, Arc::new(NoBackends), store, digest);
-    Ok(wired(engine, over)?
+    let engine = wired(engine, over)?
         .with_ledger(Arc::new(StoreLedger))
-        .with_wrapper(Place::Meter, Arc::new(meter)))
+        .with_wrapper(Place::Meter, Arc::new(meter));
+    // The lease stands in its place wherever there is a models directory to take
+    // a hold in. Without one no local backend is ready ([`Over::inventory`]), so
+    // no request ever comes to the place.
+    Ok(match &over.installed {
+        Some(installed) => {
+            let lease = Lease::over(installed.clone());
+            engine.with_wrapper(Place::Lease, Arc::new(lease))
+        }
+        None => engine,
+    })
 }
 
 /// What recovers a store before this build is handed its writer (ADR 0015, "One way

@@ -15,6 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use crate::capability::Inventory;
 use crate::contract::{
     ConfigSource, Estimate, SECRETS_KEPT_LIMIT, Secrets, Snapshot, SourceRefused,
 };
@@ -52,6 +53,8 @@ pub struct Files {
     kinds: Kinds,
     /// Every credential a reading handed out.
     read: Mutex<Secrets>,
+    /// What is installed, when the source was put over an inventory.
+    inventory: Option<Arc<dyn Inventory>>,
 }
 
 impl Files {
@@ -63,6 +66,7 @@ impl Files {
             env: env.map(Path::to_owned),
             kinds,
             read: Mutex::new(Secrets::none()),
+            inventory: None,
         }
     }
 
@@ -76,6 +80,17 @@ impl Files {
             read: Mutex::new(secrets),
             ..self
         }
+    }
+
+    /// The same source, with what each reading offers put over this inventory
+    /// ([`Offers::over`]): a local backend of the config is prepared under the
+    /// identity of its model's installation, or is not ready, with the reason. The
+    /// inventory is asked at each preparation, about the one local backend a call
+    /// resolved, and is not held still. Without this a local backend is answered as
+    /// its kind declared it, whatever is installed.
+    pub fn over(mut self, inventory: Arc<dyn Inventory>) -> Files {
+        self.inventory = Some(inventory);
+        self
     }
 
     /// Both files, read now as the source reads them for a snapshot, or the readers'
@@ -134,6 +149,10 @@ impl ConfigSource for Files {
         };
         let offers = Offers::knowing(loaded.config(), loaded.credentials(), &self.kinds, &known)
             .map_err(|_| SourceRefused::because(NO_ROSTER))?;
+        let offers = match &self.inventory {
+            Some(inventory) => offers.over(inventory.clone()),
+            None => offers,
+        };
         // The config's approvals are the whole policy: a config that names no
         // recipient approves none, whatever the executor was built with.
         let approvals = loaded.config().recipients().map(|(_, approval)| approval);

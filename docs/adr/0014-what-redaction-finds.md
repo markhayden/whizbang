@@ -302,8 +302,17 @@ executor keeps it through `Diagnostic::written_json`, which redacts it as JSON: 
 exchange in which the letters of a secret stood after a line break's escape was
 stored with a backslash before the marker, and could not be read back as one
 (`asked::an_exchange_with_a_judge_is_stored_as_json_after_a_secret_at_the_edge_of_an_escape_was_taken_out`).
-So what this section does not find holds for a stored exchange from here on: a secret
-that stands across two of its strings. Nothing else the executor writes is a body it
+So what this section does not find holds for a stored exchange from here on, and it
+is wider than a secret across two strings. A secret that stands across any two
+tokens of the body is in no one of them: across a key and its value (the secret
+`key":"value-0123456789` in `{"key":"value-0123456789"}`), or made of the characters
+of numbers and what stands between them (the secret `12345678,90123` in
+`{"sizes":[12345678,90123]}`). Such a secret holds a quote, a comma or a colon where
+the body's own structure has one; a real API key is one token and cannot span two.
+And the other way about: after an escape such as `\n`, a stored exchange can hold
+the letters of a secret as bytes though no text it decodes to holds the secret (the
+`n` of the escape and the letters after it). Nothing was leaked there, and a search
+of a store's bytes for a key would still report it. Nothing else the executor writes is a body it
 knows to be JSON and searches whole. A record and an admission are made of fields
 that are each cleaned as a text before the document is written; a journal is lines
 whose messages were cleaned the same way; and what an action writes under a name of
