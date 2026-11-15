@@ -370,7 +370,7 @@ fn with_the_default_policy_a_backend_that_names_a_recipient_hands_nothing_over_a
             RefusalKind::RequestNotApproved,
             "nothing was sent to https://api.example.com: the recipient is not approved for \
              the classes of data the request holds (the classes of data the request holds: \
-             none)"
+             none known before a piece of it is made)"
                 .to_owned()
         )]
     );

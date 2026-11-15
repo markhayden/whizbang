@@ -54,6 +54,10 @@ Amended: 2026-11-15, with task S8. Changed under "A part in the admission", "Lim
 the kinds the two parts that refuse are recorded under. And, as the review of task S3
 asked, under "One snapshot of the config": a snapshot prints whether it holds a cap,
 and not the cap.
+Amended: 2026-11-15, after the review of task I3. Changed under "A wrapper around
+each request": a panic of `Open::after` abandons the run; the tests of a judge and a
+segmenter through the places, of a repeat of an abandoned run's request, and of the
+gate's sentence; and why the path without a snapshot is left as it is.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -886,6 +890,13 @@ through the meter, the lease and the gate before the tally accounts for the requ
 So a request is outstanding, and its run and every run above it not terminal, until
 the last wrapper has returned
 (`around::with_a_wrapper_stopped_after_the_backend_answered_the_run_and_its_parent_are_not_terminal`).
+A filler and a segmenter send through `Bounds::send`; a judge's handle counts and
+accounts for its request itself, to keep the exchange, and takes it through the same
+places by `Bounds::through`. Each of the three is shown passing the places in order,
+and stopped before its backend by a gate that refuses
+(`around::a_segmentation_and_a_judge_request_each_pass_the_three_places_in_order`,
+`around::a_gate_that_refuses_stops_a_segmentation_and_a_judge_request_before_its_backend`;
+the first test of this section is a filler's).
 A request the handle's own checks refuse is seen by no wrapper. A request the tally
 refuses, because the run's action has come back or the run has sent as many as it may,
 is seen by none either.
@@ -911,6 +922,20 @@ the request is handed to the action, which is told the request could not be acco
 for, and nothing more is sent for the run
 (`around::a_wrapper_that_fails_after_the_backend_answered_leaves_the_run_abandoned_and_not_ended`,
 `around::a_backend_that_panics_under_a_wrapper_leaves_the_run_abandoned_and_not_ended`).
+A **panic** of `Open::after` comes to the same as its failure: it is caught where the
+wrappers are told, the run is marked to be abandoned exactly as for a failure, the
+places before it are told how the request ended all the same, and the panic then goes
+on, as a backend's does under a wrapper that holds something: it unwinds through the
+handle to the action, and whatever the action makes of it the run is abandoned, with
+no end published and its reservation open
+(`around::a_wrapper_that_panics_after_the_backend_answered_leaves_the_run_abandoned_and_not_ended`).
+That holds wherever `after` is called, so also where it is told that a later place
+refused the request: what the wrapper held is not accounted for either way
+(`around::a_wrapper_that_panics_when_told_a_later_place_refused_leaves_the_run_abandoned`).
+The request id of an abandoned run stays taken, by the rule every admitted run has
+(ADR 0007): the same request again is answered with that run, as abandoned, and never
+runs again, and another request under the id is a conflict
+(`around::a_repeat_of_the_request_of_an_abandoned_run_is_answered_with_that_run_and_never_runs_again`).
 A wrapper says whether it holds anything for a request (`Open::holds`). One whose
 work is all before the request holds nothing (`Nothing`), and a backend's panic under
 such a one alone is what it was without it: its run ends as an error that says its
@@ -935,7 +960,13 @@ fault states no charge
 (`around::with_the_default_policy_a_backend_that_names_a_recipient_is_refused_at_the_gates_place_and_one_that_names_none_is_sent`;
 through a config's policy, `gate::a_backend_that_is_refused_at_the_gates_place_is_not_called`).
 A backend that names no recipient is local: the gate lets its requests by, and what
-such a backend tries to send is refused by its sender, as before.
+such a backend tries to send is refused by its sender, as before. The sentence the
+refusal is noted with states the classes the request is known to hold, and where
+that is none it says "none known before a piece of it is made": the backend was not
+called, so what its pieces would have held is not known. Where the refusal could not
+be listed in where the run's data went (the list keeps half its room for what was
+sent), the sentence says so, as the checked sender's does
+(`around::the_gates_refusal_says_so_when_it_could_not_be_listed_in_where_the_runs_data_went`).
 
 **What a request is said to hold, before any piece is made.** ADR 0012 left open who
 knows a source image from a derived one at a handle. Nobody does: a `Picture` has no
@@ -947,7 +978,9 @@ that is not approved for prompts when the request holds one, before anything is
 built; and every piece the backend then makes is held to the policy again, with the
 class its builder states, by the checked sender. A recipient approved for prompts
 and not for source images is still refused a source image there, after its backend
-was called.
+was called: sent a picture and no prompt, the backend is called once, nothing is
+handed to the sender, and the refusal names the images
+(`gate::a_recipient_approved_for_prompts_only_that_is_sent_a_picture_and_no_prompt_is_refused_after_its_backend_was_called`).
 
 **The bound of a request is its own backend's.** `Wrapped::quote` is the quote of the
 backend the handle holds, which is the one the call resolved. Two backends of one
@@ -961,17 +994,22 @@ reserves, and it is kept: reserving the largest cannot reserve too little
 - **Nothing stands in the lease's or the meter's place.** A paid request is not
   debited, recorded before it leaves or settled until task S5; and a request to a
   local model takes no lease until the rest of task I7.
-- **A wrapper that panics** unwinds as a backend's panic does. Before the backend was
-  called that is the fault of one action; what the places before it held is dropped,
-  and nothing here marks the run.
+- **A wrapper that panics in `Around::before`** unwinds as a backend's panic does
+  under no wrapper: it is the fault of one action; what the places before it held is
+  dropped, and nothing here marks the run. (A panic of `Open::after` abandons the
+  run, as above.)
 - **A refused request is in the run's list of requests,** as one that ended in a
   fault that says it was not sent, beside its refusal.
 - **An executor that was built with held backends and no snapshot hands a run no
   backend for a capability none of them answers,** and admits the call: its action
   finds no handle. The path through a snapshot refuses such a call as not ready
-  (`Snapshot::handed`). It is left so: an executor built by hand is a test's, many of
-  whose actions need a capability and never ask for it, and the binary's executor
-  goes through a snapshot (task W1).
+  (`Snapshot::handed`). It is left so for now: an executor built by hand is a test's,
+  many of whose actions need a capability and never ask for it. The binary's executor
+  is on this path too, today: it is built with no backends at all
+  (`crates/whizbang/src/wiring.rs`, `NoBackends`) and no snapshot. That it goes through
+  a snapshot is task W1's plan and not yet so; `docs/carry-over.md` has the row that
+  holds the binary to the snapshot path, with a test that a call with no backend to
+  hand is refused as not ready.
 - **The gate knows a prompt and no other class,** as above.
 
 ## Consequences
