@@ -15,8 +15,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::{
-    Address, Classes, Credential, DispatchPolicy, NotAllowed, Origin, Outgoing, Recipient, Reply,
-    Sender,
+    Address, Classes, Credential, DispatchPolicy, NotAllowed, Origin, Outgoing, Piece, Recipient,
+    Reply, Sender,
 };
 use crate::capability::{Bounds, Declaration, Fault, FaultKind, Stage};
 use crate::contract::record::Handed;
@@ -33,6 +33,7 @@ pub const CREDENTIALS_LIMIT: usize = 256;
 pub struct Hop<'a> {
     recipient: &'a Recipient,
     to: &'a Address,
+    pieces: &'a [Piece],
     needs: Classes,
     policy: &'a DispatchPolicy,
     moves: u32,
@@ -54,6 +55,12 @@ impl<'a> Hop<'a> {
     /// The origin of that address.
     pub fn origin(&self) -> &'a Origin {
         self.to.origin()
+    }
+
+    /// The pieces the request holds, for a check that looks at what would leave. What
+    /// is printed of a hop shows nothing of them.
+    pub fn pieces(&self) -> &'a [Piece] {
+        self.pieces
     }
 
     /// The classes of data the request holds: the class each piece states, and all
@@ -370,6 +377,7 @@ impl Sender for Checked {
         let hop = Hop {
             recipient,
             to,
+            pieces: outgoing.pieces(),
             needs,
             policy: &self.policy,
             moves: self.moves.load(Ordering::SeqCst),

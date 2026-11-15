@@ -8,6 +8,6 @@ mod jpeg_sources;
 mod mappings;
 mod pixels;
 mod spaces;
-mod support;
+pub mod support;
 mod vectors;
 mod vectors_table;
