@@ -19,8 +19,8 @@ use whizbang_core::contract::{
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::spend::{Amount, ClosedBy, PlaceBy, Reading, Record, Sum, TurnBy};
-use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{self, Store};
+use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::ledger::FakeLedger;
 use whizbang_testkit::scratch::Scratch;
 
@@ -89,7 +89,8 @@ struct World {
 impl World {
     fn new(allowance: u64) -> World {
         let dir = Scratch::new("ledger");
-        let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap());
+        let store =
+            Arc::new(Store::open(&dir.path().join("store"), Arc::new(ShimFs::new())).unwrap());
         World {
             _dir: dir,
             store,
