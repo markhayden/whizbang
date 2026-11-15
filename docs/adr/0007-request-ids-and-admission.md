@@ -5,6 +5,9 @@ the admission's publication, before the ledger, and a refusal by one is a refusa
 the look; a request may carry a cap, which is no part of its fingerprint; a preparation
 carries the time it was made, beside `prepared/1`; and `ConfigSource` answers a snapshot
 of the config or a refusal, where it answered a digest ("One snapshot of the config").
+Changed by ADR 0015 again
+("One way to a writer, with recovery before it"): a store is recovered when it is
+opened to write, which "Alternatives" turned down for now.
 Changed by ADR 0016, from the
 second pull request of its task on: what a ledger's names are, and their grammar; a
 ledger cannot return from `reserve` without having made its names, and takes part in
@@ -48,6 +51,8 @@ parent's allowance, asks no ledger and has no reservation.
 Amended: 2026-11-13, with `grow` through the executor (task A9), the first action that
 reads an input. Added, in "A preparation handed to admission": what the third decoding
 of an input costs, and that it stays.
+Amended: 2026-11-15, with task I4 (ADR 0015). Changed, in "Alternatives": the write on
+open that was turned down for now is made.
 Spec: section 3, "The execution contract", "Storage" and "What every run records";
 section 6, "Spend"
 
@@ -666,7 +671,10 @@ ids.
   segment, and a name that shows the id can be found by a person.
 - **Mark an interrupted run when the next writer opens the store.** Turned down for
   now: it is a write on open, by whatever command opened it, and settlement
-  (checkpoint 1B) is what needs to act on such a run.
+  (checkpoint 1B) is what needs to act on such a run. (Decided the other way by
+  the plan of checkpoint 1B and ADR 0015, "One way to a writer, with recovery
+  before it": a store is recovered, in one publication, before anyone is handed its
+  writer.)
 - **A schema for the two records.** Turned down: nothing outside this code reads them.
   The same holds for the reservation until a ledger outside this code reads one.
 - **The reservation as a field of the admission and nothing else.** Turned down: an

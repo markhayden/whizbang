@@ -825,7 +825,8 @@ just scan-range-secrets <base> <head>
                         # commits of a pull request, there with the base branch's copy
                         # of the scan
 just ci                 # what a pull request runs: check, advisories, a smoke of the
-                        # release binary, the secrets scan
+                        # release binary, the example that must not compile, the
+                        # secrets scan
 ```
 
 `just setup`, `check`, `test-scripts-slow`, `docs`, `scan`, `scan-range`,
