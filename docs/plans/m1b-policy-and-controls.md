@@ -1090,7 +1090,7 @@ one but `store delete` and `store prune`; and `recover::a_crash_at_any_event…`
 **Depends on:** I4. Two pull requests: the record and the recovery's part that writes it;
 then the readers. In the executor's files and `crates/whizbang/src/runs.rs`.
 
-- [ ] A recovery's part: every run that is admitted, has no record and is not open in
+- [x] A recovery's part: every run that is admitted, has no record and is not open in
       this process is ended with the record "What a crashed run is recovered to"
       describes, made from its admission alone, and for a request with an id its ending.
       A run whose admission cannot be read is ended with what its name gives. Its
@@ -1834,7 +1834,7 @@ approved, carries no user data, and its redirect off the recipient is refused.
 
 **Depends on:** E3.
 
-- [ ] Each send is noted where it is made, at the `Sender`, in the run's place for facts:
+- [x] Each send is noted where it is made, at the `Sender`, in the run's place for facts:
       the origin that was reached and the classes of data. A run's `egress` list is those
       notes. A send the gate or a hop's check refused is in the record as refused.
 
@@ -1847,6 +1847,13 @@ a process left after it had sent data is recovered as interrupted, with `egress`
 nothing as sent; a local run's list is empty; an account in the list is shown cut, and a
 marker credential is nowhere in the record (rule 4).
 **Carry-over:** the row on the record's empty lists (`egress`). **Size:** small.
+
+**Ticked with task I4b** (2026-11-15). The task was built before the recovery of a run
+a dead process left, and its box waited for one clause: "a run that a process left
+after it had sent data is recovered as interrupted, with `egress` named in
+`outcome.lost` and an empty list". Task I4b's first pull request shows it
+(`recipients::a_run_that_a_process_left_after_it_had_sent_data_is_recovered_as_interrupted_with_egress_named_as_lost_and_an_empty_list`;
+ADR 0019, "The run's recipients", names the test of every other clause).
 
 ### E6. Nothing but pixels
 

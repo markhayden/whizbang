@@ -53,6 +53,9 @@ reads an input. Added, in "A preparation handed to admission": what the third de
 of an input costs, and that it stays.
 Amended: 2026-11-15, with task I4 (ADR 0015). Changed, in "Alternatives": the write on
 open that was turned down for now is made.
+Amended: 2026-11-15, with task I4b (ADR 0015). Changed, in "What `runs list` and `runs
+show` do with a run that has not ended": a run a dead process left is ended by the
+next open to write.
 Spec: section 3, "The execution contract", "Storage" and "What every run records";
 section 6, "Spend"
 
@@ -597,8 +600,11 @@ caller that wants an interrupted or deleted run done again sends it under a new 
 `runs list` shows it as `admitted, not ended`, with its action, version and start, from
 its admission. `runs show` prints the admission's fields and says there is no record;
 `--json` is refused, saying why; `--diagnostic admitted` prints the admission as it is
-stored. After a crash the run is listed the same way until it is deleted: nothing marks
-it as interrupted, because nothing in the store says which process made it. A run that
+stored. After a crash the run is listed the same way until a process opens the store
+to write: that open ends it, as an error of the kind `interrupted` (ADR 0015, "The
+interrupted record, and what readers say of it"). Nothing in the store says which
+process made a run; what says that a run was left is that the one writer a store has
+at a time did not make it. A run that
 other hands made, with neither a record nor an admission, is listed as `no record`, as
 before.
 
