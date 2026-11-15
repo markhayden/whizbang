@@ -93,7 +93,10 @@ and here: the inventory answers damaged for a model one of whose layout folders 
 a link ("The inventory"; "A folder of the layout that is a link", what is not
 refused). Tests and words: a pointer or a record that cannot be read is damaged,
 by a refused call and by a refused permission; two limits of the inventory are on
-`docs/carry-over.md` with a milestone.
+`docs/carry-over.md` with a milestone. And, from the second review of task M5c's
+pull request: a removal looks for a link again after its wait for the holds and
+just before it deletes; the look in the model's own unstaging, which the
+directory's unstaging makes too, is gone.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -1390,7 +1393,15 @@ unusual.
   models directory over it is refused, as one over a file system that streams
   nothing is.
 - **It is made again before each listing and each deleting,** not once: under the
-  model's lock by a removal, which may have waited for it; by the installer's
+  model's lock by a removal, which may have waited for it; by a removal again
+  when it has waited for the holds, before it clears the pointer, since the look
+  under the lock is then a whole wait old, and a removal refused there has
+  changed nothing; and once more when the pointer is cleared, just before the
+  deleting, where a refusal leaves the model not installed and its folders for
+  the next removal
+  (`links::a_folder_swapped_for_a_link_while_a_removal_waits_for_a_hold_is_refused_and_changes_nothing`,
+  `links::a_folder_swapped_for_a_link_once_the_pointer_is_cleared_is_refused_before_anything_is_deleted`);
+  by the installer's
   cleaning before it lists `installations/`, at the start of an install and at its
   end; by a staging before it removes what the last one left; by a publication
   after the download, before it reads back, makes a folder, renames or points;
