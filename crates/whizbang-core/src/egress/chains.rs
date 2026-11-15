@@ -78,7 +78,8 @@ fn cancelled(why: &'static str, moves: u32) -> Fault {
 /// times at most for one download, and so never answers [`Downloaded::Moved`]. A
 /// request for an address it was pointed to asks for as many bytes as the first, and
 /// carries the first request's credential only when the address is at the origin
-/// that credential is bound to. A download whose sink was handed a byte is not
+/// that credential is bound to: at every such address of the chain, whatever origin
+/// the address before it was at. A download whose sink was handed a byte is not
 /// followed anywhere.
 ///
 /// What `{:?}` prints is how many origins it holds.
@@ -118,6 +119,10 @@ impl Downloader for CheckedDownloader {
         cancellation: &Cancellation,
         sink: &mut dyn FnMut(&[u8]) -> bool,
     ) -> Result<Downloaded, Fault> {
+        // The first request's credential, kept for the whole chain: a request for an
+        // address at another origin carries none, and is not where the next one's
+        // comes from.
+        let brought = request.credential().cloned();
         let mut request = request.clone();
         let mut moves = 0;
         loop {
@@ -145,18 +150,21 @@ impl Downloader for CheckedDownloader {
             if moves > MOVES_LIMIT {
                 return Err(refused(DOWNLOAD_MOVED, moves));
             }
-            request = moved_to(&request, to)?;
+            request = moved_to(&request, to, brought.as_ref())?;
         }
     }
 }
 
-/// The request for the address a download was pointed to: as many bytes, and the
-/// credential only at the origin it is bound to.
-fn moved_to(request: &DownloadRequest, to: Address) -> Result<DownloadRequest, Fault> {
+/// The request for the address a download was pointed to: as many bytes as the
+/// request before it, which is as many as the first, and the credential the first
+/// request brought only at the origin it is bound to.
+fn moved_to(
+    request: &DownloadRequest,
+    to: Address,
+    brought: Option<&Credential>,
+) -> Result<DownloadRequest, Fault> {
     let malformed = |_| Fault::new(FaultKind::Malformed, "the download could not be asked for");
-    let carried = request
-        .credential()
-        .filter(|credential| credential.origin() == to.origin());
+    let carried = brought.filter(|credential| credential.origin() == to.origin());
     let next = DownloadRequest::new(to, request.most_bytes()).map_err(malformed)?;
     match carried {
         None => Ok(next),

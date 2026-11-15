@@ -50,6 +50,11 @@ the cap, the policy and the settings in the snapshot, and what an upstream that 
 a secret meets. Changed in "What the file holds" and "Which settings a run records": a
 backend's name and a setting's key are held together to the name a record takes, where
 this record let a config be read whose runs could not record their settings.
+Amended: 2026-11-14, a tenth note, after the review of tasks C4 and C5. Added to the
+limits of "The source over both files": what reading the two files one after the other
+can pair. Changed in "The digest": what a guess at a key would be hashed with. And of
+`Files::knowing`: the secrets a source is told of from the start are kept however many
+they are.
 Spec: section 4, "Backends" (config, resolution, credentials); section 6, "Spend";
 section 10, "Egress"
 
@@ -543,8 +548,8 @@ What follows from hashing what was read:
   - **The digest is written down.** It is in every run's record (`asked.config`) and
     in every prepared call a caller keeps, which leave the machine. Whatever of the
     env file went into it could be tested against it by anyone who holds a record: a
-    guess at a key, hashed with the config that is in the same record's settings,
-    either matches or does not. A long random key survives that; the reader takes a
+    guess at a key, hashed with the config, which is not a secret and which a
+    record's settings show part of, either matches or does not. A long random key survives that; the reader takes a
     value of 8 bytes, and a short token would not. A hash with a secret of the
     machine's own mixed in would close that, and would give two machines with one
     config two digests, which "The digest" turned down for the file's bytes.
@@ -814,8 +819,10 @@ makes a `Credential` and has no way to hand it to the snapshot ("What waits").
   source has read, where it was cleaned with the keys of one reading.
 - **It keeps 4,096 at most** (`SECRETS_KEPT_LIMIT`, the executor's bound). A reading
   that would add one over that is refused in fixed words, nothing of it is kept and
-  none is let go; the bound is on what readings add, so a source told of more from
-  the start answers a reading that adds none
+  none is let go. The secrets a source is told of from the start are kept however
+  many they are: a source told of more than the bound answers a reading that adds
+  none, and a reading that adds one to a set that is, or would be, over the bound is
+  refused
   (`source::a_reading_that_would_bring_more_keys_than_a_source_keeps_is_refused_and_none_is_let_go`).
 - **It prints** whether an env file is named, how many kinds it holds and how many
   secrets it knows: no path and no key (`source::a_source_prints_no_path_and_no_key`).
@@ -880,6 +887,10 @@ What follows is task C5's, each on one executor across a change of the file.
   them.
 - **The two files are read one after the other,** the env file first, and not as
   one thing: an env file written again after it was read is not seen by that ask.
+  So a variable that is given another recipient and another value in one edit can,
+  for one ask, be read as its old value bound to its new recipient; the same pairing
+  is on the disk whenever the config is saved before the env file. A variable that
+  changes recipient is given a new name.
 - **Every ask reads both files and makes every backend,** for a preparation as for an
   admission (ADR 0015). Nothing is kept from one ask for the next but the secrets.
 

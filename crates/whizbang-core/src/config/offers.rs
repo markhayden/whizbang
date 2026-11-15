@@ -151,7 +151,9 @@ impl Offers {
         credentials: &Credentials,
         kinds: &Kinds,
     ) -> Result<Offers, RosterError> {
-        Offers::knowing(config, credentials, kinds, &Secrets::none())
+        // The credentials' own set is given as what is known already, so that the
+        // set a kind is handed is that set as it is and no other is made.
+        Offers::knowing(config, credentials, kinds, credentials.secrets())
     }
 
     /// [`Offers::of`], by a source that has read the files before and kept the
@@ -164,7 +166,11 @@ impl Offers {
         kinds: &Kinds,
         earlier: &Secrets,
     ) -> Result<Offers, RosterError> {
-        let secrets = &credentials.secrets().joined(earlier);
+        // The kept set first: a source's holds these credentials already, and is
+        // then what comes back as it is, with the search it has
+        // (`Secrets::joined`), where the credentials joined by the kept set made a
+        // set and its search again at every ask after a key was rotated.
+        let secrets = &earlier.joined(credentials.secrets());
         let mut offers = Offers {
             roster: Roster::new(),
             not_ready: BTreeMap::new(),
