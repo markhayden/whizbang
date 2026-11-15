@@ -1161,15 +1161,19 @@ whose old body stands under a new name.)
 - [x] `Inventory`, in the core: for a local model, whether it is ready and, if so, the
       identity of its installation, which is the version in what a preparation saw; or
       why it is not (not installed, out of date, damaged, not in the catalogue).
-- [ ] `Lease`: before a request to a local model leaves, at the lease's place in I3's
+- [x] `Lease`: before a request to a local model leaves, at the lease's place in I3's
       order, a lease on the installation the run was admitted with is taken, and let go
       when the request is over. A lease that cannot be had is a fault and a noted
       refusal; nothing is dispatched.
-      (Not built. Its place is there, and empty: ADR 0015, "A wrapper around each
-      request"; `docs/carry-over.md`.)
-- [ ] Defaults that know no model, and a fake inventory in the test kit.
-      (Built of it, before task I3: the default inventory, `NoInventory`, and the fake,
-      `FakeInventory`. The lease's default is not, so the box is not ticked.)
+      (Built after task I3, as what stands in the lease's place, `Place::Lease`: an
+      `Around`, and no interface of its own. A run admitted for a local model is handed
+      its backend under the installation the admission recorded, and the place is told
+      that identity: ADR 0015, "The backend a run is handed, and the lease's place".
+      The lease over the models directory's holds is task M6b's.)
+- [x] Defaults that know no model, and a fake inventory in the test kit.
+      (The default inventory, `NoInventory`, and the fake, `FakeInventory`, before task
+      I3. The lease's default is the empty place, and its fake is the test kit's
+      `FakeWrapper` in that place.)
 
 **Done when** these pass: a roster over the fake inventory prepares a model that is not
 ready as not ready, with the reason; a request whose lease is refused reaches neither the
@@ -1177,9 +1181,15 @@ meter's place nor the backend; a lease is let go when its request ends by an ans
 fault and a panic, counted by the fake; the lease is asked for the identity the admission
 recorded, not the one current at the request. (Built: the first part, as
 `inventory::a_roster_over_the_fake_inventory_prepares_a_model_that_is_not_ready_as_not_ready_with_the_reason`,
-with ADR 0015, "An inventory". The other three are the lease's and wait for task I3. Until
-then a run admitted for a local model over an inventory is handed no backend for it:
-`inventory::known_a_run_admitted_for_a_local_model_over_an_inventory_is_handed_no_backend_for_it`.)
+with ADR 0015, "An inventory". The other three, after task I3, each with the fake in
+the lease's place and a fake meter after it:
+`inventory::a_request_whose_lease_is_refused_reaches_neither_the_meters_place_nor_the_backend`,
+`inventory::a_lease_is_let_go_when_its_request_ends_by_an_answer_a_fault_and_a_panic`
+(and `…when_the_place_after_it_panics_before_the_request_leaves`),
+`inventory::the_lease_is_asked_for_the_identity_the_admission_recorded_not_the_one_current_at_the_request`.
+The pin of the first half, a run handed no backend for a local model over an
+inventory, is turned round:
+`inventory::a_run_admitted_for_a_local_model_over_an_inventory_is_handed_its_backend_under_the_identity_the_admission_recorded`.)
 **Size:** small.
 
 ### W1. The binary wired
