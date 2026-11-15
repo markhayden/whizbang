@@ -1544,7 +1544,7 @@ tasks. "Each down to nothing" in the box is read as ADR 0016 has an allowance: i
 goes below nothing where the charge puts it, reports nothing to spend, and a return
 pays the debt first (invariant 2). The text as it stood is in this file at commit a9029d7.
 
-- [ ] When a request ends, the meter settles it by the stage it reached, and gives back to
+- [x] When a request ends, the meter settles it by the stage it reached, and gives back to
       the run's allowance what the bound held beyond the charge; or, where the charge is
       over the bound, takes the excess from the allowance of its run and of each run
       above it, each down to nothing. Not sent: nothing is

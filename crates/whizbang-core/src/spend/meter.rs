@@ -32,30 +32,47 @@
 //! **A request after its run's action has come back** never reaches the meter: the
 //! handle's tally refuses it before any wrapper sees it (ADR 0015).
 //!
-//! Settling a request when it ends is task S5b's. Until then a dispatched request
-//! stays counted at its bound, in the process and in the books: over, never under.
+//! **When the request ends** it is settled by the stage it reached (task S5b; ADR
+//! 0010): not sent, nothing is charged; answered, by a response or by a fault, the
+//! charge the answer gave, or the bound when it gave none; unresolved, a timeout and
+//! a cancellation with no answer among them, the bound. The settlement is one
+//! publication: its guard, the settlement, the next turn of the epoch the
+//! reservation's hold names, and the next place when the charge is over the bound.
+//! Once it is durable, what the bound held beyond the charge goes back to the run's
+//! allowance, or the excess of a charge over its bound is taken from the run and
+//! from each run above it ([`Dispatched::settled`]). A settlement that cannot be
+//! published fails the wrapper: the run is abandoned (ADR 0015), the dispatch has no
+//! settlement, and the request stays counted at its bound, in the process and in
+//! the books: over, never under.
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::num::NonZeroU64;
 use std::sync::Arc;
 
-use crate::capability::{Around, Ended, Fault, FaultKind, Nothing, Open, Stop, Wrapped};
+use crate::capability::{Around, Ended, Fault, FaultKind, Nothing, Open, Stage, Stop, Wrapped};
 use crate::contract::record::RECORD_KIND;
 use crate::contract::{Clock, DispatchRefused, Dispatched, NotJudged, RefusalKind, RunId};
-use crate::store::{self, Store};
+use crate::store::{self, Generation, Store};
 
-use super::name::Amount;
+use super::name::{Amount, Name};
 use super::quote::request_bound;
-use super::reading::{Names, Sum};
-use super::record::{PlaceBy, Record};
+use super::reading::{Names, Sum, lowest_free};
+use super::record::{PlaceBy, Record, TurnBy};
 
-/// How many times a place is chosen again when the store refuses it because another
-/// publication took it meanwhile.
+/// How many times a place or a turn is chosen again when the store refuses it
+/// because another publication took it meanwhile.
 const ATTEMPTS: usize = 64;
 
-/// The meter of one store: it writes each paid request's dispatch there, at the
-/// time its clock says.
+/// The meter of one store: it writes each paid request's dispatch and settlement
+/// there, at the time its clock says.
 pub struct Meter {
+    books: Books,
+}
+
+/// Where the meter writes, and its clock. A clone is the same store.
+#[derive(Clone)]
+struct Books {
     store: Arc<Store>,
     clock: Arc<dyn Clock>,
 }
@@ -63,9 +80,13 @@ pub struct Meter {
 impl Meter {
     /// A meter that records in this store, which is the one its executor writes.
     pub fn new(store: Arc<Store>, clock: Arc<dyn Clock>) -> Meter {
-        Meter { store, clock }
+        Meter {
+            books: Books { store, clock },
+        }
     }
+}
 
+impl Books {
     /// Judges a dispatch by the names of the root's reservation and publishes it:
     /// the next place and the dispatch at it. What comes back is the place. `failed`
     /// is told why, where the store failed.
@@ -138,6 +159,120 @@ impl Meter {
         *failed.borrow_mut() = Some(why.clone());
         Err(DispatchRefused::Failed(NotJudged::saying(&why)))
     }
+
+    /// Publishes the settlement of the request at this place under the root's
+    /// reservation: its guard, the settlement, the next turn of each epoch a hold of
+    /// the reservation names, and the next place when the charge is over the bound.
+    /// What comes back is why it could not, in words.
+    fn settle(
+        &self,
+        root: &RunId,
+        place: NonZeroU64,
+        bound: Amount,
+        stage: Stage,
+        charged: Amount,
+    ) -> Result<(), String> {
+        let fail = |error: store::Error| {
+            format!(
+                "the settlement was not published: {}",
+                error.without_paths()
+            )
+        };
+        let from_one = |number: u64| {
+            NonZeroU64::new(number).ok_or_else(|| "a place and a turn are from 1".to_owned())
+        };
+        let over_bound = charged > bound;
+        for _ in 0..ATTEMPTS {
+            let generation = self.store.snapshot().map_err(fail)?;
+            let names = Names::of_run(root, &generation, |entry| self.store.read(entry));
+            let Some(names) = names else {
+                return Err("the store names no reservation to settle under".to_owned());
+            };
+            let mut records = vec![
+                Record::Settling {
+                    run: root.clone(),
+                    place,
+                },
+                Record::Settlement {
+                    run: root.clone(),
+                    place,
+                    stage,
+                    charged,
+                    over_bound,
+                    at_ms: self.clock.now_ms(),
+                },
+            ];
+            // A reservation with no hold counts in no epoch, and takes no turn.
+            for epoch in names.epochs() {
+                records.push(Record::Turn {
+                    epoch,
+                    turn: from_one(next_turn(&generation, epoch))?,
+                    by: TurnBy::Settlement,
+                    run: Some(root.clone()),
+                });
+            }
+            if over_bound {
+                records.push(Record::Place {
+                    run: root.clone(),
+                    place: from_one(names.next_place())?,
+                    by: PlaceBy::Settlement,
+                });
+            }
+            let mut publication = self.store.begin().map_err(fail)?;
+            for record in &records {
+                let name = record.name().to_string();
+                publication
+                    .create(&name, RECORD_KIND, &record.to_bytes())
+                    .map_err(fail)?;
+            }
+            match publication.publish() {
+                Ok(_) => return Ok(()),
+                // Another publication took the turn or the place: chosen again.
+                Err(store::Error::NameExists { .. }) => {}
+                Err(error) => return Err(fail(error)),
+            }
+        }
+        Err(format!(
+            "the settlement was not published: the store refused its turn or its place \
+             {ATTEMPTS} times"
+        ))
+    }
+}
+
+/// The next turn of an epoch, by the names of this generation: the lowest from 1
+/// that no turn of it names.
+fn next_turn(generation: &Generation, epoch: u64) -> u64 {
+    let prefix = format!("spend/turn/{epoch}/");
+    let under = generation
+        .entries()
+        .range(prefix.clone()..)
+        .take_while(|(text, _)| text.starts_with(&prefix));
+    let taken: BTreeSet<u64> = under
+        .filter_map(|(text, _)| match Name::parse(text) {
+            Ok(Name::Turn { turn, .. }) => Some(turn.get()),
+            _ => None,
+        })
+        .collect();
+    lowest_free(&taken)
+}
+
+/// The stage a request reached and what it is charged, by how it ended: the charge
+/// an answer gave, the bound where an answer gave none and where nothing settled
+/// the request, and nothing where it was not sent.
+fn judged(ended: &Ended<'_>, bound: Amount) -> (Stage, Amount) {
+    let (stage, charge) = match ended {
+        Ended::Answered(charge) => (Stage::Answered, *charge),
+        Ended::Faulted(fault) => (fault.stage(), fault.charge()),
+    };
+    // A charge is never the largest number, which is no amount: were one, the
+    // request is held at its bound.
+    let stated = charge.and_then(|charge| Amount::new(charge.micros()));
+    let charged = match stage {
+        Stage::NotSent => Amount::ZERO,
+        Stage::Answered => stated.unwrap_or(bound),
+        Stage::Unresolved => bound,
+    };
+    (stage, charged)
 }
 
 /// A refusal of this kind that says this: the fault the action is handed says the
@@ -166,11 +301,13 @@ impl Around for Meter {
             return Ok(Box::new(Nothing));
         }
         let failed = RefCell::new(None);
-        let publish = || self.dispatch(asked.root, asked.run, bound, &failed);
+        let publish = || self.books.dispatch(asked.root, asked.run, bound, &failed);
         match allowance.dispatch(bound, publish) {
             Ok((dispatched, place)) => Ok(Box::new(Sent {
-                _dispatched: dispatched,
-                _place: place,
+                books: self.books.clone(),
+                dispatched,
+                place,
+                bound,
             })),
             Err(refused) => {
                 let why = match failed.into_inner() {
@@ -185,17 +322,30 @@ impl Around for Meter {
     }
 }
 
-/// A paid request that was dispatched: its debit and its place, held until the
-/// request is over.
+/// A paid request that was dispatched: its debit, its place and its bound, held
+/// until the request is over.
 struct Sent {
+    books: Books,
     /// Dropped without being settled, it stays counted at its bound.
-    _dispatched: Dispatched,
-    _place: NonZeroU64,
+    dispatched: Dispatched,
+    place: NonZeroU64,
+    bound: Amount,
 }
 
 impl Open for Sent {
-    /// Settling is task S5b's: the request stays counted at its bound.
-    fn after(self: Box<Self>, _: &Wrapped<'_>, _: &Ended<'_>) -> Result<(), String> {
+    fn after(self: Box<Self>, asked: &Wrapped<'_>, ended: &Ended<'_>) -> Result<(), String> {
+        let Sent {
+            books,
+            mut dispatched,
+            place,
+            bound,
+        } = *self;
+        let (stage, charged) = judged(ended, bound);
+        // A charge over its bound counts against the tree from now, before its
+        // settlement is durable.
+        dispatched.answered(charged);
+        books.settle(asked.root, place, bound, stage, charged)?;
+        dispatched.settled(charged);
         Ok(())
     }
 }
