@@ -86,6 +86,22 @@ pub fn opening(root: &Path, make: Make, recovery: Recovery) -> Result<Opening, s
     }
 }
 
+/// What a command says when a store could not be opened to write: the store's own
+/// sentence, which names the store by the path the caller gave and is escaped where
+/// it is printed. Of a store that is held it says one thing more, because the store
+/// says "another process" where the holder has not written its name yet, and the
+/// holder can be this process: a second opening of one store in one process is
+/// refused as any second writer is.
+pub fn not_opened(error: &store::Error) -> String {
+    match error {
+        store::Error::Held { .. } => format!(
+            "{error} (the writer that holds it is another opening of the store, in \
+             another process or in this one)"
+        ),
+        other => other.to_string(),
+    }
+}
+
 /// The static description of a build of this crate's version that holds this registry.
 pub fn description(registry: &Registry) -> Description {
     Description::new(env!("CARGO_PKG_VERSION"), registry)

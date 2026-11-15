@@ -1,6 +1,12 @@
 //! One way to a writer (ADR 0015; plan 1B, task I4): the binary opens a store to
 //! write in one place, `wiring::opening`, which is the entry point that recovers a
-//! store before it hands out the writer. This holds the binary's sources to that.
+//! store before it hands out the writer. This holds the binary's sources to that:
+//! every file under `crates/whizbang/src`, where the four direct opens were (two in
+//! `import.rs`, one in `rascal.rs`, one in `store.rs`).
+//!
+//! It does not hold tests or the test kit to it, and they may keep `Store::open`: a
+//! test that builds a store by hand, or that needs a writer with no recovery, opens
+//! one directly. The binary's own unit tests are among its sources and are held.
 
 use std::path::Path;
 

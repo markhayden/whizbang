@@ -64,7 +64,7 @@ pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String>
             // executor is built over the writer, which the one entry point hands out
             // once the store is recovered.
             let opening = wiring::opening(at.root(), Make::Nothing, recovery)
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| wiring::not_opened(&error))?;
             let store = opening.writer().map_err(|why| why.to_string())?;
             let registry = wiring::registry()?;
             let executor = wiring::runner(registry, store);

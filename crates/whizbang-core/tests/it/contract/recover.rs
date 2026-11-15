@@ -86,6 +86,19 @@ impl World {
     }
 }
 
+/// Waits until `done` says so, for ten seconds at most: a test that would wait longer
+/// fails here, with what it waited for, and not at the runner's limit.
+fn until(what: &str, done: impl Fn() -> bool) {
+    let limit = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !done() {
+        assert!(
+            std::time::Instant::now() < limit,
+            "nothing came of waiting for {what}"
+        );
+        std::thread::yield_now();
+    }
+}
+
 /// A part that marks every run the store holds, and makes one name outside runs.
 fn marking(name: &'static str) -> Arc<FakeRecovery> {
     let part = FakeRecovery::new(name);
@@ -570,15 +583,18 @@ fn two_executors_built_at_once_over_one_store_value_are_both_answered_after_one_
         let second = scope.spawn(|| build(&opening));
         // One of them recovers, and is stopped inside its part; the other waits.
         barriers.arrived("recovering", 1);
-        while opening.waiting() < 1 {
-            std::thread::yield_now();
-        }
+        let asked =
+            |waiting: usize| opening.waiting() >= waiting || answered.load(Ordering::SeqCst) > 0;
+        until("the second to ask", || asked(1));
+        assert_eq!(
+            answered.load(Ordering::SeqCst),
+            0,
+            "answered while it recovers"
+        );
         assert_eq!(format!("{opening:?}"), "Opening(\"initializing\")");
         // A third, built while the recovery runs, waits too.
         let third = scope.spawn(|| build(&opening.clone()));
-        while opening.waiting() < 2 {
-            std::thread::yield_now();
-        }
+        until("the third to ask", || asked(2));
         // Nobody was answered, and nothing is published yet.
         assert_eq!(answered.load(Ordering::SeqCst), 0);
         assert_eq!(world.held().0, 2);
@@ -601,13 +617,25 @@ fn whoever_waits_for_a_recovery_that_fails_is_told_what_the_one_who_ran_it_is_to
     part.stop_at(&barriers, "recovering");
     part.fail("it would not");
     let opening = world.open(&Arc::new(ShimFs::new()), with(&[&part]));
+    let early = AtomicU64::new(0);
     threads::scope(|scope| {
         let first = scope.spawn(|| opening.writer().map(drop));
         barriers.arrived("recovering", 1);
-        let second = scope.spawn(|| opening.remover().map(drop));
-        while opening.waiting() < 1 {
-            std::thread::yield_now();
-        }
+        let second = scope.spawn(|| {
+            let answered = opening.remover().map(drop);
+            early.fetch_add(1, Ordering::SeqCst);
+            answered
+        });
+        until("the second to ask", || {
+            opening.waiting() >= 1 || early.load(Ordering::SeqCst) > 0
+        });
+        // Whoever asks while the recovery runs is not answered until it is over:
+        // not with a writer, and not with a failure either.
+        assert_eq!(
+            early.load(Ordering::SeqCst),
+            0,
+            "answered while it recovers"
+        );
         barriers.open("recovering");
         let (first, second) = (first.join().unwrap(), second.join().unwrap());
         assert_eq!(first, second);

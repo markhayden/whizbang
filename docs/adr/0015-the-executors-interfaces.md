@@ -1141,6 +1141,19 @@ to `…_part_4_of_4`, in the group of crash sweeps).
   binary's own sources, line by line, for the calls by their names: a call made
   through another name for the type is not found, and the crates the binary calls
   are not read.
+- **Tests and the test kit may open a store directly** (`Store::open`): the scan
+  reads the binary's sources and nothing else, and a test that builds a store by
+  hand, or that wants a writer with no recovery, is not held to the entry point.
+- **`Recovering::open_here` is always false through the entry point, today:** a
+  recovery runs before this process is handed the writer, so it has made no run.
+- **What a command says of a refusal.** A recovery that failed is said in
+  `NoWriter`'s words, which hold no path. A store that could not be opened at all
+  is said in the store's own sentence, as before this task, which names the store
+  by the path the caller gave and is escaped where the binary prints it (ADR 0008,
+  "The first door"); of a store that is held the command adds that the holder is
+  another opening of the store, in another process or in this one, since a second
+  opening in one process is refused like any second writer
+  (`recovering::a_store_another_opening_holds_refuses_every_writing_command_in_words_true_of_this_process_and_of_another`).
 - **The binary's list of parts is empty** until tasks I4b and S6 add theirs: every
   command recovers nothing yet, and confirms the generation it finds.
 - **The writer that is handed out is the store,** whole: nothing keeps whoever holds

@@ -261,6 +261,51 @@ fn after_a_failed_recovery_every_writing_command_is_refused_with_the_reason_and_
     assert!(listed.starts_with("runs: 2\n"), "{listed}");
 }
 
+// --- a store that is held, and what a refusal names ---------------------------------------------
+
+#[test]
+fn a_store_another_opening_holds_refuses_every_writing_command_in_words_true_of_this_process_and_of_another()
+ {
+    let dir = Scratch::new("recovering-held");
+    let (root, file, mask) = left(&dir);
+    let before = held(&root);
+    // The holder is this process: an opening that is never asked for its writer.
+    let holder = wiring::opening(&root, Make::Nothing, Recovery::none()).unwrap();
+    let part = marking();
+    let refused = [
+        store::run_with(&delete(&root, LEFT[0]), with(&part)),
+        store::run_with(&prune(&root), with(&part)),
+        store::run_with(&import(&root, &file), with(&part)),
+        rascal::run_with(&grow(&root, &mask), with(&part)),
+    ];
+    for answered in refused {
+        let why = answered.unwrap_err();
+        // The store's own sentence, which names the store as the caller gave it,
+        // and what is true whoever holds it.
+        assert!(why.starts_with("the store at "), "{why}");
+        assert!(why.contains(root.to_str().unwrap()), "{why}");
+        assert!(
+            why.ends_with(
+                "one process at a time may write a store (the writer that holds it is \
+                 another opening of the store, in another process or in this one)"
+            ),
+            "{why}"
+        );
+    }
+    // Nothing was recovered and nothing changed: no part was asked.
+    assert_eq!((part.asked(), held(&root)), (0, before));
+    drop(holder);
+    // A store that is not there is said as the store says it, with its path: the
+    // complaint is escaped where the binary prints it.
+    let nowhere = dir.path().join("nowhere");
+    let why = store::run_with(&prune(&nowhere), with(&part)).unwrap_err();
+    assert_eq!(
+        why,
+        wiring::not_opened(&whizbang_core::store::Error::Missing { root: nowhere })
+    );
+    assert!(why.starts_with("there is no store at "), "{why}");
+}
+
 // --- at the limit on a generation file ---------------------------------------------------------
 
 #[test]
