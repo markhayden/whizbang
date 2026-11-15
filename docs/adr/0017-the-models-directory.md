@@ -42,6 +42,13 @@ process and in two. Words, from the review of the first: under "Publishing", whi
 syncs come before the rename of the staged folder and which after, and what finding
 an identity whole reads; under "Limits", a held repair whose pointer could not be put
 back; and that an install refused for a hold says held, not busy.
+Amended: 2026-11-15, with task M3. Added: "Attaching and cancelling", which is code
+(`install.rs`, `install_or_attach`; `stage.rs`). Changed, in code and here: one who
+attaches tries for a share of the model's lock, paced by its caller, where this
+record said that it waits ("Three kinds of lock"); every install writes `installing`
+as its first step, one that finds its identity on the disk included ("Publishing",
+"The status record"); a cancellation is asked before each file, at each piece and
+after each answer of the downloader ("Downloading into staging").
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -93,7 +100,7 @@ The code of this record that exists is `crates/whizbang-backends/src/models/`: `
 `install.rs` and `status.rs`. Its tests are in
 `crates/whizbang-backends/tests/it/models/`, named below as `names::…`, `catalogue::…`,
 `installation::…`, `identity::…`, `refusals::…`, `downloads::…`, `staging::…`,
-`publishing::…`, `status::…` and `crashes::…`.
+`publishing::…`, `status::…`, `crashes::…` and `attaching::…`.
 
 **What is code now, and what is decided for a later task.** Each part below says which
 it is. A part marked *decided, not built* has no code and no test yet, and names no
@@ -108,7 +115,8 @@ installation record with its identity.
 | Downloading into staging | Code, with the tests named (task M2) |
 | Publishing; the pointer; the status record; the deleting of what the pointer does not name | Code, with the tests named (task M2b), the crashes of "For later tasks" among them |
 | Of the layout and the locks: what an install makes and takes | Code (tasks M2, M2b); each part says which |
-| Attaching to an install; holds; removal and its mark | Decided, not built: tasks M3, M5 to M5c, M6 |
+| Attaching to an install; cancelling one | Code, with the tests named (task M3) |
+| Holds; removal and its mark | Decided, not built: tasks M5 to M5c, M6 |
 
 ### The directory
 
@@ -167,10 +175,11 @@ default place and no variable is read for it here. In it:
 
 ### Three kinds of lock, and their order
 
-*Decided; of it, task M2 built the model's lock taken alone by a try, and task M2b
+*Decided; of it, task M2 built the model's lock taken alone by a try, task M2b
 the directory's lock around a publication, the making of a hold file, and a hold file
-taken alone by whoever deletes an installation's folder. The rest is not built: a
-model's lock shared, a hold's share, and the mark.* All three are the locks of the store's file-system interface
+taken alone by whoever deletes an installation's folder, and task M3 the model's
+lock shared by one who attaches. The rest is not built: a hold's share, and the
+mark.* All three are the locks of the store's file-system interface
 (`whizbang_core::store::fs`), which are `flock` on Linux and macOS, and everything
 `store/fs.rs` says of them holds here: a models directory on a network file system is
 not supported, and **no lock file is ever removed or replaced:** not the directory's
@@ -191,8 +200,10 @@ of `docs/carry-over.md` on those locks names the models directory too.
 - **A model's lock** (`models/<model>/LOCK`) is taken alone by one install of that
   model, for the whole of it, a download included; and by a removal for its work on
   the disk, after its mark is set ("Removal", below). So one install of a model runs
-  at a time, and whoever asks for a model that is being installed attaches by sharing
-  this lock, which waits. Staging is written, and cleaned, only by its holder.
+  at a time, and whoever asks for a model that is being installed attaches by
+  trying for a share of this lock until it is given one ("Attaching and
+  cancelling"): a try does not wait, and what comes between two tries is its
+  caller's. Staging is written, and cleaned, only by its holder.
 - **A hold file** (`models/<model>/holds/<64 hex digits>`) is shared by each hold on
   that installation, and taken alone by whoever deletes the installation's folder.
 
@@ -200,10 +211,10 @@ of `docs/carry-over.md` on those locks names the models directory too.
 
 | Holding | May wait for | Never |
 |---|---|---|
-| Nothing | The directory's lock; a model's lock, to share it | A lock taken alone is tried and never waited for: the model's lock by an install or a removal, a hold file by whoever deletes |
+| Nothing | The directory's lock | A lock taken alone is tried and never waited for: the model's lock by an install or a removal, a hold file by whoever deletes. A model's lock is shared by a try too, tried again by one who attaches |
 | The directory's lock | Nothing | Takes no model's lock. Takes a hold file only to share it, as below, which does not wait. Waits for no hold |
 | A model's lock, alone | The directory's lock | Waits for no hold file: it takes one alone by a try that does not wait, or not at all |
-| A model's lock, shared (attached) | Nothing but the lock it shares | Takes no other lock |
+| A model's lock, shared (attached) | Nothing | Takes no other lock: it reads the status record and the pointer, and lets its share go |
 | A hold file, alone | Nothing | Takes no lock and waits for none: it deletes the folder, syncs, and lets the hold file go before it takes the directory's lock or sets a pointer |
 | A hold | The directory's lock, to take another hold | Never waits for that model's lock, alone or shared: a run that holds a model neither installs it, removes it nor attaches to its install |
 
@@ -598,6 +609,14 @@ An install stages through the same code under a lock it took itself, and publish
   behind; which files passed is known only inside the staging that staged them
   (`staging::a_download_that_fails_or_is_cancelled_fails_the_staging_and_leaves_nothing_staged`,
   `staging::a_download_that_ends_as_cancelled_ends_the_staging_as_cancelled`).
+- **A cancellation is asked before the lock is taken, before each file, at each
+  piece, and after each answer of the downloader** (task M3). The sink answers no
+  to a piece that comes after a cancel, whether or not the downloader asks the
+  cancellation itself; and when the downloader has answered, with bytes or with
+  another address, a cancel ends the staging as cancelled before a move is followed
+  or anything else is asked for
+  (`attaching::a_cancel_is_asked_between_files_and_inside_one_whatever_the_downloader_does`,
+  `attaching::a_cancel_before_a_move_is_followed_asks_for_nothing_more`).
 - **Each step of the file system refused, and a crash before each,** with what was not
   durable lost each way the shim can lose it, and what was appended to a file and not
   synced left each way the shim can leave it: the staging fails, and the next staging
@@ -649,13 +668,15 @@ test states one. Under the model's lock, held from before anything of the model 
 touched to the end
 (`publishing::one_install_of_a_model_runs_at_a_time_and_the_other_is_busy_and_touches_nothing`):
 
-1. **What the pointer does not name is deleted,** as below, and a pointer being
+1. **The status record is written first:** `installing`, no file staged. Then
+   **what the pointer does not name is deleted,** as below, and a pointer being
    written that a dead publication left (`CURRENT.new`) is removed.
 2. **An identity that is on the disk already and whole is not downloaded again.**
    The folder of the identity being installed, when there is one, is read against
    the record: its `RECORD` byte for byte, its files each by size and hash, and
-   nothing else in it. Whole, it is what would be staged, and the install goes to
-   step 6 with it. Otherwise:
+   nothing else in it. Whole, it is what would be staged: the status says
+   `installing` with every file staged, and the install goes to step 6 with it.
+   Otherwise:
 3. The files are staged, and **each staged file is read back from the disk** through
    the store's streamed read (ADR 0018), a piece of at most 1 MiB at a time, counted,
    and stopped one byte past its size. It is held to its size and its hash, both: a
@@ -800,19 +821,100 @@ under the format `status/1`, in one form:
   each file is staged, and when the install ends, however it ends. It is written
   whole beside the old one (`STATUS.new`) and renamed over it. An install that never
   had the lock (busy, a secret in a name, cancelled before it began) writes none.
+- **Every install says `installing` as its first step under the lock** (task M3),
+  before it deletes, reads or downloads anything, and so does one that finds its
+  identity on the disk: reading it whole can take minutes, and until task M3 such
+  an install wrote the final status only, so that one who looked meanwhile was
+  shown how the install before it had ended. It says `installing` with every file
+  staged before it points. So while an installer has the model's lock the status
+  says `installing`, and a status that says anything else under a held lock is not
+  an installer's
+  (`attaching::an_install_says_installing_before_anything_else_whether_it_downloads_or_finds_its_identity_whole`).
 - **After a refused sync of the pointer it says `failed` while the pointer names the
   new installation** ("Limits"): the install was refused, and it is the pointer that
   says what is installed. Asking again answers with the installation and says
-  `installed`.
-- **Nothing is decided from it, and it is given no sync of its own.** Whether an install is
-  running is said by the model's lock; which installation is in use is said by the
-  pointer. A crash can leave a status that says `installing` with no installer
+  `installed`. One who attached to that install is told failed, as the installer
+  was ("Attaching and cancelling").
+- **No install, hold or removal is decided from it, and it is given no sync of its
+  own.** Whether an install is running is said by the model's lock; which
+  installation is in use is said by the pointer. One thing is answered from it: how
+  an install ended, to a request that attached to it and never held the lock
+  ("Attaching and cancelling"). A crash can leave a status that says `installing` with no installer
   alive: a status that says so while the model's lock is free is the status of an
   install that died. A status that cannot be written fails an install that has not
   published, and changes nothing of one that has.
 - **It holds no name and no path:** a state's word and two counts.
-- It does not yet say whether the holder of the model's lock is an installer or a
-  remover; tasks M3 and M5b add that ("For later tasks").
+- It has no state for a remover. An installer says `installing` for as long as it
+  has the lock; the task that makes a removal hold the model's lock (M5b) gives the
+  record a state for it, in a new format ("For later tasks").
+
+### Attaching and cancelling
+
+Code (task M3: `install.rs`, `install_or_attach`; `stage.rs`; tests named
+`attaching::…`). `install_or_attach` is `install` when the model's lock is free. When
+another has it, the request starts no install of its own and downloads nothing: it
+attaches to whatever holds the lock, and ends as that ended
+(`attaching::two_requests_in_one_process_cause_one_download_of_each_file_and_end_with_one_result`,
+`attaching::a_second_process_that_asks_while_the_first_is_stopped_sees_progress_and_ends_with_the_same_installation`,
+`attaching::a_request_that_finds_no_install_running_installs_and_one_already_cancelled_does_nothing`).
+
+- **It tries; it does not wait.** The plan and the first form of this record had
+  the attached request wait on the model's lock. A request blocked in the file
+  system on a lock can show no progress and cannot leave: it sees neither the
+  status record nor its own cancellation until the install is over. So it tries
+  for a share of the model's lock (`try_share`, ADR 0018), which answers at once,
+  and tries again. **Between two tries it calls `watch`, which its caller gave it,
+  once,** with what the status record says when that is `installing`, and with
+  nothing when it says anything else or cannot be read. `watch` is where progress
+  is shown, and it is what paces the tries: the caller waits there as long as it
+  chooses. Nothing in the library sleeps, and nothing in it tries twice without
+  that call in between, so it does not spin by itself; a caller whose `watch`
+  returns at once tries as fast as the file system answers, which is what the
+  tests do, giving way to other threads. The pause a command makes there is the
+  command's (1C, `docs/carry-over.md`).
+- **It ends by what the status record says,** read once it has its share, when
+  nobody can be installing or removing. `installed`, with the pointer naming the
+  installation of the entry it asked for: that installation, read by `current`.
+  `installed` with a pointer that names another installation: busy, since what ran
+  was an install of another revision; asked again, it installs
+  (`attaching::a_request_that_attached_to_an_install_of_another_identity_is_busy`).
+  `cancelled`: cancelled. `failed`: failed (`InstallRefused::Failed`), with no
+  reason, which only the installer has
+  (`attaching::a_request_that_attaches_ends_as_the_install_ended_failed_or_cancelled`).
+  A status that still says `installing` with the lock free is an install whose
+  process is gone: failed, and the pointer names what it named
+  (`attaching::when_the_installing_process_is_killed_the_attached_one_reports_the_install_as_failed`).
+  No status, or one that cannot be read: failed.
+- **Never by the pointer alone.** After a refused sync of the pointer ("Limits") the
+  status says `failed` over a pointer that names the new installation, which no
+  sync has made durable. The attached request is told failed, as the installer was:
+  no request is told that a model is installed on the word of a name that is not
+  durable. Asked again, it finds the identity whole, downloads nothing, makes the
+  pointer durable and answers with the installation
+  (`attaching::an_attached_request_answers_from_the_status_and_never_from_a_pointer_alone`).
+  A status that says `installed` was written by an install whose last sync
+  passed, and every install that takes the lock after it says `installing` before
+  it touches the pointer.
+- **What is shown between tries is an install or nothing.** Under a lock held by one
+  who is not installing, the status is how the last install ended, and is not
+  shown as progress
+  (`attaching::while_the_lock_is_held_and_the_status_says_no_install_is_running_nothing_is_shown`).
+- **An install is cancelled by the request that started it,** and by no other: its
+  cancellation is asked before the lock is taken, before each file, at each piece,
+  after each answer of the downloader, and for the last time when the staged files
+  have been read back ("Downloading into staging"; "Publishing", step 4). A cancel
+  while the download is stopped inside a file ends the install as cancelled,
+  removes its staging and leaves the previous installation named, with nothing
+  asked or handed over after it
+  (`attaching::a_cancel_while_the_download_is_stopped_inside_a_file_ends_the_install_as_cancelled`).
+  A cancel after the pointer was replaced changes nothing: the answer is the
+  installation
+  (`attaching::a_cancel_after_the_pointer_was_replaced_returns_the_installed_result`).
+- **An attached request that goes away cancels nothing.** Its cancellation is its
+  own: asked before each try, it ends the request as `InstallRefused::Left`, and
+  the install goes on to its end. So does an attached process that is killed
+  (`attaching::an_attached_request_that_goes_away_does_not_cancel_the_install`).
+  A request that was cancelled before it asked is cancelled, and waits for nothing.
 
 ### Holds
 
@@ -977,11 +1079,14 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   takes it from its caller, who gets it from the adapter the entry names, and from
   nowhere else.
 - **M6 compares two revisions by equality only.** Nothing is newer or older.
-- **M3 and M5d:** the status record says whether the holder of the model's lock is an
-  installer or a remover, so that one who attaches knows what it is waiting for. As
-  task M2b left it, `status/1` has no state for a remover: the task that writes one
-  adds it. And staging asks the cancellation once, before it takes the lock: "nothing
-  is asked after a cancel" needs it asked before each request and each move.
+- **M5b and M5d:** the status record says whether the holder of the model's lock is an
+  installer or a remover, so that one who attaches knows what it is waiting for. An
+  installer says `installing` from its first step (task M3); `status/1` has no state
+  for a remover, and the task that makes a removal hold the model's lock adds one.
+  Until then one who attaches under a lock held by another than an installer is
+  shown nothing, and is answered by what the last install left: installed, when the
+  status says so and the pointer names its installation. A removal that clears the
+  pointer must change that status under the same lock.
 - **M5b:** the draining mark is read by a publication as there or not there
   (`DRAINING` in the model's folder), under the directory's lock. A mark with content
   is read the same way. A stale mark stops every publication of the model until the

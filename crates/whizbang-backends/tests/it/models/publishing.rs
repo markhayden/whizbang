@@ -389,6 +389,14 @@ fn every_refusal_of_an_install_says_one_sentence_of_fixed_words() {
             InstallRefused::Disk(std::io::ErrorKind::CrossesDevices),
             "the models directory could not be written: the system refused",
         ),
+        (
+            InstallRefused::Failed,
+            "the install of the model that was running did not install it",
+        ),
+        (
+            InstallRefused::Left,
+            "the request stopped waiting for the install of the model, which goes on",
+        ),
     ];
     for (refused, sentence) in sentences {
         assert_eq!(refused.to_string(), sentence);

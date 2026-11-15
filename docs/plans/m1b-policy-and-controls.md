@@ -1656,10 +1656,10 @@ medium.
 attach) and `crates/rascal-mask/tests/it/install_controls.rs`; table-manners
 `CONTRACT.md` section 5.3.
 
-- [ ] A second request for a model that is installing attaches, from the same process or
+- [x] A second request for a model that is installing attaches, from the same process or
       another: it waits on the install's lock, reads progress from the status record, and
       ends with the same result.
-- [ ] An install can be cancelled between files and inside one, by the request that
+- [x] An install can be cancelled between files and inside one, by the request that
       started it. A cancelled install leaves what was installed before. An attached
       request that goes away cancels nothing.
 
