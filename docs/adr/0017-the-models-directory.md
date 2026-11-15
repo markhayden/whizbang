@@ -77,6 +77,8 @@ and here: a removal takes off only a mark that is its own, one it made where non
 was or one it has under the model's lock, where a busy removal took off the mark
 of the removal that had the lock; and a removal sets its mark again while it waits
 for a hold. Words: three limits, under "Removal".
+Amended: 2026-11-15, with task M6. Added: "The inventory", which is code
+(`inventory.rs`), with the tests named `inventory::…`.
 Amended: 2026-11-15, after the review of task M5c's pull request. Added, in code
 (`directory.rs`, `unlinked`; `Fs::is_link`) and here: "A folder of the layout that is
 a link", with the tests named `links::…`. Changed, in code and here: a removal, an
@@ -86,6 +88,15 @@ it; "nothing outside the models directory is touched" was false of that case, an
 is corrected under "Removal": on the disk; the limit on a link where a fixed folder
 belongs says what is still followed. Words: that the hold files of deleted
 installations are kept, and why.
+Amended: 2026-11-15, after the review of task M6's pull request. Changed, in code
+and here: the inventory answers damaged for a model one of whose layout folders is
+a link ("The inventory"; "A folder of the layout that is a link", what is not
+refused). Tests and words: a pointer or a record that cannot be read is damaged,
+by a refused call and by a refused permission; two limits of the inventory are on
+`docs/carry-over.md` with a milestone. And, from the second review of task M5c's
+pull request: a removal looks for a link again after its wait for the holds and
+just before it deletes; the look in the model's own unstaging, which the
+directory's unstaging makes too, is gone.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -134,11 +145,11 @@ a process id read from a file (R3).
 
 The code of this record that exists is `crates/whizbang-backends/src/models/`: `name.rs`,
 `catalogue.rs`, `installation.rs`, `json.rs`, `refused.rs`, `directory.rs`, `stage.rs`,
-`install.rs`, `status.rs`, `hold.rs` and `remove.rs`. Its tests are in
+`install.rs`, `status.rs`, `hold.rs`, `remove.rs` and `inventory.rs`. Its tests are in
 `crates/whizbang-backends/tests/it/models/`, named below as `names::…`, `catalogue::…`,
 `installation::…`, `identity::…`, `refusals::…`, `downloads::…`, `staging::…`,
-`publishing::…`, `status::…`, `crashes::…`, `attaching::…`, `holds::…`, `remove::…`
-and `links::…`.
+`publishing::…`, `status::…`, `crashes::…`, `attaching::…`, `holds::…`, `remove::…`,
+`links::…` and `inventory::…`.
 
 **What is code now, and what is decided for a later task.** Each part below says which
 it is. A part marked *decided, not built* has no code and no test yet, and names no
@@ -159,6 +170,8 @@ installation record with its identity.
 | Removal against an install and across processes | Code, with the tests named (task M5d) |
 | The deleting of a removed model's files | Code, with the tests named (task M5c) |
 | A folder of the layout that is a link | Code, with the tests named (task M5c, after its review) |
+| The inventory: readiness from what is installed | Code, with the tests named (task M6) |
+| The lease over holds | Decided, not built: task M6b, after the lease's interface (ADR 0015) |
 
 ### The directory
 
@@ -1380,7 +1393,15 @@ unusual.
   models directory over it is refused, as one over a file system that streams
   nothing is.
 - **It is made again before each listing and each deleting,** not once: under the
-  model's lock by a removal, which may have waited for it; by the installer's
+  model's lock by a removal, which may have waited for it; by a removal again
+  when it has waited for the holds, before it clears the pointer, since the look
+  under the lock is then a whole wait old, and a removal refused there has
+  changed nothing; and once more when the pointer is cleared, just before the
+  deleting, where a refusal leaves the model not installed and its folders for
+  the next removal
+  (`links::a_folder_swapped_for_a_link_while_a_removal_waits_for_a_hold_is_refused_and_changes_nothing`,
+  `links::a_folder_swapped_for_a_link_once_the_pointer_is_cleared_is_refused_before_anything_is_deleted`);
+  by the installer's
   cleaning before it lists `installations/`, at the start of an install and at its
   end; by a staging before it removes what the last one left; by a publication
   after the download, before it reads back, makes a folder, renames or points;
@@ -1418,14 +1439,77 @@ folder here is made readable and writable by its owner only): one who can do it
 can delete the same files without whizbang.
 
 **What is not refused.** A reader that holds no lock (`current`, `draining`,
-`status`) reads through such a link, and changes nothing: it can answer that a
-model is installed which every install, hold and removal then refuses. Task M6's
-inventory is built on those readers. And a lock file that is a link ("Limits").
+`status`) itself still reads through such a link, and changes nothing: asked
+alone, it can answer that a model is installed which every install, hold and
+removal then refuses. The inventory, which is built on `current`, looks at the
+layout first and answers damaged, so such a model is never called ready ("The
+inventory"). And a lock file that is a link ("Limits").
 
 **The owner may later choose to follow links instead,** so that one model can be
 kept on another disk by a link at its folder. That would take a rule for what a
 removal may delete through one, and is a new decision: this section is what is
 refused until then.
+
+### The inventory
+
+Code (task M6: `inventory.rs`, `Installations`; tests named `inventory::…`).
+`Installations` is the core's `Inventory` (ADR 0015, "An inventory") over one models
+directory: it is made from the directory, a catalogue, each adapter this build has
+with the revision it states (no adapter is in the build yet, so whoever makes the
+inventory states them), and the executor's secrets. It answers one question, of one
+model, from what is on the disk now, each time it is asked. Each test asks it
+through an executor the test builds over it (`InstalledRoster::over`), whose roster
+offers one local backend.
+
+| The answer | When |
+|---|---|
+| Not in the catalogue | The catalogue holds no model of exactly that name (`inventory::a_configured_model_that_the_catalogue_does_not_hold_is_prepared_as_not_ready_saying_so`) |
+| Not installed | The model has no pointer: never installed, or removed |
+| Ready, under the installation's identity | The pointer names an installation whose record is the record an install would make now: from the catalogue's entry, under the revision this build's adapter states (`inventory::a_model_in_the_catalogue_is_ready_when_installed_and_not_installed_otherwise`) |
+| Out of date | The pointer names an installation with any other record: another revision of the entry, another revision of the adapter, or an adapter this build does not have. Two revisions are the same or they are not; nothing is newer (`inventory::an_installation_whose_recorded_catalogue_or_adapter_revision_is_not_the_current_one_is_prepared_as_out_of_date`) |
+| Damaged | What `current` reports as damage ("The pointer"): a pointer that is not one as it is written, a record that is not there, is not in the one form, is another installation's or holds a secret the inventory was told of; a disk that cannot be read, by a call it refuses or a permission it does not give (`inventory::a_pointer_or_a_record_that_cannot_be_read_is_prepared_as_damaged_never_ready_and_never_not_installed`, `inventory::a_pointer_or_a_record_the_system_refuses_permission_to_read_is_damaged_and_never_not_installed`); and a model one of whose layout folders is a link, which every install, hold and removal refuses (`inventory::a_model_one_of_whose_layout_folders_is_a_link_is_damaged_and_never_ready`). Never ready, and never "not installed"; a new install repairs it, but for the link, which its owner takes away (`inventory::an_installation_record_that_is_damaged_or_a_pointer_that_names_nothing_is_prepared_as_damaged_and_a_new_install_repairs_it`, `inventory::a_record_that_holds_a_secret_the_inventory_was_told_of_is_damage_and_what_is_said_holds_nothing_of_the_disk`) |
+
+- **The name it is asked by is never a path.** It is the name a backend declares
+  for its model, which comes from a config and may hold a separator, dots, anything.
+  It is compared with the names of the catalogue's entries, exactly, with no case
+  folded and nothing cut; a name the catalogue does not hold opens nothing. The
+  folder that is read is named from the catalogue's own entry, whose name is a
+  `ModelName`; and an entry whose name holds a secret the inventory was told of,
+  in a catalogue made by a reader that was told of others, is not looked for on
+  the disk
+  (`inventory::a_declared_name_is_looked_up_in_the_catalogue_and_never_used_as_a_path`).
+- **It holds no lock, and reads the pointer and the record it names,** as "The
+  pointer" says of a reader with no lock. It makes nothing: asked of a model that
+  was never installed, no folder is made.
+- **Rascal's R2 and R4.** An installation of an entry or an adapter that has since
+  changed is reported, as out of date; and a configured model that the catalogue
+  does not hold is never ready: its call is prepared as not ready and refused at
+  admission, with the reason.
+- **After a reinstall** under another revision, the installation is another
+  identity, which is the model's version in what a preparation saw: a request that
+  carries the old preparation is refused as `Stale::Model`; one under a new id with
+  no preparation is admitted and run under the new installation's identity; and a
+  repeat of the first request's id returns the first run, and runs nothing
+  (`inventory::after_a_reinstall_the_old_preparation_is_stale_a_new_request_runs_on_the_new_installation_and_a_repeat_returns_the_first_run`).
+  A repair, which has the identity of what it repairs, leaves a preparation good.
+- **Limits.** *It does not read an installation's files:* "verified" is what the
+  publication held them to, and a file damaged since is found when the identity
+  is installed again
+  (`inventory::known_an_installation_whose_file_was_damaged_after_it_was_published_is_ready_until_it_is_installed_again`).
+  A hold does not read them either ("Holds"), so nothing stands between a file
+  damaged after its publication and the first adapter that loads it: that
+  adapter's task verifies, at the load or at the first lease in a process (1C,
+  `docs/carry-over.md`).
+  *A run is handed no backend for a local model* until the lease is built (ADR
+  0015, "What waits"): "runs under the new installation" is what the run's action
+  is handed as its model's version, and no request reaches a model. *The draining
+  mark is not read:* a model whose removal waits for holds is ready, and it is the
+  lease that is refused then (task M6b); one whose pointer a removal has cleared
+  is not installed. *An adapter this build does not have* makes an installed model
+  out of date, and a model that is not installed is said to be not installed:
+  neither says that no install here could make it ready (a reason of its own
+  is weighed with the command that lists models: 1C, `docs/carry-over.md`). *Nothing puts what a
+  config offers over an inventory:* the tests give a roster (ADR 0015).
 
 ### What a refusal says
 
@@ -1574,7 +1658,8 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
 - **M2b: the adapter's revision comes from the adapter.** `InstallationRecord::of`
   takes it from its caller, who gets it from the adapter the entry names, and from
   nowhere else.
-- **M6 compares two revisions by equality only.** Nothing is newer or older.
+- **M6 compares two revisions by equality only.** Nothing is newer or older. Built
+  ("The inventory").
 - **M5b and M5d:** the status record says whether the holder of the model's lock is an
   installer or a remover, so that one who attaches knows what it is waiting for. An
   installer says `installing` from its first step (task M3), and a remover
@@ -1609,7 +1694,10 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   its own process's: `Holds` lets its share go only with the last hold.
 - **M5b and M6:** a reader that holds no lock reads the mark as well as the pointer
   (`draining`, beside `current`), and can say "draining", not "not installed", of a
-  model whose pointer a removal has cleared and whose mark is still set.
+  model whose pointer a removal has cleared and whose mark is still set. The
+  inventory does not: the core's `Unready` has no such reason, and a removal clears
+  the pointer and takes its mark off within a few calls of the file system. A
+  command that lists models is where it is said (1C).
 - **M5c:** a folder under `installations/` that the pointer does not name and that has
   no hold file was never published: it is deleted, and no hold file is made for it.
 - **The crashes the tests of M2b and M5c hold,** each reopened by the next to take the
@@ -1727,7 +1815,8 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   A catalogue made by a constructor that was told of other secrets than the installer's
   is checked again by the installer.
 - **M6** compares `catalogue_revision` with the entry's revision, and
-  `adapter_revision` with the one the adapter states.
+  `adapter_revision` with the one the adapter states. Built: it compares the whole
+  record with the one an install would make now ("The inventory").
 - **1C's real downloader** makes the `Address` a redirect points to itself, and is told
   the executor's secrets to make it (ADR 0012, "For later tasks").
 

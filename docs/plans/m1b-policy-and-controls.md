@@ -2087,7 +2087,7 @@ own files.
 
 **Depends on:** M5c, I7.
 
-- [ ] `Inventory` (I7) over the models directory: installed and verified, not installed,
+- [x] `Inventory` (I7) over the models directory: installed and verified, not installed,
       out of date, damaged, or not in the catalogue. Only the first is ready.
 
 **Done when** these pass, each with an executor a test builds over the inventory: a
@@ -2098,6 +2098,16 @@ nothing, is prepared as damaged, never ready, and a new install repairs it; afte
 reinstall, a new request with the old preparation is `Stale::Model`, one under a new id
 with no preparation runs on the new installation, and a repeat of the first request's id
 returns the first run.
+**Built** (ADR 0017, "The inventory"), each clause by a test named
+`models::inventory::…`. The box and the clauses keep their words; two phrases of them
+are shown as far as what is built allows. The box says "installed and verified": the
+inventory reads the pointer and the installation's record and no file, because it is
+asked at every preparation and a model's files are gigabytes; "verified" is what the
+publication held the files to, and a file damaged since is found when the identity is
+installed again (pinned as `inventory::known_…`). And "runs on the new installation": the
+request is admitted and its action runs with the new installation's identity as its
+model's version; a run is handed no backend for a local model until the lease is built
+(task I7's second half, after I3), so no request reaches a model in that test.
 **Carry-over:** rascal's R2 (reported), R4, and of R6 a corrupt installation record and a
 reinstall between a call and its retry. **Size:** small.
 
