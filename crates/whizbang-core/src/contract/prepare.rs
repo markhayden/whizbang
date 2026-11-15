@@ -583,6 +583,21 @@ pub enum CallError {
         run: super::RunId,
         why: String,
     },
+    /// The run was admitted, and its admission was not confirmed: on the books as
+    /// they were read once the admission was durable, it does not stand (ADR 0016,
+    /// "An admission is confirmed before anything runs under it"). This is no
+    /// refusal of the call: a run was made. Its action did not run and nothing ran
+    /// under its reservation. When `ended` is true the run is in the store, ended as
+    /// an error of the kind [`super::NOT_CONFIRMED_KIND`], with its reservation
+    /// closed and, for a request with an id, the id's ending made, so that a repeat
+    /// of the request is answered with that run. When it is false that end could not
+    /// be written: the run is as it was admitted, and abandoned
+    /// ([`super::RunState::Abandoned`]).
+    NotConfirmed {
+        run: super::RunId,
+        action: String,
+        ended: bool,
+    },
     /// A part of the admission ([`super::AdmissionPart`]) failed, or did what a part
     /// may not: `part` is its name, and the sentence says which. This is not a
     /// judgement of the call, and nothing was published.
@@ -686,6 +701,7 @@ impl CallError {
             | CallError::Record { .. }
             | CallError::Ledger { .. }
             | CallError::NotStarted { .. }
+            | CallError::NotConfirmed { .. }
             | CallError::Part { .. }
             | CallError::Config { .. } => None,
         }
@@ -714,6 +730,16 @@ impl std::fmt::Display for CallError {
                 f,
                 "the run {run} was admitted and could not be started: no thread could be \
                  made for its action: {why}"
+            ),
+            CallError::NotConfirmed { run, action, ended } => write!(
+                f,
+                "{action} was admitted as the run {run} and its admission was not \
+                 confirmed on the ledger's books as they were read afterwards: its action \
+                 was not run, and {}",
+                match ended {
+                    true => "the run is ended",
+                    false => "the run could not be ended and is abandoned",
+                }
             ),
             CallError::Part { part, why } => write!(
                 f,

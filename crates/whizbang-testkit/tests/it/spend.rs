@@ -83,8 +83,9 @@ fn every_named_history_gives_the_balances_it_must_and_keeps_every_invariant() {
         .collect();
     assert!(broken.is_empty(), "{}", broken.join("\n"));
     // The plan's 38, in its order and under its numbers, then this record's own, and
-    // from 43 those of its review rounds: 87 with the pull request's review.
-    assert!(table.len() >= 87, "{}", table.len());
+    // from 43 those of its review rounds: 87 with the pull request's review, and 88
+    // from the follow-ups of its last round.
+    assert!(table.len() >= 88, "{}", table.len());
     for (at, history) in table.iter().enumerate() {
         let number = format!("{:02} ", at + 1);
         assert!(history.name.starts_with(&number), "{}", history.name);
@@ -4627,4 +4628,19 @@ fn the_limits_accepted_with_a_frozen_reservation_that_stops_nothing_else_each_co
     for number in [67, 70] {
         assert!(named(number).balance().needs_owner, "{number}");
     }
+    // The exception for an epoch's turns is of that epoch alone. History 88, limits
+    // (b) and (d): a settlement at 12 over a bound of 5 is lost whole, the turn it
+    // took left behind, after a reset closed its epoch. The old epoch needs its
+    // owner and shows 10 where 12 were spent; the new epoch needs nobody, and its
+    // whole allowance of 20 is admitted.
+    let books = named(88);
+    let folded = books.fold();
+    let old = folded.balance_of(1);
+    assert!(old.needs_owner && !old.unknown);
+    assert_eq!((old.allowed, old.counted, old.left), (20, 10, 0));
+    let new = folded.balance_of(2);
+    assert!(!new.needs_owner && !new.unknown);
+    assert_eq!((new.allowed, new.counted, new.left), (20, 20, 0));
+    let (_, _, took) = books.really(Run(1)).unwrap();
+    assert_eq!(took, 12);
 }

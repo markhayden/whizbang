@@ -5,15 +5,20 @@
 //! of its request id, under a name that belongs to no run. The [`Ledger`] is asked in
 //! that step, before anything is published, and may decline: then nothing is published.
 //!
-//! What is here is what admission calls. The ledger itself, with its allowance, its
-//! dispatch records and settlement, is checkpoint 1B's; until then the only ledger is
-//! the test kit's fake, and an executor that was given none reserves nothing.
+//! What is here is what the executor calls (ADR 0016, "What the second part builds"):
+//! [`Ledger::reserve`] in the admission's step, [`Ledger::confirm`] on a reading made
+//! after the admission is durable, and [`Ledger::settle`] in the publication that ends
+//! a run nothing called. The names a ledger makes are those of `spend::Name` and no
+//! other. The real ledger is the spend strand's (plan 1B, task S2); until it merges
+//! the only ledger is the test kit's fake, and an executor that was given none
+//! reserves nothing.
 
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::Contents;
 use crate::capability::Shown;
 use crate::identity::Digest;
+use crate::spend::{Name, Record};
 use crate::store::{self, Entry, Generation, Publication};
 
 use super::record::RECORD_KIND;
@@ -25,13 +30,13 @@ use super::{CallError, NotJudged, RunId, Secrets, StoreFailure};
 pub const RESERVATION_RECORD: &str = "reservation/1";
 
 /// What the name of every record of spend starts with, outside runs.
-pub const SPEND_PREFIX: &str = "spend/";
+pub const SPEND_PREFIX: &str = crate::spend::SPEND_PREFIX;
 
 /// What the name of every reservation starts with: the run's id follows.
 pub const RESERVATIONS_PREFIX: &str = "spend/reservations/";
 
 /// The longest name a ledger may make in an admission, in characters.
-pub const LEDGER_NAME_LIMIT: usize = 200;
+pub const LEDGER_NAME_LIMIT: usize = crate::spend::NAME_LIMIT;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -233,37 +238,225 @@ impl From<CallError> for Declined {
     }
 }
 
-/// What admission asks before a run is made: may this be reserved?
+/// What the executor asks of a ledger (ADR 0016).
 ///
-/// **How it takes part in the step.** [`Ledger::reserve`] is called inside admission,
-/// once for every attempt at the admission's publication, after the publication was
-/// begun and before it is published. It is handed the reservation and the [`Step`]:
-/// the generation to judge on, and a way to add records of its own to the same
-/// publication. When it returns `Ok`, the executor adds the reservation's record and
-/// publishes; the run, the request id's record, the reservation and whatever the
-/// ledger added become visible together or not at all. When it declines, the
-/// publication is dropped: nothing was published, no run exists, and the request's id
-/// is not taken by this request.
+/// **How it takes part in an admission.** [`Ledger::reserve`] is called inside
+/// admission, once for every attempt at the admission's publication, after the
+/// publication was begun and before it is published. It is handed the reservation and
+/// the [`Step`]: the generation to judge on, and a way to add records of its own to
+/// the same publication. When it returns `Ok`, the executor adds the reservation's
+/// record and publishes; the run, the request id's record, the reservation and
+/// whatever the ledger added become visible together or not at all. When it declines,
+/// the publication is dropped: nothing was published, no run exists, and the request's
+/// id is not taken by this request.
+///
+/// **A ledger cannot return from `reserve` without having made a name.** What it
+/// returns, a [`MadeName`], can only be had from [`Step::make`]: a ledger that makes no
+/// name has nothing to return, and does not compile.
+///
+/// ```compile_fail
+/// use whizbang_core::contract::{Declined, Ledger, MadeName, Reservation, Step};
+/// struct Careless;
+/// impl Ledger for Careless {
+///     fn reserve(&self, _: &Reservation, _: &mut Step<'_, '_>) -> Result<MadeName, Declined> {
+///         // There is no way to make one but `Step::make`.
+///         Ok(MadeName { step: 0, name: String::new() })
+///     }
+/// }
+/// ```
+///
+/// And the executor refuses one that hands back a name it made in another step
+/// ([`CallError::Ledger`]): the name that comes back is one this attempt publishes.
 ///
 /// **A judgement that must hold when the step is published.** The generation a ledger
 /// judges on can be an old one by the time the publication is published: another
 /// admission over the same store may have reserved meanwhile. The store decides only
 /// what a publication asks it to: that a name it makes is not there. So a ledger whose
-/// answer depends on what was reserved makes a name ([`Step::make`]) that any
-/// admission it must not overlook would make too. The store then refuses the later of
-/// the two whole, and the executor asks the ledger again, on the generation as it is
-/// then.
+/// answer depends on what was reserved makes a name that any admission it must not
+/// overlook would make too: the next turn of its epoch (ADR 0016, "Nothing is
+/// published on a stale balance"). The store then refuses the later of the two whole,
+/// and the executor asks the ledger again, on the generation as it is then.
 ///
 /// **What a call to `reserve` is not.** It is not a reservation: an attempt that the
-/// store refuses reserved nothing, and the ledger is asked again for the next. What
-/// was reserved is what the current generation names ([`reservations`]), so a ledger
-/// keeps no count of its own.
+/// store refuses reserved nothing, and the ledger is asked again for the next. Nor is
+/// a publication an admission that stands: see [`Ledger::confirm`].
 pub trait Ledger: Send + Sync {
-    fn reserve(&self, reservation: &Reservation, step: &mut Step<'_, '_>) -> Result<(), Declined>;
+    fn reserve(
+        &self,
+        reservation: &Reservation,
+        step: &mut Step<'_, '_>,
+    ) -> Result<MadeName, Declined>;
+
+    /// Whether an admission that was published stands (ADR 0016, "An admission is
+    /// confirmed before anything runs under it"). The executor calls this once the
+    /// admission's publication is durable, with the store's generation read again,
+    /// and makes the run's thread, its allowance and the tree's tally only when the
+    /// answer is yes. The three conditions are the ledger's to hold on that reading:
+    /// the reservation is the record, one hold and nothing else that names the run;
+    /// neither the epoch it fell under nor the newest needs its owner; and that
+    /// epoch is not over its allowance with this reservation counted in full, which
+    /// a call of nothing is not held to.
+    ///
+    /// A ledger that keeps no books of names says yes: that is the default, for a
+    /// ledger of a test that only judges. A failure to read is no answer, and the
+    /// executor backs the admission out as it does one that does not stand.
+    fn confirm(&self, reservation: &Reservation, reading: &Reread<'_>) -> Result<bool, NotJudged> {
+        let _ = (reservation, reading);
+        Ok(true)
+    }
+
+    /// Closes the reservation of a run nothing called, inside the publication that
+    /// ends the run, with the same kind of step: what it makes is published with the
+    /// run's record or not at all, a failure of it is a failure of that publication,
+    /// and the run then stays admitted and its caller is told. A closing takes the
+    /// reservation's next place and its epoch's next turn, so the store refuses the
+    /// end's publication whole when either was taken meanwhile, and the executor
+    /// asks again.
+    ///
+    /// It answers [`Settled::Nothing`] where there is nothing for it to close: a
+    /// closing already names the reservation, or the ledger keeps no books, which
+    /// is the default.
+    fn settle(&self, closing: &Closing<'_>, step: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
+        let _ = (closing, step);
+        Ok(Settled::Nothing)
+    }
 }
 
-/// One attempt at an admission, as the ledger sees it.
+/// The store as it is read again once an admission is durable: what
+/// [`Ledger::confirm`] folds.
+pub struct Reread<'a> {
+    generation: &'a Generation,
+    contents: &'a dyn Contents,
+}
+
+impl<'a> Reread<'a> {
+    pub(super) fn new(generation: &'a Generation, contents: &'a dyn Contents) -> Reread<'a> {
+        Reread {
+            generation,
+            contents,
+        }
+    }
+
+    /// The generation read after the admission's publication.
+    pub fn generation(&self) -> &Generation {
+        self.generation
+    }
+
+    /// The content of an entry of that generation.
+    pub fn read(&self, entry: &Entry) -> store::Result<Vec<u8>> {
+        self.contents.read_record(entry)
+    }
+}
+
+/// The reservation a run's end closes.
+#[derive(Debug, Clone, Copy)]
+pub struct Closing<'a> {
+    /// The run nothing called, whose reservation it is.
+    pub run: &'a RunId,
+    /// What was reserved for it.
+    pub reserved_micros: u64,
+    /// When the run ended, in milliseconds since the Unix epoch.
+    pub at_ms: u64,
+}
+
+/// What [`Ledger::settle`] did.
+#[derive(Debug)]
+pub enum Settled {
+    /// It closed the reservation: a name it made in this step.
+    Closed(MadeName),
+    /// There was nothing for it to close.
+    Nothing,
+}
+
+/// Why a paid request was not dispatched (ADR 0016, "A dispatch's refusals"): each its
+/// own. A request that is refused did not leave, and nothing of it is counted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DispatchRefused {
+    /// The bound is the largest number there is, which is no amount.
+    NoAmount,
+    /// The run that sends it can spend less: how much its allowance has left.
+    OverRun { left_micros: u64 },
+    /// Its reservation, by its names, has less left: how much.
+    OverReservation { left_micros: u64 },
+    /// Its reservation is frozen: its names are not a set the ledger could have
+    /// written, and nothing is dispatched under it until its owner corrects it.
+    Frozen,
+    /// A closing names its reservation: nothing is dispatched after one.
+    Closed,
+    /// The epoch its reservation falls under needs its owner, or a reservation whose
+    /// amount is unknown makes every epoch need it: no new paid work starts.
+    NeedsOwner { epoch: u64 },
+    /// What the process holds of the tree's reservation does not cover it, whatever
+    /// the names say: how much the tree has left in memory.
+    OverTree { left_micros: u64 },
+    /// It could not be judged or published: the store failed, or the ledger did.
+    /// This is not a judgement of the request.
+    Failed(NotJudged),
+}
+
+impl std::fmt::Display for DispatchRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let left = |f: &mut std::fmt::Formatter<'_>, what: &str, left: &u64| {
+            write!(
+                f,
+                "the request was not sent: {what} {left} millionths of a US dollar left"
+            )
+        };
+        match self {
+            DispatchRefused::NoAmount => f.write_str(
+                "the request was not sent: its bound is the largest number there is, which \
+                 is no amount",
+            ),
+            DispatchRefused::OverRun { left_micros } => left(f, "its run has", left_micros),
+            DispatchRefused::OverReservation { left_micros } => {
+                left(f, "its reservation has", left_micros)
+            }
+            DispatchRefused::Frozen => f.write_str(
+                "the request was not sent: its reservation is frozen until its owner \
+                 corrects it",
+            ),
+            DispatchRefused::Closed => {
+                f.write_str("the request was not sent: its reservation is closed")
+            }
+            DispatchRefused::NeedsOwner { epoch } => write!(
+                f,
+                "the request was not sent: the books of epoch {epoch} need their owner"
+            ),
+            DispatchRefused::OverTree { left_micros } => left(
+                f,
+                "the tree it is sent under has, as its process holds it,",
+                left_micros,
+            ),
+            DispatchRefused::Failed(_) => {
+                f.write_str("the request was not sent: it could not be judged or recorded")
+            }
+        }
+    }
+}
+
+/// A name a ledger made in a step: what [`Step::make`] hands back, and what a ledger
+/// returns from [`Ledger::reserve`]. It cannot be made any other way, and is not
+/// copied.
+#[derive(Debug)]
+pub struct MadeName {
+    step: u64,
+    name: String,
+}
+
+impl MadeName {
+    /// The name that was made.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// The steps this process has begun: what tells one step's names from another's.
+static STEPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// One attempt at a publication, as the ledger sees it: an admission's, or the one
+/// that ends a run.
 pub struct Step<'a, 's> {
+    id: u64,
     publication: &'a mut Publication<'s>,
     generation: &'a Generation,
     contents: &'a dyn Contents,
@@ -279,6 +472,7 @@ impl<'a, 's> Step<'a, 's> {
         secrets: &'a Secrets,
     ) -> Step<'a, 's> {
         Step {
+            id: STEPS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1,
             publication,
             generation,
             contents,
@@ -292,22 +486,28 @@ impl<'a, 's> Step<'a, 's> {
         self.generation
     }
 
+    /// The content of an entry of that generation.
+    pub fn read(&self, entry: &Entry) -> store::Result<Vec<u8>> {
+        self.contents.read_record(entry)
+    }
+
     /// Every reservation that generation names ([`reservations`]).
     pub fn reserved(&self) -> Result<Vec<Reservation>, CallError> {
         reservations(self.generation, |entry| self.contents.read_record(entry))
     }
 
-    /// Adds a record of the ledger's own to the admission's publication, under a name
-    /// that is made: the admission is published with it or not at all, and is refused
+    /// Adds a record of the ledger's own to the publication, under a name that is
+    /// made: the publication is published with it or not at all, and is refused
     /// whole when the store holds the name by then, in which case the ledger is asked
     /// again.
     ///
-    /// The name starts with `spend/` and not with `spend/reservations/`, which is the
-    /// executor's; it is of the ASCII letters, the digits, `_`, `-`, `.`, `:` and `/`,
-    /// 200 characters at most. A name the step's generation already holds is refused
-    /// here: it could never be made. A name or a content that holds a secret is
-    /// refused, and not shown.
-    pub fn make(&mut self, name: &str, bytes: &[u8]) -> Result<(), CallError> {
+    /// The name is one of the ledger's (ADR 0016, "The books are names"): a text that
+    /// `spend::Name` reads, and not of the form `spend/reservations/<run>`, which is
+    /// the executor's. So it starts with `spend/`, is 200 characters at most, and has
+    /// no segment that is empty, `.` or `..`. A name the step's generation already
+    /// holds is refused here: it could never be made. A name or a content that holds
+    /// a secret is refused, and not shown.
+    pub fn make(&mut self, name: &str, bytes: &[u8]) -> Result<MadeName, CallError> {
         let refuse = |why: &str| {
             Err(CallError::Ledger {
                 why: why.to_owned(),
@@ -319,18 +519,18 @@ impl<'a, 's> Step<'a, 's> {
                  ledger is stored as it is, so it cannot hold a secret",
             );
         }
-        let plain = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':' | '/');
-        if !name.starts_with(SPEND_PREFIX)
-            || name.starts_with(RESERVATIONS_PREFIX)
-            || name.len() > LEDGER_NAME_LIMIT
-            || !name.chars().all(plain)
-        {
-            return refuse(&format!(
-                "{} is no name for a record of the ledger: its names start with \
-                 {SPEND_PREFIX} and not with {RESERVATIONS_PREFIX}, and are of the ASCII \
-                 letters, the digits, _, -, ., : and /, {LEDGER_NAME_LIMIT} characters at most",
-                Shown(name)
-            ));
+        match Name::parse(name) {
+            Ok(Name::Reservation(_)) => {
+                return refuse(&format!(
+                    "{} is no name for a record of the ledger: a name under \
+                     {RESERVATIONS_PREFIX} is the executor's",
+                    Shown(name)
+                ));
+            }
+            Ok(_) => {}
+            Err(not) => {
+                return refuse(&format!("it was to make a name that is none: {not}"));
+            }
         }
         if self.generation.get(name).is_some() {
             return refuse(&format!(
@@ -342,7 +542,21 @@ impl<'a, 's> Step<'a, 's> {
             .create(name, RECORD_KIND, bytes)
             .map_err(|error| CallError::Store(StoreFailure::new(error)))?;
         self.made.push(name.to_owned());
-        Ok(())
+        Ok(MadeName {
+            step: self.id,
+            name: name.to_owned(),
+        })
+    }
+
+    /// Adds this record under its own name ([`Step::make`]): the content is the one
+    /// way the record is written, and says what its name says.
+    pub fn record(&mut self, record: &Record) -> Result<MadeName, CallError> {
+        self.make(&record.name().to_string(), &record.to_bytes())
+    }
+
+    /// Whether this name was made in this step, and by it.
+    pub(super) fn made_here(&self, made: &MadeName) -> bool {
+        made.step == self.id && self.made.contains(&made.name)
     }
 
     /// The names the ledger made in this attempt.
