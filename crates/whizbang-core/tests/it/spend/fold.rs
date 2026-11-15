@@ -1047,8 +1047,10 @@ fn an_admission_stands_under_each_of_its_three_conditions_and_only_for_the_amoun
     const RESET: [&str; 3] = ["spend/reset/2/50", "spend/epoch/2", "spend/turn/1/2"];
     assert!(stands(&RESET));
     assert!(!stands(&joined(&[&RESET, &["spend/turn/2/3"]])));
-    // A frozen reservation whose amount no name states makes every epoch need it.
-    assert!(!stands(&["spend/place/7000-9/1"]));
+    // A frozen reservation whose amount no name states makes no epoch need its
+    // owner: the admission beside it stands (as cut down, 2026-11-15; ADR 0016,
+    // "The strand cut down". It made every epoch need it, and none stood).
+    assert!(stands(&["spend/place/7000-9/1"]));
     // One whose hold states its amount, and that the allowance covers, does not.
     let beside = [
         "spend/reset/1/12",
@@ -1310,11 +1312,21 @@ fn a_reservation_whose_content_is_damaged_is_frozen_at_20_and_stops_nothing_else
     let balance = newest(&frozen);
     assert_eq!((balance.counted, balance.left), (25, 5));
     assert!(!balance.needs_owner && !balance.unknown);
-    // It counts so in every epoch there is: a reset does not clear it.
+    // It counts so in the epoch its hold names, and a reset clears it: nothing of
+    // it counts in the epoch the reset opens (as cut down, 2026-11-15; ADR 0016,
+    // "The strand cut down". It counted its 20 in every epoch there is).
     let mut later = TWO_RESERVED.to_vec();
     later.extend(["spend/reset/2/40", "spend/epoch/2", "spend/turn/1/4"]);
     let after = with_damage(&later, &["spend/reservations/7000-1"]);
-    assert_eq!((newest(&after).counted, newest(&after).left), (20, 20));
+    assert_eq!(
+        state_and_count(&after, &one()),
+        (State::Frozen, model::Counted::Exactly(20))
+    );
+    let standing = after.reservation(&one()).unwrap();
+    assert!(standing.counts_in(1) && !standing.counts_in(2));
+    assert_eq!(plain(after.balance_of(1)).counted, 25);
+    assert_eq!((newest(&after).counted, newest(&after).left), (0, 40));
+    assert!(!newest(&after).needs_owner);
 }
 
 #[test]
@@ -1738,7 +1750,8 @@ fn a_name_of_no_form_freezes_the_reservation_it_starts_as_a_name_of_or_is_report
         assert_eq!(folded.unplaced(), 0, "{stray}");
     }
     // One for a run that has no reservation is a frozen reservation of nothing whose
-    // amount no name states: the store needs its owner.
+    // amount no name states. With no hold it counts against no epoch's allowance,
+    // and it stops nothing (as cut down, 2026-11-15: the store needed its owner).
     let mut names = TWO_RESERVED.to_vec();
     names.push("spend/place/7000-9/x");
     let folded = of(&names);
@@ -1747,7 +1760,10 @@ fn a_name_of_no_form_freezes_the_reservation_it_starts_as_a_name_of_or_is_report
         state_and_count(&folded, &nine),
         (State::Frozen, model::Counted::AtLeast(0))
     );
-    assert!(newest(&folded).needs_owner);
+    let stray = folded.reservation(&nine).unwrap();
+    assert!(!stray.counts_in(0) && !stray.counts_in(1) && !stray.counts_in(2));
+    assert_eq!(newest(&folded), newest(&whole));
+    assert!(!newest(&folded).needs_owner);
     // One that starts as nothing the ledger writes, or whose run is no run id, is
     // placed nowhere: it changes no balance, and the fold says that it is there.
     let mut names = TWO_RESERVED.to_vec();

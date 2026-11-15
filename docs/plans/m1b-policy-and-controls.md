@@ -431,6 +431,9 @@ task is not done while one that applies to it has no test.
    is parsed, escaped or cut, and one that holds a secret is refused and not shown.
 5. **A document says what the head does.** An ADR, a guide or a help text added by a task
    names, for each thing it claims the code does, the test that shows it.
+   (For the six spend tasks kept on 2026-11-15, S4, S5, S5b, S9, S10 and S11, a
+   mapping of the task's acceptance clauses to its tests suffices: under the task's
+   "As built", in the plan, and not sentence by sentence in an ADR or a help text.)
 6. **No sleeps.** A test waits on a barrier or an event. Time comes from the injected
    clock (`Clock`), which a test moves by hand.
 7. **Threads only through the test kit** (`AGENTS.md`, "Threads and processes"). A test
@@ -1334,15 +1337,19 @@ whose old body stands under a new name.)
 - [x] `Inventory`, in the core: for a local model, whether it is ready and, if so, the
       identity of its installation, which is the version in what a preparation saw; or
       why it is not (not installed, out of date, damaged, not in the catalogue).
-- [ ] `Lease`: before a request to a local model leaves, at the lease's place in I3's
+- [x] `Lease`: before a request to a local model leaves, at the lease's place in I3's
       order, a lease on the installation the run was admitted with is taken, and let go
       when the request is over. A lease that cannot be had is a fault and a noted
       refusal; nothing is dispatched.
-      (Not built. Its place is there, and empty: ADR 0015, "A wrapper around each
-      request"; `docs/carry-over.md`.)
-- [ ] Defaults that know no model, and a fake inventory in the test kit.
-      (Built of it, before task I3: the default inventory, `NoInventory`, and the fake,
-      `FakeInventory`. The lease's default is not, so the box is not ticked.)
+      (Built after task I3, as what stands in the lease's place, `Place::Lease`: an
+      `Around`, and no interface of its own. A run admitted for a local model is handed
+      its backend under the installation the admission recorded, and the place is told
+      that identity: ADR 0015, "The backend a run is handed, and the lease's place".
+      The lease over the models directory's holds is task M6b's.)
+- [x] Defaults that know no model, and a fake inventory in the test kit.
+      (The default inventory, `NoInventory`, and the fake, `FakeInventory`, before task
+      I3. The lease's default is the empty place, and its fake is the test kit's
+      `FakeWrapper` in that place.)
 
 **Done when** these pass: a roster over the fake inventory prepares a model that is not
 ready as not ready, with the reason; a request whose lease is refused reaches neither the
@@ -1350,9 +1357,15 @@ meter's place nor the backend; a lease is let go when its request ends by an ans
 fault and a panic, counted by the fake; the lease is asked for the identity the admission
 recorded, not the one current at the request. (Built: the first part, as
 `inventory::a_roster_over_the_fake_inventory_prepares_a_model_that_is_not_ready_as_not_ready_with_the_reason`,
-with ADR 0015, "An inventory". The other three are the lease's and wait for task I3. Until
-then a run admitted for a local model over an inventory is handed no backend for it:
-`inventory::known_a_run_admitted_for_a_local_model_over_an_inventory_is_handed_no_backend_for_it`.)
+with ADR 0015, "An inventory". The other three, after task I3, each with the fake in
+the lease's place and a fake meter after it:
+`inventory::a_request_whose_lease_is_refused_reaches_neither_the_meters_place_nor_the_backend`,
+`inventory::a_lease_is_let_go_when_its_request_ends_by_an_answer_a_fault_and_a_panic`
+(and `…when_the_place_after_it_panics_before_the_request_leaves`),
+`inventory::the_lease_is_asked_for_the_identity_the_admission_recorded_not_the_one_current_at_the_request`.
+The pin of the first half, a run handed no backend for a local model over an
+inventory, is turned round:
+`inventory::a_run_admitted_for_a_local_model_over_an_inventory_is_handed_its_backend_under_the_identity_the_admission_recorded`.)
 **Size:** small.
 
 ### W1. The binary wired
@@ -1673,7 +1686,7 @@ clears the books, and this task changes the fold so that it clears all of them. 
 reset no longer leaves a frozen reservation counting, and no state of a reservation
 makes the store wait for a command that is not built. The text as it stood is in this file at commit a9029d7.
 
-- [ ] **A reset closes the books.** In the fold (`spend/fold.rs`) and in the model
+- [x] **A reset closes the books.** In the fold (`spend/fold.rs`) and in the model
       (`crates/whizbang-testkit/src/spend.rs`) two rules change, and nothing else of
       either. `counts_in`: a reservation counts against an epoch only when one of
       its holds names that epoch; a frozen reservation no longer counts in every
@@ -1688,7 +1701,7 @@ makes the store wait for a command that is not built. The text as it stood is in
       So is the model's checker, where it holds a reservation to an epoch its hold
       no longer names: that is a stated limit of the ADR from now on ("The strand
       cut down").
-- [ ] `whizbang spend status`: of the newest epoch, the allowance, what is counted
+- [x] `whizbang spend status`: of the newest epoch, the allowance, what is counted
       against it, what is charged, what is held beyond that, what is unresolved, what
       is left and the debt; and the last reset. It lists each reservation that counts
       there and that no run's end closed as released, with its run, what it counts
@@ -1696,7 +1709,7 @@ makes the store wait for a command that is not built. The text as it stood is in
       what counts nowhere: a reservation with no hold, as "unknown, at least" and the
       number, and any name under `spend/` that the fold can place nowhere. Where the
       epoch admits nothing until a reset, it says so. It reads only.
-- [ ] `whizbang spend reset --allowance <usd>`: one publication of the reset's name,
+- [x] `whizbang spend reset --allowance <usd>`: one publication of the reset's name,
       its guard (`spend/epoch/<epoch>`) and the next turn of the epoch it closes. The
       records before it stay, and nothing they hold in the epochs before it counts
       in the epoch it opens. A hold that names the epoch it opens, which only other
@@ -1719,6 +1732,64 @@ there and is named by `status`, and after one more reset the next call is admitt
 reset of an amount of the largest number, one after the largest epoch a name can
 say, and one in a store at its generation limit are refused and say why.
 **Size:** small.
+**As built, 2026-11-15.** The reset is `spend::reset` in the core
+(`crates/whizbang-core/src/spend/reset.rs`), and the commands are
+`crates/whizbang/src/spend.rs`. Each clause above, and its test; those named
+`spending::…` are the binary's own (`crates/whizbang/src/spending.rs`), each over a
+store that an executor with the real ledger wrote:
+
+- The model and the real fold agree on every named and every generated history:
+  `spend::fold::every_named_history_written_into_a_store_folds_to_what_the_model_gives_and_to_what_it_must`
+  and the seven `spend::fold::every_generated_history_…` of the core, with the two
+  of one name changed. What the two rules moved is listed in ADR 0016, "The strand
+  cut down", under "As built with task S9": histories 45, 67, 68, 69 and 78 beside
+  31 and 65, nine tests of the model, five of the core, three rows of the checker,
+  and two counts of what the generated histories reach.
+- A store that holds each of the four in turn, named by `status`, with no second
+  request counted and a call admitted after a `reset`:
+  `spending::an_open_reservation_a_dead_process_left_with_a_dispatch_is_named_and_a_reset_clears_it`,
+  `spending::a_frozen_reservation_is_named_with_what_it_counts_for_and_a_reset_clears_it`,
+  `spending::a_reservation_with_no_hold_is_named_as_unknown_and_counts_nowhere`,
+  `spending::an_epoch_whose_turns_are_wrong_is_named_and_a_reset_opens_one_that_admits`.
+- `status` answers while the store is held, and `reset` is refused with the holder
+  named:
+  `spending::status_answers_while_another_opening_holds_the_store_and_reset_is_refused_with_the_holder_named`.
+- After a reset the earlier records are read and the balances start again:
+  `spending::after_a_reset_the_earlier_records_are_all_still_read_and_the_balances_start_again`.
+- A damaged record, said escaped and cut, with no path:
+  `spending::status_names_a_damaged_record_and_a_text_of_no_form_escaped_and_cut_with_no_path`.
+- `reset` is no registered action: `spending::reset_is_a_command_and_no_registered_action`.
+- A hold planted for the epoch a reset then opens:
+  `spending::a_hold_planted_for_the_epoch_a_reset_then_opens_counts_there_and_the_next_reset_passes_it`.
+- The three refusals:
+  `spending::an_allowance_is_dollars_as_digits_and_anything_else_is_refused_before_a_store_is_opened`
+  (the largest number) and
+  `spending::a_reset_after_the_largest_epoch_and_one_at_the_generation_limit_are_refused_and_say_why`.
+- `reset` opens the store through the one entry point and recovers it first:
+  `spending::spend_reset_on_a_store_a_killed_process_left_recovers_before_it_resets`,
+  and `writer::the_binary_opens_a_store_to_write_in_one_place_and_through_the_entry_point`
+  now counts `spend.rs`.
+- The command line and the exit codes, through the binary: `spend::…` in
+  `crates/whizbang/tests/it/spend.rs`.
+
+**Reworded with the task.** "the fake counts no second request" is shown as: the
+action a test registers, which stands for a paid request, runs once before the state
+is made, not at all for `status`, for `reset` or for the call that is refused, and
+once more for the call the new allowance admits. No fake backend is sent a request
+in these tests, because no meter is built yet (tasks S5 and S5b): what a run a dead
+process left had dispatched is planted as its names.
+"an open reservation of a run a dead process left" is listed by `status` as "open":
+the books do not say whether a run's process is alive, and `status` reads only the
+books. "with the holder named" is the store's own sentence, which names the writer
+by the line it wrote in the lock, or "another process" before it has written one.
+**Added with the task** (the orchestrator's brief, from the owner's wish to see what
+things cost): `whizbang spend status --run <run>` shows one run, from the fold's
+reading and with no new machinery: what was reserved for it, what it counts for, what
+was charged and is outstanding under it, and what the requests it sent were charged
+and still hold, under its own reservation or under that of the run at the root of
+its tree (`spending::status_of_one_run_says_what_was_reserved_what_its_requests_were_charged_and_what_they_hold`).
+`status` also lists frozen reservations that count in earlier epochs alone, and the
+earlier epochs whose turns are wrong.
 
 ### S10. The run's spend lines
 
@@ -2256,8 +2327,8 @@ asked at every preparation and a model's files are gigabytes; "verified" is what
 publication held the files to, and a file damaged since is found when the identity is
 installed again (pinned as `inventory::known_…`). And "runs on the new installation": the
 request is admitted and its action runs with the new installation's identity as its
-model's version; a run is handed no backend for a local model until the lease is built
-(task I7's second half, after I3), so no request reaches a model in that test.
+model's version; the executor of that test is given no backend, so no request reaches a
+model in it. Requests to a local model under its installation are task M6b's tests.
 **Carry-over:** rascal's R2 (reported), R4, and of R6 a corrupt installation record and a
 reinstall between a call and its retry. **Size:** small.
 
@@ -2265,7 +2336,7 @@ reinstall between a call and its retry. **Size:** small.
 
 **Depends on:** M6.
 
-- [ ] `Lease` (I7) over M5's holds: a hold on the installation the run was admitted with,
+- [x] `Lease` (I7) over M5's holds: a hold on the installation the run was admitted with,
       by identity. If the pointer no longer names that installation, or it is draining,
       the lease is refused.
 
@@ -2277,22 +2348,19 @@ same way; a removal that starts while a request holds the model waits for it (M5
 model installs, is attached to, is cancelled and is drained, each through the crate's own
 interface from a test's process and a second real process, in one test that names the
 four clauses of the checkpoint's exit line.
-**Built in part; the box is not ticked** (ADR 0017, "What a lease takes";
-`docs/carry-over.md`). The lease stands in the lease's place of task I3's order, which
-is there; a run admitted for a local model over an inventory is handed no backend until
-task I7's second half, so no request reaches that place yet. Built here: the hold a lease
-takes, `models::Installations::hold`, by the declared name and the identity the admission
-recorded, refused when the pointer no longer names that installation or the model is
-draining. Shown with an admitted run's action standing in the lease's place, which is not
-the executor's order: `leases::a_reinstall_or_a_removal_between_the_admission_and_the_lease_refuses_the_hold_and_nothing_is_metered`,
-`leases::a_retry_inside_an_admitted_run_whose_installation_was_replaced_is_refused_the_same_way`.
-Shown as worded: a removal that starts while a request holds the model waits for it
-(`leases::a_removal_that_starts_while_a_request_holds_the_model_waits_for_it`), and the
-one test of the exit line's four clauses
-(`leases::a_model_installs_is_attached_to_is_cancelled_and_is_drained_from_this_process_and_a_second_one`).
-Not shown: "refused before dispatch" and "a fake meter in the place after the lease",
-through an executor; they are shown by the pull request that puts a lease over this
-hold in that place, after task I7's second half.
+**Built** (ADR 0017, "The lease"), in two pull requests, each clause by a test named
+`models::leases::…`, through an executor a test builds over the real inventory with
+`models::Lease` in the lease's place and a fake meter in the place after it. The first
+pull request built the hold a lease takes (`models::Installations::hold`) before task I7's
+second half, with a run's action standing in the lease's place; the second replaced
+those tests. A reinstall, a removal and a draining removal at a barrier between the
+admission and the lease, each refused before dispatch with the meter and the backend
+having seen nothing and no other installation answering:
+`leases::a_reinstall_or_a_removal_between_the_admission_and_the_lease_refuses_the_request_before_dispatch`.
+A retry: `leases::a_retry_inside_an_admitted_run_whose_installation_was_replaced_is_refused_the_same_way`.
+A removal that waits: `leases::a_removal_that_starts_while_a_request_holds_the_model_waits_for_it`.
+The exit line's four clauses:
+`leases::a_model_installs_is_attached_to_is_cancelled_and_is_drained_from_this_process_and_a_second_one`.
 **Size:** small.
 
 ### X1. A key directly after a word character

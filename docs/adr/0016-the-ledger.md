@@ -1244,8 +1244,8 @@ nothing: each answer is the real fold of one generation of the store's names, th
 one an admission's step shows or the one read again after the admission's
 publication. Its tests are in `crates/whizbang-core/tests/it/spend/reserve.rs`, named
 `spend::reserve::…`, each with an executor the test builds with it. An allowance is
-the owner's reset; until `whizbang spend reset` is built (task S9) a test makes the
-three names a reset makes.
+the owner's reset, which a test makes as `whizbang spend reset` does (`spend::reset`,
+task S9).
 
 | What | As built | Shown by |
 |---|---|---|
@@ -1254,7 +1254,7 @@ three names a reset makes.
 | A cost with no bound | Refused by the executor, and the ledger is not asked | `a_call_with_no_bound_is_refused_and_the_ledger_is_not_asked` |
 | A preparation | Makes no reservation and no record, and asks the ledger nothing | `prepare_makes_no_reservation_and_no_record` |
 | A call from inside an action | Asks the ledger nothing, and has no name under `spend/` | `a_nested_call_asks_the_ledger_nothing` |
-| An epoch that needs its owner | An admission is refused with a reason of its own, a call of nothing among them, and nothing is published; a reset opens an epoch that admits again, unless a frozen reservation's amount is unknown, which no reset ends | `an_epoch_whose_turns_are_not_its_publications_admits_nothing_until_a_reset`, `a_frozen_reservation_whose_amount_no_name_states_stops_every_admission_and_a_reset_too` |
+| An epoch that needs its owner | An admission is refused with a reason of its own, a call of nothing among them, and nothing is published; a reset opens an epoch that admits again. (As cut down with task S9: a frozen reservation whose amount is unknown counts against no allowance and stops no admission, before a reset or after it. It was: "unless a frozen reservation's amount is unknown, which no reset ends") | `an_epoch_whose_turns_are_not_its_publications_admits_nothing_until_a_reset`, `a_frozen_reservation_whose_amount_no_name_states_counts_nowhere_and_stops_no_admission` |
 | A damaged record (invariant 4; history 81) | Its own reservation is frozen at the most its names can mean, 25 for one of 10, and a call the rest of the allowance covers is admitted, confirmed and runs beside it. A reset whose record cannot be read allows nothing | `one_record_that_cannot_be_read_freezes_its_own_reservation_and_stops_no_other_call`, `a_reset_whose_record_cannot_be_read_allows_nothing` |
 | The confirmation | `Folded::stands` on the reading made after the publication. Its third condition is of the epoch the reservation's hold names: with a reset between the publication and the reading, an admission whose own epoch is full stands though the newest allows nothing, and one whose own epoch is over its allowance does not though the newest has room. Nor does one whose epoch, or the newest, needs its owner; nor one with a name beside its record and its hold. A call of nothing is confirmed in a store in debt | `an_admission_is_held_to_the_epoch_it_fell_under_when_a_reset_came_before_its_reading`, `an_admission_does_not_stand_where_its_epoch_or_the_newest_needs_its_owner`, `an_admission_stands_only_as_the_record_and_one_hold_and_within_its_allowance`, `a_call_of_nothing_is_confirmed_in_a_store_in_debt` |
 | Two admissions at once (the plan's rule 1; history 1) | Two executors over one store are each told yes for the last of the allowance, and are held inside the ledger with their names staged, after the reading a wrong ledger would decide from. Let go together, one is admitted; the other's publication is refused for the turn, it is asked again on the books as they are then, and is declined for what is left. It leaves no name, and its id is free. Under an allowance that covers both, both are admitted, at the epoch's first and second turn. The next turn, the turns due and the epoch a publication takes its turn in (`Folded::next_turn`, `due`, `turn_epochs`) are read after each | `two_executors_each_told_yes_for_the_last_of_the_allowance_end_with_one_admitted`, `two_executors_that_judge_together_under_an_allowance_that_covers_both_are_both_admitted` |
@@ -1764,8 +1764,60 @@ them") then leave out a reservation whose hold is lost, which is limit (c) witho
 its exception: such a reservation counts against no allowance, and the store goes
 on. **What a reset clears is what the names before it say of the epochs before it.**
 A hold that names a later epoch, which only other hands make, counts there when a
-reset reaches it, and one more reset passes it. Until task S9 merges, the fold and the model are as the sections above have
-them.
+reset reaches it, and one more reset passes it.
+
+**As built with task S9.** The two rules are changed in the core (`spend/fold.rs`)
+and in the model alike, and nothing else of either; the model and the real fold agree
+on every named and every generated history (`spend::fold::every_named_history_…` and
+`spend::fold::every_generated_history_…`, in the core's tests). What moved, each
+restated to hold the new rule and none taken away:
+
+- **Named histories.** 31 and 65 keep their numbers; 31 now also holds, after the
+  reset and before the correction, that the frozen reservation counts nothing in the
+  new epoch. 45, 67, 68, 69 and 78 move: each is of a frozen reservation with several
+  holds or none, which now counts where its holds say and stops nothing. In 67, 10
+  are counted of 10 where 20 are committed, which is the third row of the table of
+  costs below; in 69 the store goes on with 10 outstanding that no name counts.
+- **Tests of the model.**
+  `spend::a_reset_does_not_clear_a_frozen_reservation_and_its_owners_correction_does`
+  is now
+  `spend::a_reset_clears_a_frozen_reservation_and_its_owners_correction_changes_nothing_after_it`.
+  `spend::a_store_that_needs_its_owner_starts_no_paid_work_and_still_settles_ends_recovers_and_is_corrected`
+  keeps its name and its two cases of an epoch's turns; its third, a frozen
+  reservation of unknown amount, is held there as a case that stops nothing. Seven
+  more tests held the old rule in one assertion or a few, and hold the new one:
+  the two suites of one name changed, `…what_the_ledger_could_not_have_written…`,
+  `…the_turns_of_an_epoch…`, `…one_hold_made_in_the_place_of_the_ledgers_states_the_amount_of_a_frozen_reservation_too`,
+  `…one_record_that_cannot_be_read…` and `…the_limits_accepted…`.
+- **Tests of the core.** Three held the old rule and hold the new one:
+  `spend::fold::an_admission_stands_under_each_of_its_three_conditions_and_only_for_the_amount_its_hold_states`
+  (an admission beside a reservation of unknown amount stands);
+  `spend::reserve::a_frozen_reservation_whose_amount_no_name_states_counts_nowhere_and_stops_no_admission`,
+  which was `…_stops_every_admission_and_a_reset_too`; and
+  `contract::admit::a_stored_reservation_that_is_not_one_is_refused_by_its_reader_and_stops_no_call_beside_it`,
+  which was `…_is_refused_and_nothing_is_admitted`: a reservation's record that
+  cannot be read, with no hold beside it, is still refused by whoever reads
+  reservations, and the call beside it runs. Two more hold it in an assertion
+  each (`spend::fold::a_reservation_whose_content_is_damaged_…` after a reset, and
+  `spend::fold::a_name_of_no_form_…` for a run with no reservation).
+- **The checker.** Three places. A reservation is held to the epoch it was really
+  reserved in only while the hold the ledger made for it is there; where that hold is
+  lost, what can still be reserved is held to the fold's own count of it, which is
+  nothing in an epoch no hold names; and an amount that is unknown must be said by
+  each epoch a hold names, where it was the newest epoch that had to say it. Every
+  generated suite keeps every invariant so.
+- **Two counts of what the generated histories reach** are lower, because a frozen
+  reservation of unknown amount no longer makes a store need its owner: dispatches
+  refused for that, 29 where the test asked for more than 75, and dispatches judged
+  before the store came to need its owner, 4 where it asked for more than 5
+  (`spend::every_generated_history_keeps_every_invariant`).
+
+In the paragraphs above that this section ends, read "the store needs its owner" of a
+frozen reservation as no longer so, and "counts in every epoch" as "counts in each
+epoch a hold of it names". The table under "The invariants, and what holds them"
+that counts what one changed name comes to (15,632 and its parts) is of the rules as
+they were: the same suites now hold that a reservation whose amount is unknown stops
+no epoch but the one a turn is owed in.
 
 **No state leaves the owner without a way to use the allowance.**
 

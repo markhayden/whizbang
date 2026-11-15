@@ -43,7 +43,7 @@ pub use install::{Current, Damage, InstallRefused, current, install, install_or_
 pub use installation::{
     INSTALLATION_FORMAT, INSTALLATION_MAX_BYTES, InstallationId, InstallationRecord, InstalledFile,
 };
-pub use inventory::Installations;
+pub use inventory::{Installations, Lease};
 pub use name::{
     FILE_MAX_BYTES, FILE_NAME_LIMIT, FileName, LICENCE_LIMIT, Licence, MODEL_NAME_LIMIT, ModelName,
     REVISION_LIMIT, Revision, SHOWN_LIMIT,

@@ -27,8 +27,9 @@ use super::reading::{Counted, Names, Reading, RunSpend, Sent, Sum, lowest_free};
 /// ADR 0016, "What a reservation counts for".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
-    /// Not closed: its run executes, or was left and is not recovered yet. It counts
-    /// for the larger of its amount and what is known against it.
+    /// Not closed: its run executes, or a process that died left it, and then
+    /// nothing closes it. It counts for the larger of its amount and what is known
+    /// against it, until a reset opens an epoch in which it does not count.
     Open,
     /// Closed with every dispatch settled: it counts for its charges, and what it
     /// held beyond them is released.
@@ -36,7 +37,8 @@ pub enum State {
     /// Closed with nothing released: the larger of its amount and what is known.
     Interrupted,
     /// Its names are not a set the ledger could have written: it counts for the most
-    /// they can mean, and nothing lowers it but its owner's correction.
+    /// they can mean, in each epoch a hold of it names, and nothing lowers it but
+    /// its owner's correction.
     Frozen,
     /// Its owner corrected it, and the correction stands: it counts for what the
     /// correction says, and never under what its whole settlements say.
@@ -74,8 +76,9 @@ impl Standing {
         self.names.closed()
     }
 
-    /// What it counts for against the allowance of each epoch it counts in: the
-    /// number, which is the least it can be where [`Standing::unknown`] says so.
+    /// What it counts for against the allowance of each epoch it counts in
+    /// ([`Standing::counts_in`]): the number, which is the least it can be where
+    /// [`Standing::unknown`] says so.
     pub fn counts(&self) -> Sum {
         self.counts
     }
@@ -105,15 +108,13 @@ impl Standing {
         short(Sum::of(self.names.amount()).less(self.names.known()))
     }
 
-    /// Whether it counts against this epoch's allowance. A frozen reservation counts
-    /// in every epoch there is: its holds are not trusted to say which. So does one
-    /// that has no hold, or more than one, whatever it is: a correction says what it
-    /// is charged, and not where.
+    /// Whether it counts against this epoch's allowance: only where one of its
+    /// holds names the epoch, whatever its state. One with no hold counts in none.
+    /// So a reset closes the books: nothing made before it counts in the epoch it
+    /// opens, a frozen reservation among it (ADR 0016, "The strand cut down").
     pub fn counts_in(&self, epoch: u64) -> bool {
         let named = |(held, _): &(u64, Amount)| *held == epoch;
-        self.state == State::Frozen
-            || self.epoch().is_none()
-            || self.names.holds().iter().any(named)
+        self.names.holds().iter().any(named)
     }
 }
 
@@ -317,9 +318,9 @@ impl Folded {
     /// are other than exactly those its publications took: not 1 to their count, or
     /// more or fewer than the names account for, so that a name that took a turn may
     /// be gone, and with it an amount that nothing counts; or a text that begins as
-    /// one of its turns is of no form. Or a reservation is frozen and its amount is
-    /// unknown, which counts in every epoch for a number no name can be trusted for.
-    /// A frozen reservation whose one hold states its amount stops nothing else.
+    /// one of its turns is of no form. That is of the epoch's turns alone: no
+    /// reservation makes an epoch need its owner by being frozen, or by an amount
+    /// that is unknown (ADR 0016, "The strand cut down").
     pub fn needs_owner(&self, epoch: u64) -> bool {
         let none = BTreeSet::new();
         let turns = self.turns.get(&epoch).unwrap_or(&none);
@@ -328,10 +329,7 @@ impl Folded {
         // count exactly when the last of them is their count. Nothing counts up to a
         // turn, which can be any number a name can say.
         let whole = turns.last().copied().unwrap_or(0) == count;
-        !whole
-            || count != self.due(epoch)
-            || self.garbled.contains(&epoch)
-            || self.reservations.values().any(Standing::unknown)
+        !whole || count != self.due(epoch) || self.garbled.contains(&epoch)
     }
 
     /// The balance of this epoch.

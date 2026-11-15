@@ -298,8 +298,8 @@ pub struct Standing {
     /// The epoch it falls under: the reset its one hold names. None when it has no
     /// hold, or more than one.
     pub epoch: Option<u64>,
-    /// Every epoch a hold of it names. It counts in the one its one hold names; and
-    /// in every epoch there is where it is frozen, or has no hold or more than one.
+    /// Every epoch a hold of it names: it counts in each of them and in no other,
+    /// whatever its state, and in none where it has no hold.
     pub epochs: BTreeSet<u64>,
     /// What was reserved: the largest amount a hold of it names.
     pub amount: u64,
@@ -386,12 +386,12 @@ impl Standing {
         u64::try_from(u128::from(self.amount).saturating_sub(self.known())).unwrap_or(u64::MAX)
     }
 
-    /// Whether it counts against this epoch's allowance.
+    /// Whether it counts against this epoch's allowance: only where one of its
+    /// holds names the epoch, whatever its state. One with no hold counts in none,
+    /// and a reset opens an epoch in which nothing made before it counts (ADR 0016,
+    /// "The strand cut down").
     pub fn counts_in(&self, epoch: u64) -> bool {
-        // A frozen reservation counts in every epoch there is: its holds are not
-        // trusted to say which. So does one that has no hold, or more than one,
-        // whatever it is: a correction says what it is charged, and not where.
-        self.state == State::Frozen || self.epoch.is_none() || self.epochs.contains(&epoch)
+        self.epochs.contains(&epoch)
     }
 }
 
@@ -480,19 +480,15 @@ impl Folded {
     /// Whether no new paid work starts in an epoch until the owner acts. Its turns
     /// are other than exactly those its publications took: not 1 to their count, or
     /// more or fewer than the names account for, so that a name that took a turn
-    /// may be gone, and with it an amount that nothing counts. Or a reservation is
-    /// frozen and its amount is unknown, which counts in every epoch for a number
-    /// no name can be trusted for. A frozen reservation whose one hold states its
-    /// amount stops nothing else: it is counted at the most its names can mean.
+    /// may be gone, and with it an amount that nothing counts. That is of the
+    /// epoch's turns alone: no reservation makes an epoch need its owner by being
+    /// frozen, or by an amount that is unknown (ADR 0016, "The strand cut down").
     pub fn needs_owner(&self, epoch: u64) -> bool {
         let none = BTreeSet::new();
         let turns = self.turns.get(&epoch).unwrap_or(&none);
         let count = turns.len() as u64;
         let due = self.due.get(&epoch).copied().unwrap_or(0);
-        let unknown = |one: &Standing| one.unknown;
-        !turns.iter().copied().eq(1..=count)
-            || count != due
-            || self.reservations.values().any(unknown)
+        !turns.iter().copied().eq(1..=count) || count != due
     }
 
     /// The balance of this epoch.
@@ -1011,9 +1007,8 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
 /// after its publication (ADR 0016, "An admission is confirmed"): its reservation
 /// is a set the ledger could have written, and open, and is the record, one hold
 /// and nothing else that names the run; neither the epoch it fell
-/// under nor the newest needs its owner, which a frozen reservation whose amount
-/// is unknown makes every epoch do; and that epoch is not over its allowance with this reservation
-/// counted in full. A call of nothing adds nothing to what is counted, and is not
+/// under nor the newest needs its owner; and that epoch is not over its allowance
+/// with this reservation counted in full. A call of nothing adds nothing to what is counted, and is not
 /// held to a debt that was there before it, as it is not when it is judged.
 ///
 /// Nothing is done under a reservation before it is confirmed, so a place, a
@@ -1640,9 +1635,8 @@ impl Books {
                 }
                 // Nor under a reservation of an epoch that needs its owner: where
                 // the books are not what the ledger wrote, no new paid work starts
-                // until a person has looked. A frozen reservation whose amount is
-                // unknown makes every epoch need its owner; one whose hold states
-                // its amount stops nothing but its own dispatches.
+                // until a person has looked. That is of the epoch's turns alone:
+                // a frozen reservation stops nothing but its own dispatches.
                 if standing.epoch.is_none_or(|epoch| folded.needs_owner(epoch)) {
                     return refused(Why::NeedsOwner);
                 }
@@ -2471,6 +2465,16 @@ impl Books {
         self.removed.contains_key(&own)
     }
 
+    /// Whether the hold the ledger made for this reservation is among the names:
+    /// the epoch it falls under is in that name alone.
+    fn own_hold_is_there(&self, root: Run, truth: &Truth) -> bool {
+        self.names.contains(&Name::Held {
+            epoch: truth.epoch,
+            run: root,
+            micros: truth.amount,
+        })
+    }
+
     /// Whether no name states an amount for this request: the ledger's own hold of
     /// its reservation is lost, and its dispatch is lost too (ADR 0016, limit (c)).
     fn unnamed(&self, root: Run, truth: &Truth, asked: &Asked) -> bool {
@@ -2531,8 +2535,12 @@ impl Books {
             // counts here as the fold has it, which is not at all when a hold other
             // hands made in the place of the ledger's names another epoch.
             let here = |one: &&Standing| one.counts_in(newest);
+            // Where the ledger's own hold is lost, nothing says which epoch the
+            // reservation is of: it counts where the holds that are left say, which
+            // is nowhere when none is (limit (c), as cut down).
+            let kept = self.own_hold_is_there(*root, truth);
             counted = counted.saturating_add(match self.held_to(*root, truth, folded) {
-                Ok(Some(floor)) => floor,
+                Ok(Some(floor)) if kept => floor,
                 _ => folded
                     .reservations
                     .get(root)
@@ -2682,7 +2690,9 @@ impl Books {
     /// What it leaves out is what ADR 0016 lists against its limits (a) to (e) and
     /// (g), and nothing else; of an admission that stands, nothing. Under limit (c) it also holds the books to saying what they
     /// cannot say: a reservation whose own hold is lost, frozen with no hold or
-    /// with several, counts "unknown, at least".
+    /// with several, counts "unknown, at least", and so does each epoch a hold of
+    /// it names. Such a reservation is held to no epoch: it counts where the holds
+    /// that are left say, and nowhere when none is.
     pub fn check(&mut self) -> Result<(), String> {
         let folded = self.fold();
         for (root, truth) in &self.truth {
@@ -2721,19 +2731,21 @@ impl Books {
             }
             // Limit (c), said by the books: where the ledger's own hold is lost and
             // the reservation is frozen with no hold or several, its count is
-            // "unknown, at least", and so is the store's in every epoch. Where the
-            // books say so and the ledger's own hold is there among several, the
-            // amount is at least its own, and nothing is lost: the floor above was
-            // held, and so is the amount.
+            // "unknown, at least", and so is that of each epoch a hold of it names.
+            // Where the books say so and the ledger's own hold is there among
+            // several, the amount is at least its own, and nothing is lost: the
+            // floor above was held, and so is the amount.
             let lost = self.amount_lost(*root, truth);
             if lost && one.state == State::Frozen && one.epoch.is_none() && !one.unknown {
                 return Err(format!(
                     "{root}: its hold is lost, and the books say what it counts for"
                 ));
             }
-            if one.unknown && !folded.balance().unknown {
+            let said = |epoch: &u64| folded.balance_of(*epoch).unknown;
+            if one.unknown && !one.epochs.iter().all(said) {
                 return Err(format!(
-                    "{root}: its amount is unknown, and the store says what is counted"
+                    "{root}: its amount is unknown, and an epoch it counts in says what \
+                     is counted"
                 ));
             }
             if one.unknown && !lost && one.counts < u128::from(truth.amount) {
@@ -2742,17 +2754,13 @@ impl Books {
                     one.counts
                 ));
             }
-            // It counts in the epoch it was really reserved in. The epoch is in the
-            // hold alone: one hold that other hands made in the place of the
-            // ledger's is believed for it (limit (a)). With the ledger's hold there,
-            // alone or not, and with no hold or several, there is no such excuse.
-            let own = Name::Held {
-                epoch: truth.epoch,
-                run: *root,
-                micros: truth.amount,
-            };
-            let replaced = one.epoch.is_some() && !self.names.contains(&own);
-            if !one.counts_in(truth.epoch) && !replaced {
+            // It counts in the epoch it was really reserved in, while the hold the
+            // ledger made for it is there, alone or not: the epoch is in that hold
+            // alone. Where it is lost the reservation counts where the holds other
+            // hands left say, in one epoch (limit (a)), in several or in none
+            // (limit (c), as cut down on 2026-11-15: ADR 0016, "The strand cut
+            // down").
+            if self.own_hold_is_there(*root, truth) && !one.counts_in(truth.epoch) {
                 return Err(format!(
                     "{root}: reserved in epoch {} and not counted there",
                     truth.epoch
@@ -4077,6 +4085,9 @@ pub fn histories() -> Vec<History> {
     );
     add(
         "31 freeze 10, reset to 20, adjust the frozen one to nothing: 20 to spend, not 30",
+        // As cut down, 2026-11-15: the reset alone leaves 20 to spend, since the
+        // frozen reservation does not count in the epoch it opens; the correction
+        // changes nothing there. The numbers are as they were.
         with(frozen(), vec![reset(20), adjust(1, 0)]),
         vec![
             Left(20),
@@ -4084,7 +4095,15 @@ pub fn histories() -> Vec<History> {
             state(r(1), State::Adjusted),
             Counts(r(1), 0),
         ],
-        vec![(4, state(r(1), State::Frozen)), (4, Left(0))],
+        vec![
+            (4, state(r(1), State::Frozen)),
+            (4, Left(0)),
+            // After the reset and before the correction: frozen still, and not
+            // counted in the epoch the reset opened.
+            (5, state(r(1), State::Frozen)),
+            (5, Counted(0)),
+            (5, Left(20)),
+        ],
     );
     add(
         "32 adjust, then reset: the reset's amount",
@@ -4380,7 +4399,10 @@ pub fn histories() -> Vec<History> {
             Must::NeedsOwner,
             Left(0),
         ],
-        vec![(3, Epoch(1)), (3, Must::CountedAtLeast(15)), (3, Left(0))],
+        // In its own epoch it stops nothing else (as cut down, 2026-11-15): it is
+        // counted there at the least it can be, and the 5 beyond that can be
+        // reserved. Before, an amount that is unknown left nothing in any epoch.
+        vec![(3, Epoch(1)), (3, Must::CountedAtLeast(15)), (3, Left(5))],
     );
     add(
         "46 a second hold of more: counted at the larger, and nothing more is dispatched",
@@ -4911,8 +4933,8 @@ pub fn histories() -> Vec<History> {
     );
     add(
         "67 the hold lost while holds other hands made in other epochs remain, and a \
-         hold made for another run: counted in its own epoch still, and nothing is \
-         admitted",
+         hold made for another run: it counts where those holds say and in its own \
+         epoch no more, and its 10 are admitted again",
         vec![
             reset(10),
             admit(1, 10),
@@ -4943,23 +4965,43 @@ pub fn histories() -> Vec<History> {
             }),
             admit(2, 10),
         ],
+        // As cut down, 2026-11-15 (ADR 0016, "The strand cut down", the third row
+        // of what it costs): a reservation counts only where a hold of it names,
+        // and one whose amount is unknown stops nothing. Before, this one counted
+        // in every epoch for at least 20 and the store needed its owner. Now the
+        // 10 that are outstanding under it are counted in epochs 2 and 3, which no
+        // reset has opened, and in its own not at all: 10 under, and the next
+        // call takes the whole allowance again.
         vec![
-            came(8, refused(Why::NeedsOwner)),
+            came(8, Outcome::Done),
             Epoch(1),
             Allowed(10),
             state(r(1), State::Frozen),
-            Must::CountedAtLeast(20),
+            // The amount, the bound, and nothing a name can be trusted for.
+            Must::CountsAtLeast(r(1), 20),
+            state(r(2), State::Open),
+            // The second call's 10, and nothing of the first's.
+            Counted(10),
             Left(0),
-            Absent(r(2)),
         ],
-        vec![],
+        // With its own hold lost it is counted in the first epoch no more. The
+        // turn that hold took is then one the epoch's names do not account for,
+        // until the hold made there for another run is taken for it: other hands
+        // made the turns add up, and the store goes on.
+        vec![
+            (5, Must::CountedAtLeast(20)),
+            (6, Counted(0)),
+            (6, Must::NeedsOwner),
+            (7, Counted(0)),
+            (7, Left(10)),
+        ],
     );
     // What the hunt over other seeds found, once the generators made holds in any
     // epoch and the second suite let other hands do six things.
     add(
         "68 a reservation frozen by holds other hands made in other epochs, its own \
-         lost, and then corrected by its owner: counted in its own epoch still, and \
-         nothing more is admitted",
+         lost, and then corrected by its owner: it counts where those holds say, \
+         corrected or not, and its own epoch admits its 10 again",
         vec![
             reset(10),
             admit(1, 10),
@@ -4988,22 +5030,30 @@ pub fn histories() -> Vec<History> {
             adjust(1, 10),
             admit(2, 10),
         ],
+        // As cut down, 2026-11-15: before, it counted in every epoch, frozen and
+        // corrected alike, and the second call was refused with nothing left. Now
+        // it counts in epochs 5 and 6 alone, and the second call is admitted.
         vec![
             came(10, Outcome::Done),
-            came(11, refused(Why::OverAllowance { left: 0 })),
+            came(11, Outcome::Done),
             state(r(1), State::Adjusted),
             Counts(r(1), 10),
             Epoch(1),
             Allowed(10),
+            // The second call's 10, and nothing of the first's.
+            state(r(2), State::Open),
             Counted(10),
             Left(0),
-            Absent(r(2)),
         ],
         vec![
             (7, state(r(1), State::Frozen)),
             // The amount, the bound, and the amount for the closing's place.
             (7, Must::CountsAtLeast(r(1), 30)),
-            (9, Must::NeedsOwner),
+            // Its turns owed to the epochs of the holds that are left, the first
+            // epoch has no turn and is due none: it needs nobody, and nothing is
+            // counted in it.
+            (9, Counted(0)),
+            (9, Left(10)),
         ],
     );
     // What the fourth review round found: each of its traces, as it was given.
@@ -5020,8 +5070,8 @@ pub fn histories() -> Vec<History> {
     };
     add(
         "69 two holds of nothing made, then the ledger's hold and its dispatch lost: \
-         the amount is unknown and the books say so, and nothing is admitted or \
-         dispatched anywhere",
+         the amount is unknown and the books say so, nothing is dispatched under \
+         it, and the store goes on with its 10 counted nowhere",
         vec![
             reset(30),
             admit(1, 10),
@@ -5035,20 +5085,25 @@ pub fn histories() -> Vec<History> {
             dispatch(1, 0),
             dispatch(2, 1),
         ],
+        // As cut down, 2026-11-15: before, an amount that is unknown made the
+        // store need its owner, and the last three events were refused. Now it
+        // stops nothing but its own dispatches: a call is admitted and another
+        // run sends its request, with 10 outstanding that no name counts.
         vec![
-            came(8, refused(Why::NeedsOwner)),
+            came(8, Outcome::Done),
             came(9, refused(Why::Frozen)),
-            came(10, refused(Why::NeedsOwner)),
+            came(10, Outcome::Placed(1)),
             state(r(1), State::Frozen),
             // No hold states more than nothing, and no dispatch is named: the
             // names say nothing of the 10 that are outstanding.
             Must::CountsAtLeast(r(1), 0),
             Must::SentUnbounded(r(1)),
-            // The other reservation's 5, and nothing that a name says of this one.
-            Must::CountedAtLeast(5),
-            Must::NeedsOwner,
-            Absent(r(3)),
-            Outstanding(r(2), 0),
+            // The second reservation's 5 and the third's 1, and nothing that a
+            // name says of this one.
+            Must::CountedAtLeast(6),
+            Left(24),
+            state(r(3), State::Open),
+            Outstanding(r(2), 1),
         ],
         vec![
             (3, Counts(r(1), 10)),
@@ -5288,8 +5343,8 @@ pub fn histories() -> Vec<History> {
     );
     // The sixth review round's, in its two forms. A request that was judged while
     // the store was sound is published once the store needs its owner: by the loss
-    // of another reservation's hold, whose amount is then unknown, and by the loss
-    // of a turn. (As the round gave it, the other reservation was damaged: since
+    // of another reservation's hold, whose turn the epoch's names then do not
+    // account for, and by the loss of a turn. (As the round gave it, the other reservation was damaged: since
     // the owner's ruling a damaged reservation whose hold is there stops nothing
     // else, which is history 81.)
     let publish = |run, micros| Event::Publish {
@@ -5326,17 +5381,20 @@ pub fn histories() -> Vec<History> {
             Counts(r(1), 10),
             Outstanding(r(1), 10),
             state(r(2), State::Frozen),
-            // No name states the second's amount: the books say so.
+            // No name states the second's amount: the books say so of it. With no
+            // hold it counts in no epoch (as cut down, 2026-11-15), so the epoch
+            // says what is counted: the first's 10. Before, it was "at least 10".
             Must::CountsAtLeast(r(2), 0),
-            Must::CountedAtLeast(10),
+            Counted(10),
             Left(0),
+            // The turn its hold took is one the epoch's names do not account for.
             Must::NeedsOwner,
             Must::TreeLeft(r(1), 0),
             Spendable(r(1), 0),
         ],
         vec![
             (4, Must::NeedsOwner),
-            (4, Must::CountedAtLeast(10)),
+            (4, Counted(10)),
             (4, Must::TreeLeft(r(1), 10)),
         ],
     );

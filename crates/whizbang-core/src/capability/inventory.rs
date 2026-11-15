@@ -18,7 +18,10 @@ use std::sync::Arc;
 use crate::contract::{Backends, Capability, Estimate, ModelIdentity, Unavailable};
 use crate::identity::Digest;
 
-use super::Roster;
+use super::{
+    Bounds, Declaration, Fault, FillRequest, Filler, Judge, JudgeRequest, Painted, Roster,
+    SegmentRequest, SegmentResponse, Segmenter, Turn,
+};
 
 /// The identity of one installation of a model: a digest, as ADR 0017 makes it. Its
 /// text is `sha256:` and 64 lower-case hex digits and nothing else, so it is a version
@@ -36,6 +39,124 @@ impl Installation {
     pub fn identity(&self) -> Digest {
         self.0
     }
+
+    /// The installation whose identity is written so: `sha256:` and 64 lower-case
+    /// hex digits, and nothing else. None for any other text. It is how a version
+    /// is known to be an installation's: no other version is written so by anything
+    /// here, and one that is, is taken for a local model's ([`under`]).
+    pub fn from_version(version: &str) -> Option<Installation> {
+        version.parse().ok().map(Installation)
+    }
+}
+
+/// A local backend, as a run that was admitted under one installation of its model
+/// is handed it: the backend, declaring the installation's identity as its version.
+/// Every request goes to the backend as it is.
+struct Under<B: ?Sized> {
+    backend: Arc<B>,
+    declaration: Declaration,
+}
+
+impl Segmenter for Under<dyn Segmenter> {
+    fn declaration(&self) -> &Declaration {
+        &self.declaration
+    }
+
+    fn segment(&self, request: &SegmentRequest, bounds: &Bounds) -> Result<SegmentResponse, Fault> {
+        self.backend.segment(request, bounds)
+    }
+}
+
+impl Filler for Under<dyn Filler> {
+    fn declaration(&self) -> &Declaration {
+        &self.declaration
+    }
+
+    fn fill(&self, request: &FillRequest, bounds: &Bounds) -> Result<Painted, Fault> {
+        self.backend.fill(request, bounds)
+    }
+}
+
+impl Judge for Under<dyn Judge> {
+    fn declaration(&self) -> &Declaration {
+        &self.declaration
+    }
+
+    fn send(&self, request: &JudgeRequest, bounds: &Bounds) -> Result<Turn, Fault> {
+        self.backend.send(request, bounds)
+    }
+}
+
+/// How a kind of backend is handed under an installation.
+pub(crate) trait Installable {
+    fn declared(&self) -> &Declaration;
+    /// This backend, declaring this installation's identity as its version.
+    fn under(self: &Arc<Self>, installation: Installation) -> Arc<Self>;
+}
+
+macro_rules! installable {
+    ($kind:ident) => {
+        impl Installable for dyn $kind {
+            fn declared(&self) -> &Declaration {
+                self.declaration()
+            }
+
+            fn under(self: &Arc<Self>, installation: Installation) -> Arc<Self> {
+                Arc::new(Under {
+                    declaration: self.declaration().installed_as(installation),
+                    backend: self.clone(),
+                })
+            }
+        }
+    };
+}
+
+installable!(Segmenter);
+installable!(Filler);
+installable!(Judge);
+
+/// Of these backends, the one a call that resolved this model is handed (ADR 0009;
+/// ADR 0015, "An inventory"), or none.
+///
+/// - **A version that is not an installation's identity** is matched as it always
+///   was: the first backend that declares this model, by its backend, its model and
+///   its version.
+/// - **A version that is an installation's identity is a local model's.** A roster
+///   over an inventory resolves a local backend under the identity of its model's
+///   installation, which no backend declares. So the run is handed a local
+///   backend that declares this backend and this model: one that declares this
+///   very version, when there is one, as it is and wherever it stands; and
+///   otherwise the first, whatever version it declares, wrapped so that it
+///   declares the identity: the one the admission recorded, which is the one in
+///   the prepared call. **A backend that names a
+///   recipient is never handed for such a version,** though it declare the same
+///   three texts: a run that was resolved as local sends nothing away.
+pub(crate) fn under<B: Installable + ?Sized>(
+    backends: &[Arc<B>],
+    model: &ModelIdentity,
+) -> Option<Arc<B>> {
+    let Some(installation) = Installation::from_version(model.version()) else {
+        let mut backends = backends.iter();
+        return backends
+            .find(|backend| backend.declared().model() == model)
+            .cloned();
+    };
+    let local = || {
+        backends.iter().filter(|backend| {
+            let declared = backend.declared();
+            declared.is_local()
+                && declared.model().backend() == model.backend()
+                && declared.model().model() == model.model()
+        })
+    };
+    // One that declares the identity itself is the exact match, by all three
+    // texts, as it was before an inventory: it is handed as it is, wherever it
+    // stands among the others. Only with none is the first of that backend and
+    // that model handed, under the identity.
+    if let Some(exact) = local().find(|backend| backend.declared().model() == model) {
+        return Some(exact.clone());
+    }
+    local().next().map(|first| first.under(installation))
 }
 
 impl std::fmt::Display for Installation {
@@ -135,6 +256,19 @@ impl Backends for InstalledRoster {
         };
         let declared = resolved.declaration().model();
         if !resolved.declaration().is_local() {
+            // The text of an installation's identity is a version only a local
+            // model has: a run resolved under one is handed a local backend or
+            // none ([`under`]), so a backend that names a recipient and declares
+            // one would be admitted and handed nothing. It is not ready, and says
+            // so.
+            if Installation::from_version(declared.version()).is_some() {
+                return Err(Unavailable::new(&format!(
+                    "the {} backend {} names a recipient, and declares the identity of an \
+                     installation as its version",
+                    capability.name(),
+                    resolved.name()
+                )));
+            }
             return Ok(declared.clone());
         }
         match self.inventory.look(declared.model()) {
