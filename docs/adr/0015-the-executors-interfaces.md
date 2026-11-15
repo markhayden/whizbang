@@ -59,6 +59,8 @@ Amended: 2026-11-15, after the review of task I3. Changed under "A wrapper aroun
 each request": a panic of `Open::after` abandons the run; the tests of a judge and a
 segmenter through the places, of a repeat of an abandoned run's request, and of the
 gate's sentence; and why the path without a snapshot is left as it is.
+Amended: 2026-11-15, with task I4. Added: "One way to a writer, with recovery before
+it". ADR 0007 is amended with it (the alternative it turned down for now).
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
