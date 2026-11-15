@@ -20,7 +20,7 @@ use whizbang_core::capability::{
     Support, Turn, feature,
 };
 use whizbang_core::contract::{Capability, ModelIdentity};
-use whizbang_core::egress::Recipient;
+use whizbang_core::egress::{Address, Outgoing, Piece, Recipient};
 
 use crate::barrier::Barriers;
 
@@ -233,7 +233,13 @@ pub struct FakeFiller {
     requests: AtomicU64,
     stop: Option<Stop>,
     terms: Terms,
+    /// What it sends, and where to first, before it paints: when it was told to.
+    posts: Option<(Address, Vec<Piece>)>,
 }
+
+/// The most addresses a fake that sends goes on to, one after another, when each
+/// answer points to the next.
+pub const FAKE_MOVES_LIMIT: usize = 8;
 
 impl FakeFiller {
     pub fn new(paint: Paint) -> FakeFiller {
@@ -243,7 +249,25 @@ impl FakeFiller {
             requests: AtomicU64::new(0),
             stop: None,
             terms: Terms::default(),
+            posts: None,
         }
+    }
+
+    /// The same filler, which for every request sends these pieces to this address
+    /// before it paints, through the sender its request's bounds hand it and through
+    /// nothing else (ADR 0015). An answer that points elsewhere is followed: the same
+    /// pieces are sent to the address it names, [`FAKE_MOVES_LIMIT`] times at most. A
+    /// fault of the sender is the request's fault, and nothing is painted; any answer
+    /// is taken, whatever its status.
+    pub fn posting(mut self, to: Address, pieces: Vec<Piece>) -> FakeFiller {
+        self.posts = Some((to, pieces));
+        self
+    }
+
+    /// The same filler, declaring this in place of what it declared.
+    pub fn declared_as(mut self, declaration: Declaration) -> FakeFiller {
+        self.declaration = declaration;
+        self
     }
 
     /// The same filler, declaring these features and no others. What it states of its
@@ -313,6 +337,18 @@ impl Filler for FakeFiller {
         self.requests.fetch_add(1, Ordering::SeqCst);
         held(&self.stop, bounds)?;
         self.terms.failed()?;
+        if let Some((to, pieces)) = &self.posts {
+            let mut to = to.clone();
+            for _ in 0..=FAKE_MOVES_LIMIT {
+                let outgoing = Outgoing::new(to.clone(), pieces.clone())
+                    .map_err(|why| Fault::new(FaultKind::TooLarge, &why.to_string()).not_sent())?;
+                let reply = bounds.sender().send(&outgoing, bounds)?;
+                match reply.moved_to() {
+                    Some(next) => to = next.clone(),
+                    None => break,
+                }
+            }
+        }
         let painted = self.painted(request)?;
         Ok(match self.terms.charge {
             Some(charge) => painted.charged(charge),
@@ -385,6 +421,12 @@ impl FakeSegmenter {
             fails: None,
             terms: Terms::default(),
         }
+    }
+
+    /// The same segmenter, declaring this in place of what it declared.
+    pub fn declared_as(mut self, declaration: Declaration) -> FakeSegmenter {
+        self.declaration = declaration;
+        self
     }
 
     /// The same segmenter, declaring these features and no others. What it states of

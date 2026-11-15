@@ -945,7 +945,10 @@ nothing marks a run a dead process left: this task marks it, and corrects the ro
 - [ ] `DispatchPolicy`, in the core: a value the executor holds, asked whether a recipient
       may receive given classes of data, and whether it may be probed. The default
       approves nothing. The gate's place in I3's order is given this policy.
-- [ ] `Sender`, the sending interface of B2, as the executor hands it to a backend: every
+      (Built before I2 to I4b, but for its last sentence: the policy is there, the
+      executor holds it and the checked sender asks it; the gate's place is task I3's,
+      which gives it this policy and ticks this box: `docs/carry-over.md`.)
+- [x] `Sender`, the sending interface of B2, as the executor hands it to a backend: every
       origin it is asked to reach goes through one check before data is handed over, and
       what was handed over is noted in the run's place for facts. The check is E2's and
       E3's; here it is a default that refuses everything, and a fake.
@@ -961,17 +964,17 @@ sending fake does; the policy's `{:?}` shows recipients cut and no credential (r
 **Depends on:** I5. A section of the interfaces' ADR, which changes ADR 0007's
 `ConfigSource`.
 
-- [ ] `ConfigSource` answers a snapshot or a refusal. A snapshot is the digest together
+- [x] `ConfigSource` answers a snapshot or a refusal. A snapshot is the digest together
       with what it is the digest of: the roster and the backends it is of, made from one thing so
       that a model a call resolved is always held, the per-call cap, the dispatch policy,
       the secrets, and the settings a run records. A call is prepared under one snapshot;
       admission prepares again under the snapshot current then (ADR 0007); the run then
       executes under that one, whatever the file becomes.
-- [ ] Secrets are kept for redaction for as long as the executor lives: a value a later
+- [x] Secrets are kept for redaction for as long as the executor lives: a value a later
       snapshot no longer holds is still taken out of what is written.
-- [ ] An admission's part (I1) is shown the snapshot its call was prepared under at
+- [x] An admission's part (I1) is shown the snapshot its call was prepared under at
       admission.
-- [ ] A digest alone is still a source, of a snapshot that holds nothing else, so the
+- [x] A digest alone is still a source, of a snapshot that holds nothing else, so the
       binary and 1A's tests are unchanged. A fake source in the test kit that a test
       swaps.
 
@@ -982,7 +985,12 @@ backend, and is held to a cap and a policy, of that snapshot though the source w
 while it ran; a secret of an earlier snapshot is still redacted from a later run's record
 (rule 4); a call cannot resolve a model the snapshot holds no backend for, and the pin
 `asked::known_a_call_that_resolved_a_model_the_executor_does_not_hold_is_handed_no_handle`
-is turned round.
+is turned round. (Built: the pin is now
+`asked::a_call_that_resolved_a_model_its_snapshot_does_not_hold_is_refused_and_not_handed_no_handle`.
+A source that refuses fails the next call as `CallError::Config`, which is no refusal
+of the call: ADR 0015. One helper of `admit.rs` that implemented `ConfigSource` changed
+by three lines. No test of checkpoint 1A changed but the pin the task turns round,
+whose old body stands under a new name.)
 **Size:** small.
 
 ### I7. An inventory, and a lease on an installation
@@ -1434,10 +1442,10 @@ time the task measures and states.
 
 **Depends on:** C1, C2, I6.
 
-- [ ] A `ConfigSource` over the config file and its env file: each time it is asked it
+- [x] A `ConfigSource` over the config file and its env file: each time it is asked it
       reads both and answers a snapshot (I6), or a refusal when either cannot be read as
       what it is.
-- [ ] A snapshot's roster. A backend kind is registered as an action is, by code the
+- [x] A snapshot's roster. A backend kind is registered as an action is, by code the
       binary and the tests share; the shipped binary registers none yet, and the tests
       register a fake kind.
 
@@ -1446,9 +1454,17 @@ with two fake backends of one capability and a default gives a roster that resol
 choice and the default as ADR 0006 says; a backend whose kind this build does not have is
 offered as not ready, with the reason, and never as another backend; a config whose
 backend changed between prepare and admission is `Stale::Config`, on the same executor; a
-config replaced by a file that does not parse refuses the next call, with no run, naming
-the key escaped and cut and no path, and the call after the file is put right is admitted
-(rule 3); a run that was admitted goes on under the snapshot it was admitted with.
+config replaced by a file that does not parse fails the next call as `CallError::Config`,
+with no run and the request's id not taken, in fixed words that name the file as "the
+config" and hold no key, no value and no path; the key is named, escaped and cut and with
+no path, by the reader's own refusal, which the source gives to whoever loads the config
+directly; and the call after the file is put right is admitted (rule 3); a run that was
+admitted goes on under the snapshot it was admitted with.
+**Reworded with the task,** after I6 (ADR 0015, "One snapshot of the config"): the clause
+on a file that does not parse said that it "refuses the next call, with no run, naming
+the key escaped and cut and no path". I6 ruled that a source which cannot answer is a
+failure of the call in fixed words and not a refusal of it, so the call no longer names
+the key; the key, escaped and cut, is still asked for, of the reader's refusal.
 **Carry-over:** the row on the executor built with no backends and the digest of no bytes
 (W1 wires it into the binary). **Size:** medium.
 
@@ -1458,6 +1474,15 @@ the key escaped and cut and no path, and the call after the file is put right is
 
 - [ ] The snapshot carries the per-call cap (S3), the egress policy (E2), the secrets (C2,
       C3) and the settings a run records, each read from the config.
+
+**Not ticked, though the box is true:** built before S3, so the first part of "Done
+when" below is not shown as the plan words it. The snapshot of the source over the files
+carries all four, and a cap lowered in the file is the cap the next admission is shown;
+the call over it is refused by a part of the test's own, which stands where S3's will
+(`source::a_cap_lowered_in_the_config_is_the_cap_the_next_admission_is_held_to_on_one_executor`).
+The box is ticked by the pull request that shows the same with S3's part, or by S3's.
+The other four parts are shown. ADR 0011, "The source over both files";
+`docs/carry-over.md`.
 
 **Done when** these pass, each on one executor across a change of the file: a cap lowered
 in the config refuses the next call that is over it; a recipient taken out of the `egress`
@@ -1473,9 +1498,16 @@ these runs.
 **Depends on:** I5. **Reads:** squint `crates/squint-providers/src/privacy.rs`
 (`consent`).
 
-- [ ] The policy a config's `egress` table makes (I5's `DispatchPolicy`): which recipients
+- [x] The policy a config's `egress` table makes (I5's `DispatchPolicy`): which recipients
       may receive which classes of data.
-- [ ] The check behind a `Sender` (I5) for the first address.
+- [x] The check behind a `Sender` (I5) for the first address.
+
+**Not done yet, though both boxes are true:** built before I3, so four parts of "Done
+when" below are not shown as the plan words them. The fake backend counting none and
+the fake meter having seen nothing are I3's, with the gate's place; no dispatch record
+is S5's; and "no other backend is asked" is shown only of an executor that has no
+fallback, and again at the gate's place by I3. ADR 0019, "Limits";
+`docs/carry-over.md`.
 
 **Done when** these pass, each with an executor a test builds with the policy: with the
 empty policy every request to a backend with a recipient is refused and the fake counts
@@ -1494,10 +1526,10 @@ its record, with the recipient and the reason.
 (`same_origin`, `MAX_REDIRECTS`). Two pull requests: the hops; then the probe and the
 download.
 
-- [ ] Everything a `Sender` is asked to reach is checked against the recipient: a
+- [x] Everything a `Sender` is asked to reach is checked against the recipient: a
       redirect, an upload address and a returned download address, as the first address
       is. A credential is attached only for the origin it was configured for.
-- [ ] The download interface is checked the same way against the origins a catalogue entry
+- [x] The download interface is checked the same way against the origins a catalogue entry
       names. A probe is refused unless the config approves probing that recipient, apart
       from any class of data.
 
@@ -1533,7 +1565,7 @@ marker credential is nowhere in the record (rule 4).
 **Depends on:** E2. **Reads:** squint `crates/squint-providers/src/privacy.rs` (`scan`,
 `FORBIDDEN_MARKERS`).
 
-- [ ] What leaves for a recipient holds no image metadata, no file name and no path. An
+- [x] What leaves for a recipient holds no image metadata, no file name and no path. An
       image is sent as a `Picture` (ADR 0006), which is canonical pixels and has no place
       for any; the sending interface takes a body made by whizbang's own encoder, which
       writes no ancillary data.

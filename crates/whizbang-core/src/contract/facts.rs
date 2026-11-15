@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use super::record::{Facts, Handed, Paid, Refused, Setting, Went};
 use super::{RefusalKind, Secrets, Value};
-use crate::egress::{Account, Classes, Origin};
+use crate::egress::{Account, Classes, DataClass, Origin};
 
 /// Where a refusal of a request goes: among the refusals of the run, which the
 /// executor keeps with the calls the run made that were refused, in one order and
@@ -41,6 +41,70 @@ struct Noted {
     facts: Facts,
     /// Whether the run still takes a note: until its end began.
     open: bool,
+    /// For each entry listed as sent, how many notes of it are held, and how many of
+    /// them hold each class: what is left of the entry when one is taken back.
+    sent: Vec<Sent>,
+}
+
+/// The notes held of one entry that is listed as sent.
+struct Sent {
+    origin: String,
+    account: Option<String>,
+    notes: u64,
+    /// By the class's place among the four.
+    holding: [u64; 4],
+}
+
+/// The four classes of data, in the order a record lists them.
+const CLASSES: [DataClass; 4] = [
+    DataClass::SourceImages,
+    DataClass::DerivedImages,
+    DataClass::Prompts,
+    DataClass::Evidence,
+];
+
+/// The note that data is handed to an origin, taken before anything is handed over
+/// (ADR 0015): the entry is in the run's record from here on, whatever becomes of
+/// the request, unless the note is taken back because nothing left.
+pub(crate) struct Sending {
+    facts: RunFacts,
+    origin: String,
+    account: Option<String>,
+    classes: Classes,
+}
+
+impl Sending {
+    /// Nothing was handed over after all: the note is taken back. The entry keeps
+    /// what other notes of it hold, and goes when this was the only one. Once the
+    /// run's end has begun the record is made, and the entry stays as it is listed.
+    pub(crate) fn take_back(self) {
+        let mut noted = self.facts.noted();
+        if !noted.open {
+            return;
+        }
+        let same = |sent: &Sent| sent.origin == self.origin && sent.account == self.account;
+        let Some(place) = noted.sent.iter().position(same) else {
+            return;
+        };
+        let sent = &mut noted.sent[place];
+        sent.notes = sent.notes.saturating_sub(1);
+        for (at, class) in CLASSES.iter().enumerate() {
+            if self.classes.iter().any(|held| held == *class) {
+                sent.holding[at] = sent.holding[at].saturating_sub(1);
+            }
+        }
+        let left = (sent.notes > 0).then(|| {
+            let held = CLASSES.iter().zip(sent.holding);
+            let held = held.filter(|(_, notes)| *notes > 0);
+            held.fold(Classes::none(), |classes, (class, _)| classes.with(*class))
+        });
+        if left.is_none() {
+            noted.sent.remove(place);
+        }
+        noted
+            .facts
+            .sent_now(&self.origin, self.account.as_deref(), left);
+    }
 }
 
 impl Default for RunFacts {
@@ -73,6 +137,7 @@ impl RunFacts {
                 noted: Mutex::new(Noted {
                     facts: Facts::none(),
                     open: true,
+                    sent: Vec::new(),
                 }),
             }),
         }
@@ -127,8 +192,10 @@ impl RunFacts {
     /// of the executor's ([`Went::new`]). An origin, account and outcome that is noted
     /// already gains these classes.
     ///
-    /// False, and nothing is noted: when the entry is new and the record lists as many
-    /// as it may; and when the run's end has begun.
+    /// False, and nothing is noted: when the origin, as it is written, holds a secret
+    /// of the executor's, since a record writes an origin whole; when the entry is
+    /// new and the record lists as many as it may, of which those of a refused send
+    /// are half at most; and when the run's end has begun.
     pub fn went(
         &self,
         origin: &Origin,
@@ -136,8 +203,73 @@ impl RunFacts {
         classes: Classes,
         outcome: Handed,
     ) -> bool {
-        let went = Went::new(origin, account, classes, outcome, &self.shared.secrets);
+        if outcome == Handed::Sent {
+            // A note that is never taken back.
+            return self.sending(origin, account, classes).is_some();
+        }
+        let Some(went) = self.entry(origin, account, classes, outcome) else {
+            return false;
+        };
         self.note(|facts| facts.went(went))
+    }
+
+    /// The entry for this origin, unless the origin as it is written holds a secret.
+    fn entry(
+        &self,
+        origin: &Origin,
+        account: Option<&Account>,
+        classes: Classes,
+        outcome: Handed,
+    ) -> Option<Went> {
+        let secrets = &self.shared.secrets;
+        let written = origin.to_string();
+        (secrets.redact(&written) == written)
+            .then(|| Went::new(origin, account, classes, outcome, secrets))
+    }
+
+    /// Notes that data of these classes is about to be handed to an origin, before
+    /// it is: the look at whether the run still takes notes, the look for room and
+    /// the note are one step under the place's lock. None, and nothing is noted,
+    /// when [`RunFacts::went`] would answer false; then nothing may be handed over.
+    pub(crate) fn sending(
+        &self,
+        origin: &Origin,
+        account: Option<&Account>,
+        classes: Classes,
+    ) -> Option<Sending> {
+        let went = self.entry(origin, account, classes, Handed::Sent)?;
+        let (origin, account) = (went.origin().to_owned(), went.account().map(str::to_owned));
+        let mut noted = self.noted();
+        if !noted.open || !noted.facts.went(went) {
+            return None;
+        }
+        let same = |sent: &Sent| sent.origin == origin && sent.account == account;
+        let place = match noted.sent.iter().position(same) {
+            Some(place) => place,
+            None => {
+                noted.sent.push(Sent {
+                    origin: origin.clone(),
+                    account: account.clone(),
+                    notes: 0,
+                    holding: [0; 4],
+                });
+                noted.sent.len() - 1
+            }
+        };
+        let sent = &mut noted.sent[place];
+        sent.notes = sent.notes.saturating_add(1);
+        for (at, class) in CLASSES.iter().enumerate() {
+            if classes.iter().any(|held| held == *class) {
+                sent.holding[at] = sent.holding[at].saturating_add(1);
+            }
+        }
+        drop(noted);
+        Some(Sending {
+            facts: self.clone(),
+            origin,
+            account,
+            classes,
+        })
     }
 
     /// Notes that a capability request of the run was refused and not sent. It is

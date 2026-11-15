@@ -1,13 +1,18 @@
 //! A fake kind of backend (ADR 0011, "Kinds"): the code a config's `kind` names, for a
-//! test. It sends nothing. It declares what its table says, refuses a table it does not
-//! know, and keeps what it was shown, so a test can say which backend's credential a
-//! kind was handed, and that it was handed no other's.
+//! test. It sends nothing. It makes one of the test kit's fake backends, declaring
+//! what its table says, refuses a table it does not know, and keeps what it was shown
+//! and what it made, so a test can say which backend's credential a kind was handed,
+//! that it was handed no other's, and which backend answered a run.
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+use crate::capabilities::{FakeFiller, FakeJudge, FakeSegmenter, Paint};
+
+use std::sync::Arc;
+
 use whizbang_core::capability::Declaration;
 use whizbang_core::config::{Kind, KindRefused, Setting, Table};
-use whizbang_core::contract::{Capability, ModelIdentity};
+use whizbang_core::contract::{Capability, Made, ModelIdentity};
 use whizbang_core::egress::{Credential, Recipient};
 
 /// The header a fake kind carries its key in: the kind's own constant.
@@ -43,15 +48,44 @@ pub struct Shown {
     pub printed: String,
 }
 
+/// One backend a fake kind made: the table's capability and name, and the fake.
+#[derive(Clone)]
+pub enum MadeFake {
+    Segment(Arc<FakeSegmenter>),
+    Fill(Arc<FakeFiller>),
+    Judge(Arc<FakeJudge>),
+}
+
+impl MadeFake {
+    /// How many requests the backend was sent.
+    pub fn requests(&self) -> u64 {
+        match self {
+            MadeFake::Segment(backend) => backend.requests(),
+            MadeFake::Fill(backend) => backend.requests(),
+            MadeFake::Judge(backend) => backend.requests(),
+        }
+    }
+}
+
 /// A kind of this name. A backend of it declares the model its table gives (`m` when it
 /// gives none) of the backend that is the kind's name, at the version its setting
 /// `version` gives (`1` when it gives none), with the features its setting `features`
 /// lists, with commas between. A table with an address declares that origin as its
-/// recipient. Any other setting is refused.
-#[derive(Debug)]
+/// recipient. Any other setting is refused. The backend it makes is a fake of the
+/// table's capability: a filler that paints the inverse, a segmenter that finds
+/// nothing it was not told of, a judge with no script.
 pub struct FakeKind {
     name: String,
     shown: Mutex<Vec<Shown>>,
+    made: Mutex<Vec<(Capability, String, MadeFake)>>,
+    /// What it refuses every table with, when a test told it to.
+    refusing: Mutex<Option<&'static str>>,
+}
+
+impl std::fmt::Debug for FakeKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FakeKind({})", self.name)
+    }
 }
 
 impl FakeKind {
@@ -59,7 +93,23 @@ impl FakeKind {
         FakeKind {
             name: name.to_owned(),
             shown: Mutex::new(Vec::new()),
+            made: Mutex::new(Vec::new()),
+            refusing: Mutex::new(None),
         }
+    }
+
+    /// From now on it refuses every table it would have taken with this sentence,
+    /// after it has kept what it was shown, and makes no backend.
+    pub fn refuse_with(&self, why: &'static str) {
+        *self.refusing.lock().unwrap_or_else(PoisonError::into_inner) = Some(why);
+    }
+
+    /// Every backend the kind made, in the order it made them, each with the
+    /// capability and the name of its table: one for every table it took, every
+    /// time it was shown one.
+    pub fn made(&self) -> Vec<(Capability, String, MadeFake)> {
+        let made = self.made.lock().unwrap_or_else(PoisonError::into_inner);
+        made.clone()
     }
 
     fn held(&self) -> MutexGuard<'_, Vec<Shown>> {
@@ -77,7 +127,7 @@ impl Kind for FakeKind {
         &self.name
     }
 
-    fn declare(&self, table: &Table<'_>) -> Result<Declaration, KindRefused> {
+    fn make(&self, table: &Table<'_>) -> Result<Made, KindRefused> {
         let backend = table.backend();
         let (mut version, mut features) = ("1", "");
         for (key, setting) in backend.settings() {
@@ -117,6 +167,27 @@ impl Kind for FakeKind {
             token,
             printed: format!("{table:?}"),
         });
-        Ok(declaration)
+        if let Some(why) = *self.refusing.lock().unwrap_or_else(PoisonError::into_inner) {
+            return Err(KindRefused::Table(why));
+        }
+        let (fake, made) = match table.capability() {
+            Capability::Segment => {
+                let backend = Arc::new(FakeSegmenter::new().declared_as(declaration));
+                (MadeFake::Segment(backend.clone()), Made::Segment(backend))
+            }
+            Capability::Fill => {
+                let backend = FakeFiller::new(Paint::Inverse).declared_as(declaration);
+                let backend = Arc::new(backend);
+                (MadeFake::Fill(backend.clone()), Made::Fill(backend))
+            }
+            Capability::Judge => {
+                let backend = FakeJudge::scripted(Vec::new()).declared_as(declaration);
+                let backend = Arc::new(backend);
+                (MadeFake::Judge(backend.clone()), Made::Judge(backend))
+            }
+        };
+        let mut all = self.made.lock().unwrap_or_else(PoisonError::into_inner);
+        all.push((table.capability(), table.name().to_owned(), fake));
+        Ok(made)
     }
 }

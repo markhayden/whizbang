@@ -18,6 +18,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use crate::contract::{Cancellation, Capability, Clock, ModelIdentity};
+use crate::egress::{NoWayOut, Sender};
 use crate::identity::{CanonicalPixels, PixelDigest};
 
 mod charge;
@@ -232,6 +233,13 @@ pub struct Bounds {
     /// What tells the time the deadline is held to, when it is not the machine's: the
     /// clock of the executor that made the run (ADR 0008, "A deadline in a run").
     clock: Option<Arc<dyn Clock>>,
+    /// The way out the executor made for this backend and this run (ADR 0015), when
+    /// an executor made the handle.
+    sender: Option<Arc<dyn Sender>>,
+    /// How many answers have pointed this one request elsewhere (ADR 0019, "Every
+    /// hop"). A clone holds the same count; each request a handle sends is handed
+    /// bounds with a count of its own ([`Bounds::of_one_request`]).
+    moved: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl std::fmt::Debug for Bounds {
@@ -579,6 +587,51 @@ impl Bounds {
             deadline: None,
             tally: None,
             clock: None,
+            sender: None,
+            moved: Arc::default(),
+        }
+    }
+
+    /// The bounds one request is handed: these, with a count of answers that pointed
+    /// elsewhere that starts at nothing and is this request's alone. A handle makes
+    /// one for each request it sends to its backend.
+    pub(crate) fn of_one_request(&self) -> Bounds {
+        Bounds {
+            moved: Arc::default(),
+            ..self.clone()
+        }
+    }
+
+    /// How many answers have pointed the request of these bounds elsewhere.
+    pub(crate) fn moved(&self) -> u32 {
+        self.moved.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// One more answer pointed the request of these bounds elsewhere. The count
+    /// stays at its largest, and never goes back.
+    pub(crate) fn moved_once_more(&self) {
+        let more = |now: u32| Some(now.saturating_add(1));
+        let order = std::sync::atomic::Ordering::SeqCst;
+        // The closure always answers, so the update is always made.
+        let _ = self.moved.try_update(order, order, more);
+    }
+
+    /// Sends through this: the checked sender the executor made for the backend.
+    pub(crate) fn sending_through(&mut self, sender: Arc<dyn Sender>) {
+        self.sender = Some(sender);
+    }
+
+    /// The one way data leaves for a backend (ADR 0015, "A policy before a send, and a
+    /// checked send"): every address it is asked to reach is held to the recipient the
+    /// backend declared, to the executor's policy and to its check before anything is
+    /// handed over, the credential of the origin is attached by it and by nothing
+    /// else, and what it hands over is noted in the run's record. A backend sends
+    /// through this and holds no sender and no credential of its own. A handle that
+    /// no executor made sends nothing.
+    pub fn sender(&self) -> &dyn Sender {
+        match &self.sender {
+            Some(sender) => sender.as_ref(),
+            None => &NoWayOut,
         }
     }
 

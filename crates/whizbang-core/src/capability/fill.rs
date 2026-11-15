@@ -318,6 +318,13 @@ impl FillHandle {
         self
     }
 
+    /// The same handle, whose backend sends through this and nothing else: the checked
+    /// sender the executor made for it (ADR 0015).
+    pub(crate) fn sending_through(mut self, sender: Arc<dyn crate::egress::Sender>) -> FillHandle {
+        self.bounds.sending_through(sender);
+        self
+    }
+
     /// The same handle, holding its deadline to this clock in place of the machine's.
     pub(crate) fn timed_by(mut self, clock: Arc<dyn crate::contract::Clock>) -> FillHandle {
         self.bounds.timed_by(clock);
@@ -346,7 +353,7 @@ impl FillHandle {
             crate::contract::Capability::Fill,
             self.declaration(),
             || {
-                let painted = self.backend.fill(request, &self.bounds)?;
+                let painted = self.backend.fill(request, &self.bounds.of_one_request())?;
                 let (expected, found) = (
                     (request.image.width(), request.image.height()),
                     (painted.width, painted.height),

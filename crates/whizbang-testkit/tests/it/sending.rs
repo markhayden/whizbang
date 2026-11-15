@@ -10,10 +10,11 @@ use whizbang_core::capability::{
 };
 use whizbang_core::contract::{Cancellation, ModelIdentity, Secrets};
 use whizbang_core::egress::{
-    Address, Classes, Credential, DataClass, Outgoing, Piece, Reply, Sender,
+    Address, Classes, Credential, DataClass, Outgoing, Piece, ProbeRequest, Probed, Prober, Reply,
+    Sender,
 };
 use whizbang_core::identity::CanonicalPixels;
-use whizbang_testkit::sending::FakeSender;
+use whizbang_testkit::sending::{FakeProber, FakeSender};
 
 const KEY: &str = "sk-marker-7f3a9c";
 
@@ -210,6 +211,116 @@ fn what_is_printed_of_the_sending_fake_and_of_a_hop_holds_no_credential() {
     assert!(!shown.contains(KEY), "{shown}");
     assert!(
         shown.contains("x-api-key for https://api.example.com"),
+        "{shown}"
+    );
+}
+
+// --- the fake that probes ----------------------------------------------------------------------
+
+/// A probe of this address, with the credential when the address is at its origin.
+fn probe_of(to: &str) -> ProbeRequest {
+    let to = address(to);
+    let origin = address("https://api.example.com").origin().clone();
+    let request = ProbeRequest::new(to.clone());
+    if *to.origin() == origin {
+        let credential = Credential::new(origin, "x-api-key", KEY, &Secrets::none()).unwrap();
+        request.with_credential(credential).unwrap()
+    } else {
+        request
+    }
+}
+
+#[test]
+fn the_probing_fake_plays_its_script_and_keeps_each_request_with_its_address_and_headers() {
+    let unreachable = Fault::new(FaultKind::Unavailable, "no route").not_sent();
+    let prober = FakeProber::scripted(vec![
+        Ok(Probed::Moved(address(
+            "https://eu.example.net/health?zone=1",
+        ))),
+        Ok(Probed::Reached { status: 204 }),
+        Err(unreachable.clone()),
+    ]);
+    let run = Cancellation::new();
+    let first = probe_of("https://api.example.com/health");
+    let second = probe_of("https://eu.example.net/health?zone=1");
+    // It follows nothing: the address it was pointed to is asked only when a test asks.
+    assert_eq!(
+        prober.probe(&first, &run).unwrap(),
+        Probed::Moved(address("https://eu.example.net/health?zone=1"))
+    );
+    assert_eq!((prober.requests(), prober.remaining()), (1, 2));
+    assert_eq!(
+        prober.probe(&second, &run).unwrap(),
+        Probed::Reached { status: 204 }
+    );
+    // A fault is played where the script has one, and the request is kept.
+    assert_eq!(prober.probe(&first, &run).unwrap_err(), unreachable);
+    assert_eq!((prober.requests(), prober.remaining()), (3, 0));
+
+    let probes = prober.probes();
+    let reached: Vec<String> = probes
+        .iter()
+        .map(|probe| format!("{}{}", probe.to().origin(), probe.to().rest()))
+        .collect();
+    assert_eq!(
+        reached,
+        [
+            "https://api.example.com/health",
+            "https://eu.example.net/health?zone=1",
+            "https://api.example.com/health",
+        ]
+    );
+    // The whole of each request is kept: an address and a credential are all one has.
+    assert_eq!(probes[0].request(), &first);
+    assert_eq!(probes[1].request(), &second);
+    let key = vec![("x-api-key".to_owned(), KEY.to_owned())];
+    let headers: Vec<Vec<(String, String)>> = probes.iter().map(|probe| probe.headers()).collect();
+    assert_eq!(headers, [key.clone(), Vec::new(), key]);
+}
+
+#[test]
+fn the_probing_fake_past_the_end_of_its_script_fails_and_does_not_panic() {
+    let prober = FakeProber::scripted(Vec::new());
+    let fault = prober
+        .probe(
+            &probe_of("https://api.example.com/health"),
+            &Cancellation::new(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        (fault.kind(), fault.stage()),
+        (FaultKind::Malformed, Stage::Unresolved)
+    );
+    assert_eq!(fault.sentence(), "the scripted probes have no answer left");
+    // What it was handed is kept all the same.
+    assert_eq!(prober.probes().len(), 1);
+    // And it may be held as the interface is, and shared.
+    let shared: Arc<dyn Prober> = Arc::new(FakeProber::scripted(Vec::new()));
+    assert!(
+        shared
+            .probe(
+                &probe_of("https://api.example.com/health"),
+                &Cancellation::new()
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn what_is_printed_of_the_probing_fake_and_of_a_probe_holds_no_credential() {
+    let prober = FakeProber::scripted(vec![Ok(Probed::Reached { status: 200 })]);
+    let request = probe_of("https://api.example.com/health?token=abc");
+    prober.probe(&request, &Cancellation::new()).unwrap();
+    let shown = format!("{prober:?} {:?}", prober.probes());
+    assert!(!shown.contains(KEY), "{shown}");
+    // Nor the rest of the address, where a signed address keeps its signature.
+    assert!(!shown.contains("token"), "{shown}");
+    assert!(
+        shown.contains("x-api-key for https://api.example.com"),
+        "{shown}"
+    );
+    assert!(
+        shown.starts_with("FakeProber(1 probes, 0 answers left)"),
         "{shown}"
     );
 }

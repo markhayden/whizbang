@@ -1286,3 +1286,60 @@ fn a_part_that_panics_at_a_call_from_inside_an_action_ends_that_run_and_leaves_n
     assert_eq!(ran_inside.load(Ordering::SeqCst), 1);
     assert_eq!(store.snapshot().unwrap().runs().len(), 3);
 }
+
+#[test]
+fn an_action_that_catches_a_parts_panic_at_a_nested_call_keeps_its_full_allowance_and_a_second_call_runs()
+ {
+    let world = World::new();
+    let store = world.store();
+    let ledger = Arc::new(FakeLedger::new());
+    let part = Arc::new(FakePart::new("gate"));
+    let left = Arc::new(Mutex::new(Vec::new()));
+    let outer = {
+        let (part, left) = (part.clone(), left.clone());
+        action("outer", &world.runs, move |_, context| {
+            let allowance = context.allowance().clone();
+            let note = |left: &Mutex<Vec<Option<u64>>>| {
+                left.lock().unwrap().push(allowance.left_micros());
+            };
+            note(&left);
+            // The part panics at the call below, and the action catches the panic.
+            part.when_asked(|| panic!("the part went wrong"));
+            let call = || context.executor().submit(&Call::new("inner"));
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(call));
+            assert!(caught.is_err(), "the panic reached the action");
+            // What the call took from the allowance is back: all of it is there.
+            note(&left);
+            // And a second call, which needs all of it, is admitted and runs.
+            part.when_asked(|| {});
+            let finished = context
+                .executor()
+                .submit(&Call::new("inner"))
+                .map_err(|error| Failure::error("inner", &error.to_string()))?;
+            assert_eq!(finished.outcome(), &Outcome::Completed { outputs: vec![] });
+            note(&left);
+            Ok(Produced::nothing())
+        })
+    };
+    let ran_inside = Arc::new(AtomicU64::new(0));
+    let inner = action("inner", &ran_inside, |_, _| Ok(Produced::nothing()));
+    let engine = engine(store.clone(), vec![outer, inner])
+        .with_ledger(ledger.clone())
+        .with_part(part.clone());
+
+    let finished = engine.submit(&Call::new("outer")).unwrap();
+    assert_eq!(finished.outcome(), &Outcome::Completed { outputs: vec![] });
+    // The whole allowance before the call, the whole of it after the panic was
+    // caught, and none of it once the second call had taken its share.
+    assert_eq!(
+        *left.lock().unwrap(),
+        [Some(250_000), Some(250_000), Some(0)]
+    );
+    assert_eq!(ran_inside.load(Ordering::SeqCst), 1);
+    // The caller's run and the second call's: the call that panicked left none.
+    assert_eq!(store.snapshot().unwrap().runs().len(), 2);
+    assert_eq!(ledger.reservations(store.as_ref()).unwrap().len(), 1);
+    // The part was asked for the caller, for the call that panicked and for the
+    // second.
+    assert_eq!(part.asked(), 3);
+}
