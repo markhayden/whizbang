@@ -2066,8 +2066,9 @@ nothing, is prepared as damaged, never ready, and a new install repairs it; afte
 reinstall, a new request with the old preparation is `Stale::Model`, one under a new id
 with no preparation runs on the new installation, and a repeat of the first request's id
 returns the first run.
-**Reworded with the task** (ADR 0017, "The inventory"). Two phrases are shown as far as
-what is built allows, and say so here. The box says "installed and verified": the
+**Built** (ADR 0017, "The inventory"), each clause by a test named
+`models::inventory::…`. The box and the clauses keep their words; two phrases of them
+are shown as far as what is built allows. The box says "installed and verified": the
 inventory reads the pointer and the installation's record and no file, because it is
 asked at every preparation and a model's files are gigabytes; "verified" is what the
 publication held the files to, and a file damaged since is found when the identity is

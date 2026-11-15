@@ -438,6 +438,134 @@ fn an_installation_record_that_is_damaged_or_a_pointer_that_names_nothing_is_pre
 }
 
 #[test]
+fn a_pointer_or_a_record_that_cannot_be_read_is_prepared_as_damaged_never_ready_and_never_not_installed()
+ {
+    // The disk refuses one call, once: the opening of the pointer, a read of it,
+    // the opening of the record, a read of it.
+    type Refused = fn(&Event) -> bool;
+    let refusals: [(&str, Refused); 4] = [
+        (
+            "the pointer cannot be opened",
+            |event| matches!(event, Event::Open(p) if p.ends_with("CURRENT")),
+        ),
+        (
+            "the pointer cannot be read",
+            |event| matches!(event, Event::Read(p) if p.ends_with("CURRENT")),
+        ),
+        (
+            "the record cannot be opened",
+            |event| matches!(event, Event::Open(p) if p.ends_with("RECORD")),
+        ),
+        (
+            "the record cannot be read",
+            |event| matches!(event, Event::Read(p) if p.ends_with("RECORD")),
+        ),
+    ];
+    for (what, refusal) in refusals {
+        let scratch = Scratch::new("inventory-unreadable");
+        let root = scratch.path();
+        let record = installed(root, &second());
+        let fs = Arc::new(ShimFs::new());
+        let over = || {
+            Installations::of(
+                ModelsDir::at(fs.clone(), root),
+                Catalogue::new(vec![second()], &none()).unwrap(),
+                [(second().adapter().clone(), adapter())],
+                none(),
+            )
+        };
+        let world = World::over(over(), "tiny");
+        world.prepared_under();
+        // Asked through the executor: prepared as not ready, as damaged.
+        fs.refuse_matching(0, refusal);
+        let prepared = world.executor.prepare(&World::call()).unwrap();
+        let Readiness::NotReady(missing) = prepared.readiness() else {
+            panic!("{what}: the call is ready: {prepared:?}");
+        };
+        assert_eq!(
+            missing[0].why(),
+            format!("{NOT_READY}its installation is damaged"),
+            "{what}"
+        );
+        // Asked of the inventory: damaged, and neither of the other two.
+        fs.refuse_matching(0, refusal);
+        assert_eq!(over().ready("tiny"), Err(Unready::Damaged), "{what}");
+        // The disk answers again: ready, under the same identity. Nothing was
+        // changed by the asking.
+        assert_eq!(over().look("tiny"), ready(&record), "{what}");
+        is_whole(root, &record);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_pointer_or_a_record_the_system_refuses_permission_to_read_is_damaged_and_never_not_installed()
+{
+    use std::os::unix::fs::PermissionsExt;
+    for file in ["CURRENT", "RECORD"] {
+        let scratch = Scratch::new("inventory-permission");
+        let root = scratch.path();
+        let record = installed(root, &second());
+        let at = match file {
+            "CURRENT" => tiny(root).join("CURRENT"),
+            _ => folder_of(root, &record).join("RECORD"),
+        };
+        std::fs::set_permissions(&at, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // One who may read every file whatever its mode (root) is refused nothing,
+        // and has nothing to show here.
+        if std::fs::read(&at).is_err() {
+            assert_eq!(
+                inventory(root).look("tiny"),
+                Installed::NotReady(Unready::Damaged),
+                "{file}"
+            );
+        }
+        std::fs::set_permissions(&at, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(inventory(root).look("tiny"), ready(&record), "{file}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_model_one_of_whose_layout_folders_is_a_link_is_damaged_and_never_ready() {
+    // What every install, hold and removal refuses is not called ready (ADR 0017,
+    // "A folder of the layout that is a link"): the folder is moved out, a link
+    // is left at its name, and the pointer and the record read through it as before.
+    for folder in [
+        "models",
+        "models/tiny",
+        "models/tiny/installations",
+        "models/tiny/staging",
+        "models/tiny/holds",
+    ] {
+        let scratch = Scratch::new("inventory-link");
+        let outside = Scratch::new("inventory-link-outside");
+        let root = scratch.path();
+        let record = installed(root, &second());
+        let world = World::over(inventory(root), "tiny");
+        world.prepared_under();
+        let (at, moved) = (root.join(folder), outside.path().join("moved"));
+        std::fs::rename(&at, &moved).unwrap();
+        std::os::unix::fs::symlink(&moved, &at).unwrap();
+        assert_eq!(
+            world.why_not(),
+            format!("{NOT_READY}its installation is damaged"),
+            "{folder}"
+        );
+        assert_eq!(
+            inventory(root).ready("tiny"),
+            Err(Unready::Damaged),
+            "{folder}"
+        );
+        // With the folder back in its place the model is ready, as it was.
+        std::fs::remove_file(&at).unwrap();
+        std::fs::rename(&moved, &at).unwrap();
+        let (_, version) = world.prepared_under();
+        assert_eq!(version, record.identity().to_string(), "{folder}");
+    }
+}
+
+#[test]
 fn a_record_that_holds_a_secret_the_inventory_was_told_of_is_damage_and_what_is_said_holds_nothing_of_the_disk()
  {
     let scratch = Scratch::new("inventory-secret");

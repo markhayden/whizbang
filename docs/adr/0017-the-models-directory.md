@@ -88,6 +88,12 @@ it; "nothing outside the models directory is touched" was false of that case, an
 is corrected under "Removal": on the disk; the limit on a link where a fixed folder
 belongs says what is still followed. Words: that the hold files of deleted
 installations are kept, and why.
+Amended: 2026-11-15, after the review of task M6's pull request. Changed, in code
+and here: the inventory answers damaged for a model one of whose layout folders is
+a link ("The inventory"; "A folder of the layout that is a link", what is not
+refused). Tests and words: a pointer or a record that cannot be read is damaged,
+by a refused call and by a refused permission; two limits of the inventory are on
+`docs/carry-over.md` with a milestone.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -1422,9 +1428,11 @@ folder here is made readable and writable by its owner only): one who can do it
 can delete the same files without whizbang.
 
 **What is not refused.** A reader that holds no lock (`current`, `draining`,
-`status`) reads through such a link, and changes nothing: it can answer that a
-model is installed which every install, hold and removal then refuses. Task M6's
-inventory is built on those readers. And a lock file that is a link ("Limits").
+`status`) itself still reads through such a link, and changes nothing: asked
+alone, it can answer that a model is installed which every install, hold and
+removal then refuses. The inventory, which is built on `current`, looks at the
+layout first and answers damaged, so such a model is never called ready ("The
+inventory"). And a lock file that is a link ("Limits").
 
 **The owner may later choose to follow links instead,** so that one model can be
 kept on another disk by a link at its folder. That would take a rule for what a
@@ -1448,7 +1456,7 @@ offers one local backend.
 | Not installed | The model has no pointer: never installed, or removed |
 | Ready, under the installation's identity | The pointer names an installation whose record is the record an install would make now: from the catalogue's entry, under the revision this build's adapter states (`inventory::a_model_in_the_catalogue_is_ready_when_installed_and_not_installed_otherwise`) |
 | Out of date | The pointer names an installation with any other record: another revision of the entry, another revision of the adapter, or an adapter this build does not have. Two revisions are the same or they are not; nothing is newer (`inventory::an_installation_whose_recorded_catalogue_or_adapter_revision_is_not_the_current_one_is_prepared_as_out_of_date`) |
-| Damaged | What `current` reports as damage ("The pointer"): a pointer that is not one as it is written, a record that is not there, is not in the one form, is another installation's or holds a secret the inventory was told of; and a disk that cannot be read. Never ready, and never "not installed"; a new install repairs it (`inventory::an_installation_record_that_is_damaged_or_a_pointer_that_names_nothing_is_prepared_as_damaged_and_a_new_install_repairs_it`, `inventory::a_record_that_holds_a_secret_the_inventory_was_told_of_is_damage_and_what_is_said_holds_nothing_of_the_disk`) |
+| Damaged | What `current` reports as damage ("The pointer"): a pointer that is not one as it is written, a record that is not there, is not in the one form, is another installation's or holds a secret the inventory was told of; a disk that cannot be read, by a call it refuses or a permission it does not give (`inventory::a_pointer_or_a_record_that_cannot_be_read_is_prepared_as_damaged_never_ready_and_never_not_installed`, `inventory::a_pointer_or_a_record_the_system_refuses_permission_to_read_is_damaged_and_never_not_installed`); and a model one of whose layout folders is a link, which every install, hold and removal refuses (`inventory::a_model_one_of_whose_layout_folders_is_a_link_is_damaged_and_never_ready`). Never ready, and never "not installed"; a new install repairs it, but for the link, which its owner takes away (`inventory::an_installation_record_that_is_damaged_or_a_pointer_that_names_nothing_is_prepared_as_damaged_and_a_new_install_repairs_it`, `inventory::a_record_that_holds_a_secret_the_inventory_was_told_of_is_damage_and_what_is_said_holds_nothing_of_the_disk`) |
 
 - **The name it is asked by is never a path.** It is the name a backend declares
   for its model, which comes from a config and may hold a separator, dots, anything.
@@ -1477,6 +1485,10 @@ offers one local backend.
   publication held them to, and a file damaged since is found when the identity
   is installed again
   (`inventory::known_an_installation_whose_file_was_damaged_after_it_was_published_is_ready_until_it_is_installed_again`).
+  A hold does not read them either ("Holds"), so nothing stands between a file
+  damaged after its publication and the first adapter that loads it: that
+  adapter's task verifies, at the load or at the first lease in a process (1C,
+  `docs/carry-over.md`).
   *A run is handed no backend for a local model* until the lease is built (ADR
   0015, "What waits"): "runs under the new installation" is what the run's action
   is handed as its model's version, and no request reaches a model. *The draining
@@ -1484,7 +1496,8 @@ offers one local backend.
   lease that is refused then (task M6b); one whose pointer a removal has cleared
   is not installed. *An adapter this build does not have* makes an installed model
   out of date, and a model that is not installed is said to be not installed:
-  neither says that no install here could make it ready. *Nothing puts what a
+  neither says that no install here could make it ready (a reason of its own
+  is weighed with the command that lists models: 1C, `docs/carry-over.md`). *Nothing puts what a
   config offers over an inventory:* the tests give a roster (ADR 0015).
 
 ### What a refusal says

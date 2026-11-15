@@ -7,7 +7,8 @@
 //! and that folder is named from the catalogue's own entry.
 //!
 //! It holds no lock and reads no file of an installation: it answers from the
-//! pointer and the record the pointer names ([`super::current`]). That the files
+//! pointer and the record the pointer names ([`super::current`]), after a look
+//! at the model's layout for a folder that is a link, which is damage. That the files
 //! are whole was held when they were published. It answers from what is there now,
 //! each time it is asked.
 
@@ -71,6 +72,14 @@ impl Installations {
         // secrets than this inventory.
         if holds_secret(entry.name().as_str(), &self.secrets) {
             return Err(Unready::NotInCatalogue);
+        }
+        // A model one of whose layout folders is a link is refused by every
+        // install, hold and removal (ADR 0017, "A folder of the layout that is a
+        // link"), so it is not called ready on the word of a pointer read through
+        // the link. A disk that cannot be looked at is damaged, as one that
+        // cannot be read is.
+        if self.dir.unlinked(entry.name()).is_err() {
+            return Err(Unready::Damaged);
         }
         let record = match current(&self.dir, entry.name(), &self.secrets) {
             Ok(Current::Installed(record)) => record,
