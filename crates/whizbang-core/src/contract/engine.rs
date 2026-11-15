@@ -577,6 +577,12 @@ impl Engine {
         let answer = |found: Found| match found {
             Found::Nothing => None,
             Found::Same(earlier) => Some(Ok(Err(Answer::Repeat(earlier)))),
+            // The answer to a conflict names the id. A snapshot taken since the id
+            // was looked at, by this admission or by another call, may have brought
+            // a key the id holds (ADR 0015): it is looked for before the id is given.
+            Found::Other { .. } if self.secrets.now().redact(id.as_str()) != id.as_str() => {
+                Some(Err(Refusal::SecretInRequestId.into()))
+            }
             Found::Other { run } => Some(Err(CallError::Refused(Refusal::Conflict {
                 request: id.clone(),
                 run,
@@ -593,12 +599,6 @@ impl Engine {
             // ready, or fit the allowance, because the request under its id was
             // admitted. The id is looked up once more, and what it says is the
             // answer; a refusal stands only when the id is still not taken.
-            // But for an id that holds a secret its admission's snapshot brought (ADR
-            // 0015): it is refused as it is before the first look, since the answer
-            // to a conflict names the id.
-            Err(Stopped::Refused(error @ CallError::Refused(Refusal::SecretInRequestId))) => {
-                Err(error)
-            }
             Err(Stopped::Refused(error @ CallError::Refused(_))) => {
                 answer(self.look_up(id, fingerprint)?).unwrap_or(Err(error))
             }
@@ -1271,8 +1271,8 @@ impl Engine {
         let Some(secrets) = self.secrets.with(snapshot.secrets()) else {
             return Err(CallError::Config {
                 why: format!(
-                    "the config brings more secrets than the {} an executor keeps over \
-                     every config it has read, and none is let go",
+                    "the config adds secrets that would make more than the {} an executor \
+                     keeps over every config it has read, and none is let go",
                     super::SECRETS_KEPT_LIMIT
                 ),
             });

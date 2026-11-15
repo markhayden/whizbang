@@ -28,6 +28,10 @@ notes. ADR 0013 is amended with it ("Where data went").
 Amended: 2026-11-14, with task I6. Added: "One snapshot of the config". Changed under
 "A policy before a send, and a checked send": the limit on a secret of a later config.
 ADR 0011 is amended with it ("Kinds", "What a config offers", "Both files, each time").
+Amended: 2026-11-14, after the review of task I6, before it merged. Changed under "One
+snapshot of the config": the bound is on what snapshots add; a conflict is never
+answered with an id that holds a secret, in place of a refusal that took no second
+look; two limits on a secret a later snapshot brings; the digest and a rotated key.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -565,13 +569,22 @@ go, so a key that was rotated is still taken out of what a later run writes
   kept, and no earlier secret is dropped to make room. The look and the keeping are one
   step under the set's lock
   (`snapshot::a_snapshot_that_would_bring_more_secrets_than_an_executor_keeps_is_not_taken`).
+  **The bound is on what snapshots add.** The secrets an executor is built with are
+  not bounded, and all of them are kept: a snapshot that adds none is taken however
+  many there are, and one that adds any to a set that is, or would be, over the bound
+  is not. Nothing is dropped either way, so it cannot fail open
+  (`snapshot::an_executor_built_with_more_secrets_than_it_keeps_is_failed_by_no_snapshot_that_brings_none`).
 - **A request's id is looked at again** for a secret once its admission's snapshot is
   taken, before the id is written anywhere: the first look was made before the executor
   knew what that snapshot brings
   (`snapshot::a_request_id_that_holds_a_key_its_admissions_snapshot_brings_is_refused_and_written_nowhere`).
-  That refusal is not followed by a second look for the id, as the same refusal before
-  the first look is not: a conflict's answer names the id
-  (`snapshot::a_request_id_taken_while_its_admissions_snapshot_was_read_is_not_shown_when_the_snapshot_brings_its_key`).
+  **A conflict is never answered with an id that holds a secret.** A conflict's answer
+  names the id, and a look for the id can come after a snapshot brought a key: the
+  admission's own, or one a concurrent call took. So wherever a look finds the id taken
+  by another request, the id is looked at with the secrets known then, and one that
+  holds a secret is refused as such and not shown
+  (`snapshot::a_request_id_taken_while_its_admissions_snapshot_was_read_is_not_shown_when_the_snapshot_brings_its_key`,
+  `snapshot::a_conflict_does_not_name_an_id_that_holds_a_key_a_concurrent_admission_brought`).
 - **A snapshot whose policy names a recipient at an origin that holds a secret is not
   taken.** Every send to that recipient would be refused where it is made ("A policy
   before a send, and a checked send"), so it is said once, as `CallError::Config` in
@@ -606,6 +619,10 @@ its reason and never by another
   backends again: the runs admitted under one snapshot are answered by its backends
   and by no other's
   (`snapshot::a_backend_made_for_a_snapshot_answers_only_the_runs_admitted_under_it`).
+  **The digest does not cover the env file** (ADR 0011, "The digest"): a key that is
+  rotated gives a new backend under the same digest, and a call prepared before it is
+  not stale
+  (`snapshot::known_a_key_rotated_in_the_env_file_gives_a_new_backend_under_the_same_digest_and_no_stale_config`).
 - **A kind that makes a backend of another capability** than its table is under makes
   that backend not ready (`NotReady::OtherCapability`)
   (`roster::a_kind_that_makes_a_backend_of_another_capability_makes_its_backend_not_ready`).
@@ -620,6 +637,10 @@ check (`Ways::behind`): a run admitted under the snapshot is held to that policy
 handed those credentials, and the executor's own are not used for it. A snapshot that
 was given a credential and no policy sends under the policy that approves nothing
 (`snapshot::a_snapshot_prints_no_credential_no_secret_and_no_setting`, its last lines).
+The executor's policy and credentials never stand beside a snapshot's: under a snapshot
+with a credential alone nothing is sent though the executor's policy approves, and
+under one with a policy alone a request goes without the credential the executor holds
+(`snapshot::a_snapshots_policy_and_credentials_stand_in_place_of_the_executors_and_never_beside_them`).
 
 **The settings a run records** are asked of the snapshot's `Settings` at admission,
 with the names the call resolved and the run's secrets, and each pair is held there to
@@ -657,7 +678,12 @@ hook while it is asked.
   which is what is meant.
 - **A snapshot's secrets are known only once it is taken.** What a run admitted before
   wrote, or is writing, was cleaned with the secrets known at that run's admission. A
-  key that first appears in a later config is not taken out of an earlier run's files.
+  key that first appears in a later config is not taken out of an earlier run's files,
+  nor out of what `status`, `wait` or a repeat later answers of that run.
+- **A secret a later snapshot brings is looked for in the origins a running run's
+  snapshot approves, when that run makes a call.** If one holds it, the call from
+  inside the run fails as `CallError::Config`; the run's own sends are still held to
+  the secrets known at its admission.
 - **A preparation takes a snapshot's secrets in too,** and may fail on the bound.
 - **A backend is made each time a source that reads makes a snapshot,** for a
   preparation as for an admission. A kind's `make` reads nothing and sends nothing

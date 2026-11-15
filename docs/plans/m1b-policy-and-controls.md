@@ -989,7 +989,8 @@ is turned round. (Built: the pin is now
 `asked::a_call_that_resolved_a_model_its_snapshot_does_not_hold_is_refused_and_not_handed_no_handle`.
 A source that refuses fails the next call as `CallError::Config`, which is no refusal
 of the call: ADR 0015. One helper of `admit.rs` that implemented `ConfigSource` changed
-by three lines; no test of 1A changed.)
+by three lines. No test of checkpoint 1A changed but the pin the task turns round,
+whose old body stands under a new name.)
 **Size:** small.
 
 ### I7. An inventory, and a lease on an installation

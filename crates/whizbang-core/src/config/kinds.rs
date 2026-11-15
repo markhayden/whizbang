@@ -27,8 +27,9 @@ pub const KIND_SENTENCE_WITHHELD: &str =
 /// Why a kind does not take a backend's table: a sentence written in the kind's code,
 /// or why the egress types did not make a credential. Both are meant to be fixed
 /// words: the sentence is a constant in the kind's code. The type does not enforce
-/// that against a kind that leaks a made text; the executor replaces a sentence that
-/// holds a secret with fixed words and cuts it.
+/// that against a kind that leaks a made text; what a config offers (`Offers::of`)
+/// replaces a sentence that holds a secret of that config's credentials with fixed
+/// words and cuts it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KindRefused {
     /// What the table says is not what the kind takes: a setting it does not know, a

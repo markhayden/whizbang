@@ -25,7 +25,8 @@ use super::{
 };
 
 /// The most secrets an executor keeps, over every snapshot it has taken. A snapshot
-/// that would bring it over is not taken: a secret is never let go to make room.
+/// that adds a secret and would bring it over is not taken: a secret is never let go
+/// to make room. Those an executor is built with are not bounded.
 pub const SECRETS_KEPT_LIMIT: usize = 4096;
 
 /// The longest reason of a source that is passed on, in characters.
@@ -472,12 +473,15 @@ impl Known {
     }
 
     /// Takes these in, and answers all that are known with them. None, and nothing
-    /// is taken in, when that would be more than [`SECRETS_KEPT_LIMIT`]. The look
-    /// and the keeping are one step under the lock.
+    /// is taken in, when these add a secret and all that would then be known are
+    /// more than [`SECRETS_KEPT_LIMIT`]. The bound is on what is added: an executor
+    /// built with more secrets than that keeps every one of them, and is answered
+    /// them all when nothing is added. The look and the keeping are one step under
+    /// the lock.
     pub(super) fn with(&self, more: &Secrets) -> Option<Secrets> {
         let mut known = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let joined = known.joined(more);
-        if joined.count() > SECRETS_KEPT_LIMIT {
+        if joined.count() > known.count() && joined.count() > SECRETS_KEPT_LIMIT {
             return None;
         }
         *known = joined.clone();

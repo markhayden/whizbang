@@ -579,10 +579,9 @@ declares (ADR 0006: its model and features; ADR 0010: its price; ADR 0012: who
 receives its requests); or it answers why it does not take the table (`KindRefused`): a
 sentence that is the kind's own, or the egress types' refusal of a credential. Both
 are meant to be fixed words: the sentence is a constant in the kind's code. The type
-does not enforce that against a kind that leaks a made text; the executor replaces a
-sentence that holds a secret with fixed words and cuts it. That is done where the
-sentence is kept (`Offers::of`), with the secrets of the config's credentials, the
-backend's own key among them: the whole sentence is looked at first, one that holds a
+does not enforce that against a kind that leaks a made text; what a config offers
+(`Offers::of`) replaces a sentence that holds a secret of that config's credentials
+with fixed words and cuts it. The backend's own key is among those secrets: the whole sentence is looked at first, one that holds a
 secret is replaced with `KIND_SENTENCE_WITHHELD`, and any other is cut at 256
 characters (`KIND_SENTENCE_LIMIT`)
 (`roster::a_kinds_sentence_that_holds_its_backends_key_is_replaced_with_fixed_words_and_a_long_one_is_cut`).
