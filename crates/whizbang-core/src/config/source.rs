@@ -68,8 +68,9 @@ impl Files {
 
     /// The same source, told of these secrets from the start, as an executor is
     /// built with some ([`Engine::with_secrets`](crate::contract::Engine::with_secrets)):
-    /// a config that holds one is refused whole. They are not counted against the
-    /// bound, which is on what readings add.
+    /// a config that holds one is refused whole. They are kept however many they
+    /// are; a reading that adds one to a set that is, or would be, over the bound is
+    /// refused.
     pub fn knowing(self, secrets: Secrets) -> Files {
         Files {
             read: Mutex::new(secrets),

@@ -159,16 +159,18 @@ pub enum NotApproved {
 }
 
 impl NotApproved {
-    /// The sentence a refusal says it with.
+    /// The sentence a refusal says it with. An origin or an account is said to be
+    /// named by an approval, not to be approved: the approval may be for probing
+    /// alone, which approves no data.
     pub fn why(self) -> &'static str {
         match self {
             NotApproved::Account => {
-                "the recipient's origin is approved, but not with the account the backend \
-                 declares"
+                "the recipient's origin is named by an approval, but not with the account \
+                 the backend declares"
             }
             NotApproved::Upstreams => {
-                "the recipient's origin and account are approved, but not with the upstreams \
-                 the backend declares"
+                "the recipient's origin and account are named by an approval, but not with \
+                 the upstreams the backend declares"
             }
             NotApproved::Classes => {
                 "the recipient is not approved for the classes of data the request holds"

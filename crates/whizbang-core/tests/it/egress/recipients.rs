@@ -23,10 +23,10 @@ use super::support::{
 };
 
 const CLASSES: &str = "the recipient is not approved for the classes of data the request holds";
-const ACCOUNT_DIFFERS: &str = "the recipient's origin is approved, but not with the account \
-                               the backend declares";
-const UPSTREAMS_DIFFER: &str = "the recipient's origin and account are approved, but not \
-                                with the upstreams the backend declares";
+const ACCOUNT_DIFFERS: &str = "the recipient's origin is named by an approval, but not with \
+                               the account the backend declares";
+const UPSTREAMS_DIFFER: &str = "the recipient's origin and account are named by an approval, \
+                                but not with the upstreams the backend declares";
 
 fn ways(sender: &Arc<FakeSender>, policy: DispatchPolicy) -> Ways {
     Ways::through(sender.clone())
@@ -382,7 +382,9 @@ fn the_policy_says_why_a_recipient_may_not_receive_and_nothing_when_it_may() {
         assert_eq!(asked(&two, &other, prompts()), None);
     }
     // A recipient that may only be probed is one the policy names: approved for no
-    // class, and another account of its origin is said as the account.
+    // class, and another account of its origin is said as the account. The sentence
+    // says the origin is named by an approval, which is true of one that may only
+    // be probed, and not that it is approved, which would be read as for data.
     let probed = DispatchPolicy::none()
         .approving_probes_of(recipient())
         .unwrap();

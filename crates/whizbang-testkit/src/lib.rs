@@ -6,6 +6,7 @@ pub mod capabilities;
 pub mod downloads;
 pub mod echo;
 pub mod fs_shim;
+pub mod inventory;
 pub mod kinds;
 pub mod ledger;
 pub mod part;
