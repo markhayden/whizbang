@@ -606,7 +606,9 @@ go, so a key that was rotated is still taken out of what a later run writes
   taken.** Every send to that recipient would be refused where it is made ("A policy
   before a send, and a checked send"), so it is said once, as `CallError::Config` in
   fixed words that show no origin (`SECRET_ORIGIN_APPROVED`). The secret may be the
-  snapshot's own or an earlier one's; an upstream that holds one is left to the send
+  snapshot's own or an earlier one's; an upstream that holds one is left to the send,
+  and is refused where the config is read when the source over the files knows the
+  secret (ADR 0011, "The source over both files")
   (`snapshot::a_snapshot_that_approves_a_recipient_whose_origin_is_a_secret_is_not_taken`).
 
 **The roster and the backends are made from one thing.** A kind no longer declares a
@@ -682,8 +684,9 @@ hook while it is asked.
 **What waits.**
 
 - **The source over the config file and its env file is built** (`Files`, ADR 0011,
-  "The source over both files"): the digest, the backends and the secrets of each
-  reading. The cap, the policy and the settings in its snapshot are task C5's.
+  "The source over both files"): the digest, the backends, the secrets, the cap, the
+  policy and the settings of each reading. It gives a snapshot no credential: a kind
+  has no way to hand one over yet (ADR 0011, "What waits").
 - **Nothing holds a call to the cap.** A part is shown it; task S3 is that part.
 - **The gate's place** (task I3) is given the policy of the run's snapshot, as the
   checked sender is.
@@ -708,10 +711,10 @@ hook while it is asked.
   (ADR 0011), so it is cheap by its own rule; nothing here holds a kind to that.
 - **A run's snapshot is in memory alone.** A run a dead process left is recovered from
   its admission (task I4b), which names the digest and not the config.
-- **The name of a setting may be longer than a record takes** (128 against the 155 a
-  config's reader allows). Such a config fails every call whose backend has that
-  setting, with the setting named; which of the two bounds gives way is task C5's
-  (`docs/carry-over.md`).
+- **The name of a setting may be longer than a record takes** only from a `Settings`
+  that is not a config. The config's reader allowed 155 characters against the
+  record's 128, and task C5 held it to the record's bound (ADR 0011, "What the file
+  holds"), so no config that is read gives such a name.
 - **A reason and a kind's sentence are cleaned by themselves,** as a part's is: a
   secret completed only by words put around it is not found.
 - **A run that could not note a setting it was admitted with** would end as an error

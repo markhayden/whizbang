@@ -4,7 +4,9 @@
 //! [`Files`] names the two files and holds the kinds of a build. Each time it is
 //! asked it reads both files again, whole ([`Loaded::of_files`]), and answers one
 //! snapshot of what they say: the config's digest, the backends its kinds made
-//! ([`Offers`]) and every credential the config names. A file that cannot be read as
+//! ([`Offers`]), the cap of one call, the policy the config's approvals make, every
+//! credential the config names, and the settings a run records. A file that cannot
+//! be read as
 //! what it is refuses that ask in fixed words, which name the file as "the config" or
 //! "the env file" and quote nothing of either; what the readers themselves say of it,
 //! the key or the line, is [`Files::load`]'s to give, to whoever loads a config
@@ -13,7 +15,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use crate::contract::{ConfigSource, SECRETS_KEPT_LIMIT, Secrets, Snapshot, SourceRefused};
+use crate::contract::{
+    ConfigSource, Estimate, SECRETS_KEPT_LIMIT, Secrets, Snapshot, SourceRefused,
+};
+use crate::egress::DispatchPolicy;
 
 use super::{ConfigRefused, EnvRefused, Kinds, LoadRefused, Loaded, Offers};
 
@@ -24,6 +29,11 @@ const KEYS_OVER: &str = "the env file has given more keys, over every reading, t
 /// What is said when what a config offers makes no roster. A config that was read
 /// gives no such thing; it is passed on and not dropped all the same.
 const NO_ROSTER: &str = "the backends of the config do not make a roster";
+
+/// What is said when the recipients a config approves make no policy. A config that
+/// was read approves each recipient once and no more than a policy names; it is
+/// passed on and not dropped all the same.
+const NO_POLICY: &str = "the recipients the config approves do not make a policy";
 
 /// The config file and its env file, as an executor's source of the config.
 ///
@@ -108,9 +118,12 @@ impl std::fmt::Debug for Files {
 }
 
 impl ConfigSource for Files {
-    /// Reads both files and answers what they say now: the config's digest, what
-    /// the config offers with this build's kinds, each ready backend made, and
-    /// every credential the config names as the snapshot's secrets, in one set.
+    /// Reads both files and answers what they say now: the config's digest; what
+    /// the config offers with this build's kinds, each ready backend made; the cap
+    /// of one call, when the file gives one; the policy its approvals make, which
+    /// approves nothing when the file names no recipient; every credential the
+    /// config names as the snapshot's secrets, in one set; and the config itself as
+    /// what makes the settings a run records.
     fn snapshot(&self) -> Result<Snapshot, SourceRefused> {
         let loaded = self
             .load()
@@ -120,9 +133,20 @@ impl ConfigSource for Files {
         };
         let offers = Offers::knowing(loaded.config(), loaded.credentials(), &self.kinds, &known)
             .map_err(|_| SourceRefused::because(NO_ROSTER))?;
-        Ok(Snapshot::of(loaded.config().digest())
+        // The config's approvals are the whole policy: a config that names no
+        // recipient approves none, whatever the executor was built with.
+        let approvals = loaded.config().recipients().map(|(_, approval)| approval);
+        let policy = DispatchPolicy::from_approvals(approvals)
+            .map_err(|_| SourceRefused::because(NO_POLICY))?;
+        let snapshot = Snapshot::of(loaded.config().digest())
             .offering(Arc::new(offers))
-            .with_secrets(loaded.secrets().clone()))
+            .sending_under(policy)
+            .with_secrets(loaded.secrets().clone())
+            .recording(Arc::new(loaded.config().clone()));
+        Ok(match loaded.config().call_cap_micros() {
+            Some(micros) => snapshot.capped_at(Estimate::of_micros(micros)),
+            None => snapshot,
+        })
     }
 }
 

@@ -8,22 +8,31 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use whizbang_core::capability::{FillRequest, Picture, Support};
-use whizbang_core::config::{
-    ConfigRefused, EnvRefused, Files, KEY_SHOWN_LIMIT, KIND_SENTENCE_WITHHELD, Kinds, LoadRefused,
+use whizbang_core::capability::{
+    Declaration, Fault, FaultKind, FillRequest, Picture, Price, Stage, Support,
 };
-use whizbang_core::contract::record::RunRecord;
+use whizbang_core::config::{
+    self, ConfigRefused, EnvRefused, Files, KEY_SHOWN_LIMIT, KIND_SENTENCE_WITHHELD, KindRefused,
+    Kinds, LoadRefused, Setting, Table,
+};
+use whizbang_core::contract::record::{ArgumentValue, Handed, RunRecord};
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Answer, Argument, Call, CallError, Capability, ConfigSource, Context,
-    Engine, Executor, Failure, Finished, Kind, ModelIdentity, NoBackends, Outcome, PreparedCall,
-    Produced, Readiness, Refusal, Registry, Request, Requirement, SECRETS_KEPT_LIMIT, Secrets,
-    SourceRefused, Stale, Value, ValueType,
+    Action, ActionDescriptor, AdmissionPart, Answer, Argument, Asking, Call, CallError, Capability,
+    ConfigSource, Context, Engine, Estimate, Executor, Failure, Finished, Kind, Made,
+    ModelIdentity, NoBackends, Outcome, PartDeclined, PartRefusal, PartStep, PreparedCall,
+    Produced, Readiness, Refusal, RefusalKind, Registry, Request, Requirement, SECRETS_KEPT_LIMIT,
+    Secrets, SourceRefused, Stale, Value, ValueType,
+};
+use whizbang_core::egress::{
+    Classes, DataClass, DispatchPolicy, Origin, Piece, Recipient, Reply, Ways,
 };
 use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::store::{Reader, Store};
+use whizbang_testkit::capabilities::{FakeFiller, Paint};
 use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::kinds::FakeKind;
 use whizbang_testkit::scratch::Scratch;
+use whizbang_testkit::sending::{FakeCheck, FakeSender};
 
 use super::made_up_key;
 
@@ -45,14 +54,16 @@ impl Action for Scripted {
 }
 
 /// An action of this name with these needs. It takes an optional text, `backend`,
-/// which a need may name as the argument that chooses its backend.
+/// which a need may name as the argument that chooses its backend, and another,
+/// `note`, which makes a call another call.
 fn action(
     name: &str,
     needs: Vec<Requirement>,
     body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
 ) -> Arc<dyn Action> {
     let mut draft = ActionDescriptor::draft(name, "1.0.0", Kind::Primitive, "A test action.")
-        .argument(Argument::optional("backend", "A backend.", ValueType::Text));
+        .argument(Argument::optional("backend", "A backend.", ValueType::Text))
+        .argument(Argument::optional("note", "A note.", ValueType::Text));
     for need in needs {
         draft = draft.needs(need);
     }
@@ -78,12 +89,53 @@ fn asks() -> Arc<dyn Action> {
     })
 }
 
+/// A kind whose backends are fillers that send a prompt to their table's address,
+/// name that origin as their recipient, and state the price their setting
+/// `at_most_micros` gives. It keeps each filler it made.
+#[derive(Default)]
+struct Posts {
+    made: Mutex<Vec<Arc<FakeFiller>>>,
+}
+
+impl config::Kind for Posts {
+    fn name(&self) -> &str {
+        "posts"
+    }
+
+    fn make(&self, table: &Table<'_>) -> Result<Made, KindRefused> {
+        let Some(address) = table.backend().address() else {
+            return Err(KindRefused::Table("a posting backend needs a url"));
+        };
+        let model = table.backend().model().unwrap_or("m");
+        let mut declaration = Declaration::new(ModelIdentity::new("posts", model, "1"), &[])
+            .map_err(|_| KindRefused::Table("a posting backend cannot declare that model"))?
+            .sending_to(Recipient::new(address.origin().clone()));
+        for (key, setting) in table.backend().settings() {
+            let ("at_most_micros", Setting::Integer(micros)) = (key, setting) else {
+                return Err(KindRefused::Table("a posting backend takes at_most_micros"));
+            };
+            #[allow(clippy::cast_precision_loss)]
+            let price = Price::at_most(*micros as f64)
+                .map_err(|_| KindRefused::Table("a posting backend cannot state that price"))?;
+            declaration = declaration.priced(price);
+        }
+        let prompt = vec![Piece::of(DataClass::Prompts, b"a red door".to_vec())];
+        let filler = FakeFiller::new(Paint::Inverse)
+            .declared_as(declaration)
+            .posting(address.clone(), prompt);
+        let filler = Arc::new(filler);
+        self.made.lock().unwrap().push(filler.clone());
+        Ok(Made::Fill(filler))
+    }
+}
+
 /// A scratch folder with a config, an env file and a store in it, the source over
-/// the two files with one fake kind, and that kind.
+/// the two files with two kinds, `fake` and `posts`, and those kinds.
 struct World {
     dir: Scratch,
     fs: Arc<ShimFs>,
     kind: Arc<FakeKind>,
+    posts: Arc<Posts>,
     files: Arc<Files>,
 }
 
@@ -93,14 +145,17 @@ impl World {
     fn new(config: &str, env: Option<&str>) -> World {
         let dir = Scratch::new("config-source");
         let kind = Arc::new(FakeKind::new("fake"));
+        let posts = Arc::new(Posts::default());
         let mut kinds = Kinds::new();
         kinds.register(kind.clone()).unwrap();
+        kinds.register(posts.clone()).unwrap();
         let named = env.map(|_| dir.path().join("keys.env"));
         let files = Files::new(&dir.path().join("whizbang.toml"), named.as_deref(), kinds);
         let world = World {
             dir,
             fs: Arc::new(ShimFs::new()),
             kind,
+            posts,
             files: Arc::new(files),
         };
         world.config(config);
@@ -165,6 +220,29 @@ impl World {
             .filter(|(_, of, _)| of == name)
             .map(|(_, _, fake)| fake.requests())
             .sum()
+    }
+
+    /// Whether any file of the store holds this text, as it is.
+    fn store_holds(&self, text: &str) -> bool {
+        fn every_byte_under(folder: &std::path::Path, into: &mut Vec<u8>) {
+            let mut entries: Vec<_> = std::fs::read_dir(folder)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect();
+            entries.sort();
+            for path in entries {
+                if path.is_dir() {
+                    every_byte_under(&path, into);
+                } else {
+                    into.extend(std::fs::read(&path).unwrap());
+                    into.push(b'\n');
+                }
+            }
+        }
+        let mut bytes = Vec::new();
+        every_byte_under(&self.root(), &mut bytes);
+        assert!(bytes.len() > 100, "the store holds next to nothing");
+        bytes.windows(text.len()).any(|w| w == text.as_bytes())
     }
 
     /// Everything a failure says, and whether it holds the scratch folder's path or
@@ -813,8 +891,436 @@ fn a_source_prints_no_path_and_no_key() {
     let world = World::new(&config, Some(&format!("FILL_KEY={key}\n")));
     world.files.snapshot().unwrap();
     let printed = format!("{:?}", world.files);
-    assert_eq!(printed, "Files { env_file: true, kinds: 1, secrets: 1 }");
+    assert_eq!(printed, "Files { env_file: true, kinds: 2, secrets: 1 }");
     assert!(!world.names_a_path(&printed) && !printed.contains(&key));
     let secrets = Secrets::new([key.clone()]).unwrap();
     assert_eq!(world.files.load().unwrap().secrets(), &secrets);
+}
+
+// --- what the snapshot carries (task C5) ---------------------------------------------------------
+
+/// What stands in for the part that holds a call to the cap of one call (task S3,
+/// which is not built): it refuses a call whose estimate is over the cap of the
+/// snapshot it is shown, and keeps each cap it was shown.
+#[derive(Default)]
+struct HoldsToCap(Mutex<Vec<Option<Estimate>>>);
+
+impl AdmissionPart for HoldsToCap {
+    fn name(&self) -> &'static str {
+        "stand-in-cap"
+    }
+
+    fn look(&self, asking: &Asking<'_>, _: &mut PartStep<'_, '_>) -> Result<(), PartDeclined> {
+        let cap = asking.snapshot().cap();
+        self.0.lock().unwrap().push(cap);
+        match cap {
+            Some(cap) if asking.prepared().estimate().micros() > cap.micros() => {
+                let refusal = PartRefusal::new(
+                    RefusalKind::OverAllowance,
+                    "the call's estimate is over the cap of one call",
+                );
+                Err(refusal.unwrap().into())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// A config with one posting filler at the API's address, which names this variable
+/// for its key, and whatever follows.
+fn posting(rest: &str) -> String {
+    format!("[backends.fill]\nkind = \"posts\"\nurl = \"{API}/v1\"\nkey_env = \"FILL_KEY\"\n{rest}")
+}
+
+/// The setting of this name in a run's record, when it holds one.
+fn setting(record: &RunRecord, name: &str) -> Option<ArgumentValue> {
+    let settings = &record.asked().settings;
+    let found = settings.iter().find(|setting| setting.name() == name);
+    found.map(|setting| setting.value().clone())
+}
+
+#[test]
+fn a_cap_lowered_in_the_config_is_the_cap_the_next_admission_is_held_to_on_one_executor() {
+    // The filler states that a request costs 1.5 dollars at most, so that is the
+    // call's estimate. The cap is 2 dollars, then 1, then 1.5, then none.
+    let key = made_up_key("-cap");
+    let config = |cap: &str| {
+        posting(&format!(
+            "[backends.fill.settings]\nat_most_micros = 1500000\n{cap}"
+        ))
+    };
+    let world = World::new(
+        &config("[spend]\ncall_cap_usd = 2\n"),
+        Some(&format!("FILL_KEY={key}\n")),
+    );
+    let part = Arc::new(HoldsToCap::default());
+    // `holds` needs a filler and asks it nothing.
+    let needs = vec![Requirement::new(Capability::Fill)];
+    let holds = action("holds", needs, |_, _| Ok(Produced::nothing()));
+    let executor = world.executor(vec![holds]).with_part(part.clone());
+    let call = Call::new("holds");
+    assert_eq!(
+        executor.prepare(&call).unwrap().estimate(),
+        Estimate::of_micros(1_500_000)
+    );
+
+    let finished = executor.submit(&call).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let cap = |record: &RunRecord| setting(record, "spend.call_cap_micros");
+    assert_eq!(
+        cap(&world.record(&finished)),
+        Some(ArgumentValue::Integer(2_000_000))
+    );
+    // The cap is lowered in the file: the next call, which is over it, is refused,
+    // with no run.
+    world.config(&config("[spend]\ncall_cap_usd = 1\n"));
+    let refused = executor.submit(&call).unwrap_err();
+    assert_eq!(
+        refused,
+        CallError::Refused(Refusal::ByPart {
+            action: "holds".to_owned(),
+            part: "stand-in-cap",
+            kind: RefusalKind::OverAllowance,
+            why: "the call's estimate is over the cap of one call".to_owned(),
+        })
+    );
+    assert_eq!(world.runs(), 1);
+    // A cap the estimate is not over, and no cap at all, admit it.
+    world.config(&config("[spend]\ncall_cap_usd = 1.5\n"));
+    let finished = executor.submit(&call).unwrap();
+    assert_eq!(
+        cap(&world.record(&finished)),
+        Some(ArgumentValue::Integer(1_500_000))
+    );
+    world.config(&config(""));
+    let finished = executor.submit(&call).unwrap();
+    assert_eq!(cap(&world.record(&finished)), None);
+    assert_eq!(world.runs(), 3);
+    let micros = |micros| Some(Estimate::of_micros(micros));
+    assert_eq!(
+        *part.0.lock().unwrap(),
+        [
+            micros(2_000_000),
+            micros(1_000_000),
+            micros(1_500_000),
+            None
+        ]
+    );
+    assert!(!world.store_holds(&key) && !world.store_holds(&key[..14]));
+}
+
+fn answered() -> Result<Reply, Fault> {
+    Ok(Reply::answered(200, b"{}".to_vec()).unwrap())
+}
+
+#[test]
+fn a_recipient_taken_out_of_the_egress_table_is_refused_on_the_next_call_on_one_executor() {
+    let key = made_up_key("-gate");
+    let approving = |classes: &str| {
+        posting(&format!(
+            "[egress.recipients.api]\norigin = \"{API}\"\nclasses = [{classes}]\n"
+        ))
+    };
+    let world = World::new(
+        &approving("\"prompts\""),
+        Some(&format!("FILL_KEY={key}\n")),
+    );
+    let faults = Arc::new(Mutex::new(Vec::new()));
+    let sends = {
+        let faults = faults.clone();
+        let needs = vec![Requirement::new(Capability::Fill)];
+        action("sends", needs, move |_, context| {
+            let fill = context.capabilities().fill().unwrap();
+            match fill.fill(&fill_request()) {
+                Ok(_) => Ok(Produced::nothing()),
+                Err(fault) => {
+                    faults.lock().unwrap().push((fault.kind(), fault.stage()));
+                    Err(Failure::error("refused", fault.sentence()))
+                }
+            }
+        })
+    };
+    // The executor's own policy approves the recipient for everything: it is the
+    // config's that a run is held to.
+    let there = Recipient::new(Origin::of(API, &Secrets::none()).unwrap());
+    let every = Classes::of(&[
+        DataClass::Prompts,
+        DataClass::SourceImages,
+        DataClass::DerivedImages,
+        DataClass::Evidence,
+    ]);
+    let sender = Arc::new(FakeSender::scripted(vec![answered(), answered()]));
+    let ways = Ways::through(sender.clone())
+        .checked_by(Arc::new(FakeCheck::approving()))
+        .under(DispatchPolicy::none().approving(there, every).unwrap());
+    let executor = world.executor(vec![sends]).with_ways(ways);
+    let call = Call::new("sends");
+
+    let finished = executor.submit(&call).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(sender.requests(), 1);
+    assert_eq!(world.record(&finished).egress()[0].outcome(), Handed::Sent);
+
+    // The recipient is taken out of the table; then it is there for another class
+    // than the one the request holds. Each next call is refused its send.
+    let refused = (FaultKind::Rejected, Stage::NotSent);
+    for (taken_out, nth) in [(posting(""), 1), (approving("\"source_images\""), 2)] {
+        world.config(&taken_out);
+        let finished = executor.submit(&call).unwrap();
+        assert_eq!(finished.outcome().name(), "error");
+        assert_eq!(sender.requests(), 1, "nothing more was handed over");
+        assert_eq!(faults.lock().unwrap().len(), nth);
+        assert_eq!(faults.lock().unwrap()[nth - 1], refused);
+        let record = world.record(&finished);
+        assert_eq!(record.egress().len(), 1);
+        assert_eq!(record.egress()[0].outcome(), Handed::Refused);
+    }
+    // Put back, the next call sends.
+    world.config(&approving("\"prompts\", \"evidence\""));
+    let finished = executor.submit(&call).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(sender.requests(), 2);
+    assert_eq!(world.posts.made.lock().unwrap().len(), 4);
+    assert!(!world.store_holds(&key) && !world.store_holds(&key[..14]));
+}
+
+#[test]
+fn a_credential_rotated_in_the_env_file_is_the_one_the_next_calls_backend_is_handed_and_both_are_taken_out_of_what_is_written_after()
+ {
+    let (old, new) = (made_up_key("-O"), made_up_key("-N"));
+    let config =
+        format!("[backends.fill]\nkind = \"fake\"\nkey_env = \"FILL_KEY\"\nurl = \"{API}/v1\"\n");
+    let world = World::new(&config, Some(&format!("FILL_KEY={old}\n")));
+    let tells = {
+        let keys = [old.clone(), new.clone()];
+        let needs = vec![Requirement::new(Capability::Fill)];
+        action("tells", needs, move |call, context| {
+            // The first run says the key it was made with; the second says both.
+            let known = if call.arguments().is_empty() { 1 } else { 2 };
+            let said = keys[..known].join(" and ");
+            context.events().progress(&format!("using {said}"));
+            let written = context.diagnostics().write("keys.txt", said.as_bytes());
+            written.map_err(|why| Failure::error("write", &why))?;
+            Err(Failure::error("told", &format!("the keys are {said}")))
+        })
+    };
+    let executor = world.executor(vec![tells]);
+    let handed = |world: &World| {
+        let shown = world.kind.shown();
+        let last = shown.last().unwrap();
+        last.key.as_ref().unwrap().expose().to_owned()
+    };
+
+    let first = executor.submit(&Call::new("tells")).unwrap();
+    assert_eq!(message(&first), "the keys are [redacted]");
+    assert_eq!(handed(&world), old);
+    // A call is prepared, and the key is rotated in the env file. The call is not
+    // stale: the digest covers nothing of the env file.
+    let call = Call::new("tells").argument("note", Value::text("again"));
+    let prepared = executor.prepare(&call).unwrap();
+    world.env(&format!("FILL_KEY={new}\n"));
+    let answer = executor.request(&Request::new(call).expecting(&prepared));
+    let Ok(Answer::Ran(second)) = answer else {
+        panic!("the request did not run: {answer:?}");
+    };
+    // The backend of that run was made with the new key, and the old one is
+    // still taken out of everything the run wrote.
+    assert_eq!(handed(&world), new);
+    assert_eq!(message(&second), "the keys are [redacted] and [redacted]");
+    assert_eq!(
+        world.record(&second).asked().config,
+        Some(prepared.config())
+    );
+    for key in [&old, &new] {
+        assert!(!world.store_holds(key), "a key is in the store");
+        assert!(
+            !world.store_holds(&key[..14]),
+            "the start of a key is in the store"
+        );
+        let refused = executor.request_id(key).unwrap_err();
+        assert_eq!(refused, CallError::Refused(Refusal::SecretInRequestId));
+    }
+    assert!(world.store_holds("the keys are [redacted] and [redacted]"));
+    assert!(world.store_holds("using [redacted] and [redacted]"));
+}
+
+#[test]
+fn a_runs_settings_are_those_of_the_backend_its_call_resolved_and_the_cap_and_hold_no_credential_and_no_variables_name()
+ {
+    let (key, token, other) = (made_up_key("-K"), made_up_key("-T"), made_up_key("-J"));
+    let config = |version: &str| {
+        format!(
+            "[backends.fill]\ndefault = \"bria\"\n\n\
+             [backends.fill.bria]\nkind = \"fake\"\nmodel = \"bria-erase\"\nprovider = \"fal\"\n\
+             url = \"{API}/v1\"\nkey_env = \"FILL_KEY\"\ntoken_env = \"FILL_TOKEN\"\n\n\
+             [backends.fill.bria.settings]\nversion = \"{version}\"\nfeatures = \"prompt\"\n\n\
+             [backends.fill.lama]\nkind = \"fake\"\nmodel = \"lama\"\n\n\
+             [backends.judge]\nkind = \"fake\"\nkey_env = \"JUDGE_KEY\"\nurl = \"{API}/v2\"\n\n\
+             [spend]\ncall_cap_usd = 2.5\n\n\
+             [egress.recipients.fal]\norigin = \"{API}\"\naccount = \"team-1234\"\n\
+             classes = [\"prompts\"]\n"
+        )
+    };
+    let env = format!("FILL_KEY={key}\nFILL_TOKEN={token}\nJUDGE_KEY={other}\n");
+    let world = World::new(&config("3"), Some(&env));
+    let executor = world.executor(vec![asks()]);
+    let text = |name: &str, value: &str| (name.to_owned(), ArgumentValue::Text(value.to_owned()));
+    let recorded = |finished: &Finished| -> Vec<(String, ArgumentValue)> {
+        let record = world.record(finished);
+        let settings = record.asked().settings.iter();
+        settings
+            .map(|setting| (setting.name().to_owned(), setting.value().clone()))
+            .collect()
+    };
+    let of_bria = |version: &str| {
+        vec![
+            text("backends.fill.bria.kind", "fake"),
+            text("backends.fill.bria.model", "bria-erase"),
+            text("backends.fill.bria.provider", "fal"),
+            text("backends.fill.bria.settings.features", "prompt"),
+            text("backends.fill.bria.settings.version", version),
+            text("backends.fill.bria.url", "https://api.example.com/v1"),
+            (
+                "spend.call_cap_micros".to_owned(),
+                ArgumentValue::Integer(2_500_000),
+            ),
+        ]
+    };
+
+    // The backend the call resolved, and the cap: not the other filler, not the
+    // judge, nothing of the egress table.
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(recorded(&finished), of_bria("3"));
+    // A call that chose the other filler records the other's.
+    let finished = executor.submit(&choosing("lama")).unwrap();
+    assert_eq!(
+        recorded(&finished),
+        [
+            text("backends.fill.lama.kind", "fake"),
+            text("backends.fill.lama.model", "lama"),
+            (
+                "spend.call_cap_micros".to_owned(),
+                ArgumentValue::Integer(2_500_000)
+            ),
+        ]
+    );
+    // A setting changed in the file is what the next run records.
+    world.config(&config("4"));
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(recorded(&finished), of_bria("4"));
+    assert_eq!(world.runs(), 3);
+
+    // No credential and no start of one, no name of a variable, and nothing of
+    // the egress table is in any byte the store holds.
+    for absent in [
+        key.as_str(),
+        token.as_str(),
+        other.as_str(),
+        &key[..14],
+        "FILL_KEY",
+        "FILL_TOKEN",
+        "JUDGE_KEY",
+        "key_env",
+        "token_env",
+        "team-1234",
+    ] {
+        assert!(!world.store_holds(absent), "the store holds {absent}");
+    }
+    assert!(world.store_holds("backends.fill.bria.settings.version"));
+}
+
+#[test]
+fn a_setting_a_record_would_not_take_fails_the_admission_naming_the_setting_and_never_its_value() {
+    // The cap in millionths is a number whose digits are the key. The reader does
+    // not find a secret in a number (ADR 0011, "What the reader does not do"), so
+    // the config is read; a record writes a number as it is, so the settings are
+    // refused, and the admission fails with no run.
+    let digits = "1234567890";
+    let config = |cap: &str| {
+        format!(
+            "[backends.fill]\nkind = \"fake\"\nkey_env = \"FILL_KEY\"\nurl = \"{API}/v1\"\n\
+             [spend]\ncall_cap_usd = {cap}\n"
+        )
+    };
+    let world = World::new(
+        &config("1234.567890"),
+        Some(&format!("FILL_KEY={digits}\n")),
+    );
+    let executor = world.executor(vec![asks()]);
+    let id = executor.request_id("request-1").unwrap();
+    let request = Request::new(Call::new("asks")).with_id(id);
+    let failed = executor.request(&request).unwrap_err();
+    assert_eq!(
+        failed,
+        config_failure(
+            "the setting spend.call_cap_micros is a number whose digits hold a secret, and a \
+             record writes a number as it is; the value is not shown"
+        )
+    );
+    assert!(!said(&failed).contains(digits));
+    assert_eq!((world.runs(), world.requests("default")), (0, 0));
+    // Put right, the same request runs under its id, and records the cap.
+    world.config(&config("2"));
+    let Ok(Answer::Ran(finished)) = executor.request(&request) else {
+        panic!("the request did not run");
+    };
+    assert_eq!(
+        setting(&world.record(&finished), "spend.call_cap_micros"),
+        Some(ArgumentValue::Integer(2_000_000))
+    );
+    assert!(!world.store_holds(digits));
+}
+
+#[test]
+fn an_upstream_that_holds_a_secret_the_source_knows_is_refused_where_the_config_is_read() {
+    // A secret that can stand as a host: lower-case letters and digits.
+    let secret = format!("upstream{}", "0123456789abcdef");
+    let config = |upstream: &str| {
+        posting(&format!(
+            "[egress.recipients.api]\norigin = \"{API}\"\nclasses = [\"prompts\"]\n\
+             upstreams = [\"https://{upstream}.example\"]\n"
+        ))
+    };
+    let env = format!("FILL_KEY={}\n", made_up_key("-up"));
+    let world = World::new(&config(&secret), Some(&env));
+    let needs = vec![Requirement::new(Capability::Fill)];
+    let holds = action("holds", needs, |_, _| Ok(Produced::nothing()));
+    // A source that was not told of the secret reads the config: the executor,
+    // which was, leaves an upstream to each send (ADR 0015).
+    let told = Secrets::new([secret.clone()]).unwrap();
+    let executor = world.executor(vec![holds]).with_secrets(told.clone());
+    assert!(executor.prepare(&Call::new("holds")).is_ok());
+    assert_eq!(world.runs(), 0);
+    drop(executor);
+
+    // A source that is told of it, as the executor is, refuses the config whole.
+    let mut world = world;
+    let kinds = {
+        let mut kinds = Kinds::new();
+        kinds.register(world.posts.clone()).unwrap();
+        kinds
+    };
+    let files = Files::new(&world.config_path(), Some(&world.env_path()), kinds).knowing(told);
+    world.files = Arc::new(files);
+    let needs = vec![Requirement::new(Capability::Fill)];
+    let holds = action("holds", needs, |_, _| Ok(Produced::nothing()));
+    let executor = world.executor(vec![holds]);
+    let failed = executor.submit(&Call::new("holds")).unwrap_err();
+    assert_eq!(
+        failed,
+        config_failure(
+            "the config holds a secret: a credential is named by its variable and is never \
+             written in the file; nothing of the file is shown"
+        )
+    );
+    assert_eq!(world.runs(), 0);
+    world.config(&config("storage"));
+    assert_eq!(
+        executor
+            .submit(&Call::new("holds"))
+            .unwrap()
+            .outcome()
+            .name(),
+        "completed"
+    );
 }

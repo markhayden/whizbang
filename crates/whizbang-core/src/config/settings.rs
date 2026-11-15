@@ -27,7 +27,9 @@ pub enum SettingsRefused {
     /// The name a setting would be recorded under holds a secret. It is not shown.
     HoldsSecret,
     /// The name a setting would be recorded under is longer than a record takes: its
-    /// first characters.
+    /// first characters. No config that was read gives one: the reader refuses a
+    /// backend's name and a setting's key that are too long together. It is kept so
+    /// that such a name, if the two ever part, is refused and not left out.
     Name { name: String },
     /// The setting is a whole number whose digits, as they are written, hold a secret:
     /// a record writes a number as it is, so it writes none.
@@ -73,6 +75,14 @@ fn shown(name: &str) -> String {
         Some((cut, _)) => format!("{}...", &name[..cut]),
         None => name.to_owned(),
     }
+}
+
+/// The name a backend's setting is recorded under:
+/// `backends.<capability>.<name>.settings.<key>`. The config's reader holds it to the
+/// length a record takes ([`SETTING_NAME_LIMIT`](crate::contract::record::SETTING_NAME_LIMIT)),
+/// with this same function, so the name that is checked is the name that is made.
+pub(super) fn setting_name(capability: &str, backend: &str, key: &str) -> String {
+    format!("backends.{capability}.{backend}.settings.{key}")
 }
 
 impl Config {
@@ -129,7 +139,7 @@ impl Config {
                         Setting::Integer(number) => Value::Integer(*number),
                         Setting::Boolean(boolean) => Value::Boolean(*boolean),
                     };
-                    pairs.insert(format!("{under}.settings.{key}"), value);
+                    pairs.insert(setting_name(capability.name(), name, key), value);
                 }
             }
         }
@@ -185,5 +195,60 @@ impl Settings for Config {
     ) -> Result<Vec<(String, Value)>, NotJudged> {
         self.settings_of(resolved, secrets)
             .map_err(|refused| NotJudged::saying(&refused.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::{Config, Setting, SettingsRefused};
+    use crate::config::{Backend, Offered};
+    use crate::contract::{Capability, Secrets};
+
+    /// What `settings::what_a_record_would_not_take_is_refused_naming_the_setting_and_never_its_value`
+    /// held of a name too long for a record, until the config's reader refused such
+    /// a config. No file gives this config any more, so it is made here by hand:
+    /// were the reader's bound and the record's ever to part, the setting is still
+    /// refused, shown cut, and not left out.
+    #[test]
+    fn a_name_longer_than_a_record_takes_is_refused_and_shown_cut_should_a_config_ever_hold_one() {
+        let (backend, key) = ("b".repeat(64), "k".repeat(64));
+        let settings = BTreeMap::from([
+            (key, Setting::Integer(1)),
+            ("short".to_owned(), Setting::Integer(2)),
+        ]);
+        let table = Backend {
+            kind: "fake".to_owned(),
+            model: None,
+            provider: None,
+            url: None,
+            key_env: None,
+            token_env: None,
+            settings,
+        };
+        let offered = Offered {
+            default: None,
+            backends: BTreeMap::from([(backend.clone(), table)]),
+        };
+        let long = Config {
+            backends: BTreeMap::from([("segment", offered)]),
+            call_cap_micros: None,
+            recipients: BTreeMap::new(),
+        };
+        let refused = long
+            .settings_of(&[(Capability::Segment, backend.as_str())], &Secrets::none())
+            .unwrap_err();
+        let shown = format!("backends.segment.{}...", "b".repeat(64 - 17));
+        assert_eq!(
+            refused,
+            SettingsRefused::Name {
+                name: shown.clone()
+            }
+        );
+        assert_eq!(
+            refused.to_string(),
+            format!("the setting {shown} has a name longer than a record takes")
+        );
     }
 }
