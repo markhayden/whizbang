@@ -977,6 +977,19 @@ impl Store {
         })
     }
 
+    /// Confirms the generation this writer found, or last made visible: the root is
+    /// synced, which is the step that makes a pointer durable. A publication whose
+    /// last sync failed ([`Error::Unacknowledged`]) left a generation that is visible
+    /// and not known to be durable; whoever opens the store next to write confirms it
+    /// with this before building on it. It changes nothing a reader sees.
+    pub fn confirm(&self) -> Result<()> {
+        let root = &self.files.layout.root;
+        self.files
+            .fs
+            .sync_dir(root)
+            .map_err(Error::io("sync", root))
+    }
+
     /// The current generation.
     pub fn snapshot(&self) -> Result<Generation> {
         self.files.snapshot()

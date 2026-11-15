@@ -1,7 +1,8 @@
 # 0015. The executor's interfaces: what a strand plugs into, one section for each
 
 Status: accepted. Changes ADR 0007 ("Admission": the executor's parts are asked in the
-admission's step; "A preparation handed to admission": a preparation carries the time it
+admission's step; "Alternatives": a store is recovered when the next writer opens it,
+which it turned down for now; "A preparation handed to admission": a preparation carries the time it
 was made, and a request may carry a cap, and `ConfigSource` answers a snapshot of the
 config or a refusal, where it answered a digest), ADR 0009 (a call that resolved a model
 its snapshot does not hold is refused) and ADR 0011 (a kind makes a backend), and names
@@ -54,6 +55,12 @@ Amended: 2026-11-15, with task S8. Changed under "A part in the admission", "Lim
 the kinds the two parts that refuse are recorded under. And, as the review of task S3
 asked, under "One snapshot of the config": a snapshot prints whether it holds a cap,
 and not the cap.
+Amended: 2026-11-15, after the review of task I3. Changed under "A wrapper around
+each request": a panic of `Open::after` abandons the run; the tests of a judge and a
+segmenter through the places, of a repeat of an abandoned run's request, and of the
+gate's sentence; and why the path without a snapshot is left as it is.
+Amended: 2026-11-15, with task I4. Added: "One way to a writer, with recovery before
+it". ADR 0007 is amended with it (the alternative it turned down for now).
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -886,6 +893,13 @@ through the meter, the lease and the gate before the tally accounts for the requ
 So a request is outstanding, and its run and every run above it not terminal, until
 the last wrapper has returned
 (`around::with_a_wrapper_stopped_after_the_backend_answered_the_run_and_its_parent_are_not_terminal`).
+A filler and a segmenter send through `Bounds::send`; a judge's handle counts and
+accounts for its request itself, to keep the exchange, and takes it through the same
+places by `Bounds::through`. Each of the three is shown passing the places in order,
+and stopped before its backend by a gate that refuses
+(`around::a_segmentation_and_a_judge_request_each_pass_the_three_places_in_order`,
+`around::a_gate_that_refuses_stops_a_segmentation_and_a_judge_request_before_its_backend`;
+the first test of this section is a filler's).
 A request the handle's own checks refuse is seen by no wrapper. A request the tally
 refuses, because the run's action has come back or the run has sent as many as it may,
 is seen by none either.
@@ -911,6 +925,20 @@ the request is handed to the action, which is told the request could not be acco
 for, and nothing more is sent for the run
 (`around::a_wrapper_that_fails_after_the_backend_answered_leaves_the_run_abandoned_and_not_ended`,
 `around::a_backend_that_panics_under_a_wrapper_leaves_the_run_abandoned_and_not_ended`).
+A **panic** of `Open::after` comes to the same as its failure: it is caught where the
+wrappers are told, the run is marked to be abandoned exactly as for a failure, the
+places before it are told how the request ended all the same, and the panic then goes
+on, as a backend's does under a wrapper that holds something: it unwinds through the
+handle to the action, and whatever the action makes of it the run is abandoned, with
+no end published and its reservation open
+(`around::a_wrapper_that_panics_after_the_backend_answered_leaves_the_run_abandoned_and_not_ended`).
+That holds wherever `after` is called, so also where it is told that a later place
+refused the request: what the wrapper held is not accounted for either way
+(`around::a_wrapper_that_panics_when_told_a_later_place_refused_leaves_the_run_abandoned`).
+The request id of an abandoned run stays taken, by the rule every admitted run has
+(ADR 0007): the same request again is answered with that run, as abandoned, and never
+runs again, and another request under the id is a conflict
+(`around::a_repeat_of_the_request_of_an_abandoned_run_is_answered_with_that_run_and_never_runs_again`).
 A wrapper says whether it holds anything for a request (`Open::holds`). One whose
 work is all before the request holds nothing (`Nothing`), and a backend's panic under
 such a one alone is what it was without it: its run ends as an error that says its
@@ -935,7 +963,13 @@ fault states no charge
 (`around::with_the_default_policy_a_backend_that_names_a_recipient_is_refused_at_the_gates_place_and_one_that_names_none_is_sent`;
 through a config's policy, `gate::a_backend_that_is_refused_at_the_gates_place_is_not_called`).
 A backend that names no recipient is local: the gate lets its requests by, and what
-such a backend tries to send is refused by its sender, as before.
+such a backend tries to send is refused by its sender, as before. The sentence the
+refusal is noted with states the classes the request is known to hold, and where
+that is none it says "none known before a piece of it is made": the backend was not
+called, so what its pieces would have held is not known. Where the refusal could not
+be listed in where the run's data went (the list keeps half its room for what was
+sent), the sentence says so, as the checked sender's does
+(`around::the_gates_refusal_says_so_when_it_could_not_be_listed_in_where_the_runs_data_went`).
 
 **What a request is said to hold, before any piece is made.** ADR 0012 left open who
 knows a source image from a derived one at a handle. Nobody does: a `Picture` has no
@@ -947,7 +981,9 @@ that is not approved for prompts when the request holds one, before anything is
 built; and every piece the backend then makes is held to the policy again, with the
 class its builder states, by the checked sender. A recipient approved for prompts
 and not for source images is still refused a source image there, after its backend
-was called.
+was called: sent a picture and no prompt, the backend is called once, nothing is
+handed to the sender, and the refusal names the images
+(`gate::a_recipient_approved_for_prompts_only_that_is_sent_a_picture_and_no_prompt_is_refused_after_its_backend_was_called`).
 
 **The bound of a request is its own backend's.** `Wrapped::quote` is the quote of the
 backend the handle holds, which is the one the call resolved. Two backends of one
@@ -961,21 +997,138 @@ reserves, and it is kept: reserving the largest cannot reserve too little
 - **Nothing stands in the lease's or the meter's place.** A paid request is not
   debited, recorded before it leaves or settled until task S5; and a request to a
   local model takes no lease until the rest of task I7.
-- **A wrapper that panics** unwinds as a backend's panic does. Before the backend was
-  called that is the fault of one action; what the places before it held is dropped,
-  and nothing here marks the run.
+- **A wrapper that panics in `Around::before`** unwinds as a backend's panic does
+  under no wrapper: it is the fault of one action; what the places before it held is
+  dropped, and nothing here marks the run. (A panic of `Open::after` abandons the
+  run, as above.)
 - **A refused request is in the run's list of requests,** as one that ended in a
   fault that says it was not sent, beside its refusal.
 - **An executor that was built with held backends and no snapshot hands a run no
   backend for a capability none of them answers,** and admits the call: its action
   finds no handle. The path through a snapshot refuses such a call as not ready
-  (`Snapshot::handed`). It is left so: an executor built by hand is a test's, many of
-  whose actions need a capability and never ask for it, and the binary's executor
-  goes through a snapshot (task W1).
+  (`Snapshot::handed`). It is left so for now: an executor built by hand is a test's,
+  many of whose actions need a capability and never ask for it. The binary's executor
+  is on this path too, today: it is built with no backends at all
+  (`crates/whizbang/src/wiring.rs`, `NoBackends`) and no snapshot. That it goes through
+  a snapshot is task W1's plan and not yet so; `docs/carry-over.md` has the row that
+  holds the binary to the snapshot path, with a test that a call with no backend to
+  hand is refused as not ready.
 - **The gate knows a prompt and no other class,** as above.
+
+### One way to a writer, with recovery before it
+
+Task I4. Changes ADR 0007, which turned down marking an interrupted run "when the next
+writer opens the store" for now, as a write on open by whatever command opened it:
+the plan of checkpoint 1B decides it the other way ("What a crashed run is recovered
+to"), and this is where the write on open is made. Tests named `recover::` are in
+`crates/whizbang-core/tests/it/contract/recover.rs`.
+
+**Recovery is lossy and pessimistic by intent** (the plan, "Decisions"). It
+reconstructs nothing of what a dead process did: it ends what was left and counts
+what may have been spent at the most it can have been. What makes that cheap is that
+it is one publication of names made once, by parts that each look at what is there
+and add only what is missing, so that a crash inside it leaves it not done, and done
+twice it changes nothing. This section is the frame; what is recovered is each
+part's (the interrupted run: task I4b; the money: task S6).
+
+**One entry point opens a store to write** (`contract::Opening`, over `Store::open`
+and its two siblings, which it mirrors: `open`, `open_in_existing_parent`,
+`open_existing`). The store module names nothing above it: the entry point is the
+contract's. Opening takes the writer lock and recovers nothing. Whoever then asks for
+the writer (`Opening::writer`) is answered once recovery is over, and the first to
+ask runs it, on its own thread, before anything is handed out
+(`recover::a_fake_parts_records_are_published_before_the_writer_is_handed_out`).
+
+**Recovery is a list of parts** (`RecoveryPart`, given in a `Recovery`, with the clock
+that tells the time of the recovery). Each is asked once for a store value, in the
+order given, and shown (`Recovering`) the generation the store was found at, a way to
+read its entries, whether a run is open in this process, and the time. A part adds
+names to the one publication of the recovery: outside runs (`Recovering::make`, which
+is the store's `create`) and in a run the store holds (`Recovering::make_in`). A name
+is made once: one the generation holds, or that a part made earlier in the same
+recovery, is refused, and so is a name in a run the store does not hold, and each
+fails the recovery
+(`recover::a_part_that_does_not_keep_to_a_name_made_once_fails_the_recovery`). With
+nothing added nothing is published; and with no part the store opens as before, but
+for the one sync below
+(`recover::with_no_part_recovery_publishes_nothing_and_the_store_opens_as_before`,
+`recover::recovery_run_twice_changes_nothing_the_second_time`).
+
+**All of the parts' records, or none.** They are one publication, so the store's
+rule holds for them: refusing each call of the file system in turn, the store is left
+with none of any part's records, or, where the refused call was the last sync, with
+all of them
+(`recover::all_of_the_parts_records_are_published_or_none_shown_by_refusing_each_call_of_the_publication`).
+
+**An open confirms the generation it finds before it is ready.** The first step of
+every recovery is a sync of the store's root (`Store::confirm`), which is the step
+that makes a pointer durable: the publication that made the generation may have been
+visible and not confirmed (the store's `Unacknowledged`), in a process that then
+died, and nothing is built on it before it is durable. A store that cannot be
+confirmed hands out no writer, and no part is asked
+(`recover::an_open_that_cannot_confirm_the_generation_it_finds_hands_out_no_writer_and_asks_no_part`).
+
+**Three states,** shared by every clone of an `Opening`, which is what "the same
+store value" is: initializing, ready, failed. Whoever asks while it is initializing
+waits for the answer, and everyone is answered alike from then on: two executors
+built at once are both handed the one writer after one recovery, and a third built
+while it runs waits
+(`recover::two_executors_built_at_once_over_one_store_value_are_both_answered_after_one_recovery_and_a_third_built_while_it_runs_waits`,
+`recover::whoever_waits_for_a_recovery_that_fails_is_told_what_the_one_who_ran_it_is_told`).
+An executor is built over the writer (`Engine::over`), so building one is asking for
+it.
+
+**A recovery that fails** hands out no writer, to anyone, for anything. The store
+value is dropped, which lets the lock go, though the opening lives; the store can be
+read (`Opening::reader`, which opens it as any reader does); and the failure
+(`NoWriter`) is said without a path, in one of two ways:
+
+- **nothing published** (`NothingPublished`), when it failed before its publication
+  was visible: a part failed (`RecoveryFailed`: a sentence, cut to 256 characters; a
+  failure of the store that a part passes on is taken in its words without paths), a
+  part panicked, the generation found could not be confirmed, or the store refused a
+  step of the publication. The store is as it was found
+  (`recover::after_a_failed_recovery_nobody_is_handed_a_writer_the_reason_is_said_without_a_path_and_a_reader_works`,
+  `recover::a_part_that_panics_is_a_failed_recovery`: what the panic carried is not
+  said);
+- **published and not confirmed** (`NotConfirmed`), when the last sync failed: the
+  whole generation is there and stays. The next open confirms it, finds every name
+  of the recovery made, publishes nothing more and makes nothing twice
+  (`recover::a_recovery_whose_last_sync_fails_leaves_no_writer_and_the_next_open_confirms_what_is_there_and_publishes_nothing_more`).
+
+**At the store's limit on a generation file** a publication that adds names is
+refused, recovery's among them (`store::Error::GenerationTooLarge`). That is a fourth
+answer, beside ready: the store is kept, and its writer is handed out for deleting
+and pruning alone (`Opening::remover`, a `Remover`: `snapshot`, `delete`, `prune`),
+which make the file smaller; `Opening::writer` is refused and told why
+(`NoWriter::AtTheLimit`), so no executor is built and nothing is admitted. After a
+deletion made room the next open recovers
+(`recover::with_the_limit_set_low_a_recovery_that_cannot_be_published_leaves_deleting_and_pruning_working_and_an_admission_refused_and_after_a_deletion_the_next_open_recovers`).
+
+**Limits, each stated.**
+
+- **Nothing holds a caller to the entry point but the binary's test** (the second
+  pull request of the task): `Store::open` is public, and a test or a tool that
+  opens a store with it is handed a writer with no recovery.
+- **The writer that is handed out is the store,** whole: nothing keeps whoever holds
+  it from publishing anything. `Remover` narrows it for the one case that needs it.
+- **Recovery runs on the thread of the first to ask,** and is not cancelled: a part
+  that never returns is waited for by everyone who asks.
+- **Recovery runs once for a store value.** A run this process abandons afterwards
+  is left as it is until the process is gone and the next open recovers it (the
+  plan, "A run abandoned in a live process").
+- **A failed recovery is not tried again by the same opening.** Whoever wants to
+  try again opens the store again.
+- **A part's sentence is the part's.** A failure of the store that it passes on has
+  no path; what it writes itself is cut and not otherwise changed, and a door
+  escapes it when it prints it.
 
 ## Consequences
 
+- A store is opened to write through `Opening`, and its first sync is the
+  confirmation of the generation it found. A strand adds what it recovers as a
+  `RecoveryPart` and edits neither the entry point nor the store (tasks I4b, S6).
+  Nothing stored changes by the frame itself.
 - `Refusal` and `CallError` each have one more kind, and `Request` and `PreparedCall`
   one more thing they carry. Nothing stored changes: no record, no fingerprint, no
   schema.

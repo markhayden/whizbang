@@ -10,6 +10,8 @@ mod downloads;
 mod holds;
 mod identity;
 mod installation;
+#[cfg(unix)]
+mod links;
 mod names;
 mod publishing;
 mod refusals;

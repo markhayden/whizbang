@@ -8,8 +8,8 @@
 //! ([`current`]), the status record an installer writes ([`status`]), a request
 //! that attaches to an install that is running ([`install_or_attach`]), and the holds
 //! of a process on the installations in use ([`Holds`]), and a removal that drains
-//! them and clears the pointer ([`remove`]). The deleting of a removed model's files
-//! and the inventory are built by the later tasks of checkpoint 1B's models strand
+//! them, clears the pointer and deletes the model's files ([`remove`]). The
+//! inventory is built by the later tasks of checkpoint 1B's models strand
 //! (`docs/plans/`). The disk is reached only through
 //! the store's file-system interface, and every download is behind the interface of
 //! ADR 0012: no network client is in the build.

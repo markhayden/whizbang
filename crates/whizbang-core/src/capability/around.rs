@@ -11,6 +11,7 @@
 //! Each place is empty unless an executor fills it. This module holds the interface
 //! and what runs it; what a gate, a lease and a meter do is theirs.
 
+use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::Arc;
 
@@ -105,7 +106,8 @@ pub trait Around: Send + Sync {
 ///
 /// A failure of [`Open::after`] is not a judgement of the request, and does not
 /// account for it as free: the run is abandoned with the failure (ADR 0008), and
-/// nothing of it is released.
+/// nothing of it is released. A panic of it comes to the same, and then goes on to
+/// the action once the other places were told.
 pub trait Open: Send {
     fn after(self: Box<Self>, asked: &Wrapped<'_>, ended: &Ended<'_>) -> Result<(), String>;
 
@@ -230,8 +232,8 @@ const NOT_ACCOUNTED: &str = "the request ended and could not be accounted for, s
 
 impl Wrappers {
     /// Sends one request through the places, to `ask`, which calls the backend, and
-    /// back. `fail` is told when the run is to be abandoned: a wrapper failed once
-    /// the request was over, or the backend panicked under a wrapper.
+    /// back. `fail` is told when the run is to be abandoned: a wrapper failed or
+    /// panicked once the request was over, or the backend panicked under a wrapper.
     pub(crate) fn send<T>(
         &self,
         capability: Capability,
@@ -256,16 +258,30 @@ impl Wrappers {
             facts: &self.facts,
         };
         // What is open is closed in the other order, each told how the request
-        // ended. A failure of one does not keep the others from being told.
+        // ended. A failure of one does not keep the others from being told, and
+        // neither does a panic of one: it is caught, the run is marked as it is for
+        // a failure, since what that wrapper held is not accounted for, and the
+        // first such panic is handed back to go on once every other was told.
         let close = |open: Vec<(Place, Box<dyn Open>)>, ended: &Ended<'_>| {
-            let mut failed = false;
+            let mut closed = Closed::default();
             for (place, held) in open.into_iter().rev() {
-                if let Err(why) = held.after(&asked, ended) {
-                    fail(format!("the {} failed: {why}", place.name()));
-                    failed = true;
+                match catch_unwind(AssertUnwindSafe(|| held.after(&asked, ended))) {
+                    Ok(Ok(())) => {}
+                    Ok(Err(why)) => {
+                        fail(format!("the {} failed: {why}", place.name()));
+                        closed.failed = true;
+                    }
+                    Err(panic) => {
+                        fail(format!(
+                            "the {} panicked once its request was over",
+                            place.name()
+                        ));
+                        closed.failed = true;
+                        closed.keep(panic);
+                    }
                 }
             }
-            failed
+            closed
         };
         let mut open: Vec<(Place, Box<dyn Open>)> = Vec::new();
         for (place, wrapper) in places {
@@ -275,7 +291,7 @@ impl Wrappers {
                     // The refusal goes with the run's others. The places before
                     // this one are told that the request did not leave.
                     self.facts.refused(stop.kind, &stop.why);
-                    close(open, &Ended::Faulted(&stop.fault));
+                    close(open, &Ended::Faulted(&stop.fault)).go_on();
                     return Err(stop.fault);
                 }
             }
@@ -301,11 +317,42 @@ impl Wrappers {
             Ok(answer) => Ended::Answered(charge_of(answer)),
             Err(fault) => Ended::Faulted(fault),
         };
-        match close(open, &ended) {
+        match close(open, &ended).go_on() {
             false => result,
             // What the request cost is not known to the run any more: no answer of
             // it is handed on.
             true => Err(Fault::new(FaultKind::Unavailable, NOT_ACCOUNTED).unresolved()),
         }
+    }
+}
+
+/// What telling the wrappers of a request's end came to: whether one of them failed
+/// or panicked, and the first panic, which goes on once all were told.
+#[derive(Default)]
+struct Closed {
+    failed: bool,
+    panic: Option<Box<dyn Any + Send>>,
+}
+
+impl Closed {
+    /// Keeps the first panic. What a later one carried is dropped here, and a value
+    /// can panic when it is dropped: that is caught, and what it carried is not
+    /// dropped at all.
+    fn keep(&mut self, panic: Box<dyn Any + Send>) {
+        if self.panic.is_none() {
+            self.panic = Some(panic);
+        } else if let Err(second) = catch_unwind(AssertUnwindSafe(move || drop(panic))) {
+            std::mem::forget(second);
+        }
+    }
+
+    /// Whether a wrapper failed. A panic of one goes on from here, as a backend's
+    /// does: it unwinds through the handle to the action, whose run is abandoned
+    /// whatever the action makes of it.
+    fn go_on(self) -> bool {
+        if let Some(panic) = self.panic {
+            resume_unwind(panic);
+        }
+        self.failed
     }
 }
