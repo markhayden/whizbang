@@ -586,18 +586,25 @@ fn at_file(name: &str) -> whizbang_core::egress::Address {
 
 // --- two installers over one directory ---------------------------------------------------------
 
+/// The event that follows the first read of the pointer by an install of the second
+/// entry over the first: the read is of the pointer's file, under the model's lock.
+fn after_the_pointer_was_read() -> usize {
+    let clean = events_after(&[&first()], &second());
+    let locked = index_of(&clean, |event| matches!(event, Event::Lock(_)));
+    let read = index_of(
+        &clean,
+        |event| matches!(event, Event::Read(p) if p.ends_with("CURRENT")),
+    );
+    assert!(locked < read);
+    read + 1
+}
+
 #[test]
 fn two_installers_stopped_after_one_read_the_pointer_do_not_both_publish() {
     // The first installer is stopped after it took the model's lock and read the
-    // pointer, at its first write. The pointer is read under the model's lock, so
+    // pointer, at its next step. The pointer is read under the model's lock, so
     // the second never reads one to decide from: it is busy.
-    let clean = events_after(&[&first()], &second());
-    let written = index_of(&clean, |event| matches!(event, Event::Write(_)));
-    assert!(
-        clean[..written]
-            .iter()
-            .any(|event| matches!(event, Event::Read(p) if p.ends_with("CURRENT")))
-    );
+    let written = after_the_pointer_was_read();
     let scratch = Scratch::new("race-stopped");
     let root = scratch.path().to_path_buf();
     let before = installed(&root, &first());
@@ -634,8 +641,7 @@ const ROOT_FOR_CHILD: &str = "WHIZBANG_TEST_MODELS_ROOT";
 fn child_installs_and_stops_after_it_read_the_pointer() {
     use std::io::{BufRead, Write};
     let root = std::path::PathBuf::from(std::env::var_os(ROOT_FOR_CHILD).unwrap());
-    let clean = events_after(&[&first()], &second());
-    let written = index_of(&clean, |event| matches!(event, Event::Write(_)));
+    let written = after_the_pointer_was_read();
     let fs = Arc::new(ShimFs::new());
     fs.pause_before(written, || {
         let mut out = std::io::stdout().lock();

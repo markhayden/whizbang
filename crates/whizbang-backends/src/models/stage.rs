@@ -217,6 +217,10 @@ pub(super) fn stage_locked(
         fs.sync_dir(&incoming)?;
         let mut done = Vec::new();
         for file in entry.files() {
+            // Asked before each file: nothing is begun after a cancel.
+            if cancellation.is_cancelled() {
+                return Err(StageRefused::Cancelled);
+            }
             stage_file(dir, entry, file, &files, downloader, cancellation)?;
             // Made from what the catalogue states, which the file was just held to.
             let installed = InstalledFile::new(file.name().clone(), file.size(), file.sha256());
@@ -308,7 +312,16 @@ fn stage_file(
         // where a downloader that keeps to what it is asked would cut it at its size.
         let request = DownloadRequest::new(from, size + 1)
             .map_err(|_| refused(FileRefused::Download(FaultKind::Malformed)))?;
-        let ended = downloader.download(&request, cancellation, &mut |piece| received.take(piece));
+        // Asked at each piece: a downloader that does not ask is not handed a sink
+        // that keeps on taking. And asked when the downloader has answered, whatever
+        // it answered: after a cancel no move is followed, and nothing more is
+        // asked for.
+        let ended = downloader.download(&request, cancellation, &mut |piece| {
+            !cancellation.is_cancelled() && received.take(piece)
+        });
+        if cancellation.is_cancelled() {
+            return Err(StageRefused::Cancelled);
+        }
         match ended {
             Err(fault) if fault.kind() == FaultKind::Cancelled => {
                 return Err(StageRefused::Cancelled);

@@ -3,7 +3,10 @@
 //! of the installation, and the model's pointer is replaced.
 //!
 //! One install of a model runs at a time, under the model's lock, for the whole of
-//! it. The directory's lock is taken for a moment at the end, around the reading of
+//! it. A request for a model that is being installed attaches to that install
+//! ([`install_or_attach`]; ADR 0017, "Attaching and cancelling"): it waits until the
+//! model's lock is let go, and ends as the install ended, by what the status record
+//! says. The directory's lock is taken for a moment at the end, around the reading of
 //! the draining mark, the making of the hold file and the replacing of the pointer,
 //! and around nothing else: no download, no reading back and no deleting happens
 //! under it. Only the pointer says that a model is installed, so a crash anywhere
@@ -41,7 +44,8 @@ pub enum InstallRefused {
     HoldsSecret,
     /// Another holds the model's lock: an install or a removal of the model.
     Busy,
-    /// The install was cancelled before it began to publish.
+    /// The install was cancelled before it began to publish: by the request that
+    /// started it. One that attached to it is told the same.
     Cancelled,
     /// One file was not staged. `name` is what [`super::FileName::shown`] shows.
     File { name: String, why: FileRefused },
@@ -55,6 +59,12 @@ pub enum InstallRefused {
     DirectoryBusy,
     /// The file system refused. The kind of failure, and no path.
     Disk(io::ErrorKind),
+    /// For a request that attached: the install it waited for was refused, or its
+    /// process ended before it said how it ended. Why is the installer's to say.
+    Failed,
+    /// For a request that attached: it was cancelled while it waited, and waits no
+    /// longer. The install goes on.
+    Left,
 }
 
 impl std::fmt::Display for InstallRefused {
@@ -82,6 +92,12 @@ impl std::fmt::Display for InstallRefused {
                 f.write_str("the models directory is locked by another, which did not let it go")
             }
             InstallRefused::Disk(kind) => StageRefused::Disk(*kind).fmt(f),
+            InstallRefused::Failed => {
+                f.write_str("the install of the model that was running did not install it")
+            }
+            InstallRefused::Left => f.write_str(
+                "the request stopped waiting for the install of the model, which goes on",
+            ),
         }
     }
 }
@@ -148,6 +164,13 @@ impl From<io::Error> for InstallRefused {
 ///   its end, and the answer is the installation.
 /// - An identity that is on the disk already and whole is not downloaded again: it
 ///   is pointed to, after the folder that names it and the pointer are synced.
+/// - The status record says that an install is running from the first step under
+///   the model's lock to the last, whether files are downloaded or the identity is
+///   found on the disk: one who attaches is never shown how an earlier install ended
+///   as if it were this one.
+/// - **A cancellation is asked before each file, before each request and at each
+///   piece** ("Downloading into staging"), by the request that started the install
+///   and by no other.
 /// - A refused install removes its staging under the model's lock, writes how it
 ///   ended into the status record, and leaves the pointer naming what it named; a
 ///   repair refused after it cleared the pointer leaves the model not installed.
@@ -181,6 +204,9 @@ pub fn install(
     let hex = record.identity().hex();
     let mut done = 0;
     let ended = (|| {
+        // Before anything else: whoever looks while the lock is held is shown an
+        // install that is running.
+        model.say(State::Installing, 0, files)?;
         // What a publication that died left of its new pointer.
         dir.remove(&model.folder.join("CURRENT.new"))?;
         model.clean(&hex)?;
@@ -192,8 +218,8 @@ pub fn install(
         if adopted {
             dir.unstage(entry.name());
             done = files;
+            model.say(State::Installing, done, files)?;
         } else {
-            model.say(State::Installing, 0, files)?;
             stage_locked(dir, entry, downloader, cancellation, &mut |staged| {
                 done = staged as u64;
                 model.say(State::Installing, done, files)
@@ -217,6 +243,85 @@ pub fn install(
     let _ = model.say(state, done, files);
     let _ = model.clean(&hex);
     ended.map(|()| record)
+}
+
+/// Installs a model, or attaches to the install of it that is running: a second
+/// request for a model that is being installed, from this process or another, starts
+/// no install of its own, downloads nothing, and ends as the running install ended.
+///
+/// With the model's lock free this is [`install`], and `watch` is not called.
+/// With it held by another:
+///
+/// - **The request waits by trying, not by waiting.** It tries for a share of the
+///   model's lock, which is given once whoever has the lock alone lets it go, by
+///   finishing or by dying. Between two tries `watch` is called once, with what the
+///   status record says when it says that an install is running, and with nothing
+///   otherwise. Nothing sleeps here: `watch` paces the tries, and shows progress.
+/// - **It ends by what the status record says** once it has its share, when no
+///   install can be running: `installed`, and the pointer names the installation of
+///   this entry, is that installation; `installed` with any other pointer is
+///   [`InstallRefused::Busy`], since another identity was installed meanwhile;
+///   `cancelled` is [`InstallRefused::Cancelled`]; and `failed`, a status that still
+///   says `installing` (its process is gone), no status and an unreadable one are
+///   [`InstallRefused::Failed`]. **Never by the pointer alone:** after a refused sync
+///   of the pointer the status says `failed` over a pointer that names the new
+///   installation, and the request is told failed, as the installer was. Asked
+///   again, it installs: nothing is downloaded, and the pointer is made durable.
+/// - **Its cancellation is its own.** Cancelled while it waits, it ends as
+///   [`InstallRefused::Left`] and the install goes on: an install is cancelled only
+///   by the cancellation of the request that started it.
+pub fn install_or_attach(
+    dir: &ModelsDir,
+    entry: &Entry,
+    adapter_revision: &Revision,
+    downloader: &dyn Downloader,
+    cancellation: &Cancellation,
+    secrets: &Secrets,
+    watch: &mut dyn FnMut(Option<Status>),
+) -> Result<InstallationRecord, InstallRefused> {
+    let started = install(
+        dir,
+        entry,
+        adapter_revision,
+        downloader,
+        cancellation,
+        secrets,
+    );
+    if started != Err(InstallRefused::Busy) {
+        return started;
+    }
+    // The same record an install of this entry would publish: it was made once
+    // already, by the install that was busy.
+    let Ok(record) = InstallationRecord::of(entry, adapter_revision.clone(), secrets) else {
+        return Err(InstallRefused::HoldsSecret);
+    };
+    let name = entry.name();
+    let lock = dir.model(name).join("LOCK");
+    let _share = loop {
+        if cancellation.is_cancelled() {
+            return Err(InstallRefused::Left);
+        }
+        if let Some(share) = dir.fs().try_share(&lock)? {
+            break share;
+        }
+        let running = status::status(dir, name, secrets)
+            .ok()
+            .flatten()
+            .filter(|status| status.state() == State::Installing);
+        watch(running);
+    };
+    // With a share of the model's lock nobody installs or removes: the status and
+    // the pointer are as the last to hold the lock alone left them.
+    let ended = status::status(dir, name, secrets).ok().flatten();
+    match ended.map(|status| status.state()) {
+        Some(State::Installed) => match current(dir, name, secrets) {
+            Ok(Current::Installed(found)) if found == record => Ok(found),
+            Ok(Current::Installed(_)) => Err(InstallRefused::Busy),
+            _ => Err(InstallRefused::Failed),
+        },
+        Some(State::Cancelled) => Err(InstallRefused::Cancelled),
+        Some(State::Failed | State::Installing) | None => Err(InstallRefused::Failed),
+    }
 }
 
 /// What a model's pointer file holds.
