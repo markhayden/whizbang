@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::contract::record::{ArgumentValue, SETTINGS_LIMIT, Setting as Recorded};
-use crate::contract::{Capability, Secrets, Value};
+use crate::contract::{Capability, NotJudged, Secrets, Settings, Value};
 
 use super::{BACKENDS_LIMIT, CAPABILITIES, Config, KEY_SHOWN_LIMIT, Setting};
 
@@ -171,5 +171,19 @@ impl Config {
                 Ok((name, value))
             })
             .collect()
+    }
+}
+
+/// A config makes the settings of the runs admitted under a snapshot of it (ADR 0015,
+/// "One snapshot of the config"). What [`Config::settings_of`] refuses is a failure
+/// in that refusal's words, which name a setting and never a value.
+impl Settings for Config {
+    fn of(
+        &self,
+        resolved: &[(Capability, &str)],
+        secrets: &Secrets,
+    ) -> Result<Vec<(String, Value)>, NotJudged> {
+        self.settings_of(resolved, secrets)
+            .map_err(|refused| NotJudged::saying(&refused.to_string()))
     }
 }

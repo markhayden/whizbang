@@ -1,6 +1,8 @@
 # 0009. What a run asks of its capabilities, and a judge held where its calls are dispatched
 
-Status: accepted
+Status: accepted. Changed by ADR 0015 ("One snapshot of the config"): under a snapshot
+of the config that holds backends, a call that resolved a model the snapshot holds no
+backend for is refused at admission, and a backend is handed over by its name
 Date: 2026-11-13
 Amended: 2026-11-13, after the review of its first pull request, before it merged.
 Added: "A provider's words are redacted whole"; the bound on a model's names and the
@@ -74,10 +76,13 @@ What is not held, and is known:
 - The roster prepare asks and the backends an executor holds are given apart, and nothing
   holds one to the other. A call that resolved a model no held backend declares is
   admitted, and its action finds no handle
-  (`asked::known_a_call_that_resolved_a_model_the_executor_does_not_hold_is_handed_no_handle`).
-  The binary's executor holds none. Both are the config's, at checkpoint 1B.
+  (`asked::known_an_executor_built_with_a_digest_alone_holds_its_backends_apart_from_its_roster`).
+  The binary's executor holds none. Both are the config's, at checkpoint 1B: under a
+  snapshot of the config that holds backends, one thing makes both, and such a call is
+  refused at admission (ADR 0015, "One snapshot of the config").
 - A call with two needs of one capability is handed the backend of the first.
 - Two backends that declare one model are one backend to this: the first is handed over.
+  Under a snapshot that holds backends a run is handed its backend by name (ADR 0015).
 
 ### Every request is in the run's record
 

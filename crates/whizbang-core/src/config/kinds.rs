@@ -3,14 +3,13 @@
 //!
 //! The core names no kind. The binary registers the kinds it links, which at this
 //! checkpoint is none; a test registers a fake. A kind is shown one backend's table,
-//! with the credentials that table names and no others, and answers what the backend
-//! declares, or why it does not take the table, in words that are the kind's own and
-//! hold nothing of the file.
+//! with the credentials that table names and no others, and makes the backend, which
+//! says of itself what it declares; or it answers why it does not take the table, in
+//! words that are the kind's own and are meant to hold nothing of the file.
 
 use std::sync::Arc;
 
-use crate::capability::Declaration;
-use crate::contract::{Capability, Secrets, text};
+use crate::contract::{Capability, Made, Secrets, text};
 use crate::egress::NotAllowed;
 
 use super::{Backend, Handed, KeyValue};
@@ -18,9 +17,19 @@ use super::{Backend, Handed, KeyValue};
 /// The most kinds one build registers.
 pub const KINDS_LIMIT: usize = 64;
 
-/// Why a kind does not take a backend's table. Both are fixed words: the first is a
-/// sentence written in the kind's code, the second is why the egress types did not make
-/// a credential. Neither can hold a value of a config or of an env file.
+/// The longest sentence of a kind that is kept, in characters.
+pub const KIND_SENTENCE_LIMIT: usize = 256;
+
+/// What is kept in place of a kind's sentence that holds a secret.
+pub const KIND_SENTENCE_WITHHELD: &str =
+    "its kind gave a reason that is not shown: it held a secret";
+
+/// Why a kind does not take a backend's table: a sentence written in the kind's code,
+/// or why the egress types did not make a credential. Both are meant to be fixed
+/// words: the sentence is a constant in the kind's code. The type does not enforce
+/// that against a kind that leaks a made text; what a config offers (`Offers::of`)
+/// replaces a sentence that holds a secret of that config's credentials with fixed
+/// words and cuts it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KindRefused {
     /// What the table says is not what the kind takes: a setting it does not know, a
@@ -28,6 +37,24 @@ pub enum KindRefused {
     Table(&'static str),
     /// The credential the table names cannot be carried to the backend's address.
     Credential(NotAllowed),
+}
+
+impl KindRefused {
+    /// The same refusal as it is kept (`Offers::of`): a sentence that the search for
+    /// these secrets changes is replaced with [`KIND_SENTENCE_WITHHELD`], and any
+    /// other is cut at [`KIND_SENTENCE_LIMIT`] characters. The look comes first,
+    /// over the whole sentence; a cut takes text away and adds none, so what is left
+    /// of a sentence that held no secret holds none.
+    pub(super) fn kept(self, secrets: &Secrets) -> KindRefused {
+        let KindRefused::Table(why) = self else {
+            return self;
+        };
+        if secrets.redact(why) != why {
+            return KindRefused::Table(KIND_SENTENCE_WITHHELD);
+        }
+        let cut = why.char_indices().nth(KIND_SENTENCE_LIMIT);
+        KindRefused::Table(cut.map_or(why, |(at, _)| &why[..at]))
+    }
 }
 
 impl std::fmt::Display for KindRefused {
@@ -105,14 +132,18 @@ pub trait Kind: Send + Sync {
     /// The name a config says it by. A name, as an action's is. The same on every call.
     fn name(&self) -> &str;
 
-    /// What a backend with this table declares: its model, its features, its price
-    /// and who receives its requests. Answered from the table and from nothing else:
-    /// nothing is sent, and nothing is read from a disk.
+    /// Makes the backend this table describes: what answers the requests of the runs
+    /// admitted under the config the table is of, and of no other run. What the
+    /// backend declares, its model, its features, its price and who receives its
+    /// requests, is what the backend itself says ([`Made::declaration`]), so what a
+    /// config offers and what a run is handed are one thing. It is made from the
+    /// table and from nothing else: nothing is sent, and nothing is read from a
+    /// disk. It answers the capability the table is under.
     ///
     /// A kind that needs a credential makes it with [`KeyValue::carried_to`], bound to
     /// the origin of the address it sends to, under a header that is the kind's own
     /// constant.
-    fn declare(&self, table: &Table<'_>) -> Result<Declaration, KindRefused>;
+    fn make(&self, table: &Table<'_>) -> Result<Made, KindRefused>;
 }
 
 /// Why a kind was not registered.

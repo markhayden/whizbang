@@ -19,7 +19,9 @@ use whizbang_core::contract::{
     RequestRecordError, Requirement, Reservation, RunState, Secrets, Step, Unavailable, Value,
     ValueType, request_fingerprint, reservations,
 };
-use whizbang_core::contract::{ConfigSource, InputFault, InputPort, Readiness, Stale};
+use whizbang_core::contract::{
+    ConfigSource, InputFault, InputPort, Readiness, Snapshot, SourceRefused, Stale,
+};
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::{Fs, RealFs};
 use whizbang_core::store::{self, Reader, Store};
@@ -1558,8 +1560,8 @@ impl Backends for Priced {
 struct Config(Mutex<Digest>);
 
 impl ConfigSource for Config {
-    fn digest(&self) -> Digest {
-        *self.0.lock().unwrap()
+    fn snapshot(&self) -> Result<Snapshot, SourceRefused> {
+        Ok(Snapshot::of(*self.0.lock().unwrap()))
     }
 }
 

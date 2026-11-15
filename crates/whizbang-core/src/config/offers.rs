@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 
 use crate::capability::{Resolved, Roster, RosterError, Unresolved};
-use crate::contract::{Backends, Capability, Estimate, ModelIdentity, Unavailable};
+use crate::contract::{Backends, Capability, Estimate, Made, ModelIdentity, Offered, Unavailable};
 
 use super::{CAPABILITIES, Config, Credentials, KindRefused, Kinds, Table};
 
@@ -28,6 +28,9 @@ pub enum NotReady {
     /// The backend names this variable for a credential, and the env file does not
     /// set it.
     Missing { variable: String },
+    /// The backend's kind made a backend of another capability than the one its
+    /// table is under.
+    OtherCapability,
 }
 
 impl std::fmt::Display for NotReady {
@@ -39,6 +42,9 @@ impl std::fmt::Display for NotReady {
                 f,
                 "the env file does not set {variable}, the variable its credential is in"
             ),
+            NotReady::OtherCapability => {
+                f.write_str("its kind made a backend of another capability")
+            }
         }
     }
 }
@@ -89,7 +95,12 @@ impl std::error::Error for Unanswered {}
 
 /// What one config offers, with the kinds of one build and the credentials of one env
 /// file. What `{:?}` prints is how many backends are ready and how many are not.
-#[derive(Clone, PartialEq, Eq)]
+///
+/// It holds each backend that is ready, made by its kind in the one walk that offers
+/// it: the roster's entry is what that backend declares. Two are equal when they
+/// offer the same; the backends they made are not compared, and are never the same
+/// ones.
+#[derive(Clone)]
 pub struct Offers {
     /// The backends that are ready, and the default of each capability whose default
     /// is ready.
@@ -99,14 +110,33 @@ pub struct Offers {
     /// The default the file gives a capability, ready or not, by the capability's name.
     defaults: BTreeMap<&'static str, String>,
     ready: usize,
+    /// The backends that are ready, made, by the capability's name and the backend's.
+    made: BTreeMap<(&'static str, String), Made>,
 }
+
+impl PartialEq for Offers {
+    fn eq(&self, other: &Offers) -> bool {
+        (&self.roster, &self.not_ready, &self.defaults, self.ready)
+            == (
+                &other.roster,
+                &other.not_ready,
+                &other.defaults,
+                other.ready,
+            )
+    }
+}
+
+impl Eq for Offers {}
 
 impl Offers {
     /// What this config offers. Each backend is shown to the kind its table names,
-    /// with the credentials that table names and no others, and is offered as that
-    /// kind declares it. One whose kind is not registered, whose kind does not take
-    /// its table, or that names a variable the env file does not set, is offered as
-    /// not ready. The kind of a backend with a missing variable is not asked.
+    /// with the credentials that table names and no others; the kind makes it, and
+    /// it is offered as it declares itself. One whose kind is not registered, whose
+    /// kind does not take its table or makes a backend of another capability, or
+    /// that names a variable the env file does not set, is offered as not ready. The
+    /// kind of a backend with a missing variable is not asked. A kind's sentence is
+    /// kept cleaned ([`KindRefused`]): with these credentials' secrets, which hold
+    /// the backend's own key.
     ///
     /// The credentials are those of this config (`Loaded`); given another's, a backend
     /// is handed nothing and is not ready for want of its variable.
@@ -124,6 +154,7 @@ impl Offers {
             not_ready: BTreeMap::new(),
             defaults: BTreeMap::new(),
             ready: 0,
+            made: BTreeMap::new(),
         };
         for capability in CAPABILITIES {
             for (name, backend) in config.backends(capability) {
@@ -135,23 +166,34 @@ impl Offers {
                     };
                     value.is_none().then(|| variable.to_owned())
                 });
-                let declared = match (missing, kinds.get(backend.kind())) {
+                let secrets = credentials.secrets();
+                let made = match (missing, kinds.get(backend.kind())) {
                     (Some(variable), _) => Err(NotReady::Missing { variable }),
                     (None, None) => Err(NotReady::UnknownKind),
                     (None, Some(kind)) => kind
-                        .declare(&Table {
+                        .make(&Table {
                             capability,
                             name,
                             backend,
                             handed: &handed,
-                            secrets: credentials.secrets(),
+                            secrets,
                         })
-                        .map_err(NotReady::Refused),
+                        .map_err(|refused| NotReady::Refused(refused.kept(secrets)))
+                        .and_then(|made| match made.capability() == capability {
+                            true => Ok(made),
+                            false => Err(NotReady::OtherCapability),
+                        }),
                 };
-                match declared {
-                    Ok(declaration) => {
+                match made {
+                    Ok(made) => {
+                        // The roster's entry is what the backend that was made
+                        // declares: the two are one thing.
+                        let declaration = made.declaration().clone();
                         offers.roster = offers.roster.offer(capability, name, declaration)?;
                         offers.ready += 1;
+                        offers
+                            .made
+                            .insert((capability.name(), name.to_owned()), made);
                     }
                     Err(why) => {
                         offers
@@ -248,5 +290,21 @@ impl Backends for Offers {
     /// What the roster of the ready backends answers ([`Roster`]'s `bound`).
     fn bound(&self, capability: Capability, model: &ModelIdentity) -> Estimate {
         self.roster.bound(capability, model)
+    }
+}
+
+/// What a config offers is what a snapshot of the config holds as its backends (ADR
+/// 0015, "One snapshot of the config"): prepare asks it, so a backend that is not
+/// ready is answered with its reason, and a run is handed the backend its call
+/// resolved by its name.
+impl Offered for Offers {
+    fn default_of(&self, capability: Capability) -> Option<&str> {
+        Offers::default_of(self, capability)
+    }
+
+    fn made(&self, capability: Capability, name: &str) -> Option<Made> {
+        self.made
+            .get(&(capability.name(), name.to_owned()))
+            .cloned()
     }
 }

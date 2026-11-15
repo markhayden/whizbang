@@ -46,6 +46,11 @@ impl DispatchPolicy {
         self.approved.is_empty()
     }
 
+    /// Every recipient the policy names, for a class of data or for a probe.
+    pub(crate) fn recipients(&self) -> impl Iterator<Item = &Recipient> {
+        self.approved.iter().map(|approved| &approved.recipient)
+    }
+
     fn entry(&mut self, recipient: Recipient) -> Result<&mut Approved, NotAllowed> {
         let place = self.approved.iter().position(|a| a.recipient == recipient);
         let place = match place {

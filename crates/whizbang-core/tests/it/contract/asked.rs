@@ -206,10 +206,62 @@ fn an_action_is_handed_the_backend_its_call_resolved_and_no_other() {
 }
 
 #[test]
-fn known_a_call_that_resolved_a_model_the_executor_does_not_hold_is_handed_no_handle() {
-    // The limit, pinned as known: the roster and the backends an executor holds are
-    // given apart, and nothing holds one to the other. A call that resolved a model no
-    // held backend declares is admitted, and its action finds no handle.
+fn a_call_that_resolved_a_model_its_snapshot_does_not_hold_is_refused_and_not_handed_no_handle() {
+    // The pin this was, turned round (ADR 0015, "One snapshot of the config"): under
+    // a snapshot of the config the roster and the backends are one thing, and a call
+    // that resolved a model the snapshot holds no backend for is refused at
+    // admission, with no run. Its action is not run to find no handle.
+    use whizbang_core::contract::{CallError, Made, Offered, Refusal, Snapshot};
+    struct Apart(Roster, Arc<FakeJudge>);
+    impl Backends for Apart {
+        fn resolve(
+            &self,
+            capability: Capability,
+            choice: Option<&str>,
+            features: &[String],
+        ) -> Result<ModelIdentity, whizbang_core::contract::Unavailable> {
+            Backends::resolve(&self.0, capability, choice, features)
+        }
+    }
+    impl Offered for Apart {
+        fn default_of(&self, _: Capability) -> Option<&str> {
+            Some("fake")
+        }
+        fn made(&self, _: Capability, _: &str) -> Option<Made> {
+            Some(Made::Judge(self.1.clone()))
+        }
+    }
+    let world = World::new();
+    let offered = Arc::new(FakeJudge::scripted(Vec::new()).as_model("judge-elsewhere"));
+    let held = Arc::new(FakeJudge::scripted(Vec::new()));
+    let ran: Noted<bool> = Noted::default();
+    let asks = {
+        let ran = ran.clone();
+        action("asks", judging(), move |_, _| {
+            ran.lock().unwrap().push(true);
+            Ok(Produced::nothing())
+        })
+    };
+    let apart = Apart(roster(None, None, Some(offered.as_ref())), held.clone());
+    let executor = engine(&world, NoBackends, Capabilities::none(), vec![asks]).with_config(
+        Arc::new(Snapshot::of(Digest::of_bytes(b"")).offering(Arc::new(apart))),
+    );
+    let refused = executor.submit(&Call::new("asks")).unwrap_err();
+    assert!(matches!(
+        refused,
+        CallError::Refused(Refusal::NotReady { .. })
+    ));
+    assert!(ran.lock().unwrap().is_empty());
+    assert_eq!(held.requests(), 0);
+}
+
+#[test]
+fn known_an_executor_built_with_a_digest_alone_holds_its_backends_apart_from_its_roster() {
+    // What is left of the limit, pinned as known: an executor that is given no
+    // snapshot with backends, as 1A's tests build one, is given its roster and its
+    // backends apart, and nothing holds one to the other. A call that resolved a
+    // model no held backend declares is admitted, and its action finds no handle.
+    // The binary is built from a source (task W1), where this cannot be.
     let world = World::new();
     let offered = Arc::new(FakeJudge::scripted(Vec::new()).as_model("judge-elsewhere"));
     let held = Arc::new(FakeJudge::scripted(Vec::new()));

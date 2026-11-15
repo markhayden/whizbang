@@ -1079,6 +1079,18 @@ fn refused_sends_cannot_use_up_the_room_of_a_send() {
     // Every refused send is among the run's refusals, listed or counted.
     let refusals = &record.outcome().refusals;
     assert!(!refusals.is_empty());
+    // The 64th refused send still had its entry; the 65th had none, and says so.
+    let unlisted = "not listed in where the run's data went";
+    assert!(
+        !refusals[63].why().contains(unlisted),
+        "{}",
+        refusals[63].why()
+    );
+    assert!(
+        refusals[64].why().contains(unlisted),
+        "{}",
+        refusals[64].why()
+    );
     assert!(holds(&names["record"], "request_not_approved"));
 }
 

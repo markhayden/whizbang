@@ -964,17 +964,17 @@ sending fake does; the policy's `{:?}` shows recipients cut and no credential (r
 **Depends on:** I5. A section of the interfaces' ADR, which changes ADR 0007's
 `ConfigSource`.
 
-- [ ] `ConfigSource` answers a snapshot or a refusal. A snapshot is the digest together
+- [x] `ConfigSource` answers a snapshot or a refusal. A snapshot is the digest together
       with what it is the digest of: the roster and the backends it is of, made from one thing so
       that a model a call resolved is always held, the per-call cap, the dispatch policy,
       the secrets, and the settings a run records. A call is prepared under one snapshot;
       admission prepares again under the snapshot current then (ADR 0007); the run then
       executes under that one, whatever the file becomes.
-- [ ] Secrets are kept for redaction for as long as the executor lives: a value a later
+- [x] Secrets are kept for redaction for as long as the executor lives: a value a later
       snapshot no longer holds is still taken out of what is written.
-- [ ] An admission's part (I1) is shown the snapshot its call was prepared under at
+- [x] An admission's part (I1) is shown the snapshot its call was prepared under at
       admission.
-- [ ] A digest alone is still a source, of a snapshot that holds nothing else, so the
+- [x] A digest alone is still a source, of a snapshot that holds nothing else, so the
       binary and 1A's tests are unchanged. A fake source in the test kit that a test
       swaps.
 
@@ -985,7 +985,12 @@ backend, and is held to a cap and a policy, of that snapshot though the source w
 while it ran; a secret of an earlier snapshot is still redacted from a later run's record
 (rule 4); a call cannot resolve a model the snapshot holds no backend for, and the pin
 `asked::known_a_call_that_resolved_a_model_the_executor_does_not_hold_is_handed_no_handle`
-is turned round.
+is turned round. (Built: the pin is now
+`asked::a_call_that_resolved_a_model_its_snapshot_does_not_hold_is_refused_and_not_handed_no_handle`.
+A source that refuses fails the next call as `CallError::Config`, which is no refusal
+of the call: ADR 0015. One helper of `admit.rs` that implemented `ConfigSource` changed
+by three lines. No test of checkpoint 1A changed but the pin the task turns round,
+whose old body stands under a new name.)
 **Size:** small.
 
 ### I7. An inventory, and a lease on an installation
