@@ -9,9 +9,9 @@
 //! [`Ledger::reserve`] in the admission's step, [`Ledger::confirm`] on a reading made
 //! after the admission is durable, and [`Ledger::settle`] in the publication that ends
 //! a run nothing called. The names a ledger makes are those of `spend::Name` and no
-//! other. The real ledger is the spend strand's (plan 1B, task S2); until it merges
-//! the only ledger is the test kit's fake, and an executor that was given none
-//! reserves nothing.
+//! other. The real ledger is the spend strand's, `spend::StoreLedger` (plan 1B, task
+//! S2); the test kit has a fake, and an executor that was given none reserves
+//! nothing.
 
 use serde::{Deserialize, Serialize};
 
@@ -216,6 +216,13 @@ pub enum Declined {
     /// in millionths of a US dollar. The call is refused
     /// ([`super::Refusal::OverAllowance`]).
     OverAllowance { left_micros: u64 },
+    /// The books of this epoch, the newest, need their owner: its turns are not those
+    /// its publications took, or a reservation is frozen and no name can be trusted
+    /// for its amount, which stops every epoch (ADR 0016, "Epochs: what a reset
+    /// bounds"). Nothing is admitted there until the owner acts, a call of nothing
+    /// among them: no amount that is left can be stated. The call is refused
+    /// ([`super::Refusal::NeedsOwner`]).
+    NeedsOwner { epoch: u64 },
     /// The ledger could not judge: the store failed, or a record it needed is not one
     /// this build reads, or the ledger itself failed ([`NotJudged`]). This is not a
     /// judgement of the call. It holds a failure of the store or a sentence and
@@ -255,15 +262,28 @@ impl From<CallError> for Declined {
 /// name has nothing to return, and does not compile.
 ///
 /// ```compile_fail
-/// use whizbang_core::contract::{Declined, Ledger, MadeName, Reservation, Step};
+/// use whizbang_core::contract::{
+///     Closing, Declined, Ledger, MadeName, NotJudged, Reread, Reservation, Settled, Step,
+/// };
 /// struct Careless;
 /// impl Ledger for Careless {
 ///     fn reserve(&self, _: &Reservation, _: &mut Step<'_, '_>) -> Result<MadeName, Declined> {
 ///         // There is no way to make one but `Step::make`.
 ///         Ok(MadeName { step: 0, name: String::new() })
 ///     }
+///     fn confirm(&self, _: &Reservation, _: &Reread<'_>) -> Result<bool, NotJudged> {
+///         Ok(true)
+///     }
+///     fn settle(&self, _: &Closing<'_>, _: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
+///         Ok(Settled::Nothing)
+///     }
 /// }
 /// ```
+///
+/// **Every ledger says what it does at each of the three.** None has a default: a
+/// ledger that makes holds and left [`Ledger::confirm`] out would otherwise confirm
+/// every admission, on books it never read. One that keeps no books of names, as a
+/// test's may, says so in its own words: yes, and [`Settled::Nothing`].
 ///
 /// And the executor refuses one that hands back a name it made in another step
 /// ([`CallError::Ledger`]): the name that comes back is one this attempt publishes.
@@ -297,13 +317,10 @@ pub trait Ledger: Send + Sync {
     /// epoch is not over its allowance with this reservation counted in full, which
     /// a call of nothing is not held to.
     ///
-    /// A ledger that keeps no books of names says yes: that is the default, for a
-    /// ledger of a test that only judges. A failure to read is no answer, and the
-    /// executor backs the admission out as it does one that does not stand.
-    fn confirm(&self, reservation: &Reservation, reading: &Reread<'_>) -> Result<bool, NotJudged> {
-        let _ = (reservation, reading);
-        Ok(true)
-    }
+    /// It has no default: a ledger that keeps no books of names says yes itself. A
+    /// failure to read is no answer, and the executor backs the admission out as it
+    /// does one that does not stand.
+    fn confirm(&self, reservation: &Reservation, reading: &Reread<'_>) -> Result<bool, NotJudged>;
 
     /// Closes the reservation of a run nothing called, inside the publication that
     /// ends the run, with the same kind of step: what it makes is published with the
@@ -314,12 +331,9 @@ pub trait Ledger: Send + Sync {
     /// asks again.
     ///
     /// It answers [`Settled::Nothing`] where there is nothing for it to close: a
-    /// closing already names the reservation, or the ledger keeps no books, which
-    /// is the default.
-    fn settle(&self, closing: &Closing<'_>, step: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
-        let _ = (closing, step);
-        Ok(Settled::Nothing)
-    }
+    /// closing already names the reservation, or the ledger keeps no books. It has
+    /// no default either.
+    fn settle(&self, closing: &Closing<'_>, step: &mut Step<'_, '_>) -> Result<Settled, NotJudged>;
 }
 
 /// The store as it is read again once an admission is durable: what

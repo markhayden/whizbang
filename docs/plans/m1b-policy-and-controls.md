@@ -1245,6 +1245,9 @@ zero is admitted in a store with no allowance, and one over zero is refused ther
 passes with the real ledger in the fake's place; prepare makes no reservation and no
 record; a nested call asks the ledger nothing.
 **Carry-over:** the row on the ledger (the real one). **Size:** medium.
+(The first pull request, 2026-11-15: the ledger, `spend::StoreLedger`, with its tests
+in `tests/it/spend/reserve.rs`; ADR 0016, "The real ledger", names each. The boxes
+are ticked with the second, which has the race and the crash sweep.)
 
 ### S3. The per-call cap, and a call's own
 

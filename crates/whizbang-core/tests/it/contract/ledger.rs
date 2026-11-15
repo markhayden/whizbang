@@ -369,6 +369,14 @@ fn a_ledger_that_hands_back_a_name_it_did_not_make_in_this_attempt_is_refused() 
             *kept = Some(step.record(&turn(1))?);
             Ok(step.record(&turn(2))?)
         }
+
+        fn confirm(&self, _: &Reservation, _: &Reread<'_>) -> Result<bool, NotJudged> {
+            Ok(true)
+        }
+
+        fn settle(&self, _: &Closing<'_>, _: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
+            Ok(Settled::Nothing)
+        }
     }
     let engine = world.engine_with(250, Arc::new(Keeping(kept)), |_| Ok(Produced::nothing()));
     ran(engine.request(&asked("order-1")));

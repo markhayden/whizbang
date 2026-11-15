@@ -806,6 +806,14 @@ pub enum Refusal {
         asked_micros: u64,
         left_micros: u64,
     },
+    /// The call is ready, and the ledger admits nothing: the books of `epoch`, the
+    /// newest, need their owner (ADR 0016, "Epochs: what a reset bounds"). Its turns
+    /// are not those its publications took, or a reservation is frozen and no name
+    /// can be trusted for its amount. Until the owner resets the allowance, or
+    /// corrects that reservation, no call is admitted, one that costs nothing among
+    /// them. No run was made, nothing was reserved, and the request's id is not
+    /// taken by this request.
+    NeedsOwner { action: String, epoch: u64 },
     /// The call is ready, and what it may cost has no bound that can be counted: its
     /// estimate is the largest amount there is ([`Estimate::is_unbounded`]). An
     /// executor that reserves does not admit it, and its ledger is not asked.
@@ -907,6 +915,10 @@ impl Refusal {
             Refusal::Conflict { .. } => RefusalKind::Conflict,
             Refusal::Stale { .. } => RefusalKind::Stale,
             Refusal::OverAllowance { .. } => RefusalKind::OverAllowance,
+            // `run/3` has no kind of its own for it (ADR 0013): nothing is left of
+            // an allowance whose books need their owner, and a caller tells the two
+            // apart by the refusal.
+            Refusal::NeedsOwner { .. } => RefusalKind::OverAllowance,
             Refusal::NoBound { .. } => RefusalKind::NoBound,
             Refusal::SecretInRequestId => RefusalKind::SecretInRequestId,
             Refusal::NotARequestId { .. } => RefusalKind::NotARequestId,
@@ -1045,6 +1057,12 @@ impl std::fmt::Display for Refusal {
                 f,
                 "{action} was not admitted: it may cost up to {asked_micros} millionths of \
                  a US dollar, and {left_micros} are left of the ledger's allowance"
+            ),
+            Refusal::NeedsOwner { action, epoch } => write!(
+                f,
+                "{action} was not admitted: the ledger's books of epoch {epoch} need their \
+                 owner, and nothing is admitted until the owner resets the allowance or \
+                 corrects the reservation whose amount no name states"
             ),
             Refusal::NoBound { action } => write!(
                 f,

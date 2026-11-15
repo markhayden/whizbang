@@ -389,21 +389,24 @@ impl Folded {
         }
     }
 
-    /// Whether an admission that was published stands, on this reading of the names
-    /// made after its publication (ADR 0016, "An admission is confirmed before
-    /// anything runs under it"): its reservation is open and is the record, one hold
-    /// and nothing else that names the run; neither the epoch it fell under nor the
-    /// newest needs its owner; and that epoch is not over its allowance with this
-    /// reservation counted in full. A call of nothing adds nothing to what is
+    /// Whether an admission of this amount that was published stands, on this reading
+    /// of the names made after its publication (ADR 0016, "An admission is confirmed
+    /// before anything runs under it"): its reservation is open and is the record,
+    /// one hold and nothing else that names the run; neither the epoch it fell under
+    /// nor the newest needs its owner; and that epoch is not over its allowance with
+    /// this reservation counted in full. A call of nothing adds nothing to what is
     /// counted and is not held to a debt that was there before it.
+    ///
+    /// **The amount is held to the hold.** It stands only where its one hold states
+    /// exactly `micros`: a caller cannot pass nothing and skip the debt, and a hold
+    /// that is not the one the admission made is not one it stands on.
     pub fn stands(&self, run: &RunId, micros: Amount) -> bool {
         let own = self.reservations.get(run);
         // Open, it is a set the ledger could have written, which has the record and
         // one hold: with two names, it has no other.
-        let Some(epoch) = own
-            .filter(|one| one.state == State::Open && one.names.count() == 2)
-            .and_then(Standing::epoch)
-        else {
+        let whole = |one: &&Standing| one.state == State::Open && one.names.count() == 2;
+        let stated = |one: &&Standing| one.names.stated() == Some(micros);
+        let Some(epoch) = own.filter(whole).filter(stated).and_then(Standing::epoch) else {
             return false;
         };
         if self.needs_owner(epoch) || self.needs_owner(self.epoch()) {
