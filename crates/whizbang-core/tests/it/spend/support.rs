@@ -87,6 +87,25 @@ impl Action for Scripted {
     }
 }
 
+/// An action of this name that needs a model for each of these capabilities, counts
+/// its runs here, and does what the test says.
+pub fn counting(
+    runs: &Arc<AtomicU64>,
+    name: &str,
+    needs: &[Capability],
+    body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
+) -> Arc<dyn Action> {
+    let mut draft = ActionDescriptor::draft(name, "1.0.0", Kind::Primitive, "A test action.");
+    for need in needs {
+        draft = draft.needs(Requirement::new(*need));
+    }
+    Arc::new(Scripted {
+        descriptor: draft.build().unwrap(),
+        runs: runs.clone(),
+        body: Box::new(body),
+    })
+}
+
 /// A store on a scratch folder, a source of the config a test swaps, a clock it moves,
 /// and a count of the actions that ran.
 pub struct World {
@@ -149,15 +168,7 @@ impl World {
         needs: &[Capability],
         body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
     ) -> Arc<dyn Action> {
-        let mut draft = ActionDescriptor::draft(name, "1.0.0", Kind::Primitive, "A test action.");
-        for need in needs {
-            draft = draft.needs(Requirement::new(*need));
-        }
-        Arc::new(Scripted {
-            descriptor: draft.build().unwrap(),
-            runs: self.runs.clone(),
-            body: Box::new(body),
-        })
+        counting(&self.runs, name, needs, body)
     }
 
     /// An action of this name that needs a filler and does nothing: a call of it may

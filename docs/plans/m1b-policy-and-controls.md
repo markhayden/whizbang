@@ -1280,9 +1280,9 @@ names can mean (20 and 27). "Stops nothing else" stands as it was written.
 
 **Depends on:** S1b, I2. Two pull requests: the ledger; then its race and crash proofs.
 
-- [ ] The real ledger implements `Ledger::reserve`: it folds the balances from the step's
+- [x] The real ledger implements `Ledger::reserve`: it folds the balances from the step's
       generation, declines over the allowance, and makes its name.
-- [ ] A store with no allowance set declines every call whose estimate is over zero.
+- [x] A store with no allowance set declines every call whose estimate is over zero.
 
 **Done when** these pass, each with an executor a test builds with the real ledger: two
 executors over one store, each told yes for the last of the allowance and held at a
@@ -1294,9 +1294,36 @@ zero is admitted in a store with no allowance, and one over zero is refused ther
 passes with the real ledger in the fake's place; prepare makes no reservation and no
 record; a nested call asks the ledger nothing.
 **Carry-over:** the row on the ledger (the real one). **Size:** medium.
-(The first pull request, 2026-11-15: the ledger, `spend::StoreLedger`, with its tests
-in `tests/it/spend/reserve.rs`; ADR 0016, "The real ledger", names each. The boxes
-are ticked with the second, which has the race and the crash sweep.)
+**As built, 2026-11-15.** The ledger is `spend::StoreLedger`. Each clause above, and
+its test in `crates/whizbang-core/tests/it/spend/reserve.rs` (`spend::reserve::…`):
+two executors held inside the ledger,
+`two_executors_each_told_yes_for_the_last_of_the_allowance_end_with_one_admitted`;
+the crash, `a_crash_at_any_event_of_an_admission_through_the_real_ledger_leaves_all_of_it_or_none_1_of_6`
+to `…_6_of_6`; no allowance,
+`a_store_with_no_allowance_admits_a_call_of_nothing_and_refuses_one_over_nothing`;
+no bound, `a_call_with_no_bound_is_refused_and_the_ledger_is_not_asked`; prepare,
+`prepare_makes_no_reservation_and_no_record`; a nested call,
+`a_nested_call_asks_the_ledger_nothing`. The tests of `admit.rs` that ran with the
+fake run with the real ledger, counted, and no test there names the fake; those
+that are of the executor and a ledger of the test's own (one that judges nothing,
+one that does what the test says) keep theirs.
+**Reworded with the task.** "every test of `admit.rs` passes with the real ledger in
+the fake's place" holds with three things changed in those tests, each because the
+real ledger is not the fake: an allowance is the owner's reset, which a test makes
+as its three names until task S9 builds the command, so the store holds those names
+and the epoch is 1; a store allows nothing until one is made; and no reservation is
+closed when its run ends, because the real ledger's `settle` is task S11's, so a
+reservation counts in full where the fake had released it.
+**The sweep took the place of two in `admit.rs`** (the orchestrator's ruling,
+2026-11-15): the every-choice sweep with a ledger of one name
+(`admit::a_crash_inside_the_admission_step_*`, four tests), which it holds all of and
+adds the ledger's names to, shown by mutants of the admission's publication that
+each sweep kills; and the sweep under six fixed losses with a hold and its turn,
+which showed nothing the new one does not once that had an amount under an
+allowance.
+Two things were added that the task did not name, each asked for by a review:
+a refusal of its own where the books need their owner
+(`Refusal::NeedsOwner`), and `Ledger::confirm` and `settle` without a default.
 
 ### S3. The per-call cap, and a call's own
 

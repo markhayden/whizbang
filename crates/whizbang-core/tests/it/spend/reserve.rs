@@ -3,25 +3,32 @@
 //! generation its step shows, declines what the allowance of the newest epoch does not
 //! cover, and makes its hold and the epoch's next turn in the admission's publication;
 //! and it answers whether a published admission stands, on the names read after it.
+//! Then its proofs: two executors over one store, held inside the ledger; and a crash
+//! before every step of an admission, with every choice of what the disk loses.
 //!
 //! An allowance is the owner's reset. There is no command for one yet (task S9), so a
 //! test makes the names a reset makes (`support::allow`).
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use whizbang_core::contract::{
-    Call, CallError, Capability, Closing, Declined, Engine, Estimate, Executor, Ledger, MadeName,
-    NotJudged, Produced, Refusal, RefusalKind, Request, RequestId, Reread, Reservation, RunId,
-    RunState, Settled, Step,
+    ADMITTED_NAME, Action, Admission, Answer, Call, CallError, Capability, Closing, Declined,
+    Engine, Estimate, Executor, Ledger, MadeName, NotJudged, Produced, Refusal, RefusalKind,
+    Registry, Request, RequestId, Reread, Reservation, RunId, RunState, Settled, Step,
 };
+use whizbang_core::identity::Digest;
 use whizbang_core::spend::fold::State;
 use whizbang_core::spend::{Counted as Count, Record, StoreLedger, Sum, TurnBy};
 use whizbang_core::store::Store;
+use whizbang_testkit::barrier::Barriers;
+use whizbang_testkit::fs_shim::{Lost, ShimFs};
 use whizbang_testkit::ledger::FakeLedger;
+use whizbang_testkit::scratch::Scratch;
 
 use super::support::{
-    Bounds, Counted, World, allow, books, plant, plant_bytes, ran, reservation_bytes, reserved,
-    spend_names,
+    Bounds, Counted, Hand, World, allow, books, counting, plant, plant_bytes, ran,
+    reservation_bytes, reserved, spend_names,
 };
 use super::{amount, n, run};
 
@@ -736,7 +743,7 @@ fn confirmed_after(
             assert_eq!(repeat.run(), &made, "{label}");
             assert!(matches!(
                 repeat,
-                whizbang_core::contract::Answer::Repeat(ref earlier)
+                Answer::Repeat(ref earlier)
                     if matches!(earlier.state(), RunState::Ended(_))
             ));
             assert_eq!(world.ran(), 0, "{label}");
@@ -899,4 +906,484 @@ fn a_call_of_nothing_is_confirmed_in_a_store_in_debt() {
     // A call over nothing is refused there.
     let paid = painting(&world, 1, ledger.clone());
     assert_eq!(paid.request(&asked("order-2")).unwrap_err(), over(1, 0));
+}
+
+// --- two executors over one store ----------------------------------------------------------------
+
+/// The real ledger, stopped at a barrier each time it has judged and staged an
+/// admission: after the read a wrong ledger would decide from, and before the
+/// publication. It counts how many times it answered yes.
+struct Held {
+    inner: Arc<Counted>,
+    barriers: Barriers,
+    yes: AtomicU64,
+}
+
+impl Held {
+    fn over(inner: &Arc<Counted>, barriers: &Barriers) -> Arc<Held> {
+        Arc::new(Held {
+            inner: inner.clone(),
+            barriers: barriers.clone(),
+            yes: AtomicU64::new(0),
+        })
+    }
+}
+
+impl Ledger for Held {
+    fn reserve(
+        &self,
+        reservation: &Reservation,
+        step: &mut Step<'_, '_>,
+    ) -> Result<MadeName, Declined> {
+        let answer = self.inner.reserve(reservation, step);
+        if answer.is_ok() {
+            self.yes.fetch_add(1, Ordering::SeqCst);
+        }
+        self.barriers.stop_at("judged");
+        answer
+    }
+
+    fn confirm(&self, reservation: &Reservation, reading: &Reread<'_>) -> Result<bool, NotJudged> {
+        self.inner.confirm(reservation, reading)
+    }
+
+    fn settle(&self, closing: &Closing<'_>, step: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
+        self.inner.settle(closing, step)
+    }
+}
+
+#[test]
+fn two_executors_each_told_yes_for_the_last_of_the_allowance_end_with_one_admitted() {
+    // Rule 1. Two executors over one store, and forty cents allowed. Each asks the
+    // ledger for a quarter on books in which nothing is reserved, each is told yes,
+    // and each is held there, with its hold and its turn staged. They are let go
+    // together. Both chose the epoch's next turn, which is one name: the store
+    // refuses the later publication whole, that executor asks again on the books as
+    // they are then, and is declined for what is left.
+    let world = World::new("reserve-race");
+    assert_eq!(allow(&world.store, 400_000), 1);
+    let ledger = Counted::new();
+    let barriers = Barriers::new();
+    let held = Held::over(&ledger, &barriers);
+    let engines: Vec<Engine> = (0..2)
+        .map(|_| painting(&world, 250_000, held.clone()))
+        .collect();
+    let answers: Vec<_> = whizbang_testkit::threads::scope(|scope| {
+        // Two show a race.
+        let threads: Vec<_> = engines
+            .iter()
+            .zip(["order-1", "order-2"])
+            .map(|(engine, id)| scope.spawn(move || engine.request(&asked(id))))
+            .collect();
+        // Both have judged, and both were told yes, before either publishes.
+        barriers.arrived("judged", 2);
+        assert_eq!((ledger.asked(), held.yes.load(Ordering::SeqCst)), (2, 2));
+        assert_eq!(reserved(&world.store), []);
+        barriers.open("judged");
+        threads.into_iter().map(|t| t.join().unwrap()).collect()
+    });
+    let lost = answers.iter().position(|answer| answer.is_err()).unwrap();
+    let won = ran(answers
+        .into_iter()
+        .enumerate()
+        .fold(None, |made, (at, answer)| match (at == lost, answer) {
+            (true, Err(refused)) => {
+                assert_eq!(refused, over(250_000, 150_000));
+                made
+            }
+            (false, answer) => Some(answer),
+            (true, Ok(answer)) => panic!("both were admitted: {answer:?}"),
+        })
+        .unwrap());
+    // Asked three times: the loser again, once, on the books with the winner's
+    // names. One reservation, one hold, and the epoch's first turn and no second.
+    assert_eq!((ledger.asked(), held.yes.load(Ordering::SeqCst)), (3, 2));
+    assert_eq!((world.ran(), ledger.confirmed()), (1, 1));
+    let one = won.run();
+    assert_eq!(
+        spend_names(&world.store),
+        [
+            "spend/epoch/1".to_owned(),
+            format!("spend/held/1/{one}/250000"),
+            format!("spend/reservations/{one}"),
+            "spend/reset/1/400000".to_owned(),
+            "spend/turn/0/1".to_owned(),
+            "spend/turn/1/1".to_owned(),
+        ]
+    );
+    let folded = books(&world.store);
+    assert_eq!(folded.turn_epochs(one), [1]);
+    assert_eq!((folded.next_turn(1), folded.due(1)), (2, 1));
+    assert_eq!(
+        balance(&world.store, 1),
+        (400_000, exactly(250_000), 150_000)
+    );
+    // The refused request left no name and no run, and its id is free: under an
+    // allowance that covers it, it is admitted, and takes the next turn.
+    let free = ["order-1", "order-2"][lost];
+    let generation = world.store.snapshot().unwrap();
+    assert!(generation.entries().keys().all(|name| !name.contains(free)));
+    assert_eq!(generation.runs().len(), 1);
+    let small = painting(&world, 150_000, ledger.clone());
+    ran(small.request(&asked(free)));
+    assert!(spend_names(&world.store).contains(&"spend/turn/1/2".to_owned()));
+    assert_eq!(balance(&world.store, 1), (400_000, exactly(400_000), 0));
+}
+
+#[test]
+fn two_executors_that_judge_together_under_an_allowance_that_covers_both_are_both_admitted() {
+    // The same race where nothing has to be refused: the later publication is
+    // refused for the turn, asked again, and admitted at the next. Each of the two
+    // reservations has its own turn, and the epoch's turns are those its
+    // publications took.
+    let world = World::new("reserve-race-both");
+    allow(&world.store, 500_000);
+    let ledger = Counted::new();
+    let barriers = Barriers::new();
+    let held = Held::over(&ledger, &barriers);
+    let engines: Vec<Engine> = (0..2)
+        .map(|_| painting(&world, 250_000, held.clone()))
+        .collect();
+    whizbang_testkit::threads::scope(|scope| {
+        let threads: Vec<_> = engines
+            .iter()
+            .zip(["order-1", "order-2"])
+            .map(|(engine, id)| scope.spawn(move || ran(engine.request(&asked(id)))))
+            .collect();
+        barriers.arrived("judged", 2);
+        barriers.open("judged");
+        for thread in threads {
+            thread.join().unwrap();
+        }
+    });
+    assert_eq!((ledger.asked(), ledger.confirmed(), world.ran()), (3, 2, 2));
+    let folded = books(&world.store);
+    assert_eq!(folded.turns()[&1], [1, 2].into());
+    assert_eq!((folded.next_turn(1), folded.due(1)), (3, 2));
+    assert!(!folded.needs_owner(1));
+    assert_eq!(balance(&world.store, 1), (500_000, exactly(500_000), 0));
+}
+
+#[test]
+fn an_admission_that_judged_before_the_owners_reset_is_asked_again_under_the_new_epoch() {
+    // A reset takes the next turn of the epoch it closes, which is the turn an
+    // admission that judged before it chose. The admission's publication is refused,
+    // and it is judged again: on the new epoch, whose allowance does not cover it.
+    let world = World::new("reserve-race-reset");
+    allow(&world.store, 1_000_000);
+    let ledger = Counted::new();
+    let barriers = Barriers::new();
+    let held = Held::over(&ledger, &barriers);
+    let engine = painting(&world, 250_000, held.clone());
+    let refused = whizbang_testkit::threads::scope(|scope| {
+        let thread = scope.spawn(|| engine.request(&asked("order-1")));
+        barriers.arrived("judged", 1);
+        assert_eq!(allow(&world.store, 100_000), 2);
+        barriers.open("judged");
+        thread.join().unwrap().unwrap_err()
+    });
+    assert_eq!(refused, over(250_000, 100_000));
+    assert_eq!((ledger.asked(), held.yes.load(Ordering::SeqCst)), (2, 1));
+    assert_eq!((world.ran(), reserved(&world.store).len()), (0, 0));
+    // One that the new epoch covers falls under it, with that epoch's first turn.
+    let small = painting(&world, 100_000, ledger.clone());
+    let finished = ran(small.request(&asked("order-1")));
+    let names = spend_names(&world.store);
+    assert!(names.contains(&format!("spend/held/2/{}/100000", finished.run())));
+    assert!(names.contains(&"spend/turn/2/1".to_owned()));
+    let folded = books(&world.store);
+    assert_eq!(folded.turn_epochs(finished.run()), [2]);
+    assert!(!folded.needs_owner(1) && !folded.needs_owner(2));
+}
+
+// --- a crash at each step of an admission --------------------------------------------------------
+
+/// How many tests the sweep below is cut into.
+const PARTS: usize = 6;
+
+/// What the owner allowed in the store the sweep admits in, and what its call may
+/// cost.
+const ALLOWED: u64 = 1_000_000;
+const PRICE: u64 = 250_000;
+
+/// Copies a folder and all under it: a store that nothing has open.
+fn copy_all(from: &std::path::Path, to: &std::path::Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let (source, target) = (entry.path(), to.join(entry.file_name()));
+        if source.is_dir() {
+            copy_all(&source, &target);
+        } else {
+            std::fs::copy(&source, &target).unwrap();
+        }
+    }
+}
+
+/// Power is lost before each call that changes the disk during an admission through
+/// the real ledger, from the request to the moment the action starts. Each is tried
+/// with every way a disk can lose what was not yet durable: every name undone, every
+/// name kept, and every choice there is of which directories, and of which names,
+/// lose theirs. Whatever is left, the next writer finds the run, the id's record, the
+/// reservation, the ledger's hold and its turn there together, or none of them
+/// (rule 2); and the same request is then admitted and runs once, or is answered
+/// with the run that is there.
+///
+/// **It is cut by the ways, not by the steps.** Half the crashes there are belong to
+/// a few of the steps, where nine names are undecided at once. So each part goes
+/// through every step, and takes every `PARTS`th of the ways a crash there can end
+/// from `part`; between them the parts try every way of every step. How many ways a
+/// step has is learnt from one crash at it, which every part makes.
+///
+/// The call may cost a quarter of a dollar, under an allowance of a dollar that the
+/// owner's reset made durable before any of it. That store is made once and copied
+/// for each crash, so that no reset is published before each of them.
+fn admissions_crashed(part: usize) {
+    // The store every crash starts from: the owner allowed a dollar, and nothing has
+    // it open.
+    let template = Scratch::new("reserve-crash-template");
+    {
+        let fs = Arc::new(ShimFs::new());
+        let store = Store::open(&template.path().join("store"), fs).unwrap();
+        assert_eq!(allow(&store, ALLOWED), 1);
+    }
+    let reset = [
+        "spend/epoch/1".to_owned(),
+        format!("spend/reset/1/{ALLOWED}"),
+        "spend/turn/0/1".to_owned(),
+    ];
+    let scratch = |fs: ShimFs| {
+        let dir = Scratch::new("reserve-crash");
+        copy_all(&template.path().join("store"), &dir.path().join("store"));
+        let fs = Arc::new(fs);
+        let store = Arc::new(Store::open(&dir.path().join("store"), fs.clone()).unwrap());
+        (dir, fs, store)
+    };
+    let over = |store: Arc<Store>, action: Arc<dyn Action>, ledger: &Arc<Counted>| {
+        let mut registry = Registry::new();
+        registry.register(action).unwrap();
+        let backends = Arc::new(Bounds(Estimate::of_micros(PRICE)));
+        Engine::over(registry, backends, store, Digest::of_bytes(b""))
+            .with_clock(Hand::at(7000))
+            .with_ledger(ledger.clone())
+    };
+    let admitting = |store: Arc<Store>, runs: &Arc<AtomicU64>, ledger: &Arc<Counted>| {
+        let paint = counting(runs, "paint", &[Capability::Fill], |_, _| {
+            Ok(Produced::nothing())
+        });
+        over(store, paint, ledger)
+    };
+    // The calls that change the disk during one admission are found by running one.
+    let (opened, steps) = {
+        let (_dir, fs, store) = scratch(ShimFs::new());
+        let opened = fs.events().len();
+        let started = Arc::new(AtomicU64::new(0));
+        let noting = {
+            let (fs, started) = (fs.clone(), started.clone());
+            let runs = Arc::new(AtomicU64::new(0));
+            counting(&runs, "paint", &[Capability::Fill], move |_, _| {
+                started.store(fs.events().len() as u64, Ordering::SeqCst);
+                Ok(Produced::nothing())
+            })
+        };
+        ran(over(store, noting, &Counted::new()).request(&asked("order-17")));
+        (opened, started.load(Ordering::SeqCst) as usize - opened)
+    };
+    assert!(steps > 8, "{steps}");
+
+    let mut outcomes = std::collections::BTreeSet::new();
+    let (mut most_dirs, mut most_names, mut crashes) = (0, 0, 0);
+    for step in 0..=steps {
+        let mut ways = vec![Lost::Unsynced, Lost::ContentOnly, Lost::Subset(0)];
+        let mut next = 0;
+        while next < ways.len() {
+            let (index, lost) = (next, ways[next]);
+            next += 1;
+            // The third way is the one the rest are learnt from: every part makes it.
+            if index % PARTS != part && index != 2 {
+                continue;
+            }
+            crashes += 1;
+            let at = format!("step {step}, {lost:?}");
+            let (dir, fs, store) = scratch(ShimFs::new().crash_before(opened + step, lost));
+            let (runs, ledger) = (Arc::new(AtomicU64::new(0)), Counted::new());
+            let engine = admitting(store, &runs, &ledger);
+            let answer = engine.request(&asked("order-17"));
+            assert!(
+                matches!(answer, Err(CallError::Store(_))),
+                "{at}: {answer:?}"
+            );
+            if index == 2 {
+                let (dirs, names) = (fs.crash_choices(), fs.crash_names());
+                assert!(dirs <= 10 && names <= 10, "{at}: {dirs} {names}");
+                ways.extend((1..1u64 << dirs).map(Lost::Subset));
+                ways.extend((0..1u64 << names).map(Lost::Names));
+                most_dirs = most_dirs.max(dirs);
+                most_names = most_names.max(names);
+            }
+            // The action started only where the admission was whole and durable, and
+            // was confirmed: the last call of the step clears its staging away.
+            let ran_here = runs.load(Ordering::SeqCst);
+            assert!(
+                ran_here == 0 || (ran_here == 1 && step >= steps - 1),
+                "{at}"
+            );
+            drop(engine);
+
+            // The next writer recovers the store, and reads what survived: every
+            // name outside runs with its content, and every run with its names.
+            let root = dir.path().join("store");
+            let store = Arc::new(Store::open(&root, Arc::new(ShimFs::new())).unwrap());
+            let generation = store.snapshot().unwrap();
+            let read = |name: &str| {
+                let entry = generation.get(name).unwrap();
+                assert_eq!(entry.kind, whizbang_core::store::Kind::Diagnostic, "{at}");
+                store.read(entry).unwrap()
+            };
+            let names: Vec<&str> = generation.entries().keys().map(String::as_str).collect();
+            for name in &names {
+                read(name);
+            }
+            let made: Vec<&String> = generation.runs().keys().collect();
+            let folded = books(&store);
+            match made.as_slice() {
+                [] => {
+                    // Nothing: no id's record, no reservation, and neither the hold
+                    // nor its turn. No action had started.
+                    assert_eq!(names, reset, "{at}");
+                    assert_eq!(reserved(&store), [], "{at}");
+                    assert_eq!(ran_here, 0, "{at}: an action ran unadmitted");
+                    assert_eq!(folded.next_turn(1), 1, "{at}");
+                    assert_eq!(balance(&store, 1), (ALLOWED, exactly(0), ALLOWED), "{at}");
+                    // The same request is admitted, and runs, once.
+                    let again = admitting(store.clone(), &runs, &ledger);
+                    ran(again.request(&asked("order-17")));
+                    assert_eq!(runs.load(Ordering::SeqCst), 1, "{at}");
+                    assert_eq!(reserved(&store).len(), 1, "{at}");
+                    assert!(spend_names(&store).contains(&"spend/turn/1/1".to_owned()));
+                    outcomes.insert("nothing");
+                }
+                [made_id] => {
+                    // All of it: the id's record, the ledger's hold and its turn,
+                    // and the reservation, each readable and saying what its name
+                    // says; and the run with its admission.
+                    assert_eq!(
+                        names,
+                        [
+                            "requests/order-17/admitted",
+                            reset[0].as_str(),
+                            format!("spend/held/1/{made_id}/{PRICE}").as_str(),
+                            format!("spend/reservations/{made_id}").as_str(),
+                            reset[1].as_str(),
+                            reset[2].as_str(),
+                            "spend/turn/1/1",
+                        ],
+                        "{at}"
+                    );
+                    let of = run(made_id);
+                    // The id's record names the run and says what was reserved; the
+                    // run holds the same admission and nothing else.
+                    let admission = Admission::from_bytes(&read(names[0])).unwrap();
+                    assert_eq!(admission.run(), &of, "{at}");
+                    assert_eq!(admission.reserved_micros(), Some(PRICE), "{at}");
+                    let own = generation.run(made_id).unwrap();
+                    let held: Vec<&String> = own.entries().keys().collect();
+                    assert_eq!(held, [ADMITTED_NAME], "{at}");
+                    let inside = own.get(ADMITTED_NAME).unwrap();
+                    assert_eq!(inside.digest, generation.get(names[0]).unwrap().digest);
+                    // The reservation is of that run and that request, for the
+                    // amount the admission says, and holds the admission's digest.
+                    let stored = Reservation::from_bytes(&read(names[3])).unwrap();
+                    assert_eq!(reserved(&store), std::slice::from_ref(&stored), "{at}");
+                    assert_eq!(stored.run(), &of, "{at}");
+                    assert_eq!(stored.request(), Some(&id("order-17")), "{at}");
+                    assert_eq!((stored.micros(), stored.start_ms()), (PRICE, 7000));
+                    assert_eq!(stored.admission(), inside.digest, "{at}");
+                    // The ledger's names: the hold and its turn, both there, each
+                    // the record its name says; the reservation is a set the ledger
+                    // could have written, open, and the record and one hold alone.
+                    let hold = Record::Hold {
+                        epoch: 1,
+                        run: of.clone(),
+                        reserved: amount(PRICE),
+                    };
+                    let turn = Record::Turn {
+                        epoch: 1,
+                        turn: n(1),
+                        by: TurnBy::Admission,
+                        run: Some(of.clone()),
+                    };
+                    assert_eq!(read(names[2]), hold.to_bytes(), "{at}");
+                    assert_eq!(read(names[6]), turn.to_bytes(), "{at}");
+                    let standing = folded.reservation(&of).unwrap();
+                    assert_eq!(standing.state(), State::Open, "{at}");
+                    assert!(standing.names().reachable(), "{at}");
+                    assert!(!standing.names().damaged(), "{at}");
+                    assert_eq!(standing.names().count(), 2, "{at}");
+                    assert!(!folded.needs_owner(1), "{at}");
+                    assert_eq!((folded.next_turn(1), folded.due(1)), (2, 1), "{at}");
+                    assert!(folded.stands(&of, amount(PRICE)), "{at}");
+                    let left = ALLOWED - PRICE;
+                    assert_eq!(balance(&store, 1), (ALLOWED, exactly(PRICE), left), "{at}");
+                    // The same request is answered with that run, which did not end
+                    // and is not this process's: nothing runs, the ledger is not
+                    // asked, and nothing more is reserved.
+                    let (before, asked_before) = (runs.load(Ordering::SeqCst), ledger.asked());
+                    let again = admitting(store.clone(), &runs, &ledger);
+                    let earlier = match again.request(&asked("order-17")) {
+                        Ok(Answer::Repeat(earlier)) => earlier,
+                        other => panic!("{at}: not answered as a repeat: {other:?}"),
+                    };
+                    assert_eq!(earlier.run(), &of, "{at}");
+                    assert_eq!(earlier.state(), &RunState::NotEnded { here: false });
+                    assert_eq!(runs.load(Ordering::SeqCst), before, "{at}");
+                    assert_eq!(ledger.asked(), asked_before, "{at}");
+                    assert_eq!(reserved(&store), [stored], "{at}");
+                    assert_eq!(spend_names(&store).len(), 6, "{at}");
+                    outcomes.insert("all of it");
+                }
+                more => panic!("{at}: {} runs", more.len()),
+            }
+        }
+    }
+    // Before the last step there is nothing, and at it there is all of it.
+    let both: Vec<&str> = outcomes.into_iter().collect();
+    assert_eq!(both, ["all of it", "nothing"]);
+    // The masks were not a formality: some step left several directories and nine
+    // names undecided, and each choice was a crash, in one part or another.
+    assert!(
+        most_dirs >= 2 && most_names >= 9,
+        "{most_dirs} {most_names}"
+    );
+    assert!(crashes > 350, "{crashes}");
+}
+
+#[test]
+fn a_crash_at_any_event_of_an_admission_through_the_real_ledger_leaves_all_of_it_or_none_1_of_6() {
+    admissions_crashed(0);
+}
+
+#[test]
+fn a_crash_at_any_event_of_an_admission_through_the_real_ledger_leaves_all_of_it_or_none_2_of_6() {
+    admissions_crashed(1);
+}
+
+#[test]
+fn a_crash_at_any_event_of_an_admission_through_the_real_ledger_leaves_all_of_it_or_none_3_of_6() {
+    admissions_crashed(2);
+}
+
+#[test]
+fn a_crash_at_any_event_of_an_admission_through_the_real_ledger_leaves_all_of_it_or_none_4_of_6() {
+    admissions_crashed(3);
+}
+
+#[test]
+fn a_crash_at_any_event_of_an_admission_through_the_real_ledger_leaves_all_of_it_or_none_5_of_6() {
+    admissions_crashed(4);
+}
+
+#[test]
+fn a_crash_at_any_event_of_an_admission_through_the_real_ledger_leaves_all_of_it_or_none_6_of_6() {
+    admissions_crashed(5);
 }
