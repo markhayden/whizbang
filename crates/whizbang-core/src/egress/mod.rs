@@ -5,16 +5,18 @@
 //! model's file and for a probe; and, since ADR 0015, the policy an executor holds and
 //! the checked send it hands a backend (`policy.rs`, `checked.rs`). The policy and the
 //! check an executor has until it is given others approve nothing. What a config makes
-//! of the policy, and the check of each hop, are built on these by the egress strand of
-//! checkpoint 1B (`docs/plans/`).
+//! of the policy (`approvals.rs`) and the check behind a send (`hops.rs`) are the
+//! egress strand's (ADR 0019).
 //!
 //! Every type has private fields and is made through a constructor that checks it. None
 //! is deserialised. A constructor that takes a text from outside the build is told the
 //! executor's secrets, and looks at the whole text for one before it parses, cuts or
 //! bounds it: a text that holds a secret is refused whole and nothing of it is shown.
 
+mod approvals;
 mod checked;
 mod classes;
+mod hops;
 mod policy;
 mod recipient;
 mod ways;
@@ -22,6 +24,7 @@ mod ways;
 pub(crate) use checked::NoWayOut;
 pub use checked::{CREDENTIALS_LIMIT, Denied, Hop, HopCheck, NoHop, Ways};
 pub use classes::{Classes, DataClass};
+pub use hops::SendCheck;
 pub use policy::{APPROVED_LIMIT, DispatchPolicy};
 pub use recipient::{
     ACCOUNT_LIMIT, ADDRESS_MAX_BYTES, Account, Address, Credential, Origin, Recipient,
