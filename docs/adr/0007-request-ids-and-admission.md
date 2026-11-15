@@ -197,10 +197,10 @@ the real commands, and reads every record back
 outside runs: `Publication::create`, which makes the name. A publication that makes a
 name the store already holds is refused, whole, with `Error::NameExists`; the store
 looks inside its publishing step, at the generation that is current then, as it does for
-`create_run`. Both records of an id are made, never put. What is not covered:
-`Publication::put` still replaces any name, a made one too, and nothing in the store
-stops other code from putting a name under `requests/`; no code of whizbang does. A test
-pins that (`store::runs::known_a_name_that_was_made_can_still_be_replaced_by_put`).
+`create_run`. Both records of an id are made, never put. Until ADR 0016's second part
+`Publication::put` replaced any name, a made one too, and a test pinned that as known.
+The store now refuses a `put` under `requests/` and `spend/`
+(`store::runs::a_name_that_was_made_under_requests_or_spend_cannot_be_replaced_by_put`).
 
 ### The look, before prepare
 
@@ -341,8 +341,9 @@ have reserved meanwhile. The store decides only what a publication asks it to, t
 name it makes is not there. So a ledger whose answer depends on what was reserved makes
 a name that any admission it must not overlook would make too; the store refuses the
 later of the two whole, and the executor asks the ledger again, on the generation as it
-is then. The fake makes `spend/fake/<n>`, where n is one more than the reservations it
-saw. A test holds two admissions, under two ids, at a barrier inside the ledger, after
+is then. The fake makes the next turn of its epoch, `spend/turn/<epoch>/<n>`, as ADR
+0016 has every admission do (it made `spend/fake/<n>` until that record's second
+part). A test holds two admissions, under two ids, at a barrier inside the ledger, after
 each was told yes for the last of the allowance: one is published, and the other is
 asked again and declined
 (`admit::two_simultaneous_admissions_cannot_both_take_the_last_of_the_allowance`).
@@ -416,11 +417,10 @@ and reserves nothing, and its admission names its parent and the amount (ADR 000
 "Nested calls"). Dispatch records, the allowance and its reset, and what a failed
 request cost are all 1B's (`SPEC.md` section 6).
 
-**What is not covered.** `Publication::put` still replaces any name, a reservation's
-too: the store does not refuse a `put` under `requests/` or `spend/`, and no code of
-whizbang makes one (`store::runs::known_a_name_that_was_made_can_still_be_replaced_by_put`).
-The limit stays until the real ledger, which is the first code with a reason to decide
-what else may be written under `spend/`.
+**What was not covered, and is.** `Publication::put` replaced any name, a
+reservation's too. ADR 0016 decided it with the ledger's names: the store refuses a
+`put` under `requests/` or `spend/`
+(`store::runs::a_name_that_was_made_under_requests_or_spend_cannot_be_replaced_by_put`).
 
 ### The estimate
 

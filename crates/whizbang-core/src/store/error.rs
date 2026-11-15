@@ -56,6 +56,12 @@ pub enum Error {
     /// held already: by the current generation, or by the same publication. Nothing was
     /// published: a name that is made keeps the content it was made with.
     NameExists { name: String },
+    /// A publication was to give content to a name under a prefix whose names are
+    /// made and never put ([`super::MADE_PREFIXES`]): the records of request ids and
+    /// of spend. Such a name is made once, by [`super::Publication::create`], and
+    /// keeps its content; giving it content any other way is refused here, before
+    /// anything is staged.
+    MadeOnly { name: String },
     /// The reference is a diagnostic. It can be read as one, and never used as an output.
     NotAnOutput { digest: Digest },
     /// A file of the store does not hold what it must.
@@ -145,6 +151,11 @@ impl Error {
             Error::NameExists { .. } => {
                 "the store already holds a name that is made once".to_owned()
             }
+            Error::MadeOnly { .. } => {
+                "the store was to replace a name of a kind that is made once and never \
+                 replaced"
+                    .to_owned()
+            }
             Error::NotAnOutput { digest } => format!(
                 "the reference to {digest} is a diagnostic: it can be read, and never used \
                  as an output"
@@ -224,6 +235,11 @@ impl fmt::Display for Error {
                 "the store already holds the name {name:?}: it is made once and keeps its \
                  content"
             ),
+            Error::MadeOnly { name } => write!(
+                f,
+                "the name {name:?} is of a kind that is made once and never replaced: it \
+                 is given content only by making it"
+            ),
             Error::NotAnOutput { digest } => write!(
                 f,
                 "the reference to {digest} is a diagnostic: it can be read, and never used \
@@ -263,6 +279,7 @@ impl std::error::Error for Error {
             | Error::NoSuchRun { .. }
             | Error::RunExists { .. }
             | Error::NameExists { .. }
+            | Error::MadeOnly { .. }
             | Error::InvalidRun { .. }
             | Error::OtherFormat { .. }
             | Error::WithoutPaths { .. }

@@ -508,7 +508,13 @@ impl Family {
             stack: Arc::new(stack),
             above: under.map_or_else(Arc::default, |under| under.above.clone()),
             tree: under.map_or_else(|| Arc::new(Tree::new(descendants)), |u| u.tree.clone()),
-            allowance: reserved.map_or_else(Allowance::none, Allowance::of),
+            // A run another run called has its share, under its caller's allowance
+            // and in its caller's tree; a run nothing called has what was reserved.
+            allowance: match (under, reserved) {
+                (_, None) => Allowance::none(),
+                (Some(under), Some(share)) => under.allowance.child(share),
+                (None, Some(micros)) => Allowance::of(micros),
+            },
             offer: under.map(|under| under.offer.clone()),
         }
     }

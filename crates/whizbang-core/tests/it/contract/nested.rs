@@ -572,11 +572,15 @@ fn a_nested_call_draws_on_the_allowance_of_the_run_that_made_it_and_the_ledger_i
                 let see = || left.lock().unwrap().push(context.allowance().left_micros());
                 assert_eq!(context.allowance().total_micros(), Some(200));
                 see();
+                // Each call takes its share while it runs, and what it did not use
+                // comes back when its run has ended (ADR 0016): all of it, here.
                 for _ in 0..2 {
                     context.executor().submit(&Call::new("inner")).unwrap();
                     see();
                 }
-                // Nothing is left: a third is refused, and nothing is taken.
+                // A call that may cost more than is left is refused, and nothing is
+                // taken.
+                bound.0.store(300, Ordering::SeqCst);
                 let over = refused(context.executor().submit(&Call::new("inner")));
                 said.lock().unwrap().push(over);
                 see();
@@ -589,41 +593,50 @@ fn a_nested_call_draws_on_the_allowance_of_the_run_that_made_it_and_the_ledger_i
             },
         )
     };
+    // The allowance of the run that called the leaf, for the leaf's action to look at.
+    let above: Arc<Mutex<Option<whizbang_core::contract::Allowance>>> = Arc::default();
     let inner = {
-        let said = said.clone();
+        let above = above.clone();
         action("inner", &[Capability::Fill], move |_, context| {
             // What was taken for this run is its own allowance, and a run it calls
             // draws on that.
             assert_eq!(context.allowance().total_micros(), Some(100));
+            *above.lock().unwrap() = Some(context.allowance().clone());
             context.executor().submit(&Call::new("leaf")).unwrap();
-            assert_eq!(context.allowance().left_micros(), Some(0));
-            let over = refused(context.executor().submit(&Call::new("leaf")));
-            said.lock().unwrap().push(over);
+            // The leaf used nothing, and its share is back.
+            assert_eq!(context.allowance().left_micros(), Some(100));
             Ok(Produced::nothing())
         })
     };
-    let leaf = action("leaf", &[Capability::Fill], |_, _| Ok(Produced::nothing()));
+    let leaf = {
+        let above = above.clone();
+        action("leaf", &[Capability::Fill], move |_, context| {
+            // While this run executes, its share is taken from the run that called
+            // it, which has nothing left.
+            assert_eq!(context.allowance().total_micros(), Some(100));
+            let above = above.lock().unwrap().clone().unwrap();
+            assert_eq!(above.left_micros(), Some(0));
+            Ok(Produced::nothing())
+        })
+    };
     let executor = engine_on(store.clone(), bound.clone(), vec![outer, inner, leaf])
         .with_ledger(ledger.clone());
     let finished = executor.submit(&Call::new("outer")).unwrap();
     assert_eq!(finished.outcome().name(), "completed");
     let parent = finished.run().clone();
 
-    let over = |action: &str| Refusal::OverCaller {
-        action: action.to_owned(),
-        asked_micros: 100,
-        left_micros: 0,
+    let over = Refusal::OverCaller {
+        action: "inner".to_owned(),
+        asked_micros: 300,
+        left_micros: 200,
     };
     let no_bound = Refusal::NoBound {
         action: "inner".to_owned(),
     };
-    assert_eq!(
-        *said.lock().unwrap(),
-        [over("leaf"), over("leaf"), over("inner"), no_bound]
-    );
+    assert_eq!(*said.lock().unwrap(), [over, no_bound]);
     assert_eq!(
         *left.lock().unwrap(),
-        [Some(200), Some(100), Some(0), Some(0)]
+        [Some(200), Some(200), Some(200), Some(200)]
     );
 
     // The ledger was asked once, for the run nothing called, and one reservation is
@@ -639,7 +652,9 @@ fn a_nested_call_draws_on_the_allowance_of_the_run_that_made_it_and_the_ledger_i
         .keys()
         .filter(|name| name.starts_with("spend/"))
         .collect();
-    assert_eq!(spend.len(), 2, "{spend:?}");
+    // The reservation with its hold and a turn, and its closing with its place and
+    // a turn.
+    assert_eq!(spend.len(), 6, "{spend:?}");
 
     // What was taken for each call is in its admission, which names the run it was
     // taken from, and in its record.
@@ -668,8 +683,8 @@ fn a_nested_call_draws_on_the_allowance_of_the_run_that_made_it_and_the_ledger_i
     assert_eq!(kinds, [RefusalKind::OverCaller, RefusalKind::NoBound]);
     assert_eq!(
         refusals[0].why(),
-        "inner was not called: it may cost up to 100 millionths of a US dollar, and 0 are \
-         left of its caller's allowance"
+        "inner was not called: it may cost up to 300 millionths of a US dollar, and 200 \
+         are left of its caller's allowance"
     );
 }
 
@@ -683,8 +698,9 @@ fn two_calls_at_once_cannot_both_take_the_last_of_the_allowance() {
         let (barriers, said) = (barriers.clone(), said.clone());
         action("outer", &[Capability::Fill], move |_, context| {
             // The first call takes all there is, and its run is held inside its
-            // action. A second, made while the first runs, is refused; and so is one
-            // made after it ended: nothing is given back before settlement.
+            // action. A second, made while the first runs, is refused. Once the
+            // first has ended, having used nothing, its share is back, and the same
+            // call is admitted (ADR 0016).
             let executor = context.executor();
             let started = executor.start(&Request::new(Call::new("inner"))).unwrap();
             barriers.arrived("inner", 1);
@@ -692,27 +708,42 @@ fn two_calls_at_once_cannot_both_take_the_last_of_the_allowance() {
             said.lock().unwrap().push(over);
             barriers.open("inner");
             executor.wait(started.run()).unwrap();
-            let over = refused(executor.submit(&Call::new("inner")));
-            said.lock().unwrap().push(over);
+            assert_eq!(context.allowance().left_micros(), Some(100));
+            executor.submit(&Call::new("inner")).unwrap();
             Ok(Produced::nothing())
         })
     };
-    // Eight calls made at once, of which the allowance covers one.
+    // Eight calls made at once, of which the allowance covers one. The one that is
+    // admitted holds its share until the other seven have been refused: its action
+    // stops at a barrier that the seventh refusal opens. A share comes back when its
+    // run has ended, so without that a second could be admitted after the first.
     let crowd = {
-        let admitted = admitted.clone();
+        let (admitted, barriers) = (admitted.clone(), barriers.clone());
         action("crowd", &[Capability::Fill], move |_, context| {
             let gate = std::sync::Barrier::new(8);
+            let turned_away = AtomicU64::new(0);
             whizbang_testkit::threads::scope(|scope| {
                 for _ in 0..8 {
                     scope.spawn(|| {
                         gate.wait();
-                        if context.executor().submit(&Call::new("inner")).is_ok() {
+                        if context.executor().submit(&Call::new("held")).is_ok() {
                             admitted.fetch_add(1, Ordering::SeqCst);
+                        } else if turned_away.fetch_add(1, Ordering::SeqCst) + 1 == 7 {
+                            barriers.open("held");
                         }
                     });
                 }
             });
-            assert_eq!(context.allowance().left_micros(), Some(0));
+            // The one that ran used nothing: its share is back.
+            assert_eq!(context.allowance().left_micros(), Some(100));
+            Ok(Produced::nothing())
+        })
+    };
+    let held = {
+        let barriers = barriers.clone();
+        action("held", &[Capability::Fill], move |_, context| {
+            assert_eq!(context.allowance().total_micros(), Some(100));
+            barriers.stop_at("held");
             Ok(Produced::nothing())
         })
     };
@@ -724,7 +755,7 @@ fn two_calls_at_once_cannot_both_take_the_last_of_the_allowance() {
         })
     };
     let bound = Arc::new(Priced(AtomicU64::new(100)));
-    let executor = engine_on(world.store(), bound, vec![outer, crowd, inner])
+    let executor = engine_on(world.store(), bound, vec![outer, crowd, inner, held])
         .with_ledger(Arc::new(FakeLedger::new()));
     let finished = executor.submit(&Call::new("outer")).unwrap();
     assert_eq!(finished.outcome().name(), "completed");
@@ -733,8 +764,8 @@ fn two_calls_at_once_cannot_both_take_the_last_of_the_allowance() {
         asked_micros: 100,
         left_micros: 0,
     };
-    assert_eq!(*said.lock().unwrap(), [over.clone(), over]);
-    assert_eq!(records(&world).len(), 2);
+    assert_eq!(*said.lock().unwrap(), [over]);
+    assert_eq!(records(&world).len(), 3);
 
     let finished = executor.submit(&Call::new("crowd")).unwrap();
     assert_eq!(finished.outcome().name(), "completed");
@@ -742,7 +773,7 @@ fn two_calls_at_once_cannot_both_take_the_last_of_the_allowance() {
     let stored = record(&world, finished.run());
     assert_eq!(stored.steps().len(), 1);
     assert_eq!(stored.outcome().refusals.len(), 7);
-    assert_eq!(records(&world).len(), 4);
+    assert_eq!(records(&world).len(), 5);
 }
 
 // --- cancellation -----------------------------------------------------------------------------
@@ -1548,6 +1579,9 @@ fn a_call_whose_admission_is_visible_and_not_confirmed_keeps_what_was_taken_for_
                         other => note(format!("{other:?}")),
                     }
                 }
+                // Each call that ran gave its share back when it ended. The share
+                // of the call that was not confirmed never comes back.
+                note(format!("{:?} left", context.allowance().left_micros()));
                 Ok(Produced::nothing())
             },
         )
@@ -1565,9 +1599,10 @@ fn a_call_whose_admission_is_visible_and_not_confirmed_keeps_what_was_taken_for_
             "unconfirmed",
             "Some(100) left",
             "ran",
-            "OverCaller",
             "ran",
-            "TreeFull"
+            "TreeFull",
+            "TreeFull",
+            "Some(100) left"
         ]
     );
     let all = records(&world);
@@ -1577,7 +1612,10 @@ fn a_call_whose_admission_is_visible_and_not_confirmed_keeps_what_was_taken_for_
         .filter(|admitted| admitted.parent() == Some(finished.run()))
         .map(|admitted| admitted.reserved_micros().unwrap())
         .sum();
-    assert_eq!((all.len(), taken), (4, 200));
+    // Three admissions name the run for 100 each, where it was given 200: the two
+    // that ran took the same 100 one after the other, and the one whose admission
+    // was not confirmed holds the other 100 for good.
+    assert_eq!((all.len(), taken), (4, 300));
 }
 
 #[test]

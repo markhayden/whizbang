@@ -36,6 +36,12 @@ of the model; a closed reservation has nothing left for a dispatch. Added: limit
 what a correction writes off; what a reset does not stop; a request of nothing;
 histories 80 to 87; two things more in "What the second part builds", and notes for
 whoever builds it.
+Amended: 2026-11-15, with the second part (task I2's second pull request). Added:
+"The seal, in the core" and "A name of no form"; "The second part, as built", which
+names the test of each thing the first part said was to be built, and what was
+decided while building it. Changed: the trigger table's first row, and a row for a
+dispatch made with its place; the turns exception holds one epoch only (limit (d),
+history 88); limit (b) says in its own paragraph that it has no bound.
 Spec: section 6, "Spend"; section 3, "Storage"
 
 ## Context
@@ -71,11 +77,14 @@ every record is a name that is made once.
 the design, a model of it and a table of histories:
 `crates/whizbang-testkit/src/spend.rs`, with its tests in
 `crates/whizbang-testkit/tests/it/spend.rs`, named below as `spend::…`. Nothing in the
-core is changed by it. The second part builds the interface and the records in the
-core; until it merges, **every sentence below about the store, the executor or the
-core says what is to be built, and only a sentence that names a test says what the
-head does.** The real fold, the real ledger, the meter, recovery and the commands are
-the spend strand's tasks (S1b to S12), each held to the table.
+core is changed by it. The second part built the interface and the records in the
+core: "The second part, as built" names what is there and the test of each. **Every
+other sentence below about the store, the executor or the core says what the design
+is, and only a sentence that names a test says what the head does.** The real fold,
+the real ledger, the meter, recovery and the commands are the spend strand's tasks
+(S1b to S12), each held to the table; until they merge the one ledger is the test
+kit's fake, which keeps the names of this record in a store and judges by the
+model's fold.
 
 ## Decision
 
@@ -1043,6 +1052,61 @@ because of what it is:
   the check that two readings of every reservation, written apart, give one answer
   after every event (`Books::read_apart` in the model, asserted by the generated
   tests).
+
+### The second part, as built
+
+What the list above asked for, as it is in the core (`crates/whizbang-core/src/spend/`
+and `src/contract/`), each with the test that shows it. Tests named `ledger::`,
+`admit::`, `nested::` and `runs::` are the core's (`tests/it/contract/`,
+`tests/it/store/`); `context::` are unit tests beside `Allowance`.
+
+| What | As built | Shown by |
+|---|---|---|
+| `reserve` cannot return without a name | `Ledger::reserve` returns a `MadeName`, which only `Step::make` gives and which is not copied; the example on `Ledger` does not compile. The fast tests run no examples, so the executor also refuses a `MadeName` that this attempt did not make: a ledger that kept one from an earlier attempt | `ledger::a_ledger_that_hands_back_a_name_it_did_not_make_in_this_attempt_is_refused` |
+| A ledger's names | `Step::make` takes a text that `spend::Name` reads and that is not of the form `spend/reservations/<run>`: so no segment is empty, `.` or `..` | `admit::a_ledger_adds_to_the_step_only_names_of_its_own_and_nothing_secret` |
+| `settle` | `Ledger::settle(&Closing, &mut Step)`, inside the publication that ends a run nothing called. A failure of it fails that publication: the run stays admitted and is abandoned, and its caller is told. Where the store refuses the publication for a name the ledger made in it (the place or the turn was taken meanwhile) the publication is made again, 1,024 times at most | `ledger::a_settle_that_fails_leaves_the_run_admitted_and_its_caller_told`, `ledger::an_admission_through_the_ledger_makes_its_hold_and_the_next_turn_with_the_reservation` |
+| The parser, and the reading | `spend::Name`, `spend::Reading`, `spend::Names` | The `spend::name::` and `spend::reading::` tests named under "The books are names" |
+| `Allowance`, signed | Debited before a request and for a share; given back to; in debt where a charge over its bound put it, in the run that sent the request and in each above; a child's remainder handed up when its end is durable, and dropped once its parent has entered its commit step | `context::allowance_tests::an_allowance_in_debt_reports_nothing_to_spend_and_a_return_pays_the_debt_first`, `…::a_charge_over_its_bound_takes_the_excess_from_the_run_and_from_each_run_above`, `…::a_parent_that_calls_twenty_children_in_turn_each_using_nothing_has_all_of_it_at_the_end`, `…::an_amount_given_back_to_an_allowance_whose_run_has_entered_its_commit_step_is_dropped`; through the executor, `nested::a_nested_call_draws_on_the_allowance_of_the_run_that_made_it_and_the_ledger_is_asked_once` |
+| What the process holds of a tree | Beside the allowance: the reservation's amount and what its requests took. `Allowance::dispatch(bound, publish)` asks and debits the run and the tree in one step, under the tree's lock, before `publish` runs, and undoes the debit when `publish` refuses, fails or panics. `Dispatched::answered` counts a charge over its bound from the moment the process holds the answer; `Dispatched::settled` gives back or takes the difference | `context::allowance_tests::a_dispatch_is_debited_before_it_is_published_and_the_debit_is_undone_when_it_is_refused`, `…::two_runs_of_one_tree_that_publish_at_once_are_not_both_let_by`, `…::a_dispatch_is_held_to_what_the_process_holds_of_the_tree_whatever_its_runs_share_is` (history 75: an answer counted in memory before its settlement), and through the executor `ledger::a_dispatch_is_refused_where_the_trees_tally_in_memory_does_not_cover_it_though_the_names_do` |
+| The readings' shapes | `spend::Counted` (a number; "unknown, at least") and `spend::Sent` (a number; "unknown, at most"; "unknown") | `spend::reading::each_of_the_three_shapes_of_a_reading_is_answered` |
+| A dispatch's refusals | `contract::DispatchRefused`: `OverRun`, `OverReservation`, `Frozen`, `Closed`, `NeedsOwner`, `OverTree`, and `NoAmount` and `Failed` beside them. The first and the sixth are the allowance's; the others are what the meter's judgement by the names answers, which here is the fake's | `ledger::a_dispatch_is_refused_with_a_reason_of_its_own_by_each_thing_that_holds_it`, `ledger::a_dispatch_is_refused_where_its_epoch_needs_its_owner`, and the test of the tree above |
+| The confirmation | In `Engine::admit`, after the admission's publication: the store is read again and `Ledger::confirm(&Reservation, &Reread)` answers. Only where it stands are the run's allowance and the tree's tally made and the run handed on to be executed. Where it does not, or where the reading fails, the run is ended at once by the publication that ends a run, as an error of the kind `not_confirmed` (ADR 0013), with `settle` in it and the id's ending made, and the caller is handed `CallError::NotConfirmed`, which is no refusal: so the request's id is not looked up a second time, and a repeat is answered with the run that ended. Where the reading failed and the run could not be ended either, the caller is handed that failure. A call from inside an action is not confirmed | `ledger::an_admission_whose_reservation_has_any_name_beside_its_record_and_its_one_hold_is_not_confirmed` (history 80), `ledger::an_admission_whose_epoch_needs_its_owner_is_not_confirmed`, `ledger::an_admission_of_more_than_nothing_whose_epoch_is_over_its_allowance_is_not_confirmed`, `ledger::a_call_of_nothing_in_a_store_in_debt_is_confirmed_and_runs`, `ledger::an_admission_made_beside_a_frozen_reservation_whose_hold_states_its_amount_is_confirmed`, `ledger::a_call_from_inside_an_action_has_no_reservation_and_is_not_confirmed` |
+| Sums that stop | `spend::Sum`, of 128 bits; `spend::Amount` is never the largest number of 64, at a name, a record and `Allowance::dispatch` | `spend::reading::sums_of_amounts_near_the_largest_number_stop_at_it`, `spend::name::the_largest_number_is_no_amount` |
+| The recogniser's replay | `spend::Names::reachable` | `spend::reading::a_reservation_whose_names_the_ledger_did_not_check_into_place_is_frozen` (history 74), `spend::reading::what_the_ledger_could_not_have_written_is_not_taken` |
+| Places counted | `spend::Names::unexplained` is one subtraction | `spend::reading::a_name_that_names_the_largest_place_is_counted_without_walking_to_it` |
+| The store's rule for a `put` | `Publication::put` and `Publication::keep` refuse a name under `requests/` and `spend/` (`store::Error::MadeOnly`), before anything is staged, whether the name is there or not | `runs::a_name_that_was_made_under_requests_or_spend_cannot_be_replaced_by_put`, which is the pin `known_a_name_that_was_made_can_still_be_replaced_by_put` turned round |
+| The records | `spend::Record`, ten kinds | `spend::record::each_record_is_written_one_way_and_round_trips_to_the_same_bytes`, `spend::record::a_record_with_an_unknown_or_a_missing_field_or_any_other_bytes_is_refused`, `spend::record::a_record_over_its_bound_or_of_another_kind_or_that_says_what_none_can_is_refused`; an entry over the bound is not read: `spend::reading::with_one_reservations_content_damaged_the_reading_gives_the_others_and_that_one_as_damaged` |
+
+**What the notes above came to.**
+
+- *The tally debited before the dispatch is published:* as the table has it. The
+  lock is the tree's, and it is not held while the dispatch is published.
+- *The sums of a closing:* `charged_micros` and `unresolved_micros` of
+  `spend-closing/1` are a `spend::Sum`, written as decimal digits in a string, so a
+  sum that stopped is written as the largest number of 128 bits.
+- *A run that ended as not confirmed:* decided with ADR 0013, which has it: an error
+  whose kind is the word `not_confirmed`, in `run/3` as it is.
+- *The two tests for the real fold* are task S1b's.
+
+**Decided while it was built, and not in the first part.**
+
+- **`confirm` and `settle` have defaults,** for a ledger that keeps no books of
+  names: such a one confirms every admission and closes nothing. A ledger that makes
+  holds overrides both; the fake does, and the real one is task S2's.
+- **A child's remainder is handed up now.** ADR 0008 had nothing given back to an
+  allowance. With `Allowance` as this record has it, a call from inside an action
+  that ends having used nothing gives its whole share back, so a parent can call
+  again with it. The tests of `nested.rs` that held the old rule are restated, and
+  what they showed of two calls at once is shown with the first held inside its
+  action (`nested::two_calls_at_once_cannot_both_take_the_last_of_the_allowance`).
+- **What the fake does where an epoch needs its owner at admission:** it declines as
+  over the allowance, with nothing left. A refusal of its own there is the real
+  ledger's to add (task S2); this part's "Done when" asks for one at the
+  confirmation and at a dispatch.
+- **The fake's allowance is a number in memory,** standing for the epoch before any
+  reset while the store names no reset, and a correction never stands for it. Its
+  judgement is the model's fold over the names a store holds
+  (`whizbang_testkit::ledger::FakeLedger::books`).
 
 ### Limits, each stated
 

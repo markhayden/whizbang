@@ -20,6 +20,9 @@ use crate::capability::{
 use crate::egress::{Sender, Ways};
 use crate::store;
 
+use crate::spend::Amount;
+
+use super::ledger::DispatchRefused;
 use super::nested::Offer;
 use super::{Capability, Clock, Executor, PreparedCall, Refusal, RunFacts};
 
@@ -181,12 +184,29 @@ impl Diagnostics for NoDiagnostics {
     }
 }
 
-/// What a run may spend, in millionths of a US dollar: what was reserved for it when
-/// it was admitted, or, for a run another run called, what was carved for it from its
-/// caller's allowance (ADR 0008, "Nested calls"). Each call the run makes takes its
-/// estimate from what is left, under one lock, so two calls made at once cannot both
-/// take the last of it. A run that was admitted with no ledger has no amount: nothing
-/// was reserved, and nothing is counted. Settlement arrives with the ledger.
+/// What a run may spend, in millionths of a US dollar (ADR 0016, "An allowance holds a
+/// signed balance"): what was reserved for it when it was admitted, or, for a run
+/// another run called, the share that was taken for it from its caller's allowance
+/// (ADR 0008, "Nested calls"). A run that was admitted with no ledger has no amount:
+/// nothing was reserved, and nothing is counted.
+///
+/// **The balance is signed.** It is debited before a request, by the request's bound
+/// ([`Allowance::dispatch`]), and by a nested call's share; it is given back to, by
+/// what a bound held beyond its charge, by a share whose call was not admitted, and
+/// by a child's remainder; and a charge over its bound takes the excess from the
+/// allowance of the run that sent the request and of each run above it, below
+/// nothing if need be. What a run can spend is its balance or nothing, never less,
+/// and every return is added to the signed balance, so it pays the debt first.
+///
+/// **Beside it, what the process holds of the tree's reservation:** its amount and
+/// what the requests sent under it took, by any run of the tree, each at its bound
+/// until it is settled and at its charge from then on, a charge over its bound from
+/// the moment the process holds the answer that says it. A dispatch of more than the
+/// amount less that is refused whatever its run's own balance is, and whatever the
+/// names say.
+///
+/// An allowance is not the books: it is lost with its process, and recovery closes
+/// the reservation.
 ///
 /// A clone is the same allowance. Two are equal when they are the same one.
 #[derive(Debug, Clone)]
@@ -197,7 +217,63 @@ pub struct Allowance {
 #[derive(Debug)]
 struct Purse {
     total: u64,
-    left: Mutex<u64>,
+    balance: Mutex<Balance>,
+    /// The allowance of the run that called this one.
+    above: Option<Arc<Purse>>,
+    /// What the process holds of the reservation of the tree this run is in.
+    tree: Arc<TreeHeld>,
+}
+
+#[derive(Debug)]
+struct Balance {
+    micros: i128,
+    /// The run has entered its commit step: what is given back from here on is
+    /// dropped, because its reservation is closed by its own settlements.
+    closed: bool,
+}
+
+/// What the process holds of one tree's reservation, in memory.
+#[derive(Debug)]
+struct TreeHeld {
+    amount: u64,
+    /// What the requests sent under it took, together.
+    taken: Mutex<u128>,
+}
+
+impl TreeHeld {
+    fn left(&self, taken: u128) -> u64 {
+        let left = u128::from(self.amount).saturating_sub(taken);
+        u64::try_from(left).unwrap_or(u64::MAX)
+    }
+}
+
+impl Purse {
+    fn balance(&self) -> std::sync::MutexGuard<'_, Balance> {
+        self.balance.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Adds to the signed balance, which pays a debt first. Dropped once the run has
+    /// entered its commit step, when `late` returns are.
+    fn give(&self, micros: u128, even_closed: bool) {
+        let mut balance = self.balance();
+        if balance.closed && !even_closed {
+            return;
+        }
+        let micros = i128::try_from(micros).unwrap_or(i128::MAX);
+        balance.micros = balance.micros.saturating_add(micros);
+    }
+
+    /// Takes from the signed balance, below nothing if need be.
+    fn owe(&self, micros: u128) {
+        let mut balance = self.balance();
+        let micros = i128::try_from(micros).unwrap_or(i128::MAX);
+        balance.micros = balance.micros.saturating_sub(micros);
+    }
+}
+
+/// What a run can spend of a signed balance: the balance, or nothing.
+fn spendable(micros: i128) -> u64 {
+    u64::try_from(micros.max(0)).unwrap_or(u64::MAX)
 }
 
 impl PartialEq for Allowance {
@@ -218,13 +294,37 @@ impl Allowance {
         Allowance { purse: None }
     }
 
-    /// An allowance of this much.
+    /// The allowance of a run nothing called, with this much reserved: the tree's
+    /// reservation is of the same amount, and nothing is taken of it yet.
     pub(super) fn of(micros: u64) -> Allowance {
+        let tree = Arc::new(TreeHeld {
+            amount: micros,
+            taken: Mutex::new(0),
+        });
+        Allowance::with(micros, None, tree)
+    }
+
+    fn with(micros: u64, above: Option<Arc<Purse>>, tree: Arc<TreeHeld>) -> Allowance {
         Allowance {
             purse: Some(Arc::new(Purse {
                 total: micros,
-                left: Mutex::new(micros),
+                balance: Mutex::new(Balance {
+                    micros: i128::from(micros),
+                    closed: false,
+                }),
+                above,
+                tree,
             })),
+        }
+    }
+
+    /// The allowance of a run this run called, whose share of this much was taken
+    /// from this one already ([`Allowance::take`]): it is under this one, in the
+    /// same tree. No amount where this has none.
+    pub(super) fn child(&self, share: u64) -> Allowance {
+        match &self.purse {
+            Some(purse) => Allowance::with(share, Some(purse.clone()), purse.tree.clone()),
+            None => Allowance::none(),
         }
     }
 
@@ -233,34 +333,231 @@ impl Allowance {
         self.purse.as_ref().map(|purse| purse.total)
     }
 
-    /// What is left of it now: the amount, less what the calls the run made took.
+    /// What the run can spend now: its balance, or nothing when it is in debt.
     pub fn left_micros(&self) -> Option<u64> {
         let purse = self.purse.as_ref()?;
-        Some(*purse.left.lock().unwrap_or_else(PoisonError::into_inner))
+        Some(spendable(purse.balance().micros))
     }
 
-    /// Takes this much for a call the run makes, when that much is left; otherwise
-    /// nothing is taken, and what is left comes back. The look and the taking are one
-    /// step, under the allowance's lock. None when the allowance has no amount.
+    /// By how much the run's balance is below nothing: what the next returns to it
+    /// pay first.
+    pub fn owes_micros(&self) -> Option<u64> {
+        let purse = self.purse.as_ref()?;
+        let owed = purse.balance().micros.min(0).unsigned_abs();
+        Some(u64::try_from(owed).unwrap_or(u64::MAX))
+    }
+
+    /// What the process holds as left of the reservation of the tree this run is
+    /// in: its amount less what the requests sent under it took.
+    pub fn tree_left_micros(&self) -> Option<u64> {
+        let purse = self.purse.as_ref()?;
+        let taken = purse
+            .tree
+            .taken
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        Some(purse.tree.left(*taken))
+    }
+
+    /// Takes this much for a call the run makes, when the run can spend that much;
+    /// otherwise nothing is taken, and what it can spend comes back. The look and the
+    /// taking are one step, under the allowance's lock. None when the allowance has no
+    /// amount.
     pub(super) fn take(&self, micros: u64) -> Result<Option<Taken>, u64> {
         let Some(purse) = &self.purse else {
             return Ok(None);
         };
-        let mut left = purse.left.lock().unwrap_or_else(PoisonError::into_inner);
-        if micros > *left {
-            return Err(*left);
+        let mut balance = purse.balance();
+        let left = spendable(balance.micros);
+        if micros > left {
+            return Err(left);
         }
-        *left -= micros;
+        balance.micros -= i128::from(micros);
         Ok(Some(Taken {
             purse: purse.clone(),
             micros,
             kept: false,
         }))
     }
+
+    /// The run has entered its commit step: an amount given back to it from here on
+    /// is dropped.
+    pub(super) fn close(&self) {
+        if let Some(purse) = &self.purse {
+            purse.balance().closed = true;
+        }
+    }
+
+    /// The run's end is durable: its remainder, which is its own balance when that
+    /// is over nothing, is handed to the run that called it, when that run still
+    /// executes. It is handed once: nothing is left here afterwards.
+    pub(super) fn hand_up(&self) {
+        let Some(purse) = &self.purse else {
+            return;
+        };
+        let remainder = {
+            let mut balance = purse.balance();
+            let remainder = spendable(balance.micros);
+            balance.micros -= i128::from(remainder);
+            balance.closed = true;
+            remainder
+        };
+        if let Some(above) = &purse.above {
+            above.give(u128::from(remainder), false);
+        }
+    }
+
+    /// Debits a paid request's bound before the request leaves, and publishes its
+    /// dispatch: `publish` is what makes the dispatch durable, and is the caller's
+    /// (the meter's, task S5), which judges by the names and makes them.
+    ///
+    /// The run's allowance and what the process holds of the tree are asked and
+    /// debited in one step, under the tree's lock, **before** the dispatch is
+    /// published; where `publish` refuses, or the store refuses it, the debit is
+    /// undone. So of two runs of one tree that are each about to publish a dispatch,
+    /// the second is asked after the first was debited, and both are never let by on
+    /// what only one of them fits (ADR 0016, "Notes for whoever builds the second
+    /// part"). No lock is held while `publish` runs.
+    ///
+    /// A request of nothing is debited nothing and is not refused here: by a run in
+    /// debt, and under a tree that has nothing left. An allowance with no amount
+    /// counts nothing: `publish` is run and nothing is debited.
+    pub fn dispatch<T>(
+        &self,
+        bound: Amount,
+        publish: impl FnOnce() -> Result<T, DispatchRefused>,
+    ) -> Result<(Dispatched, T), DispatchRefused> {
+        let Some(purse) = &self.purse else {
+            let published = publish()?;
+            return Ok((Dispatched { held: None }, published));
+        };
+        let micros = bound.micros();
+        {
+            let mut taken = purse
+                .tree
+                .taken
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let mut balance = purse.balance();
+            let left = spendable(balance.micros);
+            if micros > left {
+                return Err(DispatchRefused::OverRun { left_micros: left });
+            }
+            let left = purse.tree.left(*taken);
+            if micros > left {
+                return Err(DispatchRefused::OverTree { left_micros: left });
+            }
+            balance.micros -= i128::from(micros);
+            *taken = taken.saturating_add(u128::from(micros));
+        }
+        // Whatever ends `publish` without a dispatch, a panic among it, the debit is
+        // undone.
+        let mut undo = Undo {
+            purse,
+            micros,
+            armed: true,
+        };
+        let published = publish()?;
+        undo.armed = false;
+        Ok((
+            Dispatched {
+                held: Some(Held {
+                    purse: purse.clone(),
+                    bound: micros,
+                    counted: micros,
+                }),
+            },
+            published,
+        ))
+    }
+}
+
+/// Gives a dispatch's debit back when its publication did not happen.
+struct Undo<'a> {
+    purse: &'a Arc<Purse>,
+    micros: u64,
+    armed: bool,
+}
+
+impl Drop for Undo<'_> {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let tree = &self.purse.tree;
+        {
+            let mut taken = tree.taken.lock().unwrap_or_else(PoisonError::into_inner);
+            *taken = taken.saturating_sub(u128::from(self.micros));
+        }
+        // The run is executing: it is about to send a request.
+        self.purse.give(u128::from(self.micros), true);
+    }
+}
+
+/// A paid request that was dispatched: what its run's allowance and the tree's
+/// reservation hold for it in memory, until it is settled. Dropped without being
+/// settled, it stays counted as it is: nothing of it is given back.
+#[derive(Debug)]
+pub struct Dispatched {
+    held: Option<Held>,
+}
+
+#[derive(Debug)]
+struct Held {
+    purse: Arc<Purse>,
+    bound: u64,
+    /// What the tree counts for this request now: its bound, or the charge an
+    /// answer gave where that is more.
+    counted: u64,
+}
+
+impl Dispatched {
+    /// The process holds the answer, and it says this charge. A charge over the
+    /// bound counts against the tree from now, before its settlement is durable: a
+    /// dispatch by any run of the tree is refused what it took.
+    pub fn answered(&mut self, charge: Amount) {
+        let Some(held) = &mut self.held else {
+            return;
+        };
+        let charge = charge.micros();
+        if charge > held.counted {
+            let tree = &held.purse.tree;
+            let mut taken = tree.taken.lock().unwrap_or_else(PoisonError::into_inner);
+            *taken = taken.saturating_add(u128::from(charge - held.counted));
+            held.counted = charge;
+        }
+    }
+
+    /// The request is settled at this charge, durably. Under its bound, what the
+    /// bound held beyond the charge is given back to the run that sent it, and the
+    /// tree counts the charge. Over it, the excess is taken from the allowance of
+    /// the run that sent it and of each run above it, below nothing if need be.
+    pub fn settled(mut self, charge: Amount) {
+        let Some(held) = self.held.take() else {
+            return;
+        };
+        let charge = charge.micros();
+        {
+            let tree = &held.purse.tree;
+            let mut taken = tree.taken.lock().unwrap_or_else(PoisonError::into_inner);
+            let without = taken.saturating_sub(u128::from(held.counted));
+            *taken = without.saturating_add(u128::from(charge));
+        }
+        if charge <= held.bound {
+            held.purse.give(u128::from(held.bound - charge), false);
+            return;
+        }
+        let excess = u128::from(charge - held.bound);
+        let mut purse = Some(&held.purse);
+        while let Some(one) = purse {
+            one.owe(excess);
+            purse = one.above.as_ref();
+        }
+    }
 }
 
 /// What was taken from an allowance for a call. Dropped before the call's run was
-/// made, it is given back.
+/// made, it is given back: added to the signed balance, so it pays a debt first.
 #[derive(Debug)]
 pub(super) struct Taken {
     purse: Arc<Purse>,
@@ -278,12 +575,7 @@ impl Taken {
 impl Drop for Taken {
     fn drop(&mut self) {
         if !self.kept {
-            let mut left = self
-                .purse
-                .left
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            *left = left.saturating_add(self.micros);
+            self.purse.give(u128::from(self.micros), true);
         }
     }
 }
@@ -724,5 +1016,310 @@ mod tests {
         assert_eq!(told.load(Ordering::SeqCst), 2);
         drop(kept);
         assert_eq!((registered(&signal), registered(&above)), (0, 0));
+    }
+}
+
+#[cfg(test)]
+mod allowance_tests {
+    //! An allowance and what the process holds of a tree (ADR 0016, "An allowance holds
+    //! a signed balance"). What makes one is the executor's alone, so these are here
+    //! and not with the other tests.
+    #![allow(clippy::unwrap_used)]
+
+    use std::sync::mpsc;
+
+    use super::*;
+    use crate::contract::NotJudged;
+
+    fn amount(micros: u64) -> Amount {
+        Amount::new(micros).unwrap()
+    }
+
+    fn sent(allowance: &Allowance, micros: u64) -> Dispatched {
+        let (dispatched, ()) = allowance.dispatch(amount(micros), || Ok(())).unwrap();
+        dispatched
+    }
+
+    fn state(allowance: &Allowance) -> (u64, u64, u64) {
+        (
+            allowance.left_micros().unwrap(),
+            allowance.owes_micros().unwrap(),
+            allowance.tree_left_micros().unwrap(),
+        )
+    }
+
+    #[test]
+    fn an_allowance_in_debt_reports_nothing_to_spend_and_a_return_pays_the_debt_first() {
+        // The model's history 8: reserve 10, two dispatches of 5, the first settles
+        // at 12 and the second at nothing, which gives back 5.
+        let root = Allowance::of(10);
+        let first = sent(&root, 5);
+        let second = sent(&root, 5);
+        assert_eq!(state(&root), (0, 0, 0));
+        first.settled(amount(12));
+        assert_eq!(state(&root), (0, 7, 0), "in debt: nothing to spend");
+        second.settled(amount(0));
+        // The 5 that come back pay the debt first: 2 are still owed.
+        assert_eq!(state(&root), (0, 2, 0));
+        // A request of nothing is placed all the same, and one of more is refused.
+        let nothing = sent(&root, 0);
+        nothing.settled(amount(0));
+        assert_eq!(
+            root.dispatch(amount(1), || Ok(())).unwrap_err(),
+            DispatchRefused::OverRun { left_micros: 0 }
+        );
+        // A share handed back after a call was not admitted pays a debt first too
+        // (history 20): a parent in debt by 2 that is given back 5 has 3.
+        let parent = Allowance::of(10);
+        let share = parent.take(5).unwrap().unwrap();
+        let own = sent(&parent, 5);
+        own.settled(amount(7));
+        assert_eq!(
+            (parent.left_micros(), parent.owes_micros()),
+            (Some(0), Some(2))
+        );
+        drop(share);
+        assert_eq!(
+            (parent.left_micros(), parent.owes_micros()),
+            (Some(3), Some(0))
+        );
+    }
+
+    #[test]
+    fn a_charge_over_its_bound_takes_the_excess_from_the_run_and_from_each_run_above() {
+        // History 18: a child given 5 whose request settles at 12 gives nothing
+        // back, and each run above has 7 less.
+        let root = Allowance::of(20);
+        let taken = root.take(10).unwrap().unwrap();
+        let parent = root.child(10);
+        taken.keep();
+        let taken = parent.take(5).unwrap().unwrap();
+        let child = parent.child(5);
+        taken.keep();
+        let request = sent(&child, 5);
+        request.settled(amount(12));
+        assert_eq!(
+            (child.left_micros(), child.owes_micros()),
+            (Some(0), Some(7))
+        );
+        assert_eq!(
+            (parent.left_micros(), parent.owes_micros()),
+            (Some(0), Some(2))
+        );
+        assert_eq!((root.left_micros(), root.owes_micros()), (Some(3), Some(0)));
+        assert_eq!(root.tree_left_micros(), Some(8));
+        child.hand_up();
+        assert_eq!(
+            parent.owes_micros(),
+            Some(2),
+            "a child in debt hands nothing up"
+        );
+        // History 19: one child overruns and a second then returns its unused share:
+        // the debt is paid first.
+        let parent = Allowance::of(10);
+        let (first, second) = (parent.take(5), parent.take(5));
+        let (one, other) = (parent.child(5), parent.child(5));
+        first.unwrap().unwrap().keep();
+        second.unwrap().unwrap().keep();
+        sent(&one, 5).settled(amount(12));
+        assert_eq!(
+            (parent.left_micros(), parent.owes_micros()),
+            (Some(0), Some(7))
+        );
+        other.hand_up();
+        assert_eq!(
+            (parent.left_micros(), parent.owes_micros()),
+            (Some(0), Some(2))
+        );
+    }
+
+    #[test]
+    fn a_parent_that_calls_twenty_children_in_turn_each_using_nothing_has_all_of_it_at_the_end() {
+        // History 21.
+        let parent = Allowance::of(1000);
+        for _ in 0..20 {
+            let half = parent.left_micros().unwrap() / 2;
+            let taken = parent.take(half).unwrap().unwrap();
+            let child = parent.child(half);
+            taken.keep();
+            assert_eq!(child.left_micros(), Some(half));
+            child.hand_up();
+            // It is handed up once.
+            child.hand_up();
+        }
+        assert_eq!(state(&parent), (1000, 0, 1000));
+    }
+
+    #[test]
+    fn an_amount_given_back_to_an_allowance_whose_run_has_entered_its_commit_step_is_dropped() {
+        let parent = Allowance::of(10);
+        let taken = parent.take(4).unwrap().unwrap();
+        let child = parent.child(4);
+        taken.keep();
+        parent.close();
+        child.hand_up();
+        assert_eq!(parent.left_micros(), Some(6));
+        // Before that step it is not: the same, with the child ending first.
+        let parent = Allowance::of(10);
+        let taken = parent.take(4).unwrap().unwrap();
+        let child = parent.child(4);
+        taken.keep();
+        child.hand_up();
+        parent.close();
+        assert_eq!(parent.left_micros(), Some(10));
+    }
+
+    #[test]
+    fn a_dispatch_is_debited_before_it_is_published_and_the_debit_is_undone_when_it_is_refused() {
+        let root = Allowance::of(10);
+        // What `publish` sees is the allowance and the tree already debited.
+        let seen = root
+            .dispatch(amount(4), || Ok(state(&root)))
+            .map(|(_, seen)| seen)
+            .unwrap();
+        assert_eq!(seen, (6, 0, 6));
+        // A refusal by the names, and a failure, each give the amount back.
+        for refusal in [
+            DispatchRefused::OverReservation { left_micros: 1 },
+            DispatchRefused::Frozen,
+            DispatchRefused::Closed,
+            DispatchRefused::NeedsOwner { epoch: 3 },
+            DispatchRefused::Failed(NotJudged::saying("the store failed")),
+        ] {
+            let refused = root.dispatch(amount(6), || Err::<(), _>(refusal.clone()));
+            assert_eq!(refused.unwrap_err(), refusal);
+            assert_eq!(state(&root), (6, 0, 6), "{refusal:?}");
+        }
+        // And so does a panic inside it.
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            drop(root.dispatch(amount(6), || -> Result<(), DispatchRefused> {
+                panic!("the store panicked")
+            }));
+        }));
+        assert!(panicked.is_err());
+        assert_eq!(state(&root), (6, 0, 6));
+        // The run's own allowance is asked first, then the tree as the process
+        // holds it; neither calls `publish`.
+        let never = || -> Result<(), DispatchRefused> { panic!("it was published") };
+        assert_eq!(
+            root.dispatch(amount(7), never).unwrap_err(),
+            DispatchRefused::OverRun { left_micros: 6 }
+        );
+    }
+
+    #[test]
+    fn a_dispatch_is_held_to_what_the_process_holds_of_the_tree_whatever_its_runs_share_is() {
+        // The model's history 75: a parent's request of 5 is answered at 12, and no
+        // name says so yet. A child that holds a share of 5 is refused a request of
+        // 5: the tree of 10 has nothing left, though the child's own balance covers
+        // it.
+        let root = Allowance::of(10);
+        let taken = root.take(5).unwrap().unwrap();
+        let child = root.child(5);
+        taken.keep();
+        let mut request = sent(&root, 5);
+        assert_eq!(child.tree_left_micros(), Some(5));
+        request.answered(amount(12));
+        assert_eq!(child.left_micros(), Some(5));
+        let never = || -> Result<(), DispatchRefused> { panic!("it was published") };
+        assert_eq!(
+            child.dispatch(amount(5), never).unwrap_err(),
+            DispatchRefused::OverTree { left_micros: 0 }
+        );
+        // A request of nothing is placed where nothing is left.
+        sent(&child, 0).settled(amount(0));
+        // Settled, the tree counts the charge and no more; an answer under what is
+        // counted changes nothing.
+        request.answered(amount(3));
+        request.settled(amount(12));
+        assert_eq!(root.tree_left_micros(), Some(0));
+        assert_eq!(root.owes_micros(), Some(7));
+        // A request settled under its bound gives the difference back to the tree.
+        let other = Allowance::of(10);
+        let request = sent(&other, 8);
+        assert_eq!(other.tree_left_micros(), Some(2));
+        request.settled(amount(3));
+        assert_eq!(state(&other), (7, 0, 7));
+        // One that is never settled stays counted at its bound.
+        drop(sent(&other, 7));
+        assert_eq!(state(&other), (0, 0, 0));
+    }
+
+    #[test]
+    fn two_runs_of_one_tree_that_publish_at_once_are_not_both_let_by() {
+        // A run's own balance does not bound its request by itself: the tree does.
+        // The tree of 10 has had 4 taken by an answer over its bound, so that 6 are
+        // left of it, while two runs of it hold 5 each. The first is stopped inside
+        // `publish`, which is after its debit and before its dispatch is durable;
+        // the second then asks. Were the tree debited only once a dispatch is
+        // published, the second would be let by on the 6 the first is about to
+        // take. Two show a race.
+        let root = Allowance::of(10);
+        let mut over = sent(&root, 0);
+        over.answered(amount(4));
+        let tree = &root.purse.as_ref().unwrap().tree;
+        let run = || Allowance::with(5, None, tree.clone());
+        for first_is_published in [true, false] {
+            let (first, second) = (run(), run());
+            let (publishing, is_publishing) = mpsc::channel();
+            let (asked, was_asked) = mpsc::channel();
+            let (one, other) = whizbang_testkit::threads::scope(|scope| {
+                let (first, second) = (&first, &second);
+                let one = scope.spawn(move || {
+                    first
+                        .dispatch(amount(5), || {
+                            publishing.send(()).unwrap();
+                            was_asked.recv().unwrap();
+                            match first_is_published {
+                                true => Ok(()),
+                                false => Err(DispatchRefused::Closed),
+                            }
+                        })
+                        .map(drop)
+                });
+                let other = scope.spawn(move || {
+                    is_publishing.recv().unwrap();
+                    let answer = second.dispatch(amount(5), || Ok(())).map(drop);
+                    asked.send(()).unwrap();
+                    answer
+                });
+                (one.join().unwrap(), other.join().unwrap())
+            });
+            assert_eq!(other, Err(DispatchRefused::OverTree { left_micros: 1 }));
+            assert_eq!(second.left_micros(), Some(5));
+            match first_is_published {
+                true => {
+                    assert_eq!(one, Ok(()));
+                    assert_eq!(root.tree_left_micros(), Some(1));
+                    // What the first took is given back for the second round.
+                    *tree.taken.lock().unwrap() -= 5;
+                }
+                // The first was refused after all: its debit is undone.
+                false => {
+                    assert_eq!(one, Err(DispatchRefused::Closed));
+                    assert_eq!(root.tree_left_micros(), Some(6));
+                    assert_eq!(first.left_micros(), Some(5));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_allowance_with_no_amount_counts_nothing() {
+        let none = Allowance::none();
+        let (dispatched, published) = none.dispatch(amount(5), || Ok(7)).unwrap();
+        assert_eq!(published, 7);
+        dispatched.settled(amount(9));
+        assert_eq!(
+            (
+                none.left_micros(),
+                none.owes_micros(),
+                none.tree_left_micros()
+            ),
+            (None, None, None)
+        );
+        assert_eq!(none.child(5), Allowance::none());
+        none.close();
+        none.hand_up();
     }
 }

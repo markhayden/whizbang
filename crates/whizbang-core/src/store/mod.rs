@@ -1228,11 +1228,29 @@ pub struct Publication<'s> {
     when_deleted: BTreeMap<String, WhenDeleted>,
 }
 
+/// What the names that are made and never put start with: the records of request ids
+/// and of spend (ADR 0007; ADR 0016, "The store refuses a `put`"). A name under one of
+/// these is given content by [`Publication::create`] and by nothing else, so that no
+/// publication replaces what a name that was made holds.
+pub const MADE_PREFIXES: [&str; 2] = ["requests/", "spend/"];
+
+/// Refuses a name that is only ever made.
+fn made_only(name: &str) -> Result<()> {
+    if MADE_PREFIXES.iter().any(|prefix| name.starts_with(prefix)) {
+        return Err(Error::MadeOnly {
+            name: name.to_string(),
+        });
+    }
+    Ok(())
+}
+
 impl Publication<'_> {
     /// Gives `name`, which belongs to no run, this content in the generation to come,
-    /// replacing what it had, as an output. The bytes are staged now, and synced, unless
+    /// replacing what it had, as an output. A name under a prefix whose names are made
+    /// ([`MADE_PREFIXES`]) is refused ([`Error::MadeOnly`]). The bytes are staged now, and synced, unless
     /// the store already holds them. After an error the same call can be made again.
     pub fn put(&mut self, name: &str, bytes: &[u8]) -> Result<Digest> {
+        made_only(name)?;
         // A name this publication makes keeps the content it was made with, and one
         // it keeps is the store's to decide.
         if self.made.contains(name) || self.kept.contains_key(name) {
@@ -1340,6 +1358,7 @@ impl Publication<'_> {
     /// for [`Publication::put`]: the bytes are staged either way, and where the name
     /// was held they are content that nothing names, which the next prune removes.
     pub fn keep(&mut self, name: &str, bytes: &[u8]) -> Result<Digest> {
+        made_only(name)?;
         if self.names.contains_key(name) {
             return Err(Error::NameExists {
                 name: name.to_string(),

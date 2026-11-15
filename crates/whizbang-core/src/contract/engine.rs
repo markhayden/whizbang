@@ -15,7 +15,7 @@ use crate::identity::{DecodeLimits, Digest};
 use crate::store::{self, Store};
 
 use super::journal::Kept;
-use super::ledger::{Declined, Reservation, Step};
+use super::ledger::{Closing, Declined, Reread, Reservation, Settled, Step};
 use super::live::{self, LiveRun, Told};
 use super::nested::{Added, DESCENDANTS_LIMIT, Family, HeldOpen, Nested, Offer, Under};
 use super::part::{self, Asking, PartDeclined, PartStep};
@@ -27,11 +27,11 @@ use super::record::{
 use super::request::{Found, look_up, outcome_of};
 use super::snapshot::Known;
 use super::{
-    ADMITTED_NAME, Action, ActionDescriptor, Admission, AdmissionPart, Answer, Backends, Call,
-    CallError, Cancel, Cancellation, Capabilities, Clock, Committed, ConfigSource, Context, Ending,
-    Estimate, Failure, Finished, Ledger, MESSAGE_LIMIT, Outcome, PreparedCall, Produced, Readiness,
-    Refusal, Registry, Request, RequestId, RunFacts, RunId, RunState, Secrets, Snapshot, Stale,
-    StoreFailure, SystemClock, Value, Watched, request_fingerprint,
+    ADMITTED_NAME, Action, ActionDescriptor, Admission, AdmissionPart, Allowance, Answer, Backends,
+    Call, CallError, Cancel, Cancellation, Capabilities, Clock, Committed, ConfigSource, Context,
+    Ending, Estimate, Failure, Finished, Ledger, MESSAGE_LIMIT, Outcome, PreparedCall, Produced,
+    Readiness, Refusal, Registry, Request, RequestId, RunFacts, RunId, RunState, Secrets, Snapshot,
+    Stale, StoreFailure, SystemClock, Value, Watched, request_fingerprint,
 };
 
 /// What runs actions. A door, the evaluation harness and an action that calls another
@@ -425,6 +425,16 @@ static NAMED: AtomicU64 = AtomicU64::new(0);
 /// of its id is handed back as the store's failure.
 const MAX_NAMINGS: u32 = 8;
 
+/// How many times the publication that ends a run is made again because another
+/// publication took the place or the turn its reservation's closing chose, before the
+/// store's refusal is handed back as its failure and the run is abandoned, which
+/// counts its reservation in full. Each time, the store had changed.
+const MAX_SETTLINGS: u32 = 1024;
+
+/// The kind of the error a run ends with when its admission was published and was
+/// not confirmed (ADR 0016; ADR 0013, where an error's kind is a word).
+pub const NOT_CONFIRMED_KIND: &str = "not_confirmed";
+
 impl Executor for Engine {
     fn prepare(&self, call: &Call) -> Result<PreparedCall, CallError> {
         let taken = self.take()?;
@@ -679,7 +689,7 @@ impl Engine {
                 "the run was admitted and could not be started: no thread could be made \
                  for its action: {why}"
             );
-            drop(self.end(admitted, Some(&message)));
+            drop(self.end(admitted, Some(("start", &message))));
         }
         Err(CallError::NotStarted { run, why })
     }
@@ -1040,8 +1050,14 @@ impl Engine {
             })?,
             _ => None,
         };
-        let family = Family::of(under, prepared.action(), reserved, self.descendants);
+        // The allowance of a run nothing called, and what this process holds of its
+        // tree's reservation, are made only once its admission is confirmed (ADR
+        // 0016): until then it has none. A run another run called has its share.
+        let share = reserved.filter(|_| under.is_some());
+        let mut family = Family::of(under, prepared.action(), share, self.descendants);
         let parent = family.parent.as_ref().map(|(run, _)| run.clone());
+        // The reservation the ledger was asked for in the attempt that is published.
+        let mut reserved_as: Option<Reservation> = None;
         // What the run keeps while it executes is made before the run is, and attached
         // to it in the store's table of open runs by the publication that makes it: so
         // whoever sees the run in a snapshot finds it there (ADR 0008, "Status").
@@ -1144,7 +1160,18 @@ impl Engine {
                     &secrets,
                 );
                 match ledger.reserve(&reservation, &mut step) {
-                    Ok(()) => {}
+                    // What a ledger hands back is a name it made, in this step: one
+                    // it kept from another attempt is published by nothing.
+                    Ok(made) if step.made_here(&made) => {}
+                    Ok(_) => {
+                        return Err(CallError::Ledger {
+                            why: "it handed back a name that it did not make in this \
+                                  attempt at the admission: a ledger returns from \
+                                  reserving with a name the attempt publishes"
+                                .to_owned(),
+                        }
+                        .into());
+                    }
                     Err(Declined::OverAllowance { left_micros }) => {
                         return Err(CallError::Refused(Refusal::OverAllowance {
                             action: prepared.action().to_owned(),
@@ -1169,6 +1196,7 @@ impl Engine {
                     .create(&name, RECORD_KIND, &reservation.to_bytes())
                     .map_err(failed)?;
                 reservation_name = Some(name);
+                reserved_as = Some(reservation);
             }
             publication.create_run(run.as_str()).map_err(failed)?;
             publication.attach(run.as_str(), live.clone());
@@ -1237,7 +1265,32 @@ impl Engine {
         // From here the run is in the store's table under this id: what its guard lets
         // go of, when its end was visible and it was kept there.
         over.kept = Some((store.clone(), run.clone()));
-        Ok(Admitted {
+        // The confirmation (ADR 0016, "An admission is confirmed before anything runs
+        // under it"). The publication admitted nothing by itself: the store is read
+        // again, as it is now that the admission is durable, and the ledger answers
+        // whether the admission stands on that reading. Nothing is done under the
+        // reservation before: no thread, no allowance, no tally of its tree, no
+        // action. A reading that fails is no answer, and is taken as one that says no.
+        let ledger = self.ledger.as_ref().filter(|_| under.is_none());
+        let stands = match (ledger, &reserved_as) {
+            (Some(ledger), Some(reservation)) => match store.snapshot() {
+                Ok(generation) => {
+                    let reread = Reread::new(&generation, store.as_ref());
+                    ledger.confirm(reservation, &reread).map_err(|failure| {
+                        failure.into_error(
+                            |why| part::sentence(&secrets, why),
+                            |why| CallError::Ledger { why },
+                        )
+                    })
+                }
+                Err(error) => Err(failed(error)),
+            },
+            _ => Ok(true),
+        };
+        if let (Ok(true), None, Some(micros)) = (&stands, under, reserved) {
+            family.allowance = Allowance::of(micros);
+        }
+        let admitted = Admitted {
             action: action.clone(),
             prepared,
             run,
@@ -1257,7 +1310,41 @@ impl Engine {
                 settings,
             },
             over: Some(over),
-        })
+        };
+        let (why, unread) = match stands {
+            Ok(true) => return Ok(admitted),
+            Ok(false) => (
+                "on the books as they were read after its admission was published, the \
+                 admission does not stand"
+                    .to_owned(),
+                None,
+            ),
+            Err(error) => (
+                format!("the books could not be read after its admission was published: {error}"),
+                Some(error),
+            ),
+        };
+        // It does not stand: the run is ended at once, having run nothing, by the
+        // publication that ends a run, which closes its reservation and makes its
+        // request id's ending. Where that publication fails the run stays admitted,
+        // is never started, and is abandoned here with the failure; the next
+        // recovery ends it. Either way the caller is told, with a reason of its own,
+        // which is no refusal of the call: a run was made. One case is told as what
+        // it is: where the books could not be read and the run could not be ended
+        // either, the caller is handed that failure, the store's or the ledger's.
+        let run = admitted.run.clone();
+        let action = admitted.prepared.action().to_owned();
+        let message = format!(
+            "the run was admitted and its admission was not confirmed, so its action \
+             was not run: {why}"
+        );
+        let ended = self
+            .end(admitted, Some((NOT_CONFIRMED_KIND, &message)))
+            .is_ok();
+        match unread {
+            Some(error) if !ended => Err(error.into()),
+            _ => Err(CallError::NotConfirmed { run, action, ended }.into()),
+        }
     }
 
     /// Asks the config's source for a snapshot, and takes its secrets in with those
@@ -1345,10 +1432,14 @@ impl Engine {
         self.end(admitted, None)
     }
 
-    /// Ends a run that was admitted: after running its action, or, for a run that was
-    /// to be started and has no thread, without running it, as an error that says
-    /// `unstarted`.
-    fn end(&self, mut admitted: Admitted, unstarted: Option<&str>) -> Result<Finished, CallError> {
+    /// Ends a run that was admitted: after running its action, or without running it,
+    /// as an error of the kind and with the sentence `unstarted` gives: a run that was
+    /// to be started and has no thread, and a run whose admission was not confirmed.
+    fn end(
+        &self,
+        mut admitted: Admitted,
+        unstarted: Option<(&str, &str)>,
+    ) -> Result<Finished, CallError> {
         let mut over = admitted.over.take();
         // Everything the run held is let go in here, its hold on the generation it
         // read among it, before whoever waits for the run is told that it is over.
@@ -1368,7 +1459,7 @@ impl Engine {
     fn run_and_end(
         &self,
         admitted: Admitted,
-        unstarted: Option<&str>,
+        unstarted: Option<(&str, &str)>,
     ) -> Result<Finished, CallError> {
         let Admitted {
             action,
@@ -1426,7 +1517,7 @@ impl Engine {
         let unrecorded = "a setting the run was admitted with could not be noted for its \
                           record, so its action was not run";
         let unstarted = match (unstarted, recorded) {
-            (None, false) => Some(unrecorded),
+            (None, false) => Some(("start", unrecorded)),
             (unstarted, _) => unstarted,
         };
         // The backends of the run's snapshot that its call resolved, and the ways out
@@ -1472,8 +1563,8 @@ impl Engine {
         // does a run that has no thread to run it on: it is handed the failure.
         let handed = (!live.signal().is_cancelled()).then(|| match unstarted {
             None => catch_unwind(AssertUnwindSafe(|| action.run(&prepared, &context))),
-            Some(why) => Ok(Err(Failure::Error {
-                kind: "start".to_owned(),
+            Some((kind, why)) => Ok(Err(Failure::Error {
+                kind: kind.to_owned(),
                 message: why.to_owned(),
             })),
         });
@@ -1489,6 +1580,9 @@ impl Engine {
         // set under the lock this reads under: the run ends as cancelled, and nothing
         // it handed back is committed.
         let cancelled = live.begin_end();
+        // What is given back to the run's allowance from here on is dropped: its
+        // reservation is closed by its own settlements (ADR 0016).
+        family.allowance.close();
         // The outcome is made here, from what the action handed back, with the secrets
         // taken out: what is reported holds none, as what is written holds none. And
         // each of its texts is cut to a length a record can hold ([`MESSAGE_LIMIT`]).
@@ -1640,36 +1734,91 @@ impl Engine {
             noted = Facts::none();
             record = record_of(&outcome, &inside, &noted);
         }
-        let mut publication = store.begin().map_err(failed)?;
-        publication.close_run(run.as_str()).map_err(failed)?;
-        // The run stays in the store's table of open runs after its end is visible,
-        // until this function has let go of everything: a `wait` that finds the end in
-        // the store finds the run there too, and waits for that.
-        publication.keep_until_let_go(run.as_str());
-        let mut place = 0;
-        for (at, (output, artifact)) in outputs.iter().enumerate() {
-            // The outputs of one port are together, in the order they were handed back.
-            let first = at == 0 || outputs[at - 1].0.port() != output.port();
-            place = if first { 0 } else { place + 1 };
-            let reference = format!("{OUTPUTS_PREFIX}{}/{place}", output.port());
-            artifact::commit(&mut publication, run.as_str(), &reference, artifact)
-                .map_err(failed)?;
-        }
-        for (diagnostic, bytes) in &kept {
+        // The reservation of a run nothing called is closed in the same publication:
+        // the ledger is asked inside it, with a step as at admission, and a failure
+        // of it is a failure of the publication (ADR 0016, "What the second part
+        // builds"). A closing takes its reservation's next place and its epoch's next
+        // turn; where another publication took one meanwhile the store refuses this
+        // one whole, and it is made again on the store as it is then.
+        let closing = match (&self.ledger, reserved, &family.parent) {
+            (Some(ledger), Some(micros), None) => Some((ledger, micros)),
+            _ => None,
+        };
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            let mut publication = store.begin().map_err(failed)?;
+            publication.close_run(run.as_str()).map_err(failed)?;
+            // The run stays in the store's table of open runs after its end is
+            // visible, until this function has let go of everything: a `wait` that
+            // finds the end in the store finds the run there too, and waits for that.
+            publication.keep_until_let_go(run.as_str());
+            let mut place = 0;
+            for (at, (output, artifact)) in outputs.iter().enumerate() {
+                // The outputs of one port are together, in the order they were handed
+                // back.
+                let first = at == 0 || outputs[at - 1].0.port() != output.port();
+                place = if first { 0 } else { place + 1 };
+                let reference = format!("{OUTPUTS_PREFIX}{}/{place}", output.port());
+                artifact::commit(&mut publication, run.as_str(), &reference, artifact)
+                    .map_err(failed)?;
+            }
+            for (diagnostic, bytes) in &kept {
+                publication
+                    .put_in(run.as_str(), diagnostic.name(), RECORD_KIND, bytes)
+                    .map_err(failed)?;
+            }
             publication
-                .put_in(run.as_str(), diagnostic.name(), RECORD_KIND, bytes)
+                .put_in(run.as_str(), RECORD_NAME, RECORD_KIND, &record.to_bytes())
                 .map_err(failed)?;
+            if let Some(id) = request {
+                let ending = Ending::new(run.clone(), id.clone(), record.outcome().status, end_ms);
+                publication
+                    .create(&id.ending_name(), RECORD_KIND, &ending.to_bytes())
+                    .map_err(failed)?;
+            }
+            let mut ledgers = Vec::new();
+            if let Some((ledger, micros)) = closing {
+                let generation = store.snapshot().map_err(failed)?;
+                let mut step = Step::new(&mut publication, &generation, store.as_ref(), secrets);
+                let asked = Closing {
+                    run: &run,
+                    reserved_micros: micros,
+                    at_ms: end_ms,
+                };
+                let refused = |why: &str| CallError::Ledger {
+                    why: part::sentence(secrets, why),
+                };
+                match ledger.settle(&asked, &mut step) {
+                    Ok(Settled::Nothing) => {}
+                    Ok(Settled::Closed(made)) if step.made_here(&made) => {}
+                    Ok(Settled::Closed(_)) => {
+                        return Err(refused(
+                            "it handed back a name that it did not make in this attempt \
+                             at the run's end",
+                        ));
+                    }
+                    Err(failure) => {
+                        return Err(failure.into_error(
+                            |why| part::sentence(secrets, why),
+                            |why| CallError::Ledger { why },
+                        ));
+                    }
+                }
+                ledgers = step.into_made();
+            }
+            match publication.publish() {
+                Ok(_) => break,
+                Err(store::Error::NameExists { name })
+                    if ledgers.contains(&name) && attempts < MAX_SETTLINGS => {}
+                Err(error) => return Err(failed(error)),
+            }
         }
-        publication
-            .put_in(run.as_str(), RECORD_NAME, RECORD_KIND, &record.to_bytes())
-            .map_err(failed)?;
-        if let Some(id) = request {
-            let ending = Ending::new(run.clone(), id.clone(), record.outcome().status, end_ms);
-            publication
-                .create(&id.ending_name(), RECORD_KIND, &ending.to_bytes())
-                .map_err(failed)?;
+        // The run's end is durable: what it did not use of its share goes back to
+        // the run that called it, while that run still executes (ADR 0016).
+        if family.parent.is_some() {
+            family.allowance.hand_up();
         }
-        publication.publish().map_err(failed)?;
         // The run that called this one is told how it ended, and from here on reads
         // what it committed: before this run is over, which is what its caller waits
         // for.
