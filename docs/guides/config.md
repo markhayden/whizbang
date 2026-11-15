@@ -72,7 +72,7 @@ these tables, and no backend can have one: `default`, `kind`, `model`, `provider
 | `provider` | The service it is reached through |
 | `url` | Its address: `http://` or `https://`, a host in lower case, perhaps a port and a path |
 | `key_env`, `token_env` | The name of the variable its key, or its token, is in |
-| `settings` | The kind's own settings: texts, whole numbers, and true or false |
+| `settings` | The kind's own settings: texts, whole numbers, and true or false. A run records each under the backend's name and the setting's key, so the two together are 101 characters at most for `segment`, 103 for `judge` and 104 for `fill` |
 
 ## Keys are named, never written
 

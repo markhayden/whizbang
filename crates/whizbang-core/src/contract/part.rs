@@ -14,7 +14,8 @@ use crate::store::Publication;
 
 use super::record::{RECORD_KIND, REFUSAL_WHY_LIMIT, RefusalKind, is_diagnostic_name};
 use super::{
-    Call, CallError, Estimate, NotJudged, PreparedCall, RequestId, RunId, Secrets, StoreFailure,
+    Call, CallError, Estimate, NotJudged, PreparedCall, RequestId, RunId, Secrets, Snapshot,
+    StoreFailure,
 };
 
 /// What the name of every record a part adds to a run starts with: the name the part
@@ -69,6 +70,7 @@ pub struct Asking<'a> {
     pub(super) prepared: &'a PreparedCall,
     pub(super) now_ms: u64,
     pub(super) parent: Option<&'a RunId>,
+    pub(super) snapshot: &'a Snapshot,
 }
 
 impl<'a> Asking<'a> {
@@ -111,6 +113,15 @@ impl<'a> Asking<'a> {
     /// The run whose action made the call, for a call from inside an action.
     pub fn parent(&self) -> Option<&'a RunId> {
         self.parent
+    }
+
+    /// The snapshot of the config the call was prepared under at admission, and its
+    /// run will execute under (ADR 0015, "One snapshot of the config"): its digest,
+    /// the cap of one call, and the policy. It is taken once for an admission, so
+    /// every part and every attempt is shown the same one. For a call from inside an
+    /// action it is the snapshot of the run that made the call.
+    pub fn snapshot(&self) -> &'a Snapshot {
+        self.snapshot
     }
 }
 

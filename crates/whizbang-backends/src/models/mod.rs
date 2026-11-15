@@ -1,11 +1,15 @@
 //! The models directory (`SPEC.md` section 3, "Storage"; ADR 0017): where installed
 //! models live, outside any store, and what is written in it.
 //!
-//! This is its types, and no more: the names that become names on a disk, the catalogue
-//! of what can be installed, the record of one installation, and that installation's
-//! identity. **Nothing here installs, downloads or touches a disk.** The installer, its
-//! status, the holds, removal and the inventory are built on these by the later tasks
-//! of checkpoint 1B's models strand (`docs/plans/`).
+//! Its types are the names that become names on a disk, the catalogue of what can be
+//! installed, the record of one installation, and that installation's identity. On
+//! them: a download into staging ([`stage`]), an install that publishes what it staged
+//! and replaces the model's pointer ([`install`]), the reader of that pointer
+//! ([`current`]) and the status record an installer writes ([`status`]). Attaching to
+//! an install, the holds, removal and the inventory are built by the later tasks of
+//! checkpoint 1B's models strand (`docs/plans/`). The disk is reached only through
+//! the store's file-system interface, and every download is behind the interface of
+//! ADR 0012: no network client is in the build.
 //!
 //! Every type has private fields and is made through a constructor that checks it. A
 //! constructor that takes a text from outside the build is told the executor's secrets,
@@ -32,6 +36,7 @@ pub use catalogue::{
     FEATURES_LIMIT, FILES_LIMIT, MODELS_LIMIT, ORIGINS_LIMIT,
 };
 pub use directory::ModelsDir;
+pub use install::{Current, Damage, InstallRefused, current, install};
 pub use installation::{
     INSTALLATION_FORMAT, INSTALLATION_MAX_BYTES, InstallationId, InstallationRecord, InstalledFile,
 };
@@ -41,3 +46,4 @@ pub use name::{
 };
 pub use refused::{Refused, Rule, What};
 pub use stage::{FileRefused, MOVES_LIMIT, StageRefused, Staged, stage};
+pub use status::{STATUS_FORMAT, STATUS_MAX_BYTES, State, Status, status};

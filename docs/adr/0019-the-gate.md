@@ -1,10 +1,34 @@
 # 0019. The gate: a config's approvals as the executor's policy, and the check behind a send
 
 Status: accepted. Names ADR 0011 (an `Approval`), ADR 0012 (a recipient) and ADR 0015
-("A policy before a send, and a checked send"), and changes none of them
+("A policy before a send, and a checked send"), and changes none of them but for two
+accessors on ADR 0015's `Hop`: `Hop::pieces`, the pieces a request holds, and
+`Hop::request_moves`, the moves of one request, which are counted in the bounds each
+request is handed; and for one question more of ADR 0015's policy,
+`DispatchPolicy::why_not`, which the checked sender asks where it asked `may_receive`
 Date: 2026-11-14
 Amended: 2026-11-14, with task E6. Added: "Nothing but pixels", and its rows in the
 table of what was read.
+Amended: 2026-11-14, with task E3, its first pull request. Added: "Every hop". Changed:
+the check's rule for an answer that points elsewhere, which was that nothing is
+followed, and the two tests that held it; and, after the review of task E6, the limits
+of "Nothing but pixels", a folder kept out with a slash at its end, and the most bytes
+of the encoder's one chunk.
+Amended: 2026-11-14, with task E3, its second pull request. Added: "A download and a
+probe". Changed, after the review of the first: one more limit of "Every hop" (a
+backend that sends from several threads at once), and a folder that is nothing but
+slashes is refused where it was kept. ADR 0015 is amended with it (what a check is
+shown, and which count is one request's).
+Amended: 2026-11-14, with task E4. Added: "The run's recipients", and why a recipient
+is not approved, said in one of three sentences. Changed: the test of a backend that
+declares another account, which held the one sentence there was.
+Amended: 2026-11-14, after the reviews of tasks E3 and E4. Changed in "A download and a
+probe": a download's credential is the first request's at every address of its origin,
+where it was the one of the request before and was lost after an address at another
+origin; and each wrapper has a test of a signal set between two addresses. In "The
+run's recipients": the two sentences that said an origin "is approved", which is not
+so of one approved for probing alone. In "Consequences": the wrappers are not in use
+until 1C.
 Spec: section 10, "Egress"
 
 ## Context
@@ -36,6 +60,8 @@ Nothing of it is ported:
 | The account must start with the profile's prefix | Rewritten. An approval is of an origin and an account, and a backend's recipient is that approval's only when its origin, its account and its upstreams are the same, each compared whole |
 | `Consent` and its list of upstreams | Rewritten by ADR 0012 as `Recipient`, and by ADR 0011 as `Approval` |
 | `redact_account` | Rewritten by ADR 0012 as `Account::shown` |
+| `same_origin` (`crates/squint-providers/src/http.rs`): a redirect was followed only to the scheme, host and port of the first address | Rewritten by ADR 0012 (`Origin`) and ADR 0015 (`Recipient::reaches`): to the recipient's own origin, or an upstream its approval names. Nothing follows a redirect by itself: it comes back to the backend as an address |
+| `MAX_REDIRECTS`, 5 for one request | Kept as `MOVES_LIMIT`, 5 for one request of a backend |
 | `scan`, which searched a recorded request for a marker and walked JSON so that image bytes were left out | Rewritten as the check's look at each part of a request before it is handed over: a part that is the encoder's file is pixels and is not read as words, and every other part is |
 | `FORBIDDEN_MARKERS`: how a path starts (a person's folders, the temporary folders, a private folder, `C:` and a backslash, an address of a file) | Rewritten: the same starts, and a drive of any one letter |
 | `FORBIDDEN_MARKERS`: `fixtures/` | Dropped: squint's own folder of recordings |
@@ -43,7 +69,8 @@ Nothing of it is ported:
 
 ## Decision
 
-The code is `crates/whizbang-core/src/egress/approvals.rs` and `hops.rs`. The tests are
+The code is `crates/whizbang-core/src/egress/approvals.rs`, `hops.rs`, `pixels.rs` and
+`chains.rs`, each named in its section. The tests of the first two sections are
 in `crates/whizbang-core/tests/it/egress/gate.rs`, named below as `gate::…`; each builds
 an executor with the policy a config's text makes, this record's check, and the test
 kit's fake sender. Nothing is sent anywhere.
@@ -97,7 +124,7 @@ all the same.** Nothing looser is tried: no approval is found by its origin alon
   (`gate::a_backend_that_declares_other_upstreams_than_its_approval_is_approved_for_nothing`).
   Whoever makes a backend from a config makes its recipient from the approval itself.
 
-### The check behind a send, for a first address
+### The check behind a send
 
 `SendCheck` is the `HopCheck` an executor that sends is given. The executor has asked
 its four questions before it (ADR 0015): the backend declared a recipient, the request
@@ -106,18 +133,11 @@ upstreams, and the policy approves the recipient for every class of data the req
 holds. The check is asked last and can only refuse
 (`gate::under_the_strands_check_a_request_is_still_held_to_what_its_backend_declared_and_reaches`).
 
-**It approves an address while no answer has pointed its backend elsewhere in the run,
-and refuses every address after one has,** in fixed words. Following an answer that
-points elsewhere is task E3's, and until then nothing is followed. An upstream is
-approved as a first address: an upload address comes inside an answer, and the request
-to it is one no answer pointed to
-(`gate::the_check_approves_a_first_address_and_no_address_an_answer_pointed_to`).
-
-It goes by the moves of the whole run (`Hop::total_moves`), which never go back, and
-not by the moves in a row, which an answered request of the same backend sets back to
-nothing: with two requests through one handle at once, the address an answer pointed
-to would otherwise pass for a first one
-(`gate::a_request_that_was_answered_after_an_answer_pointed_elsewhere_does_not_make_the_next_address_a_first_one`).
+**It approves an address while its request has been pointed elsewhere five times at
+most** ("Every hop", below), in fixed words when it does not. An upstream is approved
+as a first address: an upload address comes inside an answer, and the request to it is
+one no answer pointed to
+(`hops::an_upload_address_and_a_download_address_outside_the_recipients_are_each_refused`).
 
 It holds nothing that changes and counts nothing. A check is still asked for a sender
 that was kept past its run (ADR 0015), and being asked changes nothing. What `{:?}`
@@ -148,6 +168,290 @@ prints of it is its name and how many folders it keeps out, never one of them
   in where its data went, as `refused`, with the origin and the account cut. Nothing of
   the address but its origin is in the store
   (`gate::a_run_whose_action_catches_the_refusal_and_completes_has_it_in_its_record_with_the_recipient_and_the_reason`).
+
+### Every hop
+
+Task E3, its first pull request. The code is the limit in `hops.rs`; one count in a
+request's bounds (`capability/mod.rs`: `Bounds::of_one_request`, and the line in each
+of the three handles that hands a backend its bounds); and `Hop::request_moves` in
+`checked.rs`. The tests are in `crates/whizbang-core/tests/it/egress/hops.rs`, named
+below as `hops::…`, against the test kit's sending fake.
+
+`SPEC.md` section 10: "Every hop is checked: redirects, upload services and returned
+download addresses. Credentials are never forwarded to another origin."
+
+**Nothing is followed by the sender.** An answer that points elsewhere comes back to
+the backend as an address (ADR 0012), and the request the backend then makes of it is
+a new request to the checked sender, asked everything again from the first question
+(ADR 0015). An upload address and a returned download address are addresses inside an
+answer, and reaching either is the same. So:
+
+- **A redirect to an origin that is neither the recipient's own nor one of its
+  upstreams is refused, and nothing is sent to it**
+  (`hops::a_redirect_to_an_origin_that_is_not_the_recipients_or_an_upstream_is_refused_and_nothing_is_sent_to_it`).
+- **A redirect to an approved upstream is followed without the credential.** The
+  executor attaches the credential it holds for the origin of each address, or none: an
+  upstream is handed the recipient's own never, and its own only when the executor was
+  given one bound to it, which in turn never goes to the recipient's own origin
+  (`hops::a_redirect_to_an_approved_upstream_is_followed_without_the_credential`,
+  `hops::a_credential_bound_to_an_upstream_goes_to_that_upstream_and_never_to_the_recipients_own_origin`).
+- **An upload address and a download address outside the recipient's are each
+  refused,** and ones inside it are sent
+  (`hops::an_upload_address_and_a_download_address_outside_the_recipients_are_each_refused`).
+- **A chain longer than the limit is refused.** One request of a backend is pointed
+  elsewhere 5 times at most (`MOVES_LIMIT`): the number squint followed
+  (`MAX_REDIRECTS`), counted as squint counted it, for one request. The address a
+  sixth answer names is handed nothing, and every later address of that request is
+  refused too (`hops::a_chain_longer_than_the_limit_is_refused`).
+
+**The count is one request's** (`Hop::request_moves`). A handle hands its backend, with
+each request, bounds that carry a count of their own, which starts at nothing; the
+checked sender adds one to the count of the bounds a send came with when its answer
+points elsewhere, and shows the check that count. It never goes back while the request
+lasts, an answered request between two hops included. It is not shared with another
+request through the same handle, at once or one after another; and a clone of a
+request's bounds holds the same count, so a backend does not start again by cloning
+(`hops::the_moves_of_one_request_are_its_own_and_a_clone_of_its_bounds_holds_the_same_count`,
+`hops::two_requests_through_one_handle_at_once_each_count_their_own_moves`,
+`hops::each_request_of_each_capability_is_handed_a_count_of_its_own`). A run that is
+pointed elsewhere once for each of thirty requests is not refused
+(`hops::a_long_run_that_is_pointed_elsewhere_once_for_each_request_is_not_refused`).
+`Hop::moves` and `Hop::total_moves` are as ADR 0015 has them, and this check uses
+neither.
+
+Limits of it, each stated:
+
+- **The limit is on what a server does, not on what a backend does.** The count is of
+  the bounds a send comes with. A backend that sends with the bounds of another of its
+  requests is counted there, and one that makes a new request starts at nothing:
+  adapters are trusted code, and a backend can ask as often as its run's bound on
+  requests lets it (ADR 0009).
+- **A real client makes a redirect's `Address` itself** from what a server sent, with
+  the executor's secrets (ADR 0012), and writes the `/` before a query: an address
+  with a query straight after its host is refused when it is made.
+- **A request with no answer that points elsewhere has no limit on its sends** but the
+  run's own: an upload in many parts is many answered requests.
+- **A request whose backend sends from several threads at once may be followed a few
+  times more.** The count is read before a send and added to after its answer, so
+  sends that are in the air together each see the count as it was: at most one more
+  for each such thread, after which every address of that request is refused.
+- **The probe and the download are not checked here,** but each by a wrapper of its
+  own ("A download and a probe").
+
+### A download and a probe
+
+Task E3, its second pull request. The code is
+`crates/whizbang-core/src/egress/chains.rs`: `CheckedDownloader` and `CheckedProber`.
+The executor and the handles are not changed, and nothing in the build makes either
+yet: there is no network client in 1B. The tests are in
+`crates/whizbang-core/tests/it/egress/chains.rs`, named below as `chains::…`, against
+the test kit's `FakeDownloader` and a fake that probes, `FakeProber`
+(`crates/whizbang-testkit/src/sending.rs`), which is added here and has its own tests
+(`crates/whizbang-testkit/tests/it/sending.rs`, `sending::…`).
+
+`SPEC.md` section 10: "Model downloads and probes are separate, approved traffic and
+carry no user data."
+
+**Each is its interface around another of its kind.** A `Downloader` and a `Prober` are
+one request to one address and follow nothing (ADR 0012). A checked one is handed
+another, asks its questions of the first address, and is the one that goes on to an
+address an answer points to, after asking the same questions of it. So it never
+answers that a request moved, and whoever is handed one in place of a bare client
+needs no change. Neither is handed the bounds of a request, so neither can use the
+count a send has: each counts the answers that point elsewhere within one call, 5 at
+most (`MOVES_LIMIT`, the same number), and starts at nothing for the next call
+(`chains::a_download_pointed_elsewhere_more_often_than_the_limit_is_refused_and_each_download_counts_its_own`,
+`chains::a_probe_pointed_elsewhere_more_often_than_the_limit_is_refused_and_each_probe_counts_its_own`).
+
+**A refusal is a fault in fixed words, `rejected`, and is noted nowhere.** It quotes
+nothing of an address. Neither is made for a run, so there is no record to note it
+in: a download is the installer's, which answers with why a file was refused, and a
+probe is a command's. A refusal before anything was asked of any address states that
+nothing was sent; one that follows an answer that pointed elsewhere states no stage,
+since the address that answered was asked. A signal that is set is looked at before
+each address, and a fault of the client behind comes back as it is
+(`chains::a_cancelled_download_asks_nothing_and_a_fault_of_the_downloader_is_handed_on`,
+`chains::a_probe_that_brings_a_credential_is_refused_and_a_cancelled_one_asks_nothing`).
+One that is set while the first address answers that it moved ends the call as
+`cancelled`, with no stage, and nothing is asked of the second address
+(`chains::a_download_cancelled_between_two_addresses_asks_nothing_of_the_second`,
+`chains::a_probe_cancelled_between_two_addresses_asks_nothing_of_the_second`).
+
+**A download is held to a list of origins it is handed:** the origins a catalogue's
+entry names for its files. `CheckedDownloader::new(downloader, origins)` takes 16 at
+most (`DOWNLOAD_ORIGINS_LIMIT`; an entry names 8 at most), and one handed none reaches
+none (`chains::a_checked_download_holds_a_bounded_number_of_origins_and_prints_how_many`).
+
+- **A download that is redirected off those origins is refused,** by host, by scheme
+  and by port, and nothing is asked of the address it was pointed to. The request
+  that was made carried the address and nothing else: no header, and a
+  `DownloadRequest` has no place for a body
+  (`chains::a_download_redirected_off_its_catalogues_origins_is_refused_and_its_request_carried_nothing_but_the_address`).
+- **A first address off them is refused too,** and nothing is asked
+  (`chains::a_download_whose_first_address_is_off_its_origins_asks_nothing`).
+- **A download moved to one of them is followed,** asking for as many bytes as the
+  first request, and the sink is handed the file; a sink's no ends it as it ends a
+  bare download
+  (`chains::a_download_moved_to_one_of_its_origins_is_followed_and_handed_whole`).
+- **A credential the request brings goes to the origin it is bound to and no other:**
+  to a second address at that origin, and not to another origin of the list
+  (`chains::a_downloads_credential_goes_to_the_origin_it_is_bound_to_and_no_other`).
+  It is the first request's credential that is looked at for each address, not that
+  of the request before: a download moved from its origin to another and back
+  carries it at the first address, not at the second, and again at the third
+  (`chains::a_downloads_credential_is_carried_again_at_its_origin_after_an_address_at_another`).
+  The checked downloader holds no credential itself.
+- **Bytes and then another address are not followed,** even to an origin of the list:
+  the fault is `malformed` (`chains::bytes_and_then_another_address_are_not_followed`).
+
+**How it fits `Entry::may_download_from`** (ADR 0017). The installer asks that
+question itself of each address a download is moved to, and counts five moves for one
+file; that is what holds a download today, against the fake, and it stays. The
+checked downloader is what the real client of 1C is wrapped in before the installer
+is handed it, made with `Entry::origins`, which is the list `may_download_from`
+answers from: the two ask the same question of the same list. Behind a checked
+downloader the installer is never told that a file moved, so its own check has
+nothing to refuse, and a download off the entry's origins comes to it as a fault,
+`rejected`, which it keeps as a failed download (`FileRefused::Download`) and not as
+`Elsewhere` or `TooManyMoves`. The second hold is deliberate: the installer's stops
+an installer that is handed a bare client, and the wrapper stops a client from being
+asked at all. No test joins an `Entry` to a checked downloader yet, since nothing
+makes one: `docs/carry-over.md`, the row on the real network client.
+
+**A probe is for one recipient, under a policy.** `CheckedProber::new(prober, policy,
+recipient)`, and `with_credential` for each credential it holds, which is refused for
+an origin the recipient does not reach and for a second one of the same origin
+(`chains::a_checked_probe_holds_one_credential_for_each_origin_it_reaches_and_prints_none`).
+It asks, in this order:
+
+1. **The policy approves probing the recipient** (`DispatchPolicy::may_probe`), which
+   is apart from any class of data. So a probe is refused by default: under the
+   policy an executor has until it is given one, and under a config that approves the
+   recipient for all four classes and says nothing of probing. Approved for probing
+   and for no class, it is sent
+   (`chains::a_probe_is_refused_by_default_and_sent_when_approved_and_carries_no_user_data`).
+   The recipient is the approval's only when its origin, its account and its
+   upstreams are the same
+   (`chains::a_probe_is_approved_for_the_recipient_as_it_was_approved_and_for_no_other`).
+2. **The request brings no credential.** One that does is refused, as a send is.
+3. **The address is at the recipient's own origin or one of its upstreams**
+   (`Recipient::reaches`): the first address, and every address an answer points to.
+   A redirect off the recipient, by host, by scheme or by port, is refused and
+   nothing is asked of it
+   (`chains::a_probes_redirect_off_the_recipient_is_refused_and_nothing_is_asked_of_it`).
+
+Then the credential held for the origin of that address is attached, or none: an
+upstream is handed the recipient's own never
+(`chains::a_probes_redirect_within_the_recipient_is_followed_with_the_credential_of_each_origin_or_none`).
+**A probe carries no user data** because a `ProbeRequest` has no place for any (ADR
+0012): what the fake was handed is the address and the credential of its origin, and
+the test holds the whole request to that.
+
+The fake that probes plays a script as the sending fake does, keeps each request with
+its address and the headers it would have carried, follows nothing, and prints no
+credential
+(`sending::the_probing_fake_plays_its_script_and_keeps_each_request_with_its_address_and_headers`,
+`sending::the_probing_fake_past_the_end_of_its_script_fails_and_does_not_panic`,
+`sending::what_is_printed_of_the_probing_fake_and_of_a_probe_holds_no_credential`).
+
+Limits of it, each stated:
+
+- **The rest of an address is not looked at.** A probe's and a download's address is
+  made by trusted code from a config or a catalogue; what its path or its query holds
+  is not searched for a path or a folder kept out, as a send's is.
+- **Nothing gives a checked prober its policy, its recipient or its credentials yet.**
+  The command that probes is 1C's (`docs/carry-over.md`), and takes all three from
+  the snapshot of the config a call is made under.
+- **A probe and a download are in no run's record.**
+
+### The run's recipients
+
+Task E4. The code is one question of the policy (`DispatchPolicy::why_not` and
+`NotApproved`, in `policy.rs`) and the lines of `checked.rs` that ask it. Nothing else
+is new: a send is noted where it is made, at the checked sender, since ADR 0015
+(`RunFacts::sending`, before anything is handed over, and `RunFacts::went` for one
+that is refused), and `run/3` has the list (ADR 0013, "Where data went"). The tests
+are in `crates/whizbang-core/tests/it/egress/recipients.rs`, named below as
+`recipients::…`: each runs an action on an executor with this record's check, a policy
+and the test kit's sending fake, and reads the run's record from the store.
+
+`SPEC.md` section 10: "Every run records where data went."
+
+- **A run that sent a prompt and a derived image to one recipient lists it once, with
+  both classes.** Three sends to one origin are one entry: the origin, the account
+  cut, `derived_images` and `prompts` in the record's order, `sent`; and nothing of an
+  address but its origin is in the store
+  (`recipients::a_run_that_sent_a_prompt_and_a_derived_image_to_one_recipient_lists_it_once_with_both_classes`).
+- **An upstream is listed when it was reached, and only then.** A request that went on
+  to an approved upstream lists the recipient's own origin and the upstream, in that
+  order; a second upstream that was approved and not reached is nowhere in the record
+  (`recipients::a_run_whose_request_went_on_to_an_approved_upstream_lists_it_as_reached_and_one_that_was_not_reached_is_not_listed`).
+- **A request that failed at its second hop lists the first, which had the data.**
+  When the second hop's fault says that nothing left, the first is listed alone. When
+  it states no such thing, the data may have left for the second, and it is listed
+  after the first (ADR 0015: only a fault that says nothing left takes a note back)
+  (`recipients::a_request_that_failed_at_its_second_hop_lists_the_first_which_had_the_data`).
+- **A run whose only request was refused lists the refusal, and nothing as sent:**
+  one entry, `refused`, and the refusal among the run's refusals
+  (`recipients::a_run_whose_only_request_was_refused_lists_the_refusal_and_nothing_as_sent`).
+- **A local run's list is empty,** and nothing of the record is lost
+  (`recipients::a_local_runs_list_is_empty`).
+- **An account in the list is shown cut, and a credential is nowhere in the record.**
+  The credential went with the request, as the fake shows; the store holds neither
+  the key, whole or by its start, nor the name of its header, nor the account past
+  its first four characters
+  (`recipients::an_account_in_the_list_is_shown_cut_and_a_marker_credential_is_nowhere_in_the_record`).
+
+**Why a recipient is not approved is said in one of three sentences.** The executor's
+fourth question (ADR 0015) knew only that the policy said no, and said of every such
+request that its recipient "is not approved for the classes of data the request
+holds", which is false of a backend whose account or upstreams are not the
+approval's, and sent a person to the wrong line of a config. `DispatchPolicy::why_not`
+answers which part differs, as a kind that holds no value, and nothing when the
+recipient may receive, which is exactly when `may_receive` says yes:
+
+| `NotApproved` | When | The sentence |
+|---|---|---|
+| `Classes` | The policy names the recipient whole, and not for every class the request holds; or no approval names its origin | "the recipient is not approved for the classes of data the request holds" |
+| `Account` | An approval names its origin, and none names it with its account | "the recipient's origin is named by an approval, but not with the account the backend declares" |
+| `Upstreams` | An approval names its origin and its account, with other upstreams | "the recipient's origin and account are named by an approval, but not with the upstreams the backend declares" |
+
+The two sentences say that an approval names the origin, not that the origin is
+approved: the approval may be for probing alone, which approves no data. An origin
+approved under several accounts is compared with all of them: one with the
+recipient's account makes it the upstreams, in whichever order they were approved. An
+account is compared whole, never by what is shown of it. No sentence holds an
+account, an origin or a class: the refusal's note names the origin and the classes, as
+every refusal of a send does, and the entry in where data went shows the account cut
+(`recipients::a_recipient_that_is_not_the_one_approved_is_refused_in_words_that_say_which_part_differs`,
+`recipients::the_policy_says_why_a_recipient_may_not_receive_and_nothing_when_it_may`).
+
+**What readers show.** `runs show` prints the list as the record holds it: `egress:`
+and how many, then a line for each entry with the origin, the cut account or `none`,
+the classes and `sent` or `refused`; `egress: none` for an empty list, and `egress:
+unknown` for a record that lost it. That was built with the record (`run/3`), and is
+held by the binary's tests against records written by hand
+(`runs::runs_show_prints_the_settings_the_paid_requests_and_where_data_went`,
+`runs::runs_show_says_unknown_for_every_group_a_record_has_lost_and_never_none`).
+Nothing of it is changed here. The first test above holds the bytes of the list as an
+executor writes it to the shape those tests read.
+
+Limits of it, each stated:
+
+- **A run that a process left after it had sent data is not shown here.** The plan
+  asks that it is recovered as interrupted, with `egress` named in `outcome.lost` and
+  an empty list. The record of such a run and what readers print of it are built and
+  tested (ADR 0013, "What is lost"); the recovery that makes it is task I4b's and is
+  not built, so no test can leave a run and recover it. The task's box is not ticked
+  for that one clause (`docs/carry-over.md`).
+- **The list says where data went, to four characters of an account** (ADR 0013): two
+  accounts at one origin that start with the same four characters are one entry.
+- **An unnamed origin is said as the classes are.** A backend whose origin no
+  approval names is told that its recipient is not approved for the classes, which is
+  true, and not that the origin is unknown.
+- **The sentences tell a backend's declaration from a config's approval apart, and so
+  say that an approval of the origin exists.** They go to the run's record and to the
+  fault the action is answered with, on the machine that holds the config.
 
 ### Nothing but pixels
 
@@ -194,7 +498,8 @@ it found (`pixels::every_part_of_a_request_is_looked_at`):
 3. **A part, or the rest of an address, that holds a folder the check was told to keep
    out is refused.** `SendCheck::keeping_out(folder)` is told the root of the
    executor's store, as it is written; at most 8 (`KEPT_OUT_LIMIT`), and a path of
-   nothing is refused. What is printed of a check is how many it keeps out
+   nothing, or of nothing but slashes, is refused: every address holds a slash. What
+   is printed of a check is how many it keeps out
    (`pixels::a_check_keeps_out_a_bounded_number_of_folders_and_prints_none`).
 4. **A part that holds an absolute path is refused:** one of `/Users/`, `/home/`,
    `/tmp/`, `/var/folders/`, `/private/` and `file://`, or a drive, which is one
@@ -210,20 +515,26 @@ Limits of it, each pinned or stated:
   escaped line break, are refused as paths
   (`pixels::known_words_that_only_look_like_a_path_are_refused_too`). A piece is the
   words as they are, not as a wire format escapes them.
-- **A file name alone is not found,** nor a relative path, nor an absolute path under
-  a folder that is not in the list and was not given to `keeping_out`. That no file
-  name leaves is held by what a picture is, not by a search.
+- **A file name alone is not found,** nor a relative path, nor a path from a home
+  written as `~`, nor an absolute path that starts any other way: under a folder that
+  is not in the list and was not given to `keeping_out`, on a drive written with a
+  forward slash, on a share, in another case, or in an encoded form (percent-encoded,
+  JSON's `\/`, UTF-16). That no file name leaves is held by what a picture is, not by
+  a search.
 - **A folder is found only as it was written to the check.** Another spelling of the
-  same folder (through a link, with another case) is not. The list of path starts is
+  same folder (through a link, with another case, percent-encoded as an address writes a space, or
+  with the slashes escaped as JSON may) is not. The list of path starts is
   not applied to an address, whose path is the recipient's: only the folders kept out
   are.
 - **Another encoder's file that is the same bytes passes.** For pixels that do not
   compress, an encoder that stores them writes the very file this one does; it holds
   nothing but those pixels, and is sent. The test uses a picture of one colour, which
   the other encoder compresses.
-- **An image inside other bytes is not seen:** an image in base64 inside words, or in
-  a container the list does not name. Adapters are trusted code (`SPEC.md` section
-  10); the type they are given for an image is `Piece::picture`.
+- **An image inside other bytes, or cut across parts, is not seen:** an image in
+  base64 inside words, after any byte in a part, in a container the list does not
+  name (a BMP), or cut so that no part starts as an image file does. Adapters are
+  trusted code (`SPEC.md` section 10); the type they are given for an image is
+  `Piece::picture`.
 - **The file is not compressed,** so it is a little larger than four bytes a pixel.
   Nothing real is sent in 1B. A compressing encoder before a real send is on
   `docs/carry-over.md`; it changes one function and the reader beside it.
@@ -248,16 +559,12 @@ Limits of it, each pinned or stated:
   fallback to take: a run is handed the backend its call resolved (ADR 0009). The test
   holds that a refusal adds none. It cannot show that a backend refused at the gate's
   place is not replaced, since there is no such place yet.
-- **Once an answer has pointed a backend elsewhere, every later request of that
-  backend in that run is refused,** a first address among them. The counts a check is
-  shown are for one backend of one run, not for one request (ADR 0015). Task E3 decides
-  what is followed.
 - **A class is what whoever built the piece stated** (ADR 0012). Nothing here knows a
   source image from a derived one.
 - **Nothing here reads a config or gives an executor its policy.** That is tasks I6
   and C5, and the binary has no ways out until task W1.
-- **`may_probe` is answered and nothing asks it yet.** The checked probe and the
-  checked download are task E3's.
+- **`may_probe` is asked by the checked probe, and nothing in the build makes one
+  yet** ("A download and a probe").
 
 ### For later tasks
 
@@ -269,17 +576,32 @@ Limits of it, each pinned or stated:
 - **Task I3.** The gate's place asks the same policy the same question,
   `may_receive(recipient, classes)`, with the classes a capability's request holds
   before any piece is made; a request it refuses does not reach the checked sender.
-- **Task E3.** `SendCheck` is where a limit on a chain of answers goes.
 - **Tasks I6 and W1.** The check an executor is given is
-  `SendCheck::new().keeping_out(root)`, with the root of its store.
+  `SendCheck::new().keeping_out(root)`, with the root of its store. Give it the root
+  as an absolute path, and its canonical spelling too when that differs. A relative
+  root such as `.` refuses any part that holds a dot. A root that holds a space or a
+  backslash can never be found in an address. Slashes at the end of the root are left
+  off, so the folder is found where it is written bare, and a root that is nothing
+  but slashes is refused (`NotAllowed::Empty`), not kept
+  (`pixels::a_body_that_holds_an_absolute_path_or_the_stores_root_is_refused_by_the_sending_interface`).
+  The list of path starts is not applied to an address: a home path in a query is
+  sent.
 - **A real sender (1C).** It puts the pieces of a request into a wire format itself.
   A picture piece is already a whole PNG file.
+- **A real download client and a real prober (1C).** Each is wrapped before anything
+  is handed it: `CheckedDownloader::new(client, entry.origins())` for each entry, and
+  `CheckedProber::new(client, policy, recipient)` for each recipient probed.
 
 ## Consequences
 
 - An executor built with `Ways::through(sender).checked_by(SendCheck).under(policy)`
-  sends a first address to a recipient the config approves for what the request holds,
+  sends to a recipient the config approves for what the request holds, at its own
+  origin and its upstreams, through five answers that point elsewhere at most,
   and nothing else.
+- Once 1C wraps its download client and its prober, neither is trusted: a model's file
+  comes only from the origins its entry names, and a probe goes only to a recipient
+  the config approves for probing. Until then the installer's own check holds a
+  download, and nothing probes.
 - A config's `account` and `upstreams` are part of what is approved. Changing either in
   the file and not in the backend, or the other way, approves nothing.
 - Reversing this costs the tasks that make a snapshot of a config (C5) and the rest of
@@ -313,3 +635,14 @@ Limits of it, each pinned or stated:
   could hold it.
 - **The check goes by the moves in a row.** Turned down: a request answered meanwhile
   sets them back.
+- **The limit on the moves of the whole run** (`Hop::total_moves`), which needs
+  nothing of the executor. Turned down: it is a budget for a run, and a judge whose
+  every turn is pointed elsewhere once would be refused at its sixth turn.
+- **The checked sender follows an answer itself, and counts as it goes.** Turned down
+  by ADR 0012 and ADR 0015: a hop that is not a new request is not asked the
+  executor's questions where a test can see it.
+- **A checked download and a checked probe that follow nothing,** and hand the
+  address back as the bare interface does. Turned down: with no bounds to count in,
+  a count of moves would have to be kept between calls, for a chain nothing marks
+  the start or the end of. The questions are asked of each address inside the one
+  call, where the fake behind shows what was asked of whom.

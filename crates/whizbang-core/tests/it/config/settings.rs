@@ -2,8 +2,8 @@
 //! setting"; plan 1B, the function of task C5 that needs no snapshot): from a config
 //! and the backends a call resolved, names and values in the order of the names.
 
-use whizbang_core::config::{Config, SettingsRefused};
-use whizbang_core::contract::record::Setting;
+use whizbang_core::config::{Config, ConfigRefused, SettingsRefused};
+use whizbang_core::contract::record::{SETTING_NAME_LIMIT, Setting};
 use whizbang_core::contract::{Capability, Secrets, Value};
 
 use super::made_up_key;
@@ -286,28 +286,80 @@ fn what_a_record_would_not_take_is_refused_naming_the_setting_and_never_its_valu
         assert_eq!(refused, SettingsRefused::HoldsSecret, "{secret}");
         assert!(!said(&refused).contains("abcdefgh"));
     }
+}
 
-    // A name longer than a record takes: the longest backend's name with the longest
-    // key. It is shown cut, and holds no secret.
-    let (backend, key) = ("b".repeat(64), "k".repeat(64));
-    let long = config(&format!(
-        "[backends.segment.{backend}]\nkind = \"fake\"\n\
-         [backends.segment.{backend}.settings]\n{key} = 1\nshort = 2\n"
-    ));
-    let refused = long
-        .settings_of(&[(Capability::Segment, backend.as_str())], &Secrets::none())
-        .unwrap_err();
-    let shown = format!("backends.segment.{}...", "b".repeat(64 - 17));
-    assert_eq!(
-        refused,
-        SettingsRefused::Name {
-            name: shown.clone()
+#[test]
+fn the_longest_names_a_config_can_hold_are_recorded_and_one_character_more_is_refused_where_the_config_is_read()
+ {
+    // A setting is recorded as `backends.<capability>.<name>.settings.<key>`, and a
+    // record takes a name of 128 characters. A backend's name and a setting's key
+    // may each be 64, which with the rest would come to 155 for `segment`: so the
+    // two together are held to what is left of the 128, where the config is read.
+    assert_eq!(SETTING_NAME_LIMIT, 128);
+    let table = |capability: &str, name: &str, key: &str| {
+        format!(
+            "[backends.{capability}.{name}]\nkind = \"fake\"\n\
+             [backends.{capability}.{name}.settings]\n{key} = 1\nshort = 2\n"
+        )
+    };
+    for capability in [Capability::Fill, Capability::Judge, Capability::Segment] {
+        let of = capability.name();
+        let around = format!("backends.{of}..settings.").len();
+        let room = SETTING_NAME_LIMIT - around;
+        // The longest name with the longest key that still fits, and the longest
+        // key with the longest name that still fits.
+        for name_len in [64, room - 64] {
+            let (name, key) = ("b".repeat(name_len), "k".repeat(room - name_len));
+            let longest = config(&table(of, &name, &key));
+            let pairs = longest
+                .settings_of(&[(capability, name.as_str())], &Secrets::none())
+                .unwrap();
+            let recorded = format!("backends.{of}.{name}.settings.{key}");
+            assert_eq!(recorded.len(), SETTING_NAME_LIMIT);
+            assert_eq!(pairs[1], (recorded.clone(), Value::Integer(1)));
+            // And a record takes each pair.
+            for (name, value) in &pairs {
+                assert!(Setting::new(name, value, &Secrets::none()).is_some());
+            }
+
+            // One character more, in the key or in the name, is refused by the
+            // reader, which names the key and shows no value.
+            for (name, key) in [
+                (name.clone(), format!("{key}k")),
+                (format!("{name}b"), key.clone()),
+            ] {
+                if name.len() > 64 || key.len() > 64 {
+                    continue;
+                }
+                let refused = Config::parse(table(of, &name, &key).as_bytes(), &Secrets::none());
+                assert_eq!(
+                    refused,
+                    Err(ConfigRefused::Key {
+                        key: format!("backends.{of}.{name}.settings.{key}"),
+                        why: "would be recorded under a name of 129 characters, and a run's \
+                              record takes a setting's name of 128 at most: shorten the \
+                              backend's name or the key by 1"
+                            .to_owned(),
+                    })
+                );
+            }
         }
-    );
-    assert_eq!(
-        refused.to_string(),
-        format!("the setting {shown} has a name longer than a record takes")
-    );
+        // The longest of both, which the reader took until the two bounds agreed.
+        let (name, key) = ("b".repeat(64), "k".repeat(64));
+        let refused = Config::parse(table(of, &name, &key).as_bytes(), &Secrets::none());
+        let Err(ConfigRefused::Key { why, .. }) = refused else {
+            panic!("the longest name and the longest key were read");
+        };
+        let over = around + 128 - SETTING_NAME_LIMIT;
+        assert!(why.ends_with(&format!("or the key by {over}")), "{why}");
+        // The short form's backend is named `default`, and every key fits it.
+        let short =
+            format!("[backends.{of}]\nkind = \"fake\"\n[backends.{of}.settings]\n{key} = 1\n");
+        let pairs = config(&short)
+            .settings_of(&[(capability, "default")], &Secrets::none())
+            .unwrap();
+        assert_eq!(pairs[1].0, format!("backends.{of}.default.settings.{key}"));
+    }
 }
 
 #[test]

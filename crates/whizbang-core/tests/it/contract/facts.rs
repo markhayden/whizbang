@@ -683,3 +683,58 @@ fn a_clone_that_notes_from_another_thread_while_the_run_ends_is_in_the_record_or
     );
     assert!(record.asked().settings.is_empty());
 }
+
+#[test]
+fn a_note_of_a_send_that_is_taken_back_leaves_an_entry_noted_before_it_with_its_own_classes() {
+    // The run notes `sent` for an origin and an account itself, for prompts. A send
+    // to the same origin under the same account, of a source image, is then noted
+    // before it is handed over, fails with nothing sent, and its note is taken
+    // back. The entry is still listed, with the classes of the first note alone.
+    use whizbang_core::capability::{Fault, FaultKind};
+    use whizbang_core::egress::{Address, DispatchPolicy, Piece, Recipient, Ways};
+    use whizbang_testkit::sending::{FakeCheck, FakeSender};
+    let world = World::new();
+    let at = origin("https://api.example.com");
+    let who = account("acct_4f8a1c9e77");
+    let recipient = Recipient::new(at.clone()).with_account(who.clone());
+    let images = Classes::of(&[DataClass::SourceImages]);
+    let to = Address::of("https://api.example.com/v1", &Secrets::none()).unwrap();
+    let piece = vec![Piece::of(DataClass::SourceImages, b"pixels".to_vec())];
+    let filler = FakeFiller::new(Paint::Inverse).sending_to(recipient.clone());
+    let filler = Arc::new(filler.posting(to, piece));
+    let fault = Fault::new(FaultKind::Unavailable, "the test failed it").not_sent();
+    let sender = Arc::new(FakeSender::scripted(vec![Err(fault)]));
+    let policy = DispatchPolicy::none().approving(recipient, images).unwrap();
+    let ways = Ways::through(sender.clone())
+        .checked_by(Arc::new(FakeCheck::approving()))
+        .under(policy);
+    let asks = {
+        let (at, who) = (at.clone(), who.clone());
+        let needs = vec![Requirement::new(Capability::Fill)];
+        action("asks", needs, move |_, context| {
+            assert!(
+                context
+                    .facts()
+                    .went(&at, Some(&who), prompts(), Handed::Sent)
+            );
+            let fill = context.capabilities().fill().unwrap();
+            fill.fill(&fill_request()).unwrap_err();
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(
+        &world,
+        roster(None, Some(filler.as_ref()), None),
+        Capabilities::none().with_fill(filler.clone()),
+        vec![asks],
+    )
+    .with_ways(ways);
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(sender.requests(), 1);
+    let (record, _) = stored(&world, finished.run());
+    assert_eq!(record.egress().len(), 1);
+    let went = &record.egress()[0];
+    assert_eq!(went.origin(), "https://api.example.com");
+    assert_eq!(went.outcome(), Handed::Sent);
+    assert_eq!(went.classes(), prompts());
+}

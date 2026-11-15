@@ -145,7 +145,13 @@ impl Staged {
 /// - Each file is asked for at its address, and at an address it moved to only when
 ///   the entry names that address's origin. One byte more than its size is asked
 ///   for and no more than its size is kept: a byte beyond it refuses the file.
-/// - On any refusal the staging folder is removed.
+/// - A staging refused after it took the lock removes the staging folder and syncs
+///   the removal. When the removal itself is refused, what is left is removed by the
+///   next to stage, which trusts none of it. A refusal before the lock touches
+///   nothing.
+///
+/// What is staged is published by [`super::install`], which stages for itself: a
+/// [`Staged`] is what the files were held to, and the lock.
 pub fn stage(
     dir: &ModelsDir,
     entry: &Entry,
@@ -153,6 +159,24 @@ pub fn stage(
     cancellation: &Cancellation,
     secrets: &Secrets,
 ) -> Result<Staged, StageRefused> {
+    let lock = lock_model(dir, entry, cancellation, secrets)?;
+    let files = stage_locked(dir, entry, downloader, cancellation, &mut |_| Ok(()))?;
+    Ok(Staged {
+        model: entry.name().clone(),
+        files,
+        _lock: lock,
+    })
+}
+
+/// The model's lock, taken alone by a try, for an install of this entry: after the
+/// names were looked at for a secret and the cancellation was asked, and before
+/// anything of the model but its folder and its lock file is made.
+pub(super) fn lock_model(
+    dir: &ModelsDir,
+    entry: &Entry,
+    cancellation: &Cancellation,
+    secrets: &Secrets,
+) -> Result<Box<dyn LockFile>, StageRefused> {
     let named = entry.files().iter().map(|file| file.name().as_str());
     if std::iter::once(entry.name().as_str())
         .chain(named)
@@ -163,52 +187,58 @@ pub fn stage(
     if cancellation.is_cancelled() {
         return Err(StageRefused::Cancelled);
     }
-    let fs = dir.fs();
     let model = dir.model(entry.name());
     dir.ensure_dir(&dir.models())?;
     dir.ensure_dir(&model)?;
-    let Some(lock) = fs.hold_lock_file(&model.join("LOCK"), true)? else {
-        return Err(StageRefused::Busy);
-    };
-    let staging = model.join("staging");
-    let incoming = staging.join("incoming");
+    dir.fs()
+        .hold_lock_file(&model.join("LOCK"), true)?
+        .ok_or(StageRefused::Busy)
+}
+
+/// Stages every file of the entry, for one who holds the model's lock. `staged` is
+/// told after each file how many are staged, and its refusal refuses the staging.
+pub(super) fn stage_locked(
+    dir: &ModelsDir,
+    entry: &Entry,
+    downloader: &dyn Downloader,
+    cancellation: &Cancellation,
+    staged: &mut dyn FnMut(usize) -> io::Result<()>,
+) -> Result<Vec<InstalledFile>, StageRefused> {
+    let fs = dir.fs();
+    let staging = dir.staging(entry.name());
+    let incoming = dir.incoming(entry.name());
     let files = incoming.join("files");
-    let staged = (|| {
+    let done = (|| {
         dir.remove(&incoming)?;
         dir.ensure_dir(&staging)?;
         fs.create_dir(&incoming)?;
         fs.sync_dir(&staging)?;
         fs.create_dir(&files)?;
         fs.sync_dir(&incoming)?;
-        let mut staged = Vec::new();
+        let mut done = Vec::new();
         for file in entry.files() {
             stage_file(dir, entry, file, &files, downloader, cancellation)?;
             // Made from what the catalogue states, which the file was just held to.
             let installed = InstalledFile::new(file.name().clone(), file.size(), file.sha256());
-            staged.push(installed.map_err(|_| StageRefused::Disk(io::ErrorKind::InvalidData))?);
+            done.push(installed.map_err(|_| StageRefused::Disk(io::ErrorKind::InvalidData))?);
+            staged(done.len())?;
         }
         fs.sync_dir(&files)?;
-        Ok(staged)
+        Ok(done)
     })();
-    match staged {
-        Ok(files) => Ok(Staged {
-            model: entry.name().clone(),
-            files,
-            _lock: lock,
-        }),
-        Err(refused) => {
-            // Under the lock still. What cannot be removed now is removed by the next
-            // to stage, which trusts nothing it finds here.
-            let _ = dir.remove(&incoming);
-            let _ = fs.sync_dir(&staging);
-            Err(refused)
-        }
+    if done.is_err() {
+        // Under the lock still. What cannot be removed now is removed by the next
+        // to stage, which trusts nothing it finds here.
+        dir.unstage(entry.name());
     }
+    done
 }
 
 /// What the sink of one file's download has seen.
 struct Received {
     file: Box<dyn NewFile>,
+    /// The size the catalogue states: the most that is kept.
+    size: u64,
     kept: u64,
     hash: Sha256,
     /// A byte came beyond the size.
@@ -218,26 +248,26 @@ struct Received {
 }
 
 impl Received {
-    /// Takes one piece, and says whether to go on. The file was begun with its size
-    /// as the most it may hold, so a piece that would take it past its size is
-    /// refused by the file system before any of it is written: the file is too long,
-    /// and nothing more is wanted of it. The handle is broken by that, as by any
-    /// failure, and what it wrote is removed with the staging folder.
+    /// Takes one piece, and says whether to go on. A piece that would take the file
+    /// past its size is a byte beyond it: the file is too long, none of the piece is
+    /// written, and nothing more is wanted. The file was begun with its size as the
+    /// most it may hold, so the file system would refuse such a piece too; but what
+    /// the file system refuses is the disk's refusal, whatever it calls it. A full
+    /// disk and a limit on a file's size both say that a file grew too large, of a
+    /// file that is as long as its catalogue states. A handle is broken by a refusal,
+    /// and what it wrote is removed with the staging folder.
     fn take(&mut self, piece: &[u8]) -> bool {
         if self.beyond || self.disk.is_some() {
             return false;
         }
+        if self.kept.saturating_add(piece.len() as u64) > self.size {
+            self.beyond = true;
+            return false;
+        }
         for part in piece.chunks(PIECE_MAX_BYTES) {
-            match self.file.append(part) {
-                Ok(()) => {}
-                Err(error) if error.kind() == io::ErrorKind::FileTooLarge => {
-                    self.beyond = true;
-                    return false;
-                }
-                Err(error) => {
-                    self.disk = Some(error.kind());
-                    return false;
-                }
+            if let Err(error) = self.file.append(part) {
+                self.disk = Some(error.kind());
+                return false;
             }
         }
         self.hash.update(piece);
@@ -265,6 +295,7 @@ fn stage_file(
         file: dir
             .fs()
             .begin_new(&files.join(file.name().as_str()), size)?,
+        size,
         kept: 0,
         hash: Sha256::new(),
         beyond: false,
@@ -284,6 +315,7 @@ fn stage_file(
             }
             Err(fault) => return Err(refused(FileRefused::Download(fault.kind()))),
             Ok(Downloaded::Bytes(_)) => break,
+            Ok(Downloaded::Moved(_)) if received.disk.is_some() => break,
             Ok(Downloaded::Moved(_)) if received.kept > 0 || received.beyond => {
                 // Bytes, and then another address: no downloader answers so.
                 return Err(refused(FileRefused::Download(FaultKind::Malformed)));

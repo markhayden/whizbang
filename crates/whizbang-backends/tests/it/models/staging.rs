@@ -13,7 +13,7 @@ use whizbang_backends::models::{
 use whizbang_core::capability::{Fault, FaultKind};
 use whizbang_core::contract::Cancellation;
 use whizbang_core::egress::{Address, DownloadRequest, Downloaded, Downloader};
-use whizbang_core::store::fs::{Fs, RealFs};
+use whizbang_core::store::fs::{Fs, NewFile, PIECE_MAX_BYTES, RealFs};
 use whizbang_testkit::downloads::{Ended, FakeDownloader};
 use whizbang_testkit::fs_shim::{Event, Lost, ShimFs, Tail};
 use whizbang_testkit::scratch::Scratch;
@@ -21,17 +21,17 @@ use whizbang_testkit::scratch::Scratch;
 use super::{MARKER, file_name, hash, none, origin, parts, secrets};
 
 /// 2,500 bytes, three pieces of the fake's, different at every place a piece starts.
-fn graph() -> Vec<u8> {
+pub(super) fn graph() -> Vec<u8> {
     (0..2500u32).map(|at| (at % 251) as u8).collect()
 }
 
-const TERMS: &[u8] = b"terms";
+pub(super) const TERMS: &[u8] = b"terms";
 
-fn address(text: &str) -> Address {
+pub(super) fn address(text: &str) -> Address {
     Address::of(text, &none()).unwrap()
 }
 
-fn at(name: &str) -> Address {
+pub(super) fn at(name: &str) -> Address {
     address(&format!("https://weights.example.org/files/{name}"))
 }
 
@@ -55,7 +55,7 @@ fn entry_of(files: &[(&str, Vec<u8>)]) -> Entry {
 }
 
 /// A fake that serves both files as the entry states them.
-fn serving_both() -> FakeDownloader {
+pub(super) fn serving_both() -> FakeDownloader {
     FakeDownloader::new()
         .serving(&at("graph.onnx"), graph())
         .serving(&at("LICENSE.txt"), TERMS.to_vec())
@@ -66,7 +66,7 @@ fn staged_at(root: &Path, name: &str) -> PathBuf {
     incoming(root).join("files").join(name)
 }
 
-fn incoming(root: &Path) -> PathBuf {
+pub(super) fn incoming(root: &Path) -> PathBuf {
     root.join("models/tiny/staging/incoming")
 }
 
@@ -81,12 +81,12 @@ fn staging(
 }
 
 /// What a file holds, read without the shim; nothing when it is not there.
-fn on_disk(path: &Path) -> Option<Vec<u8>> {
+pub(super) fn on_disk(path: &Path) -> Option<Vec<u8>> {
     std::fs::read(path).ok()
 }
 
 /// Every name under a folder, as text, for a search of what was written.
-fn names_under(root: &Path) -> Vec<String> {
+pub(super) fn names_under(root: &Path) -> Vec<String> {
     let mut names = Vec::new();
     let mut left = vec![root.to_path_buf()];
     while let Some(dir) = left.pop() {
@@ -703,8 +703,13 @@ fn staging_touches_nothing_outside_the_models_directory() {
     let short = FakeDownloader::new().serving(&at("LICENSE.txt"), b"term".to_vec());
     staging(&fs, scratch.path(), &entry(), &short).unwrap_err();
     staging(&fs, scratch.path(), &entry(), &serving_both()).unwrap();
-    for event in fs.events() {
-        let paths = match &event {
+    touches_only(&fs.events(), scratch.path());
+}
+
+/// Every event names only paths under this folder.
+pub(super) fn touches_only(events: &[Event], root: &Path) {
+    for event in events {
+        let paths = match event {
             Event::Rename(from, to) => vec![from.clone(), to.clone()],
             Event::CreateDir(p)
             | Event::Write(p)
@@ -720,7 +725,7 @@ fn staging_touches_nothing_outside_the_models_directory() {
             | Event::TryShare(p) => vec![p.clone()],
         };
         for path in paths {
-            assert!(path.starts_with(scratch.path()), "{event:?}");
+            assert!(path.starts_with(root), "{event:?}");
         }
     }
 }
@@ -850,55 +855,183 @@ fn a_crash_at_any_event_of_staging_leaves_what_the_next_staging_removes_and_stag
     }
 }
 
+/// The store's interface as it was before the streamed calls: every other call
+/// goes to the shim, and the three new ones answer as the interface's own do. Or,
+/// when it is told to be a disk with a limit of its own, it begins a file that takes
+/// no piece: every append is refused as a file grown too large.
+struct Old(ShimFs, bool);
+
+/// A file on a disk that lets no file grow: full, or under a limit on a file's size.
+struct NoRoom;
+
+impl NewFile for NoRoom {
+    fn append(&mut self, _: &[u8]) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::FileTooLarge,
+            "the disk lets no file grow",
+        ))
+    }
+    fn sync(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+    fn finish(self: Box<Self>) -> std::io::Result<u64> {
+        Ok(0)
+    }
+}
+
+impl Fs for Old {
+    fn create_dir(&self, path: &Path) -> std::io::Result<()> {
+        self.0.create_dir(path)
+    }
+    fn write_new(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        self.0.write_new(path, bytes)
+    }
+    fn sync_dir(&self, path: &Path) -> std::io::Result<()> {
+        self.0.sync_dir(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        self.0.rename(from, to)
+    }
+    fn remove_all(&self, path: &Path) -> std::io::Result<()> {
+        self.0.remove_all(path)
+    }
+    fn read_at_most(&self, path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+        self.0.read_at_most(path, limit)
+    }
+    fn list(&self, path: &Path) -> std::io::Result<Vec<PathBuf>> {
+        self.0.list(path)
+    }
+    fn exists(&self, path: &Path) -> std::io::Result<bool> {
+        self.0.exists(path)
+    }
+    fn hold_lock_file(
+        &self,
+        path: &Path,
+        create: bool,
+    ) -> std::io::Result<Option<Box<dyn whizbang_core::store::fs::LockFile>>> {
+        self.0.hold_lock_file(path, create)
+    }
+    fn share(&self, path: &Path) -> std::io::Result<Box<dyn whizbang_core::store::fs::Held>> {
+        self.0.share(path)
+    }
+    fn try_alone(
+        &self,
+        path: &Path,
+    ) -> std::io::Result<Option<Box<dyn whizbang_core::store::fs::Held>>> {
+        self.0.try_alone(path)
+    }
+    fn begin_new(&self, _: &Path, _: u64) -> std::io::Result<Box<dyn NewFile>> {
+        if self.1 {
+            return Ok(Box::new(NoRoom));
+        }
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+}
+
+#[test]
+fn a_disk_that_lets_a_file_grow_no_further_is_a_disk_that_refused_and_not_a_file_too_long() {
+    // The file is as the catalogue states it. The disk refuses its first piece as a
+    // file grown too large, which a full disk or a limit on a file's size does: that
+    // is the disk's refusal, and says nothing of the file's length.
+    let scratch = Scratch::new("stage-no-room");
+    let dir = ModelsDir::at(Arc::new(Old(ShimFs::new(), true)), scratch.path());
+    let refused = stage(
+        &dir,
+        &entry(),
+        &serving_both(),
+        &Cancellation::new(),
+        &none(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        refused,
+        StageRefused::Disk(std::io::ErrorKind::FileTooLarge)
+    );
+    assert!(!incoming(scratch.path()).exists());
+}
+
+#[test]
+fn a_file_that_is_said_to_have_moved_after_the_disk_refused_a_piece_is_not_asked_for_again() {
+    // The disk refuses the one piece, so nothing is kept; the downloader goes on, and
+    // answers that the file moved. Nothing was kept and no byte came beyond the size,
+    // and still the address is not asked: the staging has failed already, by the disk.
+    let entry = entry_of(&[("graph.onnx", graph())]);
+    let mirror = address("https://mirror.example.net/g");
+    let rude = Rude::playing(vec![
+        (vec![graph()], Downloaded::Moved(mirror)),
+        (vec![graph()], Downloaded::Bytes(2500)),
+    ]);
+    let scratch = Scratch::new("stage-rude-disk");
+    let fs = Arc::new(ShimFs::new());
+    fs.refuse_matching(0, |event| matches!(event, Event::Append(_)));
+    let dir = ModelsDir::at(fs, scratch.path());
+    let refused = stage(&dir, &entry, &rude, &Cancellation::new(), &none()).unwrap_err();
+    assert_eq!(refused, StageRefused::Disk(std::io::ErrorKind::Other));
+    assert_eq!(
+        rude.calls.lock().unwrap().len(),
+        1,
+        "the address it named was asked"
+    );
+    assert!(!incoming(scratch.path()).exists());
+}
+
+/// A file one byte longer than the longest piece the store's interface takes.
+fn over_a_piece() -> Vec<u8> {
+    (0..=PIECE_MAX_BYTES).map(|at| (at % 251) as u8).collect()
+}
+
+#[test]
+fn a_piece_longer_than_the_store_takes_at_once_is_staged_whole_in_two_appends() {
+    // In memory only, about a megabyte: the whole file handed over as one piece.
+    let whole = over_a_piece();
+    let entry = entry_of(&[("graph.onnx", whole.clone())]);
+    let rude = Rude::playing(vec![(
+        vec![whole.clone()],
+        Downloaded::Bytes(whole.len() as u64),
+    )]);
+    let scratch = Scratch::new("stage-long-piece");
+    let fs = Arc::new(ShimFs::new());
+    let dir = ModelsDir::at(fs.clone(), scratch.path());
+    stage(&dir, &entry, &rude, &Cancellation::new(), &none()).unwrap();
+    let appends = fs
+        .events()
+        .iter()
+        .filter(|event| matches!(event, Event::Append(_)))
+        .count();
+    assert_eq!(appends, 2);
+    assert!(on_disk(&staged_at(scratch.path(), "graph.onnx")).unwrap() == whole);
+}
+
+#[test]
+fn a_piece_is_hashed_whole_however_long_it_is() {
+    // One byte another, past the first mebibyte of a piece longer than that; and at
+    // byte 1,500 of a piece of 2,500. Each has the stated length, and is refused by
+    // its hash.
+    let mut long = over_a_piece();
+    let stated_long = long.clone();
+    long[PIECE_MAX_BYTES] ^= 1;
+    let mut short = graph();
+    short[1500] ^= 1;
+    for (stated, served) in [(stated_long, long), (graph(), short)] {
+        let entry = entry_of(&[("graph.onnx", stated)]);
+        let handed = served.len() as u64;
+        let rude = Rude::playing(vec![(vec![served], Downloaded::Bytes(handed))]);
+        let scratch = Scratch::new("stage-piece-hash");
+        let dir = ModelsDir::at(Arc::new(ShimFs::new()), scratch.path());
+        let refused = stage(&dir, &entry, &rude, &Cancellation::new(), &none()).unwrap_err();
+        assert_eq!(
+            refused,
+            file_refused("graph.onnx", FileRefused::WrongHash),
+            "{handed}"
+        );
+        assert!(!incoming(scratch.path()).exists());
+    }
+}
+
 #[test]
 fn a_models_directory_on_a_file_system_that_streams_nothing_is_refused_and_not_worked_around() {
-    /// The store's interface as it was before the streamed calls: every other call
-    /// goes to the shim, and the three new ones answer as the interface's own do.
-    struct Old(ShimFs);
-    impl Fs for Old {
-        fn create_dir(&self, path: &Path) -> std::io::Result<()> {
-            self.0.create_dir(path)
-        }
-        fn write_new(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-            self.0.write_new(path, bytes)
-        }
-        fn sync_dir(&self, path: &Path) -> std::io::Result<()> {
-            self.0.sync_dir(path)
-        }
-        fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
-            self.0.rename(from, to)
-        }
-        fn remove_all(&self, path: &Path) -> std::io::Result<()> {
-            self.0.remove_all(path)
-        }
-        fn read_at_most(&self, path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
-            self.0.read_at_most(path, limit)
-        }
-        fn list(&self, path: &Path) -> std::io::Result<Vec<PathBuf>> {
-            self.0.list(path)
-        }
-        fn exists(&self, path: &Path) -> std::io::Result<bool> {
-            self.0.exists(path)
-        }
-        fn hold_lock_file(
-            &self,
-            path: &Path,
-            create: bool,
-        ) -> std::io::Result<Option<Box<dyn whizbang_core::store::fs::LockFile>>> {
-            self.0.hold_lock_file(path, create)
-        }
-        fn share(&self, path: &Path) -> std::io::Result<Box<dyn whizbang_core::store::fs::Held>> {
-            self.0.share(path)
-        }
-        fn try_alone(
-            &self,
-            path: &Path,
-        ) -> std::io::Result<Option<Box<dyn whizbang_core::store::fs::Held>>> {
-            self.0.try_alone(path)
-        }
-    }
     let scratch = Scratch::new("stage-old");
-    let dir = ModelsDir::at(Arc::new(Old(ShimFs::new())), scratch.path());
+    let dir = ModelsDir::at(Arc::new(Old(ShimFs::new(), false)), scratch.path());
     let refused = stage(
         &dir,
         &entry(),

@@ -964,17 +964,17 @@ sending fake does; the policy's `{:?}` shows recipients cut and no credential (r
 **Depends on:** I5. A section of the interfaces' ADR, which changes ADR 0007's
 `ConfigSource`.
 
-- [ ] `ConfigSource` answers a snapshot or a refusal. A snapshot is the digest together
+- [x] `ConfigSource` answers a snapshot or a refusal. A snapshot is the digest together
       with what it is the digest of: the roster and the backends it is of, made from one thing so
       that a model a call resolved is always held, the per-call cap, the dispatch policy,
       the secrets, and the settings a run records. A call is prepared under one snapshot;
       admission prepares again under the snapshot current then (ADR 0007); the run then
       executes under that one, whatever the file becomes.
-- [ ] Secrets are kept for redaction for as long as the executor lives: a value a later
+- [x] Secrets are kept for redaction for as long as the executor lives: a value a later
       snapshot no longer holds is still taken out of what is written.
-- [ ] An admission's part (I1) is shown the snapshot its call was prepared under at
+- [x] An admission's part (I1) is shown the snapshot its call was prepared under at
       admission.
-- [ ] A digest alone is still a source, of a snapshot that holds nothing else, so the
+- [x] A digest alone is still a source, of a snapshot that holds nothing else, so the
       binary and 1A's tests are unchanged. A fake source in the test kit that a test
       swaps.
 
@@ -985,27 +985,39 @@ backend, and is held to a cap and a policy, of that snapshot though the source w
 while it ran; a secret of an earlier snapshot is still redacted from a later run's record
 (rule 4); a call cannot resolve a model the snapshot holds no backend for, and the pin
 `asked::known_a_call_that_resolved_a_model_the_executor_does_not_hold_is_handed_no_handle`
-is turned round.
+is turned round. (Built: the pin is now
+`asked::a_call_that_resolved_a_model_its_snapshot_does_not_hold_is_refused_and_not_handed_no_handle`.
+A source that refuses fails the next call as `CallError::Config`, which is no refusal
+of the call: ADR 0015. One helper of `admit.rs` that implemented `ConfigSource` changed
+by three lines. No test of checkpoint 1A changed but the pin the task turns round,
+whose old body stands under a new name.)
 **Size:** small.
 
 ### I7. An inventory, and a lease on an installation
 
 **Depends on:** I6. A section of the interfaces' ADR.
 
-- [ ] `Inventory`, in the core: for a local model, whether it is ready and, if so, the
+- [x] `Inventory`, in the core: for a local model, whether it is ready and, if so, the
       identity of its installation, which is the version in what a preparation saw; or
       why it is not (not installed, out of date, damaged, not in the catalogue).
 - [ ] `Lease`: before a request to a local model leaves, at the lease's place in I3's
       order, a lease on the installation the run was admitted with is taken, and let go
       when the request is over. A lease that cannot be had is a fault and a noted
       refusal; nothing is dispatched.
+      (Not built: its place is task I3's, which is not built. `docs/carry-over.md`.)
 - [ ] Defaults that know no model, and a fake inventory in the test kit.
+      (Built of it, before task I3: the default inventory, `NoInventory`, and the fake,
+      `FakeInventory`. The lease's default is not, so the box is not ticked.)
 
 **Done when** these pass: a roster over the fake inventory prepares a model that is not
 ready as not ready, with the reason; a request whose lease is refused reaches neither the
 meter's place nor the backend; a lease is let go when its request ends by an answer, a
 fault and a panic, counted by the fake; the lease is asked for the identity the admission
-recorded, not the one current at the request.
+recorded, not the one current at the request. (Built: the first part, as
+`inventory::a_roster_over_the_fake_inventory_prepares_a_model_that_is_not_ready_as_not_ready_with_the_reason`,
+with ADR 0015, "An inventory". The other three are the lease's and wait for task I3. Until
+then a run admitted for a local model over an inventory is handed no backend for it:
+`inventory::known_a_run_admitted_for_a_local_model_over_an_inventory_is_handed_no_backend_for_it`.)
 **Size:** small.
 
 ### W1. The binary wired
@@ -1437,10 +1449,10 @@ time the task measures and states.
 
 **Depends on:** C1, C2, I6.
 
-- [ ] A `ConfigSource` over the config file and its env file: each time it is asked it
+- [x] A `ConfigSource` over the config file and its env file: each time it is asked it
       reads both and answers a snapshot (I6), or a refusal when either cannot be read as
       what it is.
-- [ ] A snapshot's roster. A backend kind is registered as an action is, by code the
+- [x] A snapshot's roster. A backend kind is registered as an action is, by code the
       binary and the tests share; the shipped binary registers none yet, and the tests
       register a fake kind.
 
@@ -1449,9 +1461,17 @@ with two fake backends of one capability and a default gives a roster that resol
 choice and the default as ADR 0006 says; a backend whose kind this build does not have is
 offered as not ready, with the reason, and never as another backend; a config whose
 backend changed between prepare and admission is `Stale::Config`, on the same executor; a
-config replaced by a file that does not parse refuses the next call, with no run, naming
-the key escaped and cut and no path, and the call after the file is put right is admitted
-(rule 3); a run that was admitted goes on under the snapshot it was admitted with.
+config replaced by a file that does not parse fails the next call as `CallError::Config`,
+with no run and the request's id not taken, in fixed words that name the file as "the
+config" and hold no key, no value and no path; the key is named, escaped and cut and with
+no path, by the reader's own refusal, which the source gives to whoever loads the config
+directly; and the call after the file is put right is admitted (rule 3); a run that was
+admitted goes on under the snapshot it was admitted with.
+**Reworded with the task,** after I6 (ADR 0015, "One snapshot of the config"): the clause
+on a file that does not parse said that it "refuses the next call, with no run, naming
+the key escaped and cut and no path". I6 ruled that a source which cannot answer is a
+failure of the call in fixed words and not a refusal of it, so the call no longer names
+the key; the key, escaped and cut, is still asked for, of the reader's refusal.
 **Carry-over:** the row on the executor built with no backends and the digest of no bytes
 (W1 wires it into the binary). **Size:** medium.
 
@@ -1461,6 +1481,15 @@ the key escaped and cut and no path, and the call after the file is put right is
 
 - [ ] The snapshot carries the per-call cap (S3), the egress policy (E2), the secrets (C2,
       C3) and the settings a run records, each read from the config.
+
+**Not ticked, though the box is true:** built before S3, so the first part of "Done
+when" below is not shown as the plan words it. The snapshot of the source over the files
+carries all four, and a cap lowered in the file is the cap the next admission is shown;
+the call over it is refused by a part of the test's own, which stands where S3's will
+(`source::a_cap_lowered_in_the_config_is_the_cap_the_next_admission_is_held_to_on_one_executor`).
+The box is ticked by the pull request that shows the same with S3's part, or by S3's.
+The other four parts are shown. ADR 0011, "The source over both files";
+`docs/carry-over.md`.
 
 **Done when** these pass, each on one executor across a change of the file: a cap lowered
 in the config refuses the next call that is over it; a recipient taken out of the `egress`
@@ -1504,10 +1533,10 @@ its record, with the recipient and the reason.
 (`same_origin`, `MAX_REDIRECTS`). Two pull requests: the hops; then the probe and the
 download.
 
-- [ ] Everything a `Sender` is asked to reach is checked against the recipient: a
+- [x] Everything a `Sender` is asked to reach is checked against the recipient: a
       redirect, an upload address and a returned download address, as the first address
       is. A credential is attached only for the origin it was configured for.
-- [ ] The download interface is checked the same way against the origins a catalogue entry
+- [x] The download interface is checked the same way against the origins a catalogue entry
       names. A probe is refused unless the config approves probing that recipient, apart
       from any class of data.
 
@@ -1596,7 +1625,8 @@ installation records. **Size:** medium.
 
 **Done when** these pass: two files are staged and verified; a wrong hash, a short file
 and a file one byte too long each fail the download and leave no staged file that passed;
-a download reads no more than the stated size, counted by the fake; a refusal names the
+a download keeps no more than the stated size, and for a file as stated is handed
+exactly its size, counted by the fake; a refusal names the
 file by its catalogue name, escaped and cut, with no path (rule 3).
 **Size:** small.
 

@@ -2,8 +2,15 @@
 
 Status: accepted. Changes ADR 0007 ("Admission": the executor's parts are asked in the
 admission's step; "A preparation handed to admission": a preparation carries the time it
-was made, and a request may carry a cap), and names ADR 0004 (`prepared/1` is as it
-was) and ADR 0013 (the kinds a record has for a refused call)
+was made, and a request may carry a cap, and `ConfigSource` answers a snapshot of the
+config or a refusal, where it answered a digest), ADR 0009 (a call that resolved a model
+its snapshot does not hold is refused) and ADR 0011 (a kind makes a backend), and names
+ADR 0004 (`prepared/1` is as it
+was) and ADR 0013 (the kinds a record has for a refused call). Changed by 0019: a
+check is shown the pieces a request holds (`Hop::pieces`) and the moves of one request
+(`Hop::request_moves`), counted in the bounds each request is handed; and the fourth
+question of a send is asked as `DispatchPolicy::why_not`, which says which part of a
+recipient is not as it was approved
 Date: 2026-11-14
 Amended: 2026-11-14, after the review of task I1. Changed under "A part in the
 admission": what a part's failure may hold (`NotJudged`: a failure of the store, a
@@ -22,6 +29,21 @@ good for its run only; an origin that holds a secret is not sent to; refused sen
 take half the list at most; a refusal does not set the count of moves back, and the
 check is shown a total; an upstream's credential; and what an executor with no sender
 notes. ADR 0013 is amended with it ("Where data went").
+Amended: 2026-11-14, with task I6. Added: "One snapshot of the config". Changed under
+"A policy before a send, and a checked send": the limit on a secret of a later config.
+ADR 0011 is amended with it ("Kinds", "What a config offers", "Both files, each time").
+Amended: 2026-11-14, after the review of task I6, before it merged. Changed under "One
+snapshot of the config": the bound is on what snapshots add; a conflict is never
+answered with an id that holds a secret, in place of a refusal that took no second
+look; two limits on a secret a later snapshot brings; the digest and a rotated key.
+Amended: 2026-11-14, with task E3, its second pull request, as the review of the first
+asked. Changed under "A policy before a send, and a checked send": what a check is
+shown (`Hop::pieces`, `Hop::request_moves`), and that a third count is one request's;
+and under "Consequences", the one line in each handle that the egress strand edited.
+Amended: 2026-11-14, with task E4. Changed under "A policy before a send, and a checked
+send": the fourth question says why (ADR 0019, "The run's recipients").
+Amended: 2026-11-14, with the first half of task I7. Added: "An inventory". The
+lease, the other half of the task, waits for the wrappers of task I3 and is not here.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -314,14 +336,19 @@ The first that says no is the answer, and the sender behind is handed nothing:
    this like any other
    (`send::an_origin_that_is_not_the_recipients_or_an_upstream_is_refused_before_the_check_is_asked`).
 4. **The policy approves the recipient for the classes the request holds**
-   (`Outgoing::needs`). **A piece's class is what whoever built the piece stated,**
+   (`Outgoing::needs`). It is asked as `DispatchPolicy::why_not`, which answers
+   nothing exactly when `may_receive` says yes, and otherwise which part of the
+   recipient is not as it was approved: its account, its upstreams or the classes
+   (ADR 0019, "The run's recipients"). **A piece's class is what whoever built the piece stated,**
    which is ADR 0012's rule and is not second-guessed here: nothing at a send knows a
    source image from a derived one, so a piece that states no class needs all four
    approved (`send::a_piece_with_no_class_needs_every_class_approved`).
 5. **The check approves the address** (`HopCheck::look`). It is shown a `Hop`: the
-   recipient, the address, the classes, the policy, and how many answers in a row
-   just before pointed elsewhere (`Hop::moves`), which is what a limit on a chain of
-   redirects is held with. The default, `NoHop`, approves no address
+   recipient, the address, the classes, the policy, how many answers in a row just
+   before pointed elsewhere (`Hop::moves`), the pieces the request holds
+   (`Hop::pieces`) and how many answers pointed this one request elsewhere
+   (`Hop::request_moves`), which is what a limit on a chain of redirects is held with
+   (ADR 0019, "Every hop"). The default, `NoHop`, approves no address
    (`send::a_sender_with_the_default_check_hands_nothing_to_any_origin`); a check that
    approves is shown each origin before the sender behind is handed its request
    (`send::a_check_that_approves_sees_each_origin_before_the_sending_fake_does`).
@@ -428,15 +455,386 @@ following an answer that points elsewhere 8 times at most.
   failed sets neither back
   (`send::a_refusal_between_two_hops_does_not_set_the_moves_back_and_the_total_never_goes_back`).
   Both are counted for one backend of one run, not for one request: a run that sends
-  through one handle from two threads at once has one count for both.
+  through one handle from two threads at once has one count for both. A third count
+  is one request's (`Hop::request_moves`, ADR 0019), kept in the bounds that request
+  was handed.
 - **A send to an origin that holds a secret of a later config is refused only once
-  the executor knows that secret.** The executor's secrets are those it was built
-  with until task I6 gives it those of each snapshot of the config.
+  the executor knows that secret.** A run's place for facts is made with every secret
+  the executor knew when the run was admitted, those of each snapshot it had taken
+  among them ("One snapshot of the config"); a secret a later snapshot brings is not
+  known to a run that was admitted before.
 - **A backend that opens a socket of its own is not stopped,** as ADR 0012 says:
   adapters are trusted code.
 - **The fault a backend is answered with is the backend's to hand on.** A backend that
   swallows it and answers all the same has still sent nothing.
 - **Until the wiring (task W1) the binary's executor has no ways out.**
+
+### One snapshot of the config
+
+Task I6. The code is `crates/whizbang-core/src/contract/snapshot.rs`, with the
+executor's side in `engine.rs` (`take`, `under`, `admit`, `run_and_end`), `part.rs`
+(`Asking::snapshot`) and `egress/checked.rs` (`Ways::behind`); the config's side is
+`config/kinds.rs` (`Kind::make`), `config/offers.rs` and `config/settings.rs`; the fake
+is `FakeSource` in `crates/whizbang-testkit/src/source.rs`, and `FakeKind` makes fake
+backends. The tests are in `crates/whizbang-core/tests/it/contract/snapshot.rs`, named
+below as `snapshot::…`, and in `tests/it/config/roster.rs`, as `roster::…`. **The engine's
+change was written before most of these tests, not after them;** each decision below was
+then held by changing the code and seeing a test fail (the pull request lists the
+changes tried).
+
+ADR 0007 gave the executor a `ConfigSource` that answered a digest. A digest says that
+the config changed and holds nothing of it. The strands need what the digest is of: the
+backends, the cap of one call, the policy, the secrets and the settings a run records,
+all of one reading.
+
+**`ConfigSource` has one question, `snapshot()`, and answers a snapshot or a refusal.** A
+`Snapshot` is the config's digest together with what the executor uses of the config:
+
+| A snapshot holds | Given by | Used |
+|---|---|---|
+| The digest | `Snapshot::of` | In the fingerprint of every call prepared under it (ADR 0004), and so in `Stale::Config` |
+| The backends | `offering`, an `Offered` | Prepare asks them (`Backends`); a run is handed the one its call resolved |
+| The cap of one call | `capped_at` | Shown to the admission's parts; the executor holds no call to it |
+| The policy and the credentials | `sending_under`, `with_credential` | Behind the executor's sender and check, for the runs admitted under it |
+| The secrets | `with_secrets` | Kept by the executor from then on |
+| What makes a run's settings | `recording`, a `Settings` | Made and held to a record's rules at admission, noted when the run starts |
+
+**A digest alone is still a source,** of a snapshot that holds nothing else, and a
+snapshot is a source of itself. Under a snapshot that holds no backends the executor
+asks and hands over those it was built with (`Engine::over`,
+`Engine::with_capabilities`); under one that holds neither a policy nor a credential a
+run sends through the ways the executor was given (`Engine::with_ways`); and with no
+`Settings` a run records none. So the binary and the tests of checkpoint 1A are as they
+were (`snapshot::a_digest_alone_is_a_source_of_a_snapshot_that_holds_nothing_else`).
+One helper of `admit.rs`, a source of its own that implemented `digest()`, implements
+`snapshot()` instead: three lines, and no test of that file changed.
+
+**When the source is asked.** Once for every call that is prepared
+(`Executor::prepare`), and once for every admission of a call that nothing called,
+before anything is held for it. The call is prepared under that snapshot, every part of
+the admission is shown it at every attempt (`Asking::snapshot`), and the run executes
+under it: the source is not asked a second time for one admission
+(`snapshot::a_snapshot_is_taken_once_for_an_admission_and_every_part_is_shown_it`). A
+source swapped between a preparation and its admission is `Stale::Config`, as ADR 0007
+has it (`snapshot::a_source_swapped_between_prepare_and_admission_is_a_stale_config`).
+
+**A run goes on under the snapshot it was admitted with.** The plan's words: a run
+"resolves a backend, and is held to a cap and a policy, of that snapshot though the
+source was swapped while it ran". The snapshot, the backends made of it for the run and
+the settings are carried with the admitted run, in memory, and nowhere else. The run is
+handed that snapshot's backend, sends under its policy with its credential, and its
+record names its digest, whatever the source answers by then; the next run is admitted
+under what the source answers then
+(`snapshot::a_run_goes_on_under_the_snapshot_it_was_admitted_with_though_the_source_was_swapped_while_it_ran`).
+
+**A call from inside an action is prepared and admitted under its caller's snapshot,
+not a fresh one.** The plan says of the cap that "a nested call is held to the cap
+too", and of a run that it goes on under its snapshot; a tree of runs under two configs
+would be held to two caps and two policies. The executor in a run's context is this
+executor with the run's snapshot as its source (`Engine::under`), so the source is not
+asked for a call from inside an action, a part is shown the caller's snapshot, and
+`nested.rs` is not changed. A source that refuses while a run executes does not stop
+what the run calls
+(`snapshot::a_call_from_inside_an_action_is_prepared_under_its_callers_snapshot_too`),
+and a run and the run it calls are both refused what their snapshot's policy refuses,
+though the source approves it by then
+(`snapshot::a_run_and_the_run_it_calls_are_refused_what_their_snapshot_refuses_though_the_source_now_approves_it`).
+
+**A source that refuses is a failure, not a refusal of the call.** It is
+`CallError::Config`, with a sentence: the call was not looked at under any config, so
+nothing was judged, no run is made, a request's id is not taken, and the next call asks
+the source again
+(`snapshot::a_source_that_refuses_fails_the_call_with_no_run_and_the_call_after_it_is_put_right_is_admitted`).
+As a part's failure and the ledger's, it is returned without a second look for the id
+(`snapshot::a_sources_refusal_is_a_failure_and_is_returned_without_a_second_look_for_the_id`).
+
+**A source's reason is fixed words** (`SourceRefused::because` takes a `&'static str`
+and nothing else), and names a file as "the config" or "the env file": no key, no value,
+no path. The type does not hold that against a source that leaks a made text, so the
+executor looks at the whole reason first: one that holds a secret it knows is replaced
+with fixed words (`SOURCE_WHY_WITHHELD`), and any other is cut at 256 characters
+(`SOURCE_WHY_LIMIT`). The cut comes after the look and adds nothing, so what is left of
+a reason that held no secret holds none
+(`snapshot::a_sources_reason_that_holds_a_secret_is_replaced_and_a_long_one_is_cut`).
+**So a call does not name the key of the file that was wrong.** Task C4's "Done when"
+asked for the key, escaped and cut; that is the config reader's own refusal
+(`ConfigRefused`, ADR 0011), shown by whatever loads a config directly (`Files::load`),
+and the task's words were changed when its source was built.
+
+**A source, a kind or a `Settings` that panics** unwinds to its caller. The snapshot is
+taken before anything is held, and the settings are made before anything is taken or
+staged for the call, so the store is as it was and publishes for the next, and the same request is
+admitted afterwards under its id
+(`snapshot::a_source_that_panics_leaves_the_store_as_it_was_and_the_next_request_is_served`,
+`snapshot::a_kind_that_panics_while_a_snapshot_is_made_leaves_nothing_behind_and_the_next_request_is_served`,
+`snapshot::settings_a_record_would_not_take_fail_the_admission_with_no_run`).
+
+**The secrets are kept for as long as the executor lives.** The executor holds one set,
+shared by every clone of it: those it was built with (`Engine::with_secrets`) and those
+of every snapshot it has taken, for a preparation as for an admission. None is ever let
+go, so a key that was rotated is still taken out of what a later run writes
+(`snapshot::a_secret_of_an_earlier_snapshot_is_still_redacted_from_a_later_runs_record`).
+
+- **A run writes without every secret known at its admission:** the union as it was
+  when its snapshot was taken. Its admission, its journal, its diagnostics, its record,
+  the refusals of the calls it made and its place for facts (ADR 0013) are all made
+  with that one set
+  (`snapshot::the_keys_of_two_snapshots_are_both_taken_out_of_everything_a_later_run_writes`).
+  So an origin that holds a secret of an earlier snapshot cannot be listed, and is not
+  sent to
+  (`snapshot::an_origin_that_holds_a_secret_of_an_earlier_snapshot_is_not_sent_to_and_is_in_no_file`).
+- **The set is bounded at 4,096** (`SECRETS_KEPT_LIMIT`). A snapshot that would bring it
+  over is not taken: the call fails as `CallError::Config`, nothing of that snapshot is
+  kept, and no earlier secret is dropped to make room. The look and the keeping are one
+  step under the set's lock
+  (`snapshot::a_snapshot_that_would_bring_more_secrets_than_an_executor_keeps_is_not_taken`).
+  **The bound is on what snapshots add.** The secrets an executor is built with are
+  not bounded, and all of them are kept: a snapshot that adds none is taken however
+  many there are, and one that adds any to a set that is, or would be, over the bound
+  is not. Nothing is dropped either way, so it cannot fail open
+  (`snapshot::an_executor_built_with_more_secrets_than_it_keeps_is_failed_by_no_snapshot_that_brings_none`).
+- **A request's id is looked at again** for a secret once its admission's snapshot is
+  taken, before the id is written anywhere: the first look was made before the executor
+  knew what that snapshot brings
+  (`snapshot::a_request_id_that_holds_a_key_its_admissions_snapshot_brings_is_refused_and_written_nowhere`).
+  **A conflict is never answered with an id that holds a secret.** A conflict's answer
+  names the id, and a look for the id can come after a snapshot brought a key: the
+  admission's own, or one a concurrent call took. So wherever a look finds the id taken
+  by another request, the id is looked at with the secrets known then, and one that
+  holds a secret is refused as such and not shown
+  (`snapshot::a_request_id_taken_while_its_admissions_snapshot_was_read_is_not_shown_when_the_snapshot_brings_its_key`,
+  `snapshot::a_conflict_does_not_name_an_id_that_holds_a_key_a_concurrent_admission_brought`).
+- **A snapshot whose policy names a recipient at an origin that holds a secret is not
+  taken.** Every send to that recipient would be refused where it is made ("A policy
+  before a send, and a checked send"), so it is said once, as `CallError::Config` in
+  fixed words that show no origin (`SECRET_ORIGIN_APPROVED`). The secret may be the
+  snapshot's own or an earlier one's; an upstream that holds one is left to the send,
+  and is refused where the config is read when the source over the files knows the
+  secret (ADR 0011, "The source over both files")
+  (`snapshot::a_snapshot_that_approves_a_recipient_whose_origin_is_a_secret_is_not_taken`).
+
+**The roster and the backends are made from one thing.** A kind no longer declares a
+backend: it makes one (`Kind::make`, ADR 0011), and what the roster offers of that
+backend is what the backend itself declares (`Made::declaration`). `Offers` keeps each
+backend it made under the capability and the name it is offered by, and is the
+snapshot's `Offered`: prepare asks it, so a backend that is not ready is answered with
+its reason and never by another
+(`snapshot::a_backend_that_is_not_ready_is_refused_with_its_reason_and_never_replaced_by_another`,
+`roster::what_a_config_offers_holds_each_ready_backend_made_under_its_name_and_no_other`).
+
+- **A run is handed a backend by its name, never by its model:** the name the call
+  chose, or else the capability's default. Two backends of one capability that declare
+  one model are told apart
+  (`snapshot::two_backends_of_one_capability_that_declare_one_model_are_told_apart_by_name`).
+- **A call cannot resolve a model its snapshot holds no backend for.** At admission,
+  after the call was found ready and before anything is staged, the snapshot is asked
+  for the backend under each name the call resolved; one that is not there, that
+  declares another model, or that answers another capability, refuses the call as
+  `Refusal::NotReady`, with no run
+  (`snapshot::a_call_cannot_resolve_a_model_its_snapshot_holds_no_backend_for`). The pin
+  of ADR 0009 is turned round:
+  `asked::a_call_that_resolved_a_model_its_snapshot_does_not_hold_is_refused_and_not_handed_no_handle`.
+  What is left of it, for an executor built with a digest alone, is pinned as
+  `asked::known_an_executor_built_with_a_digest_alone_holds_its_backends_apart_from_its_roster`.
+- **A backend belongs to its snapshot.** A source that reads a config again makes
+  backends again: the runs admitted under one snapshot are answered by its backends
+  and by no other's
+  (`snapshot::a_backend_made_for_a_snapshot_answers_only_the_runs_admitted_under_it`).
+  **The digest does not cover the env file** (ADR 0011, "The digest", where task C4
+  decided that this stands): a key that is
+  rotated gives a new backend under the same digest, and a call prepared before it is
+  not stale
+  (`snapshot::known_a_key_rotated_in_the_env_file_gives_a_new_backend_under_the_same_digest_and_no_stale_config`).
+- **A kind that makes a backend of another capability** than its table is under makes
+  that backend not ready (`NotReady::OtherCapability`)
+  (`roster::a_kind_that_makes_a_backend_of_another_capability_makes_its_backend_not_ready`).
+- **Two `Offers` are equal when they offer the same:** the roster, each backend that is
+  not ready with its reason, and the defaults. The backends they made are not compared.
+  A backend has no equality, and each reading makes its own, so two readings of one
+  file are equal as values and never share a backend
+  (`roster::two_offers_are_equal_when_they_offer_the_same_whatever_backends_they_made`).
+
+**The policy and the credentials of a snapshot** stand behind the executor's sender and
+check (`Ways::behind`): a run admitted under the snapshot is held to that policy and
+handed those credentials, and the executor's own are not used for it. A snapshot that
+was given a credential and no policy sends under the policy that approves nothing
+(`snapshot::a_snapshot_prints_no_credential_no_secret_and_no_setting`, its last lines).
+The executor's policy and credentials never stand beside a snapshot's: under a snapshot
+with a credential alone nothing is sent though the executor's policy approves, and
+under one with a policy alone a request goes without the credential the executor holds
+(`snapshot::a_snapshots_policy_and_credentials_stand_in_place_of_the_executors_and_never_beside_them`).
+
+**The settings a run records** are asked of the snapshot's `Settings` at admission,
+with the names the call resolved and the run's secrets, and each pair is held there to
+what a record takes (ADR 0013, "A setting"): at most 96, a name once, a name that holds
+no secret, and a value a record writes. One that fails any of these is a failure of the
+admission, `CallError::Config`, which names the setting when its name holds no secret
+and never its value; nothing is left out in silence and no run is made
+(`snapshot::settings_a_record_would_not_take_fail_the_admission_with_no_run`). The
+pairs are noted in the run's place for facts when the run starts, and are in its
+record (`snapshot::the_settings_of_a_runs_snapshot_are_in_its_record`). A config is a
+`Settings` (`Config::settings_of`, ADR 0011).
+
+**What a snapshot prints** is its digest, whether it holds backends and settings, its
+cap, its policy as a policy prints itself, and how many secrets it brings
+(`snapshot::a_snapshot_prints_no_credential_no_secret_and_no_setting`).
+
+**The fake.** `FakeSource` answers the snapshot a test gave it, which the test swaps;
+refuses or panics when told to; counts how often it was asked; and can run a test's
+hook while it is asked.
+
+**What waits.**
+
+- **The source over the config file and its env file is built** (`Files`, ADR 0011,
+  "The source over both files"): the digest, the backends, the secrets, the cap, the
+  policy and the settings of each reading. It gives a snapshot no credential: a kind
+  has no way to hand one over yet (ADR 0011, "What waits").
+- **Nothing holds a call to the cap.** A part is shown it; task S3 is that part.
+- **The gate's place** (task I3) is given the policy of the run's snapshot, as the
+  checked sender is.
+
+**Limits, each stated.**
+
+- **The window before the publication is as it was** (ADR 0007, "The window that is
+  left"): a config that changes between the snapshot and the publication is not seen
+  by that admission. What it leaves is a run under the snapshot it was admitted with,
+  which is what is meant.
+- **A snapshot's secrets are known only once it is taken.** What a run admitted before
+  wrote, or is writing, was cleaned with the secrets known at that run's admission. A
+  key that first appears in a later config is not taken out of an earlier run's files,
+  nor out of what `status`, `wait` or a repeat later answers of that run.
+- **A secret a later snapshot brings is looked for in the origins a running run's
+  snapshot approves, when that run makes a call.** If one holds it, the call from
+  inside the run fails as `CallError::Config`; the run's own sends are still held to
+  the secrets known at its admission.
+- **A preparation takes a snapshot's secrets in too,** and may fail on the bound.
+- **A backend is made each time a source that reads makes a snapshot,** for a
+  preparation as for an admission. A kind's `make` reads nothing and sends nothing
+  (ADR 0011), so it is cheap by its own rule; nothing here holds a kind to that.
+- **A run's snapshot is in memory alone.** A run a dead process left is recovered from
+  its admission (task I4b), which names the digest and not the config.
+- **The name of a setting may be longer than a record takes** only from a `Settings`
+  that is not a config. The config's reader allowed 155 characters against the
+  record's 128, and task C5 held it to the record's bound (ADR 0011, "What the file
+  holds"), so no config that is read gives such a name.
+- **A reason and a kind's sentence are cleaned by themselves,** as a part's is: a
+  secret completed only by words put around it is not found.
+- **A run that could not note a setting it was admitted with** would end as an error
+  before its action ran. Nothing reaches that: the pairs were held to the same rules,
+  with the same secrets, at admission. No test holds it.
+
+### An inventory
+
+Task I7, its first half. The code is `crates/whizbang-core/src/capability/inventory.rs`;
+the fake is `FakeInventory` in `crates/whizbang-testkit/src/inventory.rs`. The tests are
+in `crates/whizbang-core/tests/it/contract/inventory.rs`, named below as `inventory::…`.
+**The lease, the task's other half, is not built:** it stands in a place of task I3's
+order, and task I3 is not built ("What waits", below). No file of the executor changed.
+
+A local backend, one that names no recipient (`Declaration::is_local`), answers with a
+model that is on this machine or is not, and the models directory (ADR 0017) is where
+that is known. Prepare asks `Backends`, which is answered from what is configured. This
+section is what stands between the two.
+
+**`Inventory` has one question, `look(model)`,** asked by the name a backend declares
+for its model, and two answers (`Installed`):
+
+- **ready, under an installation** (`Installation`): the installation's identity, which
+  is a digest and nothing else. Its text is `sha256:` and 64 lower-case hex digits, as
+  ADR 0017 writes an installation's identity, so the type has no place for a path, a
+  file's name, a time or any text read from a disk
+  (`inventory::an_identity_is_a_digest_as_text_and_is_a_version_a_declaration_takes`);
+- **not ready, and why** (`Unready`): not installed, out of date, damaged, or not in the
+  catalogue. Each is fixed words with nothing in it. **There is no fifth:** an inventory
+  that cannot tell, or cannot read what it found, has `Damaged` to say and no way to say
+  ready without an identity. What is half installed is not installed or is damaged; which
+  of the two is the inventory's own (task M6, ADR 0017).
+
+**A roster over an inventory** (`InstalledRoster::over`) is a `Backends`. It resolves a
+call as its roster does (ADR 0006), and what the roster refuses it says as the roster
+says it, without asking the inventory
+(`inventory::what_the_roster_refuses_is_said_as_the_roster_says_it_and_the_inventory_is_not_asked`).
+Then, of the one backend that was picked:
+
+- **One that names a recipient is answered as declared,** and the inventory is not
+  asked (`inventory::a_backend_that_names_a_recipient_is_not_asked_of_the_inventory`).
+- **A local one is looked up,** by its model's name, and no other model is
+  (`inventory::the_inventory_is_asked_about_the_model_of_the_backend_the_call_resolved_and_no_other`).
+- **Not ready makes the backend not ready,** with the reason: the call is prepared as
+  not ready and is refused at admission as `Refusal::NotReady`, with no run. No other
+  backend answers in its place. The sentence names the capability and the backend by
+  the name the roster offers it under, and then the reason: nothing of the model
+  (`inventory::a_roster_over_the_fake_inventory_prepares_a_model_that_is_not_ready_as_not_ready_with_the_reason`).
+- **Ready is answered under the installation's identity, as the model's version:** the
+  backend and the model as declared, and the identity's text in place of the version
+  the backend declared. That is "the version in what a preparation saw" (the plan; ADR
+  0017, "The identity of an installation"), and it is in the preparation's fingerprint
+  (`inventory::a_local_model_that_is_ready_is_prepared_under_the_identity_of_its_installation`).
+  So an installation replaced, removed or damaged after a call was prepared makes that
+  preparation `Stale::Model` at admission, by ADR 0007's rule and with no code of this
+  task, and the same installation back makes it good again
+  (`inventory::an_installation_replaced_or_removed_under_a_prepared_call_makes_the_preparation_stale`).
+
+**The default, `NoInventory`, knows no model:** every model is not in its catalogue, so
+no local backend is ready under it, and a backend that names a recipient is as it was
+(`inventory::under_the_default_inventory_no_local_model_is_ready_and_a_backend_that_is_not_local_is_as_it_was`).
+**Nothing is put over an inventory unless it is asked for:** a `Roster` alone, what a
+config offers (`Offers`) and the binary are as they were, and no test of an earlier
+task changed.
+
+**What one request may cost** (`Backends::bound`) is asked with the model as it was
+prepared, so a local model comes under its installation's identity, which no
+declaration holds. A local backend is therefore matched by its backend and its model,
+whatever the version, and the inventory is not asked a second time; a backend that
+names a recipient is matched by all three, as a roster matches it. Where two local
+backends of one capability declare one backend and one model, the answer is the larger
+of theirs: over, never under
+(`inventory::a_local_backend_that_states_a_price_is_bound_by_it_under_its_installations_identity`).
+
+**The fake.** `FakeInventory` is told which model is ready, under the installation
+whose identity is the digest of the bytes a test gives, and which is not and why; it
+can forget a model; and it keeps the name it was asked about, each time. A model it
+was told nothing of is not in its catalogue
+(`inventory::a_model_the_inventory_was_told_nothing_of_is_not_in_the_catalogue_and_is_never_ready`).
+
+**What waits.**
+
+- **The lease** (the second box of task I7, and the last three parts of its "Done
+  when"): a lease on the installation the run was admitted with, taken before a request
+  to a local model leaves and let go when it is over. Its place is in task I3's order.
+- **A run is handed no backend for a local model over an inventory.** An executor hands
+  a run the backend that declares the model its call resolved, by backend, model and
+  version (ADR 0009, `Capabilities::resolved_for`). The identity of an installation
+  is a version no backend declares. So today a call for a local model
+  over an inventory is prepared, is ready and is admitted, and its action finds no
+  handle; no request reaches a local model that no lease holds
+  (`inventory::known_a_run_admitted_for_a_local_model_over_an_inventory_is_handed_no_backend_for_it`).
+  The task that builds the lease hands the run its backend, with the identity the
+  admission recorded, and turns that pin round (`docs/carry-over.md`).
+- **Nothing puts what a config offers over an inventory.** `InstalledRoster` takes a
+  `Roster` and is not an `Offered`, so no snapshot of a config holds one, and
+  `Snapshot::handed` matches a backend by its version too. `Offers` (ADR 0011) and the
+  binary's wiring (task W1) are not changed here.
+- **The inventory over the models directory** is task M6's.
+
+**Limits, each stated.**
+
+- **Every local backend is looked up.** A local backend whose model was never one to
+  install is not ready over any inventory that does not know it. No backend that ships
+  is local yet; the first is checkpoint 1C's.
+- **The inventory is asked by the model's name alone.** Two local backends that declare
+  one model name are one model to it, whatever backend each declares.
+- **An inventory is asked at each preparation and not held still.** Between the answer
+  and the admission's publication the installation can change, as the config can (ADR
+  0007, "The window that is left"). The lease is what holds a request to the
+  installation the admission recorded.
+- **An identity is trusted to be an installation's.** The type holds it to a digest; it
+  does not know whether an installation of that identity exists.
+- **An inventory that panics** unwinds to whoever prepared the call. Prepare holds
+  nothing and writes nothing. No test holds it.
+- **The sentence is not looked at for a secret here.** It is made of a capability's
+  name, a name the roster took, and fixed words, and is handed on as every reason of
+  a `Backends` is.
 
 ## Consequences
 
@@ -452,7 +850,17 @@ following an answer that points elsewhere 8 times at most.
 - A strand adds a refusal at admission without editing the executor: tasks S3 and S8.
 - `Bounds` hands a backend its sender, and `Engine` holds the ways out. The egress
   strand implements `HopCheck` and builds a `DispatchPolicy` from a config, and edits
-  neither the executor nor a handle. Nothing stored changes.
+  neither the executor nor a handle, but for the one line in each handle that hands a
+  request its bounds (ADR 0019). Nothing stored changes.
+- `ConfigSource` has one method, `snapshot`, in place of `digest`: a source written
+  against ADR 0007 changes by that method. `CallError` has one more kind, `Config`.
+  `Kind::declare` is `Kind::make`. Nothing stored changes: no record, no fingerprint,
+  no schema; a run's `asked.settings` is filled where a snapshot gives settings.
+- The config strand builds a `ConfigSource` from the file and edits neither the
+  executor nor a handle (tasks C4 and C5).
+- A roster may stand over an `Inventory`, and a local model is then prepared under
+  its installation's identity. The models strand implements `Inventory` (task M6) and
+  edits no file of the core. Nothing stored changes.
 - Reversing it costs the parts that were written against it.
 
 ## Alternatives
@@ -482,5 +890,17 @@ following an answer that points elsewhere 8 times at most.
   down: a check that a strand or a test plugs in could then approve an origin the
   recipient does not reach, or a recipient the policy never named. The two questions
   the executor can ask itself it asks itself, before the check.
+- **A fresh snapshot for a call from inside an action.** Turned down: the plan holds a
+  nested call to its run's cap, and a tree of runs would otherwise be judged under two
+  configs, with a parent that was approved to send and a child that was not.
+- **A source's refusal as a refusal of the call, naming the key that was wrong.**
+  Turned down: no call was judged, so nothing is owed a second look for its id; and a
+  sentence made from a file a person wrote is where a pasted key is. The reader's own
+  refusal names the key, to whoever loads the config.
+- **The roster and the backends as two things a snapshot is given.** Turned down: the
+  pin of ADR 0009 would stand, for every source that builds them apart.
+- **Secrets dropped when a snapshot no longer holds them,** or the oldest dropped at
+  the bound. Turned down: a rotated key is still a key in a record until it is revoked
+  everywhere, and a bound that drops fails open.
 - **The checked sender follows a redirect itself.** Turned down for now: ADR 0012 hands
   a redirect back as an address, and a backend that goes on to it is checked there.

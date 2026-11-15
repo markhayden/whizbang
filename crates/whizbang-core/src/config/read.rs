@@ -14,11 +14,13 @@ use std::path::Path;
 use toml::{Table, Value};
 
 use super::refused::shown;
+use super::settings::setting_name;
 use super::{
     Approval, BACKENDS_LIMIT, Backend, CALL_CAP_LIMIT_MICROS, CAPABILITIES, CONFIG_BYTES_LIMIT,
     Config, ConfigRefused, Offered, RECIPIENTS_LIMIT, SETTING_TEXT_LIMIT, SETTINGS_LIMIT, Setting,
     TEXT_LIMIT, VARIABLE_LIMIT,
 };
+use crate::contract::record::SETTING_NAME_LIMIT;
 use crate::contract::{Secrets, text};
 use crate::egress::{Account, Address, Classes, DataClass, NotAllowed, Origin, Recipient};
 
@@ -404,9 +406,8 @@ fn backends(at: &At, value: Value) -> Read<BTreeMap<&'static str, Offered>> {
         if table.contains_key("kind") {
             // The short form: one backend, named `default`, which is the default.
             offered.default = Some("default".to_owned());
-            offered
-                .backends
-                .insert("default".to_owned(), backend(&at, table)?);
+            let read = backend(&at, table, capability.name(), "default")?;
+            offered.backends.insert("default".to_owned(), read);
         } else {
             let default = match table.remove("default") {
                 Some(value) => Some(at.then("default").name(value)?),
@@ -428,9 +429,8 @@ fn backends(at: &At, value: Value) -> Read<BTreeMap<&'static str, Offered>> {
                 if text::action_name(&name).is_err() {
                     return Err(at.refuse(format!("is not a backend's name: {NAME_RULE}")));
                 }
-                offered
-                    .backends
-                    .insert(name, backend(&at, at.table(value)?)?);
+                let read = backend(&at, at.table(value)?, capability.name(), &name)?;
+                offered.backends.insert(name, read);
             }
             if let Some(default) = &default
                 && !offered.backends.contains_key(default)
@@ -448,7 +448,9 @@ fn backends(at: &At, value: Value) -> Read<BTreeMap<&'static str, Offered>> {
     Ok(read)
 }
 
-fn backend(at: &At, mut table: Table) -> Read<Backend> {
+/// One backend's table. `capability` and `name` are what its settings are recorded
+/// under: the short form's backend is named `default`.
+fn backend(at: &At, mut table: Table, capability: &str, name: &str) -> Read<Backend> {
     let Some(kind) = table.remove("kind") else {
         return Err(at.then("kind").refuse("is missing: a backend has a kind"));
     };
@@ -487,6 +489,23 @@ fn backend(at: &At, mut table: Table) -> Read<Backend> {
                     "is not a setting's key: a lower-case letter, then lower-case letters, \
                      digits or _, 64 characters at most",
                 ));
+            }
+            // A run records the setting under a name made of the capability, the
+            // backend's name and this key, and a record takes a name of no more
+            // than its bound: a longer one is refused here, so that every config
+            // that is read is one whose runs can record their settings.
+            // The length is counted in bytes and said as characters, here and in
+            // the record's bound. The two are the same only while a capability's
+            // name, a backend's name and a setting's key are ASCII, which the
+            // rules for each hold them to today.
+            let recorded = setting_name(capability, name, &key).len();
+            if recorded > SETTING_NAME_LIMIT {
+                return Err(at.refuse(format!(
+                    "would be recorded under a name of {recorded} characters, and a run's \
+                     record takes a setting's name of {SETTING_NAME_LIMIT} at most: shorten \
+                     the backend's name or the key by {}",
+                    recorded - SETTING_NAME_LIMIT
+                )));
             }
             let setting = match value {
                 Value::Integer(number) => Setting::Integer(number),

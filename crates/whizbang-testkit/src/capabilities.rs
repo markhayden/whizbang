@@ -264,6 +264,12 @@ impl FakeFiller {
         self
     }
 
+    /// The same filler, declaring this in place of what it declared.
+    pub fn declared_as(mut self, declaration: Declaration) -> FakeFiller {
+        self.declaration = declaration;
+        self
+    }
+
     /// The same filler, declaring these features and no others. What it states of its
     /// price and its recipient stays.
     pub fn declaring(mut self, features: &[&str]) -> FakeFiller {
@@ -415,6 +421,12 @@ impl FakeSegmenter {
             fails: None,
             terms: Terms::default(),
         }
+    }
+
+    /// The same segmenter, declaring this in place of what it declared.
+    pub fn declared_as(mut self, declaration: Declaration) -> FakeSegmenter {
+        self.declaration = declaration;
+        self
     }
 
     /// The same segmenter, declaring these features and no others. What it states of

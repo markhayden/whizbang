@@ -1,14 +1,17 @@
 //! The models directory's types (ADR 0017): the names that become names on a disk, the
-//! catalogue, the installation record and the identity of an installation. Nothing here
-//! installs: no test touches a disk or asks anything of a network.
+//! catalogue, the installation record and the identity of an installation; and the
+//! installer, over the test kit's disk and its fake of a download. No test asks
+//! anything of a network.
 
 mod catalogue;
 mod downloads;
 mod identity;
 mod installation;
 mod names;
+mod publishing;
 mod refusals;
 mod staging;
+mod status;
 
 use whizbang_backends::models::{
     CatalogueFile, Entry, EntryParts, FileName, Licence, ModelName, Refused, Revision,

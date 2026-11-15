@@ -9,13 +9,15 @@ use whizbang_core::egress::NotAllowed;
 
 use super::{FILE_MAX_BYTES, FILE_NAME_LIMIT, LICENCE_LIMIT, MODEL_NAME_LIMIT, REVISION_LIMIT};
 
-/// Which of the two records a refusal is about.
+/// Which of the records a refusal is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum What {
     /// The catalogue, `catalogue/1`.
     Catalogue,
     /// An installation record, `installation/1`.
     Installation,
+    /// A status record, `status/1`.
+    Status,
 }
 
 impl std::fmt::Display for What {
@@ -23,6 +25,7 @@ impl std::fmt::Display for What {
         f.write_str(match self {
             What::Catalogue => "the catalogue",
             What::Installation => "the installation record",
+            What::Status => "the status record",
         })
     }
 }
@@ -69,6 +72,10 @@ pub enum Rule {
     Address(NotAllowed),
     /// A file's address is at an origin its model does not name.
     Elsewhere,
+    /// Not a state a status record gives.
+    State,
+    /// A status record counts more files staged than there are.
+    Progress,
 }
 
 impl std::fmt::Display for Rule {
@@ -118,6 +125,8 @@ impl std::fmt::Display for Rule {
             }
             Rule::Address(why) => write!(f, "is not an address: {why}"),
             Rule::Elsewhere => f.write_str("is at an origin its model does not name"),
+            Rule::State => f.write_str("is not a state an install is in or ended in"),
+            Rule::Progress => f.write_str("counts more files staged than there are"),
         }
     }
 }
