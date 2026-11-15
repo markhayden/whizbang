@@ -201,6 +201,16 @@ text.
   Task S4 owns the rest: "the bound a backend states for a need covers every request
   the call sends it", in a wrapper around the roster. Until S4, no executor with a
   ledger is built from a roster outside a test.
+  **Built with task S4:** `spend::PerCall` wraps any `Backends` and answers the bound
+  of one request times the requests one call may send its backend, a number it is
+  built with; no bound stays none, and a product that reaches the largest amount is
+  none (`spend::quote::the_bound_of_a_need_covers_every_request_the_call_sends_its_backend`).
+  The roster is as it was. Nothing puts the wrapper in the binary's executor yet:
+  that is task W1's. And `spend::request_bound` is what one request is held to
+  before it leaves: the bound its own backend quotes, refused where that is an
+  estimate only, or no price from a backend that names a recipient, or over what
+  its run has left
+  (`spend::quote::the_check_refuses_a_request_to_a_backend_with_no_bound_and_one_whose_quote_is_over_what_its_run_has_left`).
 - **A number that arithmetic made a little too large costs a whole unit more.** 0.0079
   dollars is 7,900 millionths; worked out as `0.0079 × 1,000,000` in floating point it
   is a little over, and its quote is 7,901
