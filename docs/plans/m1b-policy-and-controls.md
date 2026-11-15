@@ -1044,9 +1044,9 @@ recovery is lossy and pessimistic by intent.
       nothing published when it failed before its publication was visible, and as
       published and not confirmed when the last sync failed. An open confirms the
       generation it finds before it is ready.
-- [ ] The executor, `store delete`, `store prune`, `store import` and the `spend`
+- [x] The executor, `store delete`, `store prune`, `store import` and the `spend`
       commands that write all open through it. A test holds the binary to no other way.
-- [ ] A store at its generation limit refuses a publication that adds names, recovery's
+- [x] A store at its generation limit refuses a publication that adds names, recovery's
       among them. Then the writer is handed out for deleting and pruning alone, which
       make the file smaller, and every other writing command is refused and told why.
 - [x] With no part, recovery publishes nothing and the store opens as before.
@@ -1075,8 +1075,20 @@ clause of "Done when" but three, which are the second pull request's with the th
 and fourth boxes: one test for each writing command on a store a killed process
 left; every writing command refused after a failed recovery, and at the limit every
 one but `store delete` and `store prune`; and `recover::a_crash_at_any_event…`.
+The second is those, with every writing command of the binary on the entry point
+(`wiring::opening`) and the test that holds the binary to it.
 
-**Reworded with the task** (I4, 2026-11-15). Two things are as the task found them.
+**Reworded with the task** (I4, 2026-11-15). Four things are as the task found them.
+
+- "the `spend` commands that write all open through it". There is none: `whizbang
+  spend` is a stub that reads and writes nothing (task B0b). The test that holds the
+  binary to one way reads every source file of the binary, `spend.rs` among them, so
+  a `spend` command that opens a store any other way fails it.
+- "each writing command, run on a store a killed process left, recovers before it
+  changes anything, one test for each command". The binary's own list of parts is
+  empty until tasks I4b and S6, so the tests call each command as `main` does with a
+  fake part in the recovery (`store::run_with`, `rascal::run_with`): they are unit
+  tests of the binary, not runs of its process.
 
 - "An open confirms the generation it finds before it is ready." It does so by a
   sync of the store's root, made by the entry point before any part is asked
@@ -1270,9 +1282,9 @@ names can mean (20 and 27). "Stops nothing else" stands as it was written.
 
 **Depends on:** S1b, I2. Two pull requests: the ledger; then its race and crash proofs.
 
-- [ ] The real ledger implements `Ledger::reserve`: it folds the balances from the step's
+- [x] The real ledger implements `Ledger::reserve`: it folds the balances from the step's
       generation, declines over the allowance, and makes its name.
-- [ ] A store with no allowance set declines every call whose estimate is over zero.
+- [x] A store with no allowance set declines every call whose estimate is over zero.
 
 **Done when** these pass, each with an executor a test builds with the real ledger: two
 executors over one store, each told yes for the last of the allowance and held at a
@@ -1284,6 +1296,36 @@ zero is admitted in a store with no allowance, and one over zero is refused ther
 passes with the real ledger in the fake's place; prepare makes no reservation and no
 record; a nested call asks the ledger nothing.
 **Carry-over:** the row on the ledger (the real one). **Size:** medium.
+**As built, 2026-11-15.** The ledger is `spend::StoreLedger`. Each clause above, and
+its test in `crates/whizbang-core/tests/it/spend/reserve.rs` (`spend::reserve::…`):
+two executors held inside the ledger,
+`two_executors_each_told_yes_for_the_last_of_the_allowance_end_with_one_admitted`;
+the crash, `a_crash_at_any_event_of_an_admission_through_the_real_ledger_leaves_all_of_it_or_none_1_of_6`
+to `…_6_of_6`; no allowance,
+`a_store_with_no_allowance_admits_a_call_of_nothing_and_refuses_one_over_nothing`;
+no bound, `a_call_with_no_bound_is_refused_and_the_ledger_is_not_asked`; prepare,
+`prepare_makes_no_reservation_and_no_record`; a nested call,
+`a_nested_call_asks_the_ledger_nothing`. The tests of `admit.rs` that ran with the
+fake run with the real ledger, counted, and no test there names the fake; those
+that are of the executor and a ledger of the test's own (one that judges nothing,
+one that does what the test says) keep theirs.
+**Reworded with the task.** "every test of `admit.rs` passes with the real ledger in
+the fake's place" holds with three things changed in those tests, each because the
+real ledger is not the fake: an allowance is the owner's reset, which a test makes
+as its three names until task S9 builds the command, so the store holds those names
+and the epoch is 1; a store allows nothing until one is made; and no reservation is
+closed when its run ends, because the real ledger's `settle` is task S11's, so a
+reservation counts in full where the fake had released it.
+**The sweep took the place of two in `admit.rs`** (the orchestrator's ruling,
+2026-11-15): the every-choice sweep with a ledger of one name
+(`admit::a_crash_inside_the_admission_step_*`, four tests), which it holds all of and
+adds the ledger's names to, shown by mutants of the admission's publication that
+each sweep kills; and the sweep under six fixed losses with a hold and its turn,
+which showed nothing the new one does not once that had an amount under an
+allowance.
+Two things were added that the task did not name, each asked for by a review:
+a refusal of its own where the books need their owner
+(`Refusal::NeedsOwner`), and `Ledger::confirm` and `settle` without a default.
 
 ### S3. The per-call cap, and a call's own
 
@@ -2077,7 +2119,7 @@ own files.
 
 **Depends on:** M5c, I7.
 
-- [ ] `Inventory` (I7) over the models directory: installed and verified, not installed,
+- [x] `Inventory` (I7) over the models directory: installed and verified, not installed,
       out of date, damaged, or not in the catalogue. Only the first is ready.
 
 **Done when** these pass, each with an executor a test builds over the inventory: a
@@ -2088,6 +2130,16 @@ nothing, is prepared as damaged, never ready, and a new install repairs it; afte
 reinstall, a new request with the old preparation is `Stale::Model`, one under a new id
 with no preparation runs on the new installation, and a repeat of the first request's id
 returns the first run.
+**Built** (ADR 0017, "The inventory"), each clause by a test named
+`models::inventory::…`. The box and the clauses keep their words; two phrases of them
+are shown as far as what is built allows. The box says "installed and verified": the
+inventory reads the pointer and the installation's record and no file, because it is
+asked at every preparation and a model's files are gigabytes; "verified" is what the
+publication held the files to, and a file damaged since is found when the identity is
+installed again (pinned as `inventory::known_…`). And "runs on the new installation": the
+request is admitted and its action runs with the new installation's identity as its
+model's version; a run is handed no backend for a local model until the lease is built
+(task I7's second half, after I3), so no request reaches a model in that test.
 **Carry-over:** rascal's R2 (reported), R4, and of R6 a corrupt installation record and a
 reinstall between a call and its retry. **Size:** small.
 
@@ -2107,6 +2159,22 @@ same way; a removal that starts while a request holds the model waits for it (M5
 model installs, is attached to, is cancelled and is drained, each through the crate's own
 interface from a test's process and a second real process, in one test that names the
 four clauses of the checkpoint's exit line.
+**Built in part; the box is not ticked** (ADR 0017, "What a lease takes";
+`docs/carry-over.md`). The lease stands in the lease's place of task I3's order, which
+is there; a run admitted for a local model over an inventory is handed no backend until
+task I7's second half, so no request reaches that place yet. Built here: the hold a lease
+takes, `models::Installations::hold`, by the declared name and the identity the admission
+recorded, refused when the pointer no longer names that installation or the model is
+draining. Shown with an admitted run's action standing in the lease's place, which is not
+the executor's order: `leases::a_reinstall_or_a_removal_between_the_admission_and_the_lease_refuses_the_hold_and_nothing_is_metered`,
+`leases::a_retry_inside_an_admitted_run_whose_installation_was_replaced_is_refused_the_same_way`.
+Shown as worded: a removal that starts while a request holds the model waits for it
+(`leases::a_removal_that_starts_while_a_request_holds_the_model_waits_for_it`), and the
+one test of the exit line's four clauses
+(`leases::a_model_installs_is_attached_to_is_cancelled_and_is_drained_from_this_process_and_a_second_one`).
+Not shown: "refused before dispatch" and "a fake meter in the place after the lease",
+through an executor; they are shown by the pull request that puts a lease over this
+hold in that place, after task I7's second half.
 **Size:** small.
 
 ### X1. A key directly after a word character

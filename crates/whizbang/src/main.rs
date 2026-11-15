@@ -2,6 +2,8 @@
 
 mod import;
 mod rascal;
+#[cfg(test)]
+mod recovering;
 mod runs;
 mod spend;
 mod store;

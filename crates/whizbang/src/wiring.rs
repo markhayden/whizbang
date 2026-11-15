@@ -5,13 +5,15 @@
 //! registry and nothing the binary would not also have, plus what the test added. Fakes
 //! live in `whizbang-testkit`, which this crate depends on for its tests only.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use whizbang_core::artifact::Contents;
-use whizbang_core::contract::{Action, Engine, NoBackends, Registry};
+use whizbang_core::contract::{Action, Engine, NoBackends, Opening, Recovery, Registry};
 use whizbang_core::description::Description;
 use whizbang_core::identity::Digest;
-use whizbang_core::store::Store;
+use whizbang_core::store::fs::RealFs;
+use whizbang_core::store::{self, Store};
 
 /// Every action this build ships, registered in the order a door lists them: the
 /// recipe first, then the primitives. Tools add theirs here as they are ported. What
@@ -52,6 +54,52 @@ pub fn executor(registry: Registry, store: Arc<dyn Contents + Send + Sync>) -> E
 /// grow` runs its action on it, and the tests run theirs, with their fakes registered.
 pub fn runner(registry: Registry, store: Arc<Store>) -> Engine {
     Engine::over(registry, Arc::new(NoBackends), store, Digest::of_bytes(b""))
+}
+
+/// What recovers a store before this build is handed its writer (ADR 0015, "One way
+/// to a writer, with recovery before it"): the parts, in the order they are asked.
+/// There is none yet. The part that ends a run a dead process left is task I4b's,
+/// and the one that settles what such a run reserved is task S6's; each is added
+/// here.
+pub fn recovery() -> Recovery {
+    Recovery::none()
+}
+
+/// Whether a command that opens a store to write makes one where there is none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Make {
+    /// The store must be there: nothing is made, and nothing is completed.
+    Nothing,
+    /// The store is made where there is none, its last directory alone: a missing
+    /// parent is refused.
+    TheRoot,
+}
+
+/// Opens a store to write: **the one place this binary does** (a test holds its
+/// sources to that). The writer lock is taken here; the store is recovered, by
+/// `recovery`, before the opening hands anyone its writer. A command gives
+/// [`recovery`]; a test gives that with its fakes.
+pub fn opening(root: &Path, make: Make, recovery: Recovery) -> Result<Opening, store::Error> {
+    match make {
+        Make::Nothing => Opening::open_existing(root, Arc::new(RealFs), recovery),
+        Make::TheRoot => Opening::open_in_existing_parent(root, Arc::new(RealFs), recovery),
+    }
+}
+
+/// What a command says when a store could not be opened to write: the store's own
+/// sentence, which names the store by the path the caller gave and is escaped where
+/// it is printed. Of a store that is held it says one thing more, because the store
+/// says "another process" where the holder has not written its name yet, and the
+/// holder can be this process: a second opening of one store in one process is
+/// refused as any second writer is.
+pub fn not_opened(error: &store::Error) -> String {
+    match error {
+        store::Error::Held { .. } => format!(
+            "{error} (the writer that holds it is another opening of the store, in \
+             another process or in this one)"
+        ),
+        other => other.to_string(),
+    }
 }
 
 /// The static description of a build of this crate's version that holds this registry.

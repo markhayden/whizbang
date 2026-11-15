@@ -15,14 +15,15 @@ use whizbang_backends::models::{
     StageRefused, stage,
 };
 use whizbang_core::contract::Cancellation;
-use whizbang_core::store::fs::Fs;
+use whizbang_core::store::fs::{Fs, RealFs};
 use whizbang_testkit::fs_shim::{Event, ShimFs};
 use whizbang_testkit::scratch::Scratch;
 
 use super::holds::hold;
 use super::none;
 use super::publishing::{
-    first, installations, installed, installing, is_whole, reading, record_of, second, tiny,
+    first, hold_file_of, installations, installed, installing, is_whole, reading, record_of,
+    second, tiny,
 };
 use super::remove::{Hand, removed, removing};
 use super::staging::{incoming, serving_both};
@@ -220,6 +221,72 @@ fn a_folder_swapped_for_a_link_while_a_removal_waits_for_the_lock_is_refused_onc
         if which != Folder::Installations {
             assert_eq!(reading(root), Current::Installed(record));
         }
+    }
+}
+
+#[test]
+fn a_folder_swapped_for_a_link_while_a_removal_waits_for_a_hold_is_refused_and_changes_nothing() {
+    for which in INSIDE {
+        let scratch = Scratch::new("links-remove-wait");
+        let outside = Scratch::new("links-remove-wait-outside");
+        let root = scratch.path();
+        let record = furnished(root);
+        // Another process holds the installation: the removal has the model's
+        // lock, has looked, and waits. While it waits the folder is moved out,
+        // with a link left, and then the hold is let go. The look it made under
+        // the lock is a whole wait old: it looks again before it decides.
+        let mut kept = RealFs.try_share(&hold_file_of(root, &record)).unwrap();
+        assert!(kept.is_some());
+        let mut then = Vec::new();
+        let mut swap = || {
+            if let Some(hold) = kept.take() {
+                moved_out(root, which, outside.path());
+                then = seen(outside.path());
+                drop(hold);
+            }
+        };
+        let fs = Arc::new(ShimFs::new());
+        let ended = removing(fs.clone(), root, &Hand::new(), SECOND, &mut swap);
+        assert_eq!(ended, Err(RemoveRefused::Linked), "{which:?}");
+        assert_eq!(seen(outside.path()), then, "{which:?}: changed outside");
+        // No pointer was cleared: the model is installed, as it was.
+        let cleared = Event::Remove(tiny(root).join("CURRENT"));
+        assert!(!fs.events().contains(&cleared), "{which:?}");
+        assert!(tiny(root).join("CURRENT").exists());
+    }
+}
+
+#[test]
+fn a_folder_swapped_for_a_link_once_the_pointer_is_cleared_is_refused_before_anything_is_deleted() {
+    // Just before the deleting: the removal has decided, and looks once more.
+    let clearing = {
+        let scratch = Scratch::new("links-events");
+        furnished(scratch.path());
+        let fs = Arc::new(ShimFs::new());
+        removing(fs.clone(), scratch.path(), &Hand::new(), SECOND, &mut never).unwrap();
+        let cleared = Event::Remove(tiny(scratch.path()).join("CURRENT"));
+        fs.events()
+            .iter()
+            .position(|event| *event == cleared)
+            .unwrap()
+    };
+    for which in [Folder::Installations, Folder::Staging] {
+        let scratch = Scratch::new("links-remove-late");
+        let outside = Scratch::new("links-remove-late-outside");
+        let root = scratch.path();
+        furnished(root);
+        let (fs, then) = swapping(root, which, outside.path(), clearing);
+        let ended = removing(fs.clone(), root, &Hand::new(), SECOND, &mut never);
+        assert_eq!(ended, Err(RemoveRefused::Linked), "{which:?}");
+        assert_eq!(
+            seen(outside.path()),
+            *then.lock().unwrap(),
+            "{which:?}: changed outside"
+        );
+        // The pointer is cleared, and that is all that was removed but the mark:
+        // the model is not installed, and what is left is the next removal's,
+        // once the folder is back.
+        assert_eq!(reading(root), Current::NotInstalled, "{which:?}");
     }
 }
 

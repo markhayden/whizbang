@@ -8,9 +8,8 @@
 //! ([`current`]), the status record an installer writes ([`status`]), a request
 //! that attaches to an install that is running ([`install_or_attach`]), and the holds
 //! of a process on the installations in use ([`Holds`]), and a removal that drains
-//! them, clears the pointer and deletes the model's files ([`remove`]). The
-//! inventory is built by the later tasks of checkpoint 1B's models strand
-//! (`docs/plans/`). The disk is reached only through
+//! them, clears the pointer and deletes the model's files ([`remove`]); and what is
+//! installed as readiness asks it ([`Installations`]). The disk is reached only through
 //! the store's file-system interface, and every download is behind the interface of
 //! ADR 0012: no network client is in the build.
 //!
@@ -44,6 +43,7 @@ pub use install::{Current, Damage, InstallRefused, current, install, install_or_
 pub use installation::{
     INSTALLATION_FORMAT, INSTALLATION_MAX_BYTES, InstallationId, InstallationRecord, InstalledFile,
 };
+pub use inventory::Installations;
 pub use name::{
     FILE_MAX_BYTES, FILE_NAME_LIMIT, FileName, LICENCE_LIMIT, Licence, MODEL_NAME_LIMIT, ModelName,
     REVISION_LIMIT, Revision, SHOWN_LIMIT,
