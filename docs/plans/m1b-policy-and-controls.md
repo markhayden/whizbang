@@ -1799,7 +1799,7 @@ earlier epochs whose turns are wrong.
 matters more here than enforcing it. It named S7, which is cut as a task; one clause
 is added, on a charge over its bound.
 
-- [ ] Every paid request of a run is an element of `spend.requests` in its record, noted
+- [x] Every paid request of a run is an element of `spend.requests` in its record, noted
       by the meter in the run's place for facts, in the order it was dispatched, for a run
       of any outcome.
 
@@ -1810,6 +1810,21 @@ record and the parent's record names the child; a request settled over its bound
 listed at what it was charged, and marked as over.
 **Carry-over:** the row on the record's empty lists (`spend.requests`, settled spend).
 **Size:** small.
+**As built, 2026-11-15.** The meter notes each paid request in `Open::after`, once its
+settlement is durable (ADR 0016, "The run's spend lines"). Each clause above, and its
+test in `crates/whizbang-core/tests/it/spend/lines.rs` (`spend::lines::…`), each
+through an executor built with the real ledger and the meter: the three outcomes,
+`the_records_of_a_completed_a_failed_and_a_cancelled_run_each_list_every_paid_request`;
+the sum, `the_sum_of_a_runs_lines_equals_what_the_fold_holds_for_that_run`; a nested
+call, `a_nested_calls_lines_are_in_the_childs_record_and_the_parents_record_names_the_child`;
+over its bound,
+`a_request_settled_over_its_bound_is_listed_at_what_it_was_charged_and_marked_as_over`.
+Beside "Done when": a judge's request, whose handle counts it by another way,
+`a_paid_request_to_a_judge_is_a_line_as_a_fillers_is`. "In the order it was
+dispatched" in the box is the order the requests were sent, which is the order a
+record lists them in (ADR 0013) and the order they are dispatched in: a line names
+its request by its place among all the requests of its run, so a wrapper is told
+that place (`Wrapped::request`), and the dispatch's record names it too.
 
 ### S11. The reservation settled when its run ends
 

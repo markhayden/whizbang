@@ -29,6 +29,11 @@ pub struct Wrapped<'a> {
     /// The run at the root of its tree: the one nothing called, whose reservation
     /// the tree draws on. It is `run` itself for a run nothing called.
     pub root: &'a RunId,
+    /// The request's place among the requests the run sent, from 0: where the run's
+    /// record lists it (`models`), and what a paid request's line names it by (ADR
+    /// 0013). None for a handle whose run does not count its requests, which no run
+    /// of an executor is.
+    pub request: Option<usize>,
     /// Which capability is asked.
     pub capability: Capability,
     /// What the backend declares: its model, its features, its price and, for a
@@ -225,6 +230,16 @@ pub(crate) struct Wrappers {
     pub(crate) facts: RunFacts,
 }
 
+/// One request, as its handle hands it to the wrappers: its place among the requests
+/// its run sent, when the run counts them; which capability is asked, of which
+/// backend; and the classes of data it is known to hold.
+pub(crate) struct Leaving<'a> {
+    pub(crate) request: Option<usize>,
+    pub(crate) capability: Capability,
+    pub(crate) declaration: &'a Declaration,
+    pub(crate) classes: Classes,
+}
+
 /// What the action is told when a wrapper failed after its request's backend was
 /// called.
 const NOT_ACCOUNTED: &str = "the request ended and could not be accounted for, so its run \
@@ -236,9 +251,7 @@ impl Wrappers {
     /// panicked once the request was over, or the backend panicked under a wrapper.
     pub(crate) fn send<T>(
         &self,
-        capability: Capability,
-        declaration: &Declaration,
-        classes: Classes,
+        leaving: Leaving<'_>,
         charge_of: impl Fn(&T) -> Option<Charge>,
         ask: impl FnOnce() -> Result<T, Fault>,
         fail: impl Fn(String),
@@ -247,9 +260,16 @@ impl Wrappers {
         if places.is_empty() {
             return ask();
         }
+        let Leaving {
+            request,
+            capability,
+            declaration,
+            classes,
+        } = leaving;
         let asked = Wrapped {
             run: &self.run,
             root: &self.root,
+            request,
             capability,
             declaration,
             quote: declaration.quote(),

@@ -1352,7 +1352,8 @@ for all three). It folds nothing, so it does not know an epoch that needs its ow
 - **`request` in a dispatch's record is the request's place among the paid requests
   its run dispatched,** from 0, as the reservation's names count them. A wrapper is
   not told a request's place among all the requests of its run; when it is (task
-  S10 needs it for the run's spend lines), the meter writes that.
+  S10 needs it for the run's spend lines), the meter writes that. (It is told, and
+  writes it, since task S10: "The run's spend lines".)
 - **A request sent after its run's action came back does not reach the meter:** the
   handle's tally refuses it first (ADR 0015). `Allowance::dispatch` called by an
   action itself, outside any wrapper, is not refused there (`docs/carry-over.md`).
@@ -1498,6 +1499,66 @@ reservation's next place, and the next turn of each epoch a hold of it names
 published, and a run whose process died has none either: each reservation stays
 open and counts in full until the owner's reset ("The strand cut down"). The
 binary's executor has no ledger until task W1.
+
+### The run's spend lines (task S10)
+
+As the plan has it after the strand was cut down: one pull request, ordinary tests.
+Seeing what each run cost matters more here than enforcing it, so this is the part
+of the record a person reads. Tests named `spend::lines::` are in
+`crates/whizbang-core/tests/it/spend/lines.rs`, each through an executor built with
+the real ledger and the meter.
+
+**Every paid request of a run is a line of `spend.requests` in its record** (ADR
+0013, "A paid request"). The meter notes it in the run's place for facts
+(`RunFacts::paid`) in `Open::after`, once the request's settlement is durable, from
+what it holds of the request: the bound, the stage and the charge it settled at.
+
+| How the request ended | `stage` | `reserved_micros` | `settled_micros` | `unresolved_micros` | `over_bound` |
+|---|---|---|---|---|---|
+| An answer that states a charge | `answered` | Its bound | The charge | 0 | Whether the charge is over the bound |
+| An answer that states none | `answered` | Its bound | Its bound | 0 | No |
+| A fault that says it was not sent | `not_sent` | Its bound | 0 | 0 | No |
+| Nothing settled it: a timeout, a cancellation with no answer | `unresolved` | Its bound | Its bound | Its bound | No |
+
+- The records of a completed, a failed and a cancelled run each list every paid
+  request, in the order they were sent
+  (`spend::lines::the_records_of_a_completed_a_failed_and_a_cancelled_run_each_list_every_paid_request`).
+- A request settled over its bound is listed at what it was charged and marked as
+  over; one whose answer stated no charge is listed at its bound, never at nothing
+  (`spend::lines::a_request_settled_over_its_bound_is_listed_at_what_it_was_charged_and_marked_as_over`).
+- The sums of a run's lines are what the fold holds for that run (`Folded::runs`):
+  charged, unresolved, and nothing outstanding
+  (`spend::lines::the_sum_of_a_runs_lines_equals_what_the_fold_holds_for_that_run`).
+- A nested call's lines are in the child's record and only there, and the parent's
+  record names the child among its steps
+  (`spend::lines::a_nested_calls_lines_are_in_the_childs_record_and_the_parents_record_names_the_child`).
+- A judge's handle counts its own request and sends it through the same places: its
+  paid request is a line as a filler's is
+  (`spend::lines::a_paid_request_to_a_judge_is_a_line_as_a_fillers_is`).
+
+**A wrapper is told a request's place** (`Wrapped::request`; ADR 0015, "A wrapper
+around each request"): its place among the requests its run sent, from 0, which is
+where the record lists the model that answered it (`models`) and what a line names
+it by. A free request takes a place and has no line, so the lines of a run that
+asked a local segmenter between two paid requests name places 1 and 3 (the third
+test above). **The dispatch's record names the same place** as `request`, where it
+was the request's place among the paid requests of its run.
+
+**Decided while it was built.**
+
+- **The note is made after the settlement is durable, and only then.** A request
+  whose settlement could not be published, and one whose backend panicked, have no
+  line: the run is abandoned and has no record from this process. The books hold
+  the dispatch, at its bound.
+- **A note that is not taken fails nothing.** `RunFacts::paid` answers no when the
+  record lists as many as it may, which is as many requests as a run sends, or when
+  the run's end has begun, which no request outlasts. The books hold the request
+  either way, and `spend status --run` shows it.
+- **A request refused before dispatch has no line:** nothing was held for it. It is
+  among the run's refusals (ADR 0013).
+- **What reads the lines is built already:** `whizbang runs show` prints each line of
+  a record (ADR 0013). The binary's executor has no meter until task W1, whose test
+  is of that command.
 
 ### Limits, each stated
 

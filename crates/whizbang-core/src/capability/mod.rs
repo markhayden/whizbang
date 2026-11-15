@@ -32,8 +32,8 @@ mod price;
 mod segment;
 pub mod written;
 
-pub(crate) use around::Wrappers;
 pub use around::{Around, Ended, Nothing, Open, Place, Places, Stop, Wrapped};
+pub(crate) use around::{Leaving, Wrappers};
 pub use charge::{Charge, Stage};
 pub use declare::{
     Declaration, DeclarationError, MODEL_NAME_LIMIT, Resolved, Roster, RosterError, Unresolved,
@@ -510,6 +510,11 @@ pub(crate) struct Sent {
 }
 
 impl Sent {
+    /// The request's place among those the run sent, from 0.
+    pub(crate) fn place(&self) -> usize {
+        self.place
+    }
+
     /// The request ended this way: with an answer the handle took, or in a fault.
     pub(crate) fn ended<T>(&mut self, result: &Result<T, Fault>) {
         let ended = match result {
@@ -708,7 +713,8 @@ impl Bounds {
         ask: impl FnOnce() -> Result<T, Fault>,
     ) -> Result<T, Fault> {
         let mut sent = self.sending(capability, declaration)?;
-        let result = self.through(capability, declaration, classes, charge_of, ask);
+        let place = sent.as_ref().map(Sent::place);
+        let result = self.through(place, capability, declaration, classes, charge_of, ask);
         if let Some(sent) = &mut sent {
             sent.ended(&result);
         }
@@ -716,9 +722,11 @@ impl Bounds {
     }
 
     /// Takes a request that the tally has counted through the wrappers to `ask`, and
-    /// back: for a handle that counts and accounts for its request itself.
+    /// back: for a handle that counts and accounts for its request itself. `request`
+    /// is the place the tally counted it at ([`Sent::place`]).
     pub(crate) fn through<T>(
         &self,
+        request: Option<usize>,
         capability: Capability,
         declaration: &Declaration,
         classes: Classes,
@@ -733,7 +741,13 @@ impl Bounds {
                 tally.fail(why);
             }
         };
-        around.send(capability, declaration, classes, charge_of, ask, fail)
+        let leaving = Leaving {
+            request,
+            capability,
+            declaration,
+            classes,
+        };
+        around.send(leaving, charge_of, ask, fail)
     }
 
     /// Puts these wrappers between the handle and its backend.
