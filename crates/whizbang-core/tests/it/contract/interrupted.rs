@@ -578,6 +578,31 @@ fn a_run_that_ended_and_a_run_that_was_never_admitted_are_left_as_they_are_and_r
     assert_eq!(held(&half), twice);
 }
 
+#[test]
+fn the_ending_of_a_request_is_made_for_the_run_that_holds_the_ids_own_admission_and_for_no_other() {
+    // Two runs were left whose admissions name one request id: the run the id was
+    // admitted for, and a run other hands made with a copy of that admission under
+    // its own id. The id's record is the first run's admission, by its content.
+    let world = World::new();
+    let run = leave_one(&world);
+    let admission = held(&world).2[&run][ADMITTED_NAME].clone();
+    let copied = String::from_utf8(admission)
+        .unwrap()
+        .replace(&run, "1000-5");
+    assert!(Admission::from_bytes(copied.as_bytes()).is_ok());
+    plant(&world, "1000-5", &[(ADMITTED_NAME, copied.as_bytes())], &[]);
+    let (_opening, _store, _) = reopened(&world);
+    // Both are ended, each from its own admission, and each says the request.
+    for ended in [run.as_str(), "1000-5"] {
+        let record = record_of(&world, ended).unwrap();
+        assert_eq!(ended_as(&record), interrupted());
+        assert_eq!(record.identity().request.as_deref(), Some("order-17"));
+    }
+    // One ending is made, and it is of the run the id was admitted for.
+    let ending = Ending::from_bytes(&held(&world).1["requests/order-17/ended"]).unwrap();
+    assert_eq!(ending.run().as_str(), run);
+}
+
 // --- a damaged admission -----------------------------------------------------------------------
 
 #[test]

@@ -1201,7 +1201,8 @@ are each ended from its own admission
 **For a request with an id, its ending is made** (`requests/<id>/ended`, ADR 0007),
 in the same publication: an error, at the time of the recovery. It is made only
 where the id's own record is the run's admission, by the digest of its content, as a
-look-up holds a run to its id; and not where the id has an ending already.
+look-up holds a run to its id; and not where the id has an ending already
+(`interrupted::the_ending_of_a_request_is_made_for_the_run_that_holds_the_ids_own_admission_and_for_no_other`).
 
 **A run whose admission cannot be read is ended with what its name gives:** its id,
 and `admission` among what is lost. That covers content that is no admission, the
