@@ -1156,8 +1156,8 @@ second box, the clauses after "Then:", and the crash sweep.
   system refused among them: failing the recovery for it would leave a store with
   one damaged run without a writer.
 - The part ends a run and leaves its reservation as it was: "It settles the money"
-  is task S6's part of the same recovery, as "What a crashed run is recovered to"
-  divides them.
+  is the spend strand's part of the same recovery, if it keeps one, as "What a
+  crashed run is recovered to" divides them.
 
 ### I5. A policy before a send, and a checked send
 
