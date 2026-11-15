@@ -45,6 +45,12 @@ history 88); limit (b) says in its own paragraph that it has no bound.
 Amended: 2026-11-15, with task S1b: the real fold in the core, held to the model
 history by history ("The real fold"); limit (h), a text that is placed nowhere, with
 history 89.
+Amended: 2026-11-15, by the owner's decision that spend control is a guard and a
+record, and that its strand is cut down (the plan, "Decisions", the last item). Added:
+"The strand cut down", which says what of this record stays built, what is not built,
+the two rules of the fold that change so that a reset closes the books, and what
+that costs in money. Nothing else in this record is rewritten: where that section
+and an earlier sentence differ, that section is the later decision.
 Spec: section 6, "Spend"; section 3, "Storage"
 
 ## Context
@@ -1491,6 +1497,105 @@ in full.
 Four exemptions were taken out after the third round and two made narrower; the
 fourth changed the row of (c) and no other; the fifth took out the two that the row
 of (e) gave an admission's money ("Review rounds").
+
+### The strand cut down
+
+By the owner's decision of 2026-11-15 (the plan, "Decisions", the last item), spend
+control is a guard and a record. It keeps a mistake from running up a bill, and it
+shows what each run cost. It errs toward letting work run, it may count more than was
+spent, and it is not held to the cent or proven against a crash. This section says
+what of this record stays built, what is not built, the one thing that changes, and
+what that costs. The sections above are left as they were written; where one of them
+and this section differ, this one is the later decision.
+
+**What stays built,** as merged or in review on that day: the names and their grammar,
+the records, the reading of one reservation, the fold, the model and its table of
+histories as the fold's test, the real ledger's `reserve` and `confirm` (task S2),
+the allowance with what a process holds of a tree, the per-call cap and the hour of
+an estimate.
+
+**What is still to be built,** each as one pull request with ordinary tests (the plan's
+tasks): a paid request with no enforceable bound is refused (S4); the meter quotes a
+request, debits it and makes its dispatch durable before it leaves (S5); each attempt
+is settled by its stage (S5b); a reservation is closed when its run ends (S11);
+`whizbang spend status` and `reset` (S9); and each run's record lists its paid
+requests (S10).
+
+**What is not built.**
+
+- **Recovery's part in the money.** "Recovery closes every reservation that is not
+  closed" ("Settlement, closing and recovery") is not built. A reservation is closed
+  by its run's end and by nothing else, and no closing whizbang writes is `by`
+  `recovery`. A reservation that a dead process left stays open.
+- **A person's correction.** No command writes an `adjusted` name (the plan's task
+  S12 is cut). The fold still reads one as "A person's correction" has it, and
+  limit (g) follows from no command of whizbang's.
+- **A dispatch judged against the store's books.** The meter judges a request by
+  what its process holds, the run's allowance and the tree's tally, and by the
+  names of its own reservation, which it reads to take the next place. It does not
+  fold the store for each request. So "An epoch that needs its owner takes no
+  dispatch either" ("Epochs") holds in the model and in the test kit's fake, and
+  not in the real meter: an admission is refused there, and a run that is already
+  executing goes on within its own reservation.
+- **Proofs beyond those merged or in review.** No crash sweep, no race at a barrier
+  and no generated suite is written for the meter, a settlement, a closing or the
+  commands, and the table of histories is not run through an executor. "Each ledger
+  task has its own sweep" ("Limits, each stated") is no longer so. What keeps a
+  publication whole under a crash is the store, which has its own sweeps.
+
+**What changes: a reset closes the books.** With no correction and no recovery, the
+owner's reset is the one way to clear what is counted, so it has to clear all of it.
+Two rules of the fold change, in the core and in the model alike, and the plan's
+task S9 makes the change:
+
+| Rule | Was | Is |
+|---|---|---|
+| The epochs a reservation counts in (`counts_in`) | The epoch its one hold names; every epoch where it is frozen, or has no hold or several | Each epoch that one of its holds names, and no other: none where it has no hold |
+| When an epoch admits nothing until the owner acts (`needs_owner`) | Its turns are not those its publications took; or any reservation in the store is frozen with an amount that is unknown | Its turns are not those its publications took |
+
+So two paragraphs of "Epochs" end with it: "A reset does not clear a frozen
+reservation", and "A frozen reservation whose amount is unknown makes the store need
+its owner, in every epoch". A frozen reservation counts where its holds say, at the
+most its names can mean, and stops nothing else, whatever its holds are; a reset
+opens an epoch in which it does not count. The exception of "Invariant 4, and what
+the owner chose" was put to the owner and is ended. Histories 31, 65 and 67, the tests
+`spend::a_reset_does_not_clear_a_frozen_reservation_and_its_owners_correction_does`
+and
+`spend::a_store_that_needs_its_owner_starts_no_paid_work_and_still_settles_ends_recovers_and_is_corrected`,
+and any other history whose numbers the two rules move are restated by that task. The
+checker's rows "1, by epoch" and "1, under loss" ("The invariants, and what holds
+them") then leave out a reservation whose hold is lost, which is limit (c) without
+its exception: such a reservation counts against no allowance, and the store goes
+on. Until task S9 merges, the fold and the model are as the sections above have
+them.
+
+**No state leaves the owner without a way to use the allowance.**
+
+| What the store holds | What it does | The way out |
+|---|---|---|
+| No allowance | Every paid call is refused | `spend reset --allowance` |
+| An open reservation of a run a dead process left | It counts in full in its epoch | A reset: it does not count in the next epoch |
+| A reservation closed as interrupted | The same | The same |
+| A frozen reservation with its one hold, or with several | It counts in each epoch a hold names, at the most its names can mean | The same |
+| A frozen reservation with no hold | It counts nowhere; `spend status` names it | None is needed |
+| An epoch whose turns are wrong | No admission in that epoch | A reset: the next epoch's turns start again |
+| The largest epoch a name can say, opened by other hands | Nothing is allowed and no reset can follow ("Epochs") | None but a new store. Accepted |
+| A store at its generation limit | A reset adds names and is refused there, as every such publication is | Deleting runs makes room (`docs/carry-over.md`, the row on what every publication costs) |
+
+**What it costs, in money.** Each is accepted with the decision.
+
+| What happens | Counted | Really spent or owed | Off by |
+|---|---|---|---|
+| A run reserves 10, spends 3 with every request settled, and its process dies before its end | 10, until a reset | 3 | 7 over. Recovery would have released them. The owner sees it in `spend status` and resets |
+| The allowance is 20. A reservation of 10 with 10 outstanding is frozen, or its run's process is dead, and the owner resets to 20 | 0 in the new epoch | 10 may still be charged by the provider | The new 20 can be spent in full beside it: 30 against a limit of 20. A reset forgets what came before it, as it already did for an open reservation (history 84) |
+| A reservation of 10 with 10 outstanding loses its hold to other hands | 0, in every epoch | 10 | 10 under, and the 10 can be admitted again. Bounded by what was sent under that reservation. Before, the store stopped until a correction |
+| Other hands leave an epoch's turns wrong while a run of that epoch executes | The run's reservation as its names read | What the run goes on to send | The run can send what its own reservation reads as left: 5 where nothing was left, in history 70. Before, the dispatch was refused |
+
+Three more things are accepted with it, which no table can state. Nothing compares the
+books with what a provider billed. A fault in the meter, a settlement or a closing
+that an ordinary test does not catch can count wrongly in either direction until it
+is seen in `spend status` or in a run's record. And the limits (a) to (h) stand as
+they were, with nothing built to narrow them.
 
 ## Review rounds
 
