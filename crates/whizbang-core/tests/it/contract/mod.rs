@@ -7,6 +7,7 @@
 //! of its capabilities, and the calls a run froze (ADR 0009).
 
 mod admit;
+mod around;
 mod asked;
 mod cancel;
 mod commit;

@@ -598,6 +598,16 @@ pub enum CallError {
         action: String,
         ended: bool,
     },
+    /// The run executed, and a capability request it sent could not be accounted
+    /// for: what stands around the request failed once its backend had been called,
+    /// or the backend panicked under it (ADR 0015, "A wrapper around each request").
+    /// This is not a judgement of the call. The run is not ended: it is as it was
+    /// admitted, and abandoned ([`super::RunState::Abandoned`]); nothing it reserved
+    /// is released, and nothing it made is committed.
+    Abandoned {
+        run: super::RunId,
+        why: String,
+    },
     /// A part of the admission ([`super::AdmissionPart`]) failed, or did what a part
     /// may not: `part` is its name, and the sentence says which. This is not a
     /// judgement of the call, and nothing was published.
@@ -702,6 +712,7 @@ impl CallError {
             | CallError::Ledger { .. }
             | CallError::NotStarted { .. }
             | CallError::NotConfirmed { .. }
+            | CallError::Abandoned { .. }
             | CallError::Part { .. }
             | CallError::Config { .. } => None,
         }
@@ -740,6 +751,11 @@ impl std::fmt::Display for CallError {
                     true => "the run is ended",
                     false => "the run could not be ended and is abandoned",
                 }
+            ),
+            CallError::Abandoned { run, why } => write!(
+                f,
+                "the run {run} was abandoned and is not ended: a request it sent could \
+                 not be accounted for: {why}"
             ),
             CallError::Part { part, why } => write!(
                 f,

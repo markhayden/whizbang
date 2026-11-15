@@ -473,7 +473,9 @@ fn a_run_goes_on_under_the_snapshot_it_was_admitted_with_though_the_source_was_s
     // The next run is admitted under the second: its backend, its cap, its policy.
     let finished = executor.submit(&Call::new("asks")).unwrap();
     assert_eq!(finished.outcome().name(), "error");
-    assert_eq!((made[0].requests(), made[1].requests()), (1, 1));
+    // Its policy approves nothing, so its request is refused at the gate's place and
+    // its backend is not called (ADR 0015, "A wrapper around each request").
+    assert_eq!((made[0].requests(), made[1].requests()), (1, 0));
     assert_eq!(sender.requests(), 1, "the second policy approves nothing");
     let seen = sees.0.lock().unwrap();
     let cap = Some(Estimate::of_micros(1_000_000));
@@ -553,12 +555,12 @@ fn a_run_and_the_run_it_calls_are_refused_what_their_snapshot_refuses_though_the
     let finished = executor.submit(&Call::new("asks")).unwrap();
     assert_eq!(finished.outcome().name(), "completed");
     // Neither the run nor the run it called was let through: both were admitted
-    // under the first snapshot, whose policy approves nobody, and both asked its
-    // backend.
+    // under the first snapshot, whose policy approves nobody, and the request of
+    // each was refused at the gate's place, before any backend was called.
     assert_eq!(sender.requests(), 0, "nothing was handed over");
     let made = posts.made.lock().unwrap().clone();
     assert_eq!(made.len(), 2);
-    assert_eq!((made[0].requests(), made[1].requests()), (2, 0));
+    assert_eq!((made[0].requests(), made[1].requests()), (0, 0));
     let refused: Vec<_> = faults.lock().unwrap().drain(..).collect();
     assert_eq!(refused.len(), 2);
     for (who, fault) in &refused {
@@ -579,7 +581,7 @@ fn a_run_and_the_run_it_calls_are_refused_what_their_snapshot_refuses_though_the
     let finished = executor.submit(&Call::new("asks")).unwrap();
     assert_eq!(finished.outcome().name(), "completed");
     assert_eq!(sender.requests(), 2);
-    assert_eq!((made[0].requests(), made[1].requests()), (2, 2));
+    assert_eq!((made[0].requests(), made[1].requests()), (0, 2));
     assert!(
         faults
             .lock()
@@ -1224,7 +1226,15 @@ fn known_a_key_rotated_in_the_env_file_gives_a_new_backend_under_the_same_digest
     let config =
         format!("[backends.fill]\nkind = \"fake\"\nkey_env = \"FILL_KEY\"\nurl = \"{API}/v1\"\n");
     let (old, new) = (made_up_key("O"), made_up_key("N"));
-    let read = |key: &str| snapshot_of(&config, &format!("FILL_KEY={key}\n"), &kinds);
+    // The backend names the origin of its address as its recipient, so each reading
+    // sends under a policy that approves it: a request to a recipient that no
+    // approval names is refused before its backend is called (ADR 0015).
+    let read = |key: &str| {
+        let approved = DispatchPolicy::none()
+            .approving(there(), Classes::of(&[DataClass::Prompts]))
+            .unwrap();
+        snapshot_of(&config, &format!("FILL_KEY={key}\n"), &kinds).sending_under(approved)
+    };
     let (first, second) = (read(&old), read(&new));
     assert_eq!(first.digest(), second.digest());
     let source = Arc::new(FakeSource::of(first));

@@ -18,9 +18,10 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use crate::contract::{Cancellation, Capability, Clock, ModelIdentity};
-use crate::egress::{NoWayOut, Sender};
+use crate::egress::{Classes, NoWayOut, Sender};
 use crate::identity::{CanonicalPixels, PixelDigest};
 
+mod around;
 mod charge;
 mod declare;
 mod fault;
@@ -31,6 +32,8 @@ mod price;
 mod segment;
 pub mod written;
 
+pub(crate) use around::Wrappers;
+pub use around::{Around, Ended, Nothing, Open, Place, Places, Stop, Wrapped};
 pub use charge::{Charge, Stage};
 pub use declare::{
     Declaration, DeclarationError, MODEL_NAME_LIMIT, Resolved, Roster, RosterError, Unresolved,
@@ -242,6 +245,9 @@ pub struct Bounds {
     /// hop"). A clone holds the same count; each request a handle sends is handed
     /// bounds with a count of its own ([`Bounds::of_one_request`]).
     moved: Arc<std::sync::atomic::AtomicU32>,
+    /// What stands between the handle and its backend for this run, when an executor
+    /// made the handle (ADR 0015, "A wrapper around each request").
+    around: Option<Arc<Wrappers>>,
 }
 
 impl std::fmt::Debug for Bounds {
@@ -349,6 +355,10 @@ struct Counts {
     /// [`EXCHANGES_MAX_BYTES`], and how many it has stored.
     budget: Option<u64>,
     stored: u64,
+    /// Why the run is to be abandoned, once a request of it could not be accounted
+    /// for: a wrapper failed after the request's backend was called, or the backend
+    /// panicked under a wrapper. The first reason is kept.
+    failed: Option<String>,
 }
 
 impl Tally {
@@ -388,6 +398,16 @@ impl Tally {
             )
             .not_sent());
         }
+        // A run that is to be abandoned sends nothing more: nothing of it is
+        // released, and nothing is added to what it may have spent.
+        if counts.failed.is_some() {
+            return Err(Fault::new(
+                FaultKind::Cancelled,
+                "an earlier request of the run could not be accounted for, so the run is \
+                 abandoned and nothing more is sent for it",
+            )
+            .not_sent());
+        }
         let limit = counts.limit.unwrap_or(REQUESTS_LIMIT);
         if counts.asked.len() >= limit {
             return Err(Fault::new(
@@ -420,6 +440,18 @@ impl Tally {
     /// From here on nothing is sent.
     pub(crate) fn close(&self) {
         self.counts().closed = true;
+    }
+
+    /// A request of the run could not be accounted for: the run is to be abandoned,
+    /// for this reason unless it had one already.
+    pub(crate) fn fail(&self, why: String) {
+        self.counts().failed.get_or_insert(why);
+    }
+
+    /// Why the run is to be abandoned, when a request of it could not be accounted
+    /// for.
+    pub(crate) fn failed(&self) -> Option<String> {
+        self.counts().failed.clone()
     }
 
     /// Returns once every request that was sent is accounted for. It has no bound: a
@@ -591,6 +623,7 @@ impl Bounds {
             clock: None,
             sender: None,
             moved: Arc::default(),
+            around: None,
         }
     }
 
@@ -655,21 +688,56 @@ impl Bounds {
             .transpose()
     }
 
-    /// Sends one request: counts it, calls `ask`, which calls the backend and holds
-    /// its answer to the request, and keeps how it ended. A panic in `ask` unwinds
-    /// through here, and the request is accounted for as unwound.
+    /// Sends one request: counts it, takes it through the wrappers to `ask`, which
+    /// calls the backend and holds its answer to the request, and keeps how it ended.
+    /// `classes` are the classes of data the request is known to hold, and
+    /// `charge_of` says what an answer cost. A panic in `ask` unwinds through here,
+    /// and the request is accounted for as unwound.
+    ///
+    /// **This is where the order is fixed** (ADR 0015): the handle's own checks came
+    /// before this call; here the tally counts the request, then the gate, the lease
+    /// and the meter see it, then the backend; and the tally accounts for it only
+    /// once the last wrapper has returned.
     pub(crate) fn send<T>(
         &self,
         capability: Capability,
         declaration: &Declaration,
+        classes: Classes,
+        charge_of: impl Fn(&T) -> Option<Charge>,
         ask: impl FnOnce() -> Result<T, Fault>,
     ) -> Result<T, Fault> {
         let mut sent = self.sending(capability, declaration)?;
-        let result = ask();
+        let result = self.through(capability, declaration, classes, charge_of, ask);
         if let Some(sent) = &mut sent {
             sent.ended(&result);
         }
         result
+    }
+
+    /// Takes a request that the tally has counted through the wrappers to `ask`, and
+    /// back: for a handle that counts and accounts for its request itself.
+    pub(crate) fn through<T>(
+        &self,
+        capability: Capability,
+        declaration: &Declaration,
+        classes: Classes,
+        charge_of: impl Fn(&T) -> Option<Charge>,
+        ask: impl FnOnce() -> Result<T, Fault>,
+    ) -> Result<T, Fault> {
+        let Some(around) = &self.around else {
+            return ask();
+        };
+        let fail = |why: String| {
+            if let Some(tally) = &self.tally {
+                tally.fail(why);
+            }
+        };
+        around.send(capability, declaration, classes, charge_of, ask, fail)
+    }
+
+    /// Puts these wrappers between the handle and its backend.
+    pub(crate) fn wrapped(&mut self, around: Arc<Wrappers>) {
+        self.around = Some(around);
     }
 
     /// What takes the run's secrets out of a text, when the run's handles know them.
