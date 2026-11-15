@@ -1173,13 +1173,25 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   an installation renamed into place without its `RECORD` or without a file is a
   state the sweeps reach: with the sync of the staging folder after `RECORD` is
   written taken out, or the sync of `files/`, a reader finds damage and the sweeps
-  fail. One sync is not shown by a crash, the one that follows the deleting of a
-  folder: a deleted folder that a crash brings back is deleted again by the next to
-  take the lock, and in a repair the sync after the rename covers the same folder.
-  It is held on the list of events, by
-  `publishing::a_repair_clears_the_pointer_deletes_the_damaged_installation_and_then_publishes`
-  and
-  `publishing::a_superseded_installation_is_deleted_when_no_hold_is_on_it_and_left_while_one_is`.
+  fail. Four syncs are not shown by a crash of an install: with any one of them
+  taken out the sweeps pass, and another test holds it. The one that follows the deleting of a folder: a deleted folder that a crash
+  brings back is deleted again by the next to take the lock, and in a repair the sync
+  after the rename covers the same folder; it is held on the list of events
+  (`publishing::a_repair_clears_the_pointer_deletes_the_damaged_installation_and_then_publishes`,
+  `publishing::a_superseded_installation_is_deleted_when_no_hold_is_on_it_and_left_while_one_is`).
+  The two of staging before any file is asked for, of `staging/` once the staging
+  folder is made and of the staging folder once `files/` is made: the staging folder
+  is synced again after `RECORD` is written, and what a crash leaves in staging is
+  removed, whatever it is (`staging::two_files_are_staged_and_verified`). And the one
+  after a refused staging is removed: what a crash brings back of it is removed by the
+  next to take the lock
+  (`staging::a_wrong_hash_fails_the_download_and_leaves_no_staged_file_that_passed`,
+  `staging::a_short_file_fails_the_download_and_leaves_no_staged_file_that_passed`,
+  `staging::a_file_one_byte_too_long_fails_the_download_and_leaves_no_staged_file_that_passed`).
+  **A folder half deleted is not produced either:** the test kit's disk removes a
+  tree as one event, so the last row of the table is reached only as a folder that
+  is not whole because a crash lost names in it after it was renamed in, never as
+  one a deletion was part-way through.
   A reader does not read an installation's files, so "whole" after a crash is the
   test's own reading of every byte, not the reader's word.
 - **A process that dies inside a download** (rascal's untested case, a signal during

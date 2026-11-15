@@ -101,6 +101,16 @@ fn part_of(clean: &[Event], part: usize, parts: usize) -> Vec<(usize, Tail)> {
     cut
 }
 
+/// A list of events with the directory they happened in taken out of every path, so
+/// that the events of two installs in two scratch folders can be compared.
+fn shape(events: &[Event], root: &Path) -> Vec<String> {
+    let root = root.display().to_string();
+    events
+        .iter()
+        .map(|event| format!("{event:?}").replace(&root, ""))
+        .collect()
+}
+
 /// What is swept.
 #[derive(Clone, Copy, PartialEq)]
 enum Sweep {
@@ -187,13 +197,17 @@ fn crashed_at_each_event(sweep: Sweep, part: usize, parts: usize) {
             assert!(allowed || (between && now == Current::NotInstalled), "{at}");
         }
         // What the pointer names is whole, and its hold file is there. A
-        // repair's pointer names the damaged folder until it is cleared.
+        // repair's pointer names the damaged folder until it is cleared: once
+        // the clearing is durable, a pointer names the folder that was renamed in.
         if let Current::Installed(record) = &now {
             assert!(hold_file_of(root, record).exists(), "{at}");
-            if sweep != Sweep::Repair || event > renamed + 1 {
+            if cleared.is_none_or(|cleared| event > cleared + 1) {
                 is_whole(root, record);
             }
         }
+        // The status is not durable, and is never half a record: it is read, and
+        // says nothing or one of its states.
+        let _ = said(root);
         // The next to take the model's lock removes the staging that was left
         // and whatever the pointer does not name, and ends with one
         // installation, whole.
@@ -290,12 +304,12 @@ fn a_crash_at_any_event_of_a_repair_leaves_it_as_it_was_not_installed_or_whole_p
 /// named by no pointer and with no hold file: after such a refusal that is a state
 /// like any other, and the crash and the next install each meet it here.
 fn crashed_after_each_refused_step(sweep: Sweep, part: usize, parts: usize) {
-    let clean = {
+    let (clean, clean_shape) = {
         let scratch = Scratch::new("crash-events");
         sweep.prepare(scratch.path());
         let fs = Arc::new(ShimFs::new());
         installing(&fs, scratch.path(), &second(), &serving_both()).unwrap();
-        fs.events()
+        (fs.events(), shape(&fs.events(), scratch.path()))
     };
     let next = record_of(&second());
     let last = record_of(&sweep.reopening());
@@ -306,12 +320,16 @@ fn crashed_after_each_refused_step(sweep: Sweep, part: usize, parts: usize) {
         let was = sweep.prepare(root);
         let fs = Arc::new(ShimFs::new().with_tail(tail).fail_before(event));
         let mut ended = installing(&fs, root, &second(), &serving_both());
+        // The refusal was used: a refused call is not recorded, so the events are
+        // not those of the clean install.
+        assert_ne!(shape(&fs.events(), root), clean_shape, "{at}");
         if again {
             ended = installing(&fs, root, &second(), &serving_both());
             assert_eq!(ended, Ok(next.clone()), "{at}");
         }
         fs.crash(lost);
         let now = reading(root);
+        let _ = said(root);
         if ended.is_ok() {
             // What was answered is what the crash left.
             assert_eq!(now, Current::Installed(next.clone()), "{at}");
@@ -567,12 +585,8 @@ fn a_process_that_dies_inside_a_download_leaves_the_previous_installation_and_th
             *event == Event::Lock(tiny(&root).join("LOCK"))
         });
         let begun = index_of(&events, |event| matches!(event, Event::Begin(_)));
-        if let Some(removed) = events
-            .iter()
-            .position(|event| *event == Event::Remove(incoming(&root)))
-        {
-            assert!(locked < removed && removed < begun, "{at}");
-        }
+        let removed = index_of(&events, |event| *event == Event::Remove(incoming(&root)));
+        assert!(locked < removed && removed < begun, "{at}");
         assert_eq!(fake.handed(&at_file("graph.onnx")), 2500, "{at}");
         assert_eq!(reading(&root), Current::Installed(after.clone()), "{at}");
         is_whole(&root, &after);
@@ -629,6 +643,18 @@ fn two_installers_stopped_after_one_read_the_pointer_do_not_both_publish() {
     assert_eq!(installations(&root), [published.identity().hex()]);
 }
 
+/// A second process, which does not outlive the test that started it: when this is
+/// dropped, by the test's end or by a failed assertion, the process is killed if it
+/// is still there, and waited for.
+struct Ended(std::process::Child);
+
+impl Drop for Ended {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// The variable that names the models directory to the installer in a process of its
 /// own, below.
 const ROOT_FOR_CHILD: &str = "WHIZBANG_TEST_MODELS_ROOT";
@@ -670,13 +696,20 @@ fn child_installs_and_stops_after_it_read_the_pointer() {
 fn two_installers_in_two_processes_stopped_after_one_read_the_pointer_do_not_both_publish() {
     use std::io::{BufRead, BufReader, Write};
     use std::process::{Command, Stdio};
-    // The test binary runs itself once, for the one test above: a second process,
-    // waited for below. The two talk through its input and its output, a line at a
-    // time, and no clock is read.
+    // The test binary runs itself once, for the one test above: a second process.
+    // The two talk through its input and its output, a line at a time, and no clock
+    // is read. What it says of a failure of its own goes to this test's output.
+    //
+    // The second process is the test binary run directly, not through the runner,
+    // so the runner's guard on threads does not watch it. It is within the rule on
+    // threads and processes all the same: it is started once, by no loop; it runs
+    // one test on one thread (`--test-threads=1`), and that test makes no thread and
+    // no process; and it is killed and waited for when this test ends, however it
+    // ends ([`Ended`]).
     let scratch = Scratch::new("race-processes");
     let root = scratch.path().to_path_buf();
     let before = installed(&root, &first());
-    let mut child = Command::new(std::env::current_exe().unwrap())
+    let child = Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "models::crashes::child_installs_and_stops_after_it_read_the_pointer",
@@ -687,10 +720,11 @@ fn two_installers_in_two_processes_stopped_after_one_read_the_pointer_do_not_bot
         .env(ROOT_FOR_CHILD, &root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::inherit())
         .spawn()
         .expect("the test binary runs");
-    let mut said_by_child = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut child = Ended(child);
+    let mut said_by_child = BufReader::new(child.0.stdout.take().unwrap()).lines();
     let mut wait_for = |word: &str| {
         let found = said_by_child
             .by_ref()
@@ -708,9 +742,9 @@ fn two_installers_in_two_processes_stopped_after_one_read_the_pointer_do_not_bot
     assert_eq!(refused, InstallRefused::Busy);
     assert!(fs.events().is_empty() && fake.requests().is_empty());
     assert_eq!(reading(&root), Current::Installed(before));
-    child.stdin.take().unwrap().write_all(b"go\n").unwrap();
+    child.0.stdin.take().unwrap().write_all(b"go\n").unwrap();
     wait_for("published");
-    assert!(child.wait().unwrap().success());
+    assert!(child.0.wait().unwrap().success());
     let published = record_of(&second());
     assert_eq!(reading(&root), Current::Installed(published.clone()));
     is_whole(&root, &published);
