@@ -11,6 +11,7 @@ pub mod inventory;
 pub mod kinds;
 pub mod ledger;
 pub mod part;
+pub mod recover;
 pub mod schema;
 pub mod scratch;
 pub mod sending;

@@ -25,7 +25,9 @@
 //! and a call back; a cancellation reaches every run under the one it cancels. The
 //! ledger itself and settlement are not here. And the executor's parts (ADR 0015): an
 //! [`AdmissionPart`] is asked before each attempt at an admission's publication, may
-//! refuse the call, and may add records among the run's names.
+//! refuse the call, and may add records among the run's names. And the one way to a
+//! writer ([`Opening`]): a store is recovered, by a list of [parts](RecoveryPart),
+//! before anyone is handed its writer.
 
 mod call;
 mod context;
@@ -39,6 +41,7 @@ mod nested;
 mod part;
 mod prepare;
 pub mod record;
+mod recover;
 mod redact;
 mod registry;
 pub mod request;
@@ -85,6 +88,10 @@ pub use record::{
     DIAGNOSTIC_NAME_LIMIT, DIAGNOSTICS_LIMIT, RECORD_MAX_BYTES, REFUSAL_WHY_LIMIT, REFUSALS_LIMIT,
     RUN_2, RUN_2_SCHEMA, RUN_RECORD, RUN_RECORD_SCHEMA, RecordError, RefusalKind, RunRecord,
     STEPS_LIMIT, is_diagnostic_name,
+};
+pub use recover::{
+    NoWriter, Opening, RECOVERY_WHY_LIMIT, Recovering, Recovery, RecoveryFailed, RecoveryPart,
+    Remover,
 };
 pub use redact::{REDACTED, SECRET_MIN_BYTES, SecretRefused, Secrets};
 pub use registry::{Action, Failure, Produced, RegistrationError, Registry, Verdict};

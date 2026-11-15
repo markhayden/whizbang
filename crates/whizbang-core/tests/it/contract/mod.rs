@@ -23,6 +23,7 @@ mod part;
 mod prepare;
 mod record;
 mod record3;
+mod recover;
 mod redact;
 mod registry;
 mod run;
