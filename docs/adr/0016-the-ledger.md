@@ -1204,7 +1204,8 @@ the real one: 256 whole books from each of two seeds, every name lost alone, eve
 name damaged alone, and names of every form made alone, each folded and compared
 with the model as after an event of a history; over 10,000 changes and over 3,000
 frozen reservations for each seed
-(`spend::fold::one_name_lost_damaged_or_made_alone_in_whole_books_folds_to_what_the_model_gives`).
+(`spend::fold::one_name_lost_damaged_or_made_alone_in_whole_books_folds_to_what_the_model_gives`,
+`…_alone_folds_to_what_the_model_gives_from_another_seed`).
 
 **What it does not do yet.** `Ledger::settle` of the real ledger closes nothing: the
 closing of a reservation at its run's end is task S11's, which has the charges of a

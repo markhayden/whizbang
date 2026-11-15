@@ -576,16 +576,23 @@ fn one_name_changed(seed: u64, count: u64) -> (u64, u64) {
     (changes, frozen)
 }
 
+/// The model's own suite of one name changed (2,048 books) is held by the model's
+/// fold. This is a sample of it against the real fold: 256 books from a seed, in a
+/// test for each of two seeds, of which the second is written here.
+fn a_sample_of_one_name_changed(seed: u64) {
+    let (changes, frozen) = one_name_changed(seed, 256);
+    assert!(changes > 10_000, "seed {seed:#x}: {changes} changes");
+    assert!(frozen > 3_000, "seed {seed:#x}: {frozen} frozen");
+}
+
 #[test]
 fn one_name_lost_damaged_or_made_alone_in_whole_books_folds_to_what_the_model_gives() {
-    // The model's own suite of one name changed (2,048 books) is held by the model's
-    // fold. This is a sample of it against the real fold: 256 books from each of
-    // two seeds written here.
-    for seed in [SEED, 0x5EED_0002_2026_1115] {
-        let (changes, frozen) = one_name_changed(seed, 256);
-        assert!(changes > 10_000, "seed {seed:#x}: {changes} changes");
-        assert!(frozen > 3_000, "seed {seed:#x}: {frozen} frozen");
-    }
+    a_sample_of_one_name_changed(SEED);
+}
+
+#[test]
+fn one_name_lost_damaged_or_made_alone_folds_to_what_the_model_gives_from_another_seed() {
+    a_sample_of_one_name_changed(0x5EED_0002_2026_1115);
 }
 
 /// A store that is given the names of a history as they come.
