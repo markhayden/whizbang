@@ -1030,12 +1030,12 @@ command on it, with the crash proofs. A section of the interfaces' ADR, which ch
 0007 (the alternative it turned down for now) and says, as "Decisions" does, that
 recovery is lossy and pessimistic by intent.
 
-- [ ] One entry point opens a store to write. It takes the writer lock, runs recovery,
+- [x] One entry point opens a store to write. It takes the writer lock, runs recovery,
       and only then hands the writer out. Recovery is a list of parts (`RecoveryPart`),
       each shown the current generation and adding to one publication of names made
       once. The store module itself names nothing above it: the entry point is the
       contract's, over `Store::open`.
-- [ ] Three states, shared by everyone who asks for the same store value: initializing,
+- [x] Three states, shared by everyone who asks for the same store value: initializing,
       ready, failed. Whoever asks while it is initializing waits for the answer; nobody
       is handed a writer before it is ready. If recovery fails, the lock is let go, the
       store is handed out to read only, and the failure is said without a path: as
@@ -1047,7 +1047,7 @@ recovery is lossy and pessimistic by intent.
 - [ ] A store at its generation limit refuses a publication that adds names, recovery's
       among them. Then the writer is handed out for deleting and pruning alone, which
       make the file smaller, and every other writing command is refused and told why.
-- [ ] With no part, recovery publishes nothing and the store opens as before.
+- [x] With no part, recovery publishes nothing and the store opens as before.
 
 **Done when** these pass: a fake part's records are published before the writer is
 handed out, all of the parts' records or none, shown by refusing each call of the
@@ -1064,6 +1064,26 @@ settles and ends nothing twice. Then:
 `recover::a_crash_at_any_event…`, with a fake part, followed by another open, leaves the
 part's records once and whole (rule 2); a part that panics is a failed recovery.
 **Size:** medium.
+
+**Built in two pull requests, as planned** (I4, 2026-11-15). The first is the entry
+point and its states (`contract::Opening`; ADR 0015, "One way to a writer, with
+recovery before it", which names the test of each clause it shows): the first,
+second and fifth boxes. It shows, through the entry point and a fake part, every
+clause of "Done when" but three, which are the second pull request's with the third
+and fourth boxes: one test for each writing command on a store a killed process
+left; every writing command refused after a failed recovery, and at the limit every
+one but `store delete` and `store prune`; and `recover::a_crash_at_any_event…`.
+
+**Reworded with the task** (I4, 2026-11-15). Two things are as the task found them.
+
+- "An open confirms the generation it finds before it is ready." It does so by a
+  sync of the store's root, made by the entry point before any part is asked
+  (`Store::confirm`), and not inside `Store::open`: an open that is not through the
+  entry point confirms nothing, as before.
+- "two executors built at once over one store value". An executor is built over the
+  writer (`Engine::over`), and the store value that is shared is the `Opening`:
+  building an executor is asking the opening for its writer, and that is what the
+  test does. `Engine::over` is as it was.
 
 ### I4b. The interrupted record, and what readers say of it
 
@@ -2059,13 +2079,25 @@ removal racing an install. **Size:** small.
 
 **Depends on:** M5d.
 
-- [ ] A removal that went on deletes the installation's files, through the file-system
+- [x] A removal that went on deletes the installation's files, through the file-system
       interface the shim can crash.
 
 **Done when** these pass: `remove::a_crash_at_any_event…` leaves the installation whole
 and named, or gone, never a pointer to files that are gone (rule 2); a removal interrupted
 after the pointer was cleared is finished by the next install or removal; nothing outside
 the models directory is touched, shown on the shim's list of events.
+**Reworded with the task,** after the review of its pull request (ADR 0017, "A folder of
+the layout that is a link"). The last clause said "nothing outside the models directory
+is touched, shown on the shim's list of events". The list spells every path inside the
+directory, so it cannot show a folder of the layout that is itself a link, and through
+one a removal did delete outside. The owner ruled that such a folder is refused, not
+followed. What is shown now: a link under `installations/` is deleted itself, on the list
+of events, as before (`models::remove::a_removal_deletes_every_installation…`); and with
+`models/`, the model's folder, its `installations/`, `staging/` or `holds/` a link, a
+removal and an install's cleaning are refused with no event on the list, and what the
+link leads to is, name for name and byte for byte, as it was (`models::links::…`). Not
+shown, and not so: a folder swapped for a link between the look and the call after it
+(ADR 0017, the limit of that section; `docs/carry-over.md`).
 **Size:** small. A file two models share is 1C's; until then each installation has its
 own files.
 

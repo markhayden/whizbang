@@ -727,7 +727,8 @@ pub enum Cancel {
     /// The cancellation was accepted: it arrived before the run entered its commit
     /// step. Nothing the run made is committed, and the run ends as cancelled. The
     /// answer does not wait for that end: the action is told, and comes back when it
-    /// does ([`super::Executor::wait`]).
+    /// does ([`super::Executor::wait`]). One run does not end as cancelled: one whose
+    /// admission was not confirmed (ADR 0016) ends as that, having run nothing.
     Accepted,
     /// The cancellation was not accepted, and where the run is says why. `Ended`: the
     /// run had ended, or was in its commit step, which was waited for until the

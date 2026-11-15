@@ -58,6 +58,9 @@ pub enum InstallRefused {
     Draining,
     /// The directory's lock was not let go by whoever has it.
     DirectoryBusy,
+    /// A folder of the model's layout is a link. Nothing is made, listed or deleted
+    /// through it.
+    Linked,
     /// The file system refused. The kind of failure, and no path.
     Disk(io::ErrorKind),
     /// For a request that attached: the install it waited for was refused, or its
@@ -92,6 +95,7 @@ impl std::fmt::Display for InstallRefused {
             InstallRefused::DirectoryBusy => {
                 f.write_str("the models directory is locked by another, which did not let it go")
             }
+            InstallRefused::Linked => StageRefused::Linked.fmt(f),
             InstallRefused::Disk(kind) => StageRefused::Disk(*kind).fmt(f),
             InstallRefused::Failed => {
                 f.write_str("the install of the model that was running did not install it")
@@ -113,6 +117,7 @@ impl From<StageRefused> for InstallRefused {
             StageRefused::Cancelled => InstallRefused::Cancelled,
             StageRefused::Draining => InstallRefused::Draining,
             StageRefused::File { name, why } => InstallRefused::File { name, why },
+            StageRefused::Linked => InstallRefused::Linked,
             StageRefused::Disk(kind) => InstallRefused::Disk(kind),
         }
     }
@@ -144,7 +149,7 @@ pub enum Current {
 
 impl From<io::Error> for InstallRefused {
     fn from(error: io::Error) -> InstallRefused {
-        InstallRefused::Disk(error.kind())
+        StageRefused::from(error).into()
     }
 }
 
@@ -155,6 +160,10 @@ impl From<io::Error> for InstallRefused {
 /// No adapter is in the build yet, so the caller states it; it is part of the
 /// installation's record and of its identity.
 ///
+/// - A folder of the model's layout that is a link is refused
+///   ([`InstallRefused::Linked`]) before anything is made, and again before the
+///   cleaning lists, before the staging removes and before the publication: nothing
+///   is made, listed or deleted through it.
 /// - The model's lock is held from before anything of the model is touched to the
 ///   end. Held by another, the answer is [`InstallRefused::Busy`].
 /// - What the pointer does not name is deleted first, and again at the end: each
@@ -394,6 +403,17 @@ impl<'a> Model<'a> {
         self.folder.join("CURRENT")
     }
 
+    /// Removes the staging folder an install left, when there is one, and syncs.
+    /// Nothing is looked for or removed through a folder of the layout that is a
+    /// link.
+    pub(super) fn unstage(&self) -> io::Result<()> {
+        self.dir.unlinked(self.name)?;
+        if self.fs().exists(&self.dir.incoming(self.name))? {
+            self.dir.unstage(self.name);
+        }
+        Ok(())
+    }
+
     /// Writes the status record.
     pub(super) fn say(&self, status: &Status) -> io::Result<()> {
         status::write(self.dir, self.name, status)
@@ -417,6 +437,9 @@ impl<'a> Model<'a> {
         let incoming = self.dir.incoming(self.name);
         let id = record.identity();
         let target = self.installations().join(id.hex());
+        // Looked at again, after the download: nothing is read back, made, renamed
+        // or pointed to through a folder of the layout that is a link.
+        self.dir.unlinked(self.name)?;
         if !adopted {
             // From the disk, not from the stream: what was staged is what is there
             // now.
@@ -557,9 +580,16 @@ impl<'a> Model<'a> {
     /// A folder named `keep` is left: the identity being installed, which the
     /// install adopts when it is whole and replaces when it is not.
     ///
+    /// **Nothing is listed or deleted through a folder of the layout that is a
+    /// link:** the layout is looked at first, and with a link in it the answer is
+    /// the refusal of it.
+    ///
     /// The pointer is read without the directory's lock: it is changed only by one
     /// who holds the model's lock, which the caller does.
-    fn clean(&self, keep: &str) -> io::Result<()> {
+    pub(super) fn clean(&self, keep: &str) -> io::Result<()> {
+        // Before anything is listed: `installations/` that is a link would be
+        // listed, and its names deleted, where the link leads.
+        self.dir.unlinked(self.name)?;
         self.fs().sync_dir(&self.folder)?;
         let named = match read_pointer(self.dir, &self.folder, self.secrets)? {
             Pointer::Names(id) => Some(id.hex()),

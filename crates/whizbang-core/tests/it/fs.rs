@@ -633,5 +633,48 @@ fn a_file_system_without_the_new_calls_says_so_and_touches_nothing() {
     // Not "held alone by another", which nobody said: an error.
     let error = Bare.try_share(&file).err().unwrap();
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+    // Not "no link", which nobody said either.
+    let error = Bare.is_link(&file).err().unwrap();
+    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+    path_free(&error, &dir);
     assert!(Bare.try_alone(&file).unwrap().is_some(), "and nothing held");
+}
+
+// --- a look at a name for a link -----------------------------------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn a_link_is_seen_at_its_own_name_whatever_it_leads_to_and_nothing_else_is_one() {
+    use std::os::unix::fs::symlink;
+    let dir = Scratch::new("fs-link");
+    let (folder, file) = (dir.path().join("folder"), dir.path().join("file"));
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(&file, b"content").unwrap();
+    std::fs::write(folder.join("inside"), b"content").unwrap();
+    let to_a_folder = dir.path().join("to-a-folder");
+    let to_a_file = dir.path().join("to-a-file");
+    let to_nothing = dir.path().join("to-nothing");
+    symlink(&folder, &to_a_folder).unwrap();
+    symlink(&file, &to_a_file).unwrap();
+    symlink(dir.path().join("missing"), &to_nothing).unwrap();
+    let before = std::fs::read_dir(dir.path()).unwrap().count();
+    for link in [&to_a_folder, &to_a_file, &to_nothing] {
+        assert!(RealFs.is_link(link).unwrap(), "{}", link.display());
+    }
+    // A folder and a file are none; neither is a name nothing has, nor one under a
+    // name that is no folder. A link on the way to a name is followed: what is
+    // asked of is the name itself.
+    for plain in [
+        folder.clone(),
+        file.clone(),
+        dir.path().join("missing"),
+        dir.path().join("missing/deeper"),
+        file.join("under-a-file"),
+        to_a_folder.join("inside"),
+    ] {
+        assert!(!RealFs.is_link(&plain).unwrap(), "{}", plain.display());
+    }
+    // The look made nothing and removed nothing.
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), before);
+    assert_eq!(std::fs::read_link(&to_a_folder).unwrap(), folder);
 }

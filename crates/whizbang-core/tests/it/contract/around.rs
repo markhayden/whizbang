@@ -6,21 +6,22 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use whizbang_core::capability::{
-    Bounds, Declaration, Fault, FaultKind, FillRequest, Filler, Painted, Picture, Stage, Support,
+    Bounds, Controls, Declaration, Fault, FaultKind, FillRequest, Filler, JudgeRequest, Message,
+    Painted, Part, Picture, Query, Role, SegmentRequest, Stage, StopReason, Support, Turn,
 };
 use whizbang_core::contract::Secrets;
 use whizbang_core::contract::record::{Handed, RunRecord, Status};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Answer, Call, CallError, Capabilities, Capability, Clock, Context,
-    Engine, Executor, Failure, Kind, Place, PreparedCall, Produced, RefusalKind, Registry, Request,
-    Requirement, RunId, RunState,
+    Engine, Executor, Failure, Kind, Place, PreparedCall, Produced, Refusal, RefusalKind, Registry,
+    Request, RequestId, Requirement, RunId, RunState,
 };
 use whizbang_core::egress::{Classes, DataClass, Origin, Recipient};
 use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::store::Store;
 use whizbang_testkit::around::{FakeWrapper, Saw};
 use whizbang_testkit::barrier::Barriers;
-use whizbang_testkit::capabilities::{FakeFiller, Paint, roster};
+use whizbang_testkit::capabilities::{FakeFiller, FakeJudge, FakeSegmenter, Paint, roster};
 use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::ledger::FakeLedger;
 use whizbang_testkit::scratch::Scratch;
@@ -99,6 +100,31 @@ impl World {
         )
         .with_clock(Arc::new(Stopped(7000)))
         .with_capabilities(Capabilities::none().with_fill(filler))
+    }
+
+    /// An executor that holds this segmenter and this judge, with these actions.
+    fn engine_of_two(
+        &self,
+        segmenter: Arc<FakeSegmenter>,
+        judge: Arc<FakeJudge>,
+        actions: Vec<Arc<dyn Action>>,
+    ) -> Engine {
+        let mut registry = Registry::new();
+        for action in actions {
+            registry.register(action).unwrap();
+        }
+        let backends = roster(Some(segmenter.as_ref()), None, Some(judge.as_ref()));
+        let held = Capabilities::none()
+            .with_segment(segmenter)
+            .with_judge(judge);
+        Engine::over(
+            registry,
+            Arc::new(backends),
+            self.store.clone(),
+            Digest::of_bytes(b""),
+        )
+        .with_clock(Arc::new(Stopped(7000)))
+        .with_capabilities(held)
     }
 
     fn record(&self, run: &RunId) -> Option<RunRecord> {
@@ -531,7 +557,8 @@ fn with_the_default_policy_a_backend_that_names_a_recipient_is_refused_at_the_ga
     assert_eq!(
         refusals[0].why(),
         "nothing was sent to https://api.example.com: the recipient is not approved for the \
-         classes of data the request holds (the classes of data the request holds: none)"
+         classes of data the request holds (the classes of data the request holds: none \
+         known before a piece of it is made)"
     );
     let went = record.egress();
     assert_eq!(went.len(), 1);
@@ -597,4 +624,371 @@ fn the_bound_a_request_is_held_to_is_its_own_backends_and_an_admission_reserves_
     let [told] = meter.requests().try_into().unwrap();
     assert_eq!(told.quote_micros, Some(40));
     assert_eq!(told.left_micros, Some(90));
+}
+
+// --- a judge and a segmenter go through the same places ----------------------------------------
+
+fn a_point() -> SegmentRequest {
+    let picture = request(None).image().clone();
+    SegmentRequest::new(picture, vec![Query::point(1.0, 1.0).unwrap()], 1).unwrap()
+}
+
+fn a_question() -> JudgeRequest {
+    let asked = Message::new(Role::User, vec![Part::Text("is it red".to_owned())]).unwrap();
+    JudgeRequest::new(
+        "You judge.",
+        vec![asked],
+        Vec::new(),
+        Controls::new(64).unwrap(),
+    )
+    .unwrap()
+}
+
+fn a_turn() -> Turn {
+    let parts = vec![Part::Text("yes".to_owned())];
+    Turn::new(parts, StopReason::EndTurn, None, None).unwrap()
+}
+
+/// `asks`: an action that asks its segmenter once and then its judge once, and keeps
+/// what each was answered with.
+fn asks_both(answered: &Answered) -> Arc<dyn Action> {
+    let answered = answered.clone();
+    let needs = [Capability::Segment, Capability::Judge];
+    action("asks", &needs, move |_, context| {
+        let handles = context.capabilities();
+        let segmented = handles.segment().unwrap().segment(&a_point()).map(drop);
+        answered.lock().unwrap().push(segmented);
+        let judged = handles.judge().unwrap().send(&a_question()).map(drop);
+        answered.lock().unwrap().push(judged);
+        Ok(Produced::nothing())
+    })
+}
+
+#[test]
+fn a_segmentation_and_a_judge_request_each_pass_the_three_places_in_order() {
+    let world = World::new();
+    let segmenter = Arc::new(FakeSegmenter::new().charging(3));
+    let judge = Arc::new(FakeJudge::scripted(vec![Ok(a_turn())]).charging(5));
+    let wrappers = three();
+    let answered: Answered = Arc::default();
+    let engine = wrapped(
+        world.engine_of_two(segmenter.clone(), judge.clone(), vec![asks_both(&answered)]),
+        &wrappers,
+    );
+    let run = ran(engine.request(&Request::new(Call::new("asks"))));
+    assert_eq!(*answered.lock().unwrap(), [Ok(()), Ok(())]);
+    assert_eq!((segmenter.requests(), judge.requests()), (1, 1));
+
+    // Each request went in by the gate, the lease and the meter, and came back by
+    // the meter, the lease and the gate, with the charge its answer stated: the
+    // segmentation first, then the judge's, which goes by a path of its own.
+    let journal = wrappers.0.journal();
+    let order: Vec<(&str, String)> = journal
+        .iter()
+        .map(|(name, saw)| match saw {
+            Saw::Before(told) => (*name, format!("before {:?}", told.capability)),
+            Saw::Answered(Some(micros)) => (*name, format!("answered at {micros}")),
+            other => panic!("{name}: {other:?}"),
+        })
+        .collect();
+    let around_one = |capability: Capability, micros: u64| {
+        let before = format!("before {capability:?}");
+        let after = format!("answered at {micros}");
+        vec![
+            ("gate", before.clone()),
+            ("lease", before.clone()),
+            ("meter", before),
+            ("meter", after.clone()),
+            ("lease", after.clone()),
+            ("gate", after),
+        ]
+    };
+    let mut expected = around_one(Capability::Segment, 3);
+    expected.extend(around_one(Capability::Judge, 5));
+    assert_eq!(order, expected);
+    // Each place was told of both: the run, the backend's model, and what the
+    // request is known to hold, which for a point is nothing and for a conversation
+    // is a prompt.
+    for wrapper in [&wrappers.0, &wrappers.1, &wrappers.2] {
+        let [segmented, judged] = wrapper.requests().try_into().unwrap();
+        assert_eq!((&segmented.run, &judged.run), (&run, &run));
+        assert_eq!(segmented.model.1, "fake-segmenter");
+        assert_eq!(judged.model.1, "fake-judge");
+        assert_eq!(segmented.classes, Classes::none());
+        assert_eq!(judged.classes, Classes::of(&[DataClass::Prompts]));
+    }
+}
+
+#[test]
+fn a_gate_that_refuses_stops_a_segmentation_and_a_judge_request_before_its_backend() {
+    // Under the policy that approves nothing, the gate of the executor stands in the
+    // gate's place: each backend names a recipient, and neither is called.
+    let origin = Origin::of("https://api.example.com", &Secrets::none()).unwrap();
+    let recipient = Recipient::new(origin);
+    let world = World::new();
+    let segmenter = Arc::new(FakeSegmenter::new().sending_to(recipient.clone()));
+    let judge = Arc::new(FakeJudge::scripted(vec![Ok(a_turn())]).sending_to(recipient));
+    let meter = FakeWrapper::new("meter");
+    let lease = meter.beside("lease");
+    let answered: Answered = Arc::default();
+    let engine = world
+        .engine_of_two(segmenter.clone(), judge.clone(), vec![asks_both(&answered)])
+        .with_wrapper(Place::Lease, Arc::new(lease.clone()))
+        .with_wrapper(Place::Meter, Arc::new(meter.clone()));
+    let run = ran(engine.request(&Request::new(Call::new("asks"))));
+    let faults = answered.lock().unwrap().clone();
+    assert_eq!(faults.len(), 2);
+    for fault in faults {
+        let fault = fault.unwrap_err();
+        assert_eq!(of_kind(&fault), (FaultKind::Rejected, Stage::NotSent));
+        assert_eq!(fault.charge(), None);
+    }
+    // Neither backend was called, the judge's script is whole, and neither the
+    // lease's place nor the meter's saw a request.
+    assert_eq!((segmenter.requests(), judge.requests()), (0, 0));
+    assert_eq!(judge.remaining(), 1);
+    assert_eq!(meter.journal(), []);
+    // Both refusals are in the run's record, each as a request that was not approved.
+    let record = world.record(&run).unwrap();
+    let refusals = &record.outcome().refusals;
+    let kinds: Vec<RefusalKind> = refusals.iter().map(|refused| refused.kind()).collect();
+    assert_eq!(kinds, [RefusalKind::RequestNotApproved; 2]);
+    // The same with a wrapper a test put in the gate's place, that refuses.
+    let world = World::new();
+    let segmenter = Arc::new(FakeSegmenter::new());
+    let judge = Arc::new(FakeJudge::scripted(vec![Ok(a_turn())]));
+    let wrappers = three();
+    wrappers
+        .0
+        .refuse(RefusalKind::RequestNotApproved, "nothing goes by");
+    let answered: Answered = Arc::default();
+    let engine = wrapped(
+        world.engine_of_two(segmenter.clone(), judge.clone(), vec![asks_both(&answered)]),
+        &wrappers,
+    );
+    ran(engine.request(&Request::new(Call::new("asks"))));
+    assert_eq!((segmenter.requests(), judge.requests()), (0, 0));
+    let names: Vec<&str> = wrappers.0.journal().iter().map(|(name, _)| *name).collect();
+    assert_eq!(names, ["gate", "gate"]);
+}
+
+// --- a wrapper that panics once the request is over ---------------------------------------------
+
+#[test]
+fn a_wrapper_that_panics_after_the_backend_answered_leaves_the_run_abandoned_and_not_ended() {
+    let world = World::new();
+    let filler = Arc::new(FakeFiller::new(Paint::Inverse).charging(7));
+    let wrappers = three();
+    wrappers.2.panic_after("the meter went wrong");
+    // The panic reaches the action, which catches it, keeps what it carried and
+    // completes: its run is abandoned all the same.
+    let reached: Arc<Mutex<Vec<String>>> = Arc::default();
+    let asks = {
+        let reached = reached.clone();
+        action("asks", &[Capability::Fill], move |_, context| {
+            let fill = context.capabilities().fill().unwrap();
+            let asked = std::panic::AssertUnwindSafe(|| fill.fill(&request(None)).map(drop));
+            let carried = std::panic::catch_unwind(asked).unwrap_err();
+            let text = carried
+                .downcast_ref::<String>()
+                .cloned()
+                .unwrap_or_default();
+            reached.lock().unwrap().push(text);
+            Ok(Produced::nothing())
+        })
+    };
+    let ledger = Arc::new(FakeLedger::new());
+    let engine = wrapped(
+        world
+            .engine(filler.clone(), vec![asks])
+            .with_ledger(ledger.clone()),
+        &wrappers,
+    );
+    let failed = match engine.request(&Request::new(Call::new("asks"))) {
+        Err(failed) => failed,
+        Ok(answer) => panic!("the run was not abandoned: {answer:?}"),
+    };
+    let run = abandoned(
+        &world,
+        &engine,
+        failed,
+        "the meter panicked once its request was over",
+    );
+    // The backend was called once, and had answered: the money may be spent.
+    assert_eq!(filler.requests(), 1);
+    // The panic was resumed, and not swallowed: the action was handed no answer
+    // and no fault, but the panic itself, with what the wrapper's carried.
+    assert_eq!(*reached.lock().unwrap(), ["the meter went wrong"]);
+    // The places before the meter's are told how the request ended all the same: a
+    // panic of one does not keep the others from being told.
+    let journal = wrappers.0.journal();
+    let told: Vec<(&str, bool)> = journal
+        .iter()
+        .map(|(name, saw)| (*name, matches!(saw, Saw::Answered(Some(7)))))
+        .collect();
+    assert_eq!(
+        told[3..],
+        [("meter", true), ("lease", true), ("gate", true)],
+        "{journal:?}"
+    );
+    // Nothing of it is released: its reservation is not closed, and counts in full.
+    let generation = world.store.snapshot().unwrap();
+    let names: Vec<&String> = generation.entries().keys().collect();
+    assert!(
+        !names.iter().any(|name| name.starts_with("spend/closed/")),
+        "{names:?}"
+    );
+    assert!(names.contains(&&format!("spend/reservations/{run}")));
+}
+
+#[test]
+fn a_wrapper_that_panics_when_told_a_later_place_refused_leaves_the_run_abandoned() {
+    // The lease let the request through and holds something for it; the meter
+    // refuses; the lease panics when it is told. What it held is not accounted
+    // for, as when it fails.
+    let world = World::new();
+    let filler = Arc::new(FakeFiller::new(Paint::Inverse));
+    let wrappers = three();
+    wrappers.1.panic_after("the lease went wrong");
+    wrappers
+        .2
+        .refuse(RefusalKind::RequestNotReady, "nothing is left");
+    let reached: Arc<Mutex<Vec<String>>> = Arc::default();
+    let asks = {
+        let reached = reached.clone();
+        action("asks", &[Capability::Fill], move |_, context| {
+            let fill = context.capabilities().fill().unwrap();
+            let asked = std::panic::AssertUnwindSafe(|| fill.fill(&request(None)).map(drop));
+            let carried = std::panic::catch_unwind(asked).unwrap_err();
+            let text = carried
+                .downcast_ref::<String>()
+                .cloned()
+                .unwrap_or_default();
+            reached.lock().unwrap().push(text);
+            Ok(Produced::nothing())
+        })
+    };
+    let engine = wrapped(world.engine(filler.clone(), vec![asks]), &wrappers);
+    let failed = match engine.request(&Request::new(Call::new("asks"))) {
+        Err(failed) => failed,
+        Ok(answer) => panic!("the run was not abandoned: {answer:?}"),
+    };
+    abandoned(
+        &world,
+        &engine,
+        failed,
+        "the lease panicked once its request was over",
+    );
+    assert_eq!(filler.requests(), 0);
+    // The panic reached the action, in place of the meter's refusal.
+    assert_eq!(*reached.lock().unwrap(), ["the lease went wrong"]);
+    // The gate, before it, is told all the same.
+    assert_eq!(
+        wrappers.0.saw().last(),
+        Some(&Saw::Faulted(FaultKind::Rejected, Stage::NotSent))
+    );
+}
+
+// --- the request id of an abandoned run ---------------------------------------------------------
+
+#[test]
+fn a_repeat_of_the_request_of_an_abandoned_run_is_answered_with_that_run_and_never_runs_again() {
+    let world = World::new();
+    let filler = Arc::new(FakeFiller::new(Paint::Inverse).charging(7));
+    let meter = FakeWrapper::new("meter");
+    meter.fail_after("its settlement was not published");
+    let answered: Answered = Arc::default();
+    let other = action("other", &[], |_, _| Ok(Produced::nothing()));
+    let engine = world
+        .engine(filler.clone(), vec![asks(&answered), other])
+        .with_ledger(Arc::new(FakeLedger::new()))
+        .with_wrapper(Place::Meter, Arc::new(meter.clone()));
+    let asked = || Request::new(Call::new("asks")).with_id(RequestId::parse("order-17").unwrap());
+    let failed = engine.request(&asked()).unwrap_err();
+    let run = abandoned(&world, &engine, failed, "the meter failed");
+    // The same request again, by each way of asking: answered with the run that is
+    // not ended, as abandoned. Its action does not run again, and nothing more is
+    // sent or reserved.
+    for again in [engine.request(&asked()), engine.start(&asked())] {
+        let Ok(Answer::Repeat(earlier)) = again else {
+            panic!("not answered as a repeat: {again:?}");
+        };
+        assert_eq!(earlier.run(), &run);
+        let state = earlier.state();
+        assert!(matches!(state, RunState::Abandoned { .. }), "{state:?}");
+    }
+    assert_eq!(filler.requests(), 1);
+    assert_eq!(answered.lock().unwrap().len(), 1);
+    assert_eq!(meter.requests().len(), 1);
+    assert_eq!(world.runs(), std::slice::from_ref(&run));
+    assert!(world.record(&run).is_none());
+    let generation = world.store.snapshot().unwrap();
+    let reservations = generation.entries().keys();
+    let reservations: Vec<&String> = reservations
+        .filter(|name| name.starts_with("spend/reservations/"))
+        .collect();
+    assert_eq!(reservations, [&format!("spend/reservations/{run}")]);
+    // A different request under the same id is a conflict, as for any id that is
+    // taken, and runs nothing.
+    let other = Request::new(Call::new("other")).with_id(RequestId::parse("order-17").unwrap());
+    let conflict = engine.request(&other).unwrap_err();
+    let Some(Refusal::Conflict { run: taken_by, .. }) = conflict.refusal() else {
+        panic!("{conflict:?}");
+    };
+    assert_eq!(taken_by, &run);
+    assert_eq!((filler.requests(), world.runs().len()), (1, 1));
+}
+
+// --- what the gate's refusal says of the list of where data went --------------------------------
+
+#[test]
+fn the_gates_refusal_says_so_when_it_could_not_be_listed_in_where_the_runs_data_went() {
+    let origin = Origin::of("https://api.example.com", &Secrets::none()).unwrap();
+    let remote = Arc::new(FakeFiller::new(Paint::Inverse).sending_to(Recipient::new(origin)));
+    // The list of where a run's data went keeps half its room for what was sent:
+    // once 64 refused sends are listed, one to a new origin has no entry.
+    let run_with = |refused_before: usize| {
+        let world = World::new();
+        let asks = action("asks", &[Capability::Fill], move |_, context| {
+            for at in 0..refused_before {
+                let to = format!("https://host-{at}.example.org");
+                let to = Origin::of(&to, &Secrets::none()).unwrap();
+                let none = Classes::none();
+                assert!(context.facts().went(&to, None, none, Handed::Refused));
+            }
+            let fill = context.capabilities().fill().unwrap();
+            fill.fill(&request(None)).unwrap_err();
+            Ok(Produced::nothing())
+        });
+        let engine = world.engine(remote.clone(), vec![asks]);
+        let run = ran(engine.request(&Request::new(Call::new("asks"))));
+        world.record(&run).unwrap()
+    };
+    let unlisted = "; not listed in where the run's data went)";
+    let listed = run_with(63);
+    let [refused] = listed.outcome().refusals.as_slice() else {
+        panic!("{:?}", listed.outcome().refusals);
+    };
+    assert!(!refused.why().contains("not listed"), "{}", refused.why());
+    assert_eq!(listed.egress().len(), 64);
+    let full = run_with(64);
+    let [refused] = full.outcome().refusals.as_slice() else {
+        panic!("{:?}", full.outcome().refusals);
+    };
+    assert_eq!(refused.kind(), RefusalKind::RequestNotApproved);
+    assert!(refused.why().ends_with(unlisted), "{}", refused.why());
+    assert!(
+        refused
+            .why()
+            .starts_with("nothing was sent to https://api.example.com: ")
+    );
+    // The refusal stands for the entry: the list holds the 64 and not the gate's.
+    assert_eq!(full.egress().len(), 64);
+    let origins = full.egress().iter();
+    assert!(
+        origins
+            .map(|went| went.origin())
+            .all(|at| at != "https://api.example.com")
+    );
+    assert_eq!(remote.requests(), 0);
 }

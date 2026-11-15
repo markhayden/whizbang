@@ -318,7 +318,7 @@ fn a_recipient_that_is_not_the_one_approved_is_refused_in_words_that_say_which_p
                 RefusalKind::RequestNotApproved,
                 format!(
                     "nothing was sent to {API}: {why} (the classes of data the request \
-                     holds: none)"
+                     holds: none known before a piece of it is made)"
                 )
             )]
         );

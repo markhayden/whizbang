@@ -776,6 +776,99 @@ fn two_calls_at_once_cannot_both_take_the_last_of_the_allowance() {
     assert_eq!(records(&world).len(), 5);
 }
 
+#[test]
+fn a_call_two_levels_down_is_refused_over_the_run_that_made_it_whatever_the_runs_above_have_left() {
+    // The run nothing called reserves 300 and calls `inner`, whose share is 100;
+    // `inner` calls `leaf`, whose share is all of that. `pair` may cost 200. While
+    // each of them asks for it the root has 200 left, and neither can spend that:
+    // a run is held to its own allowance, at every level.
+    let world = World::new();
+    let bound = Arc::new(Priced(AtomicU64::new(100)));
+    let said: Noted<(&'static str, Refusal, Option<u64>)> = noted();
+    let above: Arc<Mutex<Option<whizbang_core::contract::Allowance>>> = Arc::default();
+    let outer = {
+        let above = above.clone();
+        action(
+            "outer",
+            &[Capability::Fill, Capability::Judge, Capability::Segment],
+            move |_, context| {
+                assert_eq!(context.allowance().total_micros(), Some(300));
+                *above.lock().unwrap() = Some(context.allowance().clone());
+                context.executor().submit(&Call::new("inner")).unwrap();
+                // Neither refusal took anything, and each share is back.
+                assert_eq!(context.allowance().left_micros(), Some(300));
+                Ok(Produced::nothing())
+            },
+        )
+    };
+    let asks = |name: &'static str| {
+        let (said, above) = (said.clone(), above.clone());
+        move |context: &Context| {
+            let root = above.lock().unwrap().clone().unwrap();
+            assert_eq!(root.left_micros(), Some(200));
+            let over = refused(context.executor().submit(&Call::new("pair")));
+            let left = context.allowance().left_micros();
+            said.lock().unwrap().push((name, over, left));
+        }
+    };
+    let inner = {
+        let asks = asks("inner");
+        action("inner", &[Capability::Fill], move |_, context| {
+            assert_eq!(context.allowance().total_micros(), Some(100));
+            context.executor().submit(&Call::new("leaf")).unwrap();
+            // The leaf's share is back: 100 are left here, of the 200 `pair` may cost.
+            asks(context);
+            Ok(Produced::nothing())
+        })
+    };
+    let leaf = {
+        let asks = asks("leaf");
+        action("leaf", &[Capability::Fill], move |_, context| {
+            assert_eq!(context.allowance().total_micros(), Some(100));
+            asks(context);
+            Ok(Produced::nothing())
+        })
+    };
+    let pair = action("pair", &[Capability::Fill, Capability::Judge], |_, _| {
+        panic!("a call over its caller's allowance ran")
+    });
+    let executor = engine_on(world.store(), bound, vec![outer, inner, leaf, pair])
+        .with_ledger(Arc::new(FakeLedger::new()));
+    let finished = executor.submit(&Call::new("outer")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    let over = Refusal::OverCaller {
+        action: "pair".to_owned(),
+        asked_micros: 200,
+        left_micros: 100,
+    };
+    assert_eq!(
+        *said.lock().unwrap(),
+        [
+            ("leaf", over.clone(), Some(100)),
+            ("inner", over, Some(100))
+        ]
+    );
+    // No run of `pair` was made, and each refusal is in the record of the run that
+    // made the call.
+    let all = records(&world);
+    assert_eq!(all.len(), 3);
+    for stored in all.values() {
+        let stored = stored.as_ref().unwrap();
+        let refusals = &stored.outcome().refusals;
+        let whys: Vec<&str> = refusals.iter().map(|refusal| refusal.why()).collect();
+        match stored.asked().action.as_deref().unwrap() {
+            "outer" => assert!(whys.is_empty(), "{whys:?}"),
+            _ => assert_eq!(
+                whys,
+                [
+                    "pair was not called: it may cost up to 200 millionths of a US dollar, and \
+                  100 are left of its caller's allowance"
+                ]
+            ),
+        }
+    }
+}
+
 // --- cancellation -----------------------------------------------------------------------------
 
 #[test]

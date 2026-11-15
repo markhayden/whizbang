@@ -312,7 +312,9 @@ impl Around for Gate {
         let listed = asked
             .facts
             .went(origin, recipient.account(), asked.classes, Handed::Refused);
-        let sentence = not_sent_to(origin, why, asked.classes, listed);
+        // No piece of the request was made: what it holds is what was known of it
+        // before one is, and where that is nothing the sentence says so.
+        let sentence = not_sent_to(origin, why, asked.classes, listed, NONE_KNOWN);
         let fault = Fault::new(FaultKind::Rejected, why);
         match Stop::new(RefusalKind::RequestNotApproved, &sentence, fault) {
             Some(stop) => Err(stop),
@@ -322,13 +324,21 @@ impl Around for Gate {
     }
 }
 
+/// What the gate says of a request it knows no class of: its backend was not called,
+/// so no piece of it was made, and what it would have held is not known.
+const NONE_KNOWN: &str = "none known before a piece of it is made";
+
+/// What the checked sender says of a request whose pieces hold no data.
+const NONE: &str = "none";
+
 /// The sentence a refusal of a request is noted with among its run's refusals.
-fn not_sent_to(to: &Origin, why: &str, needs: Classes, listed: bool) -> String {
+/// `none` is what it says of a request that holds no class.
+fn not_sent_to(to: &Origin, why: &str, needs: Classes, listed: bool, none: &str) -> String {
     let classes: Vec<&str> = needs.iter().map(|class| class.name()).collect();
     format!(
         "nothing was sent to {to}: {why} (the classes of data the request holds: {}{})",
         if classes.is_empty() {
-            "none".to_owned()
+            none.to_owned()
         } else {
             classes.join(", ")
         },
@@ -405,7 +415,7 @@ impl Checked {
         // out of it while it is whole, and it is then cut.
         let noted = self.facts.refused(
             RefusalKind::RequestNotApproved,
-            &not_sent_to(to, why, needs, listed),
+            &not_sent_to(to, why, needs, listed, NONE),
         );
         let why = if noted { why } else { RUN_OVER };
         Fault::new(FaultKind::Rejected, why).not_sent()
