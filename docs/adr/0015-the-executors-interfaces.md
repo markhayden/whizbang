@@ -8,7 +8,9 @@ its snapshot does not hold is refused) and ADR 0011 (a kind makes a backend), an
 ADR 0004 (`prepared/1` is as it
 was) and ADR 0013 (the kinds a record has for a refused call). Changed by 0019: a
 check is shown the pieces a request holds (`Hop::pieces`) and the moves of one request
-(`Hop::request_moves`), counted in the bounds each request is handed
+(`Hop::request_moves`), counted in the bounds each request is handed; and the fourth
+question of a send is asked as `DispatchPolicy::why_not`, which says which part of a
+recipient is not as it was approved
 Date: 2026-11-14
 Amended: 2026-11-14, after the review of task I1. Changed under "A part in the
 admission": what a part's failure may hold (`NotJudged`: a failure of the store, a
@@ -38,6 +40,8 @@ Amended: 2026-11-14, with task E3, its second pull request, as the review of the
 asked. Changed under "A policy before a send, and a checked send": what a check is
 shown (`Hop::pieces`, `Hop::request_moves`), and that a third count is one request's;
 and under "Consequences", the one line in each handle that the egress strand edited.
+Amended: 2026-11-14, with task E4. Changed under "A policy before a send, and a checked
+send": the fourth question says why (ADR 0019, "The run's recipients").
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -330,7 +334,10 @@ The first that says no is the answer, and the sender behind is handed nothing:
    this like any other
    (`send::an_origin_that_is_not_the_recipients_or_an_upstream_is_refused_before_the_check_is_asked`).
 4. **The policy approves the recipient for the classes the request holds**
-   (`Outgoing::needs`). **A piece's class is what whoever built the piece stated,**
+   (`Outgoing::needs`). It is asked as `DispatchPolicy::why_not`, which answers
+   nothing exactly when `may_receive` says yes, and otherwise which part of the
+   recipient is not as it was approved: its account, its upstreams or the classes
+   (ADR 0019, "The run's recipients"). **A piece's class is what whoever built the piece stated,**
    which is ADR 0012's rule and is not second-guessed here: nothing at a send knows a
    source image from a derived one, so a piece that states no class needs all four
    approved (`send::a_piece_with_no_class_needs_every_class_approved`).

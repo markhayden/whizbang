@@ -4,7 +4,8 @@ Status: accepted. Names ADR 0011 (an `Approval`), ADR 0012 (a recipient) and ADR
 ("A policy before a send, and a checked send"), and changes none of them but for two
 accessors on ADR 0015's `Hop`: `Hop::pieces`, the pieces a request holds, and
 `Hop::request_moves`, the moves of one request, which are counted in the bounds each
-request is handed
+request is handed; and for one question more of ADR 0015's policy,
+`DispatchPolicy::why_not`, which the checked sender asks where it asked `may_receive`
 Date: 2026-11-14
 Amended: 2026-11-14, with task E6. Added: "Nothing but pixels", and its rows in the
 table of what was read.
@@ -18,6 +19,9 @@ probe". Changed, after the review of the first: one more limit of "Every hop" (a
 backend that sends from several threads at once), and a folder that is nothing but
 slashes is refused where it was kept. ADR 0015 is amended with it (what a check is
 shown, and which count is one request's).
+Amended: 2026-11-14, with task E4. Added: "The run's recipients", and why a recipient
+is not approved, said in one of three sentences. Changed: the test of a backend that
+declares another account, which held the one sentence there was.
 Spec: section 10, "Egress"
 
 ## Context
@@ -344,6 +348,93 @@ Limits of it, each stated:
   The command that probes is 1C's (`docs/carry-over.md`), and takes all three from
   the snapshot of the config a call is made under.
 - **A probe and a download are in no run's record.**
+
+### The run's recipients
+
+Task E4. The code is one question of the policy (`DispatchPolicy::why_not` and
+`NotApproved`, in `policy.rs`) and the lines of `checked.rs` that ask it. Nothing else
+is new: a send is noted where it is made, at the checked sender, since ADR 0015
+(`RunFacts::sending`, before anything is handed over, and `RunFacts::went` for one
+that is refused), and `run/3` has the list (ADR 0013, "Where data went"). The tests
+are in `crates/whizbang-core/tests/it/egress/recipients.rs`, named below as
+`recipients::…`: each runs an action on an executor with this record's check, a policy
+and the test kit's sending fake, and reads the run's record from the store.
+
+`SPEC.md` section 10: "Every run records where data went."
+
+- **A run that sent a prompt and a derived image to one recipient lists it once, with
+  both classes.** Three sends to one origin are one entry: the origin, the account
+  cut, `derived_images` and `prompts` in the record's order, `sent`; and nothing of an
+  address but its origin is in the store
+  (`recipients::a_run_that_sent_a_prompt_and_a_derived_image_to_one_recipient_lists_it_once_with_both_classes`).
+- **An upstream is listed when it was reached, and only then.** A request that went on
+  to an approved upstream lists the recipient's own origin and the upstream, in that
+  order; a second upstream that was approved and not reached is nowhere in the record
+  (`recipients::a_run_whose_request_went_on_to_an_approved_upstream_lists_it_as_reached_and_one_that_was_not_reached_is_not_listed`).
+- **A request that failed at its second hop lists the first, which had the data.**
+  When the second hop's fault says that nothing left, the first is listed alone. When
+  it states no such thing, the data may have left for the second, and it is listed
+  after the first (ADR 0015: only a fault that says nothing left takes a note back)
+  (`recipients::a_request_that_failed_at_its_second_hop_lists_the_first_which_had_the_data`).
+- **A run whose only request was refused lists the refusal, and nothing as sent:**
+  one entry, `refused`, and the refusal among the run's refusals
+  (`recipients::a_run_whose_only_request_was_refused_lists_the_refusal_and_nothing_as_sent`).
+- **A local run's list is empty,** and nothing of the record is lost
+  (`recipients::a_local_runs_list_is_empty`).
+- **An account in the list is shown cut, and a credential is nowhere in the record.**
+  The credential went with the request, as the fake shows; the store holds neither
+  the key, whole or by its start, nor the name of its header, nor the account past
+  its first four characters
+  (`recipients::an_account_in_the_list_is_shown_cut_and_a_marker_credential_is_nowhere_in_the_record`).
+
+**Why a recipient is not approved is said in one of three sentences.** The executor's
+fourth question (ADR 0015) knew only that the policy said no, and said of every such
+request that its recipient "is not approved for the classes of data the request
+holds", which is false of a backend whose account or upstreams are not the
+approval's, and sent a person to the wrong line of a config. `DispatchPolicy::why_not`
+answers which part differs, as a kind that holds no value, and nothing when the
+recipient may receive, which is exactly when `may_receive` says yes:
+
+| `NotApproved` | When | The sentence |
+|---|---|---|
+| `Classes` | The policy names the recipient whole, and not for every class the request holds; or no approval names its origin | "the recipient is not approved for the classes of data the request holds" |
+| `Account` | An approval names its origin, and none names it with its account | "the recipient's origin is approved, but not with the account the backend declares" |
+| `Upstreams` | An approval names its origin and its account, with other upstreams | "the recipient's origin and account are approved, but not with the upstreams the backend declares" |
+
+An origin approved under several accounts is compared with all of them: one with the
+recipient's account makes it the upstreams, in whichever order they were approved. An
+account is compared whole, never by what is shown of it. No sentence holds an
+account, an origin or a class: the refusal's note names the origin and the classes, as
+every refusal of a send does, and the entry in where data went shows the account cut
+(`recipients::a_recipient_that_is_not_the_one_approved_is_refused_in_words_that_say_which_part_differs`,
+`recipients::the_policy_says_why_a_recipient_may_not_receive_and_nothing_when_it_may`).
+
+**What readers show.** `runs show` prints the list as the record holds it: `egress:`
+and how many, then a line for each entry with the origin, the cut account or `none`,
+the classes and `sent` or `refused`; `egress: none` for an empty list, and `egress:
+unknown` for a record that lost it. That was built with the record (`run/3`), and is
+held by the binary's tests against records written by hand
+(`runs::runs_show_prints_the_settings_the_paid_requests_and_where_data_went`,
+`runs::runs_show_says_unknown_for_every_group_a_record_has_lost_and_never_none`).
+Nothing of it is changed here. The first test above holds the bytes of the list as an
+executor writes it to the shape those tests read.
+
+Limits of it, each stated:
+
+- **A run that a process left after it had sent data is not shown here.** The plan
+  asks that it is recovered as interrupted, with `egress` named in `outcome.lost` and
+  an empty list. The record of such a run and what readers print of it are built and
+  tested (ADR 0013, "What is lost"); the recovery that makes it is task I4b's and is
+  not built, so no test can leave a run and recover it. The task's box is not ticked
+  for that one clause (`docs/carry-over.md`).
+- **The list says where data went, to four characters of an account** (ADR 0013): two
+  accounts at one origin that start with the same four characters are one entry.
+- **An unnamed origin is said as the classes are.** A backend whose origin no
+  approval names is told that its recipient is not approved for the classes, which is
+  true, and not that the origin is unknown.
+- **The sentences tell a backend's declaration from a config's approval apart, and so
+  say that an approval of the origin exists.** They go to the run's record and to the
+  fault the action is answered with, on the machine that holds the config.
 
 ### Nothing but pixels
 

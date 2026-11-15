@@ -1,6 +1,7 @@
 //! The policy before a send (`SPEC.md` section 10, "Egress"; ADR 0015, "A policy before
 //! a send, and a checked send"): which recipients may receive which classes of data,
-//! and which may be probed.
+//! and which may be probed; and, for a recipient that may not receive, which part of
+//! it is not as it was approved (ADR 0019, "The run's recipients").
 //!
 //! It is a value, and holds no credential. The executor holds one and asks it before
 //! anything is handed to a sender. **One that was told nothing approves nothing.** What
@@ -107,9 +108,72 @@ impl DispatchPolicy {
             .is_some_and(|a| !a.classes.is_empty() && a.classes.covers(classes))
     }
 
+    /// Why this recipient may not receive data of all these classes, and nothing when
+    /// it may ([`DispatchPolicy::may_receive`]). The answer holds no value: not an
+    /// account, not an origin and not a class.
+    ///
+    /// A recipient that the policy names whole is short of a class. One it does not
+    /// name is compared with every approval of its origin: where one has its account,
+    /// the upstreams differ; where none has, the account does; and where no approval
+    /// names its origin, it is approved for no class.
+    pub fn why_not(&self, recipient: &Recipient, classes: Classes) -> Option<NotApproved> {
+        if self.may_receive(recipient, classes) {
+            return None;
+        }
+        if self.of(recipient).is_some() {
+            return Some(NotApproved::Classes);
+        }
+        let same_origin = |a: &&Approved| a.recipient.origin() == recipient.origin();
+        let mut named = self.approved.iter().filter(same_origin).peekable();
+        if named.peek().is_none() {
+            return Some(NotApproved::Classes);
+        }
+        Some(
+            if named.any(|a| a.recipient.account() == recipient.account()) {
+                NotApproved::Upstreams
+            } else {
+                NotApproved::Account
+            },
+        )
+    }
+
     /// Whether this recipient may be probed.
     pub fn may_probe(&self, recipient: &Recipient) -> bool {
         self.of(recipient).is_some_and(|a| a.probed)
+    }
+}
+
+/// Why a recipient may not receive what a request holds: which part of it is not as
+/// it was approved. It is a kind and a sentence of fixed words, and holds no value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NotApproved {
+    /// An approval names the recipient's origin, and none names it with the
+    /// recipient's account: under another, or under none where the recipient has
+    /// one, or under one where it has none.
+    Account,
+    /// An approval names the recipient's origin and account, with other upstreams.
+    Upstreams,
+    /// The recipient is not approved for every class the request holds: it is
+    /// approved for others or for none, or no approval names its origin at all.
+    Classes,
+}
+
+impl NotApproved {
+    /// The sentence a refusal says it with.
+    pub fn why(self) -> &'static str {
+        match self {
+            NotApproved::Account => {
+                "the recipient's origin is approved, but not with the account the backend \
+                 declares"
+            }
+            NotApproved::Upstreams => {
+                "the recipient's origin and account are approved, but not with the upstreams \
+                 the backend declares"
+            }
+            NotApproved::Classes => {
+                "the recipient is not approved for the classes of data the request holds"
+            }
+        }
     }
 }
 
