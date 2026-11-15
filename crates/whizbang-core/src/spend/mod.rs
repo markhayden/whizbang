@@ -1,20 +1,22 @@
-//! Spend (`SPEC.md` section 6): the ledger of a store (ADR 0016), and what holds a
-//! call to what it may cost.
+//! Spend (`SPEC.md` section 6): the ledger of a store (ADR 0016), and what holds a call
+//! to what it may cost.
 //!
 //! The books are names under `spend/`, each made once. Here are the one parser and
 //! writer of those names ([`name`]), the content under each ([`record`]), and a
 //! reading of them: each entry by itself, sound or damaged, and what the names of one
 //! reservation say, with the recogniser and the most they can mean ([`reading`]). The
-//! fold across reservations, the real ledger, the meter, recovery and the commands
-//! are the spend strand's tasks (plan 1B, S1b to S12), each of which adds its module
-//! here. The executor's interface to a ledger is `contract::Ledger`.
+//! fold across reservations is [`fold`]: epochs, turns, states, balances and one run's
+//! spend. The real ledger, the meter, recovery and the commands are the spend strand's
+//! tasks (plan 1B, S2 to S12), each of which adds its module here. The executor's
+//! interface to a ledger is `contract::Ledger`.
 //!
-//! And two parts in the admission (`contract::AdmissionPart`), which an executor is
-//! given ([`crate::contract::Engine::with_part`]): [`CallCap`], the cap of one call,
-//! and [`PreparationAge`], the hour a preparation holds.
+//! Beside the books are two parts in the admission (`contract::AdmissionPart`), which
+//! an executor is given ([`crate::contract::Engine::with_part`]): [`CallCap`], the cap
+//! of one call, and [`PreparationAge`], the hour a preparation holds.
 
 mod age;
 mod cap;
+pub mod fold;
 pub mod name;
 pub mod reading;
 pub mod record;

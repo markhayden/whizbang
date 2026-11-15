@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use crate::artifact::{self, Artifact, Contents};
-use crate::capability::{EXCHANGES_MAX_BYTES, REQUESTS_LIMIT, Shown};
+use crate::capability::{
+    Around, EXCHANGES_MAX_BYTES, Place, Places, REQUESTS_LIMIT, Shown, Wrappers,
+};
 use crate::egress::Ways;
 use crate::identity::{DecodeLimits, Digest};
 use crate::store::{self, Store};
@@ -135,6 +137,10 @@ pub struct Engine {
     capabilities: Capabilities,
     /// The ways out: what each handle's checked sender is made of (ADR 0015).
     ways: Ways,
+    /// What stands in the three places between each handle and its backend (ADR
+    /// 0015, "A wrapper around each request"). The gate's place, when nothing was
+    /// put there, holds the gate of the run's policy.
+    places: Places,
     /// How many runs may be admitted under one run that nothing called.
     descendants: usize,
     /// How many capability requests one run may send.
@@ -223,6 +229,7 @@ impl Engine {
             parts: Vec::new(),
             capabilities: Capabilities::none(),
             ways: Ways::none(),
+            places: Places::none(),
             descendants: DESCENDANTS_LIMIT,
             requests: REQUESTS_LIMIT,
             exchanges: EXCHANGES_MAX_BYTES,
@@ -302,6 +309,17 @@ impl Engine {
     /// check approve nothing.
     pub fn with_ways(mut self, ways: Ways) -> Engine {
         self.ways = ways;
+        self
+    }
+
+    /// The same executor, with this wrapper in one of the three places between each
+    /// handle and its backend, in place of what stood there (ADR 0015, "A wrapper
+    /// around each request"). The lease's and the meter's places are empty until
+    /// they are given one. The gate's is never empty: with none given, it holds the
+    /// gate of the policy the run executes under ([`Engine::with_ways`]), which
+    /// approves nothing unless it was told to.
+    pub fn with_wrapper(mut self, place: Place, wrapper: Arc<dyn Around>) -> Engine {
+        self.places = self.places.with(place, wrapper);
         self
     }
 
@@ -1525,6 +1543,23 @@ impl Engine {
             None => self.capabilities.resolved_for(&prepared),
         };
         let ways = held.snapshot.ways(&self.ways);
+        // What stands between each handle and its backend, for this run: the three
+        // places as the executor was given them, with the gate of this run's policy
+        // where the gate's place was given nothing. Each wrapper is told the run,
+        // the run at the root of its tree, the run's allowance and its place for
+        // facts.
+        let places = match self.places.at(Place::Gate) {
+            Some(_) => self.places.clone(),
+            None => self.places.clone().with(Place::Gate, ways.gate()),
+        };
+        let above = family.above_with(&run);
+        let around = Wrappers {
+            run: run.clone(),
+            root: above.first().cloned().unwrap_or_else(|| run.clone()),
+            places,
+            allowance: family.allowance.clone(),
+            facts: facts.clone(),
+        };
         let context = Context::new(
             live.signal().clone(),
             deadline,
@@ -1537,7 +1572,9 @@ impl Engine {
                 .timed_by(self.clock.clone())
                 // And a way out for each, checked, which notes what it hands over in
                 // the run's place for facts (ADR 0015).
-                .sending_through(ways, facts.clone()),
+                .sending_through(ways, facts.clone())
+                // And the wrappers, between each handle's tally and its backend.
+                .wrapped(around),
             // The executor in the context is under the run's snapshot: what the run
             // calls is prepared and admitted under it.
             Arc::new(Nested::new(
@@ -1574,6 +1611,18 @@ impl Engine {
         // 0008, "Nested calls"). A cancellation is still accepted while it waits, and
         // reaches them.
         live.nest().settle();
+        // A request of the run that could not be accounted for: a wrapper failed
+        // once its backend had been called, or its backend panicked under a wrapper
+        // (ADR 0015). Whatever the action handed back, the run is not ended: no end
+        // is published, its reservation is not closed and nothing of it is
+        // released. It is abandoned here, with the failure (ADR 0008, "A run with
+        // nothing behind it"), and the next recovery ends it.
+        if let Some(why) = context.requests().failed() {
+            return Err(CallError::Abandoned {
+                run,
+                why: said(secrets, &why),
+            });
+        }
         // The entry to the commit step (ADR 0008, "Cancellation"): the action has come
         // back, with whatever it came back with, and nothing it started is left. From
         // here on a cancellation is too late. One that was accepted before this was

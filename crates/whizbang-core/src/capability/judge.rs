@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::contract::{Cancellation, Capability, text};
+use crate::egress::{Classes, DataClass};
 
 use super::fault::{Raw, clean};
 use super::{Bounds, Charge, Declaration, Fault, FaultKind, Picture, Unfit, feature};
@@ -925,6 +926,12 @@ impl JudgeHandle {
         self
     }
 
+    /// The same handle, with these wrappers between it and its backend (ADR 0015).
+    pub(crate) fn wrapped(mut self, around: Arc<super::Wrappers>) -> JudgeHandle {
+        self.bounds.wrapped(around);
+        self
+    }
+
     /// The same handle, holding its deadline to this clock in place of the machine's.
     pub(crate) fn timed_by(mut self, clock: Arc<dyn crate::contract::Clock>) -> JudgeHandle {
         self.bounds.timed_by(clock);
@@ -995,17 +1002,27 @@ impl JudgeHandle {
             return refused;
         }
         let bounds = self.bounds.of_one_request();
-        let answer = self.backend.send(request, &bounds).and_then(|turn| {
-            if turn.opaque().any(|opaque| opaque.adapter != backend) {
-                // An answer came, and it is not taken: what it said it cost stands.
-                let unfit = Unfit::NotAllowed {
-                    what: "a turn",
-                    why: "holds a part of another adapter than the backend that answered",
-                };
-                return Err(Fault::from(unfit).answered(turn.charge));
-            }
-            Ok(turn)
-        });
+        // A conversation is prompts, whatever else it holds: that much the request
+        // is known to hold. Its pictures and results have no class here (ADR 0015).
+        let classes = Classes::of(&[DataClass::Prompts]);
+        let ask = || {
+            self.backend.send(request, &bounds).and_then(|turn| {
+                if turn.opaque().any(|opaque| opaque.adapter != backend) {
+                    // An answer came, and it is not taken: what it said it cost stands.
+                    let unfit = Unfit::NotAllowed {
+                        what: "a turn",
+                        why: "holds a part of another adapter than the backend that answered",
+                    };
+                    return Err(Fault::from(unfit).answered(turn.charge));
+                }
+                Ok(turn)
+            })
+        };
+        // The tally counted the request above; the wrappers stand between it and
+        // the backend, and it is accounted for below, once they have returned.
+        let answer =
+            self.bounds
+                .through(Capability::Judge, declaration, classes, Turn::charge, ask);
         // The provider's own words, in a turn or in a fault, have the run's secrets
         // taken out while they are whole, before anything keeps them or is told them.
         let redactor = self.bounds.redactor();
