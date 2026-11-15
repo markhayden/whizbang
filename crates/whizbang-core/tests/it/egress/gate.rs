@@ -522,7 +522,8 @@ fn under_the_strands_check_a_request_is_still_held_to_what_its_backend_declared_
         ),
         (
             remote(other_account, &to, a_prompt()),
-            NOT_APPROVED,
+            // Which part of the recipient differs is said (task E4).
+            "the recipient's origin is approved, but not with the account the backend declares",
             Some("acct..."),
         ),
         (

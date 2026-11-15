@@ -6,5 +6,6 @@ mod chains;
 mod gate;
 mod hops;
 mod pixels;
+mod recipients;
 mod support;
 mod ways_out;

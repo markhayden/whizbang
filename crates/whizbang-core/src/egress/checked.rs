@@ -387,12 +387,8 @@ impl Sender for Checked {
                 "the origin is neither the recipient's own nor one of its upstreams",
             ));
         }
-        if !self.policy.may_receive(recipient, needs) {
-            return Err(self.refuse(
-                origin,
-                needs,
-                "the recipient is not approved for the classes of data the request holds",
-            ));
+        if let Some(not) = self.policy.why_not(recipient, needs) {
+            return Err(self.refuse(origin, needs, not.why()));
         }
         let hop = Hop {
             recipient,
