@@ -1108,11 +1108,44 @@ which make the file smaller; `Opening::writer` is refused and told why
 deletion made room the next open recovers
 (`recover::with_the_limit_set_low_a_recovery_that_cannot_be_published_leaves_deleting_and_pruning_working_and_an_admission_refused_and_after_a_deletion_the_next_open_recovers`).
 
+**Every writing command of the binary opens through it,** in one place
+(`wiring::opening`, in `crates/whizbang/src/wiring.rs`, with the parts of this build
+from `wiring::recovery`): the executor of `rascal grow`, `store delete`, `store
+prune` and `store import`. `whizbang spend` writes nothing yet. A test holds the
+binary's sources to that one place: no file of the binary calls an open of
+`Store`, and none but the wiring an open of `Opening`
+(`writer::the_binary_opens_a_store_to_write_in_one_place_and_through_the_entry_point`,
+in the binary's tests). `store delete` and `store prune` ask for the remover, and
+the others for the writer. Each command, run on a store a killed process left,
+recovers before it changes anything; after a recovery that failed each is refused
+with the reason and a reading command works; and at the limit `store delete` and
+`store prune` work, and the others are refused and told why. These are unit tests of
+the binary (`crates/whizbang/src/recovering.rs`), which call each command as `main`
+does, with a fake part in the recovery where the binary has its own list:
+`recovering::store_delete_on_a_store_a_killed_process_left_recovers_before_it_deletes`,
+`recovering::store_prune_on_a_store_a_killed_process_left_recovers_before_it_prunes`,
+`recovering::store_import_on_a_store_a_killed_process_left_recovers_before_it_imports`,
+`recovering::rascal_grow_on_a_store_a_killed_process_left_recovers_before_its_run_is_admitted`,
+`recovering::after_a_failed_recovery_every_writing_command_is_refused_with_the_reason_and_a_reading_one_works`,
+`recovering::at_the_generation_limit_store_delete_and_prune_work_and_every_other_writing_command_is_refused_and_told_why`.
+
+**A crash inside a recovery.** Power lost before each step of a recovery by two
+parts, with every way the test kit's disk can lose what was not yet durable, leaves
+the store as it was found or with all of both parts' records; the next open recovers
+what is not, and another open after it publishes nothing: each record is there once
+and whole (`recover::a_crash_at_any_event_of_a_recovery_followed_by_another_open_leaves_the_parts_records_once_and_whole_part_1_of_4`
+to `…_part_4_of_4`, in the group of crash sweeps).
+
 **Limits, each stated.**
 
-- **Nothing holds a caller to the entry point but the binary's test** (the second
-  pull request of the task): `Store::open` is public, and a test or a tool that
-  opens a store with it is handed a writer with no recovery.
+- **Nothing holds a caller to the entry point but the binary's test:**
+  `Store::open` is public, and a test or a tool that
+  opens a store with it is handed a writer with no recovery. The test reads the
+  binary's own sources, line by line, for the calls by their names: a call made
+  through another name for the type is not found, and the crates the binary calls
+  are not read.
+- **The binary's list of parts is empty** until tasks I4b and S6 add theirs: every
+  command recovers nothing yet, and confirms the generation it finds.
 - **The writer that is handed out is the store,** whole: nothing keeps whoever holds
   it from publishing anything. `Remover` narrows it for the one case that needs it.
 - **Recovery runs on the thread of the first to ask,** and is not cancelled: a part
