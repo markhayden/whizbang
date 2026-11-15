@@ -1077,8 +1077,9 @@ reserves, and it is kept: reserving the largest cannot reserve too little
 
 - **In the meter's place and in the lease's stands only what an executor is
   given.** With `spend::Meter` there a paid request is debited and recorded before
-  it leaves (task S5; ADR 0016, "The meter"); it is not settled until task S5b, and
-  the binary's executor is given no meter until its wiring (task W1). A request to a local model is told to the lease's place under
+  it leaves (task S5; ADR 0016, "The meter"), and settled by its stage when it
+  ends (task S5b; ADR 0016, "Settlement of each attempt"); the binary's executor
+  is given no meter until its wiring (task W1). A request to a local model is told to the lease's place under
   the installation its run was admitted with (task I7), and takes a lease where
   an executor was given one (task M6b); the binary's executor is given none until
   its wiring (task W1).

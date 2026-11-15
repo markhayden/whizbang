@@ -1354,9 +1354,71 @@ for all three). It folds nothing, so it does not know an epoch that needs its ow
 - **A request sent after its run's action came back does not reach the meter:** the
   handle's tally refuses it first (ADR 0015). `Allowance::dispatch` called by an
   action itself, outside any wrapper, is not refused there (`docs/carry-over.md`).
-- **Nothing is settled yet.** A request that ended stays counted at its bound, in the
-  process and in the books, until task S5b; and nothing puts the meter in the
-  binary's executor until task W1.
+- **Nothing puts the meter in the binary's executor** until task W1.
+
+### Settlement of each attempt (task S5b)
+
+As the plan has it after the strand was cut down: one pull request, ordinary tests.
+Tests named `spend::settle::` are in `crates/whizbang-core/tests/it/spend/settle.rs`,
+each through an executor built with the real ledger and the meter.
+
+**When a request ends, the meter settles it by the stage it reached** (ADR 0010;
+`Fault::stage`, never a fault's kind), in `Open::after`:
+
+| How it ended | Stage | Charged |
+|---|---|---|
+| An answer that states a charge | `answered` | That charge |
+| An answer that states none | `answered` | Its bound |
+| A fault that says the request was not sent | `not_sent` | Nothing |
+| A fault that says it was answered | `answered` | The charge the fault carries, or the bound |
+| A fault that says nothing settled it, or says no stage: a timeout, a cancellation with no answer | `unresolved` | Its bound |
+
+(`spend::settle::a_request_charged_under_its_bound_is_charged_that_and_its_run_spends_the_difference_on_its_next`,
+`spend::settle::a_request_that_succeeds_with_no_charge_is_charged_its_bound`, and one
+test over a table for the faults and the timeout,
+`spend::settle::a_fault_at_each_stage_and_a_timeout_settle_as_not_sent_at_nothing_answered_at_its_charge_and_unresolved_at_its_bound`.)
+
+**A settlement is one publication** ("What each publication makes"): `settling/…`,
+`settled/…`, the next `turn` of the epoch the reservation's hold names, and the next
+`place` when the charge is over the bound. The next turn is the lowest that no
+`spend/turn/<epoch>/…` of the generation names, read from those names alone: after
+an admission and three settlements the epoch's turns are those its publications
+took (the first test above). A turn or a place taken meanwhile is chosen again, 64
+times at most. A reservation with no hold takes no turn: the fold owes none for it.
+
+**Then the allowance** (`Dispatched::answered`, then `Dispatched::settled` once the
+settlement is durable). What the bound held beyond the charge goes back to the run
+that sent the request, which can spend it on its next (the first test above). A
+charge over its bound is settled at the charge, its record marked `over_bound`, and
+the excess is taken from the run that sent it and from each run above it, below
+nothing: each reports nothing to spend and owes the excess
+(`spend::settle::a_charge_over_its_bound_is_settled_at_the_charge_marked_as_over_and_taken_from_its_run_and_its_parent`).
+
+**The cases that came from the tasks that were cut.**
+
+- *A cancellation after dispatch* (was S5c): a run cancelled through
+  `Executor::cancel` while its request is with the backend, whose request then ends
+  with no answer, is charged the bound as unresolved
+  (`spend::settle::a_run_cancelled_after_dispatch_whose_request_ends_with_no_answer_is_charged_the_bound_as_unresolved`).
+- *A nested call* (was S7): a parent, a child and a grandchild each send one paid
+  request. The store holds one reservation and three dispatches under it, each
+  naming the run that sent it, each settled; and the parent sends its own request
+  from what the child handed up
+  (`spend::settle::a_parent_a_child_and_a_grandchild_each_send_one_request_under_one_reservation_and_the_parent_spends_what_the_child_did_not`).
+- *A retry* (was S7): each attempt is a request like any other, with its own
+  dispatch and settlement, and one that what is left cannot hold is refused before
+  dispatch
+  (`spend::settle::a_child_that_retries_a_failed_request_has_an_attempt_for_each_and_a_retry_that_does_not_fit_is_refused_before_dispatch`).
+
+**A settlement that cannot be published** fails the wrapper, so the run is abandoned
+(ADR 0015): the dispatch stays with no settlement, counted at its bound in the
+process and in the books, and nothing of it is given back
+(`spend::settle::a_settlement_whose_publication_fails_leaves_the_dispatch_unsettled_counted_at_its_bound_and_the_run_abandoned`,
+at the store's generation limit).
+
+**Not here.** The reservation is not closed when its run ends (task S11), and a
+run's record does not list its paid requests (task S10): the meter notes nothing
+in the run's place for facts yet.
 
 ### Limits, each stated
 

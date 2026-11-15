@@ -13,6 +13,7 @@ mod quote;
 mod reading;
 mod record;
 mod reserve;
+mod settle;
 pub(crate) mod support;
 
 use std::num::NonZeroU64;
