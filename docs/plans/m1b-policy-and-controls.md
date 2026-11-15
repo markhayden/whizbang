@@ -1642,11 +1642,26 @@ file by its catalogue name, escaped and cut, with no path (rule 3).
 **Done when** these pass: an install of two files ends with the pointer naming a verified
 installation; a failed install leaves the previous installation named and readable, and
 its status says how it ended; a crash before each event the shim records, with unsynced
-writes and names lost, reopens to the previous installation or the new one, whole, and the
+writes and names lost, reopens to the previous installation or the new one, whole, or,
+for a repair of the installation in use, to the model not installed between the clearing
+of the pointer and the new pointer; and the
 staging left behind is removed only under the lock (rule 2); a process that dies in the
-middle of a download, shown with the barrier and a crash, leaves the same; two installers
-over one directory, in two processes, stopped after each read the pointer, do not both
-publish (rule 1); a status record is read strictly and refused over its bound (rule 3).
+middle of a download, shown with the barrier and a crash, leaves the same; of two
+installers over one directory, with one stopped after it took the model's lock and read
+the pointer, the second is busy and touches nothing, shown with each a thread on a disk
+of its own and again with the stopped one in a real second process, and two let go
+together end in one of the two orders, with one installation whole
+(rule 1); a status record is read strictly and refused over its bound (rule 3).
+**Reworded with the task** (ADR 0017, "Publishing" and "For later tasks"). The clause on
+two installers said "two installers over one directory, in two processes, stopped after
+each read the pointer, do not both publish". No test can stop both after a read of the
+pointer: the pointer is read only under the model's lock, which one install has at a
+time, so the second never reads one to decide from. The clause now says what is shown.
+The clause on a crash said that it "reopens to the previous installation or the new one,
+whole". A repair has the identity, and so the folder, of what it repairs: it clears the
+pointer before it deletes the damaged folder, so that no hold is given on what is being
+deleted, and a crash between that and the new pointer reopens to a model that is not
+installed.
 **Carry-over:** of rascal's untested cases (R6), a signal during a download. **Size:**
 medium.
 
@@ -1714,11 +1729,17 @@ stands for one.
 (`live_pid`, `terminate`).
 
 **Done when** these pass: the two cases of M5b with the hold in a real second process; a
-removal and an install of the same model, stopped after each read the pointer and
-released together, end in one of the two orders (rule 1); a draining mark left by a
+removal and an install of the same model, each stopped before its first step and
+released together, end in one of the two orders, and with either stopped after it took
+the model's lock and read the pointer, the other does not go on beside it (rule 1); a draining mark left by a
 process that died is taken off by the next to take the lock; a removal of a model that is
 installing cancels the install (M3) and leaves what was installed before it removed or
 kept, as the order says, never half of either.
+**Reworded with task M2b** (ADR 0017, "Three kinds of lock"). The clause said "stopped
+after each read the pointer and released together". No test can stop both there: an
+install and a removal each read the pointer to decide from only under the model's lock,
+which one of them has at a time. What the other does while one is stopped there (busy,
+or stopped by the mark) is this task's to say.
 **Carry-over:** rascal's R3 (a process id read from a file is signalled); of R6, a
 removal racing an install. **Size:** small.
 
