@@ -5,18 +5,19 @@
 //! registry and nothing the binary would not also have, plus what the test added. Fakes
 //! live in `whizbang-testkit`, which this crate depends on for its tests only.
 
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use whizbang_core::artifact::Contents;
 use whizbang_core::config::{Config, Credentials, Files, Kinds, Offers};
 use whizbang_core::contract::{
-    Action, ConfigSource, Engine, Interrupted, NoBackends, Opening, Recovery, Registry, Secrets,
-    Snapshot,
+    Action, ConfigSource, Engine, Interrupted, NoBackends, Opening, Place, Recovery, Registry,
+    Secrets, Snapshot, SourceRefused, SystemClock,
 };
 use whizbang_core::description::Description;
 use whizbang_core::egress::DispatchPolicy;
-use whizbang_core::spend::{CallCap, PreparationAge};
+use whizbang_core::spend::{CallCap, Meter, PerCall, PreparationAge, StoreLedger};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{self, Store};
 
@@ -41,6 +42,20 @@ pub fn registry() -> Result<Registry, String> {
     }
     Ok(registry)
 }
+
+/// How many requests one call may send one backend, which is how many times the
+/// bound of one request an admission reserves for each backend the call needs
+/// (`spend::PerCall`). It is the most any action of this build sends one backend:
+/// the turns of `check`'s judge loop, `whizbang_squint::check::TURNS_LIMIT`, which a
+/// test holds this number to. `grow` and `view` send none.
+///
+/// Nothing ties the number to an action: one that sent a backend more requests than
+/// this would have reserved for too few. The meter then refuses the request that
+/// its run has nothing left for, unsent, so the cost of a number that is too small
+/// is a run that fails, never a request that was not counted. And a call reserves
+/// this many bounds whether or not it sends that many: what it did not spend is
+/// released when its run ends.
+pub const REQUESTS_PER_CALL: u64 = 16;
 
 /// The kinds of backend this build has (ADR 0011, "Kinds"): none. No network client
 /// and no local model is built at this checkpoint, so a backend a config names is of
@@ -130,9 +145,15 @@ impl Over {
     /// backends,** those a config offers or none at all, so the executor asks and
     /// hands over the snapshot's and never any it was built with: a call with no
     /// backend to hand is refused as not ready, before admission.
+    ///
+    /// **The backends of every snapshot stand behind `spend::PerCall`,** so the
+    /// bound a call is prepared with, held to a cap by and admitted with covers
+    /// [`REQUESTS_PER_CALL`] requests to each backend it needs.
     fn source(&self) -> Result<Arc<dyn ConfigSource>, String> {
+        let requests = NonZeroU64::new(REQUESTS_PER_CALL)
+            .ok_or("a call sends a backend one request at least")?;
         if let Some(files) = self.files() {
-            return Ok(Arc::new(files));
+            return Ok(Arc::new(Reserving { files, requests }));
         }
         let empty = Config::empty();
         let offers = Offers::of(&empty, &Credentials::none(), &self.kinds)
@@ -141,7 +162,25 @@ impl Over {
             .offering(Arc::new(offers))
             .sending_under(DispatchPolicy::none())
             .recording(Arc::new(empty));
-        Ok(Arc::new(snapshot))
+        Ok(Arc::new(per_call(snapshot, requests)))
+    }
+}
+
+/// This snapshot, with its backends behind `spend::PerCall` for this many requests.
+fn per_call(snapshot: Snapshot, requests: NonZeroU64) -> Snapshot {
+    snapshot.offering_through(|offered| Arc::new(PerCall::new(offered, requests)))
+}
+
+/// The source over the config's files, each of whose snapshots holds its backends
+/// behind `spend::PerCall`.
+struct Reserving {
+    files: Files,
+    requests: NonZeroU64,
+}
+
+impl ConfigSource for Reserving {
+    fn snapshot(&self) -> Result<Snapshot, SourceRefused> {
+        Ok(per_call(self.files.snapshot()?, self.requests))
     }
 }
 
@@ -197,21 +236,38 @@ pub fn executor(
 /// The executor of this build that runs actions: over a registry and a store opened to
 /// write, which it reads and writes its runs to. `whizbang rascal grow` runs its action
 /// on it, and the tests run theirs, with their fakes registered. What it is given is
-/// under [`wired`]; what comes back otherwise is why it could not be built.
+/// under [`wired`], and with it the money (`SPEC.md` section 6; ADR 0016):
+///
+/// - **the real ledger** (`spend::StoreLedger`), which reserves what a call may cost
+///   at its admission against the allowance the owner's reset set, and closes the
+///   reservation when the run ends;
+/// - **the meter** (`spend::Meter`), in the meter's place between each handle and
+///   its backend, over the same store: it debits each paid request from what its
+///   run reserved before the request leaves, settles it when it ends, and notes it
+///   in the run's record.
+///
+/// **The three are given together, here and nowhere else:** the ledger, the bound of
+/// a call ([`REQUESTS_PER_CALL`], in the source) and the meter. With the meter alone a
+/// bounded request of a run that reserved nothing passes unmetered; with the ledger
+/// alone nothing a run sends is charged to what it reserved.
+///
+/// What comes back otherwise is why the executor could not be built.
 pub fn runner(registry: Registry, store: Arc<Store>, over: &Over) -> Result<Engine, String> {
     let digest = Config::empty().digest();
-    wired(
-        Engine::over(registry, Arc::new(NoBackends), store, digest),
-        over,
-    )
+    let meter = Meter::new(store.clone(), Arc::new(SystemClock));
+    let engine = Engine::over(registry, Arc::new(NoBackends), store, digest);
+    Ok(wired(engine, over)?
+        .with_ledger(Arc::new(StoreLedger))
+        .with_wrapper(Place::Meter, Arc::new(meter)))
 }
 
 /// What recovers a store before this build is handed its writer (ADR 0015, "One way
 /// to a writer, with recovery before it"): the parts, in the order they are asked.
 /// One, so far: the part that ends every run a dead process left, as interrupted
 /// (ADR 0015, "The interrupted record, and what readers say of it"). The one that
-/// would close what such a run reserved is the spend strand's, if it keeps one, and
-/// would be added here.
+/// would have closed what such a run reserved was the spend strand's, which keeps none
+/// (ADR 0016, "The strand cut down"): the reservation of a run a dead process left
+/// stays open and counted in full, and the owner's reset clears it.
 pub fn recovery() -> Recovery {
     Recovery::none().with_part(Arc::new(Interrupted))
 }

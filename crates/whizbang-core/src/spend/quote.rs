@@ -24,26 +24,43 @@ use std::num::NonZeroU64;
 use std::sync::Arc;
 
 use crate::capability::{Declaration, QuoteKind};
-use crate::contract::{Backends, Capability, Estimate, ModelIdentity, RefusalKind, Unavailable};
+use crate::contract::{
+    Backends, Capability, Estimate, Made, ModelIdentity, Offered, RefusalKind, Unavailable,
+};
 
 use super::name::Amount;
 
 /// Any backends, with the bound of each need made to cover every request one call
 /// may send: the bound of one request, as the backends under it answer it, times
 /// that many.
-pub struct PerCall {
-    backends: Arc<dyn Backends>,
+///
+/// Around what a snapshot of the config offers ([`Offered`]) it is that too: it
+/// hands a run the backends they made, as they are, so an executor that goes by a
+/// snapshot reserves for every request
+/// ([`Snapshot::offering_through`](crate::contract::Snapshot::offering_through)).
+pub struct PerCall<B: ?Sized = dyn Backends> {
     requests: NonZeroU64,
+    backends: Arc<B>,
 }
 
-impl PerCall {
+impl<B: ?Sized> PerCall<B> {
     /// These backends, for calls that send one backend this many requests at most.
-    pub fn new(backends: Arc<dyn Backends>, requests: NonZeroU64) -> PerCall {
-        PerCall { backends, requests }
+    pub fn new(backends: Arc<B>, requests: NonZeroU64) -> PerCall<B> {
+        PerCall { requests, backends }
     }
 }
 
-impl Backends for PerCall {
+impl<B: Offered + ?Sized> Offered for PerCall<B> {
+    fn default_of(&self, capability: Capability) -> Option<&str> {
+        self.backends.default_of(capability)
+    }
+
+    fn made(&self, capability: Capability, name: &str) -> Option<Made> {
+        self.backends.made(capability, name)
+    }
+}
+
+impl<B: Backends + ?Sized> Backends for PerCall<B> {
     fn resolve(
         &self,
         capability: Capability,

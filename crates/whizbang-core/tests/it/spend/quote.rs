@@ -6,10 +6,11 @@
 use std::num::NonZeroU64;
 use std::sync::Arc;
 
-use whizbang_core::capability::{Declaration, Price, TimeLimit};
+use whizbang_core::capability::{Declaration, Price, Roster, TimeLimit};
 use whizbang_core::contract::{
-    Backends, Call, CallError, Capability, Engine, Estimate, Executor, ModelIdentity, Refusal,
-    RefusalKind, Registry, Request, RequestId, Secrets, Stale,
+    Backends, Call, CallError, Capability, Engine, Estimate, Executor, Made, ModelIdentity,
+    NoBackends, Offered, Produced, Refusal, RefusalKind, Registry, Request, RequestId, Secrets,
+    Snapshot, Stale, Unavailable,
 };
 use whizbang_core::egress::{Origin, Recipient};
 use whizbang_core::identity::Digest;
@@ -232,4 +233,98 @@ fn a_backend_priced_by_time_is_admitted_at_price_times_its_hosts_limit_and_refus
     assert_eq!(reservations.len(), 1);
     assert_eq!(reservations[0].micros(), 30_000);
     assert_eq!(world.ran(), 1);
+}
+
+/// What one snapshot offers, for a test: a roster of one filler, and that filler,
+/// made, under the name the roster offers it by.
+struct Offering {
+    roster: Roster,
+    filler: Arc<FakeFiller>,
+}
+
+impl Backends for Offering {
+    fn resolve(
+        &self,
+        capability: Capability,
+        choice: Option<&str>,
+        features: &[String],
+    ) -> Result<ModelIdentity, Unavailable> {
+        Backends::resolve(&self.roster, capability, choice, features)
+    }
+
+    fn bound(&self, capability: Capability, model: &ModelIdentity) -> Estimate {
+        Backends::bound(&self.roster, capability, model)
+    }
+}
+
+impl Offered for Offering {
+    fn default_of(&self, capability: Capability) -> Option<&str> {
+        (capability == Capability::Fill).then_some("fake")
+    }
+
+    fn made(&self, capability: Capability, name: &str) -> Option<Made> {
+        let offered = capability == Capability::Fill && name == "fake";
+        offered.then(|| Made::Fill(self.filler.clone()))
+    }
+}
+
+#[test]
+fn under_a_snapshot_that_holds_backends_the_bound_of_a_need_covers_every_request_and_the_run_is_handed_the_snapshots_backend()
+ {
+    // An executor under a snapshot that holds backends asks those, and not the ones
+    // it was built with (ADR 0015, "One snapshot of the config"): so the wrapper that
+    // makes a need's bound cover every request stands around what the snapshot
+    // offers, and still hands a run the backend the snapshot made.
+    let world = World::new("quote-snapshot");
+    allow(&world.store, 1_000_000);
+    let filler = Arc::new(FakeFiller::new(Paint::Inverse).priced(at_most(250_000)));
+    let offering: Arc<dyn Offered> = Arc::new(Offering {
+        roster: roster(None, Some(filler.as_ref()), None),
+        filler: filler.clone(),
+    });
+    let snapshot = Snapshot::of(Digest::of_bytes(b"a config")).offering(offering);
+    let mut registry = Registry::new();
+    let fills = world.action("paint", &[Capability::Fill], |_, context| {
+        let fill = context.capabilities().fill().expect("a filler is handed");
+        fill.fill(&super::meter::fill_request()).unwrap();
+        Ok(Produced::nothing())
+    });
+    registry.register(fills).unwrap();
+    let digest = Digest::of_bytes(b"");
+    let engine = Engine::over(registry, Arc::new(NoBackends), world.store.clone(), digest)
+        .with_config(world.source.clone())
+        .with_clock(world.clock.clone())
+        .with_ledger(Arc::new(StoreLedger));
+    let estimate = |engine: &Engine| {
+        let prepared = engine.prepare(&Call::new("paint")).unwrap();
+        prepared.estimate().micros()
+    };
+    // As the snapshot offers them, the bound of a need is that of one request.
+    world.source.swap(snapshot.clone());
+    assert_eq!(estimate(&engine), 250_000);
+    // Around what it offers, the wrapper makes it cover three; a snapshot that holds
+    // no backends has nothing to put a wrapper around, and is as it was.
+    let three = |offered: Arc<dyn Offered>| -> Arc<dyn Offered> {
+        Arc::new(PerCall::new(offered, times(3)))
+    };
+    world.source.swap(snapshot.offering_through(three));
+    assert_eq!(estimate(&engine), 750_000);
+    let bare = Snapshot::of(Digest::of_bytes(b"a config")).offering_through(three);
+    assert!(!bare.holds_backends());
+    // The run reserves that, and is handed the filler the snapshot made.
+    let finished = ran(engine.request(&asked("covered")));
+    assert_eq!(finished.outcome().name(), "completed");
+    let reserved = reserved(&world.store);
+    assert_eq!(reserved.len(), 1);
+    assert_eq!(reserved[0].micros(), 750_000);
+    assert_eq!(filler.requests(), 1);
+    // No bound stays no bound behind the wrapper, however it is held.
+    let about = Arc::new(FakeFiller::new(Paint::Inverse).priced(Price::about(40.0).unwrap()));
+    let offering: Arc<dyn Offered> = Arc::new(Offering {
+        roster: roster(None, Some(about.as_ref()), None),
+        filler: about,
+    });
+    let snapshot = Snapshot::of(Digest::of_bytes(b"another")).offering(offering);
+    world.source.swap(snapshot.offering_through(three));
+    assert_eq!(engine.request(&asked("unbounded")), Err(no_bound()));
 }

@@ -26,6 +26,9 @@ each pinned" became "Limits of the quote and the price, each pinned" when task B
 added its own limits.
 Amended: 2026-11-14, with task B3. Added: a charge made of a whole number
 (`Charge::whole`).
+Amended: 2026-11-15, with task W1 (ADR 0015, "The binary wired"). Changed: the wrapper
+that makes a need's bound cover every request stands around what a snapshot offers,
+in the binary's executor.
 Spec: section 4, "Backends"; section 6, "Spend"
 
 ## Context
@@ -205,8 +208,10 @@ text.
   of one request times the requests one call may send its backend, a number it is
   built with; no bound stays none, and a product that reaches the largest amount is
   none (`spend::quote::the_bound_of_a_need_covers_every_request_the_call_sends_its_backend`).
-  The roster is as it was. Nothing puts the wrapper in the binary's executor yet:
-  that is task W1's. And `spend::request_bound` is what one request is held to
+  The roster is as it was. Task W1 put the wrapper around the backends of every
+  snapshot the binary's executor asks, for 16 requests (ADR 0015, "The binary
+  wired"): `PerCall` is an `Offered` around an `Offered`, so it stands around what a
+  config offers and hands a run the backend that was made. And `spend::request_bound` is what one request is held to
   before it leaves: the bound its own backend quotes, refused where that is an
   estimate only, or no price from a backend that names a recipient, or over what
   its run has left

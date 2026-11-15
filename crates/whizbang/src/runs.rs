@@ -15,7 +15,7 @@ use std::sync::Arc;
 use clap::Subcommand;
 use whizbang_core::contract::Admission;
 use whizbang_core::contract::record::{
-    self, ArgumentValue, Handed, Judged, Lost, RunRecord, StoredRecordError,
+    self, ArgumentValue, Handed, Judged, Lost, Paid, RunRecord, StoredRecordError,
 };
 use whizbang_core::contract::request::{StoredAdmissionError, admitted};
 use whizbang_core::store::fs::RealFs;
@@ -303,11 +303,38 @@ fn called_by(parent: Option<&str>) -> String {
     }
 }
 
-/// What was reserved for a run, for a person.
+/// An amount of a record, in millionths of a US dollar, as money: as `whizbang spend
+/// status` prints one.
+fn usd(micros: u64) -> String {
+    crate::spend::usd(u128::from(micros))
+}
+
+/// What was reserved for a run, for a person. "Nothing reserved" is a run that no
+/// ledger reserved for; a run a ledger admitted at no cost reserved `$0.00`.
 fn reserved(micros: Option<u64>) -> String {
     match micros {
-        Some(micros) => format!("{micros} millionths of a US dollar reserved"),
+        Some(micros) => format!("{} reserved", usd(micros)),
         None => "nothing reserved".to_owned(),
+    }
+}
+
+/// What a run cost, for a person: what its own paid requests were settled at, added
+/// up, and how much of that no answer settled, where it is not nothing. A request
+/// that no answer settled is counted at its bound, so the sum is what the run can
+/// have cost at the most: over, never under. What a run it called cost is in that
+/// run's record.
+fn cost(requests: &[Paid]) -> String {
+    let sum = |of: fn(&Paid) -> u64| -> u128 {
+        let amounts = requests.iter().map(|paid| u128::from(of(paid)));
+        amounts.sum()
+    };
+    let settled = crate::spend::usd(sum(Paid::settled_micros));
+    match sum(Paid::unresolved_micros) {
+        0 => settled,
+        unresolved => format!(
+            "{settled}, of which {} is of requests that no answer settled",
+            crate::spend::usd(unresolved)
+        ),
     }
 }
 
@@ -503,11 +530,21 @@ fn text_of(record: &RunRecord) -> String {
             ended.as_str().unwrap_or_default()
         ));
     }
-    // What was reserved, and each paid request with what it was settled at. With the
-    // admission lost, what was reserved is not known either.
+    // What was reserved, each paid request with what it was settled at, and what
+    // they come to: what the run cost. With the admission lost, what was reserved is
+    // not known either; with the requests lost, neither is the cost. A run that no
+    // ledger reserved for and that lists no paid request, as every run of a build
+    // before the ledger is, is said to have reserved nothing, and no cost is stated
+    // of it: its requests were not counted.
     let spend = record.spend();
+    let uncounted = spend.reserved_micros.is_none() && spend.requests.is_empty();
+    let came_to = match (lost(Lost::Requests), uncounted) {
+        (true, _) => format!("; cost: {}", unknown()),
+        (false, false) => format!("; cost: {}", cost(&spend.requests)),
+        (false, true) => String::new(),
+    };
     line(format!(
-        "spend: {}; paid requests: {}",
+        "spend: {}; paid requests: {}{came_to}",
         match spend.reserved_micros {
             None if lost(Lost::Admission) => unknown(),
             micros => reserved(micros),
@@ -519,9 +556,9 @@ fn text_of(record: &RunRecord) -> String {
             "  request {}\t{}\theld {}\tsettled {}\tunresolved {}{}",
             paid.request(),
             paid.stage().name(),
-            paid.reserved_micros(),
-            paid.settled_micros(),
-            paid.unresolved_micros(),
+            usd(paid.reserved_micros()),
+            usd(paid.settled_micros()),
+            usd(paid.unresolved_micros()),
             if paid.is_over_bound() {
                 "\tover its bound"
             } else {

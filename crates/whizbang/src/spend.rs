@@ -87,8 +87,9 @@ fn shown(text: &str) -> String {
 }
 
 /// Millionths of a US dollar as money: a dollar sign, the dollars, and the cents,
-/// with the digits after them only where they are not nothing.
-fn usd(micros: u128) -> String {
+/// with the digits after them only where they are not nothing. `whizbang runs show`
+/// prints a record's amounts with it too, so the two commands say one amount one way.
+pub(crate) fn usd(micros: u128) -> String {
     let mut part = format!("{:06}", micros % 1_000_000);
     while part.len() > 2 && part.ends_with('0') {
         part.pop();

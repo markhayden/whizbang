@@ -222,6 +222,20 @@ impl Snapshot {
         self
     }
 
+    /// The same snapshot, with what stands around its backends: `around` is handed
+    /// the backends the snapshot holds and answers what holds them from then on.
+    /// It is for a wrapper that changes what prepare is answered and hands a run
+    /// the same backends: `spend::PerCall`, which makes the bound of a need cover
+    /// every request a call sends. A snapshot that holds no backends is as it was,
+    /// and `around` is not asked.
+    pub fn offering_through(
+        mut self,
+        around: impl FnOnce(Arc<dyn Offered>) -> Arc<dyn Offered>,
+    ) -> Snapshot {
+        self.offered = self.offered.map(around);
+        self
+    }
+
     /// The same snapshot, with this cap on what one call may reserve. The executor
     /// holds no call to it: it is shown to the parts of the admission.
     pub fn capped_at(mut self, cap: Estimate) -> Snapshot {

@@ -74,6 +74,9 @@ and two limits.
 Amended: 2026-11-15, with the first part of task W1. Added: "The binary wired". Changed
 where a section said what waited for that task: the parts, the cap, and the path
 through a snapshot.
+Amended: 2026-11-15, with the second part of task W1. Added under "The binary wired":
+the ledger, the bound of a call and the meter. Added under "One snapshot of the
+config": what stands around a snapshot's backends (`Snapshot::offering_through`).
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -533,6 +536,17 @@ all of one reading.
 | The policy and the credentials | `sending_under`, `with_credential` | Behind the executor's sender and check, for the runs admitted under it |
 | The secrets | `with_secrets` | Kept by the executor from then on |
 | What makes a run's settings | `recording`, a `Settings` | Made and held to a record's rules at admission, noted when the run starts |
+
+**What stands around a snapshot's backends** (`Snapshot::offering_through`, with task
+W1): a snapshot hands the backends it holds to a wrapper and holds what the wrapper
+answers in their place. It is for a wrapper that changes what prepare is answered and
+hands a run the same backends, and one exists: `spend::PerCall` (ADR 0010), which is
+an `Offered` around an `Offered` and makes the bound of a need cover every request a
+call sends. An executor under a snapshot that holds backends never asks those it was
+built with, so a wrapper around the executor's own would not be asked. A snapshot
+that holds no backends is as it was, and the wrapper is not asked
+(`quote::under_a_snapshot_that_holds_backends_the_bound_of_a_need_covers_every_request_and_the_run_is_handed_the_snapshots_backend`,
+in `crates/whizbang-core/tests/it/spend/`).
 
 **A digest alone is still a source,** of a snapshot that holds nothing else, and a
 snapshot is a source of itself. Under a snapshot that holds no backends the executor
@@ -1085,7 +1099,7 @@ reserves, and it is kept: reserving the largest cannot reserve too little
   given.** With `spend::Meter` there a paid request is debited and recorded before
   it leaves (task S5; ADR 0016, "The meter"), and settled by its stage when it
   ends (task S5b; ADR 0016, "Settlement of each attempt"); the binary's executor
-  is given no meter until its wiring (task W1). A request to a local model is told to the lease's place under
+  was given no meter until its wiring, and has it since ("The binary wired"). A request to a local model is told to the lease's place under
   the installation its run was admitted with (task I7), and takes a lease where
   an executor was given one (task M6b); the binary's executor is given none until
   its wiring (task W1).
@@ -1410,9 +1424,11 @@ Task W1, in parts. The code is `crates/whizbang/src/wiring.rs`; the tests are th
 binary's, named `wired::` (`crates/whizbang/tests/it/wired.rs`) and `rascal::`, each
 through the function that builds the binary's executor, with the test kit's fakes
 behind it, and the real binary reading what a run left. This section says what the
-binary's executor is built with; it adds no interface. **This part: the source of the
-config, the secrets, and the parts of an admission.** The ledger with the meter, and
-the inventory with the lease, are the parts after it.
+binary's executor is built with; it adds no interface but one method of a snapshot
+("One snapshot of the config": what stands around its backends). **The first part:
+the source of the config, the secrets, and the parts of an admission. The second: the
+ledger, the bound of a call and the meter, and what `runs show` says of money.** The
+inventory with the lease is the part after them.
 
 **What an executor of this build is built over** is one value, `wiring::Over`: the
 config file and the env file as the command line names them (`--config`,
@@ -1467,8 +1483,72 @@ else gives either executor a source, a secret or a part.
   0011, "The source over both files")
   (`rascal::a_config_grow_cannot_use_is_said_with_its_key_and_no_path_before_the_store_is_opened`).
 
+**The money: the ledger, the bound of a call and the meter, given together**
+(`wiring::runner`; `SPEC.md` section 6; ADR 0016). Tests named `wired::` as above.
+
+- **The real ledger** (`spend::StoreLedger`) reserves what a call may cost at its
+  admission, against the allowance the owner's reset set, and closes the reservation
+  when the run ends. A store no reset was made in allows nothing and takes calls of
+  nothing: with no config, a run is admitted as before and **has a reservation of
+  nothing**, where it had none: its record says `reserved_micros` 0, not null, and
+  the books name it
+  (`wired::with_no_config_a_run_has_a_reservation_of_nothing_in_a_store_that_allows_nothing`,
+  `rascal::grow_runs_under_the_config_its_flag_names_and_under_the_empty_config_with_none`).
+- **The bound of a call covers 16 requests to each backend it needs**
+  (`wiring::REQUESTS_PER_CALL`, given to `spend::PerCall` around the backends of
+  every snapshot the source answers). The number is the most any action of this
+  build sends one backend: the turns of `check`'s judge loop
+  (`whizbang_squint::check::TURNS_LIMIT`), and a test holds the two to one number.
+  `grow` and `view` send none. So a paid call reserves 16 bounds whether or not it
+  sends 16 requests, the cap of one call is held against that, and what the call did
+  not spend is released at its run's end. Nothing ties the number to an action: one
+  that sent more would have reserved for too few, and the meter refuses the request
+  its run has nothing left for, unsent
+  (`wired::a_call_reserves_for_as_many_requests_as_an_action_of_this_build_sends_one_backend`,
+  `wired::every_request_of_a_run_is_debited_before_it_is_sent_and_the_one_its_reservation_does_not_cover_is_refused_unsent`).
+- **The meter** (`spend::Meter`) stands in the meter's place, over the store the
+  executor writes, with the system's clock. Each paid request is debited from what
+  its run reserved before it leaves, settled when it ends, and is a line of its
+  run's record.
+- **A paid call is refused without an allowance and admitted with one,** and
+  `whizbang runs show` lists its paid request with what it was held to and what it
+  was charged
+  (`wired::a_paid_call_is_refused_without_an_allowance_and_admitted_with_one_and_runs_show_lists_its_request_with_what_it_was_charged`).
+- **A run a killed process left keeps its reservation.** A command that reads
+  recovers nothing; `whizbang spend status` names the reservation as open, counted
+  in full, and a paid call that what is left does not cover is refused. The next
+  command that opens the store to write ends the run as interrupted, and **that
+  recovery makes no name under `spend/`**: the names are the same before and after
+  it, and the reservation is still named as open. After `whizbang spend reset` it
+  no longer counts and a paid call is admitted
+  (`wired::the_reservation_of_a_run_a_killed_process_left_is_named_by_spend_status_and_cleared_by_spend_reset_and_recovery_makes_no_name_of_the_ledgers`).
+- **`runs show` prints money in US dollars, as `spend status` does, and says what a
+  run cost.** Each amount of a record is printed as a dollar sign, the dollars and
+  the cents, with further digits only where they are not nothing: `$0.25`,
+  `$0.0005`. The spend line ends with `cost:` and the sum of what the run's own paid
+  requests were settled at; a request that no answer settled counts at its bound,
+  and the line then says how much of the sum is such requests. A run whose requests
+  are lost says `cost: unknown`. A run that no ledger reserved for and that lists no
+  paid request, as every run before this part is, is said to have reserved nothing
+  and no cost is stated of it: its requests were not counted
+  (`runs::runs_show_prints_the_settings_the_paid_requests_and_where_data_went`,
+  `runs::runs_show_says_unknown_for_every_group_a_record_has_lost_and_never_none`,
+  `runs::runs_show_prints_a_run_2_record_as_it_did`).
+
 **Limits, each stated.**
 
+- **The cost `runs show` states is of the run's own requests.** What a run it
+  called cost is in that run's record (ADR 0016, "The run's spend lines"), and
+  nothing adds a tree up. `whizbang spend status --run` shows what the books hold
+  of a run, an interrupted one among them.
+- **A free call writes names under `spend/` too:** its reservation of nothing, its
+  turn and its closing. Those names are never removed (ADR 0016), so every run of
+  the binary now adds to what the store's generation file holds
+  (`docs/carry-over.md`, the row on the store's limit).
+- **One number of requests for every action** (above). An action that states how
+  many requests it sends one backend is for the task that first needs one.
+- **The read-only executor reserves nothing and has no meter:** it admits nothing.
+  Its source is the same, so what it prepares states the same bound.
 - **The binary's ways out have no sender, and the check that approves no address.**
   No network client is in the build (the plan, "Decisions"), so nothing can be sent
   whatever the policy approves, and the check of ADR 0019 over a sender
@@ -1481,6 +1561,9 @@ else gives either executor a source, a secret or a part.
 - **`--env-file` is taken only beside `--config`.** The parser refuses it alone.
 - **The read-only executor (`wiring::executor`) is given the same source, secrets and
   parts,** and admits nothing; no command builds it yet.
+- **The meter tells the time by the system's clock,** whatever clock a test gives the
+  executor afterwards (`Engine::with_clock`): the times in the ledger's records of a
+  dispatch and a settlement are the system's.
 
 ## Consequences
 

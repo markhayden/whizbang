@@ -12,9 +12,9 @@ use whizbang::wiring::{self, Over};
 use whizbang_core::capability::{Declaration, FillRequest, Picture, Price, Support};
 use whizbang_core::config::{self, Config, KindRefused, Kinds, Setting, Table};
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Call, CallError, Capability, Clock, Context, Engine, Executor,
-    Failure, Kind, Made, ModelIdentity, PreparedCall, Produced, Readiness, Refusal, RefusalKind,
-    Registry, Request, Requirement, Secrets, Value,
+    Action, ActionDescriptor, Argument, Call, CallError, Capability, Clock, Context, Engine,
+    Executor, Failure, Kind, Made, ModelIdentity, PreparedCall, Produced, Readiness, Refusal,
+    RefusalKind, Registry, Request, Requirement, Secrets, Value, ValueType,
 };
 use whizbang_core::egress::Recipient;
 use whizbang_core::identity::CanonicalPixels;
@@ -23,6 +23,7 @@ use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Reader, Store};
 use whizbang_testkit::capabilities::{FakeFiller, Paint};
 use whizbang_testkit::echo::Echo;
+use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::scratch::Scratch;
 
 /// The digest of the empty config, as ADR 0011 fixes it ("The digest").
@@ -38,8 +39,9 @@ fn made_up_key(tail: &str) -> String {
 /// A kind named `fake`, whose backends are fake fillers that send nothing. A backend
 /// of it declares the model its table gives, of the backend `fake` at the version
 /// `1`; names the origin of its table's address as its recipient, when the table has
-/// one; and states the price its setting `at_most_micros` gives, when it gives one.
-/// It keeps each filler it made.
+/// one; states the price its setting `at_most_micros` gives, when it gives one; and
+/// reports the charge its setting `charges_micros` gives with every answer, when it
+/// gives one. It keeps each filler it made.
 #[derive(Default)]
 pub struct Fakes {
     made: Mutex<Vec<Arc<FakeFiller>>>,
@@ -68,16 +70,31 @@ impl config::Kind for Shared {
         if let Some(address) = table.backend().address() {
             declaration = declaration.sending_to(Recipient::new(address.origin().clone()));
         }
+        let mut charge = None;
         for (key, setting) in table.backend().settings() {
-            let ("at_most_micros", Setting::Integer(micros)) = (key, setting) else {
-                return Err(KindRefused::Table("a fake backend takes at_most_micros"));
-            };
-            #[allow(clippy::cast_precision_loss)]
-            let price = Price::at_most(*micros as f64)
-                .map_err(|_| KindRefused::Table("a fake backend cannot state that price"))?;
-            declaration = declaration.priced(price);
+            match (key, setting) {
+                ("at_most_micros", Setting::Integer(micros)) => {
+                    #[allow(clippy::cast_precision_loss)]
+                    let price = Price::at_most(*micros as f64).map_err(|_| {
+                        KindRefused::Table("a fake backend cannot state that price")
+                    })?;
+                    declaration = declaration.priced(price);
+                }
+                ("charges_micros", Setting::Integer(micros)) => {
+                    charge = u64::try_from(*micros).ok();
+                }
+                _ => {
+                    return Err(KindRefused::Table(
+                        "a fake backend takes at_most_micros and charges_micros",
+                    ));
+                }
+            }
         }
-        let filler = Arc::new(FakeFiller::new(Paint::Inverse).declared_as(declaration));
+        let filler = FakeFiller::new(Paint::Inverse).declared_as(declaration);
+        let filler = Arc::new(match charge {
+            Some(micros) => filler.charging(micros),
+            None => filler,
+        });
         self.0.made.lock().unwrap().push(filler.clone());
         Ok(Made::Fill(filler))
     }
@@ -118,20 +135,32 @@ pub fn fill_request() -> FillRequest {
     FillRequest::new(picture, Support::from_plane(6, 4, plane).unwrap(), None).unwrap()
 }
 
-/// `paints`: an action that needs a filler and asks it once. It fails, as an error of
-/// the kind `fill`, when the filler answers with a fault. It counts its runs.
+/// `paints`: an action that needs a filler and asks it once, or as many times as its
+/// argument `times` says. It fails, as an error of the kind `fill`, at the first
+/// request the filler answers with a fault. It counts its runs.
 pub fn paints(runs: &Arc<AtomicU64>) -> Arc<dyn Action> {
-    let draft = ActionDescriptor::draft("paints", "1.0.0", Kind::Primitive, "A test action.");
-    let descriptor = draft.needs(Requirement::new(Capability::Fill)).build();
+    let times = ValueType::integer(Some(1), Some(64));
+    let draft = ActionDescriptor::draft("paints", "1.0.0", Kind::Primitive, "A test action.")
+        .argument(Argument::optional("times", "How many requests.", times))
+        .needs(Requirement::new(Capability::Fill));
     Arc::new(Scripted {
-        descriptor: descriptor.unwrap(),
+        descriptor: draft.build().unwrap(),
         runs: runs.clone(),
-        body: Box::new(|_, context| {
+        body: Box::new(|call, context| {
             let fill = context.capabilities().fill().expect("a filler is handed");
-            match fill.fill(&fill_request()) {
-                Ok(_) => Ok(Produced::nothing()),
-                Err(fault) => Err(Failure::error("fill", &fault.to_string())),
+            let times = call
+                .arguments()
+                .iter()
+                .find_map(|(name, value)| match value {
+                    Value::Integer(times) if name == "times" => Some(*times),
+                    _ => None,
+                });
+            for _ in 0..times.unwrap_or(1) {
+                if let Err(fault) = fill.fill(&fill_request()) {
+                    return Err(Failure::error("fill", &fault.to_string()));
+                }
             }
+            Ok(Produced::nothing())
         }),
     })
 }
@@ -192,6 +221,17 @@ impl World {
 
     pub fn ran(&self) -> u64 {
         self.runs.load(Ordering::SeqCst)
+    }
+
+    /// Every name the store holds under `spend/`: the ledger's books.
+    pub fn books(&self) -> Vec<String> {
+        let reader = Reader::open(&self.root, Arc::new(RealFs)).unwrap();
+        let generation = reader.snapshot().unwrap();
+        let names = generation.entries().keys();
+        names
+            .filter(|name| name.starts_with("spend/"))
+            .cloned()
+            .collect()
     }
 
     /// Each run the store holds, with its names.
@@ -392,10 +432,19 @@ fn a_call_over_the_cap_of_the_binarys_config_is_refused_before_a_run_exists() {
     // Before a run exists: nothing is in the store, and nothing ran or was sent.
     assert!(world.held().is_empty(), "{:?}", world.held());
     assert_eq!((world.ran(), world.fakes.requests()), (0, 0));
-    // The cap raised in the file is the cap the next call is held to.
+    // The cap is held against what the call may cost, which is the bound of one
+    // request for each request a call may send: a quarter is the bound of one, and
+    // is not enough. Raised in the file to four dollars, it is the cap the next call
+    // is held to, and that call is admitted.
     std::fs::write(world.config_path(), capped("0.25")).unwrap();
-    let prepared = executor.prepare(&Call::new("paints")).unwrap();
-    assert_eq!(prepared.readiness(), &Readiness::Ready);
+    assert!(executor.submit(&Call::new("paints")).is_err());
+    assert!(world.held().is_empty(), "{:?}", world.held());
+    drop(executor);
+    reset(&world.root, "4");
+    std::fs::write(world.config_path(), capped("4")).unwrap();
+    let executor = world.runner(&over);
+    executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!((world.ran(), world.fakes.requests()), (1, 1));
 }
 
 /// A clock a test moves by hand.
@@ -442,8 +491,10 @@ fn the_parts_the_binary_is_wired_with_add_no_record_to_an_admission() {
     // part in the admission"), and a tree of runs that much for each run. The two
     // parts of this build, the cap's and the age's, write none: a run's names hold
     // nothing under `admission/`, with a cap configured and a preparation shown.
+    // The call may cost four dollars: a quarter for each request a call may send.
     let world = World::new("wired-parts");
-    let over = world.config(&capped("0.25"));
+    let over = world.config(&capped("4"));
+    reset(&world.root, "4");
     let executor = world.runner(&over);
     let prepared = executor.prepare(&Call::new("paints")).unwrap();
     executor
@@ -538,8 +589,12 @@ fn a_recipient_the_config_does_not_approve_is_refused_at_the_gate_and_one_its_eg
     // the config's `egress` table and nothing else: with no table nothing is
     // approved, and the request is refused at the gate's place, before its backend
     // is called.
+    // A backend that names a recipient is paid for, or it has no bound and its
+    // call is not admitted: this one states a price, and the store an allowance.
     let world = World::new("wired-egress");
-    let backend = "[backends.fill]\nkind = \"fake\"\nurl = \"https://api.example.com/v1\"\n";
+    let backend = "[backends.fill]\nkind = \"fake\"\nurl = \"https://api.example.com/v1\"\n\n\
+                   [backends.fill.settings]\nat_most_micros = 250000\n";
+    reset(&world.root, "20");
     let executor = world.runner(&world.config(backend));
     let refused = executor.submit(&Call::new("paints")).unwrap();
     assert_eq!(refused.outcome().name(), "error");
@@ -552,6 +607,12 @@ fn a_recipient_the_config_does_not_approve_is_refused_at_the_gate_and_one_its_eg
         "{text}"
     );
     assert!(text.contains("\trequest_not_approved\t"), "{text}");
+    // The gate stands before the meter: nothing was held for the request, and the
+    // run cost nothing.
+    has_line(
+        &text,
+        "spend: $4.00 reserved; paid requests: none; cost: $0.00",
+    );
     // Approved for the class a fill with no prompt is said to hold, which is none
     // known: a recipient that may receive some class is let through, and its
     // backend is called.
@@ -566,4 +627,272 @@ fn a_recipient_the_config_does_not_approve_is_refused_at_the_gate_and_one_its_eg
     drop(executor);
     let text = shown(&world.root, let_through.run().as_str());
     assert!(!text.contains("request_not_approved"), "{text}");
+}
+
+// --- the ledger, the bound of a call and the meter ---------------------------------------------
+
+/// A config whose one filler states a bound of a quarter of a dollar for a request
+/// and reports this charge with every answer, or none.
+fn priced(charges_micros: Option<u64>) -> String {
+    let charge = charges_micros.map_or(String::new(), |micros| {
+        format!("charges_micros = {micros}\n")
+    });
+    format!(
+        "[backends.fill]\nkind = \"fake\"\n\n[backends.fill.settings]\nat_most_micros = 250000\n{charge}"
+    )
+}
+
+/// The owner's reset, by the real binary.
+fn reset(root: &Path, allowance: &str) {
+    let reset = whizbang(&["spend", "reset", "--allowance", allowance], root);
+    assert_eq!(reset.code, Some(0), "{}", reset.err);
+}
+
+/// What `spend status` says, by the real binary.
+fn status(root: &Path) -> String {
+    let status = whizbang(&["spend", "status"], root);
+    assert_eq!(status.code, Some(0), "{}", status.err);
+    status.out
+}
+
+fn over_allowance(refused: Result<impl std::fmt::Debug, CallError>) -> (u64, u64) {
+    match refused {
+        Err(CallError::Refused(Refusal::OverAllowance {
+            action,
+            asked_micros,
+            left_micros,
+        })) => {
+            assert_eq!(action, "paints");
+            (asked_micros, left_micros)
+        }
+        other => panic!("not refused as over the allowance: {other:?}"),
+    }
+}
+
+#[test]
+fn a_call_reserves_for_as_many_requests_as_an_action_of_this_build_sends_one_backend() {
+    // The number is the most requests any action of this build sends one backend:
+    // the turns of `check`'s judge loop (ADR 0015, "The binary wired").
+    let turns = u64::try_from(whizbang_squint::check::TURNS_LIMIT).unwrap();
+    assert_eq!(wiring::REQUESTS_PER_CALL, turns);
+    let world = World::new("wired-per-call");
+    let executor = world.runner(&world.config(&priced(None)));
+    let prepared = executor.prepare(&Call::new("paints")).unwrap();
+    assert_eq!(prepared.estimate().micros(), 250_000 * turns);
+    // The read-only executor is told the same.
+    drop(executor);
+    let reader = Arc::new(Reader::open(&world.root, Arc::new(RealFs)).unwrap());
+    let over = world.config(&priced(None));
+    let preparer = wiring::executor(world.registry(), reader, &over).unwrap();
+    let prepared = preparer.prepare(&Call::new("paints")).unwrap();
+    assert_eq!(prepared.estimate().micros(), 250_000 * turns);
+}
+
+#[test]
+fn with_no_config_a_run_has_a_reservation_of_nothing_in_a_store_that_allows_nothing() {
+    // A store no reset was made in allows nothing, and takes calls of nothing: a
+    // call that needs no backend costs nothing, is admitted, and its run reserved
+    // nothing, which is not the same as no reservation.
+    let world = World::new("wired-free");
+    let executor = world.runner(&Over::nothing());
+    let finished = executor
+        .submit(&Call::new("echo").argument("text", Value::text("hello")))
+        .unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    drop(executor);
+    let run = finished.run().as_str();
+    has_line(
+        &shown(&world.root, run),
+        "spend: $0.00 reserved; paid requests: none; cost: $0.00",
+    );
+    let json = whizbang(&["runs", "show", run, "--json"], &world.root);
+    let record: serde_json::Value = serde_json::from_str(&json.out).unwrap();
+    assert_eq!(record["spend"]["reserved_micros"], 0);
+    // The books name the run, and its reservation was closed at its end with all
+    // of it released: nothing is counted and nothing is listed.
+    let books = world.books();
+    assert!(books.iter().any(|name| name.contains(run)), "{books:?}");
+    let said = status(&world.root);
+    assert!(!said.contains(run), "{said}");
+}
+
+#[test]
+fn a_paid_call_is_refused_without_an_allowance_and_admitted_with_one_and_runs_show_lists_its_request_with_what_it_was_charged()
+ {
+    let world = World::new("wired-paid");
+    let over = world.config(&priced(Some(100_000)));
+    // No reset was made in the store: it allows nothing, and the call may cost four
+    // dollars, a quarter for each request a call may send.
+    let executor = world.runner(&over);
+    assert_eq!(
+        over_allowance(executor.submit(&Call::new("paints"))),
+        (4_000_000, 0)
+    );
+    assert_eq!((world.ran(), world.fakes.requests()), (0, 0));
+    assert!(world.held().is_empty());
+    drop(executor);
+    // The owner's reset sets an allowance, and the same call is admitted.
+    reset(&world.root, "5");
+    let executor = world.runner(&over);
+    let finished = executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!((world.ran(), world.fakes.requests()), (1, 1));
+    drop(executor);
+    // `runs show` lists the paid request with what it was held to and what it was
+    // charged, in dollars, and says what the run cost.
+    let run = finished.run().as_str();
+    let text = shown(&world.root, run);
+    has_line(
+        &text,
+        "spend: $4.00 reserved; paid requests: 1; cost: $0.10",
+    );
+    has_line(
+        &text,
+        "  request 0\tanswered\theld $0.25\tsettled $0.10\tunresolved $0.00",
+    );
+    // The run's end closed its reservation: what its request was charged stays
+    // counted, and the rest is free for the next call.
+    let said = status(&world.root);
+    assert!(said.contains("allowance: $5.00\n"), "{said}");
+    assert!(said.contains("counted against it: $0.10\n"), "{said}");
+    assert!(said.contains("left: $4.90\n"), "{said}");
+    let of_run = whizbang(&["spend", "status", "--run", run], &world.root);
+    assert_eq!(of_run.code, Some(0), "{}", of_run.err);
+    assert!(of_run.out.contains("$0.10"), "{}", of_run.out);
+}
+
+#[test]
+fn every_request_of_a_run_is_debited_before_it_is_sent_and_the_one_its_reservation_does_not_cover_is_refused_unsent()
+ {
+    // The ledger, the bound of a call and the meter are given together: what a call
+    // reserved is what its requests draw on, one bound for each before it leaves.
+    // A run that asks once more than a call may is refused that request, unsent.
+    let world = World::new("wired-metered");
+    let over = world.config(&priced(None));
+    reset(&world.root, "5");
+    let executor = world.runner(&over);
+    let asked = i64::try_from(wiring::REQUESTS_PER_CALL).unwrap() + 1;
+    let call = Call::new("paints").argument("times", Value::Integer(asked));
+    let finished = executor.submit(&call).unwrap();
+    assert_eq!(finished.outcome().name(), "error");
+    assert_eq!(world.fakes.requests(), wiring::REQUESTS_PER_CALL);
+    drop(executor);
+    let text = shown(&world.root, finished.run().as_str());
+    // No answer stated a charge, so each request is settled at its bound.
+    has_line(
+        &text,
+        "spend: $4.00 reserved; paid requests: 16; cost: $4.00",
+    );
+    has_line(
+        &text,
+        "  request 15\tanswered\theld $0.25\tsettled $0.25\tunresolved $0.00",
+    );
+    assert!(!text.contains("  request 16\t"), "{text}");
+    assert!(text.contains("\trequest_over_allowance\t"), "{text}");
+    let said = status(&world.root);
+    assert!(said.contains("counted against it: $4.00\n"), "{said}");
+    assert!(said.contains("left: $1.00\n"), "{said}");
+}
+
+/// `dies`: an action that needs a filler, asks it once, and then has the store's
+/// file system refuse the next call that changes the disk: the first of the
+/// publication that ends its run. The run stays as it was admitted, which is what a
+/// process that was killed while its action ran leaves.
+fn dies(fs: &Arc<ShimFs>) -> Arc<dyn Action> {
+    let draft = ActionDescriptor::draft("dies", "1.0.0", Kind::Primitive, "A test action.");
+    let descriptor = draft.needs(Requirement::new(Capability::Fill)).build();
+    let fs = fs.clone();
+    Arc::new(Scripted {
+        descriptor: descriptor.unwrap(),
+        runs: Arc::new(AtomicU64::new(0)),
+        body: Box::new(move |_, context| {
+            let fill = context.capabilities().fill().expect("a filler is handed");
+            fill.fill(&fill_request()).expect("the request is answered");
+            fs.refuse_before(fs.events().len());
+            Ok(Produced::nothing())
+        }),
+    })
+}
+
+#[test]
+fn the_reservation_of_a_run_a_killed_process_left_is_named_by_spend_status_and_cleared_by_spend_reset_and_recovery_makes_no_name_of_the_ledgers()
+ {
+    let world = World::new("wired-killed");
+    let over = world.config(&priced(Some(100_000)));
+    reset(&world.root, "5");
+    // A process is killed while its action runs, after its one paid request was
+    // answered and settled.
+    {
+        let fs = Arc::new(ShimFs::new());
+        let store = Arc::new(Store::open(&world.root, fs.clone()).unwrap());
+        let mut registry = world.registry();
+        registry.register(dies(&fs)).unwrap();
+        let executor = wiring::runner(registry, store, &over).unwrap();
+        let left = executor.submit(&Call::new("dies"));
+        assert!(matches!(left, Err(CallError::Store(_))), "{left:?}");
+    }
+    assert_eq!(world.fakes.requests(), 1);
+    let held = world.held();
+    assert_eq!(held.len(), 1);
+    let run = held[0].0.clone();
+    // A command that reads recovers nothing: the run is as it was left, and its
+    // reservation is named as open, counted in full, by whichever reader, however
+    // often.
+    let open = format!(
+        "  {run}  open  counts for $4.00  (reserved $4.00, charged $0.10, outstanding $0.00)"
+    );
+    let books = world.books();
+    for _ in 0..2 {
+        let listed = whizbang(&["runs", "list"], &world.root);
+        assert!(
+            listed.out.contains("\tadmitted, not ended\t"),
+            "{}",
+            listed.out
+        );
+        let said = status(&world.root);
+        has_line(&said, &open);
+        assert!(said.contains("counted against it: $4.00\n"), "{said}");
+        assert!(said.contains("left: $1.00\n"), "{said}");
+        assert_eq!(world.books(), books);
+    }
+    // So a paid call is refused: what is left does not cover it.
+    let executor = world.runner(&over);
+    assert_eq!(
+        over_allowance(executor.submit(&Call::new("paints"))),
+        (4_000_000, 1_000_000)
+    );
+    drop(executor);
+    assert_eq!(world.books(), books);
+    // The next command that opens the store to write recovers it first: the run is
+    // ended, as interrupted. The recovery makes no name of the ledger's: the
+    // reservation is not closed, and is still named as open and counted in full.
+    let pruned = whizbang(&["store", "prune"], &world.root);
+    assert_eq!(pruned.code, Some(0), "{}", pruned.err);
+    let listed = whizbang(&["runs", "list"], &world.root);
+    assert!(
+        listed.out.contains("\terror, interrupted ("),
+        "{}",
+        listed.out
+    );
+    assert_eq!(world.books(), books);
+    has_line(&status(&world.root), &open);
+    has_line(
+        &shown(&world.root, &run),
+        "spend: $4.00 reserved; paid requests: unknown; cost: unknown",
+    );
+    // The owner's reset clears it: nothing made before the reset counts, and a
+    // paid call is admitted.
+    reset(&world.root, "5");
+    let said = status(&world.root);
+    assert!(!said.contains(&run), "{said}");
+    assert!(said.contains("left: $5.00\n"), "{said}");
+    let executor = world.runner(&over);
+    let finished = executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(world.ran(), 1);
+    // What the run that was left cost is still seen, by its run.
+    drop(executor);
+    let of_run = whizbang(&["spend", "status", "--run", &run], &world.root);
+    assert_eq!(of_run.code, Some(0), "{}", of_run.err);
+    assert!(of_run.out.contains("$0.10"), "{}", of_run.out);
 }

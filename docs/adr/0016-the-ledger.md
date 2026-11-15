@@ -58,6 +58,9 @@ record, and that its strand is cut down (the plan, "Decisions", the last item). 
 the two rules of the fold that change so that a reset closes the books, and what
 that costs in money. Nothing else in this record is rewritten: where that section
 and an earlier sentence differ, that section is the later decision.
+Amended: 2026-11-15, with task W1 (ADR 0015, "The binary wired"). Changed where a
+section said what waited for it: the binary's executor has the ledger, the bound of a
+call and the meter.
 Spec: section 6, "Spend"; section 3, "Storage"
 
 ## Context
@@ -1287,7 +1290,8 @@ run's requests to close with. Until it merges, a reservation the real ledger mad
 stays open when its run has ended, and when its admission was not confirmed, and
 counts in full: over, and never under
 (`an_admission_is_held_to_the_epoch_it_fell_under_when_a_reset_came_before_its_reading`,
-its last lines). The binary's executor is given the ledger by task W1.
+its last lines). The binary's executor is given the ledger by task W1 (built: ADR
+0015, "The binary wired").
 (Built since, with task S11: "The reservation settled when its run ends". That
 test's last lines now hold that the reservation is closed and released.)
 
@@ -1357,7 +1361,9 @@ for all three). It folds nothing, so it does not know an epoch that needs its ow
 - **A request sent after its run's action came back does not reach the meter:** the
   handle's tally refuses it first (ADR 0015). `Allowance::dispatch` called by an
   action itself, outside any wrapper, is not refused there (`docs/carry-over.md`).
-- **Nothing puts the meter in the binary's executor** until task W1.
+- **Nothing put the meter in the binary's executor** until task W1, which gave it
+  the ledger, the bound of a call and the meter together (ADR 0015, "The binary
+  wired").
 
 ### Settlement of each attempt (task S5b)
 
@@ -1498,7 +1504,8 @@ reservation's next place, and the next turn of each epoch a hold of it names
 **What it does not close.** A run that is abandoned in a live process has no end
 published, and a run whose process died has none either: each reservation stays
 open and counts in full until the owner's reset ("The strand cut down"). The
-binary's executor has no ledger until task W1.
+binary's executor had no ledger until task W1, whose test of a store a killed
+process left is through the binary (ADR 0015, "The binary wired").
 
 ### The run's spend lines (task S10)
 
@@ -1557,8 +1564,9 @@ was the request's place among the paid requests of its run.
 - **A request refused before dispatch has no line:** nothing was held for it. It is
   among the run's refusals (ADR 0013).
 - **What reads the lines is built already:** `whizbang runs show` prints each line of
-  a record (ADR 0013). The binary's executor has no meter until task W1, whose test
-  is of that command.
+  a record (ADR 0013). The binary's executor had no meter until task W1, whose test
+  is of that command; with it the command prints each amount in dollars and what
+  the run cost (ADR 0015, "The binary wired").
 
 ### Limits, each stated
 
