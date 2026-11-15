@@ -1229,6 +1229,41 @@ command ends what a killed process left before it changes anything
 (`runs::a_run_a_killed_process_left_is_ended_by_the_next_writing_command_and_then_shown_as_interrupted`,
 in the binary's tests, through the real binary).
 
+**What readers say of such a run** follows from its having a record, and needed no
+code in the executor: a run with a record has ended.
+
+- **A repeat of its request** is answered `Ended`, with the error `interrupted`, by
+  `request` and by `start`, by an executor that writes the store and by one that
+  only reads it; nothing runs, and another request under the id is a conflict.
+- **`status` and `wait`** say the same, and `wait` does not wait: the run is in no
+  process's table of open runs.
+- **`cancel`** answers `NotAccepted(Ended)`
+  (`interrupted::a_repeat_of_the_request_of_an_interrupted_run_is_ended_with_the_error_interrupted_and_status_and_wait_say_the_same_and_cancel_is_not_accepted`).
+- **Where the admission could not be read,** the questions by the run's id are
+  answered so, and a request under its request id with the error of a record that
+  is not read
+  (`interrupted::the_questions_by_its_id_of_a_run_whose_admission_could_not_be_read_are_answered_as_interrupted`,
+  and the test of a damaged admission above).
+- **`runs list`** shows it as ended in error, and says after the status that it was
+  interrupted and how much is lost: `error, interrupted (everything but what its
+  admission says is lost)`, or `error, interrupted (everything is lost, its
+  admission too)`, with `unknown` for an action, a start and a duration that the
+  admission would have given. **`runs show`** prints the error, the line `lost:`
+  with every group, and `unknown` for each group that is lost (ADR 0013). Both go by
+  `outcome.lost` and not by the error's kind, so a run whose action called its own
+  error `interrupted` is not said to have lost anything; and both print what an
+  admission said escaped
+  (`runs::runs_list_and_runs_show_show_an_interrupted_run_as_ended_in_error_interrupted_with_what_is_lost_escaped`,
+  in the binary's tests, with `runs::runs_show_says_unknown_for_every_group_a_record_has_lost_and_never_none`).
+
+**A crash inside the recovery that ends a run.** Power lost before each step of it,
+with every way the test kit's disk can lose what was not yet durable, leaves the run
+as it was left or ended with its record and its request's ending both; the next open
+ends it if it was not, with the one record its admission makes, and the open after
+that publishes nothing: the run is ended once
+(`interrupted::a_crash_at_any_event_of_the_recovery_of_an_interrupted_run_followed_by_another_open_ends_the_run_once_part_1_of_4`
+to `…_part_4_of_4`, in the group of crash sweeps).
+
 **Limits, each stated.**
 
 - **Interrupted does not say that the process is dead.** A run is ended because no

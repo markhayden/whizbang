@@ -675,3 +675,192 @@ fn a_run_whose_admissions_content_is_gone_from_the_disk_is_ended_from_its_name_a
     // No ending is made for the request: its record is the same damaged content.
     assert!(!held(&world).1.contains_key("requests/order-17/ended"));
 }
+
+// --- what readers say of an interrupted run -----------------------------------------------------
+
+/// The state of a run that was ended as interrupted: an error of that kind.
+fn says_interrupted(state: &RunState) {
+    let RunState::Ended(whizbang_core::contract::Outcome::Error { kind, message }) = state else {
+        panic!("{state:?}");
+    };
+    assert_eq!(kind, INTERRUPTED);
+    assert_eq!(message, "the process that ran it ended before the run did");
+}
+
+#[test]
+fn a_repeat_of_the_request_of_an_interrupted_run_is_ended_with_the_error_interrupted_and_status_and_wait_say_the_same_and_cancel_is_not_accepted()
+ {
+    use whizbang_core::contract::{Cancel, NoBackends, Refusal};
+    let world = World::new();
+    let run = leave_one(&world);
+    let run = RunId::parse(&run).unwrap();
+    let (opening, store, _) = reopened(&world);
+    let ran = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let counting = |name: &str| {
+        let ran = ran.clone();
+        action(name, paid(), move |_, _| {
+            ran.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(Produced::nothing())
+        })
+    };
+    // By the executor that writes the store, and by one that only reads it.
+    let writing = engine(store, vec![counting("paint"), counting("other")]);
+    let mut registry = Registry::new();
+    registry.register(counting("paint")).unwrap();
+    let reader = Arc::new(opening.reader().unwrap());
+    let reading = Engine::new(
+        registry,
+        Arc::new(NoBackends),
+        reader,
+        Digest::of_bytes(b""),
+    );
+    let asked = Request::new(Call::new("paint")).with_id(id("order-17"));
+    for engine in [&writing, &reading] {
+        // A repeat: the run that ended, and how. Nothing runs.
+        for again in [engine.request(&asked), engine.start(&asked)] {
+            let Ok(Answer::Repeat(earlier)) = again else {
+                panic!("not answered as a repeat");
+            };
+            assert_eq!((earlier.run(), earlier.start_ms()), (&run, 7000));
+            says_interrupted(earlier.state());
+        }
+        // `status` says the same, and so does `wait`, which does not wait: nothing
+        // in any process works on the run, and nobody is left waiting for it.
+        says_interrupted(engine.status(&run).unwrap().state());
+        let waited = engine.wait(&run).unwrap();
+        says_interrupted(waited.state());
+        assert_eq!((waited.events().len(), engine.waiting_for(&run)), (0, 0));
+        // `cancel` is not accepted: the run had ended.
+        let Ok(Cancel::NotAccepted(state)) = engine.cancel(&run) else {
+            panic!("the cancellation was accepted");
+        };
+        says_interrupted(&state);
+    }
+    // Another request under the id is a conflict, as with any run that ended.
+    let other = Request::new(Call::new("other")).with_id(id("order-17"));
+    let conflict = writing.request(&other).unwrap_err();
+    assert!(
+        matches!(conflict.refusal(), Some(Refusal::Conflict { .. })),
+        "{conflict:?}"
+    );
+    assert_eq!(ran.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(held(&world).2.len(), 1, "no run was made");
+}
+
+#[test]
+fn the_questions_by_its_id_of_a_run_whose_admission_could_not_be_read_are_answered_as_interrupted()
+{
+    use whizbang_core::contract::Cancel;
+    let world = World::new();
+    plant(&world, "1000-1", &[(ADMITTED_NAME, b"no admission\n")], &[]);
+    let (_opening, store, _) = reopened(&world);
+    let engine = engine(store, Vec::new());
+    let run = RunId::parse("1000-1").unwrap();
+    says_interrupted(engine.status(&run).unwrap().state());
+    says_interrupted(engine.wait(&run).unwrap().state());
+    let Ok(Cancel::NotAccepted(state)) = engine.cancel(&run) else {
+        panic!("the cancellation was accepted");
+    };
+    says_interrupted(&state);
+}
+
+// --- a crash inside the recovery of an interrupted run -----------------------------------------
+
+/// Power is lost before each step of the recovery that ends a run and its request,
+/// with every way the test kit's disk can lose what was not yet durable. What the
+/// next open finds is the run as it was left, or ended with its record and its
+/// ending both: never one without the other. That open ends it if it was not, and
+/// the open after that publishes nothing: the run is ended once (rule 2).
+fn crashes_inside_the_recovery_of_an_interrupted_run(part: usize, of: usize) {
+    // What a recovery of one left run does to the disk, after the open.
+    let (opened, steps) = {
+        let world = World::new();
+        leave_one(&world);
+        let fs = Arc::new(ShimFs::new());
+        let opening = Opening::open(&world.root(), fs.clone(), recovery()).unwrap();
+        let opened = fs.events().len();
+        opening.writer().unwrap();
+        (opened, fs.events().len() - opened)
+    };
+    assert!(steps > 8, "{steps}");
+    let (mut left, mut ended, mut crashes) = (0, 0, 0);
+    for step in (0..steps).filter(|step| step % of == part) {
+        let mut ways = vec![Gone::Unsynced, Gone::ContentOnly, Gone::Subset(0)];
+        let mut next = 0;
+        while next < ways.len() {
+            let lost = ways[next];
+            next += 1;
+            crashes += 1;
+            let at = format!("step {step}, {lost:?}");
+            let world = World::new();
+            let run = leave_one(&world);
+            let fs = Arc::new(ShimFs::new().crash_before(opened + step, lost));
+            let opening = Opening::open(&world.root(), fs.clone(), recovery()).unwrap();
+            let _ = opening.writer();
+            if lost == Gone::Subset(0) {
+                let (dirs, names) = (fs.crash_choices(), fs.crash_names());
+                assert!(dirs <= 10 && names <= 10, "{at}: {dirs} {names}");
+                ways.extend((1..1u64 << dirs).map(Gone::Subset));
+                ways.extend((0..1u64 << names).map(Gone::Names));
+            }
+            drop(opening);
+            // Whole: the record and the id's ending are there together, or neither.
+            let (_, names, runs) = held(&world);
+            let has_record = runs[&run].contains_key("record");
+            assert_eq!(
+                names.contains_key("requests/order-17/ended"),
+                has_record,
+                "{at}"
+            );
+            if has_record {
+                ended += 1;
+            } else {
+                left += 1;
+            }
+            // The next open ends it if it was not. What it is ended with is the one
+            // record, whenever it was made; and another open after it adds nothing.
+            drop(reopened(&world));
+            let once = held(&world);
+            let admission = Admission::from_bytes(&once.2[&run][ADMITTED_NAME]).unwrap();
+            assert_eq!(
+                once.2[&run]["record"],
+                made_from(&admission).to_bytes(),
+                "{at}"
+            );
+            assert!(once.1.contains_key("requests/order-17/ended"), "{at}");
+            let (_opening, _, fs) = reopened(&world);
+            assert_eq!(held(&world), once, "{at}: ended twice");
+            let wrote = fs
+                .events()
+                .iter()
+                .any(|event| matches!(event, Event::Write(_)));
+            assert!(!wrote, "{at}: published twice");
+        }
+    }
+    assert!(left > 0 && crashes > 10, "{left} {ended} {crashes}");
+    let _ = ended;
+}
+
+#[test]
+fn a_crash_at_any_event_of_the_recovery_of_an_interrupted_run_followed_by_another_open_ends_the_run_once_part_1_of_4()
+ {
+    crashes_inside_the_recovery_of_an_interrupted_run(0, 4);
+}
+
+#[test]
+fn a_crash_at_any_event_of_the_recovery_of_an_interrupted_run_followed_by_another_open_ends_the_run_once_part_2_of_4()
+ {
+    crashes_inside_the_recovery_of_an_interrupted_run(1, 4);
+}
+
+#[test]
+fn a_crash_at_any_event_of_the_recovery_of_an_interrupted_run_followed_by_another_open_ends_the_run_once_part_3_of_4()
+ {
+    crashes_inside_the_recovery_of_an_interrupted_run(2, 4);
+}
+
+#[test]
+fn a_crash_at_any_event_of_the_recovery_of_an_interrupted_run_followed_by_another_open_ends_the_run_once_part_4_of_4()
+ {
+    crashes_inside_the_recovery_of_an_interrupted_run(3, 4);
+}

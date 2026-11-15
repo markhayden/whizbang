@@ -1094,6 +1094,116 @@ fn runs_show_says_unknown_for_every_group_a_record_has_lost_and_never_none() {
 }
 
 #[test]
+fn runs_list_and_runs_show_show_an_interrupted_run_as_ended_in_error_interrupted_with_what_is_lost_escaped()
+ {
+    // Two runs a dead process left, as a recovery ends them: one whose admission
+    // was read, and said an action whose name holds an escape sequence, as an
+    // admission that other hands wrote can; and one whose admission was not read.
+    // Beside them, a run that ended by itself in an error it calls interrupted.
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let (read, unread) = (
+        RunId::parse("1000-1").unwrap(),
+        RunId::parse("1000-2").unwrap(),
+    );
+    let request = RequestId::parse("req-7").unwrap();
+    let admitted = Admitted {
+        request: Some(&request),
+        parent: None,
+        action: "he\u{1b}[31mal",
+        version: "1.0.0",
+        reserved_micros: Some(250_000),
+        start_ms: 1000,
+    };
+    let left = |run, admitted| Left {
+        run,
+        whizbang: "0.0.1",
+        admitted,
+        end_ms: 5000,
+    };
+    let own = ordinary_record().replace("1000-1", "1000-3").replace(
+        r#""status":"completed","error":null"#,
+        r#""status":"error","error":{"kind":"interrupted","message":"its own word"}"#,
+    );
+    {
+        let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+        let mut publication = store.begin().unwrap();
+        let records = [
+            (
+                "1000-1",
+                RunRecord::interrupted(left(&read, Some(admitted)))
+                    .unwrap()
+                    .to_bytes(),
+            ),
+            (
+                "1000-2",
+                RunRecord::interrupted(left(&unread, None))
+                    .unwrap()
+                    .to_bytes(),
+            ),
+            ("1000-3", own.into_bytes()),
+        ];
+        for (run, record) in &records {
+            publication
+                .put_in(run, "record", Kind::Diagnostic, record)
+                .unwrap();
+        }
+        publication.publish().unwrap();
+    }
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(listed.code, Some(0), "{}", listed.err);
+    let text = listed.text();
+    assert!(!text.contains('\u{1b}'), "{text:?}");
+    let lines: Vec<Vec<&str>> = text
+        .lines()
+        .skip(1)
+        .map(|l| l.split('\t').collect())
+        .collect();
+    assert_eq!(
+        lines[0][..3],
+        [
+            "1000-1",
+            "error, interrupted (everything but what its admission says is lost)",
+            "he\\u{1b}[31mal 1.0.0"
+        ]
+    );
+    assert_eq!(lines[0][4], "4000 ms");
+    assert_eq!(
+        lines[1],
+        [
+            "1000-2",
+            "error, interrupted (everything is lost, its admission too)",
+            "unknown unknown",
+            "unknown",
+            "unknown"
+        ]
+    );
+    // A run whose own error is called interrupted lost nothing, and is not said to.
+    assert_eq!(lines[2][..2], ["1000-3", "error"]);
+    // `runs show`: the error, what is lost, and the action escaped.
+    let shown = whizbang(&["show", "1000-1"], &root);
+    let text = shown.text();
+    assert!(!text.contains('\u{1b}'), "{text:?}");
+    has_line(text, "action: he\\u{1b}[31mal 1.0.0");
+    has_line(text, "status: error");
+    has_line(
+        text,
+        "error: interrupted: the process that ran it ended before the run did",
+    );
+    has_line(
+        text,
+        "lost: arguments, settings, inputs, refusals, durations, models, requests, egress, \
+         steps, judge, diagnostics, version",
+    );
+    let shown = whizbang(&["show", "1000-2"], &root);
+    has_line(shown.text(), "action: unknown unknown");
+    assert!(shown.text().contains(", diagnostics, version, admission\n"));
+    let shown = whizbang(&["show", "1000-3"], &root);
+    has_line(shown.text(), "error: interrupted: its own word");
+    assert!(!shown.text().contains("lost:"), "{}", shown.text());
+}
+
+#[test]
 fn runs_show_prints_a_run_2_record_as_it_did() {
     // A record the tag `m1a` wrote: every line as that build printed it.
     let record = [
