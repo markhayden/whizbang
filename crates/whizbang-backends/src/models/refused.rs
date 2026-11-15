@@ -16,8 +16,10 @@ pub enum What {
     Catalogue,
     /// An installation record, `installation/1`.
     Installation,
-    /// A status record, `status/1`.
+    /// A status record, `status/2`.
     Status,
+    /// A draining mark, `draining/1`.
+    Mark,
 }
 
 impl std::fmt::Display for What {
@@ -26,6 +28,7 @@ impl std::fmt::Display for What {
             What::Catalogue => "the catalogue",
             What::Installation => "the installation record",
             What::Status => "the status record",
+            What::Mark => "the draining mark",
         })
     }
 }

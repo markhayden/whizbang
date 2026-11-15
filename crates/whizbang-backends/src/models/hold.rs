@@ -8,8 +8,9 @@
 //!
 //! A hold is given or refused at once, under the directory's lock, after the draining
 //! mark and the pointer were read there: it is given only on the installation the
-//! pointer names, and only while no mark is set. It makes nothing on the disk; the
-//! hold file was made by the install that first published the identity.
+//! pointer names, and only while no mark is set. It makes nothing on the disk but the
+//! directory's `LOCK`, when that is not there yet; the hold file was made by the
+//! install that first published the identity.
 //!
 //! Inside one process the holds on one installation are counted ([`Holds`]): the
 //! process keeps one share of the hold file while the count is not nothing, and lets
@@ -122,8 +123,9 @@ impl Holds {
     /// Under the directory's lock, for a moment: the draining mark is read, then the
     /// pointer, and the hold is given only when no mark is set and the pointer names
     /// this installation. Then the process's share of the hold file is counted up, or,
-    /// when the process has none, tried for, without waiting. Nothing is made, and
-    /// nothing is waited for but the directory's lock.
+    /// when the process has none, tried for, without waiting. Nothing is made but
+    /// the directory's lock file when there is none, and nothing is waited for but
+    /// that lock.
     ///
     /// The hold is let go by [`Hold::let_go`], or when it is dropped.
     pub fn hold(

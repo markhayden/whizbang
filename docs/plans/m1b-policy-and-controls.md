@@ -1905,17 +1905,24 @@ a hold let go twice is let go once.
 **Depends on:** M5. **Reads:** rascal `tools/python/src/rascal_tools/installer.py`
 (`remove`) and `crates/rascal-mask/src/install.rs` (`uninstall`).
 
-- [ ] Removal, inside one process: under the directory's lock the model is marked as
+- [x] Removal, inside one process: under the directory's lock the model is marked as
       draining, so new holds are refused and waiting ones cancelled; the holds are waited
       for until a deadline of the injected clock; then the removal goes on (M5c), or it
       answers busy and the mark is taken off. Here "goes on" ends at the decision: the
       pointer is cleared and nothing is deleted yet.
 
 **Done when** these pass, with barriers and the clock moved by hand (rule 6): a removal
-during a held installation refuses a new hold, cancels a waiting one, and goes on when the
-hold is let go; with the hold kept past the deadline the removal answers busy, the mark is
-gone and the next hold is given; a removal of a model that is not installed says so; the
-mark is a record read strictly and bounded (rule 3).
+during a held installation refuses a new hold, and one that was refused and is asked for
+again, as draining, and goes on when the hold is let go; with the hold kept past the
+deadline the removal answers busy, the mark is gone and the next hold is given; a removal
+of a model that is not installed says so; the mark is a record read strictly and bounded
+(rule 3).
+**Reworded with the task** (ADR 0017, "Holds" and "Removal"). The clause said that a
+removal "refuses a new hold, cancels a waiting one". No hold waits: a hold is given or
+refused at once (task M5), because a wait for a hold file under the directory's lock would
+stop every model. What the plan calls a waiting hold is one that was refused and is asked
+for again by its caller, and a removal cancels it by the mark: asked again while the mark
+is set, it is refused as draining. The clause now says what is shown.
 **Size:** small. The waiting requests of the worker's queue are 1C's; here a waiting hold
 stands for one.
 
