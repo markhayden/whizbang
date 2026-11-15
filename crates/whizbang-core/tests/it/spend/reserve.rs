@@ -173,7 +173,7 @@ fn reset_after(store: &Store, micros: u64, turn: u64) {
 #[test]
 fn the_ledger_folds_the_steps_generation_declines_over_the_allowance_and_makes_its_names() {
     let world = World::new("reserve");
-    let ledger = Counted::new();
+    let ledger = Counted::left_open();
     // The owner allows a dollar and ten cents; a call may cost a quarter.
     assert_eq!(allow(&world.store, 1_100_000), 1);
     let engine = painting(&world, 250_000, ledger.clone());
@@ -212,8 +212,9 @@ fn the_ledger_folds_the_steps_generation_declines_over_the_allowance_and_makes_i
         }
         .to_bytes()
     );
-    // Asked once, confirmed once, and asked to close it when the run ended. The
-    // closing is not this task's: the reservation stays open and counts in full.
+    // Asked once, confirmed once, and asked to close it when the run ended. This
+    // test's ledger leaves it open, as that of a run that still executes
+    // (`Counted::left_open`): it counts in full.
     assert_eq!(
         (ledger.asked(), ledger.confirmed(), ledger.settled()),
         (1, 1, 1)
@@ -287,16 +288,20 @@ fn a_store_with_no_allowance_admits_a_call_of_nothing_and_refuses_one_over_nothi
     assert_eq!((world.ran(), ledger.asked()), (0, 2));
 
     // A call of nothing is admitted there, reserves nothing under a hold of nothing,
-    // and runs.
+    // and runs; its end closes its reservation, which takes its first place and the
+    // epoch's next turn.
     let free = painting(&world, 0, ledger.clone());
     let finished = ran(free.request(&asked("order-1")));
     let one = finished.run();
     assert_eq!(
         spend_names(&world.store),
         [
+            format!("spend/closed/{one}/released"),
             format!("spend/held/0/{one}/0"),
+            format!("spend/place/{one}/1"),
             format!("spend/reservations/{one}"),
             "spend/turn/0/1".to_owned(),
+            "spend/turn/0/2".to_owned(),
         ]
     );
     assert_eq!(world.ran(), 1);
@@ -383,7 +388,8 @@ fn a_nested_call_asks_the_ledger_nothing() {
     let finished = engine.submit(&Call::new("outer")).unwrap();
     assert_eq!(world.ran(), 3);
     // Asked once, for the run nothing called; and one reservation, one hold and one
-    // turn, of that run. The two runs it called have no name under `spend/`.
+    // turn, of that run, with the closing its end made. The two runs it called have
+    // no name under `spend/`, and nothing was asked at their ends.
     assert_eq!(
         (ledger.asked(), ledger.confirmed(), ledger.settled()),
         (1, 1, 1)
@@ -392,16 +398,20 @@ fn a_nested_call_asks_the_ledger_nothing() {
     assert_eq!(
         spend_names(&world.store),
         [
+            format!("spend/closed/{root}/released"),
             "spend/epoch/1".to_owned(),
             format!("spend/held/1/{root}/200"),
+            format!("spend/place/{root}/1"),
             format!("spend/reservations/{root}"),
             "spend/reset/1/1000".to_owned(),
             "spend/turn/0/1".to_owned(),
             "spend/turn/1/1".to_owned(),
+            "spend/turn/1/2".to_owned(),
         ]
     );
     assert_eq!(world.store.snapshot().unwrap().runs().len(), 3);
-    assert_eq!(balance(&world.store, 1), (1_000, exactly(200), 800));
+    // Nothing was sent under it: all of it is released.
+    assert_eq!(balance(&world.store, 1), (1_000, exactly(0), 1_000));
 }
 
 #[test]
@@ -444,8 +454,9 @@ fn an_admission_under_a_run_id_the_books_already_name_is_not_made() {
     assert_eq!(world.held().0.1.len(), before + 2);
     assert_eq!(world.store.snapshot().unwrap().runs().len(), 0);
     assert_eq!((world.ran(), reserved(&world.store).len()), (0, 0));
-    // The store goes on: the frozen reservation's one hold states its amount.
-    let again = painting(&world, 250_000, Counted::new());
+    // The store goes on: the frozen reservation's one hold states its amount, and
+    // a call beside it is admitted, with its reservation left open.
+    let again = painting(&world, 250_000, Counted::left_open());
     ran(again.request(&asked("order-1")));
     assert_eq!(
         balance(&world.store, 1),
@@ -458,7 +469,7 @@ fn an_admission_under_a_run_id_the_books_already_name_is_not_made() {
 #[test]
 fn an_epoch_whose_turns_are_not_its_publications_admits_nothing_until_a_reset() {
     let world = World::new("reserve-turns");
-    let ledger = Counted::new();
+    let ledger = Counted::left_open();
     allow(&world.store, 1_000_000);
     let engine = painting(&world, 250_000, ledger.clone());
     ran(engine.request(&asked("order-1")));
@@ -511,7 +522,7 @@ fn a_frozen_reservation_whose_amount_no_name_states_counts_nowhere_and_stops_no_
     // cut down"). It was `..._stops_every_admission_and_a_reset_too`: every call
     // was told that the books need their owner, before a reset and after it.
     let world = World::new("reserve-unknown");
-    let ledger = Counted::new();
+    let ledger = Counted::left_open();
     allow(&world.store, 1_000_000);
     // A name of a run that has no hold: a frozen reservation with no amount.
     plant(
@@ -621,7 +632,7 @@ fn one_record_that_cannot_be_read_freezes_its_own_reservation_and_stops_no_other
     // its names can mean, which is 25 (its amount, the bound of 5, and its amount
     // again for the place its closing took), and that is all it does.
     let world = World::new("reserve-frozen");
-    let ledger = Counted::new();
+    let ledger = Counted::left_open();
     allow(&world.store, 30);
     interrupted_reservation_of_ten(&world.store, b"not a record\n".to_vec());
     let folded = books(&world.store);
@@ -781,7 +792,9 @@ fn an_admission_is_held_to_the_epoch_it_fell_under_when_a_reset_came_before_its_
     });
     assert!(stood);
     assert_eq!(books(&world.store).epoch(), 2);
-    assert_eq!(balance(&world.store, 1), (250_000, exactly(250_000), 0));
+    // Its run has ended since, having sent nothing: its end closed the reservation
+    // and released all of it, in the epoch it fell under.
+    assert_eq!(balance(&world.store, 1), (250_000, exactly(0), 250_000));
     assert_eq!(balance(&world.store, 2), (0, exactly(0), 0));
     assert_eq!(
         books(&world.store).reservation(&made).unwrap().epoch(),
@@ -795,15 +808,16 @@ fn an_admission_is_held_to_the_epoch_it_fell_under_when_a_reset_came_before_its_
         reset_after(store, 1_000_000, 3);
     });
     assert!(!stood);
-    assert_eq!(balance(&world.store, 1), (250_000, exactly(250_001), 0));
+    // The run was ended at once, and its end closed the reservation (task S11):
+    // nothing was sent under it, so all of it is released, in the epoch it fell
+    // under, and what other hands reserved there is all that epoch counts.
+    assert_eq!(balance(&world.store, 1), (250_000, exactly(1), 249_999));
     assert_eq!(balance(&world.store, 2), (1_000_000, exactly(0), 1_000_000));
-    // It is not closed by this task's ledger, whose closing is task S11's: it stays
-    // open and counts in full, in the epoch it fell under, until it is closed.
     let folded = books(&world.store);
     let own = folded.reservation(&made).unwrap();
     assert_eq!(
         (own.state(), own.counts(), own.epoch()),
-        (State::Open, Sum::new(250_000), Some(1))
+        (State::Released, Sum::ZERO, Some(1))
     );
 }
 
@@ -869,7 +883,9 @@ fn an_admission_stands_only_as_the_record_and_one_hold_and_within_its_allowance(
         admitted_elsewhere(store, "9-9", 1, 2);
     });
     assert!(!stood);
-    assert_eq!(balance(&world.store, 1), (250_000, exactly(250_001), 0));
+    // Its own reservation was closed with the end that the answer made, and all of
+    // it released: what other hands reserved is what is counted.
+    assert_eq!(balance(&world.store, 1), (250_000, exactly(1), 249_999));
 
     // A frozen reservation beside it whose one hold states its amount, and that the
     // allowance covers, stops nothing: the admission stands.
@@ -976,7 +992,7 @@ fn two_executors_each_told_yes_for_the_last_of_the_allowance_end_with_one_admitt
     // they are then, and is declined for what is left.
     let world = World::new("reserve-race");
     assert_eq!(allow(&world.store, 400_000), 1);
-    let ledger = Counted::new();
+    let ledger = Counted::left_open();
     let barriers = Barriers::new();
     let held = Held::over(&ledger, &barriers);
     let engines: Vec<Engine> = (0..2)
@@ -1052,7 +1068,7 @@ fn two_executors_that_judge_together_under_an_allowance_that_covers_both_are_bot
     // publications took.
     let world = World::new("reserve-race-both");
     allow(&world.store, 500_000);
-    let ledger = Counted::new();
+    let ledger = Counted::left_open();
     let barriers = Barriers::new();
     let held = Held::over(&ledger, &barriers);
     let engines: Vec<Engine> = (0..2)

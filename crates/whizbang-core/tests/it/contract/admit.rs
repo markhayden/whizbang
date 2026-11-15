@@ -1496,7 +1496,7 @@ fn shop() -> Shop {
     let backends = Priced::new(250_000);
     let config = Arc::new(Config(Mutex::new(Digest::of_bytes(b"config"))));
     real::allow(&store, NO_LIMIT);
-    let ledger = real::Counted::new();
+    let ledger = real::Counted::left_open();
     let mut registry = Registry::new();
     registry.register(retouch(&world.runs)).unwrap();
     let engine = Engine::over(
@@ -2262,8 +2262,9 @@ fn admission_reserves_the_estimate_in_the_step_that_makes_the_run_and_the_ids_re
         ]
     );
     // Generation 3, the admission's, is still on the disk: it holds the run with its
-    // admission alone, and every name but the one the end made, the ending. The real
-    // ledger closes no reservation yet (plan 1B, task S11), so the end made no other.
+    // admission alone, and every name but the one the end made, the ending. This
+    // shop's ledger leaves its reservations open (`Counted::left_open`), so the end
+    // made no other: what the real ledger's closing makes is `spend::close::`.
     let third = std::fs::read(shop.world.root().join("generations").join("3.json")).unwrap();
     let third: serde_json::Value = serde_json::from_slice(&third).unwrap();
     for name in names
@@ -2361,9 +2362,9 @@ fn a_call_the_ledger_declines_is_refused_with_no_run_and_its_id_stays_free() {
     real::allow(&shop.store, 1_200_000);
     let first = ran(shop.engine.request(&request));
     let second = shop.engine.submit(&shop.call(shop.other)).unwrap();
-    // Both runs ended having sent nothing. The real ledger closes no reservation yet
-    // (plan 1B, task S11): each stays open and counts in full, which leaves twenty
-    // cents of the dollar and twenty.
+    // Both reservations are left open (`Counted::left_open`), as those of runs that
+    // still execute: each counts in full, which leaves twenty cents of the dollar
+    // and twenty.
     let refused = shop.engine.submit(&shop.call(shop.photo)).unwrap_err();
     assert_eq!(
         refused.refusal(),
@@ -2501,7 +2502,7 @@ fn two_simultaneous_admissions_cannot_both_take_the_last_of_the_allowance() {
     let world = World::new();
     let store = world.store();
     real::allow(&store, 400_000);
-    let ledger = real::Counted::new();
+    let ledger = real::Counted::left_open();
     let both = Arc::new(Waiting::new(ledger.clone(), 2));
     let engines: Vec<Engine> = (0..2)
         .map(|_| {
@@ -2534,9 +2535,9 @@ fn two_simultaneous_admissions_cannot_both_take_the_last_of_the_allowance() {
     assert_eq!(world.ran(), 1);
     // One run, one id's two records, the ledger's hold and turn and the reservation,
     // beside the three names of the owner's reset: the refused request left no name,
-    // and its id is free. The real ledger closes no reservation yet (plan 1B, task
-    // S11), so the one that was made counts in full when the other request is judged
-    // again, whether or not its run has ended by then.
+    // and its id is free. The ledger here leaves its reservations open
+    // (`Counted::left_open`), so the one that was made counts in full when the other
+    // request is judged again, whether or not its run has ended by then.
     let (_, names, runs) = held(&world.root(), world.fs.clone());
     assert_eq!((names.len(), runs.len()), (8, 1), "{names:?}");
     let taken = made[0].run();
@@ -2557,7 +2558,7 @@ fn a_run_that_is_named_again_has_one_reservation_which_names_its_final_run() {
     let (fs, store) = Taker::store(&root, 3);
     let runs = Arc::new(AtomicU64::new(0));
     real::allow(&store, NO_LIMIT);
-    let ledger = real::Counted::new();
+    let ledger = real::Counted::left_open();
     let engine =
         engine_with(store.clone(), &runs, Priced::new(250_000)).with_ledger(ledger.clone());
     let finished = ran(engine.request(&asked("hello", "order-17")));

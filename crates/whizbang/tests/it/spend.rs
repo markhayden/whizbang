@@ -50,6 +50,16 @@ fn the_help_lists_spend_with_status_and_reset_and_says_what_a_reset_does() {
     let help = text(&out.stdout);
     assert!(help.contains("--run <RUN>"), "{help}");
     assert!(help.contains("Reads only"), "{help}");
+    // A reservation shown as open may be a dead process's, and a reset clears it.
+    let flat = help.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flat.contains(
+            "shown as \"open\" belongs to a run that is still executing, or to a process \
+             that has died"
+        ),
+        "{help}"
+    );
+    assert!(flat.contains("`spend reset` clears it"), "{help}");
 }
 
 #[test]

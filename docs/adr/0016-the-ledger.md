@@ -1288,6 +1288,8 @@ stays open when its run has ended, and when its admission was not confirmed, and
 counts in full: over, and never under
 (`an_admission_is_held_to_the_epoch_it_fell_under_when_a_reset_came_before_its_reading`,
 its last lines). The binary's executor is given the ledger by task W1.
+(Built since, with task S11: "The reservation settled when its run ends". That
+test's last lines now hold that the reservation is closed and released.)
 
 ### The meter (task S5)
 
@@ -1418,7 +1420,81 @@ at the store's generation limit).
 
 **Not here.** The reservation is not closed when its run ends (task S11), and a
 run's record does not list its paid requests (task S10): the meter notes nothing
-in the run's place for facts yet.
+in the run's place for facts yet. (The closing is built since: the next section.)
+
+### The reservation settled when its run ends (task S11)
+
+As the plan has it after the strand was cut down: one pull request, ordinary tests.
+Tests named `spend::close::` are in `crates/whizbang-core/tests/it/spend/close.rs`,
+each through an executor built with the real ledger and the meter.
+
+**`StoreLedger::settle` closes the reservation of a run nothing called, in the
+publication that ends the run** ("The second part, as built", the row on `settle`).
+It reads the names of that one reservation (`spend::Names::of_run`), as the meter
+does, and the content of no other's; it folds nothing. It makes the closing, the
+reservation's next place, and the next turn of each epoch a hold of it names
+("What each publication makes"). What the closing says is what the names say:
+
+| The names of the reservation | The closing | What it counts for afterwards |
+|---|---|---|
+| A set the ledger could have written, with every dispatch settled with its whole chain | `closed/<run>/released` | What its requests were charged, an unresolved one at its bound among them. The rest is free for the next call |
+| The same, charged more than was reserved | `closed/<run>/released` | What it was charged: nothing of it is given back |
+| A dispatch with no settlement: a settlement that could not be published, or a backend's panic, in a run it called | `closed/<run>/held` | The larger of its amount and what is known, as interrupted, until the owner's reset |
+| Not a set the ledger could have written | `closed/<run>/held` | The most its names can mean, as frozen |
+| A closing already names it, or no name under `spend/` names the run | Nothing is made | As before |
+
+- A run that reserved 1,000,000 and was charged 300,000 leaves 700,000: a call of
+  750,000 is then refused with 700,000 left, and one of 500,000 runs. The same of a
+  run that completed, one whose action failed, one whose action panicked and one
+  that was cancelled
+  (`spend::close::a_run_that_reserved_ten_and_spent_three_leaves_seven_for_the_next_call_however_it_ended`).
+- A run that sent nothing releases all of it
+  (`spend::close::a_run_that_spent_nothing_releases_all_of_it`).
+- A request that no answer settled has a durable settlement at its bound, so the
+  closing releases; the bound stays counted, as unresolved
+  (`spend::close::a_run_with_an_unresolved_request_releases_only_what_is_not_unresolved`).
+- A tree charged more than it reserved
+  (`spend::close::a_tree_charged_more_than_was_reserved_is_closed_at_what_it_was_charged`).
+- A child's settlement cannot be published, so the child is abandoned (ADR 0015) and
+  its dispatch has no settlement; its root then ends, and the reservation is closed
+  as interrupted, counted at all that was reserved, with nothing released
+  (`spend::close::a_root_with_a_dispatch_that_has_no_settlement_ends_closed_as_interrupted_with_nothing_released`).
+  This is the case that the row on what the meter owes left untested
+  (`docs/carry-over.md`): the closing is judged by the names, and a child's
+  abandonment marks the child alone.
+- The end of a nested call asks the ledger nothing and closes nothing
+  (`spend::close::a_nested_calls_end_settles_nothing_in_the_ledger`).
+
+**Decided while it was built.**
+
+- **A reservation with no hold takes no turn at its closing,** as at a settlement
+  ("Settlement of each attempt"): since the strand was cut down it counts in no
+  epoch, and the fold owes no turn for it, so a turn taken in the newest epoch would
+  make that epoch need its owner
+  (`spend::close::a_reservation_with_no_hold_is_closed_as_interrupted_and_takes_no_turn`;
+  for a settlement, the unit test
+  `spend::meter::tests::a_reservation_with_no_hold_takes_no_turn_at_settlement`).
+  "In the newest where it has none" ("What each publication makes") is what the
+  model and the test kit's fake still do; no reservation the real ledger makes has
+  no hold.
+- **An admission that is not confirmed is closed by the same call:** the executor
+  ends such a run at once, with `settle` in that publication. Nothing was sent under
+  it, so where its names are whole all of it is released
+  (`spend::reserve::an_admission_is_held_to_the_epoch_it_fell_under_when_a_reset_came_before_its_reading`,
+  its last lines).
+- **The amount the executor passes (`Closing::reserved_micros`) is not read:** the
+  hold's name states the amount, and the closing's sums are the names'.
+- **Tests of an admission that need a reservation to go on counting** leave it open:
+  a run of those tests does nothing and ends at once, and its end now releases all
+  it reserved. `spend::reserve::`, the tests of `admit.rs` and the binary's tests of
+  `spend status` use, where they say so, a ledger that reserves and confirms as the
+  real one does and closes nothing: the books are then those of a run that is still
+  executing, or of one whose process died before its end.
+
+**What it does not close.** A run that is abandoned in a live process has no end
+published, and a run whose process died has none either: each reservation stays
+open and counts in full until the owner's reset ("The strand cut down"). The
+binary's executor has no ledger until task W1.
 
 ### Limits, each stated
 

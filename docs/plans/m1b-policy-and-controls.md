@@ -1819,7 +1819,7 @@ listed at what it was charged, and marked as over.
 is as it was. "Done when" is shorter, and takes one case from S11b, which is cut.
 The text as it stood is in this file at commit a9029d7.
 
-- [ ] The real ledger implements `Ledger::settle` (I2): in the publication that ends a run
+- [x] The real ledger implements `Ledger::settle` (I2): in the publication that ends a run
       nothing called, what the requests of its tree were charged is spent, what is
       unresolved stays counted, and the rest is released; a tree charged more than was
       reserved is closed at what it was charged and releases nothing. A closing that releases needs a
@@ -1837,6 +1837,32 @@ request releases only what is not unresolved; a root with a dispatch that has no
 settlement, as a failed settlement leaves one, ends with the reservation closed as
 interrupted and nothing released; a nested call's end settles nothing in the ledger.
 **Carry-over:** the row on settlement (a run that ends). **Size:** small.
+**As built, 2026-11-15.** The closing is `StoreLedger::settle` in the core (ADR 0016,
+"The reservation settled when its run ends"). Each clause above, and its test in
+`crates/whizbang-core/tests/it/spend/close.rs` (`spend::close::…`), each through an
+executor built with the real ledger and the meter: ten reserved and three spent, over
+the four ways a run ends,
+`a_run_that_reserved_ten_and_spent_three_leaves_seven_for_the_next_call_however_it_ended`;
+nothing spent, `a_run_that_spent_nothing_releases_all_of_it`; an unresolved request,
+`a_run_with_an_unresolved_request_releases_only_what_is_not_unresolved`; a dispatch
+with no settlement, as a child's failed settlement leaves one,
+`a_root_with_a_dispatch_that_has_no_settlement_ends_closed_as_interrupted_with_nothing_released`;
+a nested call's end, `a_nested_calls_end_settles_nothing_in_the_ledger`. Of the box and
+not of "Done when": a tree charged more than was reserved,
+`a_tree_charged_more_than_was_reserved_is_closed_at_what_it_was_charged`; and a
+reservation with no hold, which takes no turn,
+`a_reservation_with_no_hold_is_closed_as_interrupted_and_takes_no_turn`.
+The tests of an admission that need a reservation to go on counting after a run that
+does nothing has ended (`spend::reserve::`, `admit.rs`, the binary's tests of `spend
+status`) leave it open, with a ledger that reserves and confirms as the real one and
+closes nothing; the three that hold what a closing changed say so beside the
+assertion. Carried with this pull request, from the meter's review: a test that the
+meter's refusal is of a kind a request is refused under, and one that a reservation
+with no hold takes no turn at settlement (`spend::meter::tests::`); the threshold of
+`spend::every_generated_history_keeps_every_invariant` that had four reached asks
+only that the case is reached; and the help of `spend status` says what "open" can
+mean (`spend::the_help_lists_spend_with_status_and_reset_and_says_what_a_reset_does`
+in the binary's tests).
 
 ### S11b. Settlement at the end, under a crash and a race
 
