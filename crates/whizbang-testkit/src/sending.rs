@@ -8,7 +8,9 @@ use std::collections::VecDeque;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use whizbang_core::capability::{Bounds, Fault, FaultKind};
-use whizbang_core::egress::{Address, Outgoing, Reply, Sender};
+use whizbang_core::egress::{
+    Address, Classes, Denied, Hop as Asked, HopCheck, Origin, Outgoing, Recipient, Reply, Sender,
+};
 
 /// One request the fake was handed: what would have gone to one address. What `{:?}`
 /// prints is what an [`Outgoing`] prints: no byte of a piece and no credential.
@@ -117,5 +119,104 @@ impl Sender for FakeSender {
                     .unresolved(),
             )
         })
+    }
+}
+
+/// What a fake check was shown of one address, before anything was handed to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Looked {
+    /// The recipient the backend declared.
+    pub recipient: Recipient,
+    /// The origin of the address the request was for.
+    pub origin: Origin,
+    /// The classes of data the request holds.
+    pub needs: Classes,
+    /// How many answers in a row, just before, pointed elsewhere.
+    pub moves: u32,
+    /// How many answers pointed elsewhere, up to now, for this backend of this run.
+    pub total: u32,
+}
+
+/// What a test has a fake check do while it is asked.
+type Hook = Box<dyn Fn() + Send + Sync>;
+
+/// A fake of the check every address goes through before data is handed to it (ADR
+/// 0015): it approves every address, or refuses every one with a sentence, as a test
+/// tells it to, keeps what it was shown each time, and can run a test's hook while it
+/// is asked. It knows no policy and asks none.
+pub struct FakeCheck {
+    refusing: Option<&'static str>,
+    looked: Mutex<Vec<Looked>>,
+    hook: Mutex<Option<Hook>>,
+}
+
+impl FakeCheck {
+    /// A check that approves every address it is shown.
+    pub fn approving() -> FakeCheck {
+        FakeCheck {
+            refusing: None,
+            looked: Mutex::new(Vec::new()),
+            hook: Mutex::new(None),
+        }
+    }
+
+    /// A check that refuses every address it is shown, with this sentence.
+    pub fn refusing(why: &'static str) -> FakeCheck {
+        FakeCheck {
+            refusing: Some(why),
+            ..FakeCheck::approving()
+        }
+    }
+
+    /// Runs this each time the check is asked from here on, after it has kept what it
+    /// was shown and before it answers.
+    pub fn when_asked(&self, hook: impl Fn() + Send + Sync + 'static) {
+        let mut held = self.hook.lock().unwrap_or_else(PoisonError::into_inner);
+        *held = Some(Box::new(hook));
+    }
+
+    /// What it was shown, each time it was asked, in order.
+    pub fn looked(&self) -> Vec<Looked> {
+        let looked = self.looked.lock().unwrap_or_else(PoisonError::into_inner);
+        looked.clone()
+    }
+}
+
+impl std::fmt::Debug for FakeCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let answer = if self.refusing.is_some() {
+            "refusing"
+        } else {
+            "approving"
+        };
+        write!(
+            f,
+            "FakeCheck({answer}, asked {} times)",
+            self.looked().len()
+        )
+    }
+}
+
+impl HopCheck for FakeCheck {
+    fn look(&self, hop: &Asked<'_>) -> Result<(), Denied> {
+        {
+            let mut looked = self.looked.lock().unwrap_or_else(PoisonError::into_inner);
+            looked.push(Looked {
+                recipient: hop.recipient().clone(),
+                origin: hop.origin().clone(),
+                needs: hop.needs(),
+                moves: hop.moves(),
+                total: hop.total_moves(),
+            });
+        }
+        // The hook is run with no lock of the fake held but its own.
+        let hook = self.hook.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(hook) = hook.as_ref() {
+            hook();
+        }
+        match self.refusing {
+            Some(why) => Err(Denied::because(why)),
+            None => Ok(()),
+        }
     }
 }

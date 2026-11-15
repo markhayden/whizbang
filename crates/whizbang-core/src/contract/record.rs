@@ -1000,6 +1000,12 @@ fn paid_wire<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<Pa
 /// The most entries a record lists of where data went.
 pub const EGRESS_LIMIT: usize = 128;
 
+/// The most of those entries that are of a send that was refused: half. The other
+/// half is kept for what was sent, so that refusals cannot use up the room in which
+/// a send is listed (ADR 0015). A refused send that is not listed here is still among
+/// the run's refusals, listed or counted.
+pub const EGRESS_REFUSED_LIMIT: usize = EGRESS_LIMIT / 2;
+
 /// Whether data was handed to a recipient, or the send was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1551,7 +1557,8 @@ impl Facts {
 
     /// Notes where data went. An origin, account and outcome that is already listed
     /// gains the classes of this one, and is not listed twice. False, and nothing is
-    /// noted, when it is new and the record already lists [`EGRESS_LIMIT`].
+    /// noted, when it is new and the record already lists [`EGRESS_LIMIT`], or, for
+    /// a send that was refused, [`EGRESS_REFUSED_LIMIT`] of those.
     pub fn went(&mut self, went: Went) -> bool {
         let same = |other: &&mut Went| {
             (&other.origin, &other.account, other.outcome)
@@ -1562,11 +1569,38 @@ impl Facts {
             listed.classes = both.iter().map(Class::of).collect();
             return true;
         }
-        let room = self.went.len() < EGRESS_LIMIT;
+        let refused = |listed: &&Went| listed.outcome == Handed::Refused;
+        let room = self.went.len() < EGRESS_LIMIT
+            && (went.outcome == Handed::Sent
+                || self.went.iter().filter(refused).count() < EGRESS_REFUSED_LIMIT);
         if room {
             self.went.push(went);
         }
         room
+    }
+
+    /// Sets what is listed as sent to this origin under this account to these
+    /// classes, or takes the entry out when there are none: for a send whose note
+    /// was taken before anything was handed over, and that then said nothing left.
+    pub(super) fn sent_now(
+        &mut self,
+        origin: &str,
+        account: Option<&str>,
+        classes: Option<Classes>,
+    ) {
+        let same = |listed: &Went| {
+            listed.outcome == Handed::Sent
+                && listed.origin == origin
+                && listed.account.as_deref() == account
+        };
+        match classes {
+            None => self.went.retain(|listed| !same(listed)),
+            Some(classes) => {
+                if let Some(listed) = self.went.iter_mut().find(|listed| same(listed)) {
+                    listed.classes = classes.iter().map(Class::of).collect();
+                }
+            }
+        }
     }
 }
 

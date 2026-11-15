@@ -24,6 +24,7 @@ mod redact;
 mod registry;
 mod run;
 mod scope;
+mod send;
 mod started;
 mod text;
 mod watch;

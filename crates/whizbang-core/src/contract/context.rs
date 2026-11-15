@@ -17,6 +17,7 @@ use crate::artifact::Contents;
 use crate::capability::{
     Declaration, FillHandle, Filler, Judge, JudgeHandle, Recorder, SegmentHandle, Segmenter, Tally,
 };
+use crate::egress::{Sender, Ways};
 use crate::store;
 
 use super::nested::Offer;
@@ -305,9 +306,19 @@ pub struct Capabilities {
     judge: Vec<Arc<dyn Judge>>,
     /// The clock the handles hold a deadline to, when it is not the machine's.
     clock: Option<Arc<dyn Clock>>,
+    /// The executor's ways out and the run's place for facts, which each handle's
+    /// checked sender is made of (ADR 0015). Without them a handle sends nothing.
+    ways: Option<(Ways, RunFacts)>,
 }
 
 impl Capabilities {
+    /// The same set, whose handles each hand their backend a sender made of these
+    /// ways for that backend, noting in this place what it hands over and refuses.
+    pub(super) fn sending_through(mut self, ways: Ways, facts: RunFacts) -> Capabilities {
+        self.ways = Some((ways, facts));
+        self
+    }
+
     /// The same set, whose handles hold a run's deadline to this clock: the executor's,
     /// which its admission goes by too.
     pub fn timed_by(mut self, clock: Arc<dyn Clock>) -> Capabilities {
@@ -369,6 +380,7 @@ impl Capabilities {
                 b.declaration()
             }), // The clock the handles hold a deadline to goes with them.
             clock: self.clock.clone(),
+            ways: self.ways.clone(),
         }
     }
 
@@ -413,6 +425,28 @@ impl Capabilities {
                 segment: handles.segment.map(|h| h.timed_by(clock.clone())),
                 fill: handles.fill.map(|h| h.timed_by(clock.clone())),
                 judge: handles.judge.map(|h| h.timed_by(clock.clone())),
+            };
+        }
+        // Each handle hands its backend a sender made for that backend's recipient
+        // (ADR 0015). A context that no executor made has no ways out: its handles
+        // send nothing.
+        if let Some((ways, facts)) = &self.ways {
+            let made = |declaration: &Declaration| -> Arc<dyn Sender> {
+                ways.for_backend(declaration, facts.clone())
+            };
+            handles = Handles {
+                segment: handles.segment.map(|h| {
+                    let sender = made(h.declaration());
+                    h.sending_through(sender)
+                }),
+                fill: handles.fill.map(|h| {
+                    let sender = made(h.declaration());
+                    h.sending_through(sender)
+                }),
+                judge: handles.judge.map(|h| {
+                    let sender = made(h.declaration());
+                    h.sending_through(sender)
+                }),
             };
         }
         handles

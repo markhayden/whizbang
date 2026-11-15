@@ -194,6 +194,54 @@ fn a_refusal_of_a_request_is_in_the_runs_refusals_within_their_bound() {
 }
 
 #[test]
+fn an_origin_that_holds_a_secret_is_not_listed_and_refused_sends_take_half_the_list() {
+    let world = World::new();
+    let host = "keyhost-0123456789abcdef.example.com";
+    let seen: Arc<Mutex<Vec<bool>>> = Arc::default();
+    let notes = {
+        let seen = seen.clone();
+        action("notes", Vec::new(), move |_, context| {
+            let facts = context.facts();
+            // An origin is written whole: one that holds a secret is not taken,
+            // sent or refused.
+            let secret = origin(&format!("https://{host}"));
+            let mut taken = vec![
+                facts.went(&secret, None, prompts(), Handed::Sent),
+                facts.went(&secret, None, prompts(), Handed::Refused),
+            ];
+            // Of 65 refused sends, each to another origin, 64 are taken; one that is
+            // listed already still gains classes; and a send is taken after them.
+            for at in 0..65 {
+                let to = origin(&format!("https://host-{at}.example.org"));
+                taken.push(facts.went(&to, None, prompts(), Handed::Refused));
+            }
+            let first = origin("https://host-0.example.org");
+            taken.push(facts.went(&first, None, Classes::all(), Handed::Refused));
+            taken.push(facts.went(&first, None, prompts(), Handed::Sent));
+            seen.lock().unwrap().extend(taken);
+            Ok(Produced::nothing())
+        })
+    };
+    let executor = engine(
+        &world,
+        roster(None, None, None),
+        Capabilities::none(),
+        vec![notes],
+    )
+    .with_secrets(Secrets::new([host.to_owned()]).unwrap());
+    let finished = executor.submit(&Call::new("notes")).unwrap();
+    let mut expected = vec![false, false];
+    expected.extend([true; 64]);
+    expected.extend([false, true, true]);
+    assert_eq!(*seen.lock().unwrap(), expected);
+    let (record, names) = stored(&world, finished.run());
+    assert_eq!(record.egress().len(), 65);
+    assert_eq!(record.egress()[0].classes(), Classes::all());
+    let written = String::from_utf8(names["record"].clone()).unwrap();
+    assert!(!written.contains("keyhost"), "{written}");
+}
+
+#[test]
 fn an_account_and_a_settings_value_are_redacted_when_they_are_noted() {
     let world = World::new();
     let key = made_up_key("Z");
@@ -300,15 +348,20 @@ fn fills_every_list(requests: usize) -> Arc<dyn whizbang_core::contract::Action>
             }
             let label = "a".repeat(63);
             let host = |at: usize| format!("{label}.{label}.{label}.{at:03}{}", "b".repeat(58));
+            // Half the list is all that refused sends may take, and what was sent
+            // may take all that is left.
             for at in 0..EGRESS_LIMIT {
                 let to = origin(&format!("https://{}:65535", host(at)));
-                assert!(
-                    facts.went(&to, None, Classes::all(), Handed::Refused),
-                    "{at}"
-                );
+                let outcome = if at < EGRESS_LIMIT / 2 {
+                    Handed::Refused
+                } else {
+                    Handed::Sent
+                };
+                assert!(facts.went(&to, None, Classes::all(), outcome), "{at}");
             }
             let more = origin(&format!("https://{}:65535", host(EGRESS_LIMIT)));
             assert!(!facts.went(&more, None, Classes::all(), Handed::Refused));
+            assert!(!facts.went(&more, None, Classes::all(), Handed::Sent));
             Ok(Produced::nothing())
         },
     )

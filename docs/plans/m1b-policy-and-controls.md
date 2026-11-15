@@ -945,7 +945,10 @@ nothing marks a run a dead process left: this task marks it, and corrects the ro
 - [ ] `DispatchPolicy`, in the core: a value the executor holds, asked whether a recipient
       may receive given classes of data, and whether it may be probed. The default
       approves nothing. The gate's place in I3's order is given this policy.
-- [ ] `Sender`, the sending interface of B2, as the executor hands it to a backend: every
+      (Built before I2 to I4b, but for its last sentence: the policy is there, the
+      executor holds it and the checked sender asks it; the gate's place is task I3's,
+      which gives it this policy and ticks this box: `docs/carry-over.md`.)
+- [x] `Sender`, the sending interface of B2, as the executor hands it to a backend: every
       origin it is asked to reach goes through one check before data is handed over, and
       what was handed over is noted in the run's place for facts. The check is E2's and
       E3's; here it is a default that refuses everything, and a fake.
