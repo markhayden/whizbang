@@ -180,7 +180,7 @@ fn a_failed_runs_diagnostics_are_read_after_reopening_and_after_other_runs_are_p
     store.prune().unwrap();
     let generation = store.snapshot().unwrap();
     assert_eq!(
-        store.read(generation.get("spend/1").unwrap()).unwrap(),
+        store.read(generation.get("notes/1").unwrap()).unwrap(),
         LEDGER
     );
     assert_eq!(names(&root, "objects"), digests(&[LEDGER]));
@@ -636,7 +636,7 @@ fn every_path_the_store_creates_is_for_its_owner_only() {
 
     // Staging, while a publication is open: its directory and a payload.
     let mut publication = store.begin().unwrap();
-    publication.put("spend/1", LEDGER).unwrap();
+    publication.put("notes/1", LEDGER).unwrap();
     publication
         .put_in("one", "mask", Kind::Output, MASK)
         .unwrap();

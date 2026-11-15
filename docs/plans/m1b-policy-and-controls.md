@@ -800,7 +800,7 @@ until it passes.
 
 **Second pull request: the interface and the records.**
 
-- [ ] `Ledger::reserve` cannot return without having made its names: what it returns can
+- [x] `Ledger::reserve` cannot return without having made its names: what it returns can
       only be had from `Step::make`. `Ledger::settle`, called inside the publication
       that ends a run nothing called; a failure of it is a failure of that publication.
       **`Ledger::confirm`, and the confirmation in `Engine::admit`:** once an
@@ -811,7 +811,7 @@ until it passes.
       tree's tally made. One that does not stand is ended at once by the publication
       that ends a run, with its reservation closed in it and, for a request with an
       id, its ending made; its caller is refused with a reason of its own.
-- [ ] One parser of the ADR's grammar in the core, which every reader of a name under
+- [x] One parser of the ADR's grammar in the core, which every reader of a name under
       `spend/` uses. Reading reservations answers each entry by itself, sound or damaged.
       **The recogniser replays what the ledger checked** (the ADR's table "What the
       ledger can have written", its last row), and **the places of a frozen
@@ -820,7 +820,7 @@ until it passes.
       an epoch count for; and of one run's spend, "unknown, at most" or "unknown" with
       no most. **Every sum is of 128 bits and stops at the largest number,** in the
       fold and in every reading of it, and no name under `spend/` makes a reader fail.
-- [ ] `Allowance` as the ADR has it: debited before a request, given back to, in debt
+- [x] `Allowance` as the ADR has it: debited before a request, given back to, in debt
       where an overrun put it, and a child's remainder handed to its parent when the
       child's end is durable and the parent still executes. **Beside it, what the
       process holds of each tree's reservation, in memory:** its amount and what the
@@ -829,8 +829,8 @@ until it passes.
       refusals, each its own:** the run's allowance, the reservation by its names, a
       frozen or closed reservation, an epoch that needs its owner, and the tree as
       the process holds it.
-- [ ] The store's rule for a `put` under `requests/` and `spend/`, as the ADR decides.
-- [ ] The record types, written one way and read strictly, in
+- [x] The store's rule for a `put` under `requests/` and `spend/`, as the ADR decides.
+- [x] The record types, written one way and read strictly, in
       `crates/whizbang-core/src/spend/`, `spend-epoch/1`, a reset's guard, among them;
       the test kit's fake ledger brought in line.
 
@@ -888,6 +888,31 @@ the reason" until it was amended with ADR 0016, 2026-11-14); every test of `admi
 as changed; every claim of the ADR about code names its test (rule 5).
 **Carry-over:** the rows on "never removed" and `put`, and on the ledger (the token, the
 names). **Size:** medium, in two pull requests.
+
+**Reworded with the task** (I2's second pull request, 2026-11-15). Three clauses of
+the "Done when" above are met otherwise than they are worded; ADR 0016, "The second
+part, as built", names the test of every clause.
+
+- "a ledger that returns from `reserve` without making its names does not compile,
+  or is refused, as the ADR says which". The ADR said: does not compile. That is so,
+  by the type `reserve` returns, and the example on `Ledger` shows it; but the fast
+  tests run no examples, so no named test shows it. What a named test shows is the
+  refusal that was built beside it: a ledger that hands back a name it did not make
+  in this attempt is refused
+  (`ledger::a_ledger_that_hands_back_a_name_it_did_not_make_in_this_attempt_is_refused`).
+- "every test of `admit.rs`, `nested.rs` and `commit.rs` passes against the fake as
+  changed". They pass, and these were restated, because what they held is what this
+  task changes: the fake's own names (`spend/fake/<n>`, now a hold and a turn); a
+  reservation that counted for good once it was made (it is closed when its run
+  ends, so a test that needs money still held makes a hold); a damaged reservation
+  that stopped every admission with a failure (it freezes its own); a name that was
+  made and then replaced by `put` (refused); and, in `nested.rs`, a share that never
+  came back (a child's remainder is handed up). No test of `commit.rs` changed.
+- "a reservation whose names the ledger did not check into place is frozen" and "is
+  folded without walking to it" are shown of the reading of one reservation, as the
+  note on the split with S1b above has it; and the confirmation's and the
+  dispatch's cases that need an epoch are shown through the test kit's fake, which
+  judges by the model's fold.
 
 #### The histories the reviews produced
 
@@ -1937,17 +1962,24 @@ a hold let go twice is let go once.
 **Depends on:** M5. **Reads:** rascal `tools/python/src/rascal_tools/installer.py`
 (`remove`) and `crates/rascal-mask/src/install.rs` (`uninstall`).
 
-- [ ] Removal, inside one process: under the directory's lock the model is marked as
+- [x] Removal, inside one process: under the directory's lock the model is marked as
       draining, so new holds are refused and waiting ones cancelled; the holds are waited
       for until a deadline of the injected clock; then the removal goes on (M5c), or it
       answers busy and the mark is taken off. Here "goes on" ends at the decision: the
       pointer is cleared and nothing is deleted yet.
 
 **Done when** these pass, with barriers and the clock moved by hand (rule 6): a removal
-during a held installation refuses a new hold, cancels a waiting one, and goes on when the
-hold is let go; with the hold kept past the deadline the removal answers busy, the mark is
-gone and the next hold is given; a removal of a model that is not installed says so; the
-mark is a record read strictly and bounded (rule 3).
+during a held installation refuses a new hold, and one that was refused and is asked for
+again, as draining, and goes on when the hold is let go; with the hold kept past the
+deadline the removal answers busy, the mark is gone and the next hold is given; a removal
+of a model that is not installed says so; the mark is a record read strictly and bounded
+(rule 3).
+**Reworded with the task** (ADR 0017, "Holds" and "Removal"). The clause said that a
+removal "refuses a new hold, cancels a waiting one". No hold waits: a hold is given or
+refused at once (task M5), because a wait for a hold file under the directory's lock would
+stop every model. What the plan calls a waiting hold is one that was refused and is asked
+for again by its caller, and a removal cancels it by the mark: asked again while the mark
+is set, it is refused as draining. The clause now says what is shown.
 **Size:** small. The waiting requests of the worker's queue are 1C's; here a waiting hold
 stands for one.
 

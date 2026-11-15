@@ -46,7 +46,7 @@ fn with_runs(dir: &Scratch) -> PathBuf {
     let root = dir.path().join("store");
     let store = Store::open(&root, Arc::new(RealFs)).unwrap();
     let mut publication = store.begin().unwrap();
-    publication.put("spend/1", LEDGER).unwrap();
+    publication.put("notes/1", LEDGER).unwrap();
     publication
         .put_in("one", "mask", Kind::Output, MASK)
         .unwrap();
@@ -228,7 +228,7 @@ fn delete_removes_what_only_the_run_referenced_and_keeps_what_another_run_shares
     let exchange = generation.run("failed").unwrap().get("exchange").unwrap();
     assert_eq!(reader.read(exchange).unwrap(), EXCHANGE);
     assert_eq!(
-        reader.read(generation.get("spend/1").unwrap()).unwrap(),
+        reader.read(generation.get("notes/1").unwrap()).unwrap(),
         LEDGER
     );
 }
@@ -644,10 +644,21 @@ fn the_records_of_request_ids_are_left_by_delete_and_prune_and_still_answer() {
             "requests/order-17/ended",
             "requests/order-18/admitted",
             "requests/order-18/ended",
-            "spend/fake/1",
-            "spend/fake/2",
+            // Each run's reservation: its closing, its hold, the place the closing
+            // took and the executor's record; and the four turns the two admissions
+            // and the two closings took.
+            &format!("spend/closed/{}/released", runs[0]),
+            &format!("spend/closed/{}/released", runs[1]),
+            &format!("spend/held/0/{}/0", runs[0]),
+            &format!("spend/held/0/{}/0", runs[1]),
+            &format!("spend/place/{}/1", runs[0]),
+            &format!("spend/place/{}/1", runs[1]),
             &format!("spend/reservations/{}", runs[0]),
             &format!("spend/reservations/{}", runs[1]),
+            "spend/turn/0/1",
+            "spend/turn/0/2",
+            "spend/turn/0/3",
+            "spend/turn/0/4",
         ]
     );
     let reserved = |root: &Path| -> Vec<Reservation> {
@@ -663,7 +674,7 @@ fn the_records_of_request_ids_are_left_by_delete_and_prune_and_still_answer() {
     assert_eq!(pruned.code, Some(0), "{}", pruned.err);
     let listed = whizbang(&["list"], &root);
     assert!(
-        listed.out.contains("names outside runs: 8\nruns: 0\n"),
+        listed.out.contains("names outside runs: 16\nruns: 0\n"),
         "{}",
         listed.out
     );

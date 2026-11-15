@@ -402,6 +402,41 @@ fn each_of_the_three_shapes_of_a_reading_is_answered() {
 }
 
 #[test]
+fn a_frozen_reservation_gives_no_credit_for_a_settlement_however_whole() {
+    // The model's history 15: reserve 10, two requests of 2 settled at 1 and at 2,
+    // closed with everything released; then the reservation's record is damaged. It
+    // released at 3. Frozen, no settlement gives up anything of a bound: it counts
+    // the amount, both bounds, both charges, and the amount once more for the place
+    // its closing took, which is 27.
+    let names = [
+        record(),
+        held(0, 10),
+        place(1),
+        dispatched(1, ROOT, 2),
+        settling(1),
+        settled(1, Stage::Answered, 1),
+        place(2),
+        dispatched(2, ROOT, 2),
+        settling(2),
+        settled(2, Stage::Answered, 2),
+        place(3),
+        closed(true),
+    ];
+    let sound = of(&names);
+    assert!(sound.reachable() && sound.released());
+    assert_eq!(
+        (sound.known(), sound.outstanding()),
+        (Sum::new(3), Sum::ZERO)
+    );
+    let hurt = names.iter().map(|name| (name.clone(), *name == record()));
+    let frozen = Names::of(&run(ROOT), hurt, []);
+    assert_eq!(frozen.frozen(), Some(Counted::Exactly(Sum::new(27))));
+    assert_eq!(frozen.outstanding(), Sum::new(4));
+    // What its whole settlements say is still what a correction cannot go under.
+    assert_eq!((frozen.settled(), frozen.unsettled()), (Sum::new(3), 0));
+}
+
+#[test]
 fn a_correction_is_given_with_what_its_seal_has_to_be_and_whether_it_is_at_its_place() {
     let all = whole();
     let names = of(&all);

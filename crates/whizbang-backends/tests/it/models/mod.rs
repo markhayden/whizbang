@@ -13,6 +13,7 @@ mod installation;
 mod names;
 mod publishing;
 mod refusals;
+mod remove;
 mod staging;
 mod status;
 
