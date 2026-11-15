@@ -99,6 +99,17 @@ fn until(what: &str, done: impl Fn() -> bool) {
     }
 }
 
+/// Opens a barrier when it is dropped: so that a test that fails while something is
+/// stopped there lets it go, and fails with its own assertion and not by waiting
+/// for what is stopped.
+struct OpenedAtTheEnd<'a>(&'a Barriers, &'a str);
+
+impl Drop for OpenedAtTheEnd<'_> {
+    fn drop(&mut self) {
+        self.0.open(self.1);
+    }
+}
+
 /// A part that marks every run the store holds, and makes one name outside runs.
 fn marking(name: &'static str) -> Arc<FakeRecovery> {
     let part = FakeRecovery::new(name);
@@ -579,6 +590,7 @@ fn two_executors_built_at_once_over_one_store_value_are_both_answered_after_one_
         store
     };
     threads::scope(|scope| {
+        let _opened = OpenedAtTheEnd(&barriers, "recovering");
         let first = scope.spawn(|| build(&opening));
         let second = scope.spawn(|| build(&opening));
         // One of them recovers, and is stopped inside its part; the other waits.
@@ -619,6 +631,7 @@ fn whoever_waits_for_a_recovery_that_fails_is_told_what_the_one_who_ran_it_is_to
     let opening = world.open(&Arc::new(ShimFs::new()), with(&[&part]));
     let early = AtomicU64::new(0);
     threads::scope(|scope| {
+        let _opened = OpenedAtTheEnd(&barriers, "recovering");
         let first = scope.spawn(|| opening.writer().map(drop));
         barriers.arrived("recovering", 1);
         let second = scope.spawn(|| {
