@@ -54,6 +54,10 @@ Amended: 2026-11-15, with task S8. Changed under "A part in the admission", "Lim
 the kinds the two parts that refuse are recorded under. And, as the review of task S3
 asked, under "One snapshot of the config": a snapshot prints whether it holds a cap,
 and not the cap.
+Amended: 2026-11-15, after the review of task I3. Changed under "A wrapper around
+each request": a panic of `Open::after` abandons the run; the tests of a judge and a
+segmenter through the places, of a repeat of an abandoned run's request, and of the
+gate's sentence; and why the path without a snapshot is left as it is.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
