@@ -13,6 +13,11 @@ the check's rule for an answer that points elsewhere, which was that nothing is
 followed, and the two tests that held it; and, after the review of task E6, the limits
 of "Nothing but pixels", a folder kept out with a slash at its end, and the most bytes
 of the encoder's one chunk.
+Amended: 2026-11-14, with task E3, its second pull request. Added: "A download and a
+probe". Changed, after the review of the first: one more limit of "Every hop" (a
+backend that sends from several threads at once), and a folder that is nothing but
+slashes is refused where it was kept. ADR 0015 is amended with it (what a check is
+shown, and which count is one request's).
 Spec: section 10, "Egress"
 
 ## Context
@@ -53,7 +58,8 @@ Nothing of it is ported:
 
 ## Decision
 
-The code is `crates/whizbang-core/src/egress/approvals.rs` and `hops.rs`. The tests are
+The code is `crates/whizbang-core/src/egress/approvals.rs`, `hops.rs`, `pixels.rs` and
+`chains.rs`, each named in its section. The tests of the first two sections are
 in `crates/whizbang-core/tests/it/egress/gate.rs`, named below as `gate::…`; each builds
 an executor with the policy a config's text makes, this record's check, and the test
 kit's fake sender. Nothing is sent anywhere.
@@ -214,8 +220,130 @@ Limits of it, each stated:
   with a query straight after its host is refused when it is made.
 - **A request with no answer that points elsewhere has no limit on its sends** but the
   run's own: an upload in many parts is many answered requests.
-- **The probe and the download are not checked here.** They are this task's second
-  pull request.
+- **A request whose backend sends from several threads at once may be followed a few
+  times more.** The count is read before a send and added to after its answer, so
+  sends that are in the air together each see the count as it was: at most one more
+  for each such thread, after which every address of that request is refused.
+- **The probe and the download are not checked here,** but each by a wrapper of its
+  own ("A download and a probe").
+
+### A download and a probe
+
+Task E3, its second pull request. The code is
+`crates/whizbang-core/src/egress/chains.rs`: `CheckedDownloader` and `CheckedProber`.
+The executor and the handles are not changed, and nothing in the build makes either
+yet: there is no network client in 1B. The tests are in
+`crates/whizbang-core/tests/it/egress/chains.rs`, named below as `chains::…`, against
+the test kit's `FakeDownloader` and a fake that probes, `FakeProber`
+(`crates/whizbang-testkit/src/sending.rs`), which is added here and has its own tests
+(`crates/whizbang-testkit/tests/it/sending.rs`, `sending::…`).
+
+`SPEC.md` section 10: "Model downloads and probes are separate, approved traffic and
+carry no user data."
+
+**Each is its interface around another of its kind.** A `Downloader` and a `Prober` are
+one request to one address and follow nothing (ADR 0012). A checked one is handed
+another, asks its questions of the first address, and is the one that goes on to an
+address an answer points to, after asking the same questions of it. So it never
+answers that a request moved, and whoever is handed one in place of a bare client
+needs no change. Neither is handed the bounds of a request, so neither can use the
+count a send has: each counts the answers that point elsewhere within one call, 5 at
+most (`MOVES_LIMIT`, the same number), and starts at nothing for the next call
+(`chains::a_download_pointed_elsewhere_more_often_than_the_limit_is_refused_and_each_download_counts_its_own`,
+`chains::a_probe_pointed_elsewhere_more_often_than_the_limit_is_refused_and_each_probe_counts_its_own`).
+
+**A refusal is a fault in fixed words, `rejected`, and is noted nowhere.** It quotes
+nothing of an address. Neither is made for a run, so there is no record to note it
+in: a download is the installer's, which answers with why a file was refused, and a
+probe is a command's. A refusal before anything was asked of any address states that
+nothing was sent; one that follows an answer that pointed elsewhere states no stage,
+since the address that answered was asked. A signal that is set is looked at before
+each address, and a fault of the client behind comes back as it is
+(`chains::a_cancelled_download_asks_nothing_and_a_fault_of_the_downloader_is_handed_on`,
+`chains::a_probe_that_brings_a_credential_is_refused_and_a_cancelled_one_asks_nothing`).
+
+**A download is held to a list of origins it is handed:** the origins a catalogue's
+entry names for its files. `CheckedDownloader::new(downloader, origins)` takes 16 at
+most (`DOWNLOAD_ORIGINS_LIMIT`; an entry names 8 at most), and one handed none reaches
+none (`chains::a_checked_download_holds_a_bounded_number_of_origins_and_prints_how_many`).
+
+- **A download that is redirected off those origins is refused,** by host, by scheme
+  and by port, and nothing is asked of the address it was pointed to. The request
+  that was made carried the address and nothing else: no header, and a
+  `DownloadRequest` has no place for a body
+  (`chains::a_download_redirected_off_its_catalogues_origins_is_refused_and_its_request_carried_nothing_but_the_address`).
+- **A first address off them is refused too,** and nothing is asked
+  (`chains::a_download_whose_first_address_is_off_its_origins_asks_nothing`).
+- **A download moved to one of them is followed,** asking for as many bytes as the
+  first request, and the sink is handed the file; a sink's no ends it as it ends a
+  bare download
+  (`chains::a_download_moved_to_one_of_its_origins_is_followed_and_handed_whole`).
+- **A credential the request brings goes to the origin it is bound to and no other:**
+  to a second address at that origin, and not to another origin of the list
+  (`chains::a_downloads_credential_goes_to_the_origin_it_is_bound_to_and_no_other`).
+  The checked downloader holds no credential itself.
+- **Bytes and then another address are not followed,** even to an origin of the list:
+  the fault is `malformed` (`chains::bytes_and_then_another_address_are_not_followed`).
+
+**How it fits `Entry::may_download_from`** (ADR 0017). The installer asks that
+question itself of each address a download is moved to, and counts five moves for one
+file; that is what holds a download today, against the fake, and it stays. The
+checked downloader is what the real client of 1C is wrapped in before the installer
+is handed it, made with `Entry::origins`, which is the list `may_download_from`
+answers from: the two ask the same question of the same list. Behind a checked
+downloader the installer is never told that a file moved, so its own check has
+nothing to refuse, and a download off the entry's origins comes to it as a fault,
+`rejected`, which it keeps as a failed download (`FileRefused::Download`) and not as
+`Elsewhere` or `TooManyMoves`. The second hold is deliberate: the installer's stops
+an installer that is handed a bare client, and the wrapper stops a client from being
+asked at all. No test joins an `Entry` to a checked downloader yet, since nothing
+makes one: `docs/carry-over.md`, the row on the real network client.
+
+**A probe is for one recipient, under a policy.** `CheckedProber::new(prober, policy,
+recipient)`, and `with_credential` for each credential it holds, which is refused for
+an origin the recipient does not reach and for a second one of the same origin
+(`chains::a_checked_probe_holds_one_credential_for_each_origin_it_reaches_and_prints_none`).
+It asks, in this order:
+
+1. **The policy approves probing the recipient** (`DispatchPolicy::may_probe`), which
+   is apart from any class of data. So a probe is refused by default: under the
+   policy an executor has until it is given one, and under a config that approves the
+   recipient for all four classes and says nothing of probing. Approved for probing
+   and for no class, it is sent
+   (`chains::a_probe_is_refused_by_default_and_sent_when_approved_and_carries_no_user_data`).
+   The recipient is the approval's only when its origin, its account and its
+   upstreams are the same
+   (`chains::a_probe_is_approved_for_the_recipient_as_it_was_approved_and_for_no_other`).
+2. **The request brings no credential.** One that does is refused, as a send is.
+3. **The address is at the recipient's own origin or one of its upstreams**
+   (`Recipient::reaches`): the first address, and every address an answer points to.
+   A redirect off the recipient, by host, by scheme or by port, is refused and
+   nothing is asked of it
+   (`chains::a_probes_redirect_off_the_recipient_is_refused_and_nothing_is_asked_of_it`).
+
+Then the credential held for the origin of that address is attached, or none: an
+upstream is handed the recipient's own never
+(`chains::a_probes_redirect_within_the_recipient_is_followed_with_the_credential_of_each_origin_or_none`).
+**A probe carries no user data** because a `ProbeRequest` has no place for any (ADR
+0012): what the fake was handed is the address and the credential of its origin, and
+the test holds the whole request to that.
+
+The fake that probes plays a script as the sending fake does, keeps each request with
+its address and the headers it would have carried, follows nothing, and prints no
+credential
+(`sending::the_probing_fake_plays_its_script_and_keeps_each_request_with_its_address_and_headers`,
+`sending::the_probing_fake_past_the_end_of_its_script_fails_and_does_not_panic`,
+`sending::what_is_printed_of_the_probing_fake_and_of_a_probe_holds_no_credential`).
+
+Limits of it, each stated:
+
+- **The rest of an address is not looked at.** A probe's and a download's address is
+  made by trusted code from a config or a catalogue; what its path or its query holds
+  is not searched for a path or a folder kept out, as a send's is.
+- **Nothing gives a checked prober its policy, its recipient or its credentials yet.**
+  The command that probes is 1C's (`docs/carry-over.md`), and takes all three from
+  the snapshot of the config a call is made under.
+- **A probe and a download are in no run's record.**
 
 ### Nothing but pixels
 
@@ -262,7 +390,8 @@ it found (`pixels::every_part_of_a_request_is_looked_at`):
 3. **A part, or the rest of an address, that holds a folder the check was told to keep
    out is refused.** `SendCheck::keeping_out(folder)` is told the root of the
    executor's store, as it is written; at most 8 (`KEPT_OUT_LIMIT`), and a path of
-   nothing is refused. What is printed of a check is how many it keeps out
+   nothing, or of nothing but slashes, is refused: every address holds a slash. What
+   is printed of a check is how many it keeps out
    (`pixels::a_check_keeps_out_a_bounded_number_of_folders_and_prints_none`).
 4. **A part that holds an absolute path is refused:** one of `/Users/`, `/home/`,
    `/tmp/`, `/var/folders/`, `/private/` and `file://`, or a drive, which is one
@@ -326,8 +455,8 @@ Limits of it, each pinned or stated:
   source image from a derived one.
 - **Nothing here reads a config or gives an executor its policy.** That is tasks I6
   and C5, and the binary has no ways out until task W1.
-- **`may_probe` is answered and nothing asks it yet.** The checked probe and the
-  checked download are task E3's.
+- **`may_probe` is asked by the checked probe, and nothing in the build makes one
+  yet** ("A download and a probe").
 
 ### For later tasks
 
@@ -344,12 +473,16 @@ Limits of it, each pinned or stated:
   as an absolute path, and its canonical spelling too when that differs. A relative
   root such as `.` refuses any part that holds a dot. A root that holds a space or a
   backslash can never be found in an address. Slashes at the end of the root are left
-  off, so the folder is found where it is written bare
+  off, so the folder is found where it is written bare, and a root that is nothing
+  but slashes is refused (`NotAllowed::Empty`), not kept
   (`pixels::a_body_that_holds_an_absolute_path_or_the_stores_root_is_refused_by_the_sending_interface`).
   The list of path starts is not applied to an address: a home path in a query is
   sent.
 - **A real sender (1C).** It puts the pieces of a request into a wire format itself.
   A picture piece is already a whole PNG file.
+- **A real download client and a real prober (1C).** Each is wrapped before anything
+  is handed it: `CheckedDownloader::new(client, entry.origins())` for each entry, and
+  `CheckedProber::new(client, policy, recipient)` for each recipient probed.
 
 ## Consequences
 
@@ -357,6 +490,9 @@ Limits of it, each pinned or stated:
   sends to a recipient the config approves for what the request holds, at its own
   origin and its upstreams, through five answers that point elsewhere at most,
   and nothing else.
+- A download client and a prober are wrapped, not trusted: a model's file comes only
+  from the origins its entry names, and a probe goes only to a recipient the config
+  approves for probing.
 - A config's `account` and `upstreams` are part of what is approved. Changing either in
   the file and not in the backend, or the other way, approves nothing.
 - Reversing this costs the tasks that make a snapshot of a config (C5) and the rest of
@@ -396,3 +532,8 @@ Limits of it, each pinned or stated:
 - **The checked sender follows an answer itself, and counts as it goes.** Turned down
   by ADR 0012 and ADR 0015: a hop that is not a new request is not asked the
   executor's questions where a test can see it.
+- **A checked download and a checked probe that follow nothing,** and hand the
+  address back as the bare interface does. Turned down: with no bounds to count in,
+  a count of moves would have to be kept between calls, for a chain nothing marks
+  the start or the end of. The questions are asked of each address inside the one
+  call, where the fake behind shows what was asked of whom.

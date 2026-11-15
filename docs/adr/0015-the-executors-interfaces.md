@@ -34,6 +34,10 @@ Amended: 2026-11-14, after the review of task I6, before it merged. Changed unde
 snapshot of the config": the bound is on what snapshots add; a conflict is never
 answered with an id that holds a secret, in place of a refusal that took no second
 look; two limits on a secret a later snapshot brings; the digest and a rotated key.
+Amended: 2026-11-14, with task E3, its second pull request, as the review of the first
+asked. Changed under "A policy before a send, and a checked send": what a check is
+shown (`Hop::pieces`, `Hop::request_moves`), and that a third count is one request's;
+and under "Consequences", the one line in each handle that the egress strand edited.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -331,9 +335,11 @@ The first that says no is the answer, and the sender behind is handed nothing:
    source image from a derived one, so a piece that states no class needs all four
    approved (`send::a_piece_with_no_class_needs_every_class_approved`).
 5. **The check approves the address** (`HopCheck::look`). It is shown a `Hop`: the
-   recipient, the address, the classes, the policy, and how many answers in a row
-   just before pointed elsewhere (`Hop::moves`), which is what a limit on a chain of
-   redirects is held with. The default, `NoHop`, approves no address
+   recipient, the address, the classes, the policy, how many answers in a row just
+   before pointed elsewhere (`Hop::moves`), the pieces the request holds
+   (`Hop::pieces`) and how many answers pointed this one request elsewhere
+   (`Hop::request_moves`), which is what a limit on a chain of redirects is held with
+   (ADR 0019, "Every hop"). The default, `NoHop`, approves no address
    (`send::a_sender_with_the_default_check_hands_nothing_to_any_origin`); a check that
    approves is shown each origin before the sender behind is handed its request
    (`send::a_check_that_approves_sees_each_origin_before_the_sending_fake_does`).
@@ -440,7 +446,9 @@ following an answer that points elsewhere 8 times at most.
   failed sets neither back
   (`send::a_refusal_between_two_hops_does_not_set_the_moves_back_and_the_total_never_goes_back`).
   Both are counted for one backend of one run, not for one request: a run that sends
-  through one handle from two threads at once has one count for both.
+  through one handle from two threads at once has one count for both. A third count
+  is one request's (`Hop::request_moves`, ADR 0019), kept in the bounds that request
+  was handed.
 - **A send to an origin that holds a secret of a later config is refused only once
   the executor knows that secret.** A run's place for facts is made with every secret
   the executor knew when the run was admitted, those of each snapshot it had taken
@@ -717,7 +725,8 @@ hook while it is asked.
 - A strand adds a refusal at admission without editing the executor: tasks S3 and S8.
 - `Bounds` hands a backend its sender, and `Engine` holds the ways out. The egress
   strand implements `HopCheck` and builds a `DispatchPolicy` from a config, and edits
-  neither the executor nor a handle. Nothing stored changes.
+  neither the executor nor a handle, but for the one line in each handle that hands a
+  request its bounds (ADR 0019). Nothing stored changes.
 - `ConfigSource` has one method, `snapshot`, in place of `digest`: a source written
   against ADR 0007 changes by that method. `CallError` has one more kind, `Config`.
   `Kind::declare` is `Kind::make`. Nothing stored changes: no record, no fingerprint,

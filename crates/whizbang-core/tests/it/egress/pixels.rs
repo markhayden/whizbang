@@ -362,8 +362,8 @@ fn an_image_file_that_the_encoder_did_not_write_is_refused() {
     let ours = ours.bytes().to_vec();
     // A picture of one colour as another encoder writes it: compressed, where the
     // encoder here stores. (Pixels that do not compress, the `image` library at the
-    // pinned version stores too, and other encoders may: some other encoders store
-    // too, and their file is then the very bytes the encoder here writes.)
+    // pinned version stores too, and other encoders may; their file is then the very
+    // bytes the encoder here writes.)
     let flat = picture_of(32, 32, vec![90; 32 * 32 * 4]);
     let stored = Piece::picture(DataClass::SourceImages, &flat).unwrap();
     let mut compressed = Vec::new();
@@ -656,12 +656,15 @@ fn a_body_that_holds_an_absolute_path_or_the_stores_root_is_refused_by_the_sendi
             assert_eq!(sender.requests(), 0);
         }
     }
-    // A folder that is one slash is kept as it is, and is not a path of nothing.
-    assert!(SendCheck::new().keeping_out(Path::new("/")).is_ok());
-    assert_eq!(
-        SendCheck::new().keeping_out(Path::new("")).map(|_| ()),
-        Err(NotAllowed::Empty)
-    );
+    // A folder that is nothing but slashes names every path, and would refuse every
+    // address: it is refused as a path of nothing is.
+    for nothing in ["", "/", "//", "\\", "/\\/"] {
+        assert_eq!(
+            SendCheck::new().keeping_out(Path::new(nothing)).map(|_| ()),
+            Err(NotAllowed::Empty),
+            "{nothing:?}"
+        );
+    }
     // The same parts with a check that was told of no folder: sent.
     let ran = run_one(
         posting(vec![words(
