@@ -86,6 +86,30 @@ impl World {
     }
 }
 
+/// Waits until `done` says so, for ten seconds at most: a test that would wait longer
+/// fails here, with what it waited for, and not at the runner's limit.
+fn until(what: &str, done: impl Fn() -> bool) {
+    let limit = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !done() {
+        assert!(
+            std::time::Instant::now() < limit,
+            "nothing came of waiting for {what}"
+        );
+        std::thread::yield_now();
+    }
+}
+
+/// Opens a barrier when it is dropped: so that a test that fails while something is
+/// stopped there lets it go, and fails with its own assertion and not by waiting
+/// for what is stopped.
+struct OpenedAtTheEnd<'a>(&'a Barriers, &'a str);
+
+impl Drop for OpenedAtTheEnd<'_> {
+    fn drop(&mut self) {
+        self.0.open(self.1);
+    }
+}
+
 /// A part that marks every run the store holds, and makes one name outside runs.
 fn marking(name: &'static str) -> Arc<FakeRecovery> {
     let part = FakeRecovery::new(name);
@@ -566,19 +590,23 @@ fn two_executors_built_at_once_over_one_store_value_are_both_answered_after_one_
         store
     };
     threads::scope(|scope| {
+        let _opened = OpenedAtTheEnd(&barriers, "recovering");
         let first = scope.spawn(|| build(&opening));
         let second = scope.spawn(|| build(&opening));
         // One of them recovers, and is stopped inside its part; the other waits.
         barriers.arrived("recovering", 1);
-        while opening.waiting() < 1 {
-            std::thread::yield_now();
-        }
+        let asked =
+            |waiting: usize| opening.waiting() >= waiting || answered.load(Ordering::SeqCst) > 0;
+        until("the second to ask", || asked(1));
+        assert_eq!(
+            answered.load(Ordering::SeqCst),
+            0,
+            "answered while it recovers"
+        );
         assert_eq!(format!("{opening:?}"), "Opening(\"initializing\")");
         // A third, built while the recovery runs, waits too.
         let third = scope.spawn(|| build(&opening.clone()));
-        while opening.waiting() < 2 {
-            std::thread::yield_now();
-        }
+        until("the third to ask", || asked(2));
         // Nobody was answered, and nothing is published yet.
         assert_eq!(answered.load(Ordering::SeqCst), 0);
         assert_eq!(world.held().0, 2);
@@ -601,13 +629,26 @@ fn whoever_waits_for_a_recovery_that_fails_is_told_what_the_one_who_ran_it_is_to
     part.stop_at(&barriers, "recovering");
     part.fail("it would not");
     let opening = world.open(&Arc::new(ShimFs::new()), with(&[&part]));
+    let early = AtomicU64::new(0);
     threads::scope(|scope| {
+        let _opened = OpenedAtTheEnd(&barriers, "recovering");
         let first = scope.spawn(|| opening.writer().map(drop));
         barriers.arrived("recovering", 1);
-        let second = scope.spawn(|| opening.remover().map(drop));
-        while opening.waiting() < 1 {
-            std::thread::yield_now();
-        }
+        let second = scope.spawn(|| {
+            let answered = opening.remover().map(drop);
+            early.fetch_add(1, Ordering::SeqCst);
+            answered
+        });
+        until("the second to ask", || {
+            opening.waiting() >= 1 || early.load(Ordering::SeqCst) > 0
+        });
+        // Whoever asks while the recovery runs is not answered until it is over:
+        // not with a writer, and not with a failure either.
+        assert_eq!(
+            early.load(Ordering::SeqCst),
+            0,
+            "answered while it recovers"
+        );
         barriers.open("recovering");
         let (first, second) = (first.join().unwrap(), second.join().unwrap());
         assert_eq!(first, second);
@@ -681,4 +722,99 @@ fn with_the_limit_set_low_a_recovery_that_cannot_be_published_leaves_deleting_an
     assert!(names.get("recovered/one").is_some());
     assert!(names.run(LEFT[1]).unwrap().get("marked-by-one").is_some());
     assert_eq!(part.asked(), 2);
+}
+
+// --- a crash inside a recovery -----------------------------------------------------------------
+
+/// Power is lost before each step of a recovery by two parts, with every way the test
+/// kit's disk can lose what was not yet durable. What the next open finds is the
+/// store as it was left, or with all of both parts' records: never a part of them.
+/// That open recovers, and another after it, and the store then holds each record
+/// once and whole (rule 2). `part` of `of` takes every `of`-th step.
+fn crashes_inside_a_recovery(part: usize, of: usize) {
+    use whizbang_testkit::fs_shim::Lost;
+    let (opened, steps, last_sync) = events_of_a_recovery();
+    let (mut none, mut all, mut crashes) = (0, 0, 0);
+    for step in (0..=steps).filter(|step| step % of == part) {
+        let mut ways = vec![Lost::Unsynced, Lost::ContentOnly, Lost::Subset(0)];
+        let mut next = 0;
+        while next < ways.len() {
+            let lost = ways[next];
+            next += 1;
+            crashes += 1;
+            let at = format!("step {step}, {lost:?}");
+            let world = World::left();
+            let (one, two) = (marking("one"), marking("two"));
+            let fs = Arc::new(ShimFs::new().crash_before(opened + step, lost));
+            let opening = world.open(&fs, with(&[&one, &two]));
+            let answered = opening.writer().map(drop);
+            // Nobody is told the store is ready unless the recovery was confirmed.
+            assert_eq!(answered.is_ok(), step > last_sync, "{at}: {answered:?}");
+            if lost == Lost::Subset(0) {
+                let (dirs, names) = (fs.crash_choices(), fs.crash_names());
+                assert!(dirs <= 10 && names <= 10, "{at}: {dirs} {names}");
+                ways.extend((1..1u64 << dirs).map(Lost::Subset));
+                ways.extend((0..1u64 << names).map(Lost::Names));
+            }
+            drop(opening);
+            // What the crash left is whole: none of the records, or all of them.
+            let (number, names, runs) = world.held();
+            if number == 2 {
+                assert_eq!((names, runs), not_recovered(), "{at}");
+                assert!(
+                    step <= last_sync,
+                    "{at}: a recovery that was confirmed is there"
+                );
+                none += 1;
+            } else {
+                assert_eq!(
+                    (number, names, runs),
+                    (3, recovered_by_two().0, recovered_by_two().1),
+                    "{at}"
+                );
+                all += 1;
+            }
+            // The next open recovers what is not, and another after it adds nothing.
+            for again in 0..2 {
+                let fs = Arc::new(ShimFs::new());
+                let next = world.open(&fs, with(&[&one, &two]));
+                let opened = fs.events().len();
+                next.writer().unwrap();
+                assert_eq!(
+                    world.held(),
+                    (3, recovered_by_two().0, recovered_by_two().1),
+                    "{at}, open {again}"
+                );
+                let published = published_something(&fs.events()[opened..]);
+                assert!(again == 0 || !published, "{at}: published twice");
+            }
+        }
+    }
+    assert!(none > 0 || part != 0, "{none} {all}");
+    assert!(crashes > 20, "{crashes}");
+    let _ = all;
+}
+
+#[test]
+fn a_crash_at_any_event_of_a_recovery_followed_by_another_open_leaves_the_parts_records_once_and_whole_part_1_of_4()
+ {
+    crashes_inside_a_recovery(0, 4);
+}
+
+#[test]
+fn a_crash_at_any_event_of_a_recovery_followed_by_another_open_leaves_the_parts_records_once_and_whole_part_2_of_4()
+ {
+    crashes_inside_a_recovery(1, 4);
+}
+
+#[test]
+fn a_crash_at_any_event_of_a_recovery_followed_by_another_open_leaves_the_parts_records_once_and_whole_part_3_of_4()
+ {
+    crashes_inside_a_recovery(2, 4);
+}
+
+#[test]
+fn a_crash_at_any_event_of_a_recovery_followed_by_another_open_leaves_the_parts_records_once_and_whole_part_4_of_4()
+ {
+    crashes_inside_a_recovery(3, 4);
 }

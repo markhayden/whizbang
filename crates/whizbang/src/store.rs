@@ -3,15 +3,21 @@
 //! One rule for all four: the store must be there. None of them makes a store at a path
 //! with nothing at it or completes one in an empty directory, except `import --create`,
 //! which says so when it has (the module `import` says what it makes). The three that
-//! write take the writer lock and are refused while another process holds it.
+//! write take the writer lock and are refused while another process holds it. Each of
+//! the three opens the store through the one entry point (`wiring::opening`), so the
+//! store is recovered before the command changes anything; where the recovery fails
+//! the command is refused with the reason, and where it could not be published at the
+//! limit on a generation file, `delete` and `prune` still work and `import` is refused.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{Args, Subcommand};
+use whizbang::wiring::{self, Make};
+use whizbang_core::contract::{Recovery, Remover};
 use whizbang_core::store::fs::RealFs;
-use whizbang_core::store::{Kind, Pruned, Reader, Store};
+use whizbang_core::store::{Kind, Pruned, Reader};
 
 #[derive(Args)]
 pub struct Where {
@@ -24,6 +30,14 @@ impl Where {
     /// The store's directory.
     pub fn root(&self) -> &Path {
         &self.store
+    }
+
+    /// The store at this directory.
+    #[cfg(test)]
+    pub fn at(store: &Path) -> Where {
+        Where {
+            store: store.to_path_buf(),
+        }
     }
 }
 
@@ -72,12 +86,20 @@ pub enum Command {
 
 /// Runs a store command: what to print on success, or the complaint.
 pub fn run(command: &Command) -> Result<String, String> {
+    run_with(command, wiring::recovery())
+}
+
+/// The same, with a store that is opened to write recovered by this.
+pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String> {
     match command {
         Command::List { at } => list(&at.store),
-        Command::Delete { at, runs } => delete(&at.store, runs),
-        Command::Import { file, at, create } => crate::import::import(file, &at.store, *create),
+        Command::Delete { at, runs } => delete(&at.store, runs, recovery),
+        Command::Import { file, at, create } => {
+            crate::import::import(file, &at.store, *create, recovery)
+        }
         Command::Prune { at } => {
-            let pruned = writer(&at.store)?.prune().map_err(|e| e.to_string())?;
+            let pruned = remover(&at.store, recovery)?;
+            let pruned = pruned.prune().map_err(|e| e.to_string())?;
             Ok(report(&pruned))
         }
     }
@@ -115,8 +137,8 @@ fn list(root: &Path) -> Result<String, String> {
     Ok(text)
 }
 
-fn delete(root: &Path, runs: &[String]) -> Result<String, String> {
-    let store = writer(root)?;
+fn delete(root: &Path, runs: &[String], recovery: Recovery) -> Result<String, String> {
+    let store = remover(root, recovery)?;
     // Each run is found as `runs show` finds it, by the same function: by its id, or
     // as `runs list` prints it when that is no run's id. One that could mean two runs
     // is refused, and then none is deleted. A run named twice is one run.
@@ -140,10 +162,14 @@ fn delete(root: &Path, runs: &[String]) -> Result<String, String> {
     Ok(text)
 }
 
-/// Opens the store to write. A command that removes things makes no store where there
-/// is none, and completes none.
-fn writer(root: &Path) -> Result<Store, String> {
-    Store::open_existing(root, Arc::new(RealFs)).map_err(|e| e.to_string())
+/// Opens the store to write, for deleting and pruning: after its recovery, or, where
+/// the recovery could not be published at the limit on a generation file, without it,
+/// since these two make the file smaller. A command that removes things makes no
+/// store where there is none, and completes none.
+fn remover(root: &Path, recovery: Recovery) -> Result<Remover, String> {
+    let opening = wiring::opening(root, Make::Nothing, recovery)
+        .map_err(|error| wiring::not_opened(&error))?;
+    opening.remover().map_err(|why| why.to_string())
 }
 
 fn report(pruned: &Pruned) -> String {
