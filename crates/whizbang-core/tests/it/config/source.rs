@@ -19,14 +19,15 @@ use whizbang_core::contract::record::{ArgumentValue, Handed, RunRecord};
 use whizbang_core::contract::{
     Action, ActionDescriptor, AdmissionPart, Answer, Argument, Asking, Call, CallError, Capability,
     ConfigSource, Context, Engine, Estimate, Executor, Failure, Finished, Kind, Made,
-    ModelIdentity, NoBackends, Outcome, PartDeclined, PartRefusal, PartStep, PreparedCall,
-    Produced, Readiness, Refusal, RefusalKind, Registry, Request, Requirement, SECRETS_KEPT_LIMIT,
-    Secrets, SourceRefused, Stale, Value, ValueType,
+    ModelIdentity, NoBackends, Outcome, PartDeclined, PartStep, PreparedCall, Produced, Readiness,
+    Refusal, RefusalKind, Registry, Request, Requirement, SECRETS_KEPT_LIMIT, Secrets,
+    SourceRefused, Stale, Value, ValueType,
 };
 use whizbang_core::egress::{
     Classes, DataClass, DispatchPolicy, Origin, Piece, Recipient, Reply, Ways,
 };
 use whizbang_core::identity::{CanonicalPixels, Digest};
+use whizbang_core::spend::{CallCap, OVER_THE_CAP};
 use whizbang_core::store::{Reader, Store};
 use whizbang_testkit::capabilities::{FakeFiller, Paint};
 use whizbang_testkit::fs_shim::ShimFs;
@@ -899,30 +900,18 @@ fn a_source_prints_no_path_and_no_key() {
 
 // --- what the snapshot carries (task C5) ---------------------------------------------------------
 
-/// What stands in for the part that holds a call to the cap of one call (task S3,
-/// which is not built): it refuses a call whose estimate is over the cap of the
-/// snapshot it is shown, and keeps each cap it was shown.
+/// A part that refuses nothing and keeps the cap of each snapshot it was shown.
 #[derive(Default)]
-struct HoldsToCap(Mutex<Vec<Option<Estimate>>>);
+struct ShownCaps(Mutex<Vec<Option<Estimate>>>);
 
-impl AdmissionPart for HoldsToCap {
+impl AdmissionPart for ShownCaps {
     fn name(&self) -> &'static str {
-        "stand-in-cap"
+        "shown-caps"
     }
 
     fn look(&self, asking: &Asking<'_>, _: &mut PartStep<'_, '_>) -> Result<(), PartDeclined> {
-        let cap = asking.snapshot().cap();
-        self.0.lock().unwrap().push(cap);
-        match cap {
-            Some(cap) if asking.prepared().estimate().micros() > cap.micros() => {
-                let refusal = PartRefusal::new(
-                    RefusalKind::OverAllowance,
-                    "the call's estimate is over the cap of one call",
-                );
-                Err(refusal.unwrap().into())
-            }
-            _ => Ok(()),
-        }
+        self.0.lock().unwrap().push(asking.snapshot().cap());
+        Ok(())
     }
 }
 
@@ -953,11 +942,16 @@ fn a_cap_lowered_in_the_config_is_the_cap_the_next_admission_is_held_to_on_one_e
         &config("[spend]\ncall_cap_usd = 2\n"),
         Some(&format!("FILL_KEY={key}\n")),
     );
-    let part = Arc::new(HoldsToCap::default());
+    // The part that holds a call to the cap (task S3), after one that keeps what each
+    // admission was shown.
+    let part = Arc::new(ShownCaps::default());
     // `holds` needs a filler and asks it nothing.
     let needs = vec![Requirement::new(Capability::Fill)];
     let holds = action("holds", needs, |_, _| Ok(Produced::nothing()));
-    let executor = world.executor(vec![holds]).with_part(part.clone());
+    let executor = world.executor(vec![holds]);
+    let executor = executor
+        .with_part(part.clone())
+        .with_part(Arc::new(CallCap));
     let call = Call::new("holds");
     assert_eq!(
         executor.prepare(&call).unwrap().estimate(),
@@ -979,9 +973,9 @@ fn a_cap_lowered_in_the_config_is_the_cap_the_next_admission_is_held_to_on_one_e
         refused,
         CallError::Refused(Refusal::ByPart {
             action: "holds".to_owned(),
-            part: "stand-in-cap",
+            part: "cap",
             kind: RefusalKind::OverAllowance,
-            why: "the call's estimate is over the cap of one call".to_owned(),
+            why: OVER_THE_CAP.to_owned(),
         })
     );
     assert_eq!(world.runs(), 1);

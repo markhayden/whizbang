@@ -3,9 +3,11 @@
 //! module here; the names, the records and the reading of one reservation are task
 //! I2's (ADR 0016).
 
+mod cap;
 mod name;
 mod reading;
 mod record;
+mod support;
 
 use std::num::NonZeroU64;
 
