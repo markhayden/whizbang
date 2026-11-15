@@ -16,10 +16,10 @@ use whizbang_core::capability::{FaultKind, FillRequest, Picture, Support};
 use whizbang_core::contract::record::{DIAGNOSTICS_PREFIX, JOURNAL_NAME, Status};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Answer, Backends, Call, CallError, Cancel, Cancellation,
-    Capabilities, Capability, Clock, Context, Declined, Ending, Engine, Executor, Failure,
-    Finished, InputPort, Kind, Ledger, MadeName, NoBackends, Outcome, Produced, Refusal, Registry,
-    Request, RequestId, Reservation, RunId, RunState, Step, StoreFailure, Value, Watched,
-    read_journal,
+    Capabilities, Capability, Clock, Closing, Context, Declined, Ending, Engine, Executor, Failure,
+    Finished, InputPort, Kind, Ledger, MadeName, NoBackends, NotJudged, Outcome, Produced, Refusal,
+    Registry, Request, RequestId, Reread, Reservation, RunId, RunState, Settled, Step,
+    StoreFailure, Value, Watched, read_journal,
 };
 use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::store::fs::{Fs, RealFs};
@@ -1250,6 +1250,14 @@ where
         step: &mut Step<'_, '_>,
     ) -> Result<MadeName, Declined> {
         (self.0)(reservation, step)
+    }
+    // It keeps no books of names: every admission stands, and it closes nothing.
+    fn confirm(&self, _: &Reservation, _: &Reread<'_>) -> Result<bool, NotJudged> {
+        Ok(true)
+    }
+
+    fn settle(&self, _: &Closing<'_>, _: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
+        Ok(Settled::Nothing)
     }
 }
 
