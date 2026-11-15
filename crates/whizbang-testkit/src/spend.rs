@@ -111,6 +111,10 @@ pub enum Name {
     /// `spend/stray/<run>/<n>`: stands for any name under `spend/` that names this
     /// run where a reservation's run is named and is of none of the forms above.
     Stray { run: Run, count: u64 },
+    /// `spend/unplaced/<n>`: stands for any text under `spend/` that is of no form
+    /// and begins as no name of a reservation or of an epoch does. It belongs to
+    /// nothing: the fold counts how many there are, and no balance changes.
+    Unplaced { count: u64 },
 }
 
 impl Name {
@@ -118,6 +122,7 @@ impl Name {
     pub fn of(&self) -> Option<Run> {
         match self {
             Name::Reset { .. } | Name::Epoch(_) | Name::Turn { .. } => None,
+            Name::Unplaced { .. } => None,
             Name::Reservation(run) => Some(*run),
             Name::Closed { run, .. }
             | Name::Held { run, .. }
@@ -220,6 +225,9 @@ impl Name {
                 run: run(id)?,
                 count: from_one(count)?,
             },
+            ["unplaced", count] => Name::Unplaced {
+                count: from_one(count)?,
+            },
             _ => return None,
         })
     }
@@ -262,6 +270,7 @@ impl fmt::Display for Name {
                 "spend/adjusted/{run}/{place}/{turn}/{seal:016x}/{micros}"
             ),
             Name::Stray { run, count } => write!(f, "spend/stray/{run}/{count}"),
+            Name::Unplaced { count } => write!(f, "spend/unplaced/{count}"),
         }
     }
 }
@@ -452,6 +461,9 @@ pub struct Folded {
     /// The turns taken in each epoch, and how many its publications account for.
     pub turns: BTreeMap<u64, BTreeSet<u64>>,
     pub due: BTreeMap<u64, u64>,
+    /// How many names are of no form and belong to no reservation and to no epoch:
+    /// they change no balance, and the fold says that they are there.
+    pub unplaced: u64,
 }
 
 impl Folded {
@@ -762,6 +774,10 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
                 folded.turns.entry(*epoch).or_default().insert(*turn);
                 continue;
             }
+            Name::Unplaced { .. } => {
+                folded.unplaced = folded.unplaced.saturating_add(1);
+                continue;
+            }
             _ => {}
         }
         let Some(run) = name.of() else { continue };
@@ -770,6 +786,7 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
         of.damaged |= hurt;
         match name {
             Name::Reset { .. } | Name::Epoch(_) | Name::Turn { .. } => {}
+            Name::Unplaced { .. } => {}
             Name::Reservation(_) => of.record = true,
             Name::Held { epoch, micros, .. } => of.holds.push((*epoch, *micros)),
             Name::Place { place, .. } => {
@@ -3165,7 +3182,11 @@ impl Books {
     /// The reservations of which the two readings give two answers: none, while
     /// the two are one rule.
     pub fn read_apart(&self) -> Vec<Run> {
-        let folded = self.fold();
+        self.read_apart_of(&self.fold())
+    }
+
+    /// As [`Books::read_apart`], of these books folded already.
+    pub fn read_apart_of(&self, folded: &Folded) -> Vec<Run> {
         let apart = |(run, one): (&Run, &Standing)| {
             (one.reachable != self.believable(*run)).then_some(*run)
         };
@@ -3310,6 +3331,9 @@ pub enum Must {
     NothingExecutes,
     /// What is left of this run's tree, as its process holds it in memory.
     TreeLeft(Run, u64),
+    /// How many names are placed nowhere: of no form, in no reservation and in no
+    /// epoch.
+    Unplaced(u64),
 }
 
 /// A named history: its events, and what the books must give, after the last event
@@ -3429,6 +3453,7 @@ impl Must {
                     false => Err(format!("{runs:?} execute")),
                 }
             }
+            Must::Unplaced(count) => same("placed nowhere", books.fold().unplaced.into(), *count),
             Must::SameNamesAsAfter(at) => {
                 if books.names_after(at + 1) == Some(books.names()) {
                     Ok(())
@@ -5613,6 +5638,111 @@ pub fn histories() -> Vec<History> {
             (3, Left(5)),
             (4, Counted(2)),
             (4, Left(18)),
+        ],
+    );
+    // The exception for an epoch's turns holds that one epoch and no other. A
+    // settlement over its bound is lost whole from an epoch that a reset has since
+    // closed, the turn it took left behind: the old epoch needs its owner, and the
+    // new one, whose turns start again, reads nothing counted and admits in full.
+    add(
+        "88 a settlement at 12 over a bound of 5 lost with its guard and its place \
+         after a reset closed its epoch: the old epoch needs its owner and shows 10, \
+         and the new one admits its full 20 where 12 were spent",
+        vec![
+            reset(20),
+            admit(1, 10),
+            dispatch(1, 5),
+            settle(1, 1, charged(12)),
+            reset(20),
+            Event::Remove(Name::Settled {
+                run: r(1),
+                place: 1,
+                stage: Stage::Answered,
+                micros: 12,
+            }),
+            Event::Remove(Name::Settling {
+                run: r(1),
+                place: 1,
+            }),
+            Event::Remove(Name::Place {
+                run: r(1),
+                place: 2,
+            }),
+            admit(2, 20),
+        ],
+        vec![
+            came(8, Outcome::Done),
+            Epoch(2),
+            // What is left of the old books is a set the ledger could have written:
+            // a reservation of 10 with a request of 5 outstanding.
+            state(r(1), State::Open),
+            EpochOf(r(1), 1),
+            Counts(r(1), 10),
+            Counts(r(2), 20),
+            Allowed(20),
+            Counted(20),
+            Left(0),
+        ],
+        vec![(4, Counted(0)), (7, Counted(0)), (7, Left(20))],
+    );
+    // Task S1b's, with the real fold. A text under `spend/` that is of no form
+    // belongs to a reservation or to an epoch only by how it begins. Every name of a
+    // reservation, and the turn its admission took, garbled so far that neither its
+    // run nor its epoch can be read: to the fold each is a name lost and a text that
+    // is placed nowhere. All of them lost is a set the ledger could have written,
+    // the empty one, and is believed: limit (d), with nothing in a name to count.
+    add(
+        "89 every name of a reservation of 10 with 10 outstanding, and its turn, garbled \
+         past reading its run: five texts are placed nowhere, nothing is counted, and \
+         the whole allowance of 30 is admitted where 40 are then committed",
+        vec![
+            reset(30),
+            admit(1, 10),
+            dispatch(1, 10),
+            Event::Remove(Name::Reservation(r(1))),
+            Event::Plant(Name::Unplaced { count: 1 }),
+            Event::Remove(Name::Held {
+                epoch: 1,
+                run: r(1),
+                micros: 10,
+            }),
+            Event::Plant(Name::Unplaced { count: 2 }),
+            Event::Remove(Name::Place {
+                run: r(1),
+                place: 1,
+            }),
+            Event::Plant(Name::Unplaced { count: 3 }),
+            Event::Remove(Name::Dispatched {
+                run: r(1),
+                place: 1,
+                by: r(1),
+                micros: 10,
+            }),
+            Event::Plant(Name::Unplaced { count: 4 }),
+            Event::Remove(Name::Turn { epoch: 1, turn: 1 }),
+            Event::Plant(Name::Unplaced { count: 5 }),
+            admit(2, 30),
+        ],
+        vec![
+            came(13, Outcome::Done),
+            Must::Unplaced(5),
+            Absent(r(1)),
+            Counts(r(2), 30),
+            Counted(30),
+            Left(0),
+            Debt(0),
+        ],
+        vec![
+            (2, Counted(10)),
+            (2, Must::Unplaced(0)),
+            // One name garbled: its reservation is frozen, as by any loss of one.
+            (4, state(r(1), State::Frozen)),
+            (4, Must::Unplaced(1)),
+            // All of them, with the turn still there: the epoch needs its owner.
+            (10, Absent(r(1))),
+            (10, Must::NeedsOwner),
+            (12, Counted(0)),
+            (12, Left(30)),
         ],
     );
     table

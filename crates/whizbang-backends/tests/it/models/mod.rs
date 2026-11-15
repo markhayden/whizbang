@@ -12,6 +12,8 @@ mod identity;
 mod installation;
 mod inventory;
 mod leases;
+#[cfg(unix)]
+mod links;
 mod names;
 mod publishing;
 mod refusals;

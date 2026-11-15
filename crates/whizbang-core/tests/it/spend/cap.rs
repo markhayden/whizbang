@@ -139,6 +139,12 @@ fn a_call_from_inside_an_action_that_the_cap_refuses_gives_its_callers_share_bac
     // Under a ledger a call from inside an action takes its estimate from what its
     // caller reserved before the parts are asked. `outer` reserves half a dollar, and
     // each call of `paint` takes a quarter.
+    //
+    // A call that ends having used nothing gives its share back to its caller (ADR
+    // 0016, "An allowance holds a signed balance"; this test held the rule before
+    // it, under which a share never came back). So that the caller's share is still
+    // seen to be a limit, each `paint` here spends its quarter: it sends a request
+    // of that bound, which is never settled and stays counted in full.
     let world = World::new("cap-nested-ledger");
     type Step = (Option<u64>, Result<(), CallError>, Option<u64>);
     let said: Said<Step> = Said::default();
@@ -162,17 +168,24 @@ fn a_call_from_inside_an_action_that_the_cap_refuses_gives_its_callers_share_bac
             },
         )
     };
+    let paint = world.action("paint", &[Capability::Fill], |_, context| {
+        let bound = whizbang_core::spend::Amount::new(QUARTER).unwrap();
+        let sent = context.allowance().dispatch(bound, || Ok(()));
+        assert!(sent.is_ok(), "{:?}", sent.err());
+        Ok(Produced::nothing())
+    });
     let ledger = Arc::new(FakeLedger::new());
     let engine = world
-        .engine(Bounds::quarter(), vec![outer, world.paints("paint")])
+        .engine(Bounds::quarter(), vec![outer, paint])
         .with_ledger(ledger.clone())
         .with_part(Arc::new(CallCap));
     world.cap(Some(2 * QUARTER));
     engine.submit(&Call::new("outer")).unwrap();
     let (half, quarter) = (Some(2 * QUARTER), Some(QUARTER));
     let refused = || Err(over_the_cap("paint", OVER_ITS_OWN_CAP));
-    // What a refused call took is given back whole, so the two that follow run; the
-    // last is refused only because nothing is left, and not by the cap.
+    // What a refused call took is given back whole, so the two that follow run, and
+    // each spends its quarter; the last is refused only because nothing is left, and
+    // not by the cap.
     let nothing_left = CallError::Refused(Refusal::OverCaller {
         action: "paint".to_owned(),
         asked_micros: QUARTER,

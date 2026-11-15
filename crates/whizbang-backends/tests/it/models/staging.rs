@@ -926,6 +926,9 @@ impl Fs for Old {
         }
         Err(std::io::ErrorKind::Unsupported.into())
     }
+    fn is_link(&self, path: &Path) -> std::io::Result<bool> {
+        self.0.is_link(path)
+    }
 }
 
 #[test]

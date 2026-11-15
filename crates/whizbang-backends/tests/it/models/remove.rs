@@ -1431,6 +1431,31 @@ fn a_removal_cancels_an_install_that_runs_in_a_second_process() {
 // --- removal on disk -----------------------------------------------------------------------------
 
 #[test]
+fn a_removal_that_finds_no_pointer_removes_the_staging_a_dead_install_left() {
+    // An install of a model that was never installed died inside its download: the
+    // model's folder, its lock, its status, and its staging with part of a file.
+    let scratch = Scratch::new("remove-dead-staging");
+    let root = scratch.path();
+    std::fs::create_dir_all(incoming(root).join("files")).unwrap();
+    std::fs::write(incoming(root).join("files/graph.onnx"), b"part").unwrap();
+    assert_eq!(reading(root), Current::NotInstalled);
+    let fs = Arc::new(ShimFs::new());
+    let ended = removing(fs.clone(), root, &Hand::new(), SECOND, &mut never);
+    assert_eq!(ended, Err(RemoveRefused::NotInstalled));
+    // The staging is gone, by one removal of the folder, and that is synced.
+    assert!(!incoming(root).exists());
+    let events = fs.events();
+    let unstaged = index_of(&events, |event| *event == Event::Remove(incoming(root)));
+    assert_eq!(
+        events[unstaged + 1],
+        Event::SyncDir(tiny(root).join("staging"))
+    );
+    touches_only(&events, root);
+    assert!(!marked(root));
+    assert_eq!(said(root), None);
+}
+
+#[test]
 fn a_removal_deletes_every_installation_of_the_model_under_its_hold_files_and_touches_nothing_outside()
  {
     // Two installations are on the disk: the one in use, and one that was

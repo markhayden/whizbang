@@ -1001,9 +1001,12 @@ fn a_part_that_adds_nothing_and_refuses_nothing_leaves_the_store_as_it_is_withou
         ran(engine.request(&asked("hello", "order-17")));
         let (number, names, runs) = held(&world.root(), world.fs.clone());
         let of_run: Vec<String> = runs[0].1.iter().map(|(name, _)| name.clone()).collect();
+        // The ledger's names hold the run's id, which differs from one world to the
+        // next: the count of runs named is one for the whole process.
+        let run = runs[0].0.clone();
         let outside: Vec<String> = names
             .into_iter()
-            .filter(|name| !name.starts_with("spend/reservations/"))
+            .map(|name| name.replace(&run, "the-run"))
             .collect();
         (number, outside, of_run, world.fs.events().len())
     };
@@ -1310,7 +1313,8 @@ fn an_action_that_catches_a_parts_panic_at_a_nested_call_keeps_its_full_allowanc
             assert!(caught.is_err(), "the panic reached the action");
             // What the call took from the allowance is back: all of it is there.
             note(&left);
-            // And a second call, which needs all of it, is admitted and runs.
+            // And a second call, which needs all of it, is admitted and runs; it
+            // uses nothing, and its share is back when it has ended (ADR 0016).
             part.when_asked(|| {});
             let finished = context
                 .executor()
@@ -1330,10 +1334,10 @@ fn an_action_that_catches_a_parts_panic_at_a_nested_call_keeps_its_full_allowanc
     let finished = engine.submit(&Call::new("outer")).unwrap();
     assert_eq!(finished.outcome(), &Outcome::Completed { outputs: vec![] });
     // The whole allowance before the call, the whole of it after the panic was
-    // caught, and none of it once the second call had taken its share.
+    // caught, and the whole of it again once the second call had ended.
     assert_eq!(
         *left.lock().unwrap(),
-        [Some(250_000), Some(250_000), Some(0)]
+        [Some(250_000), Some(250_000), Some(250_000)]
     );
     assert_eq!(ran_inside.load(Ordering::SeqCst), 1);
     // The caller's run and the second call's: the call that panicked left none.

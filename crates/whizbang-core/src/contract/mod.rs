@@ -46,24 +46,28 @@ mod run;
 mod snapshot;
 pub mod text;
 
-pub use crate::capability::{FillHandle, JudgeHandle, SegmentHandle};
+pub use crate::capability::{
+    Around, Ended, FillHandle, JudgeHandle, Nothing, Open, Place, Places, SegmentHandle, Stop,
+    Wrapped,
+};
 pub use call::Call;
 pub use context::{
-    Allowance, Cancellation, Capabilities, Context, Diagnostics, Events, Handles, NoDiagnostics,
+    Allowance, Cancellation, Capabilities, Context, Diagnostics, Dispatched, Events, Handles,
+    NoDiagnostics,
 };
 pub use descriptor::{
     ActionDescriptor, Argument, Capability, Count, DescriptorError, Draft, InputPort, Kind,
     OutputPort, PortRef, Requirement, Value, ValueType, When,
 };
 pub use engine::{
-    BoundRefused, Engine, Executor, STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT, Spawn,
-    WHIZBANG_VERSION,
+    BoundRefused, Engine, Executor, NOT_CONFIRMED_KIND, STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT,
+    Spawn, WHIZBANG_VERSION,
 };
 pub use facts::RunFacts;
 pub use journal::{Clock, EXCHANGE_PREFIX, JournalLine, SystemClock, journal_bytes, read_journal};
 pub use ledger::{
-    Declined, LEDGER_NAME_LIMIT, Ledger, RESERVATION_RECORD, RESERVATIONS_PREFIX, Reservation,
-    SPEND_PREFIX, Step, reservations,
+    Closing, Declined, DispatchRefused, LEDGER_NAME_LIMIT, Ledger, MadeName, RESERVATION_RECORD,
+    RESERVATIONS_PREFIX, Reread, Reservation, SPEND_PREFIX, Settled, Step, reservations,
 };
 #[doc(hidden)]
 pub use nested::HeldOpen;

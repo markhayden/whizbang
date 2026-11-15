@@ -9,6 +9,7 @@ use std::time::Instant;
 
 use crate::artifact::Mask;
 use crate::contract::Cancellation;
+use crate::egress::{Classes, DataClass};
 
 use super::{Bounds, Charge, Declaration, Fault, Picture, Unfit, feature, pixel_count};
 
@@ -325,6 +326,12 @@ impl FillHandle {
         self
     }
 
+    /// The same handle, with these wrappers between it and its backend (ADR 0015).
+    pub(crate) fn wrapped(mut self, around: Arc<super::Wrappers>) -> FillHandle {
+        self.bounds.wrapped(around);
+        self
+    }
+
     /// The same handle, holding its deadline to this clock in place of the machine's.
     pub(crate) fn timed_by(mut self, clock: Arc<dyn crate::contract::Clock>) -> FillHandle {
         self.bounds.timed_by(clock);
@@ -349,9 +356,18 @@ impl FillHandle {
             self.declaration(),
             request.prompt.as_ref().map(|_| feature::PROMPT),
         )?;
+        // What the request is known to hold: a prompt, when it has one. Its picture
+        // has no class here: whoever builds the piece that carries it states one,
+        // and the checked sender holds that piece to it (ADR 0015).
+        let classes = match request.prompt {
+            Some(_) => Classes::of(&[DataClass::Prompts]),
+            None => Classes::none(),
+        };
         self.bounds.send(
             crate::contract::Capability::Fill,
             self.declaration(),
+            classes,
+            Painted::charge,
             || {
                 let painted = self.backend.fill(request, &self.bounds.of_one_request())?;
                 let (expected, found) = (

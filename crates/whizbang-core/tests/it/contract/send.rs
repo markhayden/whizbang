@@ -339,7 +339,10 @@ fn the_policys_debug_shows_recipients_cut_and_no_credential() {
 fn with_the_default_policy_a_backend_that_names_a_recipient_hands_nothing_over_and_one_that_names_none_is_asked()
  {
     // A sender and a check that would let everything through: the policy alone, which
-    // was told nothing, is what stops the send.
+    // was told nothing, is what stops the send. It stops it at the gate's place,
+    // before the backend is called (ADR 0015, "A wrapper around each request"): the
+    // request held no prompt, and the piece its backend would have made was never
+    // made, so the refusal names no class.
     let sender = Arc::new(FakeSender::scripted(vec![ok()]));
     let check = Arc::new(FakeCheck::approving());
     let ways = Ways::through(sender.clone()).checked_by(check.clone());
@@ -355,6 +358,7 @@ fn with_the_default_policy_a_backend_that_names_a_recipient_hands_nothing_over_a
         "the recipient is not approved for the classes of data the request holds"
     );
     assert_eq!(sender.requests(), 0, "nothing was handed to the sender");
+    assert_eq!(named.requests(), 0, "the backend was not called");
     assert_eq!(
         check.looked(),
         [],
@@ -366,7 +370,7 @@ fn with_the_default_policy_a_backend_that_names_a_recipient_hands_nothing_over_a
             RefusalKind::RequestNotApproved,
             "nothing was sent to https://api.example.com: the recipient is not approved for \
              the classes of data the request holds (the classes of data the request holds: \
-             prompts)"
+             none)"
                 .to_owned()
         )]
     );
@@ -375,7 +379,7 @@ fn with_the_default_policy_a_backend_that_names_a_recipient_hands_nothing_over_a
         [(
             API.to_owned(),
             Some("acct...".to_owned()),
-            prompts(),
+            Classes::none(),
             Handed::Refused
         )]
     );
@@ -827,9 +831,12 @@ fn a_secret_the_executor_knows_is_in_no_refusal_of_a_send() {
     let secrets = Secrets::new([host.to_owned()]).unwrap();
     let to = format!("https://{host}/v1");
     let sender = Arc::new(FakeSender::scripted(vec![ok()]));
+    // The recipient is approved, so that the request passes the gate's place and its
+    // backend is called: what is refused is the send, to an origin that is neither
+    // the recipient's own nor one of its upstreams.
     let ran = run_one(
         &remote(&to, a_prompt()),
-        Ways::through(sender.clone()),
+        Ways::through(sender.clone()).under(approving(Classes::all())),
         secrets,
     );
     assert_eq!(sender.requests(), 0);
