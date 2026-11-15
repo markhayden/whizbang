@@ -91,6 +91,20 @@ impl Declaration {
         self
     }
 
+    /// The same declaration, of the model as it is installed: the installation's
+    /// identity in place of the version (ADR 0015, "An inventory"). It is what a run
+    /// admitted for a local model over an inventory is handed its backend under, so
+    /// that the lease and the run's record are told the installation the admission
+    /// recorded. An identity's text is a version a declaration takes.
+    pub(crate) fn installed_as(&self, installation: super::Installation) -> Declaration {
+        let declared = &self.model;
+        let version = installation.to_string();
+        Declaration {
+            model: ModelIdentity::new(declared.backend(), declared.model(), &version),
+            ..self.clone()
+        }
+    }
+
     /// Who receives the backend's requests, when anything leaves the machine.
     pub fn recipient(&self) -> Option<&Recipient> {
         self.recipient.as_ref()

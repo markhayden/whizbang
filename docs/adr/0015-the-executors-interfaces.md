@@ -54,6 +54,9 @@ Amended: 2026-11-15, with task S8. Changed under "A part in the admission", "Lim
 the kinds the two parts that refuse are recorded under. And, as the review of task S3
 asked, under "One snapshot of the config": a snapshot prints whether it holds a cap,
 and not the cap.
+Amended: 2026-11-15, with the second half of task I7. Added under "An inventory":
+"The backend a run is handed, and the lease's place". Changed there: "What waits"
+and two limits.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -747,11 +750,13 @@ hook while it is asked.
 
 ### An inventory
 
-Task I7, its first half. The code is `crates/whizbang-core/src/capability/inventory.rs`;
-the fake is `FakeInventory` in `crates/whizbang-testkit/src/inventory.rs`. The tests are
-in `crates/whizbang-core/tests/it/contract/inventory.rs`, named below as `inventory::…`.
-**The lease, the task's other half, is not built:** it stands in a place of task I3's
-order, and task I3 is not built ("What waits", below). No file of the executor changed.
+Task I7. The code is `crates/whizbang-core/src/capability/inventory.rs`, with the
+executor's side in `contract/context.rs` (`Capabilities::resolved_for`); the fake is
+`FakeInventory` in `crates/whizbang-testkit/src/inventory.rs`. The tests are in
+`crates/whizbang-core/tests/it/contract/inventory.rs`, named below as `inventory::…`.
+The task was built in two halves: the inventory, before task I3; and the backend a run
+is handed with the lease's place, after it ("The backend a run is handed, and the
+lease's place", below).
 
 A local backend, one that names no recipient (`Declaration::is_local`), answers with a
 model that is on this machine or is not, and the models directory (ADR 0017) is where
@@ -819,22 +824,57 @@ can forget a model; and it keeps the name it was asked about, each time. A model
 was told nothing of is not in its catalogue
 (`inventory::a_model_the_inventory_was_told_nothing_of_is_not_in_the_catalogue_and_is_never_ready`).
 
+**The backend a run is handed, and the lease's place** (the task's second half).
+
+- **A run admitted for a local model over an inventory is handed that model's
+  backend, declaring the installation's identity as its version.** An executor
+  hands a run the backend that declares the model its call resolved, by backend,
+  model and version (ADR 0009). The identity of an installation is a version no
+  backend declares, and until this half such a run was handed nothing (the pin
+  `inventory::known_…_is_handed_no_backend_for_it`, which is turned round). Now,
+  for a model whose version is an installation's identity as it is written
+  (`Installation::from_version`), the run is handed the first local backend the
+  executor holds that declares that backend and that model, whatever version it
+  declares, behind a declaration that says the identity in the version's place
+  (`Declaration::installed_as`); every request goes to the backend as it is. The
+  identity is the one in the prepared call the run was admitted with, so it is
+  what the admission recorded: the run's record names the model under it, and
+  every place between the handle and the backend is told it
+  (`inventory::a_run_admitted_for_a_local_model_over_an_inventory_is_handed_its_backend_under_the_identity_the_admission_recorded`).
+- **The match is not loosened for a backend that names a recipient.** A version
+  that is no installation's identity is matched as it always was, by all three
+  texts, local or not. A version that is one is a local model's: **a backend that
+  names a recipient is never handed for it,** though it declare the same backend,
+  the same model and that very identity as its version; alone among the
+  executor's backends it leaves the run with no handle, and before a local
+  backend of that model it is passed over
+  (`inventory::a_backend_that_names_a_recipient_is_never_handed_to_a_run_resolved_under_an_installation`).
+  So that such a backend is not admitted to be handed nothing, a roster over an
+  inventory does not resolve it: it is not ready, and the reason says that it
+  names a recipient and declares an installation's identity
+  (`inventory::a_roster_over_an_inventory_does_not_resolve_a_backend_that_names_a_recipient_and_declares_an_identity`).
+- **The lease is what stands in the lease's place** ("A wrapper around each
+  request", `Place::Lease`, `Engine::with_wrapper`): an `Around`, as the gate and
+  the meter are, and no interface of its own. **Its default is the empty place:**
+  an executor that was given none takes no lease, as the default inventory knows
+  no model. **Its fake is `FakeWrapper`** in that place. The lease over the
+  models directory's holds is the models strand's (task M6b, ADR 0017).
+- **What the place is shown to do,** with the fake in it and a fake meter after it.
+  A request whose lease is refused reaches neither the meter's place nor the
+  backend; its action is answered a fault that says nothing left, and the refusal
+  is in the run's record
+  (`inventory::a_request_whose_lease_is_refused_reaches_neither_the_meters_place_nor_the_backend`).
+  What the place holds for a request is told how the request ended, by an answer
+  and by a fault, and is dropped when the backend panics, which leaves the run
+  abandoned as under any wrapper that holds something; a lease lets go in both
+  (`inventory::a_lease_is_let_go_when_its_request_ends_by_an_answer_a_fault_and_a_panic`).
+  And with the model installed again between the admission and the request, the
+  place is told the installation the run was admitted with, not the one that is
+  current
+  (`inventory::the_lease_is_asked_for_the_identity_the_admission_recorded_not_the_one_current_at_the_request`).
+
 **What waits.**
 
-- **The lease** (the second box of task I7, and the last three parts of its "Done
-  when"): a lease on the installation the run was admitted with, taken before a request
-  to a local model leaves and let go when it is over. Its place is there, and is
-  empty ("A wrapper around each request", `Place::Lease`): what stands in it is not
-  built.
-- **A run is handed no backend for a local model over an inventory.** An executor hands
-  a run the backend that declares the model its call resolved, by backend, model and
-  version (ADR 0009, `Capabilities::resolved_for`). The identity of an installation
-  is a version no backend declares. So today a call for a local model
-  over an inventory is prepared, is ready and is admitted, and its action finds no
-  handle; no request reaches a local model that no lease holds
-  (`inventory::known_a_run_admitted_for_a_local_model_over_an_inventory_is_handed_no_backend_for_it`).
-  The task that builds the lease hands the run its backend, with the identity the
-  admission recorded, and turns that pin round (`docs/carry-over.md`).
 - **Nothing puts what a config offers over an inventory.** `InstalledRoster` takes a
   `Roster` and is not an `Offered`, so no snapshot of a config holds one, and
   `Snapshot::handed` matches a backend by its version too. `Offers` (ADR 0011) and the
@@ -854,6 +894,22 @@ was told nothing of is not in its catalogue
   installation the admission recorded.
 - **An identity is trusted to be an installation's.** The type holds it to a digest; it
   does not know whether an installation of that identity exists.
+- **A version written as an identity is taken for one.** `sha256:` and 64 lower-case
+  hex digits as a model's version means a local model under an installation, to the
+  executor and to a roster over an inventory. A backend that names a recipient and
+  declares such a version is handed to no run. A local backend that declares one
+  itself, with no inventory, is handed as it is.
+- **A call with two needs of one capability is handed the backend of the first**
+  (ADR 0009). Each need is resolved by a question of its own to the inventory, so
+  with the model installed again between the two, one call can be prepared with two
+  installations of one model among its needs. Both are in its fingerprint, the run
+  is handed the backend under the first, and the lease is asked for the first; the
+  second is not held by anything. No action that ships has two needs of one
+  capability.
+- **The executor's own backends are searched, not the roster's names.** Of two local
+  backends that declare one backend and one model under two versions, the first the
+  executor holds is handed, whichever name the call chose, as the bound of such a
+  pair is the larger of theirs.
 - **An inventory that panics** unwinds to whoever prepared the call. Prepare holds
   nothing and writes nothing. No test holds it.
 - **The sentence is not looked at for a secret here.** It is made of a capability's

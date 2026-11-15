@@ -1,21 +1,24 @@
-//! An inventory (ADR 0015; plan 1B, task I7, as far as it is built): what a roster
-//! over an inventory prepares of a local model. Nothing here reads a disk: the fake
+//! An inventory (ADR 0015; plan 1B, task I7): what a roster over an inventory
+//! prepares of a local model, the backend a run admitted for one is handed, and what
+//! the lease's place is told. Nothing here reads a disk: the fake
 //! inventory is told what is installed.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use whizbang_core::capability::{
-    Declaration, Installation, Installed, InstalledRoster, Inventory, NoInventory, Price, Roster,
-    Unready,
+    Bounds, Declaration, Fault, FaultKind, FillRequest, Filler, Installation, Installed,
+    InstalledRoster, Inventory, NoInventory, Painted, Place, Price, Roster, Stage, Unready,
 };
 use whizbang_core::contract::{
     Answer, Backends, Call, CallError, Capabilities, Capability, Engine, Estimate, Executor,
-    ModelIdentity, Produced, Readiness, Refusal, Request, Requirement, Secrets, Stale, Value,
+    ModelIdentity, Produced, Readiness, Refusal, RefusalKind, Request, Requirement, Secrets, Stale,
+    Unavailable, Value,
 };
 use whizbang_core::egress::{Origin, Recipient};
 use whizbang_core::identity::Digest;
 use whizbang_core::store::Reader;
+use whizbang_testkit::around::{FakeWrapper, Saw};
 use whizbang_testkit::capabilities::{FakeFiller, Paint};
 use whizbang_testkit::inventory::FakeInventory;
 
@@ -411,59 +414,317 @@ fn a_local_backend_that_states_a_price_is_bound_by_it_under_its_installations_id
     assert_eq!(inventory.asked(), ["tiny-fill"]);
 }
 
-// --- what is left as it was --------------------------------------------------------------------
+// --- a run is handed its backend, and the lease's place ----------------------------------------
 
-#[test]
-fn known_a_run_admitted_for_a_local_model_over_an_inventory_is_handed_no_backend_for_it() {
-    // A pin, not a wish. An executor hands a run the backend that declares the model
-    // its call resolved, by its backend, its model and its version (ADR 0009). Over an
-    // inventory the call resolved the installation's identity as the version, which
-    // no backend declares, and nothing yet hands a run the installation it was
-    // admitted with: that is the lease's half of task I7. So the call is ready, its
-    // run is admitted, and its action finds no handle: no request reaches a local
-    // model that no lease holds.
-    let world = World::new();
-    let filler = Arc::new(FakeFiller::new(Paint::Inverse));
-    let roster = whizbang_testkit::capabilities::roster(None, Some(filler.as_ref()), None);
-    let inventory = Arc::new(FakeInventory::new());
-    let installation = inventory.install("fake-filler", b"a filler, whole");
-    let handed = Arc::new(AtomicUsize::new(0));
+/// What each request to the filler was answered with, as the action saw it: nothing
+/// for an answer, the fault's kind and stage otherwise.
+type Answers = Arc<Mutex<Vec<Option<(FaultKind, Stage)>>>>;
+
+/// An executor over a roster that offers this filler as `here`, and over this
+/// inventory, with these wrappers in the lease's place and the meter's. Its one
+/// action, `paints`, runs `first` and then asks the filler it was handed once, when
+/// it was handed one.
+fn leased(
+    world: &World,
+    filler: Arc<dyn Filler>,
+    inventory: &Arc<FakeInventory>,
+    (lease, meter): (&FakeWrapper, &FakeWrapper),
+    first: impl Fn() + Send + Sync + 'static,
+) -> (Engine, Answers) {
+    let answers = Answers::default();
     let paints = action("paints", vec![Requirement::new(Capability::Fill)], {
-        let handed = handed.clone();
+        let answers = answers.clone();
         move |_, context| {
+            first();
             if let Some(fill) = context.capabilities().fill() {
-                handed.fetch_add(1, Ordering::SeqCst);
-                fill.fill(&fill_request()).unwrap();
+                let answered = fill.fill(&fill_request());
+                let fault = answered.err().map(|fault| (fault.kind(), fault.stage()));
+                answers.lock().unwrap().push(fault);
             }
             Ok(Produced::nothing())
         }
     });
-    let held = Capabilities::none().with_fill(filler.clone());
-    let actions = || vec![paints.clone()];
-    let call = Call::new("paints");
+    let roster = Roster::new()
+        .offer(Capability::Fill, "here", filler.declaration().clone())
+        .unwrap()
+        .default_for(Capability::Fill, "here")
+        .unwrap();
+    let over = InstalledRoster::over(roster, inventory.clone());
+    let held = Capabilities::none().with_fill(filler);
+    let executor = engine(world, over, held, vec![paints])
+        .with_wrapper(Place::Lease, Arc::new(lease.clone()))
+        .with_wrapper(Place::Meter, Arc::new(meter.clone()));
+    (executor, answers)
+}
 
-    // The roster alone: the action is handed the filler, and asks it.
-    let alone = engine(&world, roster.clone(), held.clone(), actions());
-    let finished = alone.submit(&call).unwrap();
+/// A wrapper for the lease's place and one for the meter's, with one journal.
+fn places() -> (FakeWrapper, FakeWrapper) {
+    let lease = FakeWrapper::new("lease");
+    let meter = lease.beside("meter");
+    (lease, meter)
+}
+
+/// The version a wrapper was told the backend declares, for each request it saw.
+fn versions(wrapper: &FakeWrapper) -> Vec<String> {
+    let requests = wrapper.requests();
+    requests.into_iter().map(|asked| asked.model.2).collect()
+}
+
+#[test]
+fn a_run_admitted_for_a_local_model_over_an_inventory_is_handed_its_backend_under_the_identity_the_admission_recorded()
+ {
+    // The pin of the task's first half, turned round. The call resolved the
+    // installation's identity as its model's version, which no backend declares:
+    // the run is handed the local backend of that model, declaring that identity.
+    let world = World::new();
+    let filler = Arc::new(FakeFiller::new(Paint::Inverse));
+    assert_eq!(filler.declaration().model().version(), "1");
+    let inventory = Arc::new(FakeInventory::new());
+    let installation = inventory.install("fake-filler", b"a filler, whole");
+    let (lease, meter) = places();
+    let (executor, answers) = leased(&world, filler.clone(), &inventory, (&lease, &meter), || {});
+    let finished = executor.submit(&Call::new("paints")).unwrap();
     assert_eq!(finished.outcome().name(), "completed");
-    assert_eq!((handed.load(Ordering::SeqCst), filler.requests()), (1, 1));
-    let (record, _) = stored(&world, finished.run());
-    assert_eq!(record.models()[0].version, "1");
-    // One executor writes a store at a time.
-    drop(alone);
-
-    // Over the inventory: ready, admitted, and handed nothing.
-    let over = InstalledRoster::over(roster, inventory);
-    let executor = engine(&world, over, held, actions());
-    let prepared = executor.prepare(&call).unwrap();
-    assert_eq!(prepared.readiness(), &Readiness::Ready);
+    // Handed, asked and answered.
+    assert_eq!(*answers.lock().unwrap(), [None]);
+    assert_eq!(filler.requests(), 1);
+    // The lease's place and the meter's are each told the backend under the
+    // installation's identity, in the order of ADR 0015.
+    let names: Vec<&str> = lease.journal().iter().map(|(name, _)| *name).collect();
+    assert_eq!(names, ["lease", "meter", "meter", "lease"]);
+    assert_eq!(versions(&lease), [installation.to_string()]);
+    assert_eq!(versions(&meter), [installation.to_string()]);
+    let [asked] = lease.requests().try_into().unwrap();
     assert_eq!(
-        prepared.needs()[0].model().unwrap().version(),
-        installation.to_string()
+        (asked.model.0.as_str(), asked.model.1.as_str()),
+        ("fake", "fake-filler")
     );
-    let finished = executor.submit(&call).unwrap();
-    assert_eq!(finished.outcome().name(), "completed");
-    assert_eq!((handed.load(Ordering::SeqCst), filler.requests()), (1, 1));
+    // And the run's record names the model under it.
     let (record, _) = stored(&world, finished.run());
-    assert_eq!(record.models().len(), 0);
+    let [model] = record.models() else {
+        panic!("{:?}", record.models());
+    };
+    assert_eq!(model.version, installation.to_string());
+}
+
+#[test]
+fn a_request_whose_lease_is_refused_reaches_neither_the_meters_place_nor_the_backend() {
+    let world = World::new();
+    let filler = Arc::new(FakeFiller::new(Paint::Inverse));
+    let inventory = Arc::new(FakeInventory::new());
+    inventory.install("fake-filler", b"a filler, whole");
+    let (lease, meter) = places();
+    lease.refuse(RefusalKind::RequestNotReady, "the model is being removed");
+    let (executor, answers) = leased(&world, filler.clone(), &inventory, (&lease, &meter), || {});
+    let finished = executor.submit(&Call::new("paints")).unwrap();
+    // The action is answered a fault that says nothing left; the meter's place
+    // and the backend saw nothing; and the refusal is noted in the run's record.
+    assert_eq!(
+        *answers.lock().unwrap(),
+        [Some((FaultKind::Rejected, Stage::NotSent))]
+    );
+    assert_eq!(meter.saw(), []);
+    assert_eq!(filler.requests(), 0);
+    assert!(matches!(lease.saw().as_slice(), [Saw::Before(_)]));
+    let (record, _) = stored(&world, finished.run());
+    let refusals = &record.outcome().refusals;
+    assert_eq!(refusals.len(), 1);
+    assert_eq!(
+        (refusals[0].kind(), refusals[0].why()),
+        (RefusalKind::RequestNotReady, "the model is being removed")
+    );
+}
+
+/// A filler that panics when it is asked.
+struct Panicking(Declaration);
+
+impl Filler for Panicking {
+    fn declaration(&self) -> &Declaration {
+        &self.0
+    }
+
+    fn fill(&self, _: &FillRequest, _: &Bounds) -> Result<Painted, Fault> {
+        panic!("the backend went wrong")
+    }
+}
+
+#[test]
+fn a_lease_is_let_go_when_its_request_ends_by_an_answer_a_fault_and_a_panic() {
+    // What the lease's place holds for a request is told how the request ended,
+    // by an answer and by a fault, and is dropped when the backend panics: the
+    // fake counts each.
+    let declared = FakeFiller::new(Paint::Inverse).declaration().clone();
+    let fillers: [(&str, Arc<dyn Filler>); 3] = [
+        ("an answer", Arc::new(FakeFiller::new(Paint::Inverse))),
+        (
+            "a fault",
+            Arc::new(FakeFiller::new(Paint::Inverse).failing_at(Stage::Unresolved)),
+        ),
+        ("a panic", Arc::new(Panicking(declared))),
+    ];
+    for (how, filler) in fillers {
+        let world = World::new();
+        let inventory = Arc::new(FakeInventory::new());
+        inventory.install("fake-filler", b"a filler, whole");
+        let (lease, meter) = places();
+        let (executor, _) = leased(&world, filler, &inventory, (&lease, &meter), || {});
+        let ended = executor.submit(&Call::new("paints"));
+        let saw = lease.saw();
+        assert_eq!(saw.len(), 2, "{how}: {saw:?}");
+        assert!(matches!(saw[0], Saw::Before(_)), "{how}");
+        match how {
+            "an answer" => assert_eq!(saw[1], Saw::Answered(None)),
+            "a fault" => assert!(matches!(saw[1], Saw::Faulted(_, Stage::Unresolved))),
+            // Dropped, and never told: the run is abandoned (ADR 0015).
+            _ => {
+                assert_eq!(saw[1], Saw::Dropped);
+                assert!(
+                    matches!(ended, Err(CallError::Abandoned { .. })),
+                    "{ended:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn the_lease_is_asked_for_the_identity_the_admission_recorded_not_the_one_current_at_the_request() {
+    // Between the admission and the request the model is installed again, as
+    // another installation. The lease's place is told the one the run was
+    // admitted with; the next run is admitted with the new one.
+    let world = World::new();
+    let filler = Arc::new(FakeFiller::new(Paint::Inverse));
+    let inventory = Arc::new(FakeInventory::new());
+    let admitted = inventory.install("fake-filler", b"a filler, whole");
+    let (lease, meter) = places();
+    let again = inventory.clone();
+    let (executor, _) = leased(&world, filler, &inventory, (&lease, &meter), move || {
+        again.install("fake-filler", b"another installation");
+    });
+    executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!(versions(&lease), [admitted.to_string()]);
+    let Installed::Ready(current) = inventory.look("fake-filler") else {
+        panic!("not ready");
+    };
+    assert_ne!(current, admitted);
+    executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!(
+        versions(&lease),
+        [admitted.to_string(), current.to_string()]
+    );
+}
+
+/// Backends that resolve every need as one model, whatever is asked.
+struct Always(ModelIdentity);
+
+impl Backends for Always {
+    fn resolve(
+        &self,
+        _: Capability,
+        _: Option<&str>,
+        _: &[String],
+    ) -> Result<ModelIdentity, Unavailable> {
+        Ok(self.0.clone())
+    }
+}
+
+#[test]
+fn a_backend_that_names_a_recipient_is_never_handed_to_a_run_resolved_under_an_installation() {
+    // A backend that names a recipient declares the very three texts a local
+    // model was resolved under: its backend, its model, and the identity of the
+    // installation as its version.
+    let installation = Installation::of(Digest::of_bytes(b"a filler, whole"));
+    let resolved = ModelIdentity::new("fake", "fake-filler", &installation.to_string());
+    let away = || {
+        let declared = Declaration::new(resolved.clone(), &[]).unwrap();
+        Arc::new(FakeFiller::new(Paint::Inverse).declared_as(declared.sending_to(elsewhere())))
+    };
+    let handed = Arc::new(AtomicUsize::new(0));
+    let paints = || {
+        let handed = handed.clone();
+        action(
+            "paints",
+            vec![Requirement::new(Capability::Fill)],
+            move |_, context| {
+                if let Some(fill) = context.capabilities().fill() {
+                    handed.fetch_add(1, Ordering::SeqCst);
+                    let _ = fill.fill(&fill_request());
+                }
+                Ok(Produced::nothing())
+            },
+        )
+    };
+    // Alone among the executor's backends: the run is handed nothing.
+    let world = World::new();
+    let remote = away();
+    let held = Capabilities::none().with_fill(remote.clone());
+    let executor = engine(&world, Always(resolved.clone()), held, vec![paints()]);
+    let finished = executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!((handed.load(Ordering::SeqCst), remote.requests()), (0, 0));
+    drop(executor);
+    // Before the local backend of that model: the run is handed the local one.
+    let world = World::new();
+    let (remote, local) = (away(), Arc::new(FakeFiller::new(Paint::Inverse)));
+    let held = Capabilities::none()
+        .with_fill(remote.clone())
+        .with_fill(local.clone());
+    let lease = FakeWrapper::new("lease");
+    let executor = engine(&world, Always(resolved.clone()), held, vec![paints()])
+        .with_wrapper(Place::Lease, Arc::new(lease.clone()));
+    executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!((remote.requests(), local.requests()), (0, 1));
+    assert_eq!(versions(&lease), [installation.to_string()]);
+    // A version that is no installation's identity is matched as it always was,
+    // by all three: the backend that names a recipient is handed, and a local one
+    // that declares another version is not.
+    let plain = ModelIdentity::new("fake", "fake-filler", "2");
+    let declared = Declaration::new(plain.clone(), &[]).unwrap();
+    let hosted =
+        Arc::new(FakeFiller::new(Paint::Inverse).declared_as(declared.sending_to(elsewhere())));
+    let local = Arc::new(FakeFiller::new(Paint::Inverse));
+    let world = World::new();
+    let held = Capabilities::none()
+        .with_fill(local.clone())
+        .with_fill(hosted.clone());
+    let before = handed.load(Ordering::SeqCst);
+    let executor = engine(&world, Always(plain), held, vec![paints()]);
+    executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!(handed.load(Ordering::SeqCst), before + 1);
+    assert_eq!(local.requests(), 0);
+}
+
+#[test]
+fn a_roster_over_an_inventory_does_not_resolve_a_backend_that_names_a_recipient_and_declares_an_identity()
+ {
+    // Such a backend would be admitted and handed nothing: it is not ready, and
+    // the reason says why.
+    let installation = Installation::of(Digest::of_bytes(b"a filler, whole"));
+    let declared = ModelIdentity::new("fake", "hosted-fill", &installation.to_string());
+    let declaration = Declaration::new(declared, &[]).unwrap();
+    let roster = Roster::new()
+        .offer(
+            Capability::Fill,
+            "away",
+            declaration.sending_to(elsewhere()),
+        )
+        .unwrap()
+        .default_for(Capability::Fill, "away")
+        .unwrap();
+    let inventory = Arc::new(FakeInventory::new());
+    let over = InstalledRoster::over(roster, inventory.clone());
+    let refused = over.resolve(Capability::Fill, None, &[]).unwrap_err();
+    assert_eq!(
+        refused.why(),
+        "the fill backend away names a recipient, and declares the identity of an \
+         installation as its version"
+    );
+    assert!(inventory.asked().is_empty());
+    assert_eq!(
+        Installation::from_version(&installation.to_string()),
+        Some(installation)
+    );
+    for other in ["1", "sha256:abc", "SHA256:00", ""] {
+        assert_eq!(Installation::from_version(other), None, "{other:?}");
+    }
 }

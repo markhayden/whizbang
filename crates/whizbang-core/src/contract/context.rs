@@ -15,8 +15,8 @@ use std::time::Instant;
 
 use crate::artifact::Contents;
 use crate::capability::{
-    Declaration, FillHandle, Filler, Judge, JudgeHandle, Recorder, SegmentHandle, Segmenter, Tally,
-    Wrappers,
+    Declaration, FillHandle, Filler, Installable, Judge, JudgeHandle, Recorder, SegmentHandle,
+    Segmenter, Tally, Wrappers, under,
 };
 use crate::egress::{Sender, Ways};
 use crate::store;
@@ -654,7 +654,10 @@ impl Capabilities {
     /// Of these backends, the ones this call resolved (ADR 0009): for each capability
     /// the call needs and a model answers, the first backend here that declares that
     /// model, by its backend, its model and its version; and none for a capability the
-    /// call does not need, or whose model no backend here declares. A call with two
+    /// call does not need, or whose model no backend here declares. A model that was
+    /// resolved under the identity of an installation is a local one: the run is
+    /// handed the local backend of that model, declaring that identity, and never a
+    /// backend that names a recipient (ADR 0015, "An inventory"). A call with two
     /// needs of one capability is handed the backend of the first.
     pub(super) fn resolved_for(&self, prepared: &PreparedCall) -> Capabilities {
         let model_of = |capability: Capability| {
@@ -662,25 +665,21 @@ impl Capabilities {
             let need = needs.find(|need| need.capability() == capability)?;
             need.model()
         };
-        fn pick<B: ?Sized>(
+        // By the backend, the model and the version; or, for a version that is an
+        // installation's identity, the local backend of that model under it
+        // (`capability::inventory::under`, ADR 0015).
+        fn pick<B: Installable + ?Sized>(
             backends: &[Arc<B>],
             model: Option<&super::ModelIdentity>,
-            declared: impl Fn(&B) -> &Declaration,
         ) -> Vec<Arc<B>> {
-            let found = model.and_then(|model| {
-                let mut backends = backends.iter();
-                backends.find(|backend| declared(backend.as_ref()).model() == model)
-            });
-            found.cloned().into_iter().collect()
+            let found = model.and_then(|model| under(backends, model));
+            found.into_iter().collect()
         }
         Capabilities {
-            segment: pick(&self.segment, model_of(Capability::Segment), |b| {
-                b.declaration()
-            }),
-            fill: pick(&self.fill, model_of(Capability::Fill), |b| b.declaration()),
-            judge: pick(&self.judge, model_of(Capability::Judge), |b| {
-                b.declaration()
-            }), // The clock the handles hold a deadline to goes with them.
+            segment: pick(&self.segment, model_of(Capability::Segment)),
+            fill: pick(&self.fill, model_of(Capability::Fill)),
+            judge: pick(&self.judge, model_of(Capability::Judge)),
+            // The clock the handles hold a deadline to goes with them.
             clock: self.clock.clone(),
             ways: self.ways.clone(),
             around: self.around.clone(),
