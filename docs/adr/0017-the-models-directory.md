@@ -1564,6 +1564,12 @@ the place after the lease and a fake segmenter behind it.
   that nothing left, the run ends as its action ends it, and its record holds
   the refusal
   (`leases::a_reinstall_or_a_removal_between_the_admission_and_the_lease_refuses_the_request_before_dispatch`).
+- **Never whatever is ready.** With the lease over an inventory that calls the
+  reinstalled model ready, under its new installation, a run admitted with the
+  old one is refused all the same, and the new installation is not held
+  (`leases::a_lease_is_for_the_installation_that_was_admitted_though_the_reinstalled_model_is_ready`).
+  A backend must load by that identity too, and not by the pointer: that is the
+  first real local backend's (1C, `docs/carry-over.md`).
 - **A retry inside an admitted run is leased again, for the same identity.** A run
   whose installation was replaced after its first request is refused at its second
   the same way, and the first's hold kept the superseded installation whole while

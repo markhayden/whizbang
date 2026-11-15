@@ -208,7 +208,12 @@ impl Around for Lease {
         let fault = Fault::new(FaultKind::Rejected, &why);
         match Stop::new(RefusalKind::RequestNotReady, &why, fault) {
             Some(stop) => Err(stop),
-            // The kind is one of a request: this is not reached.
+            // Not reached: `Stop::new` answers nothing only for a kind that is not
+            // one of a request, and `RequestNotReady` is one
+            // (`leases::a_refusal_of_a_lease_is_of_a_kind_a_request_is_refused_under`).
+            // A refusal cannot be made without a `Stop`, so there is no way to fail
+            // closed here but that test: were the kind ever changed to one that is
+            // not a request's, the request would go by with nothing held.
             None => Ok(Box::new(Nothing)),
         }
     }

@@ -196,6 +196,12 @@ fn submitted(executor: &Engine) -> Result<String, String> {
 
 impl Run {
     fn admitted(root: &Path, asks: usize) -> Run {
+        Run::admitted_leased_over(root, asks, inventory(root))
+    }
+
+    /// The same, with the lease over this inventory, which may know another
+    /// catalogue than the one the run is admitted over.
+    fn admitted_leased_over(root: &Path, asks: usize, leasing: Arc<Installations>) -> Run {
         let store = Scratch::new("leases-store");
         let barriers = Barriers::new();
         let answers = Arc::default();
@@ -211,7 +217,8 @@ impl Run {
             (asks, &barriers, &answers),
             segmenter.clone(),
             Arc::new(meter.clone()),
-        );
+        )
+        .with_wrapper(Place::Lease, Arc::new(Lease::over(leasing)));
         let ended = threads::spawn(move || submitted(&executor));
         // The run is admitted: its action stands before its first request.
         barriers.arrived("admitted", 1);
@@ -324,6 +331,41 @@ fn a_reinstall_or_a_removal_between_the_admission_and_the_lease_refuses_the_requ
 }
 
 #[test]
+fn a_lease_is_for_the_installation_that_was_admitted_though_the_reinstalled_model_is_ready() {
+    // The lease is over an inventory whose catalogue is already the next
+    // revision's, as after a catalogue update: once the model is installed again
+    // from it, that inventory calls the model ready, under the new installation.
+    // The run was admitted with the old one. Its request is refused: the lease
+    // holds what the run was admitted with or nothing, never whatever is ready.
+    let scratch = Scratch::new("leases-ready");
+    let root = scratch.path();
+    let old = installed(root, &second());
+    let next = entry_at("2026-11.3");
+    let leasing = Arc::new(Installations::of(
+        ModelsDir::at(Arc::new(RealFs), root),
+        Catalogue::new(vec![next.clone()], &none()).unwrap(),
+        [(next.adapter().clone(), adapter())],
+        none(),
+    ));
+    let run = Run::admitted_leased_over(root, 1, leasing.clone());
+    let new = installed(root, &next);
+    assert_ne!(new.identity(), old.identity());
+    let ready = Installation::of(new.identity().digest());
+    assert_eq!(leasing.look("tiny"), Installed::Ready(ready));
+    assert_eq!(run.ended(), (vec![refused(REPLACED)], (0, 0)));
+    assert!(alone(root, &new).is_some(), "what is ready was not held");
+}
+
+#[test]
+fn a_refusal_of_a_lease_is_of_a_kind_a_request_is_refused_under() {
+    // `Lease::before` makes its refusal with `Stop::new`, which answers nothing
+    // for a kind that is not one of a request; the lease would then have no way
+    // to refuse. The kind it uses is one, so that is not reached.
+    let fault = Fault::new(FaultKind::Rejected, "refused");
+    assert!(Stop::new(RefusalKind::RequestNotReady, "refused", fault).is_some());
+}
+
+#[test]
 fn a_retry_inside_an_admitted_run_whose_installation_was_replaced_is_refused_the_same_way() {
     // The run makes two requests. The first has its lease and reaches the meter
     // and the backend. The model is installed again under another revision before
@@ -371,6 +413,9 @@ fn a_removal_that_starts_while_a_request_holds_the_model_waits_for_it() {
     // The request ends and its lease is let go: the removal goes on.
     let (answers, reached) = run.ended();
     assert_eq!((answers, reached), (vec![None], (1, 1)));
+    // Free now, by one try, before the removal is let go on: a lease that never
+    // lets go fails here, and not by the removal never ending.
+    assert!(alone(root, &record).is_some(), "let go when it is over");
     barriers.open("try");
     let removed = remover.join().unwrap().unwrap();
     assert_eq!(removed.installation(), Some(record.identity()));
