@@ -1223,7 +1223,7 @@ then the readers. In the executor's files and `crates/whizbang/src/runs.rs`.
       with the error of an unreadable record (ADR 0007's `CallError::Record`), never as
       a repeat and never as free: the fingerprint that tells a repeat from a conflict
       was in the admission.
-- [ ] What each reader answers of such a run, as that section lists: `runs list`, `runs
+- [x] What each reader answers of such a run, as that section lists: `runs list`, `runs
       show`, a repeat, `status`, `wait`, `cancel`.
 
 **Done when** these pass: a run a killed process left is ended, after the next open to
