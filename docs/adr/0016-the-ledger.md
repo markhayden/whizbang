@@ -45,6 +45,13 @@ history 88); limit (b) says in its own paragraph that it has no bound.
 Amended: 2026-11-15, with task S1b: the real fold in the core, held to the model
 history by history ("The real fold"); limit (h), a text that is placed nowhere, with
 history 89.
+Amended: 2026-11-15, with task S2: the real ledger in the core ("The real ledger");
+`confirm` and `settle` have no default; a refusal of its own where the books need
+their owner at admission; `Folded::stands` holds the amount to the hold.
+Amended: 2026-11-15, by the owner's decision on what cost control is for: the generated
+suites were made smaller, to about a quarter ("The invariants, and what holds them",
+"The real fold" and "The real ledger" have the sizes). What the code does is as it
+was; the counts under "Review rounds" are of the suites as they were then.
 Spec: section 6, "Spend"; section 3, "Storage"
 
 ## Context
@@ -87,7 +94,8 @@ is, and only a sentence that names a test says what the head does.** The real fo
 the real ledger, the meter, recovery and the commands are the spend strand's tasks
 (S1b to S12), each held to the table; until they merge the one ledger is the test
 kit's fake, which keeps the names of this record in a store and judges by the
-model's fold.
+model's fold. (Since then: the real fold, "The real fold", and a real ledger that
+reserves and confirms, "The real ledger".)
 
 ## Decision
 
@@ -286,7 +294,7 @@ Every history of the table in which other hands do nothing passes it after every
 and each name of a full set of books lost alone, each of fifteen names made, and each
 name damaged, fails it
 (`spend::the_recogniser_takes_what_the_ledger_writes_and_nothing_else`). The same is
-held of 2,048 books that the ledger alone wrote, generated from the seed: no name of
+held of 500 books that the ledger alone wrote, generated from the seed: no name of
 them lost alone, damaged alone or made alone leaves a reservation that the recogniser
 takes ("The invariants, and what holds them" has the suite).
 
@@ -901,8 +909,8 @@ what a correction writes off (82 and 83), a reset under open reservations (84),
 requests of nothing (85), and the two limits accepted with invariant 4 (86 and 87);
 and 88, from the follow-ups of that review: a loss in an epoch a reset has closed.
 And 89 is task S1b's: every name of a reservation garbled past reading (limit (h)).
-That is 89 named histories. The generated histories, in six suites, are 4,096 of at most 24 events each, from a seed written
-in the test, and 4,096 more of another shape: books the ledger alone wrote, then one to
+That is 89 named histories. The generated histories, in six suites, are 1,000 of at most 24 events each, from a seed written
+in the test, and 1,000 more of another shape: books the ledger alone wrote, then one to
 six things other hands do, then one to four things the ledger and its processes do
 (`spend::every_generated_history_of_whole_books_then_other_hands_keeps_every_invariant`); one that breaks an invariant is printed with the seed and its number.
 One in four of the first shape and one in three of the second begin with a tree whose
@@ -912,10 +920,10 @@ its turn, and a run that another run called then sends a request, judged late or
 now. **Every dispatch that is published is held to what was really left of its
 reservation, in the truth,** and both tests are held to reaching that: with runs that
 other runs called, after a run above them overran, late across what other hands did
-and after names of the reservation were lost. 1,024 more histories, of both shapes,
+and after names of the reservation were lost. 250 more histories, of both shapes,
 have amounts near the largest a name can state and places near the largest a name can
 name (`spend::every_generated_history_of_amounts_near_the_largest_keeps_every_invariant`).
-**A fourth shape moves a turn around a late admission:** 1,536 histories in which the
+**A fourth shape moves a turn around a late admission:** 400 histories in which the
 ledger alone acts; other hands then take away one turn and make another, the one
 before the other and after it, in the newest epoch and in another; and an admission
 that was judged before they did, three times in four on the names as they were just
@@ -923,7 +931,7 @@ before the lost turn was taken, is published. It is confirmed at once, or publis
 and confirmed apart with other events between, a crash and a recovery among them;
 its run then asks for all it reserved; and the ledger and its processes go on
 (`spend::every_generated_history_of_turns_moved_around_a_late_admission_keeps_every_invariant`).
-**A fifth shape has two admissions wait together:** 1,024 histories in which two
+**A fifth shape has two admissions wait together:** 250 histories in which two
 admissions are published before either is confirmed, in one process or in two, each
 judged now or earlier; a process dies, either process recovers the store, other
 hands or the ledger act; and the two are confirmed in either order
@@ -938,14 +946,15 @@ the right seal and no place, a whole correction; names are damaged and lost; abo
 happens in a second process with its own memory over the same store; and a provider
 charges before a settlement is published. They reach every event, every state and
 every way a publication ends, late ones among them
-(`spend::the_generated_histories_reach_every_event_every_state_and_every_way_a_publication_ends`),
+(`spend::the_generated_histories_reach_every_event_every_state_and_every_way_a_publication_ends`,
+which goes through the first 2,000 of the first shape: the rarest is first met in history 1,731),
 and an event that is refused changes no name (`spend::a_refusal_changes_no_name`).
 
-**A third suite changes one name.** 2,048 books that the ledger and the owner alone
+**A third suite changes one name.** 500 books that the ledger and the owner alone
 wrote, from the same seed, each have every name lost alone, every name damaged alone,
 and a sample of names made alone: of every form, at numbers the books have and at
 numbers far outside them, for a reservation that is there and for a run that has
-none. That is 35,089 names lost, 35,089 damaged and 35,793 made. Each is held
+none. That is 8,341 names lost, 8,341 damaged and 8,750 made. Each is held
 by what the fold answers, with nothing left out but the two losses in the table; and
 those of one books in sixteen are also held by the checker, and followed by an
 admission and dispatches asked of the ledger for real
@@ -954,14 +963,14 @@ admission and dispatches asked of the ledger for real
 
 | The one name | What it comes to | How many |
 |---|---|---|
-| A name of a reservation, lost, damaged or made | The reservation is frozen. It counts for no less than it did and no less than its requests really took, and nothing is dispatched under it. Its amount is said to be unknown exactly where it has not one hold | 65,285 |
-| Of those: its one hold states its amount, and the name took no turn or is only damaged | The store goes on: no epoch needs its owner that did not | 40,286 |
-| Of those: its amount is unknown, or the name is one that takes a turn and is lost or made (damaged, it takes its turn still) | The store needs its owner: in every epoch where the amount is unknown, and otherwise in the epoch of its hold | 24,999 |
-| Of those: a settlement over its bound, lost | Limit (b). No less than the amount, and less than it counted by no more than the charge was over the bound. In 7 of them more can then be reserved than before, by no more than that | 78 |
-| Of those: the hold, lost | Limit (c). Every bound and every charge its other names say, and the amount said to be unknown | 5,840 |
-| A turn of the newest epoch, lost or made | The store needs its owner: nothing is admitted, and nothing is dispatched under a reservation of that epoch | 8,937 |
-| A reset or its guard, lost, damaged or made; a turn of another epoch, lost or made | No reservation is frozen. No more can be reserved in any epoch than before, and no reservation counts for less: the epoch allows what it did or less, or it is not the newest and needs its owner | 20,067 |
-| A turn, damaged; a second reset of an epoch that says more than the first | The fold answers what it answered: a turn's content is not read, and of two resets the smaller is the allowance | 11,682 |
+| A name of a reservation, lost, damaged or made | The reservation is frozen. It counts for no less than it did and no less than its requests really took, and nothing is dispatched under it. Its amount is said to be unknown exactly where it has not one hold | 15,632 |
+| Of those: its one hold states its amount, and the name took no turn or is only damaged | The store goes on: no epoch needs its owner that did not | 9,576 |
+| Of those: its amount is unknown, or the name is one that takes a turn and is lost or made (damaged, it takes its turn still) | The store needs its owner: in every epoch where the amount is unknown, and otherwise in the epoch of its hold | 6,056 |
+| Of those: a settlement over its bound, lost | Limit (b). No less than the amount, and less than it counted by no more than the charge was over the bound. In 1 of them more can then be reserved than before, by no more than that | 19 |
+| Of those: the hold, lost | Limit (c). Every bound and every charge its other names say, and the amount said to be unknown | 1,402 |
+| A turn of the newest epoch, lost or made | The store needs its owner: nothing is admitted, and nothing is dispatched under a reservation of that epoch | 2,156 |
+| A reset or its guard, lost, damaged or made; a turn of another epoch, lost or made | No reservation is frozen. No more can be reserved in any epoch than before, and no reservation counts for less: the epoch allows what it did or less, or it is not the newest and needs its owner | 4,839 |
+| A turn, damaged; a second reset of an epoch that says more than the first | The fold answers what it answered: a turn's content is not read, and of two resets the smaller is the allowance | 2,805 |
 
 **No one name falls under limit (a) or (d).** No publication of the ledger makes one
 name of a reservation alone, so no one name made is what the ledger would write next;
@@ -1094,9 +1103,12 @@ and `src/contract/`), each with the test that shows it. Tests named `ledger::`,
 
 **Decided while it was built, and not in the first part.**
 
-- **`confirm` and `settle` have defaults,** for a ledger that keeps no books of
-  names: such a one confirms every admission and closes nothing. A ledger that makes
-  holds overrides both; the fake does, and the real one is task S2's.
+- **`confirm` and `settle` had defaults,** for a ledger that keeps no books of
+  names: such a one confirmed every admission and closed nothing. **Changed with
+  task S2: neither has a default.** A ledger that makes holds and left `confirm` out
+  compiled, and confirmed every admission on books it never read. Every ledger now
+  says what it does at each of the three; one that keeps no books, as a test's may,
+  says yes and "nothing" in its own words.
 - **What the review of the second part found untested, and what holds it now.** The
   tests of the second part were written after its code, and its review changed one
   rule at a time and found changes that no test saw. Each is held now:
@@ -1163,10 +1175,11 @@ and `src/contract/`), each with the test that shows it. Tests named `ledger::`,
   again with it. The tests of `nested.rs` that held the old rule are restated, and
   what they showed of two calls at once is shown with the first held inside its
   action (`nested::two_calls_at_once_cannot_both_take_the_last_of_the_allowance`).
-- **What the fake does where an epoch needs its owner at admission:** it declines as
-  over the allowance, with nothing left. A refusal of its own there is the real
-  ledger's to add (task S2); this part's "Done when" asks for one at the
-  confirmation and at a dispatch.
+- **What the fake did where an epoch needs its owner at admission:** it declined as
+  over the allowance, with nothing left. **Changed with task S2:** a ledger declines
+  there with a reason of its own (`contract::Declined::NeedsOwner`, which the caller
+  is handed as `Refusal::NeedsOwner` with the epoch), the fake as the real one
+  (`spend::reserve::an_epoch_whose_turns_are_not_its_publications_admits_nothing_until_a_reset`).
 - **The fake's allowance is a number in memory,** standing for the epoch before any
   reset while the store names no reset, and a correction never stands for it. Its
   judgement is the model's fold over the names a store holds
@@ -1191,7 +1204,7 @@ under `spend/`.
 | What is held | Test |
 |---|---|
 | Each of the 89 named histories is written into a store, event by event: the names an event makes in one publication, as the ledger makes them, each with the record of its kind written through the record's type; where a name is lost or its content damaged, into a new store, the damaged ones with content that is no record, a record that says something else than its name, or another name's record. After every event the store is folded and compared with the model's fold, every field of every reservation, run, epoch and turn, and every reading the real fold works out in its own code (each epoch's balance, what is left of a reservation, what a run sent, whether an admission stands). What each history must give of the books is asserted of the real fold too | `every_named_history_written_into_a_store_folds_to_what_the_model_gives_and_to_what_it_must` |
-| Every history of the six generated suites, from the seed of the model's tests: 4,096, 4,096, 1,024, 1,536, 1,024 and the 2,048 whole books. The names are folded in memory, by the one gathering a store's reading uses (`Reading::of_names`), after every event that changed a name, and compared in the same way. A store publication for each of some 200,000 states does not fit the suite's time | `every_generated_history_folds_to_what_the_model_gives_after_every_event`, `every_generated_history_of_whole_books_then_other_hands_folds_to_what_the_model_gives`, `every_generated_history_of_whole_books_then_other_hands_folds_so_in_the_second_half_too`, `every_generated_history_of_amounts_near_the_largest_folds_to_what_the_model_gives`, `every_generated_history_of_turns_moved_folds_to_what_the_model_gives`, `every_generated_history_of_two_admissions_that_wait_folds_to_what_the_model_gives`, `every_generated_history_of_whole_books_folds_to_what_the_model_gives` |
+| Every history of the six generated suites, from the seed of the model's tests: 1,000, 1,000, 250, 400, 250 and the 500 whole books. The names are folded in memory, by the one gathering a store's reading uses (`Reading::of_names`), after every event that changed a name, and compared in the same way. A store publication for each of some 22,000 states does not fit the suite's time | `every_generated_history_folds_to_what_the_model_gives_after_every_event`, `every_generated_history_of_whole_books_then_other_hands_folds_to_what_the_model_gives`, `every_generated_history_of_whole_books_then_other_hands_folds_so_in_the_second_half_too`, `every_generated_history_of_amounts_near_the_largest_folds_to_what_the_model_gives`, `every_generated_history_of_turns_moved_folds_to_what_the_model_gives`, `every_generated_history_of_two_admissions_that_wait_folds_to_what_the_model_gives`, `every_generated_history_of_whole_books_folds_to_what_the_model_gives` |
 | The two readings of every reservation, the real recogniser and the one the model's checker wrote apart, give one answer after every event of every history above (`Books::read_apart`, with the real recogniser's answer compared field by field with the model's) | The same tests |
 | Every correction a history asks for is judged by the real fold first, on the names as they were, and held to what the model does with it: taken, or refused for the same reason with the same number | The same tests |
 | A name can name any place and state any amount, and the fold ends: a place and a turn at the largest number, two holds of the largest amount, and the store's sum stopped at the largest number of 128 bits | `a_name_can_name_any_place_and_state_any_amount_and_the_fold_still_ends` |
@@ -1217,6 +1230,58 @@ cannot count less:
   (`a_turn_a_reset_or_a_guard_that_does_not_parse_never_allows_more_than_the_name_it_stands_for`).
 - **A turn of no form stops its epoch for good,** as a turn that other hands made
   does: the owner's reset opens the next.
+
+### The real ledger (task S2)
+
+`spend::StoreLedger` in the core is the ledger an executor is given. It keeps
+nothing: each answer is the real fold of one generation of the store's names, the
+one an admission's step shows or the one read again after the admission's
+publication. Its tests are in `crates/whizbang-core/tests/it/spend/reserve.rs`, named
+`spend::reserve::…`, each with an executor the test builds with it. An allowance is
+the owner's reset; until `whizbang spend reset` is built (task S9) a test makes the
+three names a reset makes.
+
+| What | As built | Shown by |
+|---|---|---|
+| An admission | Judged on the newest epoch of the step's generation. Admitted, it makes the hold, which states the amount and the epoch, and the epoch's next turn, in the admission's publication; each record says what its name says and no more. Declined, nothing is published and the request's id stays free | `the_ledger_folds_the_steps_generation_declines_over_the_allowance_and_makes_its_names` |
+| A store with no allowance | The epoch before any reset allows nothing, and so does one whose reset says nothing: a call of nothing is admitted there, under a hold of nothing, and one over nothing is refused as over the allowance, with nothing left | `a_store_with_no_allowance_admits_a_call_of_nothing_and_refuses_one_over_nothing` |
+| A cost with no bound | Refused by the executor, and the ledger is not asked | `a_call_with_no_bound_is_refused_and_the_ledger_is_not_asked` |
+| A preparation | Makes no reservation and no record, and asks the ledger nothing | `prepare_makes_no_reservation_and_no_record` |
+| A call from inside an action | Asks the ledger nothing, and has no name under `spend/` | `a_nested_call_asks_the_ledger_nothing` |
+| An epoch that needs its owner | An admission is refused with a reason of its own, a call of nothing among them, and nothing is published; a reset opens an epoch that admits again, unless a frozen reservation's amount is unknown, which no reset ends | `an_epoch_whose_turns_are_not_its_publications_admits_nothing_until_a_reset`, `a_frozen_reservation_whose_amount_no_name_states_stops_every_admission_and_a_reset_too` |
+| A damaged record (invariant 4; history 81) | Its own reservation is frozen at the most its names can mean, 25 for one of 10, and a call the rest of the allowance covers is admitted, confirmed and runs beside it. A reset whose record cannot be read allows nothing | `one_record_that_cannot_be_read_freezes_its_own_reservation_and_stops_no_other_call`, `a_reset_whose_record_cannot_be_read_allows_nothing` |
+| The confirmation | `Folded::stands` on the reading made after the publication. Its third condition is of the epoch the reservation's hold names: with a reset between the publication and the reading, an admission whose own epoch is full stands though the newest allows nothing, and one whose own epoch is over its allowance does not though the newest has room. Nor does one whose epoch, or the newest, needs its owner; nor one with a name beside its record and its hold. A call of nothing is confirmed in a store in debt | `an_admission_is_held_to_the_epoch_it_fell_under_when_a_reset_came_before_its_reading`, `an_admission_does_not_stand_where_its_epoch_or_the_newest_needs_its_owner`, `an_admission_stands_only_as_the_record_and_one_hold_and_within_its_allowance`, `a_call_of_nothing_is_confirmed_in_a_store_in_debt` |
+| Two admissions at once (the plan's rule 1; history 1) | Two executors over one store are each told yes for the last of the allowance, and are held inside the ledger with their names staged, after the reading a wrong ledger would decide from. Let go together, one is admitted; the other's publication is refused for the turn, it is asked again on the books as they are then, and is declined for what is left. It leaves no name, and its id is free. Under an allowance that covers both, both are admitted, at the epoch's first and second turn. The next turn, the turns due and the epoch a publication takes its turn in (`Folded::next_turn`, `due`, `turn_epochs`) are read after each | `two_executors_each_told_yes_for_the_last_of_the_allowance_end_with_one_admitted`, `two_executors_that_judge_together_under_an_allowance_that_covers_both_are_both_admitted` |
+| An admission and the owner's reset at once (history 29) | The reset takes the next turn of the epoch it closes, which an admission that judged before it chose: the admission is refused by the store, judged again, and falls under the new epoch | `an_admission_that_judged_before_the_owners_reset_is_asked_again_under_the_new_epoch` |
+| A crash inside an admission (the plan's rule 2) | Power is lost before each of the 24 calls that change the disk, with every choice there is of which directories and which names lose what was not durable: some 2,500 crashes, in six tests that each go through every step and take a sixth of its ways. The call may cost a quarter of a dollar under an allowance the owner's reset made durable before; that store is made once and copied for each crash. The next writer finds the run, the id's record, the reservation, the hold and its turn together, each readable and saying what its name says, the reservation open and a set the ledger could have written, or it finds none of them; and after every one of the crashes the same request runs once, or is answered with the run that is there, which nothing ran. It took the place of the executor's sweep with a ledger of one name (ADR 0007, "Admission"), and holds what that held | `a_crash_at_any_event_of_an_admission_through_the_real_ledger_leaves_all_of_it_or_none_1_of_6` to `…_6_of_6` |
+| A run id the books already name | Where the books of the step's generation hold any name of the run the admission was named for, the ledger makes nothing and fails, as the model refuses such an admission (`Why::Taken`): a hold beside what is there would leave a frozen reservation, and with a second hold a store that needs its owner | `an_admission_under_a_run_id_the_books_already_name_is_not_made` |
+
+**`Folded::stands` holds the amount to the hold** (from the review of the fold). It
+took the amount as an argument and used it only to tell a call of nothing, so a
+caller that passed nothing skipped the debt of its epoch. It now answers no unless
+the reservation's one hold states exactly the amount it is asked of. Each of its
+conditions has a case written by hand, with a call of nothing and an amount that is
+not the hold's
+(`spend::fold::an_admission_stands_under_each_of_its_three_conditions_and_only_for_the_amount_its_hold_states`),
+and the comparison with the model, after every event of every history, asks it of the
+hold's amount and of another.
+
+**One name changed alone, against the real fold.** The model's suite of one name
+lost, damaged or made alone is held by the model's fold. A sample of it is held by
+the real one: 24 whole books from each of two seeds, every name lost alone, every
+name damaged alone, and names of every form made alone, each folded and compared
+with the model as after an event of a history; over 2,500 changes and over 750
+frozen reservations for each seed
+(`spend::fold::one_name_lost_damaged_or_made_alone_in_whole_books_folds_to_what_the_model_gives`,
+`…_alone_folds_to_what_the_model_gives_from_another_seed`).
+
+**What it does not do yet.** `Ledger::settle` of the real ledger closes nothing: the
+closing of a reservation at its run's end is task S11's, which has the charges of a
+run's requests to close with. Until it merges, a reservation the real ledger made
+stays open when its run has ended, and when its admission was not confirmed, and
+counts in full: over, and never under
+(`an_admission_is_held_to_the_epoch_it_fell_under_when_a_reset_came_before_its_reading`,
+its last lines). The binary's executor is given the ledger by task W1.
 
 ### Limits, each stated
 
