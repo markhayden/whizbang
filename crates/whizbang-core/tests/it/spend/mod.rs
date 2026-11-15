@@ -6,6 +6,7 @@
 mod age;
 mod cap;
 mod name;
+mod probe;
 mod reading;
 mod record;
 mod support;

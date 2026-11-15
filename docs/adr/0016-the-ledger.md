@@ -1093,6 +1093,66 @@ and `src/contract/`), each with the test that shows it. Tests named `ledger::`,
 - **`confirm` and `settle` have defaults,** for a ledger that keeps no books of
   names: such a one confirms every admission and closes nothing. A ledger that makes
   holds overrides both; the fake does, and the real one is task S2's.
+- **What the review of the second part found untested, and what holds it now.** The
+  tests of the second part were written after its code, and its review changed one
+  rule at a time and found changes that no test saw. Each is held now:
+  - *A confirmation that cannot be answered is one that says no.* Where
+    `Ledger::confirm` fails, and where the store cannot be read again after the
+    admission's publication, nothing runs, the run ends as `not_confirmed` and its
+    caller is handed `CallError::NotConfirmed`
+    (`ledger::an_admission_whose_confirmation_fails_is_not_confirmed_and_nothing_runs`,
+    `ledger::an_admission_whose_store_cannot_be_read_again_is_not_confirmed_and_nothing_runs`).
+    Where the run cannot be ended either, it stays admitted, counted in full and
+    abandoned: its caller is told `NotConfirmed` with `ended` false where the answer
+    was no, and is handed the failure of the reading where there was no answer
+    (`ledger::an_admission_that_is_not_confirmed_and_cannot_be_ended_stays_admitted_and_its_caller_is_told`).
+  - *A run cancelled before the answer that its admission does not stand* ended as
+    cancelled in its record while its caller was told `NotConfirmed`. Decided for
+    this record and ADR 0013, which say how such a run ends: as `not_confirmed`,
+    whatever its signal says, in its record, in its id's ending and to its caller.
+    An accepted cancellation still commits nothing (ADR 0008, "Cancellation", which
+    now names the case).
+  - *`settle` is held to a name it made in its own step,* as `reserve` is
+    (`ledger::a_ledger_that_hands_back_from_a_runs_end_a_name_it_did_not_make_there_is_refused`).
+    What is not tested is the end of the 1,024 attempts at a run's end: each attempt
+    that the store refuses needs another publication to have taken the closing's
+    place or turn first, and 1,024 such pairs on the test kit's disk take longer
+    than a test may.
+  - *`reserve` reads through the store,* as `confirm` and `settle` do. It read
+    through the executor's contents, which an executor that writes is given as the
+    same store: nothing changed in what is read, and no test can tell the two apart.
+  - *The example on `Ledger` that must not compile is compiled,* by
+    `scripts/compile-fail.sh`, which `just ci` runs: it must fail with E0451 on the
+    private fields of `MadeName` and with no other error, and must compile once the
+    line that writes a `MadeName` is replaced.
+  - *The rules of the reading.* A probe reads 6,000 sets of names made from a seed,
+    each books a ledger could have written and then changed by other hands, in the
+    core and in the model, and compares every field a reservation's names give
+    (`spend::probe::every_generated_set_of_names_reads_in_the_core_as_the_model_reads_it`).
+    It holds two settlements at one place and the four parts of a whole chain, and
+    with it are tests named for what counts less when it is wrong and for what a
+    probe cannot compare: a correction under a closing that released or under none,
+    two closings, two corrections at one place and a correction at a place that is
+    not there or is the closing's
+    (`spend::reading::a_correction_is_taken_only_under_a_closing_that_held_at_a_place_of_its_own_above_it`);
+    the highest place a dispatch names
+    (`…::a_dispatch_at_a_place_whose_guard_is_lost_counts_every_place_below_it`); a
+    correction's amount in the most a reservation's names can mean
+    (`…::a_correction_that_says_more_than_the_names_do_is_the_most_they_can_mean`);
+    the replay's count of a charge over its bound
+    (`…::the_replay_counts_a_charge_over_its_bound_before_the_dispatch_above_its_place`);
+    the texts of no form in a seal
+    (`…::a_seal_is_over_the_texts_of_no_form_too_and_marks_what_is_damaged`); the
+    four parts of a correction's place
+    (`…::a_correction_is_at_its_place_only_where_the_place_is_sound_and_holds_nothing_else`);
+    and an entry that cannot be read, and a record of another run's reservation
+    (`…::an_entry_that_cannot_be_read_and_a_record_of_another_runs_reservation_are_damage`).
+    One change is no change: the recogniser asks twice that a correction's place
+    holds no dispatch, since a correction's place is above the last dispatch, and
+    either asking alone refuses the same sets.
+  - *A call two levels down is refused over the run that made it,* which a test of
+    `nested.rs` showed until a child's remainder began to be handed up
+    (`nested::a_call_two_levels_down_is_refused_over_the_run_that_made_it_whatever_the_runs_above_have_left`).
 - **A child's remainder is handed up now.** ADR 0008 had nothing given back to an
   allowance. With `Allowance` as this record has it, a call from inside an action
   that ends having used nothing gives its whole share back, so a parent can call

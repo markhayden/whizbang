@@ -1153,12 +1153,8 @@ impl Engine {
                     start_ms,
                 );
                 let generation = store.snapshot().map_err(failed)?;
-                let mut step = Step::new(
-                    &mut publication,
-                    &generation,
-                    self.contents.as_ref(),
-                    &secrets,
-                );
+                // Read through the store, as the confirmation and the run's end are.
+                let mut step = Step::new(&mut publication, &generation, store.as_ref(), &secrets);
                 match ledger.reserve(&reservation, &mut step) {
                     // What a ledger hands back is a name it made, in this step: one
                     // it kept from another attempt is published by nothing.
@@ -1561,7 +1557,11 @@ impl Engine {
         // locks that are taken whatever a panic did to them.
         // A run that was cancelled before its action started does not run it. Neither
         // does a run that has no thread to run it on: it is handed the failure.
-        let handed = (!live.signal().is_cancelled()).then(|| match unstarted {
+        // A run whose admission was not confirmed ends as that whether or not it was
+        // cancelled meanwhile (ADR 0016; ADR 0013): it never was a run that could
+        // execute, and its caller is told so, so its record says the same.
+        let not_confirmed = unstarted.is_some_and(|(kind, _)| kind == NOT_CONFIRMED_KIND);
+        let handed = (not_confirmed || !live.signal().is_cancelled()).then(|| match unstarted {
             None => catch_unwind(AssertUnwindSafe(|| action.run(&prepared, &context))),
             Some((kind, why)) => Ok(Err(Failure::Error {
                 kind: kind.to_owned(),
@@ -1611,7 +1611,7 @@ impl Engine {
             Some(Ok(Err(Failure::Invalid { why }))) => Outcome::Invalid { why: said(&why) },
             Some(Err(panic)) => error("panic", &panic_text(panic)),
         };
-        if cancelled {
+        if cancelled && !not_confirmed {
             outputs.clear();
             outcome = Outcome::Cancelled;
         }

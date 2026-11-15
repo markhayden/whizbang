@@ -4,21 +4,24 @@
 //! ledger here is the test kit's fake, which keeps the ledger's names in the store and
 //! judges by the model's fold.
 
+use std::io;
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use whizbang_core::capability::Stage;
 use whizbang_core::contract::record::{self, Status};
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Answer, Argument, Backends, Call, CallError, Capability, Clock,
-    Closing, Context, Declined, DispatchRefused, Engine, Estimate, Executor, Failure, Kind, Ledger,
-    MadeName, ModelIdentity, NOT_CONFIRMED_KIND, NotJudged, Outcome, PreparedCall, Produced,
-    Registry, Request, RequestId, Requirement, Reread, Reservation, RunId, RunState, Settled, Step,
-    Unavailable, Value, ValueType,
+    Action, ActionDescriptor, Answer, Argument, Backends, Call, CallError, Cancel, Capability,
+    Clock, Closing, Context, Declined, DispatchRefused, Engine, Estimate, Executor, Failure, Kind,
+    Ledger, MadeName, ModelIdentity, NOT_CONFIRMED_KIND, NotJudged, Outcome, PreparedCall,
+    Produced, Registry, Request, RequestId, Requirement, Reread, Reservation, RunId, RunState,
+    Settled, Step, Unavailable, Value, ValueType,
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::spend::{Amount, ClosedBy, PlaceBy, Reading, Record, Sum, TurnBy};
+use whizbang_core::store::fs::{Fs, Held, LockFile, NewFile, OpenFile};
 use whizbang_core::store::{self, Store};
 use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::ledger::FakeLedger;
@@ -956,4 +959,371 @@ fn a_dispatch_is_refused_where_the_trees_tally_in_memory_does_not_cover_it_thoug
         "the request was not sent: the tree it is sent under has, as its process holds \
          it, 0 millionths of a US dollar left"
     );
+}
+
+// --- the confirmation, where the reading fails or the run cannot be ended -----------------------
+
+type Confirm = Box<dyn Fn(&Reservation, &Reread<'_>) -> Result<bool, NotJudged> + Send + Sync>;
+
+/// A ledger that is the fake, with the test's answer in place of its confirmation,
+/// and the test's hands in its place at a run's end when the test gives them.
+struct Answering {
+    inner: Arc<FakeLedger>,
+    confirm: Confirm,
+    settle: Option<InSettle>,
+}
+
+impl Answering {
+    fn confirming(
+        world: &World,
+        confirm: impl Fn(&Reservation, &Reread<'_>) -> Result<bool, NotJudged> + Send + Sync + 'static,
+    ) -> Answering {
+        Answering {
+            inner: world.ledger.clone(),
+            confirm: Box::new(confirm),
+            settle: None,
+        }
+    }
+
+    /// The same, with a run's end that fails as the ledger's own.
+    fn and_no_end(mut self) -> Answering {
+        self.settle = Some(Box::new(|_| {
+            Err(NotJudged::saying("its books do not balance"))
+        }));
+        self
+    }
+}
+
+impl Ledger for Answering {
+    fn reserve(
+        &self,
+        reservation: &Reservation,
+        step: &mut Step<'_, '_>,
+    ) -> Result<MadeName, Declined> {
+        self.inner.reserve(reservation, step)
+    }
+
+    fn confirm(&self, reservation: &Reservation, reading: &Reread<'_>) -> Result<bool, NotJudged> {
+        (self.confirm)(reservation, reading)
+    }
+
+    fn settle(&self, closing: &Closing<'_>, step: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
+        match &self.settle {
+            Some(settle) => settle(step),
+            None => self.inner.settle(closing, step),
+        }
+    }
+}
+
+/// The sentence of the error a run ended with.
+fn ended_saying(world: &World, id: &RunId) -> String {
+    let generation = world.store.snapshot().unwrap();
+    let stored = record::stored(&generation, id.as_str(), |entry| world.store.read(entry));
+    let stored = stored.unwrap().unwrap();
+    stored.outcome().error.as_ref().unwrap().message.clone()
+}
+
+/// What the books count in the newest epoch.
+fn counted(world: &World) -> u128 {
+    let books = world.ledger.books_of(&world.store).unwrap();
+    books.folded.balance().counted
+}
+
+#[test]
+fn an_admission_whose_confirmation_fails_is_not_confirmed_and_nothing_runs() {
+    // The ledger cannot answer: that is no answer, and is taken as one that says no.
+    let world = World::new(1000);
+    let failing = Answering::confirming(&world, |_, _| {
+        Err(NotJudged::saying("its books could not be folded"))
+    });
+    let engine = world.engine_with(250, Arc::new(failing), |_| Ok(Produced::nothing()));
+    let refused = engine.request(&asked("order-1")).unwrap_err();
+    not_confirmed(&world, &engine, refused, "released");
+    assert_eq!(
+        ended_saying(&world, &world.only_run()),
+        "the run was admitted and its admission was not confirmed, so its action was not \
+         run: the books could not be read after its admission was published: the ledger \
+         failed: its books could not be folded"
+    );
+    assert_eq!(counted(&world), 0);
+}
+
+/// The test kit's file system, on which one reading of a generation's file fails
+/// when a test asks for it: the first after the pointer is next moved, which is the
+/// reading that follows a publication.
+struct Unread {
+    inner: ShimFs,
+    /// The next move of the pointer arms one failure.
+    after_the_next_publication: AtomicBool,
+    armed: AtomicBool,
+    failed: AtomicU64,
+}
+
+impl Fs for Unread {
+    fn create_dir(&self, path: &Path) -> io::Result<()> {
+        self.inner.create_dir(path)
+    }
+    fn write_new(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        self.inner.write_new(path, bytes)
+    }
+    fn sync_dir(&self, path: &Path) -> io::Result<()> {
+        self.inner.sync_dir(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        self.inner.rename(from, to)?;
+        let pointer = to.ends_with("CURRENT");
+        if pointer
+            && self
+                .after_the_next_publication
+                .swap(false, Ordering::SeqCst)
+        {
+            self.armed.store(true, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+    fn remove_all(&self, path: &Path) -> io::Result<()> {
+        self.inner.remove_all(path)
+    }
+    fn read_at_most(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+        let generation = path
+            .parent()
+            .is_some_and(|dir| dir.ends_with("generations"));
+        if generation && self.armed.swap(false, Ordering::SeqCst) {
+            self.failed.fetch_add(1, Ordering::SeqCst);
+            return Err(io::Error::other("the disk did not answer"));
+        }
+        self.inner.read_at_most(path, limit)
+    }
+    fn list(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
+        self.inner.list(path)
+    }
+    fn exists(&self, path: &Path) -> io::Result<bool> {
+        self.inner.exists(path)
+    }
+    fn hold_lock_file(&self, path: &Path, create: bool) -> io::Result<Option<Box<dyn LockFile>>> {
+        self.inner.hold_lock_file(path, create)
+    }
+    fn share(&self, path: &Path) -> io::Result<Box<dyn Held>> {
+        self.inner.share(path)
+    }
+    fn try_alone(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
+        self.inner.try_alone(path)
+    }
+    fn begin_new(&self, path: &Path, most: u64) -> io::Result<Box<dyn NewFile>> {
+        self.inner.begin_new(path, most)
+    }
+    fn open_file(&self, path: &Path) -> io::Result<Box<dyn OpenFile>> {
+        self.inner.open_file(path)
+    }
+    fn try_share(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
+        self.inner.try_share(path)
+    }
+}
+
+#[test]
+fn an_admission_whose_store_cannot_be_read_again_is_not_confirmed_and_nothing_runs() {
+    // The admission is published, and the reading that follows it fails: the ledger
+    // is not asked, and that is taken as an answer that says no. The store reads
+    // again afterwards, so the run is ended.
+    let fs = Arc::new(Unread {
+        inner: ShimFs::new(),
+        after_the_next_publication: AtomicBool::new(false),
+        armed: AtomicBool::new(false),
+        failed: AtomicU64::new(0),
+    });
+    let dir = Scratch::new("ledger-unread");
+    let store = Arc::new(Store::open(&dir.path().join("store"), fs.clone()).unwrap());
+    let world = World {
+        _dir: dir,
+        store,
+        ledger: Arc::new(FakeLedger::with_allowance(1000)),
+        runs: Arc::new(AtomicU64::new(0)),
+    };
+    let ledger = {
+        let fs = fs.clone();
+        Meddled::after_reserve(&world, move |_| {
+            fs.after_the_next_publication.store(true, Ordering::SeqCst);
+        })
+    };
+    let engine = world.engine_with(250, ledger, |_| Ok(Produced::nothing()));
+    let refused = engine.request(&asked("order-1")).unwrap_err();
+    assert_eq!(fs.failed.load(Ordering::SeqCst), 1);
+    assert_eq!(world.ledger.confirmed(), 0);
+    not_confirmed(&world, &engine, refused, "released");
+    let said = ended_saying(&world, &world.only_run());
+    assert!(
+        said.contains("the books could not be read after its admission was published"),
+        "{said}"
+    );
+    assert_eq!(counted(&world), 0);
+}
+
+/// What a store holds of a run whose admission was not confirmed and whose end could
+/// not be written: the run as it was admitted, its reservation open and counted in
+/// full, and no ending of its id. Nothing ran, and the run is abandoned.
+fn left_admitted(world: &World, engine: &Engine) {
+    assert_eq!(world.ran(), 0);
+    let id = world.only_run();
+    let generation = world.store.snapshot().unwrap();
+    let run = generation.run(id.as_str()).unwrap();
+    assert!(run.entries().get(record::RECORD_NAME).is_none());
+    assert_eq!(
+        world.names(),
+        [
+            format!("spend/held/0/{id}/250"),
+            format!("spend/reservations/{id}"),
+            "spend/turn/0/1".to_owned(),
+        ]
+    );
+    assert!(generation.get("requests/order-1/ended").is_none());
+    assert_eq!(counted(world), 250);
+    let watched = engine.status(&id).unwrap();
+    assert!(
+        matches!(watched.state(), RunState::Abandoned { .. }),
+        "{watched:?}"
+    );
+}
+
+#[test]
+fn an_admission_that_is_not_confirmed_and_cannot_be_ended_stays_admitted_and_its_caller_is_told() {
+    // The answer is no, and the publication that would end the run fails.
+    let world = World::new(1000);
+    let ledger = Answering::confirming(&world, |_, _| Ok(false)).and_no_end();
+    let engine = world.engine_with(250, Arc::new(ledger), |_| Ok(Produced::nothing()));
+    let refused = engine.request(&asked("order-1")).unwrap_err();
+    assert_eq!(
+        refused,
+        CallError::NotConfirmed {
+            run: world.only_run(),
+            action: "spend".to_owned(),
+            ended: false,
+        }
+    );
+    assert!(refused.refusal().is_none());
+    let said = refused.to_string();
+    assert!(
+        said.ends_with("the run could not be ended and is abandoned"),
+        "{said}"
+    );
+    left_admitted(&world, &engine);
+
+    // The reading itself failed, and the run could not be ended either: the caller
+    // is handed the failure of the reading.
+    let world = World::new(1000);
+    let ledger = Answering::confirming(&world, |_, _| {
+        Err(NotJudged::saying("its books could not be folded"))
+    })
+    .and_no_end();
+    let engine = world.engine_with(250, Arc::new(ledger), |_| Ok(Produced::nothing()));
+    let failed = engine.request(&asked("order-1")).unwrap_err();
+    assert_eq!(
+        failed.to_string(),
+        "the ledger failed: its books could not be folded"
+    );
+    left_admitted(&world, &engine);
+}
+
+#[test]
+fn a_run_cancelled_before_its_admission_is_answered_as_not_standing_ends_as_not_confirmed() {
+    // A cancellation is accepted between the admission's publication and the
+    // ledger's answer, which is no. The run never could execute: its record and its
+    // caller both say that its admission was not confirmed, and neither says
+    // cancelled (ADR 0013, "A run whose admission was not confirmed").
+    let world = World::new(1000);
+    let executor: Arc<Mutex<Option<Engine>>> = Arc::default();
+    let answered: Arc<Mutex<Vec<Result<Cancel, CallError>>>> = Arc::default();
+    let ledger = {
+        let (executor, answered) = (executor.clone(), answered.clone());
+        Answering::confirming(&world, move |reservation, _| {
+            let engine = executor.lock().unwrap().clone().unwrap();
+            let cancelled = engine.cancel(reservation.run());
+            answered.lock().unwrap().push(cancelled);
+            Ok(false)
+        })
+    };
+    let engine = world.engine_with(250, Arc::new(ledger), |_| Ok(Produced::nothing()));
+    *executor.lock().unwrap() = Some(engine.clone());
+    let refused = engine.request(&asked("order-1"));
+    // The ledger holds the executor no longer.
+    *executor.lock().unwrap() = None;
+    assert_eq!(*answered.lock().unwrap(), [Ok(Cancel::Accepted)]);
+    not_confirmed(&world, &engine, refused.unwrap_err(), "released");
+    assert_eq!(counted(&world), 0);
+}
+
+// --- settle, and the name it hands back ---------------------------------------------------------
+
+/// A ledger that keeps the first name it made at admission and hands it back from
+/// the run's end, where it made that one not: with nothing made there, or with
+/// another name made there.
+struct KeptForTheEnd {
+    kept: Mutex<Option<MadeName>>,
+    makes_another: bool,
+}
+
+impl Ledger for KeptForTheEnd {
+    fn reserve(&self, _: &Reservation, step: &mut Step<'_, '_>) -> Result<MadeName, Declined> {
+        *self.kept.lock().unwrap() = Some(step.record(&turn_of_no_run(1))?);
+        Ok(step.record(&turn_of_no_run(2))?)
+    }
+
+    fn settle(&self, _: &Closing<'_>, step: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
+        if self.makes_another {
+            step.record(&turn_of_no_run(3))?;
+        }
+        match self.kept.lock().unwrap().take() {
+            Some(kept) => Ok(Settled::Closed(kept)),
+            None => Ok(Settled::Nothing),
+        }
+    }
+}
+
+fn turn_of_no_run(turn: u64) -> Record {
+    Record::Turn {
+        epoch: 0,
+        turn: n(turn),
+        by: TurnBy::Admission,
+        run: None,
+    }
+}
+
+#[test]
+fn a_ledger_that_hands_back_from_a_runs_end_a_name_it_did_not_make_there_is_refused() {
+    for makes_another in [false, true] {
+        let world = World::new(1000);
+        let ledger = Arc::new(KeptForTheEnd {
+            kept: Mutex::default(),
+            makes_another,
+        });
+        let engine = world.engine_with(250, ledger, |_| Ok(Produced::nothing()));
+        let refused = engine.request(&asked("order-1")).unwrap_err();
+        let CallError::Ledger { why } = &refused else {
+            panic!("{refused:?}");
+        };
+        assert!(
+            why.contains("did not make in this attempt at the run's end"),
+            "{why}"
+        );
+        // The action ran, and its end was not published, with nothing the ledger
+        // staged in it: the run is as it was admitted, and abandoned.
+        assert_eq!(world.ran(), 1);
+        let id = world.only_run();
+        let generation = world.store.snapshot().unwrap();
+        let run = generation.run(id.as_str()).unwrap();
+        assert!(run.entries().get(record::RECORD_NAME).is_none());
+        assert_eq!(
+            world.names(),
+            [
+                format!("spend/reservations/{id}"),
+                "spend/turn/0/1".to_owned(),
+                "spend/turn/0/2".to_owned(),
+            ]
+        );
+        assert!(generation.get("requests/order-1/ended").is_none());
+        let watched = engine.status(&id).unwrap();
+        assert!(
+            matches!(watched.state(), RunState::Abandoned { .. }),
+            "{watched:?}"
+        );
+    }
 }
