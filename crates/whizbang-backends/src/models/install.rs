@@ -394,6 +394,14 @@ impl<'a> Model<'a> {
         self.folder.join("CURRENT")
     }
 
+    /// Removes the staging folder an install left, when there is one, and syncs.
+    pub(super) fn unstage(&self) -> io::Result<()> {
+        if self.fs().exists(&self.dir.incoming(self.name))? {
+            self.dir.unstage(self.name);
+        }
+        Ok(())
+    }
+
     /// Writes the status record.
     pub(super) fn say(&self, status: &Status) -> io::Result<()> {
         status::write(self.dir, self.name, status)
@@ -557,7 +565,7 @@ impl<'a> Model<'a> {
     ///
     /// The pointer is read without the directory's lock: it is changed only by one
     /// who holds the model's lock, which the caller does.
-    fn clean(&self, keep: &str) -> io::Result<()> {
+    pub(super) fn clean(&self, keep: &str) -> io::Result<()> {
         self.fs().sync_dir(&self.folder)?;
         let named = match read_pointer(self.dir, &self.folder, self.secrets)? {
             Pointer::Names(id) => Some(id.hex()),

@@ -1937,7 +1937,7 @@ removal racing an install. **Size:** small.
 
 **Depends on:** M5d.
 
-- [ ] A removal that went on deletes the installation's files, through the file-system
+- [x] A removal that went on deletes the installation's files, through the file-system
       interface the shim can crash.
 
 **Done when** these pass: `remove::a_crash_at_any_event…` leaves the installation whole

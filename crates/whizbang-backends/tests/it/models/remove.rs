@@ -24,8 +24,8 @@ use whizbang_testkit::threads;
 use super::attaching::{Deaf, Other, root_from_parent, say, told};
 use super::holds::{CHILD, alone, count, hold, holds_over};
 use super::publishing::{
-    adapter, events_after, first, hold_file_of, index_of, installed, installing, is_whole, reading,
-    record_of, said, second, tiny,
+    adapter, entry_at, events_after, first, folder_of, hold_file_of, index_of, installations,
+    installed, installing, is_whole, reading, record_of, said, second, tiny,
 };
 use super::staging::{TERMS, at, graph, incoming, names_under, serving_both, touches_only};
 use super::{MARKER, model, none, secrets, shows_nothing_of};
@@ -155,8 +155,9 @@ fn a_removal_during_a_held_installation_refuses_a_new_hold_and_goes_on_when_the_
     assert_eq!(said(root), Some((State::Removed, 0, 0)));
     assert!(!marked(root));
     assert!(!tiny(root).join("DRAINING").exists());
-    // "Goes on" ends at the decision: nothing is deleted yet (task M5c).
-    is_whole(root, &record);
+    // And its files are gone; the hold file stays, as every lock file does.
+    assert!(installations(root).is_empty());
+    assert!(hold_file_of(root, &record).exists());
     assert_eq!(hold(&holds, &record).unwrap_err(), HoldRefused::NotNamed);
 }
 
@@ -536,6 +537,9 @@ fn a_removal_marks_under_the_directorys_lock_says_removing_and_clears_the_pointe
         Event::Lock(root.join("LOCK")),
         Event::Remove(pointer),
         Event::SyncDir(model.clone()),
+        // The deleting, once the cleared pointer is durable, and its sync.
+        Event::Remove(folder_of(&root, &record)),
+        Event::SyncDir(model.join("installations")),
     ]);
     expected.extend(said_in(&status));
     expected.extend([
@@ -544,10 +548,14 @@ fn a_removal_marks_under_the_directorys_lock_says_removing_and_clears_the_pointe
         Event::SyncDir(model.clone()),
     ]);
     assert_eq!(changes, expected);
-    // Nothing is deleted yet, and nothing is left behind but the status.
+    // What is left: the lock files, the hold file, the status and the empty
+    // folders. The pointer and the installation are gone.
     let mut after = before.clone();
-    after.retain(|name| name != "models/tiny/CURRENT");
+    after.retain(|name| {
+        name != "models/tiny/CURRENT" && !name.starts_with("models/tiny/installations/")
+    });
     assert_eq!(names_under(&root), after);
+    assert!(after.contains(&format!("models/tiny/holds/{}", record.identity().hex())));
 }
 
 #[test]
@@ -608,6 +616,9 @@ fn each_step_of_the_file_system_refused_leaves_the_model_installed_or_removed() 
         }
         assert_eq!(reading(root), Current::NotInstalled, "event {event}");
         assert!(!marked(root), "event {event}");
+        // A removal that was refused after it cleared the pointer is finished by
+        // the next: nothing of the installation is left.
+        assert!(installations(root).is_empty(), "event {event}");
     }
 }
 
@@ -628,7 +639,15 @@ fn a_crash_at_any_event_of_a_removal_leaves_the_model_installed_or_not_installed
         &clean,
         |event| matches!(event, Event::Remove(p) if p.ends_with("CURRENT")),
     );
-    for (event, lost) in (0..clean.len()).flat_map(|event| LOSSES.map(|lost| (event, lost))) {
+    // Up to the clearing of the pointer the only names that are not durable are the
+    // mark's and the status's, which nothing here decides by: those events are
+    // tried under the loss of every name and of none. From the clearing on, where
+    // the pointer and the folders are at stake, under all six.
+    let tried = (0..clean.len()).flat_map(|event| {
+        let losses = if event < cleared { 2 } else { LOSSES.len() };
+        LOSSES[..losses].iter().map(move |lost| (event, *lost))
+    });
+    for (event, lost) in tried {
         let at = format!("event {event}, {lost:?}");
         let scratch = Scratch::new("remove-crash");
         let root = scratch.path();
@@ -671,6 +690,9 @@ fn a_crash_at_any_event_of_a_removal_leaves_the_model_installed_or_not_installed
         assert_eq!(reading(root), Current::NotInstalled, "{at}");
         assert!(!marked(root), "{at}");
         assert!(!tiny(root).join("DRAINING").exists(), "{at}");
+        // Whatever the crash left or brought back of the folder, the next removal
+        // deleted it.
+        assert!(installations(root).is_empty(), "{at}");
         // Under the loss of every name and of none: the model installs again.
         if matches!(lost, Lost::Unsynced | Lost::ContentOnly) {
             assert_eq!(installed(root, &second()), record, "{at}");
@@ -1389,4 +1411,239 @@ fn a_removal_cancels_an_install_that_runs_in_a_second_process() {
     assert_eq!(reading(root), Current::NotInstalled);
     assert_eq!(said(root), Some((State::Removed, 0, 0)));
     assert!(!marked(root));
+}
+
+// --- removal on disk -----------------------------------------------------------------------------
+
+#[test]
+fn a_removal_deletes_every_installation_of_the_model_under_its_hold_files_and_touches_nothing_outside()
+ {
+    // Two installations are on the disk: the one in use, and one that was
+    // superseded while a run held it. Beside them, what no installation is: a file,
+    // and a link that leads out of the models directory. And a staging folder that
+    // a dead install left.
+    let scratch = Scratch::new("remove-deletes");
+    let root = scratch.path().to_path_buf();
+    let old = installed(&root, &first());
+    let foreign = RealFs.try_share(&hold_file_of(&root, &old)).unwrap();
+    let new = installed(&root, &second());
+    drop(foreign);
+    is_whole(&root, &old);
+    let outside = Scratch::new("remove-deletes-outside");
+    std::fs::write(outside.path().join("kept"), b"not whizbang's").unwrap();
+    std::fs::write(tiny(&root).join("installations/notes.txt"), b"x").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path(), tiny(&root).join("installations/elsewhere"))
+        .unwrap();
+    std::fs::create_dir_all(incoming(&root).join("files")).unwrap();
+    std::fs::write(incoming(&root).join("files/graph.onnx"), b"part").unwrap();
+    // When the deleting is synced, both hold files are still the removal's alone.
+    let fs = Arc::new(ShimFs::new());
+    let synced = Event::SyncDir(tiny(&root).join("installations"));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let (see, files) = (
+        seen.clone(),
+        [hold_file_of(&root, &old), hold_file_of(&root, &new)],
+    );
+    let at = clean_removal_index(&root, &synced);
+    fs.pause_before(at, move || {
+        for file in &files {
+            see.lock()
+                .unwrap()
+                .push(RealFs.try_share(file).unwrap().is_none());
+        }
+    });
+    let removed = removing(fs.clone(), &root, &Hand::new(), SECOND, &mut never);
+    assert_eq!(removed.unwrap().installation(), Some(new.identity()));
+    assert_eq!(*seen.lock().unwrap(), [true, true]);
+    assert!(installations(&root).is_empty());
+    assert!(!incoming(&root).exists());
+    assert!(hold_file_of(&root, &old).exists() && hold_file_of(&root, &new).exists());
+    assert!(alone(&root, &old).is_some() && alone(&root, &new).is_some());
+    assert_eq!(
+        std::fs::read(outside.path().join("kept")).unwrap(),
+        b"not whizbang's"
+    );
+    let events = fs.events();
+    touches_only(&events, &root);
+    // Nothing is deleted before the cleared pointer is durable, and the deleting
+    // is synced.
+    let cleared = index_of(&events, |event| {
+        *event == Event::Remove(tiny(&root).join("CURRENT"))
+    });
+    assert_eq!(events[cleared + 1], Event::SyncDir(tiny(&root)));
+    let deleted: Vec<usize> = (0..events.len())
+        .filter(|at| {
+            matches!(&events[*at], Event::Remove(p)
+                if p.parent() == Some(&tiny(&root).join("installations")))
+        })
+        .collect();
+    assert_eq!(deleted.len(), 4);
+    assert!(deleted[0] > cleared + 1);
+    assert_eq!(events[deleted[3] + 1], synced);
+    // The model installs again, from nothing.
+    let fake = serving_both();
+    let again = installing(&Arc::new(ShimFs::new()), &root, &second(), &fake);
+    assert_eq!(again, Ok(new.clone()));
+    assert_eq!(fake.requests().len(), 2);
+    is_whole(&root, &new);
+}
+
+/// The index of this event among the events of a removal of the directory at
+/// `root` as it is now, found on a copy of it that is removed for the purpose.
+fn clean_removal_index(root: &Path, event: &Event) -> usize {
+    let copy = Scratch::new("remove-events-copy");
+    copy_tree(root, copy.path());
+    let fs = Arc::new(ShimFs::new());
+    removing(fs.clone(), copy.path(), &Hand::new(), SECOND, &mut never).unwrap();
+    let there = format!("{event:?}").replace(
+        &root.display().to_string(),
+        &copy.path().display().to_string(),
+    );
+    fs.events()
+        .iter()
+        .position(|event| format!("{event:?}") == there)
+        .unwrap()
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    for entry in std::fs::read_dir(from).unwrap() {
+        let path = entry.unwrap().path();
+        let target = to.join(path.file_name().unwrap());
+        if path.is_symlink() {
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(std::fs::read_link(&path).unwrap(), &target).unwrap();
+        } else if path.is_dir() {
+            std::fs::create_dir(&target).unwrap();
+            copy_tree(&path, &target);
+        } else {
+            std::fs::copy(&path, &target).unwrap();
+        }
+    }
+}
+
+/// How a removal is interrupted once it has cleared the pointer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Interrupted {
+    /// It dies before it deletes: the mark, no pointer, the folder.
+    CrashBeforeDeleting,
+    /// The deleting is refused: no pointer, the folder, and no mark.
+    RefusedDeleting,
+    /// It dies when it has deleted and not synced, and the crash brings the folder
+    /// back.
+    CrashBeforeTheSync,
+}
+
+#[test]
+fn a_removal_interrupted_after_the_pointer_was_cleared_is_finished_by_the_next_install_or_removal()
+{
+    let clean = clean_removal();
+    let deleting = index_of(&clean, |event| {
+        matches!(event, Event::Remove(p)
+            if p.parent().is_some_and(|folder| folder.ends_with("installations")))
+    });
+    let hows = [
+        Interrupted::CrashBeforeDeleting,
+        Interrupted::RefusedDeleting,
+        Interrupted::CrashBeforeTheSync,
+    ];
+    for (how, by_install) in hows.into_iter().flat_map(|how| [(how, false), (how, true)]) {
+        let at = format!("{how:?}, by an install {by_install}");
+        let scratch = Scratch::new("remove-interrupted");
+        let root = scratch.path();
+        let record = installed(root, &second());
+        let fs = match how {
+            Interrupted::CrashBeforeDeleting => {
+                ShimFs::new().crash_before(deleting, Lost::ContentOnly)
+            }
+            Interrupted::RefusedDeleting => ShimFs::new().fail_before(deleting),
+            Interrupted::CrashBeforeTheSync => {
+                ShimFs::new().crash_before(deleting + 1, Lost::Unsynced)
+            }
+        };
+        let ended = removing(Arc::new(fs), root, &Hand::new(), SECOND, &mut never);
+        assert!(
+            matches!(ended, Err(RemoveRefused::Disk(_))),
+            "{at}: {ended:?}"
+        );
+        assert_eq!(reading(root), Current::NotInstalled, "{at}");
+        is_whole(root, &record);
+        // A crash leaves the mark; a refusal does not.
+        assert_eq!(
+            tiny(root).join("DRAINING").exists(),
+            how != Interrupted::RefusedDeleting,
+            "{at}"
+        );
+        if by_install {
+            // The next install, of another identity: it takes the mark off and
+            // deletes what no pointer names, before it stages.
+            let other = entry_at("2026-11.3");
+            let fs = Arc::new(ShimFs::new());
+            let installed = installing(&fs, root, &other, &serving_both()).unwrap();
+            assert_eq!(installations(root), [installed.identity().hex()], "{at}");
+            let events = fs.events();
+            let deleted = index_of(&events, |event| {
+                *event == Event::Remove(folder_of(root, &record))
+            });
+            let begun = index_of(&events, |event| matches!(event, Event::Begin(_)));
+            assert!(deleted < begun, "{at}");
+            assert_eq!(reading(root), Current::Installed(installed), "{at}");
+        } else {
+            // The next removal: the model is not installed, and it says so; what
+            // was left is deleted, and the mark is gone.
+            let fs = Arc::new(ShimFs::new());
+            let again = removing(fs.clone(), root, &Hand::new(), SECOND, &mut never);
+            assert_eq!(again, Err(RemoveRefused::NotInstalled), "{at}");
+            assert!(installations(root).is_empty(), "{at}");
+            let events = fs.events();
+            let deleted = index_of(&events, |event| {
+                *event == Event::Remove(folder_of(root, &record))
+            });
+            assert_eq!(
+                events[deleted + 1],
+                Event::SyncDir(tiny(root).join("installations")),
+                "{at}"
+            );
+            // Nothing is deleted on the word of a name that is not durable: the
+            // model's folder was synced before the pointer was read.
+            assert!(
+                events[..deleted].contains(&Event::SyncDir(tiny(root))),
+                "{at}"
+            );
+            touches_only(&events, root);
+            assert_eq!(reading(root), Current::NotInstalled, "{at}");
+        }
+        assert!(!marked(root), "{at}");
+        assert!(!tiny(root).join("DRAINING").exists(), "{at}");
+    }
+}
+
+#[test]
+fn a_removal_that_finds_no_pointer_leaves_a_folder_a_run_still_holds_and_deletes_nothing_when_its_sync_is_refused()
+ {
+    // No pointer, and a folder that a run holds: as after a held repair that could
+    // not put its pointer back. The removal says that the model is not installed,
+    // tries the hold file once, and leaves the folder.
+    let scratch = Scratch::new("remove-no-pointer-held");
+    let root = scratch.path();
+    let record = installed(root, &second());
+    let foreign = RealFs.try_share(&hold_file_of(root, &record)).unwrap();
+    std::fs::remove_file(tiny(root).join("CURRENT")).unwrap();
+    assert_eq!(removed(root), Err(RemoveRefused::NotInstalled));
+    is_whole(root, &record);
+    drop(foreign);
+    // The sync of the model's folder is refused: which pointer is durable is not
+    // known, and nothing is deleted.
+    let fs = Arc::new(ShimFs::new());
+    let model = tiny(root);
+    fs.refuse_matching(0, move |event| *event == Event::SyncDir(model.clone()));
+    let refused = removing(fs, root, &Hand::new(), SECOND, &mut never);
+    assert!(
+        matches!(refused, Err(RemoveRefused::Disk(_))),
+        "{refused:?}"
+    );
+    is_whole(root, &record);
+    // Free, and synced: deleted.
+    assert_eq!(removed(root), Err(RemoveRefused::NotInstalled));
+    assert!(installations(root).is_empty());
 }

@@ -10,7 +10,11 @@
 //! model is not installed. Past the deadline it answers that the model is held, has
 //! changed no pointer, and takes the mark off.
 //!
-//! So far the removal ends at the decision: nothing is deleted yet (task M5c).
+//! Then, with the hold files still its own, it deletes every installation of the
+//! model and syncs the deleting. A removal that died or was refused after it
+//! cleared the pointer is finished by the next to take the model's lock: an
+//! install, or a removal, which finds no pointer, says that the model is not
+//! installed, and deletes what no pointer names.
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
@@ -157,6 +161,9 @@ impl Removed {
 ///   changed.
 /// - **The decision is the pointer,** cleared under the directory's lock while
 ///   every hold file is the removal's alone, and synced.
+/// - **Then the files are deleted:** every folder under `installations/`, with the
+///   hold files still the removal's alone, and the deleting synced. A removal that
+///   finds no pointer deletes what a removal before it left.
 /// - **The mark is taken off at the end,** however the removal ended, under the
 ///   directory's lock, and the model's folder synced.
 pub fn remove(
@@ -259,7 +266,15 @@ fn drain(
         // not installed.
         fs.sync_dir(&dir.model(name))?;
         let was = match model.named()? {
-            Pointer::None => return Err(RemoveRefused::NotInstalled),
+            Pointer::None => {
+                // What a removal that was interrupted after it cleared the pointer
+                // left, and what a dead install left: deleted as every install
+                // deletes what no pointer names, each folder when no hold is on
+                // it, after the sync above.
+                model.clean("")?;
+                model.unstage()?;
+                return Err(RemoveRefused::NotInstalled);
+            }
             Pointer::Names(id) => Some(id),
             Pointer::Damaged => None,
         };
@@ -276,7 +291,7 @@ fn drain(
         };
         names.extend(was.map(|id| OsString::from(id.hex())));
         let mut alone: Vec<Box<dyn Held>> = Vec::new();
-        for name in names {
+        for name in &names {
             let file = model.holds().join(name);
             loop {
                 match fs.try_alone(&file) {
@@ -299,6 +314,17 @@ fn drain(
         gone = true;
         fs.sync_dir(&dir.model(name))?;
         drop(directory);
+        // The deleting, now that the cleared pointer is durable and while every
+        // hold file is still this removal's: everything under `installations/`,
+        // a link itself and not what it leads to. And what an install left staged.
+        let installations = model.installations();
+        for name in &names {
+            dir.remove(&installations.join(name))?;
+        }
+        if fs.exists(&installations)? {
+            fs.sync_dir(&installations)?;
+        }
+        model.unstage()?;
         drop(alone);
         Ok(Removed { was })
     })();

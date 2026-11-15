@@ -68,6 +68,10 @@ Amended: 2026-11-15, with task M5d. Added, in code and under "Removal": an insta
 reads the mark where it asks its cancellation and stops as draining; whoever takes
 the model's lock to install takes off a mark it finds, and a removal sets its own
 again; what "does not go on beside it" means. Tests named `remove::…`.
+Amended: 2026-11-15, with task M5c. Added, in code and under "Removal": a removal
+deletes every installation of the model under its hold files once the cleared
+pointer is durable, and one that finds no pointer deletes what was left; how the
+crashes of a removal are held, and what no crash shows.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -138,7 +142,7 @@ installation record with its identity.
 | Holds | Code, with the tests named (task M5) |
 | Removal to its decision, inside one process; the mark | Code, with the tests named (task M5b) |
 | Removal against an install and across processes | Code, with the tests named (task M5d) |
-| The deleting of a removed model's files | Decided, not built: task M5c |
+| The deleting of a removed model's files | Code, with the tests named (task M5c) |
 
 ### The directory
 
@@ -1055,7 +1059,7 @@ a share in the first
 
 Code up to the decision, inside one process (task M5b: `remove.rs`, `remove`; tests
 named `remove::…`), and against an install and across processes (task M5d, below).
-*Decided, not built:* the deleting (task M5c). In this order:
+and the deleting (task M5c). In this order:
 
 1. **The draining mark comes first.** It is set under the directory's lock, before
    the removal has the model's lock, and whatever was at its name is replaced. From
@@ -1078,10 +1082,11 @@ named `remove::…`), and against an install and across processes (task M5d, bel
    the hold is kept.
 5. **With every hold file its own, the removal clears the pointer,** under the
    directory's lock, and syncs the model's folder. That is the decision: the model
-   is not installed. It says `removed`. The deleting of the folders comes here
-   (task M5c); until then nothing is deleted, and what is left is what a refused
-   publication leaves, a folder that no pointer names, which the next install of
-   that identity adopts and the next of another deletes.
+   is not installed. It says `removed`. **Then it deletes** (task M5c): everything
+   under `installations/`, each by its name as the listing gave it, a link itself
+   and not what it leads to; it syncs `installations/`, removes the staging folder
+   an install left when there is one, and only then lets the hold files go. They
+   stay, as every lock file does.
 6. **The mark is taken off at the end, however the removal ended,** under the
    directory's lock, and the model's folder synced. **Past the deadline the removal
    answers busy** (`RemoveRefused::Held`): it has changed no pointer, it lets go the
@@ -1123,12 +1128,12 @@ named `remove::…`), and against an install and across processes (task M5d, bel
   the mark when its deadline comes, and takes it off
   (`remove::a_removal_and_an_install_in_one_process_do_not_go_on_beside_each_other`).
   And an install that is downloading stops for the mark (below).
-- **Each step refused, and a crash before each** (the removal has some twenty
-  events): the model is installed, whole, with its status as it was, or it is not
-  installed; a removal that answered has made that durable; and the next removal
-  ends with the model not installed and no mark
-  (`remove::each_step_of_the_file_system_refused_leaves_the_model_installed_or_removed`,
-  `remove::a_crash_at_any_event_of_a_removal_leaves_the_model_installed_or_not_installed`).
+- **Each step refused** (the removal has some twenty events): the model is
+  installed, whole, with its status as it was, or it is not installed; a removal
+  that answered has made that durable; and the next removal ends with the model
+  not installed, no mark and nothing left of it
+  (`remove::each_step_of_the_file_system_refused_leaves_the_model_installed_or_removed`).
+  The crashes are under "On the disk", below.
 - **A refusal is fixed words and no path,** and a model's name that holds a secret
   the remover was told of is refused before anything is touched
   (`remove::a_model_name_that_holds_a_secret_is_not_removed_and_no_refusal_shows_a_path`).
@@ -1209,8 +1214,43 @@ another process by the mark alone.
   install that stopped for a mark whose remover then died is not started again by
   anything here: it is asked for again.
 
-A removal that had cleared the pointer and died before it deleted is finished by the
-next to take the lock (task M5c).
+**On the disk** (task M5c).
+
+- **Nothing is deleted before the cleared pointer is durable,** and nothing while a
+  hold file is another's: the deleting follows the sync of the model's folder, and
+  the hold files of every folder that is deleted are the removal's alone until the
+  deleting is synced. So a crash leaves the installation whole and named, or the
+  model not installed: never a pointer to files that are gone. Nothing outside the
+  models directory is touched, shown on the list of events with a link that leads
+  out of it among what is deleted
+  (`remove::a_removal_deletes_every_installation_of_the_model_under_its_hold_files_and_touches_nothing_outside`).
+- **A removal interrupted after the pointer was cleared is finished by the next
+  install or removal.** It died or was refused with no pointer and the folder
+  there, with its mark or without. The next install takes the mark off and deletes
+  what no pointer names, as every install does, or adopts a folder of its own
+  identity that is whole. The next removal finds no pointer: it says that the
+  model is not installed, and before it answers it deletes what no pointer names
+  by the installer's own routine (`clean`), each folder when its hold file is free
+  by one try, and only after the sync of the model's folder passed; a folder a run
+  still holds is left
+  (`remove::a_removal_interrupted_after_the_pointer_was_cleared_is_finished_by_the_next_install_or_removal`,
+  `remove::a_removal_that_finds_no_pointer_leaves_a_folder_a_run_still_holds_and_deletes_nothing_when_its_sync_is_refused`).
+- **The crashes.** A crash is put in place of each event of a removal of an
+  installation that nothing holds: from the clearing of the pointer on under six
+  ways of losing names, and before it, where only the mark's and the status's
+  names are not durable, under the loss of every name and of none. After each, one
+  who holds no lock reads the model as installed, whole, with its hold file, or as
+  not installed, never as damaged; and the next removal ends with no pointer, no
+  mark and nothing under `installations/`
+  (`remove::a_crash_at_any_event_of_a_removal_leaves_the_model_installed_or_not_installed`).
+- **What no crash shows.** The sync after the deleting: with it taken out the sweep
+  passes, since a folder that a crash brings back is deleted by the next to take
+  the lock; it is held on the lists of events of the two tests above. And a folder
+  half deleted is not produced: the test kit's disk removes a tree as one event
+  ("For later tasks").
+- **A removal that was refused after it cleared the pointer** answers with the
+  disk's refusal, of a model that is not installed and says `removed`; asked
+  again, it says not installed, and finishes.
 
 ### What a refusal says
 
@@ -1372,7 +1412,8 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
 - **M5c, from task M5b:** the hold files a removal has alone when it clears the
   pointer are the ones it deletes under; it lets them go only after the deleting
   and its sync. A removal that finds no pointer still deletes what no pointer
-  names, as `clean` does, after the same sync of the model's folder.
+  names, as `clean` does, after the same sync of the model's folder. Built
+  ("Removal": on the disk).
 - **M5: the store's try for a share** (ADR 0018, `try_share`) is refused by the
   process's own lock on the file alone, and given beside its own shares as a second
   lock. A file system that answers that it cannot try is an error, never "held
@@ -1395,7 +1436,7 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   no hold file was never published: it is deleted, and no hold file is made for it.
 - **The crashes the tests of M2b and M5c hold,** each reopened by the next to take the
   model's lock. The first three rows and the last are held by task M2b, as below
-  the table; the two of removal are task M5c's. "Step 1" in it is the rename of the
+  the table; the two of removal are task M5c's ("Removal": on the disk). "Step 1" in it is the rename of the
   staged folder and its sync (steps 5 and 6 of "Publishing"), and "step 2" the pointer
   (step 7). Where a row says the next deletes a folder the pointer does not name, the
   next is a removal or an install of another identity: an install of the same
