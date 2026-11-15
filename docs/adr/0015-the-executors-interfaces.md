@@ -44,6 +44,10 @@ Amended: 2026-11-14, with task E4. Changed under "A policy before a send, and a 
 send": the fourth question says why (ADR 0019, "The run's recipients").
 Amended: 2026-11-14, with the first half of task I7. Added: "An inventory". The
 lease, the other half of the task, waits for the wrappers of task I3 and is not here.
+Amended: 2026-11-15, with task I3. Added: "A wrapper around each request", with the
+gate in its place and what a request is said to hold before any piece is made.
+Changed under "A policy before a send, and a checked send" and "An inventory": what
+waited for that task.
 Amended: 2026-11-15, with task S3. Changed under "One snapshot of the config", "What
 waits": the part that holds a call to the cap is built.
 Amended: 2026-11-15, with task S8. Changed under "A part in the admission", "Limits":
@@ -450,12 +454,12 @@ following an answer that points elsewhere 8 times at most.
 
 **Limits, each stated.**
 
-- **The gate's place is not built.** The plan gives the policy to "the gate's place in
-  I3's order", which refuses a request before its backend is called and before the
-  meter sees it. Task I3 is not built yet, so a backend that names a recipient is
-  still called under the default policy: what it cannot do is send. Task I3 gives its
-  gate this policy (`docs/carry-over.md`), and with it decides what classes a
-  capability's request holds before any piece is made.
+- **The gate's place was not built with this section, and is now.** The plan gives the
+  policy to "the gate's place in I3's order", which refuses a request before its
+  backend is called and before the meter sees it. Until task I3 a backend that named a
+  recipient was still called under the default policy, and what it could not do was
+  send. "A wrapper around each request", below, has the gate and what a request is
+  said to hold before any piece is made.
 - **Nothing here probes or downloads.** The policy answers whether a recipient may be
   probed and nothing in the executor asks it yet: the checked probe and the checked
   download are task E3's.
@@ -707,8 +711,9 @@ hook while it is asked.
   amount; its tests are `cap::…` in `crates/whizbang-core/tests/it/spend/cap.rs`). An
   executor holds calls to the cap only when it is given the part; the binary's is
   given it by its wiring (task W1).
-- **The gate's place** (task I3) is given the policy of the run's snapshot, as the
-  checked sender is.
+- **The gate's place** is given the policy of the run's snapshot, as the checked
+  sender is: both are made of the ways the run executes under ("A wrapper around
+  each request").
 
 **Limits, each stated.**
 
@@ -818,7 +823,9 @@ was told nothing of is not in its catalogue
 
 - **The lease** (the second box of task I7, and the last three parts of its "Done
   when"): a lease on the installation the run was admitted with, taken before a request
-  to a local model leaves and let go when it is over. Its place is in task I3's order.
+  to a local model leaves and let go when it is over. Its place is there, and is
+  empty ("A wrapper around each request", `Place::Lease`): what stands in it is not
+  built.
 - **A run is handed no backend for a local model over an inventory.** An executor hands
   a run the backend that declares the model its call resolved, by backend, model and
   version (ADR 0009, `Capabilities::resolved_for`). The identity of an installation
@@ -852,6 +859,120 @@ was told nothing of is not in its catalogue
 - **The sentence is not looked at for a secret here.** It is made of a capability's
   name, a name the roster took, and fixed words, and is handed on as every reason of
   a `Backends` is.
+
+### A wrapper around each request
+
+Task I3. Changes ADR 0006 ("Accounting for requests": what stands between a handle and
+its backend) and names ADR 0009, whose tally records each request. Tests named
+`around::` are in `crates/whizbang-core/tests/it/contract/around.rs`.
+
+**`Around`, in the core** (`capability::Around`, also at `contract::Around`): what
+stands in one place between a handle and its backend. For each request it is told
+(`Wrapped`) the run, the run at the root of its tree, the capability, the backend's
+declaration and its quote, the classes of data the request is said to hold, and the
+run's allowance and place for facts
+(`around::three_wrappers_see_a_request_in_the_stated_order_and_none_sees_one_the_handles_own_checks_refused`,
+`around::a_wrapper_is_told_the_quote_the_classes_and_the_allowance_of_the_run`).
+`Around::before` is called before the request leaves. It may refuse, with a `Stop`: a
+fault, which is marked as not sent whatever it said, and a refusal to note, of one of
+the four kinds a record has for a request that was not sent (ADR 0013). Otherwise it
+answers with what it holds open for the request (`Open`), which is handed how the
+request ended, once: the charge an answer stated, or the fault (`Ended`).
+
+**The order is fixed** where a handle sends (`Bounds::send`; a context puts the
+wrappers on its handles last, in `Context::new`): the handle's own checks (ADR 0006),
+then the tally, then the gate, the lease and the meter, then the backend; and back
+through the meter, the lease and the gate before the tally accounts for the request.
+So a request is outstanding, and its run and every run above it not terminal, until
+the last wrapper has returned
+(`around::with_a_wrapper_stopped_after_the_backend_answered_the_run_and_its_parent_are_not_terminal`).
+A request the handle's own checks refuse is seen by no wrapper. A request the tally
+refuses, because the run's action has come back or the run has sent as many as it may,
+is seen by none either.
+
+**A refusal.** A wrapper that refuses stops the request before the next place sees it
+and before the backend. The fault reaches the action; the refusal is among the run's
+refusals, naming no action; and the places before it, which had let the request
+through, are told that it did not leave
+(`around::a_wrapper_that_refuses_stops_the_request_before_the_next_sees_it_and_before_the_backend`).
+The request is in the run's list of requests all the same, as one that ended in that
+fault: the tally counted it before any wrapper saw it.
+
+**A failure is not a refusal, and does not account for a request as free.** Two things
+leave a request that may have been charged with nobody to say so: `Open::after` fails
+once the backend was called (a settlement that could not be published), and the
+backend panics under a wrapper that holds something for the request, so that the
+wrapper is dropped and never told how the request ended. In both the run is
+**abandoned** (ADR 0008, "A run with nothing behind it"): its end is not published,
+whatever its action then hands back; its reservation is not closed and nothing of it
+is released; and its caller is handed `CallError::Abandoned`, with the failure. The
+tally lets go of the request only so that the run can reach that state: no answer of
+the request is handed to the action, which is told the request could not be accounted
+for, and nothing more is sent for the run
+(`around::a_wrapper_that_fails_after_the_backend_answered_leaves_the_run_abandoned_and_not_ended`,
+`around::a_backend_that_panics_under_a_wrapper_leaves_the_run_abandoned_and_not_ended`).
+A wrapper says whether it holds anything for a request (`Open::holds`). One whose
+work is all before the request holds nothing (`Nothing`), and a backend's panic under
+such a one alone is what it was without it: its run ends as an error that says its
+action panicked. That is what the gate is.
+
+**Each place is empty by default, but for the gate's.** `Engine::with_wrapper` puts a
+wrapper in a place. The lease's and the meter's stay empty until tasks I7 and S5 fill
+them. The gate's, when nothing was put there, holds the gate of the policy the run
+executes under: the policy of the run's snapshot where the snapshot holds one, and
+otherwise the executor's, which approves nothing unless it was told to ("A policy
+before a send, and a checked send"; "One snapshot of the config"). A fake wrapper is
+in the test kit (`whizbang_testkit::around::FakeWrapper`): it keeps what it saw, and
+refuses, fails or stops at a barrier when a test says so.
+
+**The gate.** A request to a backend that names a recipient goes on only when the
+policy approves that recipient for the classes the request is said to hold
+(`DispatchPolicy::why_not`, the question the checked sender asks). One it refuses
+reaches neither the meter's place nor its backend, so the backend's own count of
+requests is none and nothing is handed to any sender; the refusal is among the run's
+refusals and in its list of where data went, as a send that was refused; and the
+fault states no charge
+(`around::with_the_default_policy_a_backend_that_names_a_recipient_is_refused_at_the_gates_place_and_one_that_names_none_is_sent`;
+through a config's policy, `gate::a_backend_that_is_refused_at_the_gates_place_is_not_called`).
+A backend that names no recipient is local: the gate lets its requests by, and what
+such a backend tries to send is refused by its sender, as before.
+
+**What a request is said to hold, before any piece is made.** ADR 0012 left open who
+knows a source image from a derived one at a handle. Nobody does: a `Picture` has no
+class. So the handle states what is certain and no more: **a prompt, where the
+request holds one** (a fill with a prompt, a segmentation with a phrase, every
+request to a judge), and nothing for a picture. The gate is therefore the first of
+two checks and never the only one: it refuses a recipient that no approval names, or
+that is not approved for prompts when the request holds one, before anything is
+built; and every piece the backend then makes is held to the policy again, with the
+class its builder states, by the checked sender. A recipient approved for prompts
+and not for source images is still refused a source image there, after its backend
+was called.
+
+**The bound of a request is its own backend's.** `Wrapped::quote` is the quote of the
+backend the handle holds, which is the one the call resolved. Two backends of one
+capability that declare one model are told apart there, where `Roster::bound`, which
+is asked by a model, answers the largest of theirs. That answer is what an admission
+reserves, and it is kept: reserving the largest cannot reserve too little
+(`around::the_bound_a_request_is_held_to_is_its_own_backends_and_an_admission_reserves_the_largest`).
+
+**Limits, each stated.**
+
+- **Nothing stands in the lease's or the meter's place.** A paid request is not
+  debited, recorded before it leaves or settled until task S5; and a request to a
+  local model takes no lease until the rest of task I7.
+- **A wrapper that panics** unwinds as a backend's panic does. Before the backend was
+  called that is the fault of one action; what the places before it held is dropped,
+  and nothing here marks the run.
+- **A refused request is in the run's list of requests,** as one that ended in a
+  fault that says it was not sent, beside its refusal.
+- **An executor that was built with held backends and no snapshot hands a run no
+  backend for a capability none of them answers,** and admits the call: its action
+  finds no handle. The path through a snapshot refuses such a call as not ready
+  (`Snapshot::handed`). It is left so: an executor built by hand is a test's, many of
+  whose actions need a capability and never ask for it, and the binary's executor
+  goes through a snapshot (task W1).
+- **The gate knows a prompt and no other class,** as above.
 
 ## Consequences
 

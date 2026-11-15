@@ -14,7 +14,8 @@ publication that changes what is left, in the epoch it changes; a correction tha
 names its place and its turn and is sealed over the names it was made over; and what a
 run sent, known or not. And after the third: what a frozen reservation counts for
 is one sum with no credits, in every epoch, and it stops admissions until the owner
-acts. And after the hunt over other seeds that followed: a reservation with no hold,
+acts (superseded by the owner's choice, in the amendment below this one: it stops
+them only where its amount is unknown). And after the hunt over other seeds that followed: a reservation with no hold,
 or with more than one, falls under no one epoch when its owner has corrected it
 either. And after the fourth: the amount of a reservation whose own hold is lost is
 unknown, and the books say so; an epoch that needs its owner takes no dispatch
@@ -35,6 +36,15 @@ of the model; a closed reservation has nothing left for a dispatch. Added: limit
 what a correction writes off; what a reset does not stop; a request of nothing;
 histories 80 to 87; two things more in "What the second part builds", and notes for
 whoever builds it.
+Amended: 2026-11-15, with the second part (task I2's second pull request). Added:
+"The seal, in the core" and "A name of no form"; "The second part, as built", which
+names the test of each thing the first part said was to be built, and what was
+decided while building it. Changed: the trigger table's first row, and a row for a
+dispatch made with its place; the turns exception holds one epoch only (limit (d),
+history 88); limit (b) says in its own paragraph that it has no bound.
+Amended: 2026-11-15, with task S1b: the real fold in the core, held to the model
+history by history ("The real fold"); limit (h), a text that is placed nowhere, with
+history 89.
 Spec: section 6, "Spend"; section 3, "Storage"
 
 ## Context
@@ -70,11 +80,14 @@ every record is a name that is made once.
 the design, a model of it and a table of histories:
 `crates/whizbang-testkit/src/spend.rs`, with its tests in
 `crates/whizbang-testkit/tests/it/spend.rs`, named below as `spend::…`. Nothing in the
-core is changed by it. The second part builds the interface and the records in the
-core; until it merges, **every sentence below about the store, the executor or the
-core says what is to be built, and only a sentence that names a test says what the
-head does.** The real fold, the real ledger, the meter, recovery and the commands are
-the spend strand's tasks (S1b to S12), each held to the table.
+core is changed by it. The second part built the interface and the records in the
+core: "The second part, as built" names what is there and the test of each. **Every
+other sentence below about the store, the executor or the core says what the design
+is, and only a sentence that names a test says what the head does.** The real fold,
+the real ledger, the meter, recovery and the commands are the spend strand's tasks
+(S1b to S12), each held to the table; until they merge the one ledger is the test
+kit's fake, which keeps the names of this record in a store and judges by the
+model's fold.
 
 ## Decision
 
@@ -128,7 +141,7 @@ A rule that says what is allowed, and freezes everything else, has no case to fo
 
 **A writer who forges a complete, consistent chain is believed.** A set of names that
 the recogniser takes is, in the names alone, what the ledger would have made, and the
-fold reads names. That is the first of the limits of the guarantee, (a) to (g), each
+fold reads names. That is the first of the limits of the guarantee, (a) to (h), each
 stated under "Limits".
 
 ### The books are names
@@ -160,7 +173,7 @@ A name under `spend/` is one of these forms, to the character, and no other:
   0007). `<stage>` is `not_sent`, `answered` or `unresolved` (ADR 0010). `<seal>` is
   a digest in lower-case digits of base sixteen, of a fixed length: sixteen in the
   model, whose digest is not a cryptographic one, and in the core the first 32 of a
-  SHA-256 (second part). A name is at
+  SHA-256 ("The seal, in the core", below). A name is at
   most 200 characters, in the alphabet `Step::make` takes.
 - **The largest number is refused where it comes in.** No name states it as an amount,
   so nothing that would is published: a reset, an admission, a share, a dispatch, a
@@ -173,7 +186,49 @@ A name under `spend/` is one of these forms, to the character, and no other:
   read back to the same value; a number with a leading zero, a sign or a space, a
   segment too many or too few, a word of another case and a name of no form are not
   names (`spend::a_name_is_written_one_way_and_read_back_strictly`). The core has one
-  parser of it, which every reader of a name under `spend/` uses (second part).
+  parser of it, which every reader of a name under `spend/` uses: `spend::Name`, whose
+  `parse` reads exactly what its `Display` writes
+  (`spend::name::each_form_of_name_parses_to_its_parts_and_is_written_back_the_same`,
+  `spend::name::a_name_that_breaks_the_grammar_in_each_way_is_refused_and_shown_escaped_and_cut`;
+  tests named `spend::name::`, `spend::record::` and `spend::reading::` are the
+  core's, in `crates/whizbang-core/tests/it/spend/`, and every other `spend::` test
+  named in this record is the model's).
+
+**The seal, in the core.** A correction is sealed over every other name of its
+reservation, the guard of its own place aside. The seal is the first 32 digits, of
+base sixteen and in lower case, of the SHA-256 of those names: each as its text, then
+`!` when its content is damaged, then a newline, the lines in the order of their
+bytes. A name of no form that belongs to the reservation is among them, as its text,
+and is never marked as damaged: its content says nothing
+(`spend::name::a_seal_is_the_first_32_digits_of_a_sha_256_of_the_names_in_their_order`,
+which holds a fixed vector;
+`spend::reading::a_correction_is_given_with_what_its_seal_has_to_be_and_whether_it_is_at_its_place`).
+
+**A name of no form.** A text under `spend/` that the parser refuses is not ignored
+where it can be placed, and is placed by the position of its segments alone:
+
+| The text begins | And | It belongs to | What it does |
+|---|---|---|---|
+| `reservations`, `place`, `dispatched`, `settling`, `settled`, `closed` or `adjusted` | Its second segment is a run id | That run's reservation | It is a name the ledger could not have written: the reservation is frozen (the model's `Stray`). Where the run has no other name, it is a frozen reservation with no hold, and the store needs its owner |
+| `held` | Its third segment is a run id | The same | The same |
+| `reset` or `epoch` | Its second segment is a number | That epoch | The epoch is there, and its allowance is not whole: it allows nothing, as with a reset that lost its guard, until the owner resets |
+| `turn` | Its second segment is a number | That epoch | A turn no publication took: the epoch needs its owner |
+| Anything else | | Nothing | It changes no balance, and a fold reports it |
+
+The model has `Stray` for the first two rows and is silent on the rest. The third and
+fourth rows are the side that cannot count less: a garbled reset, guard or turn is
+read as one more name in its epoch that the ledger did not make, never as nothing,
+so a name garbled in place of a real one leaves that epoch allowing nothing or
+needing its owner, as the loss of the real name alone would or more. They add no
+refusal for the whole store: each stops its own epoch, by the rule there already is
+for a reset without its guard and for a turn that no publication took. A segment
+elsewhere that happens to be a run id places nothing: a run id is lower-case letters,
+digits, `_` and `-`, so nearly any segment is one. The parser answers which row a
+text is under (`spend::Belongs`;
+`spend::name::a_name_of_no_form_belongs_to_a_reservation_or_an_epoch_by_the_place_of_its_segments`);
+the reading sorts the first two rows into their reservation
+(`spend::reading::with_one_reservations_content_damaged_the_reading_gives_the_others_and_that_one_as_damaged`),
+and what the last three do to a balance is the fold's (task S1b).
 
 **Why two names where one would seem to do.** A name that carries an amount cannot
 keep two writers from one place: two dispatches that chose the place `n` with different
@@ -818,11 +873,12 @@ Every name that can make a store stop was then sorted by what can still be count
 
 | What is there | What can be counted | What the store does |
 |---|---|---|
-| A frozen reservation with exactly one hold: a record that cannot be read; a name of no form; a name made, or lost, of a form that takes no turn (the record, a place, a dispatch, a settlement) | The most its names can mean, which is no less than its amount and every bound and charge still named | Goes on. Nothing is dispatched under that reservation; everything else is admitted and dispatched as the allowance covers it |
+| A frozen reservation with exactly one hold: a record that cannot be read; a name of no form; a name made, or lost, of a form that takes no turn (the record, a place, a dispatch, a settlement), where what is left is not a set the ledger could have written | The most its names can mean, which is no less than its amount and every bound and charge still named | Goes on. Nothing is dispatched under that reservation; everything else is admitted and dispatched as the allowance covers it |
 | The same, where the name lost is a settlement over its bound | The amount, the bound and the amount again for the place the charge took: less than the charge, where the charge was more | Goes on. Accepted limit (b): history 87 |
 | The same, where its one hold is one that other hands made in the place of the ledger's | What that hold states, and what the other names say | Goes on. Accepted limit (a): history 86 |
+| Names made under an open reservation that leave a set the ledger could have written: a dispatch made with its place, within what the reservation has left | What the names say: the reservation is not frozen, and the dispatch counts as one the ledger placed | Goes on, and nothing is refused under that reservation. Limit (a), a forged set that the recogniser takes: it is not the first row |
 | A frozen reservation with no hold, or with several: the hold lost; a second hold made; a name made for a run that has no reservation | Nothing that can be trusted: "unknown, at least" | The store needs its owner, in every epoch, until that reservation is corrected. Kept as an exception; history 67 |
-| An epoch whose turns are not those its publications took: a turn lost or made; a name that takes a turn (a hold, a settlement's guard, a closing, a correction) lost, or made without one | Whatever the name that is gone stated is counted nowhere, and no name says what it was | That epoch needs its owner: no admission until a reset, no dispatch under its reservations. Kept as an exception; histories 61 and 70 |
+| An epoch whose turns are not those its publications took: a turn lost or made; a name that takes a turn (a hold, a settlement's guard, a closing, a correction) lost, or made without one | Whatever the name that is gone stated is counted nowhere, and no name says what it was | That epoch needs its owner: no admission until a reset, no dispatch under its reservations. Kept as an exception; histories 61 and 70. **It holds that one epoch and no other:** after a reset, a name lost from the epoch it closed leaves the new epoch admitting in full (limit (d); history 88) |
 
 The first three rows are the owner's choice. In the first, going on does not count
 less than was spent. In the second and third it can, and each is an accepted limit,
@@ -842,8 +898,10 @@ history is long, 78 and 79 the sixth round's, one trace in its two forms, and 80
 87 those of the review of the pull request and of the owner's choice that followed:
 names made under an admission before its reading (80), the plan's invariant 4 (81),
 what a correction writes off (82 and 83), a reset under open reservations (84),
-requests of nothing (85), and the two limits accepted with invariant 4 (86 and 87).
-That is 87 named histories. The generated histories, in six suites, are 4,096 of at most 24 events each, from a seed written
+requests of nothing (85), and the two limits accepted with invariant 4 (86 and 87);
+and 88, from the follow-ups of that review: a loss in an epoch a reset has closed.
+And 89 is task S1b's: every name of a reservation garbled past reading (limit (h)).
+That is 89 named histories. The generated histories, in six suites, are 4,096 of at most 24 events each, from a seed written
 in the test, and 4,096 more of another shape: books the ledger alone wrote, then one to
 six things other hands do, then one to four things the ledger and its processes do
 (`spend::every_generated_history_of_whole_books_then_other_hands_keeps_every_invariant`); one that breaks an invariant is printed with the seed and its number.
@@ -999,6 +1057,107 @@ because of what it is:
   after every event (`Books::read_apart` in the model, asserted by the generated
   tests).
 
+### The second part, as built
+
+What the list above asked for, as it is in the core (`crates/whizbang-core/src/spend/`
+and `src/contract/`), each with the test that shows it. Tests named `ledger::`,
+`admit::`, `nested::` and `runs::` are the core's (`tests/it/contract/`,
+`tests/it/store/`); `context::` are unit tests beside `Allowance`.
+
+| What | As built | Shown by |
+|---|---|---|
+| `reserve` cannot return without a name | `Ledger::reserve` returns a `MadeName`, which only `Step::make` gives and which is not copied; the example on `Ledger` does not compile. The fast tests run no examples, so the executor also refuses a `MadeName` that this attempt did not make: a ledger that kept one from an earlier attempt | `ledger::a_ledger_that_hands_back_a_name_it_did_not_make_in_this_attempt_is_refused` |
+| A ledger's names | `Step::make` takes a text that `spend::Name` reads and that is not of the form `spend/reservations/<run>`: so no segment is empty, `.` or `..` | `admit::a_ledger_adds_to_the_step_only_names_of_its_own_and_nothing_secret` |
+| `settle` | `Ledger::settle(&Closing, &mut Step)`, inside the publication that ends a run nothing called. A failure of it fails that publication: the run stays admitted and is abandoned, and its caller is told. Where the store refuses the publication for a name the ledger made in it (the place or the turn was taken meanwhile) the publication is made again, 1,024 times at most | `ledger::a_settle_that_fails_leaves_the_run_admitted_and_its_caller_told`, `ledger::an_admission_through_the_ledger_makes_its_hold_and_the_next_turn_with_the_reservation` |
+| The parser, and the reading | `spend::Name`, `spend::Reading`, `spend::Names` | The `spend::name::` and `spend::reading::` tests named under "The books are names" |
+| `Allowance`, signed | Debited before a request and for a share; given back to; in debt where a charge over its bound put it, in the run that sent the request and in each above; a child's remainder handed up when its end is durable, and dropped once its parent has entered its commit step | `context::allowance_tests::an_allowance_in_debt_reports_nothing_to_spend_and_a_return_pays_the_debt_first`, `…::a_charge_over_its_bound_takes_the_excess_from_the_run_and_from_each_run_above`, `…::a_parent_that_calls_twenty_children_in_turn_each_using_nothing_has_all_of_it_at_the_end`, `…::an_amount_given_back_to_an_allowance_whose_run_has_entered_its_commit_step_is_dropped`; through the executor, `nested::a_nested_call_draws_on_the_allowance_of_the_run_that_made_it_and_the_ledger_is_asked_once` |
+| What the process holds of a tree | Beside the allowance: the reservation's amount and what its requests took. `Allowance::dispatch(bound, publish)` asks and debits the run and the tree in one step, under the tree's lock, before `publish` runs, and undoes the debit when `publish` refuses, fails or panics. `Dispatched::answered` counts a charge over its bound from the moment the process holds the answer; `Dispatched::settled` gives back or takes the difference | `context::allowance_tests::a_dispatch_is_debited_before_it_is_published_and_the_debit_is_undone_when_it_is_refused`, `…::two_runs_of_one_tree_that_publish_at_once_are_not_both_let_by`, `…::a_dispatch_is_held_to_what_the_process_holds_of_the_tree_whatever_its_runs_share_is` (history 75: an answer counted in memory before its settlement), and through the executor `ledger::a_dispatch_is_refused_where_the_trees_tally_in_memory_does_not_cover_it_though_the_names_do` |
+| The readings' shapes | `spend::Counted` (a number; "unknown, at least") and `spend::Sent` (a number; "unknown, at most"; "unknown") | `spend::reading::each_of_the_three_shapes_of_a_reading_is_answered` |
+| A dispatch's refusals | `contract::DispatchRefused`: `OverRun`, `OverReservation`, `Frozen`, `Closed`, `NeedsOwner`, `OverTree`, and `NoAmount` and `Failed` beside them. The first and the sixth are the allowance's; the others are what the meter's judgement by the names answers, which here is the fake's | `ledger::a_dispatch_is_refused_with_a_reason_of_its_own_by_each_thing_that_holds_it`, `ledger::a_dispatch_is_refused_where_its_epoch_needs_its_owner`, and the test of the tree above |
+| The confirmation | In `Engine::admit`, after the admission's publication: the store is read again and `Ledger::confirm(&Reservation, &Reread)` answers. Only where it stands are the run's allowance and the tree's tally made and the run handed on to be executed. Where it does not, or where the reading fails, the run is ended at once by the publication that ends a run, as an error of the kind `not_confirmed` (ADR 0013), with `settle` in it and the id's ending made, and the caller is handed `CallError::NotConfirmed`, which is no refusal: so the request's id is not looked up a second time, and a repeat is answered with the run that ended. Where the reading failed and the run could not be ended either, the caller is handed that failure. A call from inside an action is not confirmed | `ledger::an_admission_whose_reservation_has_any_name_beside_its_record_and_its_one_hold_is_not_confirmed` (history 80), `ledger::an_admission_whose_epoch_needs_its_owner_is_not_confirmed`, `ledger::an_admission_of_more_than_nothing_whose_epoch_is_over_its_allowance_is_not_confirmed`, `ledger::a_call_of_nothing_in_a_store_in_debt_is_confirmed_and_runs`, `ledger::an_admission_made_beside_a_frozen_reservation_whose_hold_states_its_amount_is_confirmed`, `ledger::a_call_from_inside_an_action_has_no_reservation_and_is_not_confirmed` |
+| Sums that stop | `spend::Sum`, of 128 bits; `spend::Amount` is never the largest number of 64, at a name, a record and `Allowance::dispatch` | `spend::reading::sums_of_amounts_near_the_largest_number_stop_at_it`, `spend::name::the_largest_number_is_no_amount` |
+| The recogniser's replay | `spend::Names::reachable` | `spend::reading::a_reservation_whose_names_the_ledger_did_not_check_into_place_is_frozen` (history 74), `spend::reading::what_the_ledger_could_not_have_written_is_not_taken` |
+| Places counted | `spend::Names::unexplained` is one subtraction | `spend::reading::a_name_that_names_the_largest_place_is_counted_without_walking_to_it` |
+| The store's rule for a `put` | `Publication::put` and `Publication::keep` refuse a name under `requests/` and `spend/` (`store::Error::MadeOnly`), before anything is staged, whether the name is there or not | `runs::a_name_that_was_made_under_requests_or_spend_cannot_be_replaced_by_put`, which is the pin `known_a_name_that_was_made_can_still_be_replaced_by_put` turned round |
+| The records | `spend::Record`, ten kinds | `spend::record::each_record_is_written_one_way_and_round_trips_to_the_same_bytes`, `spend::record::a_record_with_an_unknown_or_a_missing_field_or_any_other_bytes_is_refused`, `spend::record::a_record_over_its_bound_or_of_another_kind_or_that_says_what_none_can_is_refused`; an entry over the bound is not read: `spend::reading::with_one_reservations_content_damaged_the_reading_gives_the_others_and_that_one_as_damaged` |
+
+**What the notes above came to.**
+
+- *The tally debited before the dispatch is published:* as the table has it. The
+  lock is the tree's, and it is not held while the dispatch is published.
+- *The sums of a closing:* `charged_micros` and `unresolved_micros` of
+  `spend-closing/1` are a `spend::Sum`, written as decimal digits in a string, so a
+  sum that stopped is written as the largest number of 128 bits.
+- *A run that ended as not confirmed:* decided with ADR 0013, which has it: an error
+  whose kind is the word `not_confirmed`, in `run/3` as it is.
+- *The two tests for the real fold* are task S1b's.
+
+**Decided while it was built, and not in the first part.**
+
+- **`confirm` and `settle` have defaults,** for a ledger that keeps no books of
+  names: such a one confirms every admission and closes nothing. A ledger that makes
+  holds overrides both; the fake does, and the real one is task S2's.
+- **A child's remainder is handed up now.** ADR 0008 had nothing given back to an
+  allowance. With `Allowance` as this record has it, a call from inside an action
+  that ends having used nothing gives its whole share back, so a parent can call
+  again with it. The tests of `nested.rs` that held the old rule are restated, and
+  what they showed of two calls at once is shown with the first held inside its
+  action (`nested::two_calls_at_once_cannot_both_take_the_last_of_the_allowance`).
+- **What the fake does where an epoch needs its owner at admission:** it declines as
+  over the allowance, with nothing left. A refusal of its own there is the real
+  ledger's to add (task S2); this part's "Done when" asks for one at the
+  confirmation and at a dispatch.
+- **The fake's allowance is a number in memory,** standing for the epoch before any
+  reset while the store names no reset, and a correction never stands for it. Its
+  judgement is the model's fold over the names a store holds
+  (`whizbang_testkit::ledger::FakeLedger::books`).
+
+### The real fold (task S1b)
+
+`spend::fold` in the core is the fold of this record over the names of one generation
+of a store. One reservation's names are read by `spend::reading` (the second part of
+task I2: the recogniser, the sums of its places, the most its names can mean, the
+seal); the fold is everything that is of more than one reservation: the epochs and
+their allowances, the turns due and whether an epoch needs its owner, whether a
+correction stands, each reservation's state and what it counts for, the store's
+balance, one run's spend, whether an admission stands on a reading, and what the
+owner's correction may say. It answers in the reading's shapes: a number, "unknown,
+at least", and of a run "unknown, at most" or "unknown". It never fails, whatever is
+under `spend/`.
+
+**It is held to the model, history by history.** The tests are in
+`crates/whizbang-core/tests/it/spend/fold.rs`, named `spend::fold::…`:
+
+| What is held | Test |
+|---|---|
+| Each of the 89 named histories is written into a store, event by event: the names an event makes in one publication, as the ledger makes them, each with the record of its kind written through the record's type; where a name is lost or its content damaged, into a new store, the damaged ones with content that is no record, a record that says something else than its name, or another name's record. After every event the store is folded and compared with the model's fold, every field of every reservation, run, epoch and turn, and every reading the real fold works out in its own code (each epoch's balance, what is left of a reservation, what a run sent, whether an admission stands). What each history must give of the books is asserted of the real fold too | `every_named_history_written_into_a_store_folds_to_what_the_model_gives_and_to_what_it_must` |
+| Every history of the six generated suites, from the seed of the model's tests: 4,096, 4,096, 1,024, 1,536, 1,024 and the 2,048 whole books. The names are folded in memory, by the one gathering a store's reading uses (`Reading::of_names`), after every event that changed a name, and compared in the same way. A store publication for each of some 200,000 states does not fit the suite's time | `every_generated_history_folds_to_what_the_model_gives_after_every_event`, `every_generated_history_of_whole_books_then_other_hands_folds_to_what_the_model_gives`, `every_generated_history_of_whole_books_then_other_hands_folds_so_in_the_second_half_too`, `every_generated_history_of_amounts_near_the_largest_folds_to_what_the_model_gives`, `every_generated_history_of_turns_moved_folds_to_what_the_model_gives`, `every_generated_history_of_two_admissions_that_wait_folds_to_what_the_model_gives`, `every_generated_history_of_whole_books_folds_to_what_the_model_gives` |
+| The two readings of every reservation, the real recogniser and the one the model's checker wrote apart, give one answer after every event of every history above (`Books::read_apart`, with the real recogniser's answer compared field by field with the model's) | The same tests |
+| Every correction a history asks for is judged by the real fold first, on the names as they were, and held to what the model does with it: taken, or refused for the same reason with the same number | The same tests |
+| A name can name any place and state any amount, and the fold ends: a place and a turn at the largest number, two holds of the largest amount, and the store's sum stopped at the largest number of 128 bits | `a_name_can_name_any_place_and_state_any_amount_and_the_fold_still_ends` |
+| Amounts of one under the largest number do not wrap: three charges of it are three times it | `sums_of_amounts_one_under_the_largest_do_not_wrap` |
+| The largest number is no amount: a name that states it, as a hold, a bound, a charge or an allowance, is of no form | `the_largest_number_is_no_amount_and_a_name_that_states_it_is_of_no_form` |
+| Room for a correction upward: taken only when what is left of the newest epoch holds the difference, and needing none for a reservation of closed books | `a_correction_upward_is_taken_only_when_what_is_left_can_hold_the_difference` |
+| A correction's floor: it counts no less than what whole settlements say, whoever wrote it, and the command is refused below them and over the most | `a_correction_counts_no_less_than_what_whole_settlements_say_and_is_refused_below_them` |
+| The next turn is the lowest that is free, with a turn far ahead and with a turn lost | `the_next_turn_is_the_lowest_that_is_free_and_never_one_past_the_highest` |
+| An answer that no name states is not in the fold: the bound is counted until the settlement is durable. That a dispatch is refused meanwhile is the tree's tally, in memory, and not the fold's | `an_answer_that_no_name_states_is_not_in_the_fold_which_counts_the_bound_until_it_is_settled` |
+| The plan's cases for task S1b, each on names written by hand: 17 counted between, 12 at the end and 17 interrupted; a debt that reads nothing left; 10, not 6; a reset; a child's dispatches; 20 and 27 for a damaged reservation, which stops nothing else; a record that cannot be placed; a correction after an interruption and after a freeze | `reserve_10_dispatch_two_of_5_and_one_settles_at_12_counts_17_then_12_or_17`, `an_allowance_driven_below_nothing_by_an_overrun_reads_nothing_left_and_keeps_the_debt`, `a_request_settled_over_its_bound_under_an_open_reservation_counts_the_amount_while_it_covers`, `a_reset_closes_the_books_before_it`, `dispatches_by_a_child_are_under_its_roots_reservation_and_named_for_the_child`, `a_reservation_whose_content_is_damaged_is_frozen_at_20_and_stops_nothing_else`, `a_reservation_damaged_after_it_released_at_3_counts_27`, `a_record_the_fold_cannot_place_freezes_the_reservation_its_name_gives_and_no_other`, `an_adjustment_after_an_interruption_and_after_a_freeze_counts_what_it_says` |
+| Records are read through names only: content under `objects/` that no name holds, left by a publication the store refused, changes nothing; and a record that says something else than its name is damage | `the_fold_reads_records_through_names_only` |
+| A text of no form: by how it begins it freezes one reservation, stops one epoch, or is placed nowhere and counted ("A name of no form"; limit (h)) | `a_name_of_no_form_freezes_the_reservation_it_starts_as_a_name_of_or_is_reported_unplaced`, `a_turn_a_reset_or_a_guard_that_does_not_parse_never_allows_more_than_the_name_it_stands_for` |
+
+**Three things the fold decides that the model left open,** each on the side that
+cannot count less:
+
+- **What one run sent is of every dispatch that names it,** under whichever
+  reservation, as in the model: a dispatch other hands made under another
+  reservation can only add to it.
+- **A reset or a guard of no form that names epoch 0 is placed nowhere.** No reset
+  opens that epoch and nothing is allowed there as it is, so the text spoils
+  nothing: it is counted with the texts of limit (h)
+  (`a_turn_a_reset_or_a_guard_that_does_not_parse_never_allows_more_than_the_name_it_stands_for`).
+- **A turn of no form stops its epoch for good,** as a turn that other hands made
+  does: the owner's reset opens the next.
+
 ### Limits, each stated
 
 - **The model is not the ledger.** It publishes names in memory; no test of it touches
@@ -1016,9 +1175,9 @@ because of what it is:
 - **The fold reads every name each time.** What that costs as a store ages is on
   `docs/carry-over.md`, with milestone 2.
 
-**The guarantee has seven limits, (a) to (g).** Five are things the fold does not hold,
-the sixth is a ruling it cannot meet, and the seventh is what the owner's own
-correction means.
+**The guarantee has eight limits, (a) to (h).** Five are things the fold does not hold,
+the sixth is a ruling it cannot meet, the seventh is what the owner's own
+correction means, and the eighth is a text the fold can place nowhere.
 
 **What the owner accepted with the plan's rule, first, in money.** A frozen reservation
 whose hold states its amount stops nothing else. Where its names still state what was
@@ -1071,6 +1230,10 @@ so that neither can be taken for covered.
   what the charge was over the frozen sum can be reserved again (history 87, in the
   table above). Invariant 1
   is of what the records show.
+  **What this limit can cost has no bound.** A charge over a bound has no bound of
+  its own: a provider that charges more than it quoted can charge anything, and a
+  charge that no name states is under by all of it beyond what the reservation's
+  other names still count.
 - **(c) When the ledger's own hold of a reservation is lost, its amount is unknown,
   whatever holds other hands leave in its place.** The amount was in that name
   alone. The reservation counts for what its names say, in every epoch; a request
@@ -1096,6 +1259,17 @@ so that neither can be taken for covered.
   turn is lost with it. What is believed is the count. A dispatch that follows is
   still held to what its process holds of the tree, while that process lives
   (history 73).
+  **The turns stop one epoch, and a reset opens another.** An epoch whose turns are
+  not those its publications took needs its owner, and that is of that epoch alone.
+  Reset to 20; a reservation of 10 sends a request of 5 that is settled at 12; the
+  owner resets to 20 again. Other hands then take away that settlement, its guard
+  and the place it took, and leave its turn. The old epoch has a turn more than its
+  names account for and needs its owner; its reservation reads as open, at 10, where
+  12 were spent. The new epoch's turns start again and are whole: it reads nothing
+  counted and admits its full 20 (history 88;
+  `spend::the_limits_accepted_with_a_frozen_reservation_that_stops_nothing_else_each_count_exactly_this_much_less`).
+  Nothing is under in the new epoch, whose allowance the owner set after the charge;
+  the old epoch's books are under by 2, which is this limit and limit (b).
   **What this limit can cost has no bound either.** Every name of a reservation lost
   is all that it spent, and every name under `spend/` lost is all the store spent and
   its allowance with it: an empty store allows nothing, and counts nothing.
@@ -1197,6 +1371,25 @@ so that neither can be taken for covered.
   corrects, as they are meant to; and the request the dead process sent is charged
   all the same. That is the case to expect.
 
+- **(h) A text that is placed nowhere changes no balance.** A text under `spend/`
+  that is of no form belongs to a reservation or to an epoch only by how it begins
+  ("A name of no form"). One that begins as nothing the ledger writes, or whose run is
+  no run id, or whose epoch is no number, belongs to nothing. The fold counts how
+  many there are (`Folded::unplaced` in the core), so that whoever shows the books
+  says so, and changes no balance for them: the store is not stopped.
+  **What it can hide is a name.** A name of the ledger's that is garbled so far that
+  neither its run nor its epoch can be read is, to the fold, that name lost. One name
+  lost freezes its reservation, as every loss of one name does, or leaves its epoch
+  needing its owner. Several garbled so are a loss of several names, which is limit
+  (d): where what is left is a set the ledger could have written, it is believed.
+  With every name of a reservation and the turn its admission took garbled, nothing
+  of it is counted anywhere: a reservation of 10 with 10 outstanding reads as
+  nothing, five texts are placed nowhere, and the whole allowance of 30 is admitted
+  where 40 are then committed (history 89;
+  `spend::fold::every_named_history_written_into_a_store_folds_to_what_the_model_gives_and_to_what_it_must`).
+  **It has no bound,** as (d) has none. What tells it from a loss is the count of
+  texts placed nowhere, which is not nothing only where other hands were.
+
 **What the checker leaves out, each under one limit.** The checker (`Books::check` and
 `Books::checked` in the model) takes its floor from the truth. These are its
 exemptions, all of them:
@@ -1215,6 +1408,7 @@ exemptions, all of them:
 | (e) | A dispatch published late is not held to a closing where other hands did something between its judgement and it and touched its reservation; and not to the refusal of an epoch that needs its owner, where on the names it was judged on the epoch did not need it. One judged, or judged again, on names where the epoch needs its owner is held to it. An admission published late, where they did something between, is not held to the turns the ledger took since its judgement: that is of its publication, and of nothing else. Whether it stands has no exemption | `unseen`, `stopped_then` and `between` in `checked` |
 | (f) | Nothing. The truth keeps the names the owner's last correction left, and the correction is the owner's again whenever the names are those | `held_to` |
 | (g) | While the names of a reservation are those the owner's last correction left: every request under it that has no settlement with its whole chain is left out of its floor, and out of what an admission that stands is held to | `corrected` in `held_to` and in `really_in` |
+| (h) | Nothing of its own. In the model a name garbled past reading is that name lost and a name that is placed nowhere made (`Name::Unplaced`), which the fold counts and reads nothing from: what is not held is what the rows of (d) leave out for the loss | `held_to` |
 
 The first row and the seventh are one piece of code, told apart by what the truth wrote
 down: a name other hands made, or only names lost. What a correction writes off was not
@@ -1818,7 +2012,7 @@ finding was fixed in the plan or here; no round followed the tenth.
   time over one store, and the later of two that judged the same books is judged again: as with the fake of
   ADR 0007, and bounded as there by the caller's signal and deadline.
 - What the store reports as left of an allowance is never more than is really left,
-  outside the limits (a) to (g), and can be less: an interrupted
+  outside the limits (a) to (h), and can be less: an interrupted
   reservation counts in full, an ancestor loses a whole overrun, and a judgement that
   missed a release is refused. Inside the limits it can be more: by 10 in history 86
   and by 13 in history 87.

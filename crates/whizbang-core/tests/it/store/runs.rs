@@ -22,7 +22,7 @@ pub(super) const LEDGER: &[u8] = b"a spend record";
 pub(super) fn with_runs(root: &Path) {
     let store = Store::open(root, Arc::new(ShimFs::new())).unwrap();
     let mut publication = store.begin().unwrap();
-    publication.put("spend/1", LEDGER).unwrap();
+    publication.put("notes/1", LEDGER).unwrap();
     publication
         .put_in("one", "mask", Kind::Output, MASK)
         .unwrap();
@@ -77,8 +77,8 @@ fn a_run_holds_its_references_under_names_of_its_own() {
     assert_eq!(reader.read_output(one).unwrap(), MASK);
     assert_eq!(std::fs::read_dir(root.join("objects")).unwrap().count(), 5);
     // Outside any run.
-    assert_eq!(generation.entries().keys().collect::<Vec<_>>(), ["spend/1"]);
-    assert_eq!(generation.get("spend/1").unwrap().kind, Kind::Output);
+    assert_eq!(generation.entries().keys().collect::<Vec<_>>(), ["notes/1"]);
+    assert_eq!(generation.get("notes/1").unwrap().kind, Kind::Output);
 }
 
 #[test]
@@ -203,7 +203,7 @@ fn a_publication_that_makes_a_run_is_refused_when_the_store_holds_that_run() {
     publication
         .put_in("one", "record", Kind::Diagnostic, b"another run's record")
         .unwrap();
-    publication.put("spend/2", LEDGER).unwrap();
+    publication.put("notes/2", LEDGER).unwrap();
     let refused = publication.publish().unwrap_err();
     assert!(
         matches!(&refused, Error::RunExists { run } if run == "one"),
@@ -335,14 +335,14 @@ fn a_name_that_is_made_is_never_given_other_content() {
     // order: the name would hold whichever came last.
     let mut publication = store.begin().unwrap();
     publication
-        .create("requests/c", Kind::Diagnostic, b"1")
+        .create("made/c", Kind::Diagnostic, b"1")
         .unwrap();
     assert!(matches!(
-        publication.put("requests/c", b"2"),
+        publication.put("made/c", b"2"),
         Err(Error::NameExists { .. })
     ));
     assert!(matches!(
-        publication.create("requests/c", Kind::Diagnostic, b"3"),
+        publication.create("made/c", Kind::Diagnostic, b"3"),
         Err(Error::NameExists { .. })
     ));
     publication.put("free", b"4").unwrap();
@@ -353,11 +353,12 @@ fn a_name_that_is_made_is_never_given_other_content() {
 }
 
 #[test]
-fn known_a_name_that_was_made_can_still_be_replaced_by_put() {
-    // The limit of "made once", pinned: `create` refuses a name that exists, and `put`
-    // does not ask. A later publication that puts the name replaces what it held. No
-    // code of whizbang puts a name under `requests/` or `spend/`; nothing in the store
-    // stops other code.
+fn a_name_that_was_made_under_requests_or_spend_cannot_be_replaced_by_put() {
+    // "Made once" had one limit, which a test here pinned as known: `create` refuses a
+    // name that exists, and `put` did not ask, so a later publication that put the
+    // name replaced what it held. The names under `requests/` and `spend/` are made
+    // and never put (ADR 0016): the store refuses to give one content any other way,
+    // whether the name is there or not, and stages nothing for it.
     let dir = Scratch::new("store-names");
     let root = root(&dir);
     let store = Store::open(&root, Arc::new(ShimFs::new())).unwrap();
@@ -365,15 +366,56 @@ fn known_a_name_that_was_made_can_still_be_replaced_by_put() {
     publication
         .create("requests/a", Kind::Diagnostic, b"first")
         .unwrap();
+    publication
+        .create("spend/turn/0/1", Kind::Diagnostic, b"first")
+        .unwrap();
+    publication.put("notes/a", b"first").unwrap();
     publication.publish().unwrap();
+    let before = store.snapshot().unwrap();
+    let objects = std::fs::read_dir(root.join("objects")).unwrap().count();
+
     let mut publication = store.begin().unwrap();
-    publication.put("requests/a", b"other").unwrap();
+    for name in [
+        "requests/a",
+        "requests/never-made/admitted",
+        "spend/turn/0/1",
+        "spend/reservations/7000-1",
+        "spend/",
+    ] {
+        for refused in [
+            publication.put(name, b"other").unwrap_err(),
+            publication.keep(name, b"other").unwrap_err(),
+        ] {
+            assert!(
+                matches!(&refused, Error::MadeOnly { name: named } if named == name),
+                "{name}: {refused:?}"
+            );
+            assert_eq!(
+                refused.without_paths(),
+                "the store was to replace a name of a kind that is made once and never replaced"
+            );
+            assert!(
+                refused.to_string().contains("only by making it"),
+                "{refused}"
+            );
+        }
+    }
+    // A name anywhere else is put as before, in the same publication.
+    publication.put("notes/a", b"other").unwrap();
+    publication.put("spending/a", b"other").unwrap();
     publication.publish().unwrap();
     let generation = store.snapshot().unwrap();
+    for name in ["requests/a", "spend/turn/0/1"] {
+        assert_eq!(generation.get(name), before.get(name), "{name}");
+        assert_eq!(store.read(generation.get(name).unwrap()).unwrap(), b"first");
+    }
     assert_eq!(
-        store.read(generation.get("requests/a").unwrap()).unwrap(),
+        store.read(generation.get("notes/a").unwrap()).unwrap(),
         b"other"
     );
+    // One content more is in the store: what the two puts elsewhere share.
+    let after = std::fs::read_dir(root.join("objects")).unwrap().count();
+    assert_eq!(after, objects + 1);
 }
 
 #[test]
@@ -819,7 +861,7 @@ fn deleting_a_run_removes_its_references_and_no_others() {
     );
     // Records outside runs are not a run's to lose.
     assert_eq!(
-        store.read(generation.get("spend/1").unwrap()).unwrap(),
+        store.read(generation.get("notes/1").unwrap()).unwrap(),
         LEDGER
     );
 }
@@ -835,7 +877,7 @@ fn a_record_outside_runs_outlives_the_deletion_of_every_run() {
     assert!(runs(&root).is_empty());
     assert_eq!(
         after_restart(&root),
-        (2, contents(&[("spend/1", LEDGER)])),
+        (2, contents(&[("notes/1", LEDGER)])),
         "the spend and request-id records are kept this way"
     );
 }
