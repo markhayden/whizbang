@@ -48,6 +48,10 @@ history 89.
 Amended: 2026-11-15, with task S2: the real ledger in the core ("The real ledger");
 `confirm` and `settle` have no default; a refusal of its own where the books need
 their owner at admission; `Folded::stands` holds the amount to the hold.
+Amended: 2026-11-15, by the owner's decision on what cost control is for: the generated
+suites were made smaller, to about a quarter ("The invariants, and what holds them",
+"The real fold" and "The real ledger" have the sizes). What the code does is as it
+was; the counts under "Review rounds" are of the suites as they were then.
 Spec: section 6, "Spend"; section 3, "Storage"
 
 ## Context
@@ -290,7 +294,7 @@ Every history of the table in which other hands do nothing passes it after every
 and each name of a full set of books lost alone, each of fifteen names made, and each
 name damaged, fails it
 (`spend::the_recogniser_takes_what_the_ledger_writes_and_nothing_else`). The same is
-held of 2,048 books that the ledger alone wrote, generated from the seed: no name of
+held of 500 books that the ledger alone wrote, generated from the seed: no name of
 them lost alone, damaged alone or made alone leaves a reservation that the recogniser
 takes ("The invariants, and what holds them" has the suite).
 
@@ -905,8 +909,8 @@ what a correction writes off (82 and 83), a reset under open reservations (84),
 requests of nothing (85), and the two limits accepted with invariant 4 (86 and 87);
 and 88, from the follow-ups of that review: a loss in an epoch a reset has closed.
 And 89 is task S1b's: every name of a reservation garbled past reading (limit (h)).
-That is 89 named histories. The generated histories, in six suites, are 4,096 of at most 24 events each, from a seed written
-in the test, and 4,096 more of another shape: books the ledger alone wrote, then one to
+That is 89 named histories. The generated histories, in six suites, are 1,000 of at most 24 events each, from a seed written
+in the test, and 1,000 more of another shape: books the ledger alone wrote, then one to
 six things other hands do, then one to four things the ledger and its processes do
 (`spend::every_generated_history_of_whole_books_then_other_hands_keeps_every_invariant`); one that breaks an invariant is printed with the seed and its number.
 One in four of the first shape and one in three of the second begin with a tree whose
@@ -916,10 +920,10 @@ its turn, and a run that another run called then sends a request, judged late or
 now. **Every dispatch that is published is held to what was really left of its
 reservation, in the truth,** and both tests are held to reaching that: with runs that
 other runs called, after a run above them overran, late across what other hands did
-and after names of the reservation were lost. 1,024 more histories, of both shapes,
+and after names of the reservation were lost. 250 more histories, of both shapes,
 have amounts near the largest a name can state and places near the largest a name can
 name (`spend::every_generated_history_of_amounts_near_the_largest_keeps_every_invariant`).
-**A fourth shape moves a turn around a late admission:** 1,536 histories in which the
+**A fourth shape moves a turn around a late admission:** 400 histories in which the
 ledger alone acts; other hands then take away one turn and make another, the one
 before the other and after it, in the newest epoch and in another; and an admission
 that was judged before they did, three times in four on the names as they were just
@@ -927,7 +931,7 @@ before the lost turn was taken, is published. It is confirmed at once, or publis
 and confirmed apart with other events between, a crash and a recovery among them;
 its run then asks for all it reserved; and the ledger and its processes go on
 (`spend::every_generated_history_of_turns_moved_around_a_late_admission_keeps_every_invariant`).
-**A fifth shape has two admissions wait together:** 1,024 histories in which two
+**A fifth shape has two admissions wait together:** 250 histories in which two
 admissions are published before either is confirmed, in one process or in two, each
 judged now or earlier; a process dies, either process recovers the store, other
 hands or the ledger act; and the two are confirmed in either order
@@ -942,14 +946,15 @@ the right seal and no place, a whole correction; names are damaged and lost; abo
 happens in a second process with its own memory over the same store; and a provider
 charges before a settlement is published. They reach every event, every state and
 every way a publication ends, late ones among them
-(`spend::the_generated_histories_reach_every_event_every_state_and_every_way_a_publication_ends`),
+(`spend::the_generated_histories_reach_every_event_every_state_and_every_way_a_publication_ends`,
+which goes through the first 2,000 of the first shape: the rarest is first met in history 1,731),
 and an event that is refused changes no name (`spend::a_refusal_changes_no_name`).
 
-**A third suite changes one name.** 2,048 books that the ledger and the owner alone
+**A third suite changes one name.** 500 books that the ledger and the owner alone
 wrote, from the same seed, each have every name lost alone, every name damaged alone,
 and a sample of names made alone: of every form, at numbers the books have and at
 numbers far outside them, for a reservation that is there and for a run that has
-none. That is 35,089 names lost, 35,089 damaged and 35,793 made. Each is held
+none. That is 8,341 names lost, 8,341 damaged and 8,750 made. Each is held
 by what the fold answers, with nothing left out but the two losses in the table; and
 those of one books in sixteen are also held by the checker, and followed by an
 admission and dispatches asked of the ledger for real
@@ -958,14 +963,14 @@ admission and dispatches asked of the ledger for real
 
 | The one name | What it comes to | How many |
 |---|---|---|
-| A name of a reservation, lost, damaged or made | The reservation is frozen. It counts for no less than it did and no less than its requests really took, and nothing is dispatched under it. Its amount is said to be unknown exactly where it has not one hold | 65,285 |
-| Of those: its one hold states its amount, and the name took no turn or is only damaged | The store goes on: no epoch needs its owner that did not | 40,286 |
-| Of those: its amount is unknown, or the name is one that takes a turn and is lost or made (damaged, it takes its turn still) | The store needs its owner: in every epoch where the amount is unknown, and otherwise in the epoch of its hold | 24,999 |
-| Of those: a settlement over its bound, lost | Limit (b). No less than the amount, and less than it counted by no more than the charge was over the bound. In 7 of them more can then be reserved than before, by no more than that | 78 |
-| Of those: the hold, lost | Limit (c). Every bound and every charge its other names say, and the amount said to be unknown | 5,840 |
-| A turn of the newest epoch, lost or made | The store needs its owner: nothing is admitted, and nothing is dispatched under a reservation of that epoch | 8,937 |
-| A reset or its guard, lost, damaged or made; a turn of another epoch, lost or made | No reservation is frozen. No more can be reserved in any epoch than before, and no reservation counts for less: the epoch allows what it did or less, or it is not the newest and needs its owner | 20,067 |
-| A turn, damaged; a second reset of an epoch that says more than the first | The fold answers what it answered: a turn's content is not read, and of two resets the smaller is the allowance | 11,682 |
+| A name of a reservation, lost, damaged or made | The reservation is frozen. It counts for no less than it did and no less than its requests really took, and nothing is dispatched under it. Its amount is said to be unknown exactly where it has not one hold | 15,632 |
+| Of those: its one hold states its amount, and the name took no turn or is only damaged | The store goes on: no epoch needs its owner that did not | 9,576 |
+| Of those: its amount is unknown, or the name is one that takes a turn and is lost or made (damaged, it takes its turn still) | The store needs its owner: in every epoch where the amount is unknown, and otherwise in the epoch of its hold | 6,056 |
+| Of those: a settlement over its bound, lost | Limit (b). No less than the amount, and less than it counted by no more than the charge was over the bound. In 1 of them more can then be reserved than before, by no more than that | 19 |
+| Of those: the hold, lost | Limit (c). Every bound and every charge its other names say, and the amount said to be unknown | 1,402 |
+| A turn of the newest epoch, lost or made | The store needs its owner: nothing is admitted, and nothing is dispatched under a reservation of that epoch | 2,156 |
+| A reset or its guard, lost, damaged or made; a turn of another epoch, lost or made | No reservation is frozen. No more can be reserved in any epoch than before, and no reservation counts for less: the epoch allows what it did or less, or it is not the newest and needs its owner | 4,839 |
+| A turn, damaged; a second reset of an epoch that says more than the first | The fold answers what it answered: a turn's content is not read, and of two resets the smaller is the allowance | 2,805 |
 
 **No one name falls under limit (a) or (d).** No publication of the ledger makes one
 name of a reservation alone, so no one name made is what the ledger would write next;
@@ -1199,7 +1204,7 @@ under `spend/`.
 | What is held | Test |
 |---|---|
 | Each of the 89 named histories is written into a store, event by event: the names an event makes in one publication, as the ledger makes them, each with the record of its kind written through the record's type; where a name is lost or its content damaged, into a new store, the damaged ones with content that is no record, a record that says something else than its name, or another name's record. After every event the store is folded and compared with the model's fold, every field of every reservation, run, epoch and turn, and every reading the real fold works out in its own code (each epoch's balance, what is left of a reservation, what a run sent, whether an admission stands). What each history must give of the books is asserted of the real fold too | `every_named_history_written_into_a_store_folds_to_what_the_model_gives_and_to_what_it_must` |
-| Every history of the six generated suites, from the seed of the model's tests: 4,096, 4,096, 1,024, 1,536, 1,024 and the 2,048 whole books. The names are folded in memory, by the one gathering a store's reading uses (`Reading::of_names`), after every event that changed a name, and compared in the same way. A store publication for each of some 200,000 states does not fit the suite's time | `every_generated_history_folds_to_what_the_model_gives_after_every_event`, `every_generated_history_of_whole_books_then_other_hands_folds_to_what_the_model_gives`, `every_generated_history_of_whole_books_then_other_hands_folds_so_in_the_second_half_too`, `every_generated_history_of_amounts_near_the_largest_folds_to_what_the_model_gives`, `every_generated_history_of_turns_moved_folds_to_what_the_model_gives`, `every_generated_history_of_two_admissions_that_wait_folds_to_what_the_model_gives`, `every_generated_history_of_whole_books_folds_to_what_the_model_gives` |
+| Every history of the six generated suites, from the seed of the model's tests: 1,000, 1,000, 250, 400, 250 and the 500 whole books. The names are folded in memory, by the one gathering a store's reading uses (`Reading::of_names`), after every event that changed a name, and compared in the same way. A store publication for each of some 22,000 states does not fit the suite's time | `every_generated_history_folds_to_what_the_model_gives_after_every_event`, `every_generated_history_of_whole_books_then_other_hands_folds_to_what_the_model_gives`, `every_generated_history_of_whole_books_then_other_hands_folds_so_in_the_second_half_too`, `every_generated_history_of_amounts_near_the_largest_folds_to_what_the_model_gives`, `every_generated_history_of_turns_moved_folds_to_what_the_model_gives`, `every_generated_history_of_two_admissions_that_wait_folds_to_what_the_model_gives`, `every_generated_history_of_whole_books_folds_to_what_the_model_gives` |
 | The two readings of every reservation, the real recogniser and the one the model's checker wrote apart, give one answer after every event of every history above (`Books::read_apart`, with the real recogniser's answer compared field by field with the model's) | The same tests |
 | Every correction a history asks for is judged by the real fold first, on the names as they were, and held to what the model does with it: taken, or refused for the same reason with the same number | The same tests |
 | A name can name any place and state any amount, and the fold ends: a place and a turn at the largest number, two holds of the largest amount, and the store's sum stopped at the largest number of 128 bits | `a_name_can_name_any_place_and_state_any_amount_and_the_fold_still_ends` |
@@ -1263,9 +1268,9 @@ hold's amount and of another.
 
 **One name changed alone, against the real fold.** The model's suite of one name
 lost, damaged or made alone is held by the model's fold. A sample of it is held by
-the real one: 96 whole books from each of two seeds, every name lost alone, every
+the real one: 24 whole books from each of two seeds, every name lost alone, every
 name damaged alone, and names of every form made alone, each folded and compared
-with the model as after an event of a history; over 10,000 changes and over 3,000
+with the model as after an event of a history; over 2,500 changes and over 750
 frozen reservations for each seed
 (`spend::fold::one_name_lost_damaged_or_made_alone_in_whole_books_folds_to_what_the_model_gives`,
 `…_alone_folds_to_what_the_model_gives_from_another_seed`).
