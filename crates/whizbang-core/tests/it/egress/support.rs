@@ -140,6 +140,14 @@ pub(super) fn action(
     Arc::new(Scripted(draft.build().unwrap(), Box::new(body)))
 }
 
+/// An action with this descriptor, whose run is whatever the test says.
+pub(super) fn scripted(
+    descriptor: ActionDescriptor,
+    body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
+) -> Arc<dyn Action> {
+    Arc::new(Scripted(descriptor, Box::new(body)))
+}
+
 /// A store of its own, in a folder that goes with the test.
 pub(super) struct World {
     dir: Scratch,
@@ -158,7 +166,7 @@ impl World {
         self.dir.path().join("store")
     }
 
-    fn store(&self) -> Arc<Store> {
+    pub(super) fn store(&self) -> Arc<Store> {
         Arc::new(Store::open(&self.root(), self.fs.clone()).unwrap())
     }
 }
@@ -275,7 +283,11 @@ impl Ran {
 /// Runs one action that asks this filler once, catches whatever it is answered and
 /// completes, on an executor with these ways out and these secrets.
 pub(super) fn run_one(filler: Arc<dyn Filler>, ways: Ways, secrets: Secrets) -> Ran {
-    let world = World::new();
+    run_in(&World::new(), filler, ways, secrets)
+}
+
+/// The same, over this world's store.
+pub(super) fn run_in(world: &World, filler: Arc<dyn Filler>, ways: Ways, secrets: Secrets) -> Ran {
     let answered = Arc::new(Mutex::new(None));
     let asks = {
         let answered = answered.clone();
@@ -287,7 +299,7 @@ pub(super) fn run_one(filler: Arc<dyn Filler>, ways: Ways, secrets: Secrets) -> 
         })
     };
     let executor = engine(
-        &world,
+        world,
         roster(None, Some(filler.as_ref()), None),
         Capabilities::none().with_fill(filler.clone()),
         vec![asks],
@@ -297,7 +309,7 @@ pub(super) fn run_one(filler: Arc<dyn Filler>, ways: Ways, secrets: Secrets) -> 
     let Ok(Answer::Ran(finished)) = executor.request(&Request::new(Call::new("asks"))) else {
         panic!("the request did not run");
     };
-    let (record, bytes) = stored(&world, finished.run());
+    let (record, bytes) = stored(world, finished.run());
     assert_eq!(record.outcome().status, Status::Completed);
     let fault = answered.lock().unwrap().take();
     let mut store = Vec::new();
