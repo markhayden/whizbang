@@ -499,7 +499,8 @@ fn an_admission_that_was_visible_and_not_confirmed_is_ended_at_the_next_open_and
 
 /// Plants a run with these names, as other hands would, and a name outside runs.
 fn plant(world: &World, run: &str, names: &[(&str, &[u8])], outside: &[(&str, &[u8])]) {
-    let store = world.store();
+    // Through a file system of its own: the world's may have lost power.
+    let store = Store::open(&world.root(), Arc::new(ShimFs::new())).unwrap();
     let mut publication = store.begin().unwrap();
     publication.create_run(run).unwrap();
     for (name, bytes) in names {
@@ -546,15 +547,35 @@ fn a_run_that_ended_and_a_run_that_was_never_admitted_are_left_as_they_are_and_r
     drop(opening);
 
     // One that was left is ended once: the open after the one that ended it finds
-    // its record and its ending made, and publishes nothing.
+    // its record and its ending made, and publishes nothing. The part looks before
+    // it adds: a name that is there would fail the recovery, and every open after.
     let left = World::new();
     let run = leave_one(&left);
     drop(reopened(&left));
     let ended = held(&left);
-    let (_opening, _, fs) = reopened(&left);
-    assert_eq!(held(&left), ended);
-    assert!(!published(&fs.events()));
+    for _ in 0..2 {
+        let (_opening, _, fs) = reopened(&left);
+        assert_eq!(held(&left), ended);
+        assert!(!published(&fs.events()));
+    }
     assert!(record_of(&left, &run).is_some());
+    // And where one of the two names is there and the other is not, as other hands
+    // can leave them: the part makes the one that is missing, and only that.
+    let half = World::new();
+    let run = leave_one(&half);
+    let ending = held(&left).1["requests/order-17/ended"].clone();
+    plant(
+        &half,
+        "other-hands",
+        &[],
+        &[("requests/order-17/ended", &ending)],
+    );
+    drop(reopened(&half));
+    assert!(record_of(&half, &run).is_some());
+    assert_eq!(held(&half).1["requests/order-17/ended"], ending);
+    let twice = held(&half);
+    drop(reopened(&half));
+    assert_eq!(held(&half), twice);
 }
 
 // --- a damaged admission -----------------------------------------------------------------------
