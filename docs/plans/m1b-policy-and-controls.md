@@ -1889,7 +1889,8 @@ a hold let go twice is let go once.
 (`remove`) and `crates/rascal-mask/src/install.rs` (`uninstall`).
 
 - [x] Removal, inside one process: under the directory's lock the model is marked as
-      draining, so new holds are refused and waiting ones cancelled; the holds are waited
+      draining, so new holds are refused, and one that was refused and is asked for again
+      is refused as draining (no hold waits: the note below); the holds are waited
       for until a deadline of the injected clock; then the removal goes on (M5c), or it
       answers busy and the mark is taken off. Here "goes on" ends at the decision: the
       pointer is cleared and nothing is deleted yet.
