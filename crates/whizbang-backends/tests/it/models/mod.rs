@@ -4,6 +4,7 @@
 //! anything of a network.
 
 mod catalogue;
+mod crashes;
 mod downloads;
 mod identity;
 mod installation;
