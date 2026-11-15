@@ -45,6 +45,11 @@ both files". Decided in "The digest": it covers nothing of the env file, and why
 Changed: `Loaded::of_files` and `Offers::of` each have a second form for a reader that
 kept the credentials of earlier readings; and the paragraphs that said no source read
 a config for an executor.
+Amended: 2026-11-14, a ninth note, with task C5. Added in "The source over both files":
+the cap, the policy and the settings in the snapshot, and what an upstream that holds
+a secret meets. Changed in "What the file holds" and "Which settings a run records": a
+backend's name and a setting's key are held together to the name a record takes, where
+this record let a config be read whose runs could not record their settings.
 Spec: section 4, "Backends" (config, resolution, credentials); section 6, "Spend";
 section 10, "Egress"
 
@@ -82,8 +87,8 @@ takes a config at this head. What is made from a config is what a snapshot of it
 (ADR 0015, "One snapshot of the config"): what it offers ("What a config offers"), with
 the backends made, and the settings a run records; both files are read again on each
 ask ("Both files, each time"); and the source an executor asks makes a snapshot of them
-("The source over both files"). The cap, the policy and the settings in that snapshot
-are task C5 of the plan.
+("The source over both files"), with the cap, the policy and the settings the config
+gives.
 
 This record was brought in two parts, because the task came to more than one pull
 request's worth: first the file, its shape and how it is read; then "The digest". The
@@ -160,7 +165,23 @@ A backend has these keys and no others:
 | `provider` | The service it is reached through | A name |
 | `url` | Its address | An address as ADR 0012 has one, and, the file's own rule, with no query |
 | `key_env`, `token_env` | The variable its key, or its token, is in | A variable's name |
-| `settings` | A table of the kind's own settings | 32 at most; a key is a name without `-`; a value is a plain text of 1,024 characters at most, a whole number, or true or false |
+| `settings` | A table of the kind's own settings | 32 at most; a key is a name without `-`; a value is a plain text of 1,024 characters at most, a whole number, or true or false; and the name the setting is recorded under, `backends.<capability>.<name>.settings.<key>`, is 128 characters at most |
+
+**A backend's name and a setting's key are held together to what a record takes.** A
+run records a setting under `backends.<capability>.<name>.settings.<key>` ("Which
+settings a run records"), and a record takes a name of 128 characters
+(`SETTING_NAME_LIMIT`, ADR 0013). A name and a key of 64 each would come to 152 for
+`fill`, 153 for `judge` and 155 for `segment`. So a setting whose recorded name is
+longer than the record's bound is refused where the config is read, naming the key and
+saying by how many characters the two are too long: a name and a key may be 104
+together for `fill`, 103 for `judge` and 101 for `segment`. The reader and the function
+that makes a run's settings make the name with one function and hold it to the
+record's one constant, so the two cannot part; the short form's backend is named
+`default`, which every key fits
+(`settings::the_longest_names_a_config_can_hold_are_recorded_and_one_character_more_is_refused_where_the_config_is_read`).
+The record's bound stands because it is the record's: `run/3` states it in its schema
+and its ADR, a record is read by other tools than this one, and a name that long is
+two names of 64 characters, which nothing needs.
 
 What a kind makes of `model`, `provider`, `url` and `settings`, and which it requires,
 is the kind's, when a kind exists (task C4). A setting's value is never a number with a
@@ -560,8 +581,8 @@ is a new kind, `config/2`, and every digest changes with it.
 `asked.settings` of a run record (ADR 0005) is decided here. `Config::settings_of` makes
 them, from the names of the backends a call resolved and the executor's secrets. A
 config is the `Settings` of a snapshot (ADR 0015): a run admitted under a snapshot that
-was given one records them, and the source that gives every snapshot its config is task
-C4's. A run records, as names and values sorted by name:
+was given one records them, and the source over both files gives every snapshot its
+config. A run records, as names and values sorted by name:
 
 - for each backend its call resolved, `backends.<capability>.<name>.kind`, and `.model`,
   `.provider` and `.url` where the file gives them, and each of its settings as
@@ -588,9 +609,12 @@ What a record would not take is never left out in silence: the whole is refused
 - a whole number whose digits, as they are written, hold a secret, the cap among them;
 - a name that holds a secret, also across a key of the file and a word the name is made
   with, which is not shown;
-- a name longer than the 128 characters a record takes. A capability's name, a
-  backend's name of 64 characters and a setting's key of 64 come to more: the config's
-  reader takes both, and the two bounds do not yet agree (`docs/carry-over.md`).
+- a name longer than the 128 characters a record takes. No config that was read gives
+  one, since the reader refuses a backend's name and a setting's key that are too long
+  together ("What the file holds"); the refusal is kept, and held by a test inside
+  `config/settings.rs` on a config made by hand
+  (`tests::a_name_longer_than_a_record_takes_is_refused_and_shown_cut_should_a_config_ever_hold_one`,
+  which is what the test above held of such a name until the reader refused it).
 
 A backend that is named and is not one the config gives is refused without its name,
 which did not come from the config
@@ -734,9 +758,12 @@ nothing until it is asked. Each time it is asked it reads both files again, whol
 | The digest | The config's ("The digest") |
 | The backends | What the config offers with the build's kinds ("What a config offers"): each ready backend made, each that is not with its reason |
 | The secrets | Every credential the config names that has a value, of that reading, given in one set (`Snapshot::with_secrets` replaces what a snapshot held, so they are given once) |
+| The cap of one call | `spend.call_cap_usd`, in millionths, when the file gives one; none when it does not |
+| The policy | What the `egress` table's approvals make (`DispatchPolicy::from_approvals`, ADR 0019). Always given: a file that names no recipient gives the policy that approves nothing, and the executor's own policy is never used for a run under this source |
+| What makes a run's settings | The config ("Which settings a run records") |
 
-The cap, the policy with its credentials and the settings a run records are not in it
-yet: task C5.
+The snapshot holds no credential for a recipient (`Snapshot::with_credential`): a kind
+makes a `Credential` and has no way to hand it to the snapshot ("What waits").
 
 - **A roster resolves as ADR 0006 says, through the executor.** With two backends of
   one capability and a default, a call that names none is prepared against the
@@ -793,6 +820,53 @@ yet: task C5.
 - **It prints** whether an env file is named, how many kinds it holds and how many
   secrets it knows: no path and no key (`source::a_source_prints_no_path_and_no_key`).
 
+What follows is task C5's, each on one executor across a change of the file.
+
+- **A cap lowered in the file is the cap the next admission is shown.** The executor
+  holds no call to a cap (ADR 0015): the part that does is task S3's, which is not
+  built. With a part of the test's own in its place, which refuses a call whose
+  estimate is over the cap of the snapshot it is shown, a call of 1.5 dollars is
+  admitted under a cap of 2, refused with no run once the file says 1, and admitted
+  again under 1.5 and under no cap
+  (`source::a_cap_lowered_in_the_config_is_the_cap_the_next_admission_is_held_to_on_one_executor`).
+- **A recipient taken out of the `egress` table is refused on the next call.** A run
+  whose backend sends a prompt is let through while the table approves its recipient
+  for prompts; once the recipient is gone from the file, and again once it is there
+  for another class only, the next run's send is refused before anything is handed
+  over, and its record says so. The executor in that test was built with a policy
+  that approves the recipient for everything: the config's stands in its place
+  (`source::a_recipient_taken_out_of_the_egress_table_is_refused_on_the_next_call_on_one_executor`).
+- **A credential rotated in the env file is the one the next call's backend is
+  handed,** by a call that was prepared before the rotation and is not stale ("The
+  digest"). Both keys are taken out of everything written after it: the run's
+  journal, a diagnostic it writes and its record, and each is refused in a request's
+  id
+  (`source::a_credential_rotated_in_the_env_file_is_the_one_the_next_calls_backend_is_handed_and_both_are_taken_out_of_what_is_written_after`).
+- **A run's `asked.settings` are what "Which settings a run records" says,** of the
+  backend its call resolved and the cap, and a setting changed in the file is what
+  the next run records. No credential, no start of one, no name of a variable, and
+  nothing of the `egress` table is in any byte the store holds after those runs
+  (`source::a_runs_settings_are_those_of_the_backend_its_call_resolved_and_the_cap_and_hold_no_credential_and_no_variables_name`).
+  Each of the four tests reads a made-up key from its env file and ends by looking
+  for it, and for its first 14 characters, in every file of the store.
+- **A setting a record would not take fails the admission.** What
+  `Config::settings_of` refuses is `CallError::Config` in that refusal's words, with
+  no run and the request's id not taken: a cap whose millionths are the digits of a
+  key, written with a decimal point so that the reader does not find it ("What the
+  reader does not do"), names the setting and not the number; with the cap put
+  right the same request runs
+  (`source::a_setting_a_record_would_not_take_fails_the_admission_naming_the_setting_and_never_its_value`).
+- **An upstream that holds a secret is refused where the config is read, for every
+  secret the source knows.** The config's reader looks for the secrets it was told
+  of over the file's bytes and makes each origin with them (ADR 0012), and the
+  source tells it of every credential it has read and of those it was told of from
+  the start (`Files::knowing`); such a config is `HoldsSecret`, and the call fails
+  with no run. ADR 0015 had left an upstream to
+  each send, where it is still refused for a secret the executor knows and the
+  source does not: an executor and its source are to be given the same secrets, by
+  whatever builds them (task W1)
+  (`source::an_upstream_that_holds_a_secret_the_source_knows_is_refused_where_the_config_is_read`).
+
 **Limits, each stated.**
 
 - **The secrets a source keeps are in memory.** A new process knows the env file as it
@@ -809,9 +883,19 @@ yet: task C5.
 - **Every ask reads both files and makes every backend,** for a preparation as for an
   admission (ADR 0015). Nothing is kept from one ask for the next but the secrets.
 
-**What waits:** the cap of one call, the dispatch policy with its credentials and the
-settings in the snapshot (task C5), and the binary's executor built over this source
-(task W1).
+**What waits.**
+
+- **The part that holds a call to the cap** (task S3). The snapshot carries the cap;
+  nothing but a test's part reads it.
+- **A recipient's credential in the snapshot.** The executor attaches a credential
+  only from its ways (ADR 0015, "A policy before a send, and a checked send"), and a
+  snapshot's ways are given one by `Snapshot::with_credential`. A kind makes the
+  `Credential` (`KeyValue::carried_to`) and hands back a backend and nothing else, so
+  the source has none to give: a backend made from a config sends with no credential
+  until a kind can hand one over. No kind sends anything at this checkpoint; it is
+  for the first kind that does (`docs/carry-over.md`).
+- **The binary's executor built over this source** (task W1), with the same secrets
+  given to both.
 
 ### What the reader does not do
 

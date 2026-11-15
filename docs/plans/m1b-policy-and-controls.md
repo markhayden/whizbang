@@ -1475,6 +1475,15 @@ the key; the key, escaped and cut, is still asked for, of the reader's refusal.
 - [ ] The snapshot carries the per-call cap (S3), the egress policy (E2), the secrets (C2,
       C3) and the settings a run records, each read from the config.
 
+**Not ticked, though the box is true:** built before S3, so the first part of "Done
+when" below is not shown as the plan words it. The snapshot of the source over the files
+carries all four, and a cap lowered in the file is the cap the next admission is shown;
+the call over it is refused by a part of the test's own, which stands where S3's will
+(`source::a_cap_lowered_in_the_config_is_the_cap_the_next_admission_is_held_to_on_one_executor`).
+The box is ticked by the pull request that shows the same with S3's part, or by S3's.
+The other four parts are shown. ADR 0011, "The source over both files";
+`docs/carry-over.md`.
+
 **Done when** these pass, each on one executor across a change of the file: a cap lowered
 in the config refuses the next call that is over it; a recipient taken out of the `egress`
 table is refused on the next call; a credential rotated in the env file is the one the

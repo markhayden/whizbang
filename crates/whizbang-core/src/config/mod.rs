@@ -17,8 +17,8 @@
 //! its backends ([`Offered`](crate::contract::Offered), ADR 0015), and a config makes
 //! the settings of a snapshot's runs ([`Settings`](crate::contract::Settings)).
 //! [`Files`] is the source an executor asks: it reads both files on each ask and
-//! answers a snapshot of them, or a refusal in fixed words. The cap, the policy and
-//! the settings of that snapshot are a later task of checkpoint 1B.
+//! answers a snapshot of them, with the cap, the policy and the settings the config
+//! gives, or a refusal in fixed words.
 
 mod env;
 mod kinds;

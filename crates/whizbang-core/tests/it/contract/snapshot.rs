@@ -1403,21 +1403,18 @@ fn the_settings_of_a_runs_snapshot_are_in_its_record() {
 fn settings_a_record_would_not_take_fail_the_admission_with_no_run() {
     let world = World::new();
     let (_, kinds) = fake_kinds();
-    // A backend's name of 64 characters and a setting's key of 64 make a name longer
-    // than a record takes: the config's reader takes both.
-    let (name, key) = ("n".repeat(64), "k".repeat(64));
-    let config = format!(
-        "[backends.fill]\ndefault = \"{name}\"\n\n[backends.fill.{name}]\nkind = \"fake\"\n\n\
-         [backends.fill.{name}.settings]\n{key} = \"x\"\n"
-    );
-    // The fake kind does not take the setting, so the config is read and no backend
-    // is made of it: the backends of the snapshot are those of another config.
-    let env = EnvFile::parse(b"").unwrap();
-    let read = Config::parse(config.as_bytes(), &env.secrets()).unwrap();
+    // A name one character longer than a record takes. No config that is read
+    // gives one since the reader holds a backend's name and a setting's key to the
+    // record's bound (ADR 0011); a `Settings` of another making still can.
+    let key = "k".repeat(64);
+    let long = format!("backends.fill.{}.settings.{key}", "n".repeat(129 - 88));
+    assert_eq!(long.len(), 129);
     let ready = "[backends.fill]\nkind = \"fake\"\n";
     let offers = snapshot_of(ready, "", &kinds);
     let source = Arc::new(FakeSource::of(
-        offers.clone().recording(Arc::new(Named(read))),
+        offers
+            .clone()
+            .recording(Arc::new(Given(vec![(long, Value::Integer(1))]))),
     ));
     let executor = under(&world, &source, vec![chooses()]);
     let id = executor.request_id("request-1").unwrap();
@@ -1426,10 +1423,7 @@ fn settings_a_record_would_not_take_fail_the_admission_with_no_run() {
     let CallError::Config { why } = &failed else {
         panic!("not a failure of the config: {failed:?}");
     };
-    assert!(
-        why.contains("has a name longer than a record takes"),
-        "{why}"
-    );
+    assert!(why.contains("is not one a record takes"), "{why}");
     assert!(!why.contains(&key), "{why}");
     assert_eq!(runs(&world), 0);
     // A setting given twice, one more than a record lists, a name that holds a
@@ -1505,21 +1499,6 @@ fn settings_a_record_would_not_take_fail_the_admission_with_no_run() {
     assert_eq!(finished.outcome().name(), "completed");
     let (record, _) = stored(&world, finished.run());
     assert_eq!(record.asked().settings.len(), 96);
-}
-
-/// The settings of a config, asked for the backend named with 64 characters whatever
-/// the call resolved.
-struct Named(Config);
-
-impl Settings for Named {
-    fn of(
-        &self,
-        _: &[(Capability, &str)],
-        secrets: &Secrets,
-    ) -> Result<Vec<(String, Value)>, NotJudged> {
-        let name = "n".repeat(64);
-        Settings::of(&self.0, &[(Capability::Fill, name.as_str())], secrets)
-    }
 }
 
 /// Settings that are these pairs.
