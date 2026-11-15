@@ -360,8 +360,9 @@ race.
    no record shows.)
    (2026-11-15: held by design, not proven. Two more exceptions, both by the owner's
    decision: a reset closes the books, so what was reserved, outstanding or frozen
-   before it counts in no later epoch; and a reservation with no hold counts against
-   no allowance, and `spend status` names it.)
+   before it counts in no later epoch, but for a hold that other hands made for an
+   epoch not yet opened (task S9); and a reservation with no hold counts against no
+   allowance, and `spend status` names it.)
 2. **Debt is not forgotten.** A balance may be below nothing inside the ledger and inside
    an allowance; what can be spent is never reported below nothing; and every return (an
    unused bound, a child's remainder, a share handed back) pays the debt first.
@@ -1507,7 +1508,9 @@ meter owes. **Size:** small.
 **Cut down, 2026-11-15, by the owner's decision** ("Decisions", the last item). The box
 is as it was. "Done when" is shorter, and takes one case from S5c (a cancellation
 after dispatch) and two from S7 (a nested call, and a retry), which are cut as
-tasks. The text as it stood is in this file at commit a9029d7.
+tasks. "Each down to nothing" in the box is read as ADR 0016 has an allowance: it
+goes below nothing where the charge puts it, reports nothing to spend, and a return
+pays the debt first (invariant 2). The text as it stood is in this file at commit a9029d7.
 
 - [ ] When a request ends, the meter settles it by the stage it reached, and gives back to
       the run's allowance what the bound held beyond the charge; or, where the charge is
@@ -2663,6 +2666,24 @@ also asked to list every history that under-counts and the limit it falls under.
 
 The rounds are numbered after the ADR's six. Every blocker was fixed; no round
 followed the tenth. ADR 0016, "Review rounds", has the same record.
+
+**The spend strand cut down, 2026-11-15.** The owner's decision ("Decisions", the last
+item) changes what will be built, so the amendment was reviewed as a change to a plan
+is, by the independent review, read-only, in two rounds numbered after the ten above.
+Each was asked for: any place where `SPEC.md` section 6, this plan, ADR 0016 and the
+carry-over list contradict each other or point at a cut task; any task that is left
+and cannot be built as written; any state of a store that leaves the owner unable to
+use an allowance or to clear one; and anything cut that checkpoints 1C and 1D or
+milestone 2 will need. The second was also asked whether anything that is left is
+more than a guard and a record need.
+
+| Round | Date | Blockers | Follow-ups |
+|---|---|---|---|
+| 11 | 2026-11-15 | 2 | 0 |
+| 12 | 2026-11-15 | 0 | 3 |
+
+Both blockers were fixed before the twelfth round, which found each answered. Two of
+its follow-ups were fixed; the third is put to the owner. No round followed it.
 
 ## Risks
 ## Risks
