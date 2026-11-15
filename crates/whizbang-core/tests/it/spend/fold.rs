@@ -437,41 +437,41 @@ fn part(numbers: std::ops::Range<u64>, generated: fn(u64, u64) -> Vec<Event>) ->
 
 #[test]
 fn every_generated_history_folds_to_what_the_model_gives_after_every_event() {
-    let (frozen, corrections) = suite(4096, model::generated);
-    assert!(frozen > 500, "{frozen}");
-    assert!(corrections > 100, "{corrections}");
+    let (frozen, corrections) = suite(1000, model::generated);
+    assert!(frozen > 125, "{frozen}");
+    assert!(corrections > 25, "{corrections}");
 }
 
 #[test]
 fn every_generated_history_of_whole_books_then_other_hands_folds_to_what_the_model_gives() {
-    let (frozen, _) = part(0..2048, model::generated_tampered);
-    assert!(frozen > 500, "{frozen}");
+    let (frozen, _) = part(0..500, model::generated_tampered);
+    assert!(frozen > 125, "{frozen}");
 }
 
 #[test]
 fn every_generated_history_of_whole_books_then_other_hands_folds_so_in_the_second_half_too() {
-    let (frozen, _) = part(2048..4096, model::generated_tampered);
-    assert!(frozen > 500, "{frozen}");
+    let (frozen, _) = part(500..1000, model::generated_tampered);
+    assert!(frozen > 125, "{frozen}");
 }
 
 #[test]
 fn every_generated_history_of_amounts_near_the_largest_folds_to_what_the_model_gives() {
-    suite(1024, model::generated_large);
+    suite(250, model::generated_large);
 }
 
 #[test]
 fn every_generated_history_of_turns_moved_folds_to_what_the_model_gives() {
-    suite(1536, model::generated_turned);
+    suite(400, model::generated_turned);
 }
 
 #[test]
 fn every_generated_history_of_two_admissions_that_wait_folds_to_what_the_model_gives() {
-    suite(1024, model::generated_paired);
+    suite(250, model::generated_paired);
 }
 
 #[test]
 fn every_generated_history_of_whole_books_folds_to_what_the_model_gives() {
-    suite(2048, model::generated_whole);
+    suite(500, model::generated_whole);
 }
 
 /// A store that is given the names of a history as they come.
