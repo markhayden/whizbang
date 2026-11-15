@@ -2036,6 +2036,18 @@ removal racing an install. **Size:** small.
 and named, or gone, never a pointer to files that are gone (rule 2); a removal interrupted
 after the pointer was cleared is finished by the next install or removal; nothing outside
 the models directory is touched, shown on the shim's list of events.
+**Reworded with the task,** after the review of its pull request (ADR 0017, "A folder of
+the layout that is a link"). The last clause said "nothing outside the models directory
+is touched, shown on the shim's list of events". The list spells every path inside the
+directory, so it cannot show a folder of the layout that is itself a link, and through
+one a removal did delete outside. The owner ruled that such a folder is refused, not
+followed. What is shown now: a link under `installations/` is deleted itself, on the list
+of events, as before (`models::remove::a_removal_deletes_every_installation…`); and with
+`models/`, the model's folder, its `installations/`, `staging/` or `holds/` a link, a
+removal and an install's cleaning are refused with no event on the list, and what the
+link leads to is, name for name and byte for byte, as it was (`models::links::…`). Not
+shown, and not so: a folder swapped for a link between the look and the call after it
+(ADR 0017, the limit of that section; `docs/carry-over.md`).
 **Size:** small. A file two models share is 1C's; until then each installation has its
 own files.
 

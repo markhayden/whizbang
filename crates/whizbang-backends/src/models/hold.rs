@@ -26,6 +26,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use whizbang_core::contract::Secrets;
 use whizbang_core::store::fs::Held;
 
+use super::directory::{LINKED, is_linked};
 use super::install::{Pointer, read_pointer};
 use super::name::holds_secret;
 use super::{InstallationId, ModelName, ModelsDir};
@@ -49,6 +50,9 @@ pub enum HoldRefused {
     Deleting,
     /// The directory's lock was not let go by whoever has it.
     DirectoryBusy,
+    /// A folder of the model's layout is a link. No hold is taken through it, and
+    /// nothing was made.
+    Linked,
     /// The file system refused, or cannot try for a share. The kind of failure, and no
     /// path.
     Disk(io::ErrorKind),
@@ -67,6 +71,7 @@ impl std::fmt::Display for HoldRefused {
             HoldRefused::DirectoryBusy => {
                 "the models directory is locked by another, which did not let it go"
             }
+            HoldRefused::Linked => LINKED,
             HoldRefused::Disk(_) => "the models directory could not be read or locked",
         })
     }
@@ -76,6 +81,9 @@ impl std::error::Error for HoldRefused {}
 
 impl From<io::Error> for HoldRefused {
     fn from(error: io::Error) -> HoldRefused {
+        if is_linked(&error) {
+            return HoldRefused::Linked;
+        }
         HoldRefused::Disk(error.kind())
     }
 }
@@ -138,6 +146,9 @@ impl Holds {
             return Err(HoldRefused::HoldsSecret);
         }
         let dir = &self.dir;
+        // Before the directory's lock is taken, or made: no lock is taken, and no
+        // pointer read, through a folder of the layout that is a link.
+        dir.unlinked(model)?;
         let folder = dir.model(model);
         let file = folder.join("holds").join(installation.hex());
         let _directory = dir.lock()?.ok_or(HoldRefused::DirectoryBusy)?;

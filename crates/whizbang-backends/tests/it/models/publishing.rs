@@ -1397,8 +1397,9 @@ fn a_record_that_would_spell_a_secret_is_not_installed_and_nothing_written_holds
 
 #[test]
 fn a_staging_folder_on_another_file_system_is_a_refusal_and_not_damage() {
-    // A link at `staging/` to another file system is followed, and the rename of
-    // the staged folder into `installations/` then crosses two.
+    // Another file system mounted at `staging/`: the rename of the staged folder
+    // into `installations/` then crosses two. (A link at `staging/` is refused
+    // before anything is staged: `links::`.)
     let scratch = Scratch::new("publish-devices");
     let root = scratch.path();
     let before = installed(root, &first());
