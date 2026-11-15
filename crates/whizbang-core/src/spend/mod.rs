@@ -1,10 +1,22 @@
-//! Spend (`SPEC.md` section 6): the ledger of a store.
+//! Spend (`SPEC.md` section 6): the ledger of a store (ADR 0016).
 //!
-//! A root only, so far. The plan of checkpoint 1B (`docs/plans/`) builds it here: the
-//! ledger's records and the names they are published under, the fold that works out what
-//! is allowed, reserved, spent and unresolved, and what reserves at admission, records a
-//! dispatch before a request leaves and settles each attempt. Until those tasks merge,
-//! the executor's interface to a ledger is `contract::Ledger` and nothing implements it
-//! outside the test kit.
+//! The books are names under `spend/`, each made once. Here are the one parser and
+//! writer of those names ([`name`]), the content under each ([`record`]), and a
+//! reading of them: each entry by itself, sound or damaged, and what the names of one
+//! reservation say, with the recogniser and the most they can mean ([`reading`]). The
+//! fold across reservations is [`fold`]: epochs, turns, states, balances and one run's
+//! spend. The real ledger, the meter, recovery and the commands are the spend strand's
+//! tasks (plan 1B, S2 to S12), each of which adds its module here. The executor's
+//! interface to a ledger is `contract::Ledger`.
 
 pub mod fold;
+pub mod name;
+pub mod reading;
+pub mod record;
+
+pub use name::{Amount, Belongs, EpochWord, NAME_LIMIT, Name, NotAName, SPEND_PREFIX, Seal};
+pub use reading::{
+    AtPlace, Correction, Counted, Formless, Names, Reading, RunSpend, Sent, Sum, lowest_free,
+    stage_allows,
+};
+pub use record::{ClosedBy, PlaceBy, Record, SPEND_RECORD_MAX_BYTES, SpendRecordError, TurnBy};

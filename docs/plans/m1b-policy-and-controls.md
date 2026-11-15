@@ -839,6 +839,26 @@ the ADR's list "What the second part builds, as decided here", which the first p
 request's review rounds made longer than these boxes were: a builder ticks none of them
 without it.
 
+**Reworded with the task** (I2's second pull request, 2026-11-15). The second box above
+says "the recogniser replays", "counted and never walked", "the three shapes of a
+reading" and "in the fold and in every reading of it", and S1b's first box says "The
+fold: ... for the store, for one reservation, and for one run under it": both boxes
+named the fold. They are divided so. **I2's**, in `crates/whizbang-core/src/spend/`:
+`name.rs`, the one parser and writer of names; `record.rs`, the record types; and
+`reading.rs`, each entry by itself, sound or damaged, and what the names of *one*
+reservation say: the recogniser with its replay, the sums of its places, the most its
+names can mean with places counted and never walked, the reading's three shapes as
+types, and the sum of 128 bits that stops. **S1b's**, in `spend/fold.rs`: everything
+across reservations, built on that reading: epochs and their allowances, the turns an
+epoch is due and whether it needs its owner, whether a correction stands, each
+reservation's state and what it counts for, the store's balance, one run's spend,
+and the table of histories through a store. Until S1b merges, the cases of this
+task's "Done when" that need an epoch (the confirmation's second and third
+conditions, a dispatch where its epoch needs its owner) are shown through the test
+kit's fake ledger, which answers from the model's fold over the names a store
+holds; "is frozen" and "is folded without walking to it" are shown of the reading
+of one reservation.
+
 **Done when** these pass: a ledger that returns from `reserve` without making its names
 does not compile, or is refused, as the ADR says which; each form of name parses to its
 parts and back, and one that breaks the grammar in each way the ADR lists is refused,
@@ -1141,12 +1161,24 @@ write, and not by one that reads; the shipped description does not change.
 
 **Depends on:** I2. In `spend/` only. The real fold, held to I2's model.
 
-- [ ] The fold: from the records and reservations a generation names, what is allowed,
+**Reworded with the task** (I2's second pull request, 2026-11-15; the note under I2
+has the reason). "The fold: ... for one reservation" in the first box below is built
+on I2's reading of one reservation's names (`spend/reading.rs`: the recogniser, the
+sums of its places, the most its names can mean). This task's is everything across
+reservations, in `spend/fold.rs`: epochs, turns, whether a correction stands, states,
+balances, one run's spend, and the histories through a store.
+
+- [x] The fold: from the records and reservations a generation names, what is allowed,
       reserved, spent and unresolved, for the store, for one reservation, and for one run
       under it.
-- [ ] The table of histories runs against the real fold as well: each history is written
+- [x] The table of histories runs against the real fold as well: each history is written
       into a store through the record types and folded, and must give what the model
       gives.
+      (As built, 2026-11-15: the named histories, 89 with this task's own, are written
+      into a store event by event. The generated ones are folded from their names in
+      memory, through the same gathering a store's reading uses, after every event:
+      a publication for each of their states does not fit the suite's time. ADR 0016,
+      "The real fold", names each test.)
 
 **Done when** the real fold and the model agree on every named and every generated
 history, and these pass: the fold gives the stated balances for a table of histories that

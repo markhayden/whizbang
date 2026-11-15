@@ -6,7 +6,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use whizbang_core::contract::RunId;
-use whizbang_core::spend::fold::{self, Counted, Folded, NotCorrected, Sent, State};
+use whizbang_core::spend::fold::{self, Folded, NotCorrected, State};
+use whizbang_core::spend::{Amount, ClosedBy, Counted, PlaceBy, Reading, Record, Seal, Sent};
+use whizbang_core::spend::{Sum, TurnBy};
 use whizbang_core::store::{Kind, Store};
 use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::scratch::Scratch;
@@ -25,10 +27,16 @@ fn run_of(id: &RunId) -> Run {
     Run(count.parse().unwrap())
 }
 
+fn amount(micros: u64) -> Amount {
+    Amount::new(micros).unwrap()
+}
+
 /// The model's names as the names a store holds. Every form is written as the model
 /// writes it, but for two. A correction's seal is the real one: the model's is a
 /// digest of its own, of sixteen digits. And the model's name of no form is written
-/// as one that starts as a name of its reservation does.
+/// as a text that begins as a name of its reservation does and is none; a store
+/// reads no content under such a text, so where the model has its content damaged,
+/// which there changes what a seal is over, it is written as another text.
 #[derive(Default)]
 struct Texts {
     /// Each correction that was seen, with the text it was given when it was first
@@ -37,12 +45,22 @@ struct Texts {
 }
 
 impl Texts {
-    fn text(&self, name: &Name) -> String {
+    fn text(&self, name: &Name, damaged: bool) -> String {
         match name {
             Name::Adjusted { .. } => self.corrections[name].clone(),
+            Name::Stray { run, count } if damaged => format!("spend/place/{run}/0{count}/hurt"),
             Name::Stray { run, count } => format!("spend/place/{run}/0{count}"),
+            // What a name garbled past its run and its epoch is left as.
+            Name::Unplaced { count } => format!("spend/h{count}ld/x/7000-1/1O"),
             other => other.to_string(),
         }
+    }
+
+    /// A name as a store holds it, with whether its content is damaged.
+    fn held(&self, name: &Name, books: &Books) -> (String, bool) {
+        let damaged = books.damaged().contains(name);
+        let formless = matches!(name, Name::Stray { .. } | Name::Unplaced { .. });
+        (self.text(name, damaged), damaged && !formless)
     }
 
     /// Gives every correction that is new in these books its text. One that the
@@ -78,18 +96,18 @@ impl Texts {
                     .map(|one| (one, hurt(one))),
             );
             let real = if over == *seal {
-                let mut texts: Vec<(String, bool)> = books
+                let texts: Vec<(String, bool)> = books
                     .names()
                     .iter()
                     .filter(others)
-                    .map(|one| (self.text(one), hurt(one)))
+                    .map(|one| self.held(one, books))
                     .collect();
-                texts.sort();
-                fold::temporary::seal(texts.iter().map(|(text, hurt)| (text.as_str(), *hurt)))
+                let over = texts.iter().map(|(text, hurt)| (text.as_str(), *hurt));
+                Seal::over(over).to_string()
             } else {
-                u128::from(*seal)
+                format!("{seal:032x}")
             };
-            let text = format!("spend/adjusted/{run}/{place}/{turn}/{real:032x}/{micros}");
+            let text = format!("spend/adjusted/{run}/{place}/{turn}/{real}/{micros}");
             self.corrections.insert(name.clone(), text);
         }
     }
@@ -98,82 +116,118 @@ impl Texts {
     /// whether its content is damaged.
     fn names(&mut self, books: &Books) -> BTreeMap<String, bool> {
         self.see(books);
-        let damaged = books.damaged();
-        let named = |name: &Name| (self.text(name), damaged.contains(name));
+        let named = |name: &Name| self.held(name, books);
         books.names().iter().map(named).collect()
     }
 }
 
+/// The fold of names that are in no store.
 fn folded(names: &BTreeMap<String, bool>) -> Folded {
-    fold::fold_names(names.iter().map(|(name, hurt)| (name.as_str(), *hurt)))
+    let names = names.iter().map(|(name, hurt)| (name.as_str(), *hurt));
+    Folded::of(Reading::of_names(names))
 }
 
-/// What the real fold answered, in the model's types: every field of every
-/// reservation, every run, epoch and turn.
-fn as_model(real: &Folded) -> model::Folded {
-    let state = |state: State| match state {
+fn state(state: State) -> model::State {
+    match state {
         State::Open => model::State::Open,
         State::Released => model::State::Released,
         State::Interrupted => model::State::Interrupted,
         State::Frozen => model::State::Frozen,
         State::Adjusted => model::State::Adjusted,
-    };
-    let standing = |one: &fold::Standing| model::Standing {
-        epoch: one.epoch,
-        epochs: one.epochs.clone(),
-        amount: one.amount,
-        charged: one.charged,
-        settled: one.settled,
-        outstanding: one.outstanding,
-        unresolved: one.unresolved,
-        unsettled: one.unsettled,
-        unexplained: one.unexplained,
-        corrections: one.corrections,
-        reachable: one.reachable,
-        names: one.names,
-        counts: one.counts,
-        unknown: one.unknown,
-        state: state(one.state),
-        closed: one.closed,
-    };
-    let spend = |one: &fold::RunSpend| model::RunSpend {
-        charged: one.charged,
-        outstanding: one.outstanding,
-        unresolved: one.unresolved,
-    };
+    }
+}
+
+/// One reservation as the real fold answered it, in the model's type: every field.
+fn standing(one: &fold::Standing) -> model::Standing {
+    let names = one.names();
+    model::Standing {
+        epoch: one.epoch(),
+        epochs: names.epochs(),
+        amount: names.amount().micros(),
+        charged: names.charged().micros(),
+        settled: names.settled().micros(),
+        outstanding: names.outstanding().micros(),
+        unresolved: names.unresolved().micros(),
+        unsettled: names.unsettled(),
+        unexplained: names.unexplained(),
+        corrections: names.corrections_most().micros(),
+        reachable: names.reachable(),
+        names: names.count(),
+        counts: one.counts().micros(),
+        unknown: one.unknown(),
+        state: state(one.state()),
+        closed: one.closed(),
+    }
+}
+
+fn spend(one: &whizbang_core::spend::RunSpend) -> model::RunSpend {
+    model::RunSpend {
+        charged: one.charged.micros(),
+        outstanding: one.outstanding.micros(),
+        unresolved: one.unresolved.micros(),
+    }
+}
+
+/// What the real fold answered, in the model's types: every field of every
+/// reservation, every run, epoch and turn.
+fn as_model(real: &Folded) -> model::Folded {
+    let epochs: BTreeSet<u64> = real.resets().keys().map(|epoch| epoch - 1).collect();
+    let held = real.reservations().values();
+    let held = held.flat_map(|one| one.names().epochs());
+    let due = epochs.into_iter().chain(held);
     model::Folded {
         reservations: real
-            .reservations
+            .reservations()
             .iter()
             .map(|(run, one)| (run_of(run), standing(one)))
             .collect(),
         runs: real
-            .runs
+            .runs()
             .iter()
             .map(|(run, one)| (run_of(run), spend(one)))
             .collect(),
-        resets: real.resets.clone(),
-        turns: real.turns.clone(),
-        due: real.due.clone(),
+        resets: real
+            .resets()
+            .iter()
+            .map(|(epoch, allowed)| (*epoch, allowed.micros()))
+            .collect(),
+        turns: real.turns().clone(),
+        // The model keeps what is due of each epoch that is owed a turn.
+        due: due.map(|epoch| (epoch, real.due(epoch))).collect(),
+        unplaced: real.unplaced(),
     }
 }
 
 fn counted(found: Counted) -> model::Counted {
     match found {
-        Counted::Exactly(micros) => model::Counted::Exactly(micros),
-        Counted::AtLeast(micros) => model::Counted::AtLeast(micros),
+        Counted::Exactly(sum) => model::Counted::Exactly(sum.micros()),
+        Counted::AtLeast(sum) => model::Counted::AtLeast(sum.micros()),
     }
 }
 
 fn sent(found: Sent) -> model::Sent {
     match found {
-        Sent::Known(one) => model::Sent::Known(model::RunSpend {
-            charged: one.charged,
-            outstanding: one.outstanding,
-            unresolved: one.unresolved,
-        }),
-        Sent::Unknown { at_most } => model::Sent::Unknown { at_most },
+        Sent::Known(one) => model::Sent::Known(spend(&one)),
+        Sent::Unknown { at_most } => model::Sent::Unknown {
+            at_most: at_most.micros(),
+        },
         Sent::Unbounded => model::Sent::Unbounded,
+    }
+}
+
+/// A balance of the real fold, in the model's type.
+fn plain(one: fold::Balance) -> model::Balance {
+    model::Balance {
+        epoch: one.epoch,
+        allowed: one.allowed.micros(),
+        counted: one.counted.least().micros(),
+        unknown: matches!(one.counted, Counted::AtLeast(_)),
+        charged: one.charged.micros(),
+        held: one.held.micros(),
+        unresolved: one.unresolved.micros(),
+        left: one.left.micros(),
+        debt: one.debt.micros(),
+        needs_owner: one.needs_owner,
     }
 }
 
@@ -195,9 +249,6 @@ fn compare(books: &Books, real: &Folded) -> Result<(), String> {
         }
         return Err(format!("the fold gives {found:#?}, the model {wanted:#?}"));
     }
-    if real.unplaced() != 0 {
-        return Err(format!("{} names are placed nowhere", real.unplaced()));
-    }
     if real.epoch() != wanted.epoch() {
         return Err(format!("the newest epoch: {}", real.epoch()));
     }
@@ -205,38 +256,11 @@ fn compare(books: &Books, real: &Folded) -> Result<(), String> {
     epochs.extend(wanted.turns.keys().copied());
     epochs.extend([0, wanted.epoch(), wanted.epoch().saturating_add(1)]);
     for epoch in &epochs {
-        let (one, other) = (real.balance_of(*epoch), wanted.balance_of(*epoch));
-        let same = (
-            one.epoch,
-            one.allowed,
-            one.counted,
-            one.unknown,
-            one.charged,
-        ) == (
-            other.epoch,
-            other.allowed,
-            other.counted,
-            other.unknown,
-            other.charged,
-        ) && (
-            one.held,
-            one.unresolved,
-            one.left,
-            one.debt,
-            one.needs_owner,
-        ) == (
-            other.held,
-            other.unresolved,
-            other.left,
-            other.debt,
-            other.needs_owner,
-        ) && real.needs_owner(*epoch) == wanted.needs_owner(*epoch)
+        let (one, other) = (plain(real.balance_of(*epoch)), wanted.balance_of(*epoch));
+        let same = one == other
+            && real.needs_owner(*epoch) == wanted.needs_owner(*epoch)
             && real.next_turn(*epoch) == wanted.next_turn(*epoch);
-        let said = match other.unknown {
-            true => model::Counted::AtLeast(other.counted),
-            false => model::Counted::Exactly(other.counted),
-        };
-        if !same || counted(one.counted()) != said {
+        if !same {
             return Err(format!(
                 "epoch {epoch}: the fold gives {one:?}, the model {other:?}"
             ));
@@ -244,23 +268,26 @@ fn compare(books: &Books, real: &Folded) -> Result<(), String> {
     }
     // The two readings of each reservation's names, the recogniser's and the one the
     // model's checker wrote apart from it, give one answer: the real fold's is the
-    // recogniser's, which was compared above.
+    // real recogniser's, which was compared above.
     let apart = books.read_apart();
     if !apart.is_empty() {
         return Err(format!("the second reading differs of {apart:?}"));
     }
     for (run, other) in &wanted.reservations {
         let root = id(*run);
-        let one = &real.reservations[&root];
-        let same = one.most() == other.most()
-            && one.left() == other.left()
-            && one.known() == other.known()
+        let one = &real.reservations()[&root];
+        let whole = Amount::new(other.amount).is_some_and(|micros| {
+            real.stands(&root, micros) == model::stands(&wanted, *run, other.amount)
+        });
+        let same = one.names().most().micros() == other.most()
+            && one.left().micros() == other.left()
+            && one.names().known().micros() == other.known()
             && counted(one.counted()) == other.counted()
             && epochs
                 .iter()
                 .all(|epoch| one.counts_in(*epoch) == other.counts_in(*epoch))
-            && real.stands(&root, other.amount) == model::stands(&wanted, *run, other.amount)
-            && real.stands(&root, 0) == model::stands(&wanted, *run, 0);
+            && whole
+            && real.stands(&root, Amount::ZERO) == model::stands(&wanted, *run, 0);
         if !same {
             return Err(format!("{run}: a reading of {one:?} is not the model's"));
         }
@@ -278,7 +305,7 @@ fn compare(books: &Books, real: &Folded) -> Result<(), String> {
 
 /// What the real fold says of a correction, as the model's refusal of one.
 fn refusal(found: Result<(), NotCorrected>) -> Option<Why> {
-    let short = |amount: u128| u64::try_from(amount).unwrap_or(u64::MAX);
+    let short = |sum: Sum| u64::try_from(sum.micros()).unwrap_or(u64::MAX);
     match found {
         Ok(()) => None,
         Err(NotCorrected::NotCorrectable) => Some(Why::NotCorrectable),
@@ -286,7 +313,9 @@ fn refusal(found: Result<(), NotCorrected>) -> Option<Why> {
             settled: short(settled),
         }),
         Err(NotCorrected::OverCount { most }) => Some(Why::OverCount { most: short(most) }),
-        Err(NotCorrected::CannotBeHeld { left }) => Some(Why::CannotBeHeld { left }),
+        Err(NotCorrected::CannotBeHeld { left }) => Some(Why::CannotBeHeld {
+            left: left.micros(),
+        }),
     }
 }
 
@@ -326,8 +355,10 @@ impl Beside {
             other => other,
         };
         let judged = match plain {
-            Event::Adjust { run, micros } if *micros != u64::MAX => {
-                Some(refusal(self.real.correction(&id(*run), *micros)))
+            // The largest number is no amount, and is refused before anything is
+            // judged.
+            Event::Adjust { run, micros } => {
+                Amount::new(*micros).map(|micros| refusal(self.real.correction(&id(*run), micros)))
             }
             _ => None,
         };
@@ -376,8 +407,8 @@ fn suite(count: u64, generated: fn(u64, u64) -> Vec<Event>) -> (u64, u64) {
         let events = generated(SEED, number);
         match beside(&events) {
             Ok(both) => {
-                let cold = |one: &&fold::Standing| one.state == State::Frozen;
-                frozen += both.real.reservations.values().filter(cold).count() as u64;
+                let cold = |one: &&fold::Standing| one.state() == State::Frozen;
+                frozen += both.real.reservations().values().filter(cold).count() as u64;
                 corrections += both.corrections;
             }
             Err(why) => panic!("seed {SEED:#x}, history {number}: {why}\n{events:#?}"),
@@ -425,18 +456,136 @@ struct Shelf {
     store: Store,
     there: BTreeMap<String, bool>,
     stores: u32,
+    damages: usize,
 }
 
-/// The content of a name whose record can be read and agrees with it.
+/// The executor's record of a reservation, as it is stored.
+fn reservation(run: &str) -> Vec<u8> {
+    format!(
+        "{{\"record\":\"reservation/1\",\"run\":\"{run}\",\"request\":null,\
+         \"admission\":\"sha256:{}\",\"reserved_micros\":0,\"start_ms\":0}}\n",
+        "0".repeat(64)
+    )
+    .into_bytes()
+}
+
+/// The record the ledger writes under a name: what the name says, and beside it
+/// what a name does not say, which the fold never reads.
+fn record(name: &whizbang_core::spend::Name) -> Option<Record> {
+    use whizbang_core::spend::Name as Real;
+    Some(match name.clone() {
+        Real::Reservation(_) => return None,
+        Real::Held { epoch, run, micros } => Record::Hold {
+            epoch,
+            run,
+            reserved: micros,
+        },
+        Real::Turn { epoch, turn } => Record::Turn {
+            epoch,
+            turn,
+            by: TurnBy::Admission,
+            run: None,
+        },
+        Real::Reset { epoch, micros } => Record::Reset {
+            epoch,
+            allowance: micros,
+            at_ms: 7,
+        },
+        Real::Epoch(epoch) => Record::Epoch { epoch },
+        Real::Place { run, place } => Record::Place {
+            run,
+            place,
+            by: PlaceBy::Dispatch,
+        },
+        Real::Dispatched {
+            run,
+            place,
+            by,
+            micros,
+        } => Record::Dispatch {
+            run,
+            place,
+            by,
+            request: 1,
+            bound: micros,
+            at_ms: 7,
+        },
+        Real::Settling { run, place } => Record::Settling { run, place },
+        Real::Settled {
+            run,
+            place,
+            stage,
+            micros,
+        } => Record::Settlement {
+            run,
+            place,
+            stage,
+            charged: micros,
+            over_bound: false,
+            at_ms: 7,
+        },
+        Real::Closed { run, released } => Record::Closing {
+            run,
+            released,
+            by: ClosedBy::End,
+            charged: Sum::ZERO,
+            unresolved: Sum::ZERO,
+            at_ms: 7,
+        },
+        Real::Adjusted {
+            run,
+            place,
+            turn,
+            seal,
+            micros,
+        } => Record::Adjustment {
+            run,
+            place,
+            turn,
+            seal,
+            charged: micros,
+            at_ms: 7,
+        },
+    })
+}
+
+/// The content of a name whose record can be read and says what the name says: the
+/// record of its kind, written through the record's type. A text that is no name of
+/// the ledger has no record, and a store reads nothing under it.
 fn sound(name: &str) -> Vec<u8> {
-    match name.strip_prefix("spend/reservations/") {
-        Some(run) => format!(
-            "{{\"record\":\"reservation/1\",\"run\":\"{run}\",\"request\":null,\
-             \"admission\":\"sha256:{}\",\"reserved_micros\":0,\"start_ms\":0}}\n",
-            "0".repeat(64)
-        )
-        .into_bytes(),
-        None => fold::temporary::content_of(name),
+    let Ok(parsed) = whizbang_core::spend::Name::parse(name) else {
+        return b"no record\n".to_vec();
+    };
+    match record(&parsed) {
+        Some(record) => {
+            assert_eq!(record.name(), parsed, "{name}");
+            record.to_bytes()
+        }
+        None => reservation(name.strip_prefix("spend/reservations/").unwrap()),
+    }
+}
+
+/// A content that is damage under this name, of one of three kinds by turns: bytes
+/// that are no record; a record of the right kind that says something else than the
+/// name; and the record of another name.
+fn damaged(name: &str, turn: usize) -> Vec<u8> {
+    let other = match whizbang_core::spend::Name::parse(name) {
+        Ok(whizbang_core::spend::Name::Place { run, place }) => Some(Record::Place {
+            run,
+            place: place.checked_add(1).unwrap_or(place),
+            by: PlaceBy::Dispatch,
+        }),
+        Ok(whizbang_core::spend::Name::Held { epoch, run, micros }) => Some(Record::Hold {
+            epoch: epoch + 1,
+            run,
+            reserved: micros,
+        }),
+        _ => None,
+    };
+    match (turn % 3, other) {
+        (0, _) => b"not a record\n".to_vec(),
+        (1, Some(other)) => other.to_bytes(),
+        _ => sound("spend/turn/9/9"),
     }
 }
 
@@ -449,6 +598,7 @@ impl Shelf {
             store,
             there: BTreeMap::new(),
             stores: 0,
+            damages: 0,
         }
     }
 
@@ -474,7 +624,10 @@ impl Shelf {
         let mut publication = self.store.begin().unwrap();
         for (name, hurt) in new {
             let bytes = match hurt {
-                true => b"not what the name says\n".to_vec(),
+                true => {
+                    self.damages += 1;
+                    damaged(name, self.damages)
+                }
                 false => sound(name),
             };
             publication.create(name, Kind::Diagnostic, &bytes).unwrap();
@@ -492,11 +645,10 @@ impl Shelf {
 /// What a history must give, asked of the real fold. None where it is of what a
 /// process holds in memory or of what became of an event, which no fold answers.
 fn holds(must: &Must, real: &Folded, books: &Books) -> Option<Result<(), String>> {
-    let balance = real.balance();
+    let balance = plain(real.balance());
     let of = |run: &Run| {
-        real.reservations
-            .get(&id(*run))
-            .ok_or(format!("no reservation of {run}"))
+        let one = real.reservation(&id(*run)).map(standing);
+        one.ok_or(format!("no reservation of {run}"))
     };
     let same = |what: &str, found: u128, wanted: u64| match found == u128::from(wanted) {
         true => Ok(()),
@@ -508,39 +660,43 @@ fn holds(must: &Must, real: &Folded, books: &Books) -> Option<Result<(), String>
     };
     let by = |run: &Run| {
         let root = books.root_of(*run).unwrap_or(*run);
-        real.sent_by(&id(*run), &id(root))
+        sent(real.sent_by(&id(*run), &id(root)))
     };
     Some(match must {
         Must::Epoch(epoch) => same("the epoch", balance.epoch.into(), *epoch),
         Must::Allowed(micros) => same("allowed", balance.allowed.into(), *micros),
-        Must::Counted(micros) => match balance.counted() {
-            Counted::Exactly(found) => same("counted", found, *micros),
-            found => Err(format!("counted {found:?}, and it must be known")),
+        Must::Counted(micros) => match balance.unknown {
+            false => same("counted", balance.counted, *micros),
+            true => Err("the books cannot say how much is counted".to_owned()),
         },
-        Must::CountedAtLeast(micros) => match balance.counted() {
-            Counted::AtLeast(found) => same("counted, at least", found, *micros),
-            found => Err(format!("counted {found:?}, and it must be unknown")),
+        Must::CountedAtLeast(micros) => match balance.unknown {
+            true => same("counted, at least", balance.counted, *micros),
+            false => Err("the books say how much is counted".to_owned()),
         },
         Must::Left(micros) => same("left", balance.left.into(), *micros),
         Must::Debt(micros) => same("the debt", balance.debt, *micros),
         Must::Counts(run, micros) => of(run).and_then(|one| match one.counted() {
-            Counted::Exactly(found) => same(&format!("{run} counts"), found, *micros),
+            model::Counted::Exactly(found) => same(&format!("{run} counts"), found, *micros),
             found => Err(format!("{run} counts {found:?}, and it must be known")),
         }),
         Must::CountsAtLeast(run, micros) => of(run).and_then(|one| match one.counted() {
-            Counted::AtLeast(found) => same(&format!("{run} counts at least"), found, *micros),
+            model::Counted::AtLeast(found) => {
+                same(&format!("{run} counts at least"), found, *micros)
+            }
             found => Err(format!("{run} counts {found:?}, and it must be unknown")),
         }),
         Must::Saturated(run) => of(run).and_then(|one| {
+            let stopped = real
+                .reservation(&id(*run))
+                .map(|one| one.counts().stopped());
             said(
                 format!("{run} counts {}", one.counts),
-                one.counts == u128::MAX,
+                stopped == Some(true),
             )
         }),
-        Must::State(run, state) => of(run).and_then(|one| {
-            let found = format!("{:?}", one.state);
-            said(format!("{run} is {found}"), found == format!("{state:?}"))
-        }),
+        Must::State(run, state) => {
+            of(run).and_then(|one| said(format!("{run} is {:?}", one.state), one.state == *state))
+        }
         Must::EpochOf(run, epoch) => of(run).and_then(|one| {
             said(
                 format!("{run} is of {:?}", one.epoch),
@@ -558,19 +714,24 @@ fn holds(must: &Must, real: &Folded, books: &Books) -> Option<Result<(), String>
         }
         Must::Absent(run) => said(
             format!("{run} has a reservation"),
-            !real.reservations.contains_key(&id(*run)),
+            real.reservation(&id(*run)).is_none(),
         ),
         Must::Sent(run, micros) => match by(run) {
-            Sent::Known(spend) => same(&format!("{run} sent"), spend.known(), *micros),
+            model::Sent::Known(spend) => same(&format!("{run} sent"), spend.known(), *micros),
             found => Err(format!("{run} sent {found:?}, and it must be known")),
         },
         Must::SentAtMost(run, micros) => match by(run) {
-            Sent::Unknown { at_most } => same(&format!("{run} sent at most"), at_most, *micros),
+            model::Sent::Unknown { at_most } => {
+                same(&format!("{run} sent at most"), at_most, *micros)
+            }
             found => Err(format!("{run} sent {found:?}, and it must be unknown")),
         },
-        Must::SentUnbounded(run) => said(format!("{run}: a most"), by(run) == Sent::Unbounded),
+        Must::SentUnbounded(run) => {
+            said(format!("{run}: a most"), by(run) == model::Sent::Unbounded)
+        }
         Must::NeedsOwner => said("the store needs nobody".to_owned(), balance.needs_owner),
         Must::Closed(run) => of(run).and_then(|one| said(format!("{run} is open"), one.closed)),
+        Must::Unplaced(count) => same("placed nowhere", real.unplaced().into(), *count),
         Must::Spendable(..)
         | Must::Owes(..)
         | Must::Outcome(..)
@@ -615,7 +776,7 @@ fn through_a_store(history: &model::History) -> Result<u64, String> {
 #[test]
 fn every_named_history_written_into_a_store_folds_to_what_the_model_gives_and_to_what_it_must() {
     let table = model::histories();
-    assert!(table.len() >= 87, "{}", table.len());
+    assert!(table.len() >= 89, "{}", table.len());
     let mut asked = 0;
     let mut broken = Vec::new();
     for history in &table {
@@ -690,9 +851,37 @@ fn joined<'a>(parts: &[&[&'a str]]) -> Vec<&'a str> {
     parts.iter().flat_map(|part| part.iter().copied()).collect()
 }
 
-fn state_and_count(folded: &Folded, run: &RunId) -> (State, Counted) {
-    let one = &folded.reservations[run];
-    (one.state, one.counted())
+fn state_and_count(folded: &Folded, run: &RunId) -> (State, model::Counted) {
+    let one = &folded.reservations()[run];
+    (one.state(), counted(one.counted()))
+}
+
+/// One reservation of the real fold, in plain numbers.
+fn res(folded: &Folded, run: &RunId) -> model::Standing {
+    standing(&folded.reservations()[run])
+}
+
+/// What a dispatch under a reservation may still take.
+fn left_of(folded: &Folded, run: &RunId) -> u64 {
+    folded.reservations()[run].left().micros()
+}
+
+fn state_of(folded: &Folded, run: &RunId) -> State {
+    folded.reservations()[run].state()
+}
+
+/// The balance of the newest epoch, in plain numbers.
+fn newest(folded: &Folded) -> model::Balance {
+    plain(folded.balance())
+}
+
+/// What the fold says of a correction to an amount: why it is not taken, or None.
+fn correct(folded: &Folded, run: &RunId, micros: u64) -> Option<Why> {
+    refusal(folded.correction(run, amount(micros)))
+}
+
+fn sent_by(folded: &Folded, run: &RunId, root: &RunId) -> model::Sent {
+    sent(folded.sent_by(run, root))
 }
 
 #[test]
@@ -702,9 +891,9 @@ fn reserve_10_dispatch_two_of_5_and_one_settles_at_12_counts_17_then_12_or_17() 
     let between = of(&joined(&[&ADMITTED, &TWO_SENT, &FIRST_AT_12]));
     assert_eq!(
         state_and_count(&between, &one()),
-        (State::Open, Counted::Exactly(17))
+        (State::Open, model::Counted::Exactly(17))
     );
-    let balance = between.balance();
+    let balance = newest(&between);
     assert_eq!(
         (balance.allowed, balance.counted, balance.left),
         (30, 17, 13)
@@ -730,9 +919,9 @@ fn reserve_10_dispatch_two_of_5_and_one_settles_at_12_counts_17_then_12_or_17() 
     ]));
     assert_eq!(
         state_and_count(&ended, &one()),
-        (State::Released, Counted::Exactly(12))
+        (State::Released, model::Counted::Exactly(12))
     );
-    assert_eq!(ended.balance().left, 18);
+    assert_eq!(newest(&ended).left, 18);
     // Interrupted with the second not settled: 17, and nothing is released.
     let recovered = [
         "spend/closed/7000-1/held",
@@ -742,9 +931,9 @@ fn reserve_10_dispatch_two_of_5_and_one_settles_at_12_counts_17_then_12_or_17() 
     let interrupted = of(&joined(&[&ADMITTED, &TWO_SENT, &FIRST_AT_12, &recovered]));
     assert_eq!(
         state_and_count(&interrupted, &one()),
-        (State::Interrupted, Counted::Exactly(17))
+        (State::Interrupted, model::Counted::Exactly(17))
     );
-    assert_eq!(interrupted.reservations[&one()].left(), 0);
+    assert_eq!(left_of(&interrupted, &one()), 0);
 }
 
 #[test]
@@ -752,7 +941,7 @@ fn an_allowance_driven_below_nothing_by_an_overrun_reads_nothing_left_and_keeps_
     let mut names = joined(&[&ADMITTED, &TWO_SENT, &FIRST_AT_12, &SECOND_AT_0]);
     names.retain(|name| *name != "spend/reset/1/30");
     names.push("spend/reset/1/10");
-    let balance = of(&names).balance();
+    let balance = newest(&of(&names));
     assert_eq!((balance.allowed, balance.counted), (10, 12));
     assert_eq!((balance.left, balance.debt), (0, 2));
 }
@@ -774,9 +963,9 @@ fn a_request_settled_over_its_bound_under_an_open_reservation_counts_the_amount_
     let folded = of(&names);
     assert_eq!(
         state_and_count(&folded, &one()),
-        (State::Open, Counted::Exactly(10))
+        (State::Open, model::Counted::Exactly(10))
     );
-    assert_eq!(folded.reservations[&one()].left(), 4);
+    assert_eq!(left_of(&folded, &one()), 4);
 }
 
 #[test]
@@ -789,10 +978,10 @@ fn a_reset_closes_the_books_before_it() {
     ]);
     let folded = of(&names);
     assert_eq!(folded.epoch(), 2);
-    let (new, old) = (folded.balance(), folded.balance_of(1));
+    let (new, old) = (newest(&folded), plain(folded.balance_of(1)));
     assert_eq!((new.allowed, new.counted, new.left), (20, 0, 20));
     assert_eq!((old.allowed, old.counted, old.left), (30, 10, 20));
-    assert_eq!(folded.reservations[&one()].epoch, Some(1));
+    assert_eq!(res(&folded, &one()).epoch, Some(1));
     assert!(!new.needs_owner && !old.needs_owner);
 }
 
@@ -812,17 +1001,17 @@ fn dispatches_by_a_child_are_under_its_roots_reservation_and_named_for_the_child
     ]);
     let folded = of(&names);
     // The child has no reservation: the tree has one, at its root.
-    assert!(!folded.reservations.contains_key(&two()));
-    let root = &folded.reservations[&one()];
+    assert!(!folded.reservations().contains_key(&two()));
+    let root = res(&folded, &one());
     assert_eq!((root.charged, root.outstanding, root.unresolved), (4, 3, 7));
-    let Sent::Known(child) = folded.sent_by(&two(), &one()) else {
+    let model::Sent::Known(child) = sent_by(&folded, &two(), &one()) else {
         panic!("the child's spend is known");
     };
     assert_eq!(
         (child.charged, child.outstanding, child.unresolved),
         (4, 0, 4)
     );
-    let Sent::Known(parent) = folded.sent_by(&one(), &one()) else {
+    let model::Sent::Known(parent) = sent_by(&folded, &one(), &one()) else {
         panic!("the root's spend is known");
     };
     assert_eq!((parent.charged, parent.outstanding), (0, 3));
@@ -854,22 +1043,22 @@ fn a_reservation_whose_content_is_damaged_is_frozen_at_20_and_stops_nothing_else
     let whole = of(&TWO_RESERVED);
     assert_eq!(
         state_and_count(&whole, &one()),
-        (State::Released, Counted::Exactly(0))
+        (State::Released, model::Counted::Exactly(0))
     );
     let frozen = with_damage(&TWO_RESERVED, &["spend/reservations/7000-1"]);
     assert_eq!(
         state_and_count(&frozen, &one()),
-        (State::Frozen, Counted::Exactly(20))
+        (State::Frozen, model::Counted::Exactly(20))
     );
-    assert_eq!(frozen.reservations[&two()], whole.reservations[&two()]);
-    let balance = frozen.balance();
+    assert_eq!(res(&frozen, &two()), res(&whole, &two()));
+    let balance = newest(&frozen);
     assert_eq!((balance.counted, balance.left), (25, 5));
     assert!(!balance.needs_owner && !balance.unknown);
     // It counts so in every epoch there is: a reset does not clear it.
     let mut later = TWO_RESERVED.to_vec();
     later.extend(["spend/reset/2/40", "spend/epoch/2", "spend/turn/1/4"]);
     let after = with_damage(&later, &["spend/reservations/7000-1"]);
-    assert_eq!((after.balance().counted, after.balance().left), (20, 20));
+    assert_eq!((newest(&after).counted, newest(&after).left), (20, 20));
 }
 
 #[test]
@@ -897,14 +1086,14 @@ fn a_reservation_damaged_after_it_released_at_3_counts_27() {
     ]);
     assert_eq!(
         state_and_count(&of(&names), &one()),
-        (State::Released, Counted::Exactly(3))
+        (State::Released, model::Counted::Exactly(3))
     );
     let frozen = with_damage(&names, &["spend/reservations/7000-1"]);
     assert_eq!(
         state_and_count(&frozen, &one()),
-        (State::Frozen, Counted::Exactly(27))
+        (State::Frozen, model::Counted::Exactly(27))
     );
-    assert_eq!(frozen.balance().left, 3);
+    assert_eq!(newest(&frozen).left, 3);
 }
 
 #[test]
@@ -914,8 +1103,8 @@ fn a_record_the_fold_cannot_place_freezes_the_reservation_its_name_gives_and_no_
     let mut unplaced = TWO_RESERVED.to_vec();
     unplaced.push("spend/settled/7000-2/1/answered/3");
     let folded = of(&unplaced);
-    assert_eq!(folded.reservations[&two()].state, State::Frozen);
-    assert_eq!(folded.reservations[&one()], whole.reservations[&one()]);
+    assert_eq!(state_of(&folded, &two()), State::Frozen);
+    assert_eq!(res(&folded, &one()), res(&whole, &one()));
     // Two dispatches at one place: each may be a request, so both bounds count.
     let mut twice = TWO_RESERVED.to_vec();
     twice.extend([
@@ -926,14 +1115,14 @@ fn a_record_the_fold_cannot_place_freezes_the_reservation_its_name_gives_and_no_
     let folded = of(&twice);
     assert_eq!(
         state_and_count(&folded, &two()),
-        (State::Frozen, Counted::Exactly(10))
+        (State::Frozen, model::Counted::Exactly(10))
     );
-    assert_eq!(folded.reservations[&one()], whole.reservations[&one()]);
-    assert!(!folded.balance().needs_owner);
+    assert_eq!(res(&folded, &one()), res(&whole, &one()));
+    assert!(!newest(&folded).needs_owner);
     // What either run sent under it is unknown, and at most what it counts for.
     assert_eq!(
-        folded.sent_by(&two(), &two()),
-        Sent::Unknown { at_most: 10 }
+        sent_by(&folded, &two(), &two()),
+        model::Sent::Unknown { at_most: 10 }
     );
 }
 
@@ -946,8 +1135,8 @@ fn correction(run: &str, place: u64, turn: u64, micros: u64, over: &[&str]) -> S
         .filter(|name| name.contains(run) && *name != format!("spend/place/{run}/{place}"))
         .collect();
     over.sort_unstable();
-    let seal = fold::temporary::seal(over.into_iter().map(|name| (name, false)));
-    format!("spend/adjusted/{run}/{place}/{turn}/{seal:032x}/{micros}")
+    let seal = Seal::over(over.into_iter().map(|name| (name, false)));
+    format!("spend/adjusted/{run}/{place}/{turn}/{seal}/{micros}")
 }
 
 /// A reservation of 10 that recovery closed as interrupted, with 5 outstanding and
@@ -975,7 +1164,7 @@ fn an_adjustment_after_an_interruption_and_after_a_freeze_counts_what_it_says() 
     let names = interrupted();
     assert_eq!(
         state_and_count(&of(&names), &one()),
-        (State::Interrupted, Counted::Exactly(10))
+        (State::Interrupted, model::Counted::Exactly(10))
     );
     // Corrected to 4, at the next place and the next turn, over its names.
     let adjusted = correction("7000-1", 4, 4, 4, &names);
@@ -984,26 +1173,28 @@ fn an_adjustment_after_an_interruption_and_after_a_freeze_counts_what_it_says() 
     let folded = of(&corrected);
     assert_eq!(
         state_and_count(&folded, &one()),
-        (State::Adjusted, Counted::Exactly(4))
+        (State::Adjusted, model::Counted::Exactly(4))
     );
-    assert_eq!(folded.balance().left, 26);
-    assert!(!folded.balance().needs_owner);
+    assert_eq!(newest(&folded).left, 26);
+    assert!(!newest(&folded).needs_owner);
     // Frozen by a damaged record, it counts 10 + 3 + 2 + 5 + 10; the correction no
     // longer stands, because a name it was sealed over changed. Its owner corrects
     // it again, over the names as they are, damage and all.
     let frozen = with_damage(&corrected, &["spend/reservations/7000-1"]);
     assert_eq!(
         state_and_count(&frozen, &one()),
-        (State::Frozen, Counted::Exactly(10 + 3 + 2 + 5 + 2 * 10))
+        (
+            State::Frozen,
+            model::Counted::Exactly(10 + 3 + 2 + 5 + 2 * 10)
+        )
     );
-    let mut over: Vec<(&str, bool)> = corrected
+    let over: Vec<(&str, bool)> = corrected
         .iter()
         .filter(|name| name.contains("7000-1"))
         .map(|name| (*name, *name == "spend/reservations/7000-1"))
         .collect();
-    over.sort_unstable();
-    let seal = fold::temporary::seal(over.into_iter());
-    let again = format!("spend/adjusted/7000-1/5/5/{seal:032x}/0");
+    let seal = Seal::over(over);
+    let again = format!("spend/adjusted/7000-1/5/5/{seal}/0");
     let made = [again.as_str(), "spend/place/7000-1/5", "spend/turn/1/5"];
     let ended = with_damage(
         &joined(&[&corrected, &made]),
@@ -1012,7 +1203,7 @@ fn an_adjustment_after_an_interruption_and_after_a_freeze_counts_what_it_says() 
     // Never under what its settlement with its whole chain says: 2.
     assert_eq!(
         state_and_count(&ended, &one()),
-        (State::Adjusted, Counted::Exactly(2))
+        (State::Adjusted, model::Counted::Exactly(2))
     );
 }
 
@@ -1026,35 +1217,26 @@ fn a_correction_counts_no_less_than_what_whole_settlements_say_and_is_refused_be
     let folded = of(&joined(&[&names, &made]));
     assert_eq!(
         state_and_count(&folded, &one()),
-        (State::Adjusted, Counted::Exactly(2))
+        (State::Adjusted, model::Counted::Exactly(2))
     );
     // And in what the command is told: from what is settled, to the most.
     let before = of(&names);
     assert_eq!(
-        before.correction(&one(), 1),
-        Err(NotCorrected::BelowSettled { settled: 2 })
+        correct(&before, &one(), 1),
+        Some(Why::BelowSettled { settled: 2 })
     );
-    assert_eq!(before.correction(&one(), 2), Ok(()));
-    assert_eq!(before.correction(&one(), 10), Ok(()));
+    assert_eq!(correct(&before, &one(), 2), None);
+    assert_eq!(correct(&before, &one(), 10), None);
     assert_eq!(
-        before.correction(&one(), 11),
-        Err(NotCorrected::OverCount { most: 10 })
+        correct(&before, &one(), 11),
+        Some(Why::OverCount { most: 10 })
     );
     // Only of a reservation that is closed, and not of one that released.
     let open = of(&ADMITTED);
-    assert_eq!(
-        open.correction(&one(), 5),
-        Err(NotCorrected::NotCorrectable)
-    );
-    assert_eq!(
-        open.correction(&two(), 5),
-        Err(NotCorrected::NotCorrectable)
-    );
+    assert_eq!(correct(&open, &one(), 5), Some(Why::NotCorrectable));
+    assert_eq!(correct(&open, &two(), 5), Some(Why::NotCorrectable));
     let released = of(&TWO_RESERVED);
-    assert_eq!(
-        released.correction(&one(), 0),
-        Err(NotCorrected::NotCorrectable)
-    );
+    assert_eq!(correct(&released, &one(), 0), Some(Why::NotCorrectable));
 }
 
 #[test]
@@ -1074,21 +1256,21 @@ fn a_correction_upward_is_taken_only_when_what_is_left_can_hold_the_difference()
     ]);
     names.push(adjusted.as_str());
     let folded = of(&names);
-    assert_eq!((folded.balance().counted, folded.balance().left), (11, 1));
+    assert_eq!((newest(&folded).counted, newest(&folded).left), (11, 1));
     // Up by 1 is held by the 1 that is left; up by 2 is not.
-    assert_eq!(folded.correction(&one(), 5), Ok(()));
+    assert_eq!(correct(&folded, &one(), 5), None);
     assert_eq!(
-        folded.correction(&one(), 6),
-        Err(NotCorrected::CannotBeHeld { left: 1 })
+        correct(&folded, &one(), 6),
+        Some(Why::CannotBeHeld { left: 1 })
     );
     // Downward needs no room.
-    assert_eq!(folded.correction(&one(), 2), Ok(()));
+    assert_eq!(correct(&folded, &one(), 2), None);
     // After a reset the reservation is of the closed books: a correction upward
     // changes nothing the new allowance can spend, and needs no room there.
     names.extend(["spend/reset/2/0", "spend/epoch/2", "spend/turn/1/6"]);
     let later = of(&names);
-    assert_eq!(later.balance().left, 0);
-    assert_eq!(later.correction(&one(), 10), Ok(()));
+    assert_eq!(newest(&later).left, 0);
+    assert_eq!(correct(&later, &one(), 10), None);
 }
 
 #[test]
@@ -1110,7 +1292,7 @@ fn the_next_turn_is_the_lowest_that_is_free_and_never_one_past_the_highest() {
     let folded = of(&lost);
     assert_eq!(folded.next_turn(1), 1);
     assert!(folded.needs_owner(1));
-    assert_eq!(folded.balance().left, 0);
+    assert_eq!(newest(&folded).left, 0);
 }
 
 #[test]
@@ -1126,9 +1308,9 @@ fn an_answer_that_no_name_states_is_not_in_the_fold_which_counts_the_bound_until
     let before = of(&names);
     assert_eq!(
         state_and_count(&before, &one()),
-        (State::Open, Counted::Exactly(10))
+        (State::Open, model::Counted::Exactly(10))
     );
-    assert_eq!(before.reservations[&one()].left(), 5);
+    assert_eq!(left_of(&before, &one()), 5);
     // Once its settlement is durable the charge is counted, and nothing is left.
     let settled = [
         "spend/settling/7000-1/1",
@@ -1139,9 +1321,9 @@ fn an_answer_that_no_name_states_is_not_in_the_fold_which_counts_the_bound_until
     let after = of(&joined(&[&names, &settled]));
     assert_eq!(
         state_and_count(&after, &one()),
-        (State::Open, Counted::Exactly(12))
+        (State::Open, model::Counted::Exactly(12))
     );
-    assert_eq!(after.reservations[&one()].left(), 0);
+    assert_eq!(left_of(&after, &one()), 0);
 }
 
 #[test]
@@ -1162,11 +1344,15 @@ fn a_name_can_name_any_place_and_state_any_amount_and_the_fold_still_ends() {
     }
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
     let folded = of(&names);
-    let first = &folded.reservations[&one()];
-    assert_eq!((first.state, first.unexplained), (State::Frozen, u64::MAX));
+    let first = res(&folded, &one());
+    assert_eq!(state_of(&folded, &one()), State::Frozen);
+    assert_eq!(first.unexplained, u64::MAX);
     let places = u128::from(u64::MAX) * u128::from(most);
-    assert_eq!(first.counted(), Counted::AtLeast(u128::from(most) + places));
-    let balance = folded.balance();
+    assert_eq!(
+        first.counted(),
+        model::Counted::AtLeast(u128::from(most) + places)
+    );
+    let balance = newest(&folded);
     assert_eq!((balance.counted, balance.left), (u128::MAX, 0));
     assert!(balance.needs_owner && balance.unknown);
     // A turn at the largest number is read without counting up to it.
@@ -1205,14 +1391,14 @@ fn sums_of_amounts_one_under_the_largest_do_not_wrap() {
     }
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
     let folded = of(&names);
-    let own = &folded.reservations[&one()];
-    assert_eq!(own.state, State::Open);
+    let own = res(&folded, &one());
+    assert_eq!(state_of(&folded, &one()), State::Open);
     assert_eq!(own.charged, 3 * u128::from(most));
-    assert_eq!(own.counted(), Counted::Exactly(3 * u128::from(most)));
-    let balance = folded.balance();
+    assert_eq!(own.counted(), model::Counted::Exactly(3 * u128::from(most)));
+    let balance = newest(&folded);
     assert_eq!((balance.left, balance.debt), (0, 2 * u128::from(most)));
     assert!(!balance.needs_owner);
-    let Sent::Known(sent) = folded.sent_by(&one(), &one()) else {
+    let model::Sent::Known(sent) = sent_by(&folded, &one(), &one()) else {
         panic!("what it sent is known");
     };
     assert_eq!(sent.known(), 3 * u128::from(most));
@@ -1230,10 +1416,10 @@ fn the_largest_number_is_no_amount_and_a_name_that_states_it_is_of_no_form() {
     let folded = of(&names);
     assert_eq!(
         state_and_count(&folded, &one()),
-        (State::Frozen, Counted::AtLeast(0))
+        (State::Frozen, model::Counted::AtLeast(0))
     );
-    assert!(folded.balance().needs_owner);
-    assert_eq!(folded.sent_by(&one(), &one()), Sent::Unbounded);
+    assert!(newest(&folded).needs_owner);
+    assert_eq!(sent_by(&folded, &one(), &one()), model::Sent::Unbounded);
     // As a bound and as a charge: the reservation is frozen at what its other names
     // say, and not at a number that no name can state.
     for name in [
@@ -1245,7 +1431,7 @@ fn the_largest_number_is_no_amount_and_a_name_that_states_it_is_of_no_form() {
         let folded = of(&names);
         assert_eq!(
             state_and_count(&folded, &one()),
-            (State::Frozen, Counted::Exactly(10)),
+            (State::Frozen, model::Counted::Exactly(10)),
             "{name}"
         );
     }
@@ -1254,7 +1440,7 @@ fn the_largest_number_is_no_amount_and_a_name_that_states_it_is_of_no_form() {
     let mut names = ADMITTED.to_vec();
     names.retain(|name| *name != "spend/reset/1/30");
     names.push(reset.as_str());
-    let balance = of(&names).balance();
+    let balance = newest(&of(&names));
     assert_eq!((balance.epoch, balance.allowed, balance.left), (1, 0, 0));
 }
 
@@ -1275,12 +1461,8 @@ fn a_name_of_no_form_freezes_the_reservation_it_starts_as_a_name_of_or_is_report
         let mut names = TWO_RESERVED.to_vec();
         names.push(stray);
         let folded = of(&names);
-        assert_eq!(folded.reservations[&two()].state, State::Frozen, "{stray}");
-        assert_eq!(
-            folded.reservations[&one()],
-            whole.reservations[&one()],
-            "{stray}"
-        );
+        assert_eq!(state_of(&folded, &two()), State::Frozen, "{stray}");
+        assert_eq!(res(&folded, &one()), res(&whole, &one()), "{stray}");
         assert_eq!(folded.unplaced(), 0, "{stray}");
     }
     // One for a run that has no reservation is a frozen reservation of nothing whose
@@ -1291,9 +1473,9 @@ fn a_name_of_no_form_freezes_the_reservation_it_starts_as_a_name_of_or_is_report
     let nine = RunId::parse("7000-9").unwrap();
     assert_eq!(
         state_and_count(&folded, &nine),
-        (State::Frozen, Counted::AtLeast(0))
+        (State::Frozen, model::Counted::AtLeast(0))
     );
-    assert!(folded.balance().needs_owner);
+    assert!(newest(&folded).needs_owner);
     // One that starts as nothing the ledger writes, or whose run is no run id, is
     // placed nowhere: it changes no balance, and the fold says that it is there.
     let mut names = TWO_RESERVED.to_vec();
@@ -1305,14 +1487,14 @@ fn a_name_of_no_form_freezes_the_reservation_it_starts_as_a_name_of_or_is_report
     ]);
     let folded = of(&names);
     assert_eq!(folded.unplaced(), 4);
-    assert_eq!(folded.reservations, whole.reservations);
-    assert_eq!(folded.balance(), whole.balance());
+    assert_eq!(folded.reservations(), whole.reservations());
+    assert_eq!(newest(&folded), newest(&whole));
 }
 
 #[test]
 fn a_turn_a_reset_or_a_guard_that_does_not_parse_never_allows_more_than_the_name_it_stands_for() {
     let whole = of(&TWO_RESERVED);
-    assert_eq!(whole.balance().left, 25);
+    assert_eq!(newest(&whole).left, 25);
     // Each name of an epoch, garbled where it stood: the name it was is gone.
     for (name, garbled) in [
         ("spend/turn/1/2", "spend/turn/1/02"),
@@ -1325,7 +1507,7 @@ fn a_turn_a_reset_or_a_guard_that_does_not_parse_never_allows_more_than_the_name
         let mut names = TWO_RESERVED.to_vec();
         names.retain(|other| *other != name);
         names.push(garbled);
-        let balance = of(&names).balance();
+        let balance = newest(&of(&names));
         assert_eq!((balance.epoch, balance.left), (1, 0), "{garbled}");
     }
     // Made beside the names that are there, each can only stop: a turn of no form
@@ -1340,10 +1522,21 @@ fn a_turn_a_reset_or_a_guard_that_does_not_parse_never_allows_more_than_the_name
     ] {
         let mut names = TWO_RESERVED.to_vec();
         names.push(made);
-        let balance = of(&names).balance();
+        let balance = newest(&of(&names));
         assert_eq!((balance.epoch, balance.left), (epoch, 0), "{made}");
-        assert_eq!(of(&names).reservations, whole.reservations, "{made}");
+        assert_eq!(of(&names).reservations(), whole.reservations(), "{made}");
     }
+    // A reset or a guard of no form that names the epoch before the first spoils
+    // nothing: no reset opens that epoch. It is placed nowhere, and counted.
+    let mut names = TWO_RESERVED.to_vec();
+    names.extend(["spend/reset/0/x", "spend/epoch/0/x"]);
+    let folded = of(&names);
+    assert_eq!(folded, {
+        let mut names = TWO_RESERVED.to_vec();
+        names.extend(["spend/fake/1", "spend/fake/2"]);
+        of(&names)
+    });
+    assert_eq!((folded.unplaced(), newest(&folded).left), (2, 25));
 }
 
 #[test]
@@ -1359,7 +1552,7 @@ fn the_fold_reads_records_through_names_only() {
     shelf.hold(&names);
     let before = shelf.fold();
     assert_eq!(before, folded(&names));
-    assert_eq!(before.balance().left, 25);
+    assert_eq!(newest(&before).left, 25);
     let objects = |shelf: &Shelf| {
         let root = shelf.scratch.path().join("0").join("objects");
         std::fs::read_dir(root).unwrap().count()
@@ -1385,6 +1578,6 @@ fn the_fold_reads_records_through_names_only() {
     shelf.hold(&hurt);
     let frozen = shelf.fold();
     assert_eq!(frozen, folded(&hurt));
-    assert_eq!(frozen.reservations[&two()].state, State::Frozen);
-    assert_eq!(frozen.reservations[&one()], before.reservations[&one()]);
+    assert_eq!(state_of(&frozen, &two()), State::Frozen);
+    assert_eq!(res(&frozen, &one()), res(&before, &one()));
 }

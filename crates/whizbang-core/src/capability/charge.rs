@@ -51,8 +51,8 @@ impl Charge {
     }
 }
 
-/// How far a request that failed got.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// How far a request that failed got. The stages are ordered as a request passes them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Stage {
     /// The request did not leave whizbang: nothing was handed to anyone. Nothing was
     /// charged.
