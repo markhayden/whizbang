@@ -18,7 +18,7 @@ use whizbang_backends::models::{
 use whizbang_core::capability::Fault;
 use whizbang_core::contract::Cancellation;
 use whizbang_core::egress::{DownloadRequest, Downloaded, Downloader};
-use whizbang_core::store::fs::{Fs, RealFs};
+use whizbang_core::store::fs::{Fs, Held, LockFile, NewFile, OpenFile, RealFs};
 use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::downloads::FakeDownloader;
 use whizbang_testkit::fs_shim::{Event, ShimFs};
@@ -27,10 +27,10 @@ use whizbang_testkit::threads;
 
 use super::none;
 use super::publishing::{
-    adapter, events_after, first, index_of, installations, installed, installing, is_whole,
-    reading, record_of, said, second,
+    adapter, events_after, first, flip, folder_of, index_of, installations, installed, installing,
+    is_whole, reading, record_of, said, second,
 };
-use super::staging::{TERMS, address, at, graph, incoming, serving_both};
+use super::staging::{TERMS, address, at, graph, incoming, names_under, on_disk, serving_both};
 
 /// A fake that serves the licence, and the graph up to 1,024 of its 2,500 bytes, where
 /// it stops at the barrier `mid`.
@@ -260,6 +260,213 @@ fn while_the_lock_is_held_and_the_status_says_no_install_is_running_nothing_is_s
 }
 
 #[test]
+fn a_request_that_attached_and_finds_no_status_or_one_it_cannot_read_is_told_failed() {
+    // The pointer names the installation that is asked for, whole: only the status
+    // stands between the request and "installed". With no status, and with one that
+    // is not a status record, the request is told failed and never goes by the
+    // pointer; asked again, it installs, and downloads nothing.
+    type Spoil = fn(&Path);
+    let spoils: [Spoil; 4] = [
+        |status| std::fs::remove_file(status).unwrap(),
+        |status| std::fs::write(status, b"{\"format\":\"status/1\"}").unwrap(),
+        |status| std::fs::write(status, vec![b' '; 300]).unwrap(),
+        |status| {
+            std::fs::remove_file(status).unwrap();
+            std::fs::create_dir(status).unwrap();
+        },
+    ];
+    for (at, spoil) in spoils.into_iter().enumerate() {
+        let scratch = Scratch::new("attach-no-status");
+        let root = scratch.path();
+        let record = installed(root, &second());
+        spoil(&root.join("models/tiny/STATUS"));
+        let mut held = RealFs
+            .hold_lock_file(&root.join("models/tiny/LOCK"), false)
+            .unwrap();
+        assert!(held.is_some());
+        let fake = serving_both();
+        let mut seen = Vec::new();
+        let attached = asking(root, &fake, &Cancellation::new(), &mut |status| {
+            seen.push(status.as_ref().map(of));
+            held = None;
+        });
+        assert_eq!(seen, [None], "spoil {at}");
+        assert_eq!(attached, Err(InstallRefused::Failed), "spoil {at}");
+        assert!(fake.requests().is_empty());
+        assert_eq!(reading(root), Current::Installed(record.clone()));
+        let again = asking(root, &fake, &Cancellation::new(), &mut |_| {});
+        assert!(fake.requests().is_empty());
+        if at == 3 {
+            // A folder where the status belongs is not written over: the install is
+            // refused by the disk, at its first step.
+            assert!(matches!(again, Err(InstallRefused::Disk(_))), "{again:?}");
+            continue;
+        }
+        assert_eq!(again, Ok(record), "spoil {at}");
+        assert_eq!(said(root), Some((State::Installed, 2, 2)));
+    }
+}
+
+#[test]
+fn known_a_request_that_met_only_anothers_share_of_the_lock_is_answered_from_the_last_installs_status()
+ {
+    // A request that attached has a share of the model's lock for the moment in
+    // which it reads the status. An install tried in that moment is busy, so the
+    // request that asked for it attaches, to no install: it is given its own share
+    // at once, `watch` is never called, and it is answered by how the last install
+    // ended. That is a limit (ADR 0017): asked again, it installs.
+    let scratch = Scratch::new("attach-share");
+    let root = scratch.path();
+    let before = installed(root, &first());
+    let short = FakeDownloader::new()
+        .serving(&at("LICENSE.txt"), TERMS.to_vec())
+        .serving(&at("graph.onnx"), graph()[..2499].to_vec());
+    installing(&Arc::new(ShimFs::new()), root, &second(), &short).unwrap_err();
+    assert_eq!(said(root), Some((State::Failed, 1, 2)));
+    let lock = root.join("models/tiny/LOCK");
+    let share = RealFs.try_share(&lock).unwrap().unwrap();
+    let fake = serving_both();
+    let mut rounds = 0;
+    let ended = asking(root, &fake, &Cancellation::new(), &mut |_| rounds += 1);
+    assert_eq!(ended, Err(InstallRefused::Failed));
+    assert_eq!(rounds, 0);
+    assert!(fake.requests().is_empty());
+    assert_eq!(reading(root), Current::Installed(before));
+    drop(share);
+    let again = asking(root, &fake, &Cancellation::new(), &mut |_| rounds += 1);
+    assert_eq!(again, Ok(record_of(&second())));
+    served_each_file_once(&fake);
+    // And when the last install ended installed, with its installation named, the
+    // answer is that installation: nothing ran, and nothing needed to.
+    let share = RealFs.try_share(&lock).unwrap().unwrap();
+    let ended = asking(root, &fake, &Cancellation::new(), &mut |_| rounds += 1);
+    assert_eq!(ended, Ok(record_of(&second())));
+    assert_eq!(rounds, 0);
+    served_each_file_once(&fake);
+    drop(share);
+}
+
+/// A disk that refuses every write of a status record, and runs what it was given
+/// once, at the first it refuses. Everything else is the real file system's.
+struct NoStatus {
+    at_first: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Fs for NoStatus {
+    fn create_dir(&self, path: &Path) -> std::io::Result<()> {
+        RealFs.create_dir(path)
+    }
+    fn write_new(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        if path.ends_with("STATUS.new") {
+            if let Some(first) = self.at_first.lock().unwrap().take() {
+                first();
+            }
+            return Err(std::io::ErrorKind::PermissionDenied.into());
+        }
+        RealFs.write_new(path, bytes)
+    }
+    fn sync_dir(&self, path: &Path) -> std::io::Result<()> {
+        RealFs.sync_dir(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        RealFs.rename(from, to)
+    }
+    fn remove_all(&self, path: &Path) -> std::io::Result<()> {
+        RealFs.remove_all(path)
+    }
+    fn read_at_most(&self, path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+        RealFs.read_at_most(path, limit)
+    }
+    fn list(&self, path: &Path) -> std::io::Result<Vec<PathBuf>> {
+        RealFs.list(path)
+    }
+    fn exists(&self, path: &Path) -> std::io::Result<bool> {
+        RealFs.exists(path)
+    }
+    fn hold_lock_file(
+        &self,
+        path: &Path,
+        create: bool,
+    ) -> std::io::Result<Option<Box<dyn LockFile>>> {
+        RealFs.hold_lock_file(path, create)
+    }
+    fn share(&self, path: &Path) -> std::io::Result<Box<dyn Held>> {
+        RealFs.share(path)
+    }
+    fn try_alone(&self, path: &Path) -> std::io::Result<Option<Box<dyn Held>>> {
+        RealFs.try_alone(path)
+    }
+    fn begin_new(&self, path: &Path, most: u64) -> std::io::Result<Box<dyn NewFile>> {
+        RealFs.begin_new(path, most)
+    }
+    fn open_file(&self, path: &Path) -> std::io::Result<Box<dyn OpenFile>> {
+        RealFs.open_file(path)
+    }
+    fn try_share(&self, path: &Path) -> std::io::Result<Option<Box<dyn Held>>> {
+        RealFs.try_share(path)
+    }
+}
+
+#[test]
+fn known_an_install_refused_every_write_of_its_status_leaves_the_last_status_and_one_who_attached_is_answered_from_it()
+ {
+    // The installation in use is damaged: one byte of a file is another. Its repair
+    // takes the model's lock and is refused its first step, the status, and every
+    // write of a status after it: it touches nothing else, and the status still
+    // says how the install before it ended, `installed`, under a lock an installer
+    // holds. One who attached meanwhile is shown nothing, and is then told that the
+    // model is installed, of files nobody read. That is a limit (ADR 0017).
+    let scratch = Scratch::new("attach-status-refused");
+    let root = scratch.path().to_path_buf();
+    let record = installed(&root, &second());
+    let damaged = folder_of(&root, &record).join("files/graph.onnx");
+    flip(&damaged, 77);
+    let before = names_under(&root);
+    let barriers = Barriers::new();
+    let stop = barriers.clone();
+    let fs = Arc::new(NoStatus {
+        at_first: Mutex::new(Some(Box::new(move || stop.stop_at("refused")))),
+    });
+    let fake = Arc::new(serving_both());
+    let installer = {
+        let (fs, root, fake) = (fs.clone(), root.clone(), fake.clone());
+        threads::spawn(move || {
+            let dir = ModelsDir::at(fs, &root);
+            install(
+                &dir,
+                &second(),
+                &adapter(),
+                &*fake,
+                &Cancellation::new(),
+                &none(),
+            )
+        })
+    };
+    barriers.arrived("refused", 1);
+    let other = serving_both();
+    let mut seen = Vec::new();
+    let attached = asking(&root, &other, &Cancellation::new(), &mut |status| {
+        if seen.is_empty() {
+            barriers.release("refused");
+        }
+        seen.push(status.as_ref().map(of));
+        std::thread::yield_now();
+    });
+    let refused = installer.join().unwrap();
+    assert_eq!(
+        refused,
+        Err(InstallRefused::Disk(std::io::ErrorKind::PermissionDenied))
+    );
+    assert!(seen.iter().all(Option::is_none));
+    assert_eq!(attached, Ok(record.clone()));
+    assert!(fake.requests().is_empty() && other.requests().is_empty());
+    assert_eq!(said(&root), Some((State::Installed, 2, 2)));
+    assert_eq!(reading(&root), Current::Installed(record));
+    assert_ne!(on_disk(&damaged).unwrap(), graph());
+    assert_eq!(names_under(&root), before);
+}
+
+#[test]
 fn an_attached_request_answers_from_the_status_and_never_from_a_pointer_alone() {
     // The install the second request waits for is refused the sync that makes its
     // pointer durable: it is refused, its status says failed, and the pointer names
@@ -386,30 +593,54 @@ fn an_install_says_installing_before_anything_else_whether_it_downloads_or_finds
 /// own.
 const ROOT_FOR_CHILD: &str = "WHIZBANG_TEST_MODELS_ROOT";
 
-fn root_from_parent() -> PathBuf {
+pub(super) fn root_from_parent() -> PathBuf {
     PathBuf::from(std::env::var_os(ROOT_FOR_CHILD).unwrap())
 }
 
 /// Says one line to the process that started this one.
-fn say(line: &str) {
+pub(super) fn say(line: &str) {
     let mut out = std::io::stdout().lock();
     writeln!(out, "\n{line}").unwrap();
     out.flush().unwrap();
 }
 
-/// The test's own program, run once more for one test of this file that is
-/// otherwise skipped: a second process over the same models directory.
-struct Other {
+/// Waits for one line from the process that started this one.
+pub(super) fn told() -> String {
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line).unwrap();
+    line
+}
+
+/// The test's own program, run once more for one test that is otherwise skipped: a
+/// second process over the same models directory. What it says of a failure of its
+/// own goes to this test's output.
+///
+/// It is the test binary run directly, not through the runner, so the runner's guard
+/// on threads does not watch it. It is within the rule on threads and processes all
+/// the same: it is started once, by no loop; it runs one test on one thread
+/// (`--test-threads=1`), and that test makes no process; and it does not outlive the
+/// test that started it: when this is dropped, by the test's end or by a failed
+/// assertion, the process is killed if it is still there, and waited for.
+pub(super) struct Other {
     child: Child,
     lines: Lines<BufReader<ChildStdout>>,
 }
 
+impl Drop for Other {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 impl Other {
-    fn running(test: &str, root: &Path) -> Other {
+    /// Runs the test of this whole name, as `models::attaching::…`, in a process of
+    /// its own, told of this models directory.
+    pub(super) fn running(test: &str, root: &Path) -> Other {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                &format!("models::attaching::{test}"),
+                test,
                 "--ignored",
                 "--nocapture",
                 "--test-threads=1",
@@ -417,7 +648,7 @@ impl Other {
             .env(ROOT_FOR_CHILD, root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .expect("the test binary runs");
         let lines = BufReader::new(child.stdout.take().unwrap()).lines();
@@ -426,7 +657,7 @@ impl Other {
 
     /// Waits for the line the other process says that starts with this word, and
     /// gives what follows the word.
-    fn says(&mut self, word: &str) -> String {
+    pub(super) fn says(&mut self, word: &str) -> String {
         let prefix = format!("{word} ");
         let line = self
             .lines
@@ -437,13 +668,20 @@ impl Other {
         line[prefix.len()..].to_owned()
     }
 
+    /// Sends the other process one line.
+    pub(super) fn tell(&mut self, line: &str) {
+        let input = self.child.stdin.as_mut().unwrap();
+        writeln!(input, "{line}").unwrap();
+        input.flush().unwrap();
+    }
+
     /// Kills the other process, and waits until it is gone: its locks are let go.
-    fn killed(&mut self) {
+    pub(super) fn killed(&mut self) {
         self.child.kill().unwrap();
         self.child.wait().unwrap();
     }
 
-    fn ended_well(mut self) {
+    pub(super) fn ended_well(mut self) {
         assert!(self.child.wait().unwrap().success());
     }
 }
@@ -487,8 +725,7 @@ fn child_installs_and_stops_inside_its_second_file() {
     let fs = Arc::new(ShimFs::new());
     fs.pause_before(inside, || {
         say("stopped inside");
-        let mut go = String::new();
-        std::io::stdin().lock().read_line(&mut go).unwrap();
+        told();
     });
     let ended = installing(&fs, &root, &second(), &serving_both());
     say(&format!("ended {}", ended.is_ok()));
@@ -502,7 +739,10 @@ fn a_second_process_that_asks_while_the_first_is_stopped_sees_progress_and_ends_
     installed(root, &first());
     let barriers = Barriers::new();
     let (fake, installer) = stopped_mid_file(root, &barriers, &Cancellation::new());
-    let mut other = Other::running("child_asks_for_the_model_and_says_what_it_sees", root);
+    let mut other = Other::running(
+        "models::attaching::child_asks_for_the_model_and_says_what_it_sees",
+        root,
+    );
     assert_eq!(other.says("sees"), "Installing 1 2");
     barriers.release("mid");
     let published = installer.join().unwrap().unwrap();
@@ -522,7 +762,10 @@ fn when_the_installing_process_is_killed_the_attached_one_reports_the_install_as
     let scratch = Scratch::new("attach-killed");
     let root = scratch.path();
     let before = installed(root, &first());
-    let mut other = Other::running("child_installs_and_stops_inside_its_second_file", root);
+    let mut other = Other::running(
+        "models::attaching::child_installs_and_stops_inside_its_second_file",
+        root,
+    );
     assert_eq!(other.says("stopped"), "inside");
     // This process attaches, is shown the install, and the other is killed: the
     // model's lock is free, and the status still says that an install is running.
@@ -819,7 +1062,10 @@ fn an_attached_request_that_goes_away_does_not_cancel_the_install() {
     installed(root, &first());
     let barriers = Barriers::new();
     let (fake, installer) = stopped_mid_file(root, &barriers, &Cancellation::new());
-    let mut other = Other::running("child_asks_for_the_model_and_says_what_it_sees", root);
+    let mut other = Other::running(
+        "models::attaching::child_asks_for_the_model_and_says_what_it_sees",
+        root,
+    );
     assert_eq!(other.says("sees"), "Installing 1 2");
     other.killed();
     barriers.release("mid");

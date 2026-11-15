@@ -1703,7 +1703,7 @@ without the installer's reason.
 **Depends on:** M2b. **Reads:** rascal `tools/python/src/rascal_tools/installs.py`
 (`.held`, `alive`, `Slot`).
 
-- [ ] A hold on one installation, by its identity: a shared file lock, and a count inside
+- [x] A hold on one installation, by its identity: a shared file lock, and a count inside
       the process. It is what M6b's lease takes. A hold is refused when the
       pointer does not name that installation.
 

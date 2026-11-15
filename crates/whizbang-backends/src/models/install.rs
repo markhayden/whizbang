@@ -326,7 +326,7 @@ pub fn install_or_attach(
 
 /// What a model's pointer file holds.
 #[derive(PartialEq, Eq)]
-enum Pointer {
+pub(super) enum Pointer {
     /// There is no pointer.
     None,
     /// It names this installation.
@@ -543,7 +543,11 @@ impl Model<'_> {
 
 /// Reads a model's pointer: exactly an identity's text and one line feed, in a
 /// regular file under its own name. Anything else that is there is damage.
-fn read_pointer(dir: &ModelsDir, folder: &Path, secrets: &Secrets) -> io::Result<Pointer> {
+pub(super) fn read_pointer(
+    dir: &ModelsDir,
+    folder: &Path,
+    secrets: &Secrets,
+) -> io::Result<Pointer> {
     let bytes = match dir.read(&folder.join("CURRENT"), POINTER_BYTES as u64)? {
         Read::Missing => return Ok(Pointer::None),
         Read::NotAFile => return Ok(Pointer::Damaged),
