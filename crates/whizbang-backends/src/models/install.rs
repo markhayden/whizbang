@@ -53,7 +53,8 @@ pub enum InstallRefused {
     NotWhole { name: String },
     /// An installation of the same identity is on the disk, damaged, and held.
     Held,
-    /// The model is being removed: nothing is published.
+    /// The model is being removed: its mark was set while the install ran. The
+    /// download stopped for it, or nothing was published.
     Draining,
     /// The directory's lock was not let go by whoever has it.
     DirectoryBusy,
@@ -110,6 +111,7 @@ impl From<StageRefused> for InstallRefused {
             StageRefused::HoldsSecret => InstallRefused::HoldsSecret,
             StageRefused::Busy => InstallRefused::Busy,
             StageRefused::Cancelled => InstallRefused::Cancelled,
+            StageRefused::Draining => InstallRefused::Draining,
             StageRefused::File { name, why } => InstallRefused::File { name, why },
             StageRefused::Disk(kind) => InstallRefused::Disk(kind),
         }
@@ -194,19 +196,27 @@ pub fn install(
         Err(_) => return Err(InstallRefused::Disk(io::ErrorKind::InvalidData)),
     };
     let _lock = lock_model(dir, entry, cancellation, secrets)?;
-    let model = Model {
-        dir,
-        name: entry.name(),
-        folder: dir.model(entry.name()),
-        secrets,
-    };
+    let model = Model::of(dir, entry.name(), secrets);
     let files = record.files().len() as u64;
-    let hex = record.identity().hex();
+    let id = record.identity();
+    let hex = id.hex();
+    // What the status says of this install: its state, the installation it is of,
+    // and how many of the entry's files are staged. A count of files is one a
+    // status takes: the entry's.
+    let say = |state: State, done: u64| {
+        let status = Status::of_install(state, id, done, files)
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        model.say(&status)
+    };
     let mut done = 0;
     let ended = (|| {
         // Before anything else: whoever looks while the lock is held is shown an
         // install that is running.
-        model.say(State::Installing, 0, files)?;
+        say(State::Installing, 0)?;
+        // A mark that is there now was left by a remover that died, or is one
+        // whose remover does not have the model's lock: it is taken off, and a
+        // remover that is alive sets its own again.
+        model.unmark()?;
         // What a publication that died left of its new pointer.
         dir.remove(&model.folder.join("CURRENT.new"))?;
         model.clean(&hex)?;
@@ -218,11 +228,11 @@ pub fn install(
         if adopted {
             dir.unstage(entry.name());
             done = files;
-            model.say(State::Installing, done, files)?;
+            say(State::Installing, done)?;
         } else {
             stage_locked(dir, entry, downloader, cancellation, &mut |staged| {
                 done = staged as u64;
-                model.say(State::Installing, done, files)
+                say(State::Installing, done)
             })?;
         }
         model.publish(&record, cancellation, adopted)
@@ -240,7 +250,7 @@ pub fn install(
     if ended.is_err() {
         dir.unstage(entry.name());
     }
-    let _ = model.say(state, done, files);
+    let _ = say(state, done);
     let _ = model.clean(&hex);
     ended.map(|()| record)
 }
@@ -312,15 +322,22 @@ pub fn install_or_attach(
     };
     // With a share of the model's lock nobody installs or removes: the status and
     // the pointer are as the last to hold the lock alone left them.
-    let ended = status::status(dir, name, secrets).ok().flatten();
-    match ended.map(|status| status.state()) {
-        Some(State::Installed) => match current(dir, name, secrets) {
+    let Some(ended) = status::status(dir, name, secrets).ok().flatten() else {
+        return Err(InstallRefused::Failed);
+    };
+    // What ran was not an install of what was asked for: a removal, or an install of
+    // another identity, however it ended. Asked again, the request installs.
+    let asked = ended.installation() == Some(record.identity());
+    match ended.state() {
+        State::Removing | State::Removed => Err(InstallRefused::Busy),
+        State::Installed => match current(dir, name, secrets) {
             Ok(Current::Installed(found)) if found == record => Ok(found),
             Ok(Current::Installed(_)) => Err(InstallRefused::Busy),
             _ => Err(InstallRefused::Failed),
         },
-        Some(State::Cancelled) => Err(InstallRefused::Cancelled),
-        Some(State::Failed | State::Installing) | None => Err(InstallRefused::Failed),
+        _ if !asked => Err(InstallRefused::Busy),
+        State::Cancelled => Err(InstallRefused::Cancelled),
+        State::Failed | State::Installing => Err(InstallRefused::Failed),
     }
 }
 
@@ -337,43 +354,55 @@ pub(super) enum Pointer {
 
 /// Whether deleting an installation's folder was done.
 #[derive(PartialEq, Eq)]
-enum Deleted {
+pub(super) enum Deleted {
     Yes,
     /// A hold is on the installation: its folder is left.
     Held,
 }
 
-/// One model's folder, for one who holds the model's lock.
-struct Model<'a> {
+/// One model's folder, for one who holds the model's lock: an install, or a removal.
+pub(super) struct Model<'a> {
     dir: &'a ModelsDir,
     name: &'a ModelName,
     folder: PathBuf,
     secrets: &'a Secrets,
 }
 
-impl Model<'_> {
+impl<'a> Model<'a> {
+    pub(super) fn of(dir: &'a ModelsDir, name: &'a ModelName, secrets: &'a Secrets) -> Model<'a> {
+        Model {
+            dir,
+            name,
+            folder: dir.model(name),
+            secrets,
+        }
+    }
+
     fn fs(&self) -> &dyn Fs {
         self.dir.fs()
     }
 
-    fn installations(&self) -> PathBuf {
+    pub(super) fn installations(&self) -> PathBuf {
         self.folder.join("installations")
     }
 
-    fn holds(&self) -> PathBuf {
+    pub(super) fn holds(&self) -> PathBuf {
         self.folder.join("holds")
     }
 
-    fn pointer(&self) -> PathBuf {
+    pub(super) fn pointer(&self) -> PathBuf {
         self.folder.join("CURRENT")
     }
 
-    /// Writes the status record. A count of files is one a status takes: the
-    /// entry's.
-    fn say(&self, state: State, done: u64, files: u64) -> io::Result<()> {
-        let status = Status::new(state, done, files)
-            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
-        status::write(self.dir, self.name, &status)
+    /// Writes the status record.
+    pub(super) fn say(&self, status: &Status) -> io::Result<()> {
+        status::write(self.dir, self.name, status)
+    }
+
+    /// What the model's pointer file holds. It is changed only by one who holds the
+    /// model's lock, which the caller does.
+    pub(super) fn named(&self) -> io::Result<Pointer> {
+        read_pointer(self.dir, &self.folder, self.secrets)
     }
 
     /// Publishes the installation of this record: what is staged, or, when
@@ -440,6 +469,19 @@ impl Model<'_> {
     /// a publication.
     fn draining(&self) -> io::Result<bool> {
         self.fs().exists(&self.folder.join("DRAINING"))
+    }
+
+    /// Takes a draining mark off, under the directory's lock, and makes that
+    /// durable, for one who has just taken the model's lock: whoever set the mark
+    /// does not have that lock. With no mark nothing is locked and nothing changed.
+    fn unmark(&self) -> Result<(), InstallRefused> {
+        if !self.draining()? {
+            return Ok(());
+        }
+        let _directory = self.dir.lock()?.ok_or(InstallRefused::DirectoryBusy)?;
+        self.dir.remove(&self.folder.join("DRAINING"))?;
+        self.fs().sync_dir(&self.folder)?;
+        Ok(())
     }
 
     /// Under the directory's lock: reads the draining mark, when the pointer is to

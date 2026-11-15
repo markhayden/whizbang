@@ -237,8 +237,8 @@ fn a_request_that_attached_to_an_install_of_another_identity_is_busy() {
 
 #[test]
 fn while_the_lock_is_held_and_the_status_says_no_install_is_running_nothing_is_shown() {
-    // The model's lock is held by one who installs nothing, as a removal will hold
-    // it (task M5b), over a status that says how the last install ended. What is
+    // The model's lock is held by one who writes no status, which no install and no
+    // removal does, over a status that says how the last install ended. What is
     // shown between two tries is nothing; and once the lock is let go, a status
     // that says installed with a pointer that names this installation is the answer.
     let scratch = Scratch::new("attach-no-install");
@@ -464,6 +464,64 @@ fn known_an_install_refused_every_write_of_its_status_leaves_the_last_status_and
     assert_eq!(reading(&root), Current::Installed(record));
     assert_ne!(on_disk(&damaged).unwrap(), graph());
     assert_eq!(names_under(&root), before);
+}
+
+#[test]
+fn an_attached_request_is_answered_by_the_status_of_an_install_of_what_it_asked_for_and_is_busy_after_any_other()
+ {
+    // The status names the installation an install was of. A request that attached
+    // is told how that install ended only when it was an install of the identity
+    // the request asked for; an install of another identity, however it ended, and
+    // a removal are "busy": asked again, the request installs. The pointer names
+    // what was asked for throughout, so nothing here is decided by it.
+    let asked = record_of(&second()).identity();
+    let another = record_of(&first()).identity();
+    let install = |state, id| Status::of_install(state, id, 1, 2).unwrap();
+    let removal = |state| Status::of_removal(state).unwrap();
+    let cases = [
+        (
+            install(State::Installing, asked),
+            Err(InstallRefused::Failed),
+        ),
+        (install(State::Failed, asked), Err(InstallRefused::Failed)),
+        (
+            install(State::Cancelled, asked),
+            Err(InstallRefused::Cancelled),
+        ),
+        (
+            install(State::Installing, another),
+            Err(InstallRefused::Busy),
+        ),
+        (install(State::Failed, another), Err(InstallRefused::Busy)),
+        (
+            install(State::Cancelled, another),
+            Err(InstallRefused::Busy),
+        ),
+        (removal(State::Removing), Err(InstallRefused::Busy)),
+        (removal(State::Removed), Err(InstallRefused::Busy)),
+    ];
+    for (status, answer) in cases {
+        let scratch = Scratch::new("attach-identity");
+        let root = scratch.path();
+        installed(root, &second());
+        std::fs::write(root.join("models/tiny/STATUS"), status.to_bytes()).unwrap();
+        let mut held = RealFs
+            .hold_lock_file(&root.join("models/tiny/LOCK"), false)
+            .unwrap();
+        assert!(held.is_some());
+        let fake = serving_both();
+        let mut seen = Vec::new();
+        let attached = asking(root, &fake, &Cancellation::new(), &mut |shown| {
+            seen.push(shown);
+            held = None;
+        });
+        assert_eq!(attached, answer, "{status:?}");
+        assert!(fake.requests().is_empty());
+        // What is shown between two tries is an install, of whatever identity, with
+        // the identity it is of; a removal is not shown as progress.
+        let shown = (status.state() == State::Installing).then_some(status);
+        assert_eq!(seen, [shown], "{status:?}");
+    }
 }
 
 #[test]
@@ -822,20 +880,20 @@ fn a_cancel_while_the_download_is_stopped_inside_a_file_ends_the_install_as_canc
 /// A downloader that looks at no cancellation and at no answer of its sink: it hands
 /// each file over in two pieces, come what may, and runs what it was given once,
 /// after the first piece of the graph.
-struct Deaf {
+pub(super) struct Deaf {
     asked: Mutex<Vec<String>>,
     between: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl Deaf {
-    fn doing(between: impl FnOnce() + Send + 'static) -> Deaf {
+    pub(super) fn doing(between: impl FnOnce() + Send + 'static) -> Deaf {
         Deaf {
             asked: Mutex::new(Vec::new()),
             between: Mutex::new(Some(Box::new(between))),
         }
     }
 
-    fn asked(&self) -> Vec<String> {
+    pub(super) fn asked(&self) -> Vec<String> {
         self.asked.lock().unwrap().clone()
     }
 }
