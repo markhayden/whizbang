@@ -23,10 +23,21 @@
 //! stands is [`Folded::stands`](super::fold::Folded::stands) on the names read after
 //! it, and nothing else.
 //!
-//! **Closing is not built here.** [`Ledger::settle`] answers that it closed nothing
-//! (plan 1B, task S11, which has the charges of a run's requests to close with). Until
-//! then a reservation this ledger made stays open when its run ends, and when its
-//! admission was not confirmed, and counts in full: over, never under.
+//! **Closing** (task S11). [`Ledger::settle`] is asked inside the publication that
+//! ends a run nothing called, and closes that run's reservation there: the closing,
+//! the reservation's next place, and the next turn of each epoch a hold of it names.
+//! It reads the names of that one reservation and no other's. The closing releases,
+//! as `released`, only where those names are a set the ledger could have written and
+//! every dispatch under them has its settlement with its whole chain, an unresolved
+//! one charged at its bound among them: the reservation then counts for what its
+//! requests were charged, which may be more than was reserved, and the rest is free
+//! for the next call. Where a dispatch has no settlement, as after a settlement that
+//! could not be published or a backend's panic in a run it called, or where the names
+//! are not the ledger's, it is closed as `held`: interrupted, at the larger of its
+//! amount and what is known, with nothing released, until the owner's reset. A
+//! reservation that a closing already names, and a run the books do not name, are
+//! left as they are. Nothing else closes a reservation: one whose process died before
+//! its run ended stays open and counts in full (ADR 0016, "The strand cut down").
 
 use std::num::NonZeroU64;
 
@@ -35,11 +46,16 @@ use crate::contract::{
 };
 
 use super::fold::fold;
+use super::meter::next_turn;
 use super::name::Amount;
-use super::record::{Record, TurnBy};
+use super::reading::Names;
+use super::record::{ClosedBy, PlaceBy, Record, TurnBy};
 
 /// What a ledger fails with when it is asked to reserve the largest number there is.
 const NO_AMOUNT: &str = "the largest number there is is no amount to reserve";
+
+/// What a closing fails with where its place or its turn would be nothing.
+const NOT_FROM_ONE: &str = "a place and a turn are numbers from 1";
 
 /// The ledger of a store: the books of names under `spend/`, folded each time it is
 /// asked. It holds nothing, so one value serves any number of executors and stores.
@@ -110,9 +126,44 @@ impl Ledger for StoreLedger {
         Ok(folded.stands(reservation.run(), reserved))
     }
 
-    /// It closes nothing: the closing of a reservation when its run ends is task
-    /// S11's. The reservation stays open and counts in full.
-    fn settle(&self, _: &Closing<'_>, _: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
-        Ok(Settled::Nothing)
+    /// Closes the run's reservation by its own names: released where every dispatch
+    /// under it is settled, and held, with nothing released, where one is not.
+    fn settle(&self, closing: &Closing<'_>, step: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
+        let run = closing.run;
+        let names = Names::of_run(run, step.generation(), |entry| step.read(entry));
+        // The books name no such run, or a closing names it already: there is
+        // nothing to close.
+        let Some(names) = names.filter(|names| !names.closed()) else {
+            return Ok(Settled::Nothing);
+        };
+        // One closing. It releases only where the names are a set the ledger could
+        // have written and every place that holds a dispatch is settled whole.
+        let released = names.reachable() && names.unsettled() == 0;
+        let from_one =
+            |number: u64| NonZeroU64::new(number).ok_or_else(|| NotJudged::saying(NOT_FROM_ONE));
+        let made = step.record(&Record::Closing {
+            run: run.clone(),
+            released,
+            by: ClosedBy::End,
+            charged: names.charged(),
+            unresolved: names.unresolved(),
+            at_ms: closing.at_ms,
+        })?;
+        step.record(&Record::Place {
+            run: run.clone(),
+            place: from_one(names.next_place())?,
+            by: PlaceBy::Closing,
+        })?;
+        // A turn in each epoch a hold of it names. A reservation with no hold counts
+        // in no epoch, and takes no turn: the fold owes none for it.
+        for epoch in names.epochs() {
+            step.record(&Record::Turn {
+                epoch,
+                turn: from_one(next_turn(step.generation(), epoch))?,
+                by: TurnBy::Closing,
+                run: Some(run.clone()),
+            })?;
+        }
+        Ok(Settled::Closed(made))
     }
 }

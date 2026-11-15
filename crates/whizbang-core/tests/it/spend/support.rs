@@ -257,11 +257,26 @@ pub struct Counted {
     asked: AtomicU64,
     confirmed: AtomicU64,
     settled: AtomicU64,
+    left_open: bool,
 }
 
 impl Counted {
     pub fn new() -> Arc<Counted> {
         Arc::new(Counted::default())
+    }
+
+    /// The same, but that it closes nothing when a run ends: for a test of what is
+    /// judged against a reservation that still counts. A run of such a test does
+    /// nothing and ends at once, and its end closes its reservation and releases all
+    /// of it (plan 1B, task S11; `spend::close::`). Left open, the books are those of
+    /// a run that is still executing, or of one whose process died before its end.
+    /// It reserves and confirms as the real ledger does, and is still counted as
+    /// asked to close.
+    pub fn left_open() -> Arc<Counted> {
+        Arc::new(Counted {
+            left_open: true,
+            ..Counted::default()
+        })
     }
 
     /// How many times admission asked for a reservation: once for every attempt at
@@ -299,6 +314,9 @@ impl Ledger for Counted {
 
     fn settle(&self, closing: &Closing<'_>, step: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
         self.settled.fetch_add(1, Ordering::SeqCst);
+        if self.left_open {
+            return Ok(Settled::Nothing);
+        }
         self.inner.settle(closing, step)
     }
 }

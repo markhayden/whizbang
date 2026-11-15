@@ -13,12 +13,12 @@ use whizbang_core::capability::{
 use whizbang_core::config::Config;
 use whizbang_core::contract::record::Status;
 use whizbang_core::contract::{
-    Action, Answer, Call, CallError, Capabilities, Capability, Engine, Executor, Failure, Place,
-    Produced, RefusalKind, Registry, Request, RunId, RunState, Secrets,
+    Action, Answer, Call, CallError, Capabilities, Capability, Engine, Executor, Failure, Ledger,
+    Place, Produced, RefusalKind, Registry, Request, RunId, RunState, Secrets,
 };
 use whizbang_core::egress::{DispatchPolicy, Origin, Recipient, SendCheck, Ways};
 use whizbang_core::identity::{CanonicalPixels, Digest};
-use whizbang_core::spend::{ClosedBy, Meter, PerCall, Record, StoreLedger, Sum};
+use whizbang_core::spend::{ClosedBy, Meter, PerCall, PlaceBy, Record, StoreLedger, Sum};
 use whizbang_core::store::GENERATION_MAX_BYTES;
 use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::capabilities::{FakeFiller, Paint, roster};
@@ -49,6 +49,17 @@ pub(super) fn metered(
     requests: u64,
     actions: Vec<Arc<dyn Action>>,
 ) -> Engine {
+    metered_with(world, filler, requests, actions, Arc::new(StoreLedger))
+}
+
+/// The same, with this ledger: the real one, or the real one with its calls counted.
+pub(super) fn metered_with(
+    world: &World,
+    filler: Arc<dyn Filler>,
+    requests: u64,
+    actions: Vec<Arc<dyn Action>>,
+    ledger: Arc<dyn Ledger>,
+) -> Engine {
     let mut registry = Registry::new();
     for action in actions {
         registry.register(action).unwrap();
@@ -64,7 +75,7 @@ pub(super) fn metered(
     )
     .with_clock(world.clock.clone())
     .with_capabilities(Capabilities::none().with_fill(filler))
-    .with_ledger(Arc::new(StoreLedger))
+    .with_ledger(ledger)
     .with_wrapper(Place::Meter, Arc::new(meter))
 }
 
@@ -91,14 +102,23 @@ pub(super) fn call() -> Request {
 }
 
 /// The names of the ledger's that a dispatch and a settlement make, of those the
-/// store holds.
+/// store holds. The place that the closing of a reservation took at its run's end
+/// (task S11) is left out: its record says what took it.
 pub(super) fn sent(world: &World) -> Vec<String> {
+    let generation = world.store.snapshot().unwrap();
+    let closings = |name: &String| {
+        let entry = generation.get(name).unwrap();
+        let record = Record::from_bytes(&world.store.read(entry).unwrap());
+        let closing = PlaceBy::Closing;
+        matches!(record, Ok(Record::Place { by, .. }) if by == closing)
+    };
     let made = |name: &String| {
         ["place", "dispatched", "settling", "settled"]
             .iter()
             .any(|word| name.starts_with(&format!("spend/{word}/")))
     };
-    spend_names(&world.store).into_iter().filter(made).collect()
+    let names = spend_names(&world.store).into_iter();
+    names.filter(made).filter(|name| !closings(name)).collect()
 }
 
 /// Of those, the names a dispatch makes: a settlement's are left out.
@@ -397,7 +417,7 @@ fn a_reservation_whose_names_read_as_frozen_or_closed_or_leave_too_little_takes_
                 Record::Place {
                     run: run.clone(),
                     place,
-                    by: whizbang_core::spend::PlaceBy::Closing,
+                    by: PlaceBy::Closing,
                 },
             ],
         );

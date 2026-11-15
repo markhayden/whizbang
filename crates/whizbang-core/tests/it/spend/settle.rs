@@ -111,8 +111,8 @@ fn a_request_charged_under_its_bound_is_charged_that_and_its_run_spends_the_diff
     assert!(!books.needs_owner(epoch));
     assert_eq!(
         books.next_turn(epoch),
-        5,
-        "an admission and three settlements"
+        6,
+        "an admission, three settlements and the closing at the run's end"
     );
 }
 
@@ -417,7 +417,7 @@ fn a_child_that_retries_a_failed_request_has_an_attempt_for_each_and_a_retry_tha
 
 /// A filler that answers as the one it holds does, once it has left the store with
 /// no room for a publication that adds a name.
-struct Filling(FakeFiller, Arc<Store>);
+pub(super) struct Filling(pub(super) FakeFiller, pub(super) Arc<Store>);
 
 impl Filler for Filling {
     fn declaration(&self) -> &Declaration {

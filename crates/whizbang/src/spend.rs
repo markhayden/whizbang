@@ -38,8 +38,11 @@ pub enum Command {
     /// counted against it, what is left, and each reservation that still counts.
     /// Reads only: it works while another process writes.
     ///
-    /// A reservation that a dead process left stays open and counts in full, and a
-    /// damaged one is frozen: both are named here, and `spend reset` clears them.
+    /// A run's end closes its reservation, and one that released what it did not
+    /// spend is not listed. A reservation shown as "open" belongs to a run that is
+    /// still executing, or to a process that has died: nothing closes that one, it
+    /// counts in full, and `spend reset` clears it. A damaged one is shown as
+    /// "frozen", and `spend reset` clears that too.
     Status {
         #[command(flatten)]
         at: Where,

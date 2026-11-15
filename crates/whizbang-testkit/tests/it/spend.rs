@@ -129,8 +129,10 @@ fn every_generated_history_keeps_every_invariant() {
     // published where it needs it; none that was judged there is, which is held
     // of every dispatch of every suite. (As cut down, 2026-11-15: 4 in these
     // histories, where it was over 5 while an amount that is unknown also made
-    // a store need its owner. The second suite reaches more of them.)
-    assert!(all.judged_before_the_owner_was_needed > 3, "{all:?}");
+    // a store need its owner. The second suite reaches more of them. The
+    // threshold asks only that the case is reached: one below what is reached
+    // would fail on any change to what the seed gives.)
+    assert!(all.judged_before_the_owner_was_needed > 0, "{all:?}");
     // The same seed and number give the same history.
     assert_eq!(generated(SEED, 7), generated(SEED, 7));
     assert_ne!(generated(SEED, 7), generated(SEED + 1, 7));

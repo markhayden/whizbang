@@ -3,6 +3,11 @@
 //! that other hands then changed. An executor here has one action, `paint`, a call
 //! of which may cost a quarter of a dollar, and the test counts its runs: nothing
 //! that `status` or `reset` does runs it again.
+//!
+//! A run's end closes its reservation (task S11), and `paint` sends nothing, so a
+//! run that ends releases all it reserved. Most of what `status` names is what did
+//! not end so: `World::paint` leaves its reservation open, as a process that died
+//! before its run's end leaves it ([`Dies`]), and `World::ends` is the real thing.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -14,12 +19,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use whizbang::wiring::{self, Make};
 use whizbang_core::capability::Stage;
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Backends, Call, CallError, Capability, Context, Engine, Estimate,
-    Executor, Failure, Kind as ActionKind, ModelIdentity, PreparedCall, Produced, Recovery,
-    RecoveryPart, Refusal, Registry, Requirement, RunId, Unavailable,
+    Action, ActionDescriptor, Backends, Call, CallError, Capability, Closing, Context, Declined,
+    Engine, Estimate, Executor, Failure, Kind as ActionKind, Ledger, MadeName, ModelIdentity,
+    NotJudged, PreparedCall, Produced, Recovery, RecoveryPart, Refusal, Registry, Requirement,
+    Reread, Reservation, RunId, Settled, Step, Unavailable,
 };
 use whizbang_core::identity::Digest;
-use whizbang_core::spend::{Amount, ClosedBy, PlaceBy, Record, StoreLedger, Sum, TurnBy};
+use whizbang_core::spend::{Amount, PlaceBy, Record, StoreLedger, TurnBy};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Kind, Reader};
 use whizbang_testkit::recover::FakeRecovery;
@@ -67,6 +73,30 @@ impl Action for Paint {
     }
 }
 
+/// The real ledger in a process that dies before its run's end is published: it
+/// reserves and confirms as the real one does, and closes nothing. What it leaves
+/// under `spend/` is what such a process leaves: the reservation, its hold and its
+/// turn, open.
+struct Dies(StoreLedger);
+
+impl Ledger for Dies {
+    fn reserve(
+        &self,
+        reservation: &Reservation,
+        step: &mut Step<'_, '_>,
+    ) -> Result<MadeName, Declined> {
+        self.0.reserve(reservation, step)
+    }
+
+    fn confirm(&self, reservation: &Reservation, reading: &Reread<'_>) -> Result<bool, NotJudged> {
+        self.0.confirm(reservation, reading)
+    }
+
+    fn settle(&self, _: &Closing<'_>, _: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
+        Ok(Settled::Nothing)
+    }
+}
+
 /// A store in a scratch folder, and how many times `paint` ran over it.
 struct World {
     _dir: Scratch,
@@ -92,9 +122,21 @@ impl World {
         self.runs.load(Ordering::SeqCst)
     }
 
-    /// One call of `paint` through an executor with the real ledger, which is gone
-    /// again when this returns: the run it made, or the refusal.
+    /// One call of `paint` whose reservation is left open, as by a process that
+    /// died before the run's end ([`Dies`]): the run it made, or the refusal.
     fn paint(&self) -> Result<RunId, CallError> {
+        self.call(Arc::new(Dies(StoreLedger)))
+    }
+
+    /// One call of `paint` through an executor with the real ledger, to the run's
+    /// end, which closes its reservation: the run it made, or the refusal.
+    fn ends(&self) -> Result<RunId, CallError> {
+        self.call(Arc::new(StoreLedger))
+    }
+
+    /// One call of `paint` through an executor with this ledger, which is gone
+    /// again when this returns.
+    fn call(&self, ledger: Arc<dyn Ledger>) -> Result<RunId, CallError> {
         let opening = wiring::opening(&self.root, Make::Nothing, Recovery::none()).unwrap();
         let store = opening.writer().unwrap();
         let draft = ActionDescriptor::draft("paint", "1.0.0", ActionKind::Primitive, "Paints.");
@@ -106,7 +148,7 @@ impl World {
         };
         registry.register(Arc::new(paint)).unwrap();
         let engine = Engine::over(registry, Arc::new(Quarter), store, Digest::of_bytes(b""))
-            .with_ledger(Arc::new(StoreLedger));
+            .with_ledger(ledger);
         let finished = engine.submit(&Call::new("paint"))?;
         Ok(finished.run().clone())
     }
@@ -198,8 +240,8 @@ fn refused(answer: Result<RunId, CallError>) -> &'static str {
 
 // --- the four states a reset is the way out of --------------------------------------------------
 
-/// A store with an allowance of one call, and that call made: its reservation stays
-/// open, since nothing closes one yet, and holds all of the allowance.
+/// A store with an allowance of one call, and that call made by a process that died
+/// before the run's end: its reservation stays open, and holds all of the allowance.
 fn one_call(label: &str) -> (World, RunId) {
     let world = World::new(label);
     let found = world.held().0;
@@ -488,30 +530,21 @@ fn after_a_reset_the_earlier_records_are_all_still_read_and_the_balances_start_a
 
 #[test]
 fn a_reservation_its_runs_end_closed_as_released_is_counted_for_its_charges_and_not_listed() {
-    let (world, run) = one_call("spend-released");
-    // Its run's end closed it with nothing charged, as the ledger will once it
-    // closes reservations (task S11): the closing, its place and its turn.
-    world.plant(&[
-        Record::Closing {
-            run: run.clone(),
-            released: true,
-            by: ClosedBy::End,
-            charged: Sum::ZERO,
-            unresolved: Sum::ZERO,
-            at_ms: 0,
-        },
-        Record::Place {
-            run: run.clone(),
-            place: n(1),
-            by: PlaceBy::Closing,
-        },
-        Record::Turn {
-            epoch: 1,
-            turn: n(2),
-            by: TurnBy::Closing,
-            run: Some(run.clone()),
-        },
-    ]);
+    let world = World::new("spend-released");
+    world.reset("0.25").unwrap();
+    // The run ends, and the real ledger closes its reservation in that publication
+    // (task S11): the closing, its place and its turn. Nothing was sent under it, so
+    // nothing is charged and all of it is released.
+    let run = world.ends().unwrap();
+    assert_eq!(world.ran(), 1);
+    let (_, names) = world.held();
+    for name in [
+        format!("spend/closed/{run}/released"),
+        format!("spend/place/{run}/1"),
+        "spend/turn/1/2".to_owned(),
+    ] {
+        assert!(names.contains(&name), "{name} is not in {names:?}");
+    }
     let said = world.status();
     assert!(said.contains("counted against it: $0.00\n"), "{said}");
     assert!(said.contains("left: $0.25\n"), "{said}");
@@ -524,7 +557,9 @@ fn a_reservation_its_runs_end_closed_as_released_is_counted_for_its_charges_and_
     // By its run it is still shown.
     let said = world.of_run(run.as_str()).unwrap();
     assert!(said.contains("reservation: released\n"), "{said}");
-    world.paint().unwrap();
+    // The whole allowance is there for the next call.
+    world.ends().unwrap();
+    assert_eq!(world.ran(), 2);
 }
 
 #[test]

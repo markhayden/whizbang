@@ -241,7 +241,7 @@ impl Books {
 
 /// The next turn of an epoch, by the names of this generation: the lowest from 1
 /// that no turn of it names.
-fn next_turn(generation: &Generation, epoch: u64) -> u64 {
+pub(super) fn next_turn(generation: &Generation, epoch: u64) -> u64 {
     let prefix = format!("spend/turn/{epoch}/");
     let under = generation
         .entries()
@@ -281,7 +281,9 @@ fn stop(kind: RefusalKind, why: &str) -> Result<Box<dyn Open>, Stop> {
     let fault = Fault::new(FaultKind::Rejected, why);
     match Stop::new(kind, why, fault) {
         Some(stop) => Err(stop),
-        // The kinds here are of a request: this is not reached.
+        // Not reached: `Stop::new` answers nothing only for a kind that is not one
+        // of a request, and the two the meter refuses under are
+        // (`a_refusal_of_the_meter_is_of_a_kind_a_request_is_refused_under`, below).
         None => Ok(Box::new(Nothing)),
     }
 }
@@ -347,5 +349,81 @@ impl Open for Sent {
         books.settle(asked.root, place, bound, stage, charged)?;
         dispatched.settled(charged);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    // The test kit's scratch folder holds none of this crate's types, so it can be
+    // used here; the store is this crate's own, on the real disk.
+    use whizbang_testkit::scratch::Scratch;
+
+    use super::*;
+    use crate::contract::SystemClock;
+    use crate::store::fs::RealFs;
+
+    #[test]
+    fn a_refusal_of_the_meter_is_of_a_kind_a_request_is_refused_under() {
+        // `stop` makes its refusal with `Stop::new`, which answers nothing for a
+        // kind that is not one of a request: the request would then go by with
+        // nothing held. The meter refuses under two kinds, and each is one.
+        for kind in [
+            RefusalKind::RequestNoBound,
+            RefusalKind::RequestOverAllowance,
+        ] {
+            assert!(stop(kind, "refused").is_err(), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_reservation_with_no_hold_takes_no_turn_at_settlement() {
+        let dir = Scratch::new("core-meter-no-hold");
+        let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap());
+        let run = RunId::parse("7000-1").unwrap();
+        let place = NonZeroU64::new(1).unwrap();
+        let bound = Amount::new(250_000).unwrap();
+        // A dispatch at its place under a reservation whose hold is not there: no
+        // name says which epoch it counts in, so the fold owes no turn for it.
+        let dispatched = [
+            Record::Place {
+                run: run.clone(),
+                place,
+                by: PlaceBy::Dispatch,
+            },
+            Record::Dispatch {
+                run: run.clone(),
+                place,
+                by: run.clone(),
+                request: 0,
+                bound,
+                at_ms: 0,
+            },
+        ];
+        let mut publication = store.begin().unwrap();
+        for record in &dispatched {
+            let name = record.name().to_string();
+            publication
+                .create(&name, RECORD_KIND, &record.to_bytes())
+                .unwrap();
+        }
+        publication.publish().unwrap();
+        let books = Books {
+            store: store.clone(),
+            clock: Arc::new(SystemClock),
+        };
+        let charged = Amount::new(100_000).unwrap();
+        books
+            .settle(&run, place, bound, Stage::Answered, charged)
+            .unwrap();
+        let generation = store.snapshot().unwrap();
+        let names: Vec<&String> = generation.entries().keys().collect();
+        // The settlement and its guard are made, and no turn of any epoch.
+        assert!(names.contains(&&format!("spend/settled/{run}/1/answered/100000")));
+        assert!(names.contains(&&format!("spend/settling/{run}/1")));
+        assert!(
+            !names.iter().any(|name| name.starts_with("spend/turn/")),
+            "{names:?}"
+        );
     }
 }
