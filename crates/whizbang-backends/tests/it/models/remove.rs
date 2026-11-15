@@ -59,7 +59,7 @@ impl Clock for Hand {
     }
 }
 
-const SECOND: Duration = Duration::from_secs(1);
+pub(super) const SECOND: Duration = Duration::from_secs(1);
 
 /// What paces a removal that must not have to wait.
 fn never() {
@@ -103,7 +103,7 @@ pub(super) fn marked(root: &Path) -> bool {
 
 /// A removal on a thread, a process of its own, which stops at the barrier `try`
 /// between two tries. The clock is the test's.
-fn removal_on_a_thread(
+pub(super) fn removal_on_a_thread(
     root: &Path,
     barriers: &Barriers,
     clock: &Arc<Hand>,
