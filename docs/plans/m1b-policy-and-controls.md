@@ -1042,9 +1042,9 @@ recovery is lossy and pessimistic by intent.
       nothing published when it failed before its publication was visible, and as
       published and not confirmed when the last sync failed. An open confirms the
       generation it finds before it is ready.
-- [ ] The executor, `store delete`, `store prune`, `store import` and the `spend`
+- [x] The executor, `store delete`, `store prune`, `store import` and the `spend`
       commands that write all open through it. A test holds the binary to no other way.
-- [ ] A store at its generation limit refuses a publication that adds names, recovery's
+- [x] A store at its generation limit refuses a publication that adds names, recovery's
       among them. Then the writer is handed out for deleting and pruning alone, which
       make the file smaller, and every other writing command is refused and told why.
 - [x] With no part, recovery publishes nothing and the store opens as before.
@@ -1073,8 +1073,20 @@ clause of "Done when" but three, which are the second pull request's with the th
 and fourth boxes: one test for each writing command on a store a killed process
 left; every writing command refused after a failed recovery, and at the limit every
 one but `store delete` and `store prune`; and `recover::a_crash_at_any_event…`.
+The second is those, with every writing command of the binary on the entry point
+(`wiring::opening`) and the test that holds the binary to it.
 
-**Reworded with the task** (I4, 2026-11-15). Two things are as the task found them.
+**Reworded with the task** (I4, 2026-11-15). Four things are as the task found them.
+
+- "the `spend` commands that write all open through it". There is none: `whizbang
+  spend` is a stub that reads and writes nothing (task B0b). The test that holds the
+  binary to one way reads every source file of the binary, `spend.rs` among them, so
+  a `spend` command that opens a store any other way fails it.
+- "each writing command, run on a store a killed process left, recovers before it
+  changes anything, one test for each command". The binary's own list of parts is
+  empty until tasks I4b and S6, so the tests call each command as `main` does with a
+  fake part in the recovery (`store::run_with`, `rascal::run_with`): they are unit
+  tests of the binary, not runs of its process.
 
 - "An open confirms the generation it finds before it is ready." It does so by a
   sync of the store's root, made by the entry point before any part is asked

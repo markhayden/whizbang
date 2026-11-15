@@ -682,3 +682,98 @@ fn with_the_limit_set_low_a_recovery_that_cannot_be_published_leaves_deleting_an
     assert!(names.run(LEFT[1]).unwrap().get("marked-by-one").is_some());
     assert_eq!(part.asked(), 2);
 }
+
+// --- a crash inside a recovery -----------------------------------------------------------------
+
+/// Power is lost before each step of a recovery by two parts, with every way the test
+/// kit's disk can lose what was not yet durable. What the next open finds is the
+/// store as it was left, or with all of both parts' records: never a part of them.
+/// That open recovers, and another after it, and the store then holds each record
+/// once and whole (rule 2). `part` of `of` takes every `of`-th step.
+fn crashes_inside_a_recovery(part: usize, of: usize) {
+    use whizbang_testkit::fs_shim::Lost;
+    let (opened, steps, last_sync) = events_of_a_recovery();
+    let (mut none, mut all, mut crashes) = (0, 0, 0);
+    for step in (0..=steps).filter(|step| step % of == part) {
+        let mut ways = vec![Lost::Unsynced, Lost::ContentOnly, Lost::Subset(0)];
+        let mut next = 0;
+        while next < ways.len() {
+            let lost = ways[next];
+            next += 1;
+            crashes += 1;
+            let at = format!("step {step}, {lost:?}");
+            let world = World::left();
+            let (one, two) = (marking("one"), marking("two"));
+            let fs = Arc::new(ShimFs::new().crash_before(opened + step, lost));
+            let opening = world.open(&fs, with(&[&one, &two]));
+            let answered = opening.writer().map(drop);
+            // Nobody is told the store is ready unless the recovery was confirmed.
+            assert_eq!(answered.is_ok(), step > last_sync, "{at}: {answered:?}");
+            if lost == Lost::Subset(0) {
+                let (dirs, names) = (fs.crash_choices(), fs.crash_names());
+                assert!(dirs <= 10 && names <= 10, "{at}: {dirs} {names}");
+                ways.extend((1..1u64 << dirs).map(Lost::Subset));
+                ways.extend((0..1u64 << names).map(Lost::Names));
+            }
+            drop(opening);
+            // What the crash left is whole: none of the records, or all of them.
+            let (number, names, runs) = world.held();
+            if number == 2 {
+                assert_eq!((names, runs), not_recovered(), "{at}");
+                assert!(
+                    step <= last_sync,
+                    "{at}: a recovery that was confirmed is there"
+                );
+                none += 1;
+            } else {
+                assert_eq!(
+                    (number, names, runs),
+                    (3, recovered_by_two().0, recovered_by_two().1),
+                    "{at}"
+                );
+                all += 1;
+            }
+            // The next open recovers what is not, and another after it adds nothing.
+            for again in 0..2 {
+                let fs = Arc::new(ShimFs::new());
+                let next = world.open(&fs, with(&[&one, &two]));
+                let opened = fs.events().len();
+                next.writer().unwrap();
+                assert_eq!(
+                    world.held(),
+                    (3, recovered_by_two().0, recovered_by_two().1),
+                    "{at}, open {again}"
+                );
+                let published = published_something(&fs.events()[opened..]);
+                assert!(again == 0 || !published, "{at}: published twice");
+            }
+        }
+    }
+    assert!(none > 0 || part != 0, "{none} {all}");
+    assert!(crashes > 20, "{crashes}");
+    let _ = all;
+}
+
+#[test]
+fn a_crash_at_any_event_of_a_recovery_followed_by_another_open_leaves_the_parts_records_once_and_whole_part_1_of_4()
+ {
+    crashes_inside_a_recovery(0, 4);
+}
+
+#[test]
+fn a_crash_at_any_event_of_a_recovery_followed_by_another_open_leaves_the_parts_records_once_and_whole_part_2_of_4()
+ {
+    crashes_inside_a_recovery(1, 4);
+}
+
+#[test]
+fn a_crash_at_any_event_of_a_recovery_followed_by_another_open_leaves_the_parts_records_once_and_whole_part_3_of_4()
+ {
+    crashes_inside_a_recovery(2, 4);
+}
+
+#[test]
+fn a_crash_at_any_event_of_a_recovery_followed_by_another_open_leaves_the_parts_records_once_and_whole_part_4_of_4()
+ {
+    crashes_inside_a_recovery(3, 4);
+}
