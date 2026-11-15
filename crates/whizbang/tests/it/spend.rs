@@ -1,8 +1,14 @@
-//! `whizbang spend`, as a stub (plan 1B, task B0b): the command is there, says that it
-//! is not built, and exits as a complaint does. The ledger behind it, and `status` and
-//! `reset`, arrive with their own tasks.
+//! `whizbang spend status` and `reset`, through the binary (plan 1B, task S9): the
+//! command line, the exit codes, and one round of a reset and a status over a store
+//! on disk. What the commands say of each state of the books is held where they are
+//! called in process (`spending.rs`, among the binary's own tests).
 
 use std::process::{Command, Output};
+use std::sync::Arc;
+
+use whizbang_core::store::Store;
+use whizbang_core::store::fs::RealFs;
+use whizbang_testkit::scratch::Scratch;
 
 fn whizbang(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_whizbang"))
@@ -16,24 +22,7 @@ fn text(bytes: &[u8]) -> &str {
 }
 
 #[test]
-fn spend_says_that_it_is_not_built_and_exits_1() {
-    let out = whizbang(&["spend"]);
-    // A complaint: exit 1, as every command's complaint is, and not the parser's 2.
-    assert_eq!(out.status.code(), Some(1));
-    assert_eq!(text(&out.stdout), "");
-    let said = text(&out.stderr);
-    assert!(said.starts_with("whizbang: "), "{said}");
-    assert!(
-        said.contains("spend") && said.contains("not built"),
-        "{said}"
-    );
-    // One line, through the one place that prints a complaint.
-    assert_eq!(said.matches('\n').count(), 1, "{said}");
-    assert!(said.ends_with('\n'), "{said}");
-}
-
-#[test]
-fn the_help_lists_spend_and_says_that_it_is_not_built() {
+fn the_help_lists_spend_with_status_and_reset_and_says_what_a_reset_does() {
     let out = whizbang(&["--help"]);
     assert_eq!(out.status.code(), Some(0));
     let help = text(&out.stdout);
@@ -41,26 +30,94 @@ fn the_help_lists_spend_and_says_that_it_is_not_built() {
         .lines()
         .find(|line| line.trim_start().starts_with("spend "))
         .unwrap_or_else(|| panic!("no line for spend in:\n{help}"));
-    assert!(line.contains("Not built"), "{line}");
+    assert!(line.contains("allowance"), "{line}");
 
     let out = whizbang(&["spend", "--help"]);
     assert_eq!(out.status.code(), Some(0));
     let help = text(&out.stdout);
-    assert!(help.contains("Not built"), "{help}");
-    assert!(help.contains("exits 1"), "{help}");
-    // Where its commands are: not here yet.
     assert!(help.contains("status") && help.contains("reset"), "{help}");
-    assert!(help.contains("arrive with later tasks"), "{help}");
-    assert_eq!(text(&out.stderr), "");
+    assert!(!help.contains("Not built"), "{help}");
+
+    let out = whizbang(&["spend", "reset", "--help"]);
+    assert_eq!(out.status.code(), Some(0));
+    let help = text(&out.stdout);
+    assert!(help.contains("--allowance <USD>"), "{help}");
+    assert!(help.contains("--store <DIR>"), "{help}");
+    assert!(help.contains("close the books"), "{help}");
+    assert!(help.contains("is not stopped"), "{help}");
+
+    let out = whizbang(&["spend", "status", "--help"]);
+    let help = text(&out.stdout);
+    assert!(help.contains("--run <RUN>"), "{help}");
+    assert!(help.contains("Reads only"), "{help}");
 }
 
 #[test]
-fn spend_takes_no_argument_yet_and_an_argument_is_the_parsers_usage_error() {
-    // `status` and `reset` are not commands of this build: the parser says so, with its
-    // own exit code, and nothing is read or written.
-    for word in ["status", "reset"] {
-        let out = whizbang(&["spend", word]);
-        assert_eq!(out.status.code(), Some(2), "{word}");
-        assert_eq!(text(&out.stdout), "", "{word}");
+fn spend_without_a_command_or_a_store_is_the_parsers_usage_error() {
+    for args in [
+        &["spend"][..],
+        &["spend", "status"],
+        &["spend", "reset", "--allowance", "1"],
+        &["spend", "reset", "--store", "somewhere"],
+        &["spend", "adjust"],
+    ] {
+        let out = whizbang(args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert_eq!(text(&out.stdout), "", "{args:?}");
     }
+}
+
+#[test]
+fn a_reset_and_a_status_through_the_binary_and_a_complaint_that_is_escaped() {
+    let dir = Scratch::new("spend-binary");
+    let root = dir.path().join("store");
+    let store = root.to_str().unwrap();
+    // No store there: a complaint, exit 1, and nothing is made.
+    for args in [
+        &["spend", "status", "--store", store][..],
+        &["spend", "reset", "--allowance", "5", "--store", store],
+    ] {
+        let out = whizbang(args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert_eq!(text(&out.stdout), "");
+        let said = text(&out.stderr);
+        assert!(
+            said.starts_with("whizbang: there is no store at "),
+            "{said}"
+        );
+    }
+    assert!(!root.exists());
+    drop(Store::open(&root, Arc::new(RealFs)).expect("a store"));
+
+    let out = whizbang(&["spend", "reset", "--allowance", "5", "--store", store]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).starts_with("allowance reset: $5.00\nepoch: 1\n"));
+    let out = whizbang(&["spend", "status", "--store", store]);
+    assert_eq!(out.status.code(), Some(0));
+    let said = text(&out.stdout);
+    assert!(
+        said.starts_with("epoch: 1\nallowance: $5.00\ncounted against it: $0.00\n"),
+        "{said}"
+    );
+    assert!(said.contains("left: $5.00\n"), "{said}");
+    let out = whizbang(&["spend", "status", "--store", store, "--run", "7000-1"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(text(&out.stdout).starts_with("run: 7000-1\n"));
+
+    // An allowance that is none is a complaint, and what was typed is escaped.
+    let out = whizbang(&[
+        "spend",
+        "reset",
+        "--allowance",
+        "lots\u{1b}[31m",
+        "--store",
+        store,
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let said = text(&out.stderr);
+    assert!(
+        said.starts_with("whizbang: lots\\u{1b}[31m is no allowance: "),
+        "{said}"
+    );
+    assert!(!said.contains('\u{1b}'), "{said}");
 }

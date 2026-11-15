@@ -689,9 +689,9 @@ fn after_a_reinstall_the_old_preparation_is_stale_a_new_request_runs_on_the_new_
     assert!(after.ran().is_empty());
     assert_eq!(after.runs(), 1);
     // One under a new id, with no preparation: it runs, under the new installation.
-    // Its action is handed that identity as its model's version, and no backend:
-    // the backend of a run for a local model is the lease's (task I7, its second
-    // half), and until then no request reaches a local model.
+    // Its action is handed that identity as its model's version. This executor
+    // was given no backend, so no request is sent here: requests to a local model
+    // under its installation are the lease's tests (`leases::`).
     let next = RequestId::parse("second-request").unwrap();
     let Ok(Answer::Ran(finished)) = after
         .executor
