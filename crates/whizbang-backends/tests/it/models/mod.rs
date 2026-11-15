@@ -11,6 +11,7 @@ mod holds;
 mod identity;
 mod installation;
 mod inventory;
+mod leases;
 mod names;
 mod publishing;
 mod refusals;

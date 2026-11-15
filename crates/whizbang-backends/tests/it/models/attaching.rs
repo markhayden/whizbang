@@ -68,7 +68,7 @@ fn asking(
 
 /// An install of the second entry on a thread, stopped inside its second file: the
 /// status says one file of two.
-fn stopped_mid_file(
+pub(super) fn stopped_mid_file(
     root: &Path,
     barriers: &Barriers,
     cancellation: &Cancellation,
@@ -87,7 +87,7 @@ fn stopped_mid_file(
 }
 
 /// Each file was asked for once of this fake, and handed over whole.
-fn served_each_file_once(fake: &FakeDownloader) {
+pub(super) fn served_each_file_once(fake: &FakeDownloader) {
     assert_eq!(fake.requests().len(), 2);
     assert_eq!(fake.asked(&at("LICENSE.txt")), 1);
     assert_eq!(fake.asked(&at("graph.onnx")), 1);

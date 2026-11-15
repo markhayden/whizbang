@@ -18,7 +18,10 @@ use whizbang_core::contract::Secrets;
 
 use super::install::{Current, current};
 use super::name::holds_secret;
-use super::{Catalogue, InstallationRecord, ModelName, ModelsDir, Revision};
+use super::{
+    Catalogue, Hold, HoldRefused, Holds, InstallationId, InstallationRecord, ModelName, ModelsDir,
+    Revision,
+};
 
 /// What is installed in one models directory, as readiness asks it: the models of
 /// one catalogue, under the adapters this build has. What `{:?}` prints holds no
@@ -28,6 +31,8 @@ pub struct Installations {
     catalogue: Catalogue,
     adapters: BTreeMap<ModelName, Revision>,
     secrets: Secrets,
+    /// This process's holds on the installations of the directory.
+    holds: Holds,
 }
 
 impl std::fmt::Debug for Installations {
@@ -51,6 +56,7 @@ impl Installations {
         secrets: Secrets,
     ) -> Installations {
         Installations {
+            holds: Holds::over(dir.clone()),
             dir,
             catalogue,
             adapters: adapters.into_iter().collect(),
@@ -90,6 +96,31 @@ impl Installations {
             Ok(_) => Err(Unready::OutOfDate),
             Err(_) => Err(Unready::Damaged),
         }
+    }
+}
+
+impl Installations {
+    /// A hold on the installation a run was admitted with, by its identity: what a
+    /// lease takes before a request to a local model leaves (ADR 0017, "What a
+    /// lease takes"). It is given or refused at once.
+    ///
+    /// `model` is the name the backend declares, as [`Inventory::look`] is asked by
+    /// it: looked up in the catalogue, and never made into a path. `admitted` is
+    /// the installation the admission recorded, not the one that is current now:
+    /// when the model's pointer no longer names it, the hold is refused
+    /// ([`HoldRefused::NotNamed`]) and no other installation answers in its place;
+    /// when the model is draining, it is refused as [`HoldRefused::Draining`]. A
+    /// model the catalogue does not hold has no installation to name.
+    pub fn hold(&self, model: &str, admitted: Installation) -> Result<Hold, HoldRefused> {
+        let Some(entry) = self.catalogue.entry(model) else {
+            return Err(HoldRefused::NotNamed);
+        };
+        // An installation's identity is a digest, written as one: the text is read
+        // back as the identity it is.
+        let Ok(identity) = InstallationId::from_text(&admitted.to_string(), &self.secrets) else {
+            return Err(HoldRefused::HoldsSecret);
+        };
+        self.holds.hold(entry.name(), identity, &self.secrets)
     }
 }
 
