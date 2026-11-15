@@ -868,6 +868,43 @@ impl Reading {
     }
 }
 
+impl Names {
+    /// The names of one reservation as a generation holds them, read alone: what
+    /// [`Reading::of`] gives for this run, with the content of no other
+    /// reservation's names read. None where no name under `spend/` names the run.
+    ///
+    /// It is what the meter judges a dispatch by (task S5): its own reservation's
+    /// names, and no fold of the store's books.
+    pub fn of_run(
+        run: &RunId,
+        generation: &Generation,
+        read: impl Fn(&Entry) -> store::Result<Vec<u8>>,
+    ) -> Option<Names> {
+        let mut named = Vec::new();
+        let mut formless = Vec::new();
+        let under = generation
+            .entries()
+            .range(SPEND_PREFIX.to_owned()..)
+            .take_while(|(text, _)| text.starts_with(SPEND_PREFIX));
+        for (text, entry) in under {
+            match Name::parse(text) {
+                Ok(name) if name.run() == Some(run) => {
+                    let damaged = !sound(&name, entry, &read);
+                    named.push((name, damaged));
+                }
+                Ok(_) => {}
+                Err(why) => {
+                    if matches!(why.belongs(), Belongs::Reservation(of) if of == run) {
+                        formless.push(text.clone());
+                    }
+                }
+            }
+        }
+        let any = !named.is_empty() || !formless.is_empty();
+        any.then(|| Names::of(run, named, formless))
+    }
+}
+
 /// Whether the content under a name can be read and says what the name says.
 fn sound(name: &Name, entry: &Entry, read: impl Fn(&Entry) -> store::Result<Vec<u8>>) -> bool {
     if entry.bytes > SPEND_RECORD_MAX_BYTES {

@@ -1512,7 +1512,7 @@ reservation, which it reads to take the next place. It does not fold the store's
 books for each request, so an epoch that admits nothing until a reset does not
 stop the requests of a run that is already executing. The text as it stood is in this file at commit a9029d7.
 
-- [ ] The meter, a wrapper for I3's last place: before a paid request leaves, it is quoted
+- [x] The meter, a wrapper for I3's last place: before a paid request leaves, it is quoted
       (S4), its bound is debited from its run's allowance and from the tree (I2,
       `Allowance::dispatch`), and its dispatch record is made durable, in one
       publication that also makes the dispatch's name under its root's reservation.

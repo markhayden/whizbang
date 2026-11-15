@@ -17,11 +17,15 @@
 //! And quotes (task S4): [`PerCall`], which makes the bound of a need cover every
 //! request a call sends its backend, and [`request_bound`], what one request is held
 //! to before it leaves.
+//!
+//! And the meter (task S5): [`Meter`], which stands in the meter's place between a
+//! handle and its backend, and debits and records a paid request before it leaves.
 
 mod age;
 mod cap;
 pub mod fold;
 mod ledger;
+mod meter;
 pub mod name;
 mod quote;
 pub mod reading;
@@ -33,6 +37,7 @@ pub use cap::{
     SNAPSHOT_CAP_ZERO,
 };
 pub use ledger::StoreLedger;
+pub use meter::Meter;
 pub use name::{Amount, Belongs, EpochWord, NAME_LIMIT, Name, NotAName, SPEND_PREFIX, Seal};
 pub use quote::{NotQuoted, PerCall, request_bound};
 pub use reading::{
