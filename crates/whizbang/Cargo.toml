@@ -17,6 +17,7 @@ name = "it"
 path = "tests/it/main.rs"
 
 [dependencies]
+whizbang-backends.workspace = true
 whizbang-core.workspace = true
 whizbang-rascal.workspace = true
 whizbang-squint.workspace = true

@@ -102,6 +102,9 @@ is code (`inventory.rs`, `Installations::hold` and `Lease`), with the tests name
 `leases::…`. The first built the hold a lease takes, under the heading "What a lease
 takes"; the second, after the second half of task I7, the lease that stands in the
 lease's place of the executor (ADR 0015), and its tests go through an executor.
+Amended: 2026-11-15, with task W1 (ADR 0015, "The binary wired"). Changed under "The
+inventory" and "The lease": what a config offers is put over an inventory, and the
+binary's wiring takes the inventory and puts the lease in its place.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -1515,8 +1518,10 @@ offers one local backend.
   is not installed. *An adapter this build does not have* makes an installed model
   out of date, and a model that is not installed is said to be not installed:
   neither says that no install here could make it ready (a reason of its own
-  is weighed with the command that lists models: 1C, `docs/carry-over.md`). *Nothing puts what a
-  config offers over an inventory:* the tests give a roster (ADR 0015).
+  is weighed with the command that lists models: 1C, `docs/carry-over.md`). *What a
+  config offers is put over an inventory* since task W1 (ADR 0015, "What a config
+  offers, over an inventory"), and the binary's wiring takes this one
+  (`wiring::Over::installed`); the tests here give a roster.
 
 ### The lease
 
@@ -1595,9 +1600,9 @@ the place after the lease and a fake segmenter behind it.
 - **Limits.** *A hold does not read the installation's files* ("Holds"; the
   inventory's limit on unverified files, `docs/carry-over.md`). *A call with two
   needs of one capability* is leased for the first's installation only (ADR 0015,
-  "An inventory", limits). *Nothing puts the lease in the binary's executor yet:*
-  that is its wiring (the plan's task W1), with what a config offers over an
-  inventory.
+  "An inventory", limits). *The lease is in the binary's executor* since its wiring
+  (the plan's task W1; ADR 0015, "The binary wired"), wherever the wiring is given
+  a models directory; no command names one yet (1C, `docs/carry-over.md`).
 - **The checkpoint's exit line for models** ("a model installs, attaches, cancels
   and drains with fake downloads", `SPEC.md` section 16) is one test, with this
   process on one side and a real second process on the other, each through this

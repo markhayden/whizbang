@@ -159,6 +159,30 @@ pub(crate) fn under<B: Installable + ?Sized>(
     local().next().map(|first| first.under(installation))
 }
 
+/// The one rule for a backend that names a recipient and declares, as its version,
+/// the text of an installation's identity: **it is not resolved, wherever a model is
+/// resolved for a call,** and the reason says why. Such a version is one only a
+/// local model has: a run resolved under one is handed a local backend or none
+/// ([`under`]), so the backend would be admitted and handed nothing. A roster alone
+/// ([`Roster`] as [`Backends`]), a roster over an inventory ([`InstalledRoster`]) and
+/// what a config offers all ask this, and say it in the same words. Any other
+/// backend is answered nothing.
+pub(crate) fn away_under_an_identity(
+    capability: Capability,
+    name: &str,
+    declaration: &Declaration,
+) -> Result<(), Unavailable> {
+    let identity = Installation::from_version(declaration.model().version());
+    if declaration.is_local() || identity.is_none() {
+        return Ok(());
+    }
+    Err(Unavailable::new(&format!(
+        "the {} backend {name} names a recipient, and declares the identity of an \
+         installation as its version",
+        capability.name()
+    )))
+}
+
 impl std::fmt::Display for Installation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -256,19 +280,7 @@ impl Backends for InstalledRoster {
         };
         let declared = resolved.declaration().model();
         if !resolved.declaration().is_local() {
-            // The text of an installation's identity is a version only a local
-            // model has: a run resolved under one is handed a local backend or
-            // none ([`under`]), so a backend that names a recipient and declares
-            // one would be admitted and handed nothing. It is not ready, and says
-            // so.
-            if Installation::from_version(declared.version()).is_some() {
-                return Err(Unavailable::new(&format!(
-                    "the {} backend {} names a recipient, and declares the identity of an \
-                     installation as its version",
-                    capability.name(),
-                    resolved.name()
-                )));
-            }
+            away_under_an_identity(capability, resolved.name(), resolved.declaration())?;
             return Ok(declared.clone());
         }
         match self.inventory.look(declared.model()) {

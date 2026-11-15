@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 use crate::contract::{Backends, Capability, Estimate, ModelIdentity, Unavailable, text};
 
-use super::{Price, Quote, Shown};
+use super::{Price, Quote, Shown, away_under_an_identity};
 use crate::egress::Recipient;
 
 /// The rule of a name, as a refusal says it.
@@ -491,7 +491,12 @@ impl Backends for Roster {
         features: &[String],
     ) -> Result<ModelIdentity, Unavailable> {
         match Roster::resolve(self, capability, choice, features) {
-            Ok(resolved) => Ok(resolved.declaration.model().clone()),
+            Ok(resolved) => {
+                // A backend that names a recipient and declares an installation's
+                // identity is resolved on no path: its run would be handed nothing.
+                away_under_an_identity(capability, resolved.name, resolved.declaration)?;
+                Ok(resolved.declaration.model().clone())
+            }
             Err(unresolved) => Err(Unavailable::new(&unresolved.to_string())),
         }
     }

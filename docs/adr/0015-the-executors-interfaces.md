@@ -77,6 +77,10 @@ through a snapshot.
 Amended: 2026-11-15, with the second part of task W1. Added under "The binary wired":
 the ledger, the bound of a call and the meter. Added under "One snapshot of the
 config": what stands around a snapshot's backends (`Snapshot::offering_through`).
+Amended: 2026-11-15, with the third part of task W1. Added under "An inventory": "What
+a config offers, over an inventory" and "One rule for a backend that names a
+recipient and declares an identity"; changed there "What waits" and two limits. Added
+under "The binary wired": the inventory and the lease.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -908,12 +912,57 @@ was told nothing of is not in its catalogue
   current
   (`inventory::the_lease_is_asked_for_the_identity_the_admission_recorded_not_the_one_current_at_the_request`).
 
+**What a config offers, over an inventory** (task W1; the code is `config/offers.rs`,
+`config/source.rs` and `contract/snapshot.rs`; tests named `source::` are in
+`crates/whizbang-core/tests/it/config/source.rs`). Until that task nothing put what a
+config offers over an inventory: `InstalledRoster` takes a `Roster` and is not an
+`Offered`, and a snapshot matched the backend it hands by its version too, so a local
+call through a snapshot would have been refused as not ready.
+
+- **`Offers::over(inventory)`** keeps a roster over the inventory beside its roster
+  (`InstalledRoster::over`, as it is), and where prepare asks (`Backends`) it answers
+  from that: a local backend whose model is ready is answered under the identity of
+  its installation, one whose model is not is not ready with the reason, a backend
+  that names a recipient is answered as declared, and what a need may cost is found
+  under an installation's identity. **A reason of the config's comes first:** a
+  backend that is offered and is not ready (its kind, its table, its variable) is
+  answered with that reason, and the inventory is not asked about it. Two offers
+  over two inventories that offer the same are equal. `Files::over(inventory)` puts
+  what each reading offers over one.
+- **`Snapshot::handed` asks the executor's own match** (`capability::inventory::under`,
+  of the one backend under the name the call resolved): by all three texts, but for
+  a version that is an installation's identity, where it hands a local backend of
+  that backend and that model, declaring the identity, and never one that names a
+  recipient. So the two paths, an executor's own backends and a snapshot's, hand a
+  run the same backend for the same resolved model, or both hand none
+  (`inventory::a_run_under_a_snapshot_is_handed_the_backend_the_executors_own_match_would_hand_it`,
+  eight cases).
+- **Through an executor over the source:** a model that is not installed makes its
+  backend not ready, with the reason and no run; installed, it is prepared under
+  the identity, its run is handed the backend its kind made, the lease's place is
+  told the identity, and its record names it; installed again, a preparation a
+  caller was shown is `Stale::Model`; a reason of the config's is said in place of
+  the inventory's; and the estimate of a priced local backend is its price
+  (`source::what_a_config_offers_over_an_inventory_prepares_a_local_model_under_its_installation_and_its_run_is_handed_its_backend_under_it`).
+
+**One rule for a backend that names a recipient and declares an identity** (task W1).
+Such a backend was treated three ways: a roster over an inventory refused to resolve
+it; a roster alone resolved it, its call was admitted, and its run was handed
+nothing with no reason said; and a snapshot that holds backends would have handed
+it. **It is refused where it is resolved, on every path, in the same words**
+(`capability::inventory::away_under_an_identity`): by a roster over an inventory, as
+before; by a roster alone, where prepare asks it (`Roster` as `Backends`; the
+roster's own `Roster::resolve`, which names the backend that was picked, is as it
+was); and by what a config offers, with an inventory or without
+(`inventory::a_roster_alone_does_not_resolve_a_backend_that_names_a_recipient_and_declares_an_identity_either`,
+`source::a_backend_of_a_config_that_names_a_recipient_and_declares_an_identity_is_not_ready_with_or_without_an_inventory`).
+And where something else resolved such a model all the same, a `Backends` that is no
+roster, both matches hand it nothing: the executor's own admits the call and its
+action finds no handle, as before, and a snapshot refuses the call as not ready at
+admission (the eight cases above).
+
 **What waits.**
 
-- **Nothing puts what a config offers over an inventory.** `InstalledRoster` takes a
-  `Roster` and is not an `Offered`, so no snapshot of a config holds one, and
-  `Snapshot::handed` matches a backend by its version too. `Offers` (ADR 0011) and the
-  binary's wiring (task W1) are not changed here.
 - **The inventory over the models directory** is task M6's.
 
 **Limits, each stated.**
@@ -941,11 +990,11 @@ was told nothing of is not in its catalogue
   model whatever it declared, and so passed the exact one over when another stood
   before it; the review found it.
 - **Under a roster alone, a backend that names a recipient and declares such a
-  version is admitted and handed nothing.** Only a roster over an inventory
-  refuses to resolve it. It fails closed: the action finds no handle. And a
-  snapshot that holds backends still matches by all three texts
-  (`Snapshot::handed`), so the two paths will not agree on such a backend once a
-  config's offers are put over an inventory (`docs/carry-over.md`, for task W1).
+  version was admitted and handed nothing,** and a snapshot that holds backends
+  matched by all three texts. Both are changed with task W1: "One rule for a
+  backend that names a recipient and declares an identity", above. What is left of
+  it: behind a `Backends` that is no roster and resolves such a model, an executor
+  built with a digest alone still admits the call and hands its run nothing.
 - **A call with two needs of one capability is handed the backend of the first**
   (ADR 0009). Each need is resolved by a question of its own to the inventory, so
   with the model installed again between the two, one call can be prepared with two
@@ -1427,8 +1476,8 @@ behind it, and the real binary reading what a run left. This section says what t
 binary's executor is built with; it adds no interface but one method of a snapshot
 ("One snapshot of the config": what stands around its backends). **The first part:
 the source of the config, the secrets, and the parts of an admission. The second: the
-ledger, the bound of a call and the meter, and what `runs show` says of money.** The
-inventory with the lease is the part after them.
+ledger, the bound of a call and the meter, and what `runs show` says of money. The
+third: the inventory and the lease.**
 
 **What an executor of this build is built over** is one value, `wiring::Over`: the
 config file and the env file as the command line names them (`--config`,
@@ -1535,8 +1584,41 @@ else gives either executor a source, a secret or a part.
   `runs::runs_show_says_unknown_for_every_group_a_record_has_lost_and_never_none`,
   `runs::runs_show_prints_a_run_2_record_as_it_did`).
 
+**The inventory and the lease** (`Over::installed`; ADR 0017, "The inventory" and "The
+lease"). Tests named `wired::` as above, over a models directory in a scratch folder
+in which the test installs a model with a fake of the download.
+
+- **What a config offers always stands over an inventory:** the models directory
+  the wiring was given (`models::Installations`), or, with none, the inventory that
+  knows no model (`NoInventory`). So a local backend is prepared under the identity
+  of an installation or is not ready, and is never answered as its kind declared it
+  with nothing known of what is installed. **Under no models directory no local
+  backend is ready,** as not in the catalogue; over one, a model the catalogue
+  holds and the directory has installed is ready, one the catalogue does not hold
+  is not, and one installed from another revision than the catalogue's is out of
+  date
+  (`wired::a_local_backend_is_ready_only_where_the_models_directory_holds_its_model_installed_and_is_never_ready_under_no_inventory`).
+- **The lease** (`models::Lease`) stands in the lease's place over the same
+  `Installations`, wherever one was given. A run is admitted under the installation
+  that was current, and its record names the model under that identity; with the
+  model installed again between the admission and the request, the request is
+  refused before it leaves, as not ready, and the backend is not called
+  (`wired::a_request_to_a_local_model_takes_a_lease_on_the_installation_its_run_was_admitted_with_and_is_refused_unsent_once_that_is_replaced`).
+- **No command names a models directory.** An inventory is of a catalogue, and the
+  build has none: the catalogue's first entry is checkpoint 1C's. So the binary's
+  own commands give no models directory, and the tests give one. The build
+  registers no kind either, so nothing of the binary's own is made not ready by
+  this: the fake backends are the tests', and the tests install their model.
+
 **Limits, each stated.**
 
+- **`runs show` cuts a model's version at 64 characters,** as it cuts every text of
+  a record, and an installation's identity is 71: the line shows its start, and
+  `runs show --json` the whole of it.
+- **The inventory is told its secrets by whoever makes it** (`Installations::of`),
+  apart from the executor's (`Over::knowing`). Nothing holds the two to one set
+  yet: the command that names a models directory makes both (`docs/carry-over.md`,
+  checkpoint 1C).
 - **The cost `runs show` states is of the run's own requests.** What a run it
   called cost is in that run's record (ADR 0016, "The run's spend lines"), and
   nothing adds a tree up. `whizbang spend status --run` shows what the books hold
