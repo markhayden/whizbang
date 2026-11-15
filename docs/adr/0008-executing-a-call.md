@@ -1,6 +1,8 @@
 # 0008. Executing a call: one commit step for outputs and the completed status
 
-Status: accepted
+Status: accepted. Changed by ADR 0016, from the second pull request of its task on: an
+allowance holds a signed balance, is debited before a request, is given back to, and
+is in debt where an overrun put it
 Date: 2026-11-12
 Amended: 2026-11-12, with the second pull request of task A7. Added: "Status, waiting,
 and a run that was started", which is built. Changed: the paragraph that says which part

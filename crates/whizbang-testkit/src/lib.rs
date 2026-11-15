@@ -14,4 +14,5 @@ pub mod schema;
 pub mod scratch;
 pub mod sending;
 pub mod source;
+pub mod spend;
 pub mod threads;
