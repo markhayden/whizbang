@@ -25,7 +25,7 @@ use super::{MARKER, file_name, hash, model, none, parts, revision, secrets};
 
 /// The entry `tiny` at this revision of the catalogue: the same two files under
 /// each, so two revisions are two installations of the same bytes.
-fn entry_at(catalogue: &str) -> Entry {
+pub(super) fn entry_at(catalogue: &str) -> Entry {
     entry_of(
         catalogue,
         &[("graph.onnx", graph()), ("LICENSE.txt", TERMS.to_vec())],
@@ -46,24 +46,24 @@ fn entry_of(catalogue: &str, files: &[(&str, Vec<u8>)]) -> Entry {
     Entry::new(parts, &none()).unwrap()
 }
 
-fn first() -> Entry {
+pub(super) fn first() -> Entry {
     entry_at("2026-11.1")
 }
 
-fn second() -> Entry {
+pub(super) fn second() -> Entry {
     entry_at("2026-11.2")
 }
 
 /// The adapter's revision. No adapter is in the build: the test states one.
-fn adapter() -> Revision {
+pub(super) fn adapter() -> Revision {
     revision("7")
 }
 
-fn record_of(entry: &Entry) -> InstallationRecord {
+pub(super) fn record_of(entry: &Entry) -> InstallationRecord {
     InstallationRecord::of(entry, adapter(), &none()).unwrap()
 }
 
-fn installing(
+pub(super) fn installing(
     fs: &Arc<ShimFs>,
     root: &Path,
     entry: &Entry,
@@ -74,12 +74,12 @@ fn installing(
 }
 
 /// Installs on a shim of its own: a process that came, installed and went.
-fn installed(root: &Path, entry: &Entry) -> InstallationRecord {
+pub(super) fn installed(root: &Path, entry: &Entry) -> InstallationRecord {
     installing(&Arc::new(ShimFs::new()), root, entry, &serving_both()).unwrap()
 }
 
 /// What the pointer says, read by one who holds no lock, on the real file system.
-fn reading(root: &Path) -> Current {
+pub(super) fn reading(root: &Path) -> Current {
     reading_with(root, &none())
 }
 
@@ -92,7 +92,7 @@ fn reading_with(root: &Path, secrets: &Secrets) -> Current {
     .unwrap()
 }
 
-fn said(root: &Path) -> Option<(State, u64, u64)> {
+pub(super) fn said(root: &Path) -> Option<(State, u64, u64)> {
     status(
         &ModelsDir::at(Arc::new(RealFs), root),
         &model("tiny"),
@@ -102,17 +102,17 @@ fn said(root: &Path) -> Option<(State, u64, u64)> {
     .map(|status| (status.state(), status.files_done(), status.files()))
 }
 
-fn tiny(root: &Path) -> PathBuf {
+pub(super) fn tiny(root: &Path) -> PathBuf {
     root.join("models/tiny")
 }
 
-fn folder_of(root: &Path, record: &InstallationRecord) -> PathBuf {
+pub(super) fn folder_of(root: &Path, record: &InstallationRecord) -> PathBuf {
     tiny(root)
         .join("installations")
         .join(record.identity().hex())
 }
 
-fn hold_file_of(root: &Path, record: &InstallationRecord) -> PathBuf {
+pub(super) fn hold_file_of(root: &Path, record: &InstallationRecord) -> PathBuf {
     tiny(root).join("holds").join(record.identity().hex())
 }
 
@@ -127,7 +127,7 @@ fn held(root: &Path, record: &InstallationRecord) -> Box<dyn Held> {
 
 /// The installation is on the disk whole: its record in the one form, its two files,
 /// and nothing else.
-fn is_whole(root: &Path, record: &InstallationRecord) {
+pub(super) fn is_whole(root: &Path, record: &InstallationRecord) {
     let folder = folder_of(root, record);
     assert_eq!(on_disk(&folder.join("RECORD")).unwrap(), record.to_bytes());
     assert_eq!(on_disk(&folder.join("files/graph.onnx")).unwrap(), graph());
@@ -139,7 +139,7 @@ fn is_whole(root: &Path, record: &InstallationRecord) {
 }
 
 /// The installations on the disk, by the names of their folders.
-fn installations(root: &Path) -> Vec<String> {
+pub(super) fn installations(root: &Path) -> Vec<String> {
     names_under(&tiny(root).join("installations"))
         .into_iter()
         .filter(|name| !name.contains('/'))
@@ -152,13 +152,13 @@ fn reads_staged(event: &Event) -> bool {
         if p.components().any(|part| part.as_os_str() == "incoming"))
 }
 
-fn index_of(events: &[Event], what: impl Fn(&Event) -> bool) -> usize {
+pub(super) fn index_of(events: &[Event], what: impl Fn(&Event) -> bool) -> usize {
     events.iter().position(what).unwrap()
 }
 
 /// The events of installing `entry` after these were installed, each by a process of
 /// its own.
-fn events_after(before: &[&Entry], entry: &Entry) -> Vec<Event> {
+pub(super) fn events_after(before: &[&Entry], entry: &Entry) -> Vec<Event> {
     let scratch = Scratch::new("publish-events");
     for earlier in before {
         installed(scratch.path(), earlier);
@@ -182,7 +182,7 @@ fn holds_no_path(refused: &InstallRefused, root: &Path) {
 }
 
 /// Changes one byte of a file and keeps its length.
-fn flip(path: &Path, place: usize) {
+pub(super) fn flip(path: &Path, place: usize) {
     let mut bytes = std::fs::read(path).unwrap();
     bytes[place] ^= 1;
     std::fs::write(path, bytes).unwrap();
