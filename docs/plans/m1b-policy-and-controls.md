@@ -1484,12 +1484,12 @@ binary's by task W1. The two vectors are held where they were, by
 **Kept as written, 2026-11-15** ("Decisions", the last item): one pull request at the
 ordinary bar.
 
-- [ ] A wrapper in `spend/` around any `Backends`. The roster already answers
+- [x] A wrapper in `spend/` around any `Backends`. The roster already answers
       `Backends::bound` with the quote of one request, from the price a backend declares
       (B1, ADR 0010); the wrapper delegates to it and adds the per-call part, so that
       the bound a backend states for a need covers every request the call sends it. The
       roster's own file is not changed.
-- [ ] The check a request is held to when it is about to be sent, against what its run
+- [x] The check a request is held to when it is about to be sent, against what its run
       has left: a function of `spend/` that S5's meter calls.
 
 **Done when** these pass: a call that needs a backend offering only an estimate is refused
