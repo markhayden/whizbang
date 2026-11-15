@@ -128,7 +128,7 @@ fn echo_runs_through_the_binarys_executor_and_runs_list_and_show_read_it() {
         "inputs: none".to_owned(),
         "outputs: none".to_owned(),
         "models: none".to_owned(),
-        "spend: nothing reserved; paid requests: none".to_owned(),
+        "spend: $0.00 reserved; paid requests: none; cost: $0.00".to_owned(),
         "egress: none".to_owned(),
         "steps: none".to_owned(),
         "judge: none".to_owned(),
@@ -779,7 +779,7 @@ fn a_run_that_was_admitted_and_did_not_end_is_listed_and_shown_as_such() {
     );
     assert!(
         text.ends_with(
-            "spend: nothing reserved\nrecord: none: the run was admitted and has not ended; it is executing, or the \
+            "spend: $0.00 reserved\nrecord: none: the run was admitted and has not ended; it is executing, or the \
              process that ran it ended first\n"
         ),
         "{text}"
@@ -1115,8 +1115,10 @@ fn runs_show_prints_the_settings_the_paid_requests_and_where_data_went() {
         "settings: 2",
         "  backends.fill.model = \"bria-erase\"",
         "  backends.fill.steps = 20",
-        "spend: 500 millionths of a US dollar reserved; paid requests: 1",
-        "  request 0\tanswered\theld 500\tsettled 900\tunresolved 0\tover its bound",
+        // Money is printed in US dollars, as `whizbang spend status` prints it, and
+        // the run's requests are added up: what the run cost.
+        "spend: $0.0005 reserved; paid requests: 1; cost: $0.0009",
+        "  request 0\tanswered\theld $0.0005\tsettled $0.0009\tunresolved $0.00\tover its bound",
         "egress: 2",
         "  https://api.example.com\tacct...\tsource_images, prompts\tsent",
         "  https://eu.example.net:8443\tnone\tderived_images\trefused",
@@ -1172,7 +1174,7 @@ fn runs_show_says_unknown_for_every_group_a_record_has_lost_and_never_none() {
         "request: req-7",
         "parent: none",
         "status: error",
-        "spend: 250000 millionths of a US dollar reserved; paid requests: unknown",
+        "spend: $0.25 reserved; paid requests: unknown; cost: unknown",
         "lost: arguments, settings, inputs, refusals, durations, models, requests, egress, \
          steps, judge, diagnostics, version",
     ];
@@ -1194,7 +1196,7 @@ fn runs_show_says_unknown_for_every_group_a_record_has_lost_and_never_none() {
         "request: unknown",
         "parent: unknown",
         "started: unknown",
-        "spend: unknown; paid requests: unknown",
+        "spend: unknown; paid requests: unknown; cost: unknown",
         "lost: arguments, settings, inputs, refusals, durations, models, requests, egress, \
          steps, judge, diagnostics, version, admission",
     ];
