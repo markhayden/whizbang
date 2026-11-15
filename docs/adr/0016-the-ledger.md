@@ -628,7 +628,7 @@ one rule of a closing ("Settlement, closing and recovery"): the ledger dispatche
 nothing under it, so an open reservation with no other name is closed as `released`
 and counts for nothing from then on; one that is not what the ledger wrote is closed
 as `held` and stays frozen; and one under which other hands made a dispatch that is not
-settled is closed as `held` and counts in full (history 80). The closing takes the reservation's first place and the next turn of its
+settled is closed as `held` and counts in full (history 80). The closing takes the reservation's next place, which is its first where no other hands made one, and the next turn of its
 epoch, as any closing does. The call is refused as not confirmed, a refusal of its
 own (`Why::NotConfirmed` in the model), and its run never executes.
 
@@ -802,10 +802,12 @@ reservation no call is admitted and no request is dispatched anywhere in the sto
   as open with 5 left, nothing under it is damaged, and 5 more are sent where nothing
   was left. The first three review rounds kept the plan's rule and each found another
   way through it; the third and the fourth gave it up.
-- **What it costs.** One record under `spend/` that cannot be read, or one name there
-  that the ledger could not have written, halts all new paid work in the store,
-  admissions and dispatches, calls and requests of nothing among them, until the owner
-  runs the correction. A reset does not lift it. Settling, ending, recovering,
+- **What it costs.** One record of a reservation that cannot be read, or one name of
+  one that the ledger could not have written, halts all new paid work in the store,
+  admissions and the dispatches judged from then on, calls and requests of nothing
+  among them, until the owner runs the correction. (A dispatch judged before may
+  still be published once: limit (e). A turn's content is not read, and a damaged
+  reset or guard makes its epoch allow nothing and freezes no reservation.) A reset does not lift it. Settling, ending, recovering,
   adjusting and resetting go on, so nothing that was started is left hanging.
 - **Which document says so.** A plan outranks an ADR (`AGENTS.md`, "When documents
   disagree"), so the plan is amended in the pull request this record came with, each
@@ -1692,13 +1694,13 @@ condition.
   and every unrelated paid call go on beside a frozen reservation, and its invariant
   ended "It never stops the fold, recovery, or a call that has nothing to do with
   it". The last clause is dropped: it under-counted (histories 67 and 70). One record
-  under `spend/` that cannot be read now halts every admission and every dispatch in
-  the store until the owner corrects that reservation; what was started is still
+  of a reservation that cannot be read now halts every admission, and every dispatch
+  judged from then on, in the store until the owner corrects that reservation; what was started is still
   settled, ended, recovered, adjusted and reset ("The invariants, and what holds
   them").
 - An admission is published and then read back: one more reading of the store and
   one more fold for every call that nothing called, and no more names when it
-  stands. One that is backed out leaves six names, counts for nothing, and has
+  stands. One that is backed out, with no name of it touched by other hands, leaves six names, counts for nothing, and has
   taken two turns.
 - An admission through the ledger makes three names under `spend/`, a paid request
   five (two when it is dispatched, three when it is settled), a closing three, a reset
