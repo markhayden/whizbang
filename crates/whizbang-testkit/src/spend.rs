@@ -465,17 +465,22 @@ impl Folded {
         self.turns.get(&epoch).map_or(1, lowest_free)
     }
 
-    /// Whether an epoch's turns are other than exactly those its publications took:
-    /// not 1 to their count, or more or fewer than the names account for.
+    /// Whether no new paid work starts in an epoch until the owner acts. Its turns
+    /// are other than exactly those its publications took: not 1 to their count, or
+    /// more or fewer than the names account for, so that a name that took a turn
+    /// may be gone, and with it an amount that nothing counts. Or a reservation is
+    /// frozen and its amount is unknown, which counts in every epoch for a number
+    /// no name can be trusted for. A frozen reservation whose one hold states its
+    /// amount stops nothing else: it is counted at the most its names can mean.
     pub fn needs_owner(&self, epoch: u64) -> bool {
         let none = BTreeSet::new();
         let turns = self.turns.get(&epoch).unwrap_or(&none);
         let count = turns.len() as u64;
         let due = self.due.get(&epoch).copied().unwrap_or(0);
-        let frozen = |one: &Standing| one.state == State::Frozen;
+        let unknown = |one: &Standing| one.unknown;
         !turns.iter().copied().eq(1..=count)
             || count != due
-            || self.reservations.values().any(frozen)
+            || self.reservations.values().any(unknown)
     }
 
     /// The balance of this epoch.
@@ -989,8 +994,8 @@ pub fn fold(names: &BTreeSet<Name>, damaged: &BTreeSet<Name>) -> Folded {
 /// after its publication (ADR 0016, "An admission is confirmed"): its reservation
 /// is a set the ledger could have written, and open, and is the record, one hold
 /// and nothing else that names the run; neither the epoch it fell
-/// under nor the newest needs its owner, which a frozen reservation anywhere makes
-/// every epoch do; and that epoch is not over its allowance with this reservation
+/// under nor the newest needs its owner, which a frozen reservation whose amount
+/// is unknown makes every epoch do; and that epoch is not over its allowance with this reservation
 /// counted in full. A call of nothing adds nothing to what is counted, and is not
 /// held to a debt that was there before it, as it is not when it is judged.
 ///
@@ -1142,7 +1147,8 @@ pub enum Why {
         left: u64,
     },
     /// The epoch's turns are not those its publications took, or a reservation is
-    /// frozen: nothing is admitted, and nothing dispatched, until the owner acts.
+    /// frozen with an amount that is unknown: nothing is admitted, and nothing
+    /// dispatched, until the owner acts.
     NeedsOwner,
     /// What the run can spend does not cover it.
     OverRun {
@@ -1617,8 +1623,9 @@ impl Books {
                 }
                 // Nor under a reservation of an epoch that needs its owner: where
                 // the books are not what the ledger wrote, no new paid work starts
-                // until a person has looked. A frozen reservation anywhere makes
-                // every epoch need its owner.
+                // until a person has looked. A frozen reservation whose amount is
+                // unknown makes every epoch need its owner; one whose hold states
+                // its amount stops nothing but its own dispatches.
                 if standing.epoch.is_none_or(|epoch| folded.needs_owner(epoch)) {
                     return refused(Why::NeedsOwner);
                 }
@@ -4831,7 +4838,9 @@ pub fn histories() -> Vec<History> {
             ],
         ),
         vec![
-            came(7, refused(Why::NeedsOwner)),
+            // Its hold states its amount, so the store goes on: and 47 are counted
+            // of 20.
+            came(7, refused(Why::OverAllowance { left: 0 })),
             state(r(1), State::Frozen),
             // The amount, the bound, the charge, and the amount for each of the two
             // places that hold no dispatch.
@@ -5115,12 +5124,12 @@ pub fn histories() -> Vec<History> {
             admit(2, 0),
         ],
         vec![
-            came(10, refused(Why::NeedsOwner)),
+            // A call of nothing is admitted in a store over any allowance.
+            came(10, Outcome::Done),
             state(r(1), State::Frozen),
             Must::Saturated(r(1)),
             Allowed(most),
             Left(0),
-            Must::NeedsOwner,
         ],
         vec![(5, state(r(1), State::Open)), (5, Left(0))],
     );
@@ -5157,11 +5166,7 @@ pub fn histories() -> Vec<History> {
             Event::Plant(held(1, 0)),
             Event::Remove(held(1, 1)),
         ],
-        vec![
-            state(r(1), State::Frozen),
-            Counts(r(1), 1),
-            Must::NeedsOwner,
-        ],
+        vec![state(r(1), State::Frozen), Counts(r(1), 1), Left(9)],
         vec![],
     );
     add(
@@ -5257,15 +5262,18 @@ pub fn histories() -> Vec<History> {
         ],
     );
     // The sixth review round's, in its two forms. A request that was judged while
-    // the store was sound is published once the store needs its owner: by damage to
-    // another reservation, and by the loss of a turn.
+    // the store was sound is published once the store needs its owner: by the loss
+    // of another reservation's hold, whose amount is then unknown, and by the loss
+    // of a turn. (As the round gave it, the other reservation was damaged: since
+    // the owner's ruling a damaged reservation whose hold is there stops nothing
+    // else, which is history 81.)
     let publish = |run, micros| Event::Publish {
         run: r(run),
         micros,
     };
     let confirm = |run| Event::Confirm { run: r(run) };
     add(
-        "78 a request judged before another reservation was damaged: it is published \
+        "78 a request judged before another reservation lost its hold: it is published \
          where the store needs its owner, within what its tree really has left, and \
          nothing that is judged afterwards is",
         vec![
@@ -5273,7 +5281,11 @@ pub fn histories() -> Vec<History> {
             publish(1, 10),
             confirm(1),
             second(admit(2, 10)),
-            Event::Damage(Name::Reservation(r(2))),
+            Event::Remove(Name::Held {
+                epoch: 1,
+                run: r(2),
+                micros: 10,
+            }),
             stale(4, dispatch(1, 10)),
             stale(4, dispatch(1, 1)),
             dispatch(1, 0),
@@ -5289,8 +5301,9 @@ pub fn histories() -> Vec<History> {
             Counts(r(1), 10),
             Outstanding(r(1), 10),
             state(r(2), State::Frozen),
-            Counts(r(2), 10),
-            Counted(20),
+            // No name states the second's amount: the books say so.
+            Must::CountsAtLeast(r(2), 0),
+            Must::CountedAtLeast(10),
             Left(0),
             Must::NeedsOwner,
             Must::TreeLeft(r(1), 0),
@@ -5298,7 +5311,7 @@ pub fn histories() -> Vec<History> {
         ],
         vec![
             (4, Must::NeedsOwner),
-            (4, Counted(20)),
+            (4, Must::CountedAtLeast(10)),
             (4, Must::TreeLeft(r(1), 10)),
         ],
     );
@@ -5362,9 +5375,9 @@ pub fn histories() -> Vec<History> {
         vec![(3, state(r(1), State::Open)), (3, Counts(r(1), 10))],
     );
     add(
-        "81 (J) one record that cannot be read: its reservation is frozen, and no \
-         other call is admitted, a call of nothing among them, though the rest of \
-         the allowance would cover it",
+        "81 (J) one record that cannot be read: its reservation is frozen at the most \
+         its names can mean, and stops nothing else: a call that the rest of the \
+         allowance covers is admitted",
         vec![
             reset(30),
             admit(1, 10),
@@ -5373,21 +5386,24 @@ pub fn histories() -> Vec<History> {
             Event::Crash,
             Event::Recover,
             admit(2, 5),
-            admit(3, 0),
+            dispatch(2, 5),
+            admit(3, 1),
         ],
         vec![
-            came(6, refused(Why::NeedsOwner)),
-            came(7, refused(Why::NeedsOwner)),
+            came(6, Outcome::Done),
+            came(7, Outcome::Placed(1)),
+            came(8, refused(Why::OverAllowance { left: 0 })),
             state(r(1), State::Frozen),
             // The amount, the bound, and the amount for the closing's place.
             Counts(r(1), 25),
-            Counted(25),
+            Counts(r(2), 5),
+            Counted(30),
+            Allowed(30),
             Left(0),
-            Must::NeedsOwner,
-            Absent(r(2)),
+            Debt(0),
             Absent(r(3)),
         ],
-        vec![(3, Counts(r(1), 15)), (3, Must::NeedsOwner)],
+        vec![(3, Counts(r(1), 15)), (3, Left(15)), (5, Left(5))],
     );
     // A request of 10 is in flight under a reservation of 10, which is all of the
     // allowance. A second process recovers the store, which closes the reservation
@@ -5522,6 +5538,77 @@ pub fn histories() -> Vec<History> {
             Owes(r(2), 5),
         ],
         vec![(2, Debt(7)), (2, Owes(r(1), 7))],
+    );
+    // The first of the limits the owner accepted with that ruling: with one hold
+    // made in the place of the ledger's, a frozen reservation states an amount, and
+    // the store goes on beside it.
+    add(
+        "86 one hold of nothing made in the place of the ledger's, the dispatch lost \
+         with it, and the whole allowance then admitted beside the frozen \
+         reservation: 30 counted of 30 where 40 are committed",
+        vec![
+            reset(30),
+            admit(1, 10),
+            dispatch(1, 10),
+            Event::Plant(held(1, 0)),
+            Event::Remove(held(1, 10)),
+            Event::Remove(sent(1, 10)),
+            admit(2, 30),
+            dispatch(2, 30),
+        ],
+        vec![
+            came(6, Outcome::Done),
+            came(7, Outcome::Placed(1)),
+            state(r(1), State::Frozen),
+            Counts(r(1), 0),
+            Counts(r(2), 30),
+            Allowed(30),
+            Counted(30),
+            Debt(0),
+            Left(0),
+        ],
+        vec![(2, Counted(10)), (5, Counted(0)), (5, Left(30))],
+    );
+    // The second: a settlement over its bound whose name is lost. The charge was in
+    // that name alone; the reservation is frozen at what its other names can mean,
+    // which is less, and the store goes on beside it.
+    add(
+        "87 a settlement at 15 over a bound of nothing whose name is lost, and what \
+         then reads as left admitted beside the frozen reservation: 20 counted of 20 \
+         where 33 are committed",
+        vec![
+            reset(20),
+            admit(1, 1),
+            dispatch(1, 0),
+            settle(1, 1, charged(15)),
+            Event::Remove(Name::Settled {
+                run: r(1),
+                place: 1,
+                stage: Stage::Answered,
+                micros: 15,
+            }),
+            admit(2, 18),
+            dispatch(2, 18),
+        ],
+        vec![
+            came(5, Outcome::Done),
+            came(6, Outcome::Placed(1)),
+            state(r(1), State::Frozen),
+            // The amount, the bound of nothing, and the amount for the place the
+            // charge took.
+            Counts(r(1), 2),
+            Counts(r(2), 18),
+            Allowed(20),
+            Counted(20),
+            Debt(0),
+            Left(0),
+        ],
+        vec![
+            (3, Counted(15)),
+            (3, Left(5)),
+            (4, Counted(2)),
+            (4, Left(18)),
+        ],
     );
     table
 }
