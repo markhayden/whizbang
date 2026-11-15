@@ -1193,12 +1193,17 @@ sums of its places, the most its names can mean). This task's is everything acro
 reservations, in `spend/fold.rs`: epochs, turns, whether a correction stands, states,
 balances, one run's spend, and the histories through a store.
 
-- [ ] The fold: from the records and reservations a generation names, what is allowed,
+- [x] The fold: from the records and reservations a generation names, what is allowed,
       reserved, spent and unresolved, for the store, for one reservation, and for one run
       under it.
-- [ ] The table of histories runs against the real fold as well: each history is written
+- [x] The table of histories runs against the real fold as well: each history is written
       into a store through the record types and folded, and must give what the model
       gives.
+      (As built, 2026-11-15: the named histories, 89 with this task's own, are written
+      into a store event by event. The generated ones are folded from their names in
+      memory, through the same gathering a store's reading uses, after every event:
+      a publication for each of their states does not fit the suite's time. ADR 0016,
+      "The real fold", names each test.)
 
 **Done when** the real fold and the model agree on every named and every generated
 history, and these pass: the fold gives the stated balances for a table of histories that
