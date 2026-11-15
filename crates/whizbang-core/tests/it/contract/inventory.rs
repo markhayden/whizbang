@@ -725,6 +725,57 @@ fn a_backend_that_names_a_recipient_is_never_handed_to_a_run_resolved_under_an_i
 }
 
 #[test]
+fn a_run_resolved_under_an_installation_is_handed_only_the_local_backend_of_that_backend_and_model()
+{
+    // The match by identity is by the backend and the model, both: a local
+    // backend of another model, and one of another backend with a model of the
+    // same name, are not handed, alone or before the one that is meant.
+    let installation = Installation::of(Digest::of_bytes(b"a filler, whole"));
+    let resolved = ModelIdentity::new("fake", "fake-filler", &installation.to_string());
+    let local = |backend: &str, model: &str| {
+        let declared = Declaration::new(ModelIdentity::new(backend, model, "1"), &[]).unwrap();
+        Arc::new(FakeFiller::new(Paint::Inverse).declared_as(declared))
+    };
+    let paints = || {
+        action(
+            "paints",
+            vec![Requirement::new(Capability::Fill)],
+            |_, context| {
+                if let Some(fill) = context.capabilities().fill() {
+                    let _ = fill.fill(&fill_request());
+                }
+                Ok(Produced::nothing())
+            },
+        )
+    };
+    let (other_model, other_backend) =
+        (local("fake", "other-filler"), local("other", "fake-filler"));
+    let others = || {
+        Capabilities::none()
+            .with_fill(other_model.clone())
+            .with_fill(other_backend.clone())
+    };
+    let world = World::new();
+    let executor = engine(&world, Always(resolved.clone()), others(), vec![paints()]);
+    executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!((other_model.requests(), other_backend.requests()), (0, 0));
+    drop(executor);
+    let world = World::new();
+    let meant = local("fake", "fake-filler");
+    let held = others().with_fill(meant.clone());
+    let executor = engine(&world, Always(resolved), held, vec![paints()]);
+    executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!(
+        (
+            other_model.requests(),
+            other_backend.requests(),
+            meant.requests()
+        ),
+        (0, 0, 1)
+    );
+}
+
+#[test]
 fn a_roster_over_an_inventory_does_not_resolve_a_backend_that_names_a_recipient_and_declares_an_identity()
  {
     // Such a backend would be admitted and handed nothing: it is not ready, and
