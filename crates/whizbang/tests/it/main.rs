@@ -9,3 +9,4 @@ mod rascal;
 mod runs;
 mod spend;
 mod store;
+mod writer;
