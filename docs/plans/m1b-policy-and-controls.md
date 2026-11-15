@@ -1905,17 +1905,24 @@ a hold let go twice is let go once.
 **Depends on:** M5. **Reads:** rascal `tools/python/src/rascal_tools/installer.py`
 (`remove`) and `crates/rascal-mask/src/install.rs` (`uninstall`).
 
-- [ ] Removal, inside one process: under the directory's lock the model is marked as
+- [x] Removal, inside one process: under the directory's lock the model is marked as
       draining, so new holds are refused and waiting ones cancelled; the holds are waited
       for until a deadline of the injected clock; then the removal goes on (M5c), or it
       answers busy and the mark is taken off. Here "goes on" ends at the decision: the
       pointer is cleared and nothing is deleted yet.
 
 **Done when** these pass, with barriers and the clock moved by hand (rule 6): a removal
-during a held installation refuses a new hold, cancels a waiting one, and goes on when the
-hold is let go; with the hold kept past the deadline the removal answers busy, the mark is
-gone and the next hold is given; a removal of a model that is not installed says so; the
-mark is a record read strictly and bounded (rule 3).
+during a held installation refuses a new hold, and one that was refused and is asked for
+again, as draining, and goes on when the hold is let go; with the hold kept past the
+deadline the removal answers busy, the mark is gone and the next hold is given; a removal
+of a model that is not installed says so; the mark is a record read strictly and bounded
+(rule 3).
+**Reworded with the task** (ADR 0017, "Holds" and "Removal"). The clause said that a
+removal "refuses a new hold, cancels a waiting one". No hold waits: a hold is given or
+refused at once (task M5), because a wait for a hold file under the directory's lock would
+stop every model. What the plan calls a waiting hold is one that was refused and is asked
+for again by its caller, and a removal cancels it by the mark: asked again while the mark
+is set, it is refused as draining. The clause now says what is shown.
 **Size:** small. The waiting requests of the worker's queue are 1C's; here a waiting hold
 stands for one.
 
@@ -1936,6 +1943,10 @@ after each read the pointer and released together". No test can stop both there:
 install and a removal each read the pointer to decide from only under the model's lock,
 which one of them has at a time. What the other does while one is stopped there (busy,
 or stopped by the mark) is this task's to say.
+**Built** (ADR 0017, "Removal": against an install, and across processes), each clause
+by a test named `models::remove::…`. What the other does: a removal beside a stopped
+install sets its mark and is busy at its deadline, or the install, let go, stops for the
+mark; an install beside a stopped removal is busy. This task has no box of its own.
 **Carry-over:** rascal's R3 (a process id read from a file is signalled); of R6, a
 removal racing an install. **Size:** small.
 
@@ -1943,7 +1954,7 @@ removal racing an install. **Size:** small.
 
 **Depends on:** M5d.
 
-- [ ] A removal that went on deletes the installation's files, through the file-system
+- [x] A removal that went on deletes the installation's files, through the file-system
       interface the shim can crash.
 
 **Done when** these pass: `remove::a_crash_at_any_event…` leaves the installation whole
@@ -1957,7 +1968,7 @@ own files.
 
 **Depends on:** M5c, I7.
 
-- [ ] `Inventory` (I7) over the models directory: installed and verified, not installed,
+- [x] `Inventory` (I7) over the models directory: installed and verified, not installed,
       out of date, damaged, or not in the catalogue. Only the first is ready.
 
 **Done when** these pass, each with an executor a test builds over the inventory: a
@@ -1968,6 +1979,15 @@ nothing, is prepared as damaged, never ready, and a new install repairs it; afte
 reinstall, a new request with the old preparation is `Stale::Model`, one under a new id
 with no preparation runs on the new installation, and a repeat of the first request's id
 returns the first run.
+**Reworded with the task** (ADR 0017, "The inventory"). Two phrases are shown as far as
+what is built allows, and say so here. The box says "installed and verified": the
+inventory reads the pointer and the installation's record and no file, because it is
+asked at every preparation and a model's files are gigabytes; "verified" is what the
+publication held the files to, and a file damaged since is found when the identity is
+installed again (pinned as `inventory::known_…`). And "runs on the new installation": the
+request is admitted and its action runs with the new installation's identity as its
+model's version; a run is handed no backend for a local model until the lease is built
+(task I7's second half, after I3), so no request reaches a model in that test.
 **Carry-over:** rascal's R2 (reported), R4, and of R6 a corrupt installation record and a
 reinstall between a call and its retry. **Size:** small.
 

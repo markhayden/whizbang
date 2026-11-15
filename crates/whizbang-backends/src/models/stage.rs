@@ -9,7 +9,7 @@
 //! file that passed is left behind.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use sha2::{Digest as _, Sha256};
 use whizbang_core::capability::FaultKind;
@@ -69,6 +69,9 @@ pub enum StageRefused {
     Busy,
     /// The download was cancelled.
     Cancelled,
+    /// The model is marked as draining: a removal of it has begun, and the download
+    /// stopped for it.
+    Draining,
     /// One file was not staged. `name` is what [`super::FileName::shown`] shows of it.
     File { name: String, why: FileRefused },
     /// The file system refused. The kind of failure, and no path.
@@ -81,6 +84,9 @@ impl std::fmt::Display for StageRefused {
             StageRefused::HoldsSecret => f.write_str("a name holds a secret, and is not shown"),
             StageRefused::Busy => f.write_str("the model is being installed or removed by another"),
             StageRefused::Cancelled => f.write_str("the download was cancelled"),
+            StageRefused::Draining => {
+                f.write_str("the model is being removed, and nothing of it is staged")
+            }
             StageRefused::File { name, why } => write!(f, "the file `{name}` {why}"),
             StageRefused::Disk(kind) => {
                 let why = match kind {
@@ -142,6 +148,9 @@ impl Staged {
 /// - The model's lock is taken without waiting; held by another, the answer is
 ///   [`StageRefused::Busy`] and nothing is touched.
 /// - What an earlier staging left is removed, whatever it is, and not looked at.
+/// - Where the cancellation is asked once the lock is held, before each file, at
+///   each piece and after each answer of the downloader, the model's draining mark
+///   is read too: with one set, the staging stops as [`StageRefused::Draining`].
 /// - Each file is asked for at its address, and at an address it moved to only when
 ///   the entry names that address's origin. One byte more than its size is asked
 ///   for and no more than its size is kept: a byte beyond it refuses the file.
@@ -195,6 +204,32 @@ pub(super) fn lock_model(
         .ok_or(StageRefused::Busy)
 }
 
+/// What stops a staging between files and inside one: the cancellation of the
+/// request that started it, and the model's draining mark, which a removal sets
+/// from any process. The mark is read as there or not there, without the
+/// directory's lock: stopping is always safe, and what a publication decides from
+/// is read under that lock, later.
+struct Stop<'a> {
+    dir: &'a ModelsDir,
+    mark: PathBuf,
+    cancellation: &'a Cancellation,
+}
+
+impl Stop<'_> {
+    /// Why the staging stops now, if it does. A mark that cannot be looked for is
+    /// no mark: the step after it meets the same disk.
+    fn asked(&self) -> Option<StageRefused> {
+        if self.cancellation.is_cancelled() {
+            return Some(StageRefused::Cancelled);
+        }
+        self.dir
+            .fs()
+            .exists(&self.mark)
+            .unwrap_or(false)
+            .then_some(StageRefused::Draining)
+    }
+}
+
 /// Stages every file of the entry, for one who holds the model's lock. `staged` is
 /// told after each file how many are staged, and its refusal refuses the staging.
 pub(super) fn stage_locked(
@@ -208,6 +243,11 @@ pub(super) fn stage_locked(
     let staging = dir.staging(entry.name());
     let incoming = dir.incoming(entry.name());
     let files = incoming.join("files");
+    let stop = Stop {
+        dir,
+        mark: dir.model(entry.name()).join("DRAINING"),
+        cancellation,
+    };
     let done = (|| {
         dir.remove(&incoming)?;
         dir.ensure_dir(&staging)?;
@@ -217,11 +257,12 @@ pub(super) fn stage_locked(
         fs.sync_dir(&incoming)?;
         let mut done = Vec::new();
         for file in entry.files() {
-            // Asked before each file: nothing is begun after a cancel.
-            if cancellation.is_cancelled() {
-                return Err(StageRefused::Cancelled);
+            // Asked before each file: nothing is begun after a cancel, or under a
+            // mark.
+            if let Some(stopped) = stop.asked() {
+                return Err(stopped);
             }
-            stage_file(dir, entry, file, &files, downloader, cancellation)?;
+            stage_file(dir, entry, file, &files, downloader, &stop)?;
             // Made from what the catalogue states, which the file was just held to.
             let installed = InstalledFile::new(file.name().clone(), file.size(), file.sha256());
             done.push(installed.map_err(|_| StageRefused::Disk(io::ErrorKind::InvalidData))?);
@@ -287,8 +328,9 @@ fn stage_file(
     file: &CatalogueFile,
     files: &Path,
     downloader: &dyn Downloader,
-    cancellation: &Cancellation,
+    stop: &Stop,
 ) -> Result<(), StageRefused> {
+    let cancellation = stop.cancellation;
     let refused = |why: FileRefused| StageRefused::File {
         name: file.name().shown(),
         why,
@@ -315,12 +357,13 @@ fn stage_file(
         // Asked at each piece: a downloader that does not ask is not handed a sink
         // that keeps on taking. And asked when the downloader has answered, whatever
         // it answered: after a cancel no move is followed, and nothing more is
-        // asked for.
+        // asked for. The mark is read at the same places: a removal stops a
+        // download as a cancel does, from any process.
         let ended = downloader.download(&request, cancellation, &mut |piece| {
-            !cancellation.is_cancelled() && received.take(piece)
+            stop.asked().is_none() && received.take(piece)
         });
-        if cancellation.is_cancelled() {
-            return Err(StageRefused::Cancelled);
+        if let Some(stopped) = stop.asked() {
+            return Err(stopped);
         }
         match ended {
             Err(fault) if fault.kind() == FaultKind::Cancelled => {

@@ -10,9 +10,11 @@ mod downloads;
 mod holds;
 mod identity;
 mod installation;
+mod inventory;
 mod names;
 mod publishing;
 mod refusals;
+mod remove;
 mod staging;
 mod status;
 
