@@ -1566,7 +1566,9 @@ and any other history whose numbers the two rules move are restated by that task
 checker's rows "1, by epoch" and "1, under loss" ("The invariants, and what holds
 them") then leave out a reservation whose hold is lost, which is limit (c) without
 its exception: such a reservation counts against no allowance, and the store goes
-on. Until task S9 merges, the fold and the model are as the sections above have
+on. **What a reset clears is what the names before it say of the epochs before it.**
+A hold that names a later epoch, which only other hands make, counts there when a
+reset reaches it, and one more reset passes it. Until task S9 merges, the fold and the model are as the sections above have
 them.
 
 **No state leaves the owner without a way to use the allowance.**
@@ -1580,7 +1582,8 @@ them.
 | A frozen reservation with no hold | It counts nowhere; `spend status` names it | None is needed |
 | An epoch whose turns are wrong | No admission in that epoch | A reset: the next epoch's turns start again |
 | The largest epoch a name can say, opened by other hands | Nothing is allowed and no reset can follow ("Epochs") | None but a new store. Accepted |
-| A store at its generation limit | A reset adds names and is refused there, as every such publication is | Deleting runs makes room (`docs/carry-over.md`, the row on what every publication costs) |
+| A hold that other hands made, naming an epoch that no reset has opened yet | It counts in that epoch when a reset opens it, and its turn is one that epoch's publications did not take: the reset does not clear it, because it is not of the books before it | `spend status` names it. The next reset passes that epoch, and it does not count in the one after |
+| A store at its generation limit | A reset adds names and is refused there, as every such publication is | Deleting runs makes room where runs' names filled it. The names under `requests/` and `spend/` are never removed, so a store those alone filled has no way out but a new store. Accepted here, as it was for every other publication (`docs/carry-over.md`, the row on what every publication costs, which is milestone 2's) |
 
 **What it costs, in money.** Each is accepted with the decision.
 

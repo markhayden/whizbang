@@ -236,9 +236,13 @@ the owner's own, given on 2026-11-13.
     before it counts: not an open reservation, an interrupted one, a frozen one, or
     one with no hold or several. For the frozen and the last that is a change to
     two rules of the fold, which S9 makes (task S9; ADR 0016, "The strand cut
-    down"). One state has no way out but a new store: other hands opened the largest
-    epoch a name can say, and no reset can follow it (ADR 0016, "Epochs"). It is
-    accepted.
+    down"). A hold that other hands made, naming an epoch not yet opened, counts
+    there when a reset opens it, and the reset after that passes it. Two states
+    have no way out but a new store, and both are accepted: other hands opened the
+    largest epoch a name can say, and no reset can follow it (ADR 0016, "Epochs");
+    and the names under `requests/` and `spend/`, which are never removed, filled
+    the store to its generation limit, where a reset is refused as every
+    publication that adds names is (`docs/carry-over.md`, milestone 2).
   - **What it costs,** in money, is in ADR 0016, "The strand cut down".
 
 ## What a crashed run is recovered to
@@ -1631,7 +1635,9 @@ makes the store wait for a command that is not built. The text as it stood is in
       epoch admits nothing until a reset, it says so. It reads only.
 - [ ] `whizbang spend reset --allowance <usd>`: one publication of the reset's name,
       its guard (`spend/epoch/<epoch>`) and the next turn of the epoch it closes. The
-      records before it stay, and nothing they name counts in the epoch it opens.
+      records before it stay, and nothing they hold in the epochs before it counts
+      in the epoch it opens. A hold that names the epoch it opens, which only other
+      hands make, counts there, and the next reset passes it.
       It does not stop a run that is executing, which goes on drawing on its own
       reservation. It is a command and nothing else ("Decisions").
 
@@ -1645,8 +1651,10 @@ request, and after a `reset` the next call that the new allowance covers is admi
 refused, with the holder named; after a reset the earlier records are all still read
 and the balances start again from the new allowance; `status` on a store whose ledger
 holds a damaged record says so escaped and cut, with no path (rule 3); `reset` is not
-among the registered actions; a reset of an amount of the largest number, and one
-after the largest epoch a name can say, are refused and say why.
+among the registered actions; a hold planted for the epoch a reset then opens counts
+there and is named by `status`, and after one more reset the next call is admitted; a
+reset of an amount of the largest number, one after the largest epoch a name can
+say, and one in a store at its generation limit are refused and say why.
 **Size:** small.
 
 ### S10. The run's spend lines
