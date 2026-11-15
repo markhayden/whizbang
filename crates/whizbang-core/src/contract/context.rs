@@ -16,6 +16,7 @@ use std::time::Instant;
 use crate::artifact::Contents;
 use crate::capability::{
     Declaration, FillHandle, Filler, Judge, JudgeHandle, Recorder, SegmentHandle, Segmenter, Tally,
+    Wrappers,
 };
 use crate::egress::{Sender, Ways};
 use crate::store;
@@ -601,9 +602,18 @@ pub struct Capabilities {
     /// The executor's ways out and the run's place for facts, which each handle's
     /// checked sender is made of (ADR 0015). Without them a handle sends nothing.
     ways: Option<(Ways, RunFacts)>,
+    /// What stands between each handle and its backend for the run (ADR 0015, "A
+    /// wrapper around each request"). Without it nothing does.
+    around: Option<Arc<Wrappers>>,
 }
 
 impl Capabilities {
+    /// The same set, whose handles each take their requests through these wrappers.
+    pub(super) fn wrapped(mut self, around: Wrappers) -> Capabilities {
+        self.around = Some(Arc::new(around));
+        self
+    }
+
     /// The same set, whose handles each hand their backend a sender made of these
     /// ways for that backend, noting in this place what it hands over and refuses.
     pub(super) fn sending_through(mut self, ways: Ways, facts: RunFacts) -> Capabilities {
@@ -673,6 +683,7 @@ impl Capabilities {
             }), // The clock the handles hold a deadline to goes with them.
             clock: self.clock.clone(),
             ways: self.ways.clone(),
+            around: self.around.clone(),
         }
     }
 
@@ -739,6 +750,17 @@ impl Capabilities {
                     let sender = made(h.declaration());
                     h.sending_through(sender)
                 }),
+            };
+        }
+        // And the wrappers, last: they stand inside the tally and outside the
+        // backend, which is where a handle puts them (`Bounds::send`). This is the
+        // order of a request (ADR 0015): the handle's own checks, the tally, the
+        // gate, the lease, the meter, the backend.
+        if let Some(around) = &self.around {
+            handles = Handles {
+                segment: handles.segment.map(|h| h.wrapped(around.clone())),
+                fill: handles.fill.map(|h| h.wrapped(around.clone())),
+                judge: handles.judge.map(|h| h.wrapped(around.clone())),
             };
         }
         handles

@@ -305,9 +305,11 @@ fn a_recipient_that_is_not_the_one_approved_is_refused_in_words_that_say_which_p
             "{declared:?}"
         );
         assert_eq!(sender.requests(), 0);
+        // It is refused at the gate's place, before its backend makes the prompt it
+        // would send: the request itself holds none (ADR 0015).
         assert_eq!(
             ran.went(),
-            [entry(API, cut, prompts(), Handed::Refused)],
+            [entry(API, cut, Classes::none(), Handed::Refused)],
             "{declared:?}"
         );
         assert_eq!(
@@ -316,7 +318,7 @@ fn a_recipient_that_is_not_the_one_approved_is_refused_in_words_that_say_which_p
                 RefusalKind::RequestNotApproved,
                 format!(
                     "nothing was sent to {API}: {why} (the classes of data the request \
-                     holds: prompts)"
+                     holds: none)"
                 )
             )]
         );

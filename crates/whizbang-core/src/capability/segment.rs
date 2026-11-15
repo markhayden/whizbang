@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::contract::Cancellation;
+use crate::egress::{Classes, DataClass};
 
 use super::{Bounds, Charge, Declaration, Fault, Picture, Unfit, feature, pixel_count};
 
@@ -110,6 +111,11 @@ impl Query {
                 bottom: *bottom,
             },
         }
+    }
+
+    /// Whether the request is a phrase: words, where the others are places.
+    pub fn is_phrase(&self) -> bool {
+        matches!(self.0, Kind::Phrase(_))
     }
 
     /// The feature a backend must declare to be sent this request.
@@ -420,6 +426,12 @@ impl SegmentHandle {
         self
     }
 
+    /// The same handle, with these wrappers between it and its backend (ADR 0015).
+    pub(crate) fn wrapped(mut self, around: Arc<super::Wrappers>) -> SegmentHandle {
+        self.bounds.wrapped(around);
+        self
+    }
+
     /// The same handle, holding its deadline to this clock in place of the machine's.
     pub(crate) fn timed_by(mut self, clock: Arc<dyn crate::contract::Clock>) -> SegmentHandle {
         self.bounds.timed_by(clock);
@@ -447,7 +459,23 @@ impl SegmentHandle {
             request.queries.iter().map(Query::feature),
         )?;
         let capability = crate::contract::Capability::Segment;
-        self.bounds.send(capability, self.declaration(), || {
+        // What the request is known to hold: a prompt, when a query is a phrase.
+        // Its picture has no class here (ADR 0015).
+        let phrase = request.queries.iter().any(Query::is_phrase);
+        let classes = match phrase {
+            true => Classes::of(&[DataClass::Prompts]),
+            false => Classes::none(),
+        };
+        let charge_of = SegmentResponse::charge;
+        self.bounds
+            .send(capability, self.declaration(), classes, charge_of, || {
+                self.answered(request)
+            })
+    }
+
+    /// Asks the backend, and holds its answer to the request.
+    fn answered(&self, request: &SegmentRequest) -> Result<SegmentResponse, Fault> {
+        {
             let response = self
                 .backend
                 .segment(request, &self.bounds.of_one_request())?;
@@ -455,7 +483,7 @@ impl SegmentHandle {
             let charge = response.charge;
             self.held(request, response)
                 .map_err(|fault| fault.answered(charge))
-        })
+        }
     }
 
     /// The backend's answer, held to the request.

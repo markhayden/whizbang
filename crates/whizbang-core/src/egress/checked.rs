@@ -18,7 +18,9 @@ use super::{
     Address, Classes, Credential, DispatchPolicy, NotAllowed, Origin, Outgoing, Piece, Recipient,
     Reply, Sender,
 };
-use crate::capability::{Bounds, Declaration, Fault, FaultKind, Stage};
+use crate::capability::{
+    Around, Bounds, Declaration, Fault, FaultKind, Nothing, Open, Stage, Stop, Wrapped,
+};
 use crate::contract::record::Handed;
 use crate::contract::{RefusalKind, RunFacts};
 
@@ -274,6 +276,70 @@ impl Ways {
     }
 }
 
+impl Ways {
+    /// What stands in the gate's place for a run under these ways (ADR 0015, "A
+    /// wrapper around each request"): the same policy the checked sender asks, asked
+    /// once before the backend is called.
+    pub(crate) fn gate(&self) -> Arc<dyn Around> {
+        Arc::new(Gate {
+            policy: self.policy.clone(),
+        })
+    }
+}
+
+/// The gate's place: a request to a backend that names a recipient goes on only when
+/// the policy approves that recipient for the classes of data the request is known to
+/// hold. A request it refuses reaches neither the places after it nor its backend,
+/// and so no sender. A backend that names no recipient is local, and is not asked
+/// about: what it tries to send is refused by its sender.
+///
+/// It is the first of two checks and never the only one. What a request is known to
+/// hold before any piece of it is made is less than what its backend then hands
+/// over, and every piece is held to the policy again by the checked sender.
+struct Gate {
+    policy: DispatchPolicy,
+}
+
+impl Around for Gate {
+    fn before(&self, asked: &Wrapped<'_>) -> Result<Box<dyn Open>, Stop> {
+        let Some(recipient) = asked.declaration.recipient() else {
+            return Ok(Box::new(Nothing));
+        };
+        let Some(not) = self.policy.why_not(recipient, asked.classes) else {
+            return Ok(Box::new(Nothing));
+        };
+        let (origin, why) = (recipient.origin(), not.why());
+        let listed = asked
+            .facts
+            .went(origin, recipient.account(), asked.classes, Handed::Refused);
+        let sentence = not_sent_to(origin, why, asked.classes, listed);
+        let fault = Fault::new(FaultKind::Rejected, why);
+        match Stop::new(RefusalKind::RequestNotApproved, &sentence, fault) {
+            Some(stop) => Err(stop),
+            // The kind is one of a request: this is not reached.
+            None => Ok(Box::new(Nothing)),
+        }
+    }
+}
+
+/// The sentence a refusal of a request is noted with among its run's refusals.
+fn not_sent_to(to: &Origin, why: &str, needs: Classes, listed: bool) -> String {
+    let classes: Vec<&str> = needs.iter().map(|class| class.name()).collect();
+    format!(
+        "nothing was sent to {to}: {why} (the classes of data the request holds: {}{})",
+        if classes.is_empty() {
+            "none".to_owned()
+        } else {
+            classes.join(", ")
+        },
+        if listed {
+            ""
+        } else {
+            "; not listed in where the run's data went"
+        }
+    )
+}
+
 impl fmt::Debug for Ways {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Ways")
@@ -337,23 +403,9 @@ impl Checked {
         let listed = self.facts.went(to, account, needs, Handed::Refused);
         // The sentence is cleaned where it is noted: the executor's secrets are taken
         // out of it while it is whole, and it is then cut.
-        let classes: Vec<&str> = needs.iter().map(|class| class.name()).collect();
         let noted = self.facts.refused(
             RefusalKind::RequestNotApproved,
-            &format!(
-                "nothing was sent to {to}: {why} (the classes of data the request holds: \
-                 {}{})",
-                if classes.is_empty() {
-                    "none".to_owned()
-                } else {
-                    classes.join(", ")
-                },
-                if listed {
-                    ""
-                } else {
-                    "; not listed in where the run's data went"
-                }
-            ),
+            &not_sent_to(to, why, needs, listed),
         );
         let why = if noted { why } else { RUN_OVER };
         Fault::new(FaultKind::Rejected, why).not_sent()
