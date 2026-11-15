@@ -22,6 +22,8 @@ use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::schema::validate;
 use whizbang_testkit::scratch::Scratch;
 
+use crate::runner;
+
 struct Ran {
     code: Option<i32>,
     out: Vec<u8>,
@@ -59,7 +61,7 @@ fn with_two_runs(root: &Path) -> (String, String) {
     let store = Arc::new(Store::open(root, Arc::new(RealFs)).unwrap());
     let mut registry = whizbang::wiring::registry().expect("the registry builds");
     registry.register(Arc::new(Echo::new())).unwrap();
-    let executor = whizbang::wiring::runner(registry, store);
+    let executor = runner(registry, store);
     let completed = executor.submit(&echo("hello")).unwrap();
     assert_eq!(completed.outcome().name(), "completed");
     let failed = executor
@@ -137,7 +139,8 @@ fn echo_runs_through_the_binarys_executor_and_runs_list_and_show_read_it() {
             "{line:?} is not in:\n{text}"
         );
     }
-    assert!(text.contains("config: sha256:e3b0c442"));
+    // No config was named: the run is under the empty config (ADR 0011).
+    assert!(text.contains("config: sha256:9d60a543"));
     assert!(text.contains("  journal\t"));
 }
 
@@ -151,7 +154,7 @@ fn a_cancelled_run_is_listed_and_shown_as_cancelled_with_its_diagnostics() {
     let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
     let mut registry = whizbang::wiring::registry().expect("the registry builds");
     registry.register(Arc::new(Echo::new())).unwrap();
-    let executor = whizbang::wiring::runner(registry, store.clone());
+    let executor = runner(registry, store.clone());
     fs.pause_after_rename_onto("CURRENT", {
         let (executor, store) = (executor.clone(), store.clone());
         move || {
@@ -275,7 +278,7 @@ fn a_run_that_committed_an_output_is_shown_and_listed_with_it() {
         registry
             .register(Arc::new(Find(find.build().unwrap())))
             .unwrap();
-        let executor = whizbang::wiring::runner(registry, store);
+        let executor = runner(registry, store);
         let finished = executor.submit(&Call::new("find")).unwrap();
         assert_eq!(finished.outcome().outputs().len(), 1);
         finished.run().as_str().to_owned()
@@ -641,7 +644,7 @@ fn runs_show_escapes_every_text_a_run_was_given() {
         let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
         let mut registry = whizbang::wiring::registry().unwrap();
         registry.register(Arc::new(Echo::new())).unwrap();
-        let executor = whizbang::wiring::runner(registry, store);
+        let executor = runner(registry, store);
         let failed = executor
             .submit(
                 &echo("text \u{1b}[31m red").argument("fail", Value::text("it \u{1b}[2J broke")),
@@ -740,7 +743,7 @@ fn a_run_that_was_admitted_and_did_not_end_is_listed_and_shown_as_such() {
         registry
             .register(Arc::new(Boom(boom.build().unwrap(), fs)))
             .unwrap();
-        let executor = whizbang::wiring::runner(registry, store);
+        let executor = runner(registry, store);
         let unended = executor.request(&request("boom"));
         assert!(matches!(unended, Err(CallError::Store(_))), "{unended:?}");
         // The same request again, in the process that admitted it, is not run again.
@@ -815,7 +818,7 @@ fn a_run_a_killed_process_left_is_ended_by_the_next_writing_command_and_then_sho
         registry
             .register(Arc::new(Boom(boom.build().unwrap(), fs)))
             .unwrap();
-        let executor = whizbang::wiring::runner(registry, store);
+        let executor = runner(registry, store);
         let left = executor.request(&Request::new(Call::new("boom")).with_id(id));
         assert!(matches!(left, Err(CallError::Store(_))), "{left:?}");
     }
@@ -917,7 +920,7 @@ fn a_run_shows_the_request_id_it_was_made_for() {
         let store = Arc::new(Store::open(&root, Arc::new(RealFs)).unwrap());
         let mut registry = whizbang::wiring::registry().expect("the registry builds");
         registry.register(Arc::new(Echo::new())).unwrap();
-        let executor = whizbang::wiring::runner(registry, store);
+        let executor = runner(registry, store);
         let request = Request::new(echo("hello")).with_id(RequestId::parse("order-17").unwrap());
         executor
             .request(&request)
@@ -1006,7 +1009,7 @@ fn a_run_another_run_called_is_marked_in_the_list_and_each_is_shown_with_the_oth
         registry
             .register(Arc::new(Nests(nests.build().unwrap())))
             .unwrap();
-        let executor = whizbang::wiring::runner(registry, store);
+        let executor = runner(registry, store);
         let finished = executor.submit(&Call::new("nests")).unwrap();
         assert_eq!(finished.outcome().name(), "completed");
         finished.run().as_str().to_owned()

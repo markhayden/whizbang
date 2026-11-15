@@ -113,8 +113,10 @@ impl Recorder for Kept {
         // A name is refused only when it holds a secret: the exchange is then not
         // kept, and the record says so. Nor is one kept that would take, with the
         // secrets taken out, more than there is room for: redaction can lengthen it.
+        // An exchange is written as JSON by the handle, and is redacted as JSON, so
+        // that what is stored can be read back as one (ADR 0014, "A JSON body").
         let name = format!("{EXCHANGE_PREFIX}{:04}", place + 1);
-        let made = Diagnostic::written(&name, written, &self.secrets).ok()?;
+        let made = Diagnostic::written_json(&name, written, &self.secrets).ok()?;
         if !room(made.1.len() as u64) {
             return None;
         }

@@ -35,6 +35,9 @@ turned round, and what the gate's place knows of a request's classes.
 Amended: 2026-11-15, with task I4b (ADR 0015). Changed in "The run's recipients": a
 run that a process left after it had sent data is shown recovered, and the limit
 that said it was not is restated.
+Amended: 2026-11-15, with task W1 (ADR 0015, "The binary wired"). Changed under
+"Limits" and "For later tasks": the binary's executor is given its config's policy,
+and the check over a sender goes to the task that gives it a sender.
 Spec: section 10, "Egress"
 
 ## Context
@@ -575,7 +578,8 @@ Limits of it, each pinned or stated:
 - **A class is what whoever built the piece stated** (ADR 0012). Nothing here knows a
   source image from a derived one.
 - **Nothing here reads a config or gives an executor its policy.** That is tasks I6
-  and C5, and the binary has no ways out until task W1.
+  and C5. Task W1 gave the binary's executor the policy of its config, and no sender:
+  none is in the build (ADR 0015, "The binary wired").
 - **`may_probe` is asked by the checked probe, and nothing in the build makes one
   yet** ("A download and a probe").
 
@@ -589,7 +593,9 @@ Limits of it, each pinned or stated:
 - **Task I3.** The gate's place asks the same policy the same question,
   `may_receive(recipient, classes)`, with the classes a capability's request holds
   before any piece is made; a request it refuses does not reach the checked sender.
-- **Tasks I6 and W1.** The check an executor is given is
+- **Task I6, and the task that gives the binary a sender** (checkpoint 1C,
+  `docs/carry-over.md`; it was task W1's here, which had no sender to put a check
+  over). The check an executor is given is
   `SendCheck::new().keeping_out(root)`, with the root of its store. Give it the root
   as an absolute path, and its canonical spelling too when that differs. A relative
   root such as `.` refuses any part that holds a dot. A root that holds a space or a

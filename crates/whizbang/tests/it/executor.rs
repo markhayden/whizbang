@@ -10,6 +10,8 @@ use whizbang_core::store::{Reader, Store};
 use whizbang_testkit::echo::Echo;
 use whizbang_testkit::scratch::Scratch;
 
+use crate::preparer;
+
 fn reader(dir: &Scratch) -> Arc<Reader> {
     let root = dir.path().join("store");
     drop(Store::open(&root, Arc::new(RealFs)).expect("a store"));
@@ -43,7 +45,7 @@ fn a_picture() -> Image {
 fn the_shipping_executor_knows_no_echo() {
     let dir = Scratch::new("executor");
     let registry = whizbang::wiring::registry().expect("the registry builds");
-    let executor = whizbang::wiring::executor(registry, reader(&dir));
+    let executor = preparer(registry, reader(&dir));
     let call = Call::new("echo").argument("text", Value::text("hello"));
     assert_eq!(
         executor.prepare(&call),
@@ -56,8 +58,9 @@ fn the_shipping_executor_knows_no_echo() {
 #[test]
 fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge() {
     // `check` and `view` are registered where the binary builds its registry. The
-    // binary's executor holds no backend, so `check`, which needs a judge, is
-    // prepared as not ready, and says what is missing; `view` needs none.
+    // binary's executor is under the empty config, which offers no backend, so
+    // `check`, which needs a judge, is prepared as not ready, and says what is
+    // missing; `view` needs none.
     let dir = Scratch::new("executor");
     let registry = whizbang::wiring::registry().expect("the registry builds");
     let names: Vec<&str> = registry.descriptors().map(|d| d.name()).collect();
@@ -72,7 +75,7 @@ fn the_shipping_executor_describes_check_and_cannot_run_it_for_want_of_a_judge()
         image.id()
     };
     let reader = Arc::new(Reader::open(&root, Arc::new(RealFs)).expect("a reader"));
-    let executor = whizbang::wiring::executor(registry, reader);
+    let executor = preparer(registry, reader);
     let prepared = executor
         .prepare(&Call::new("check").input("images", image))
         .expect("check is prepared");
@@ -98,7 +101,7 @@ fn a_test_prepares_echo_on_the_executor_the_binary_builds() {
     registry
         .register(Arc::new(Echo::new()))
         .expect("echo is registered");
-    let executor = whizbang::wiring::executor(registry, reader(&dir));
+    let executor = preparer(registry, reader(&dir));
     let call = Call::new("echo").argument("text", Value::text("hello"));
     let prepared = executor.prepare(&call).expect("echo is prepared");
     // It needs no capability, so it is ready though no backend is configured.
@@ -107,14 +110,15 @@ fn a_test_prepares_echo_on_the_executor_the_binary_builds() {
         prepared.arguments(),
         [("text".to_owned(), Value::text("hello"))]
     );
-    // There is no config yet, and the binary says so with the digest of no bytes.
+    // A command that names no config is under the empty config, and the preparation
+    // names that config's digest (ADR 0011, "The digest").
     assert_eq!(
         prepared.config(),
-        whizbang_core::identity::Digest::of_bytes(b"")
+        whizbang_core::config::Config::empty().digest()
     );
     assert_eq!(
         prepared.config().to_string(),
-        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "sha256:9d60a543ea39be1ca1bc2c4e1a90094a59ded6bdcfdf1c21436f4026f207c4a6"
     );
     // This executor was built over a read of the store: it runs nothing.
     assert_eq!(
