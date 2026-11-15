@@ -893,6 +893,8 @@ the one task that was I2 and S1 in earlier drafts.
       histories the reviews produced" below, by name, with the balances it must give;
       and generated histories, bounded and seeded, 4,096 of at most 24 events each from
       a seed written in the test, each checked against invariants 1 to 6.
+      (1,000 from 2026-11-15, by the owner's decision on what cost control is for: every
+      generated suite was made smaller, to about a quarter. ADR 0016 has the sizes.)
       (With ADR 0016, 2026-11-14, of invariant 4: after every event of every history
       the checker holds that damage, a name made and a name lost change no
       reservation but their own, and that a damaged reservation is frozen or
@@ -2722,7 +2724,7 @@ its follow-ups were fixed; the third is put to the owner. No round followed it.
 |---|---|---|
 | A store fills while 1B's publications add names | A settlement or a recovery is refused | Each has its case at the limit: nothing is released, the run is abandoned, and deleting still works (I4, S5, S5b) |
 | An interface fixed early does not fit the strand that implements it | A base task is reopened and a strand waits | Each interface is the outline a review gave after three rounds of the tasks it serves; its task ships a fake that the strand's tests are first written against; a misfit is changed by a base task, never worked around in a strand |
-| The ledger under-counts money on some path | The allowance is overspent without an error | Six rounds of prose review each found one; so I2 settles the arithmetic against an executable model, 38 named histories and 4,096 generated ones (as built with ADR 0016: 87 named, the plan's 38 among them, and six generated suites), each asserted against the invariants, and every later ledger task is held to the same table. From 2026-11-15 that is as far as it goes: the strand is cut down, the tasks that are left add no proof, and what is accepted, in money, is in ADR 0016, "The strand cut down" |
+| The ledger under-counts money on some path | The allowance is overspent without an error | Six rounds of prose review each found one; so I2 settles the arithmetic against an executable model, 38 named histories and 4,096 generated ones (as built with ADR 0016: 87 named, the plan's 38 among them, and six generated suites, of 1,000 histories and fewer from 2026-11-15), each asserted against the invariants, and every later ledger task is held to the same table. From 2026-11-15 that is as far as it goes: the strand is cut down, the tasks that are left add no proof, and what is accepted, in money, is in ADR 0016, "The strand cut down" |
 | A crash or a damaged record leaves money counted that nothing clears by itself | The allowance reads as used, and a paid call is refused | `spend status` names what holds it and `spend reset` clears it (S9). Nothing else is built, by the owner's decision of 2026-11-15 |
 | Recovery's losses are felt | Someone needs to know what an interrupted run did | It is in no record, by decision; the carry-over line says who reopens it |
 | The record's shapes are fixed in B4 before the strands that fill them | A second version, `run/4`, inside one checkpoint | B4 follows B1 to B3, which decide the quote, the stage and the recipient; a wrong shape is a new version, never an edit |
