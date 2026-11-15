@@ -2,7 +2,6 @@
 //! folder, a clock a test moves by hand, backends that state a bound, a config's
 //! source a test swaps, and actions that do what a test says.
 
-use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -16,7 +15,7 @@ use whizbang_core::contract::{
 };
 use whizbang_core::identity::Digest;
 use whizbang_core::spend::fold::{Folded, fold};
-use whizbang_core::spend::{Amount, Record, StoreLedger, TurnBy};
+use whizbang_core::spend::{Amount, Record, StoreLedger};
 use whizbang_core::store::{self, Reader, Store};
 use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::scratch::Scratch;
@@ -330,32 +329,14 @@ pub fn books(store: &Store) -> Folded {
     fold(&store.snapshot().unwrap(), |entry| store.read(entry))
 }
 
-/// The owner's reset, as the names have it (ADR 0016, "What each publication makes"):
-/// the next epoch with this allowance, its guard, and the next turn of the epoch it
-/// closes, in one publication. It stands for `whizbang spend reset` until that command
-/// is built (plan 1B, task S9). What comes back is the epoch it opened.
+/// The owner's reset, as `whizbang spend reset` makes it (`spend::reset`; plan 1B,
+/// task S9): the next epoch with this allowance, its guard, and the next turn of the
+/// epoch it closes, in one publication. What comes back is the epoch it opened.
 pub fn allow(store: &Store, micros: u64) -> u64 {
-    let folded = books(store);
-    let closes = folded.epoch();
-    let epoch = NonZeroU64::new(closes + 1).unwrap();
-    plant(
-        store,
-        &[
-            Record::Reset {
-                epoch,
-                allowance: Amount::new(micros).unwrap(),
-                at_ms: 0,
-            },
-            Record::Epoch { epoch },
-            Record::Turn {
-                epoch: closes,
-                turn: NonZeroU64::new(folded.next_turn(closes)).unwrap(),
-                by: TurnBy::Reset,
-                run: None,
-            },
-        ],
-    );
-    epoch.get()
+    let allowance = Amount::new(micros).unwrap();
+    whizbang_core::spend::reset(store, allowance, 0)
+        .unwrap()
+        .epoch
 }
 
 /// Every name the store holds under `spend/`, in their order.

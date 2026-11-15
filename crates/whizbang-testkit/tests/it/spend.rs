@@ -117,15 +117,20 @@ fn every_generated_history_keeps_every_invariant() {
     assert!(all.after_an_overrun > 75, "{all:?}");
     assert!(all.after_an_overrun_of_something > 20, "{all:?}");
     assert!(all.late_across_other_hands > 75, "{all:?}");
-    assert!(all.needs_owner > 75, "{all:?}");
+    // As cut down, 2026-11-15, an epoch needs its owner for its turns alone, so
+    // fewer dispatches meet that refusal: 29 in these histories, where a frozen
+    // reservation of an amount that is unknown used to add to them (over 75).
+    assert!(all.needs_owner > 20, "{all:?}");
     // Every admission that stands is held to the truth and to the reading made
     // after its publication; some are published and not confirmed.
     assert!(all.admitted > 500, "{all:?}");
     assert!(all.not_confirmed > 12, "{all:?}");
     // A dispatch that was judged before the store came to need its owner is
     // published where it needs it; none that was judged there is, which is held
-    // of every dispatch of every suite.
-    assert!(all.judged_before_the_owner_was_needed > 5, "{all:?}");
+    // of every dispatch of every suite. (As cut down, 2026-11-15: 4 in these
+    // histories, where it was over 5 while an amount that is unknown also made
+    // a store need its owner. The second suite reaches more of them.)
+    assert!(all.judged_before_the_owner_was_needed > 3, "{all:?}");
     // The same seed and number give the same history.
     assert_eq!(generated(SEED, 7), generated(SEED, 7));
     assert_ne!(generated(SEED, 7), generated(SEED + 1, 7));
@@ -530,45 +535,48 @@ fn one_name_changed(
     let Some(is) = is.filter(|is| frozen(is) && !is.reachable) else {
         return Err(format!("{run} is not frozen: {is:#?}"));
     };
-    // Its amount is said to be unknown where it has not exactly one hold, and the
-    // store then says that it cannot tell how much is counted.
+    // Its amount is said to be unknown where it has not exactly one hold, and
+    // each epoch a hold of it names then says that it cannot tell how much is
+    // counted; every other epoch says what is counted, as it did (as cut down,
+    // 2026-11-15: it was the newest epoch that said so, whatever the holds named).
     ensure(
         is.unknown == is.epoch.is_none(),
         "its amount is known or not",
     )?;
-    ensure(
-        after.balance().unknown == is.unknown,
-        "the store says what is counted, or does not",
-    )?;
-    // Where its amount is unknown the store needs its owner, in every epoch. Where
-    // the name is one that takes a turn, lost or made, the epoch of its hold does.
-    // Otherwise its one hold states its amount, it is counted at the most its names
-    // can mean, and the store goes on: no epoch needs its owner that did not.
+    let every: BTreeSet<u64> = before.resets.keys().chain(&is.epochs).copied().collect();
+    for epoch in &every {
+        ensure(
+            after.balance_of(*epoch).unknown == (is.unknown && is.counts_in(*epoch)),
+            "an epoch says what is counted, or does not",
+        )?;
+    }
+    // Where the name is one that takes a turn, lost or made, the epoch that turn
+    // is owed in needs its owner: the one a hold names, lost or made, and
+    // otherwise the one the reservation's hold names. No other epoch does that
+    // did not: an amount that is unknown stops nothing by itself (as cut down,
+    // 2026-11-15: it made every epoch need its owner). A name made for a run
+    // that has no hold owes a turn in no epoch, and the store goes on.
     let damage = matches!(hands, Event::Damage(_));
     let takes_a_turn = matches!(
         name,
         Name::Held { .. } | Name::Settling { .. } | Name::Closed { .. } | Name::Adjusted { .. }
     );
-    if is.unknown {
-        for epoch in before.resets.keys() {
-            ensure(
-                after.needs_owner(*epoch),
-                "an epoch has no need of its owner",
-            )?;
-        }
-        tally.stops += 1;
-    } else if takes_a_turn && !damage {
-        let epoch = is.epoch.unwrap_or(after.epoch());
+    let owed_in = match name {
+        Name::Held { epoch, .. } => Some(*epoch),
+        _ => is.epoch,
+    };
+    let stopped = owed_in.filter(|_| takes_a_turn && !damage);
+    if let Some(epoch) = stopped {
         ensure(after.needs_owner(epoch), "its epoch has its turns")?;
         tally.stops += 1;
     } else {
-        for epoch in before.resets.keys() {
-            ensure(
-                after.needs_owner(*epoch) == before.needs_owner(*epoch),
-                "an epoch came to need its owner",
-            )?;
-        }
         tally.goes_on += 1;
+    }
+    for epoch in every.iter().filter(|epoch| Some(**epoch) != stopped) {
+        ensure(
+            after.needs_owner(*epoch) == before.needs_owner(*epoch),
+            "an epoch came to need its owner",
+        )?;
     }
     let none = (0, 0, 0);
     let was = before.reservations.get(&run);
@@ -576,7 +584,23 @@ fn one_name_changed(
     let truth = books.really(run);
     let took = truth.map_or(0, |(_, _, took)| took);
     if let Some((epoch, reserved, _)) = truth {
-        ensure(is.counts_in(epoch), "not counted in its epoch")?;
+        // It counts in the epoch it was really reserved in while the hold that
+        // says so is there. With that hold lost it counts in no epoch: limit (c),
+        // as cut down on 2026-11-15.
+        let own = Name::Held {
+            epoch,
+            run,
+            micros: reserved,
+        };
+        match (hands, *name == own) {
+            (Event::Remove(_), true) => {
+                ensure(
+                    !every.iter().any(|epoch| is.counts_in(*epoch)),
+                    "counted somewhere with no hold",
+                )?;
+            }
+            _ => ensure(is.counts_in(epoch), "not counted in its epoch")?,
+        }
         ensure(reserved == amount, "the truth has another amount")?;
     }
     // What it sent over its bound, when the name lost is a settlement's.
@@ -671,8 +695,7 @@ fn asked_for_real(
         )?;
     }
     // Nothing is dispatched under the reservation the name names; and nothing under
-    // any other of an epoch that needs its owner, which is every epoch where a
-    // reservation is frozen: a request of nothing among them.
+    // any other of an epoch that needs its owner: a request of nothing among them.
     for by in changed.executing_runs() {
         let root = changed.root_of(by);
         let own = name.of().is_some() && root == name.of();
@@ -836,8 +859,8 @@ fn every_name_of_whole_books_lost_or_damaged_alone_freezes_or_allows_no_more() {
     assert!(tally.charge_lost > 12, "{tally:?}");
     assert!(tally.amount_lost > 250, "{tally:?}");
     assert!(tally.needs_owner > 250, "{tally:?}");
-    // A frozen reservation whose hold states its amount stops nothing else; one
-    // whose amount is unknown, or whose name took a turn, stops the store.
+    // A frozen reservation stops nothing else, whether or not its hold states
+    // its amount; one whose name took a turn stops the epoch that turn is owed in.
     assert!(tally.goes_on > 2_500, "{tally:?}");
     assert!(tally.stops > 1_250, "{tally:?}");
     assert_eq!(tally.goes_on + tally.stops, tally.frozen, "{tally:?}");
@@ -1327,8 +1350,10 @@ fn what_the_ledger_could_not_have_written_is_frozen_at_the_most_it_can_mean() {
     books.apply(&Event::Plant(answered(1, 7)));
     let one = books.reservation(run).unwrap();
     assert_eq!((one.state, one.charged, one.counts), (State::Frozen, 8, 22));
-    // Names that name a run with no hold are a reservation of nothing, frozen, in
-    // every epoch: what they say was charged is counted.
+    // Names that name a run with no hold are a reservation of nothing, frozen:
+    // what they say was charged is what it counts for, at least, and with no hold
+    // it counts against no epoch's allowance and stops nothing (as cut down,
+    // 2026-11-15: it counted in every epoch, and the store needed its owner).
     let mut books = base();
     books.apply(&Event::Plant(Name::Settled {
         run: Run(9),
@@ -1341,16 +1366,18 @@ fn what_the_ledger_could_not_have_written_is_frozen_at_the_most_it_can_mean() {
         (stray.state, stray.epoch, stray.counts),
         (State::Frozen, None, 6)
     );
-    assert!(stray.counts_in(0) && stray.counts_in(1) && stray.counts_in(7));
-    assert_eq!(books.balance().counted, 10 + 6);
-    assert!(books.balance().needs_owner);
+    assert_eq!(stray.counted(), Counted::AtLeast(6));
+    assert!(!stray.counts_in(0) && !stray.counts_in(1) && !stray.counts_in(7));
+    let balance = books.balance();
+    assert_eq!((balance.counted, balance.unknown), (10, false));
+    assert!(!balance.needs_owner);
     // Two resets of one epoch: the smaller allowance.
     books.apply(&Event::Plant(Name::Reset {
         epoch: 1,
-        micros: 12,
+        micros: 8,
     }));
-    assert_eq!(books.balance().allowed, 12);
-    assert_eq!((books.balance().left, books.balance().debt), (0, 4));
+    assert_eq!(books.balance().allowed, 8);
+    assert_eq!((books.balance().left, books.balance().debt), (0, 2));
 }
 
 #[test]
@@ -2271,12 +2298,16 @@ fn an_allowance_is_its_resets_only_with_the_guard_and_with_neither_damaged() {
 }
 
 #[test]
-fn a_reset_does_not_clear_a_frozen_reservation_and_its_owners_correction_does() {
+fn a_reset_clears_a_frozen_reservation_and_its_owners_correction_changes_nothing_after_it() {
+    // Restated with the strand cut down (2026-11-15; ADR 0016, "The strand cut
+    // down"). It was `a_reset_does_not_clear_a_frozen_reservation_and_its_owners_
+    // correction_does`, and held that a frozen reservation counts in every epoch
+    // until it is corrected. A reset is now the one way to clear the books, so it
+    // clears this too.
+    //
     // A reservation of 10, frozen by damage and closed by recovery, in the first
-    // epoch. The owner resets: it counts in the new epoch as in every other, the
-    // amount and the amount again for its closing's place, and all of the new
-    // allowance is taken by it. The store has no need of its owner: what the
-    // allowance does not cover is refused for that.
+    // epoch. There it counts the amount and the amount again for its closing's
+    // place, 20 against an allowance of 10, and nothing more is admitted.
     let run = Run(1);
     let mut events = vec![
         reset(10),
@@ -2284,19 +2315,36 @@ fn a_reset_does_not_clear_a_frozen_reservation_and_its_owners_correction_does() 
         Event::Crash,
         Event::Damage(Name::Reservation(run)),
         Event::Recover,
-        reset(20),
         admit(2, 1),
     ];
     let (books, outcomes) = run_checked(&events).unwrap();
     assert_eq!(
-        outcomes[6],
+        outcomes[5],
         Outcome::Refused(Why::OverAllowance { left: 0 })
     );
+    let balance = books.balance();
+    assert_eq!(
+        (
+            balance.epoch,
+            balance.allowed,
+            balance.counted,
+            balance.debt
+        ),
+        (1, 10, 20, 10)
+    );
+    // The owner resets: the frozen reservation is still there and still counts 20
+    // in the epoch of its hold, and in the new epoch it counts nothing. All of
+    // the new allowance can be reserved.
+    events.extend([reset(20), admit(2, 1)]);
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[7], Outcome::Done);
     let one = books.reservation(run).unwrap();
     assert_eq!(
         (one.state, one.epoch, one.counts),
         (State::Frozen, Some(1), 20)
     );
+    assert!(one.counts_in(1) && !one.counts_in(2));
+    assert_eq!(books.fold().balance_of(1).counted, 20);
     let balance = books.balance();
     assert_eq!(
         (
@@ -2305,28 +2353,29 @@ fn a_reset_does_not_clear_a_frozen_reservation_and_its_owners_correction_does() 
             balance.counted,
             balance.left
         ),
-        (2, 20, 20, 0)
+        (2, 20, 1, 19)
     );
     assert!(!balance.needs_owner);
-    // A second reset does not clear it either: 20 of the 40 are taken by it, and
-    // the rest can be reserved.
-    events.extend([reset(40), admit(2, 21), admit(2, 1)]);
+    // A second reset: all 40 can be reserved, and no more.
+    events.extend([reset(40), admit(3, 41), admit(3, 1)]);
     let (books, outcomes) = run_checked(&events).unwrap();
     assert_eq!(
-        outcomes[8..],
+        outcomes[9..],
         [
-            Outcome::Refused(Why::OverAllowance { left: 20 }),
+            Outcome::Refused(Why::OverAllowance { left: 40 }),
             Outcome::Done
         ]
     );
-    assert_eq!((books.balance().counted, books.balance().left), (21, 19));
-    // The owner's correction of that reservation does: it falls under the epoch of
-    // its hold again, and the newest has its whole allowance but for the 1.
-    events.extend([Event::Adjust { run, micros: 4 }, admit(3, 1)]);
+    assert_eq!((books.balance().counted, books.balance().left), (1, 39));
+    // The owner's correction of that reservation is still read as the model has
+    // it, though no command writes one: it counts 4 in the epoch of its hold, and
+    // changes nothing in the newest.
+    events.extend([Event::Adjust { run, micros: 4 }, admit(4, 1)]);
     let (books, outcomes) = run_checked(&events).unwrap();
-    assert_eq!(outcomes[10..], [Outcome::Done, Outcome::Done]);
+    assert_eq!(outcomes[11..], [Outcome::Done, Outcome::Done]);
     let one = books.reservation(run).unwrap();
     assert_eq!((one.state, one.counts), (State::Adjusted, 4));
+    assert_eq!(books.fold().balance_of(1).counted, 4);
     let balance = books.balance();
     assert_eq!((balance.counted, balance.left), (2, 38));
     assert!(!balance.needs_owner);
@@ -2541,8 +2590,9 @@ fn the_turns_of_an_epoch_are_exactly_those_its_publications_took() {
         let (books, outcomes) = run_checked(&all).unwrap();
         assert_eq!(outcomes[11], Outcome::Refused(Why::NeedsOwner), "{hand:?}");
         // A reset starts them again: the new epoch's turns are its own. Where the
-        // name made froze a reservation, each of these has one hold that states
-        // its amount: it counts in the new epoch too, and stops nothing there.
+        // name made froze a reservation, its hold names the epoch the reset
+        // closed: it does not count in the new one (as cut down, 2026-11-15: it
+        // counted there too), and the call of nothing is the only thing there.
         let frozen = |one: &&Standing| one.state == State::Frozen;
         let folded = books.fold();
         let frozen: Vec<&Standing> = folded.reservations.values().filter(frozen).collect();
@@ -2552,8 +2602,8 @@ fn the_turns_of_an_epoch_are_exactly_those_its_publications_took() {
         assert_eq!(outcomes[13], Outcome::Done, "{hand:?}");
         let balance = books.balance();
         assert!(!balance.needs_owner, "{hand:?}");
-        let counted: u128 = frozen.iter().map(|one| one.counts).sum();
-        assert_eq!(balance.counted, counted, "{hand:?}");
+        assert!(frozen.iter().all(|one| !one.counts_in(2)), "{hand:?}");
+        assert_eq!((balance.counted, balance.left), (0, 5), "{hand:?}");
     }
     // A recovery that closes two reservations takes two turns.
     let events = [
@@ -2704,22 +2754,15 @@ fn a_store_that_needs_its_owner_starts_no_paid_work_and_still_settles_ends_recov
         second(dispatch(3, 4)),
         second(Event::Crash),
     ];
-    // Each way a store comes to need its owner: a turn lost, a turn made, and a
-    // name for a run that has no reservation, which no hold states an amount for.
-    // The first two are of the epoch alone; the third is a frozen reservation whose
-    // amount is unknown, and is of every epoch.
+    // Each way an epoch comes to need its owner: a turn lost, and a turn made. Both
+    // are of the epoch alone. (As cut down, 2026-11-15, there is no third: a name
+    // for a run that has no reservation, which no hold states an amount for, made
+    // every epoch need its owner, and now stops nothing. It is held below.)
     let hands = [
-        (Event::Remove(Name::Turn { epoch: 1, turn: 1 }), false),
-        (Event::Plant(Name::Turn { epoch: 1, turn: 50 }), false),
-        (
-            Event::Plant(Name::Stray {
-                run: Run(9),
-                count: 1,
-            }),
-            true,
-        ),
+        Event::Remove(Name::Turn { epoch: 1, turn: 1 }),
+        Event::Plant(Name::Turn { epoch: 1, turn: 50 }),
     ];
-    for (hand, frozen) in hands {
+    for hand in hands {
         let mut events = before.to_vec();
         events.push(hand.clone());
         events.extend([
@@ -2762,16 +2805,35 @@ fn a_store_that_needs_its_owner_starts_no_paid_work_and_still_settles_ends_recov
         );
         let second = books.reservation(Run(2)).unwrap();
         assert_eq!(second.charged, 12, "{hand:?}");
-        // A reset opens an epoch that needs nobody where it was the turns, and
-        // admissions start again; a frozen reservation whose amount is unknown
-        // stops them still. A run of the epoch that needs its owner sends nothing
-        // more either way.
-        let admitted = match frozen {
-            true => Outcome::Refused(Why::NeedsOwner),
-            false => Outcome::Done,
-        };
-        assert_eq!(outcomes[18], admitted, "{hand:?}");
+        // A reset opens an epoch that needs nobody, and admissions start again.
+        // A run of the epoch that needs its owner sends nothing more.
+        assert_eq!(outcomes[18], Outcome::Done, "{hand:?}");
+        assert!(!books.balance().needs_owner, "{hand:?}");
     }
+    // A name for a run that has no reservation: frozen, with an amount that no
+    // hold states. It counts against no epoch's allowance and stops nothing: a
+    // call is admitted and both runs send, as where nothing was made.
+    let mut events = before.to_vec();
+    events.extend([
+        Event::Plant(Name::Stray {
+            run: Run(9),
+            count: 1,
+        }),
+        admit(4, 0),
+        dispatch(1, 0),
+        dispatch(2, 0),
+    ]);
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(
+        outcomes[9..],
+        [Outcome::Done, Outcome::Placed(2), Outcome::Placed(2)]
+    );
+    let stray = books.reservation(Run(9)).unwrap();
+    assert_eq!((stray.state, stray.unknown), (State::Frozen, true));
+    assert!(!stray.counts_in(0) && !stray.counts_in(1));
+    let balance = books.balance();
+    assert!(!balance.needs_owner && !balance.unknown);
+    assert_eq!(balance.counted, 30);
     // Where nothing needs the owner, each of them is taken.
     let mut events = before.to_vec();
     events.extend([admit(4, 0), dispatch(1, 0), dispatch(2, 0)]);
@@ -3299,8 +3361,10 @@ fn known_one_hold_made_in_the_place_of_the_ledgers_states_the_amount_of_a_frozen
     assert_eq!(one.counted(), Counted::AtLeast(0));
     assert_eq!(books.run(run), Sent::Unbounded);
     assert!(books.balance().unknown);
-    // And the store then needs its owner: no amount can be counted for it.
-    assert!(books.balance().needs_owner);
+    // And the store goes on all the same: an amount that is unknown stops nothing
+    // (as cut down, 2026-11-15: the store then needed its owner).
+    assert!(!books.balance().needs_owner);
+    assert!(one.counts_in(1) && one.counts_in(2) && !one.counts_in(3));
 }
 
 /// What the histories of a suite reach of a dispatch, counted.
@@ -4306,25 +4370,37 @@ fn one_record_that_cannot_be_read_freezes_its_reservation_at_its_worst_and_stops
     assert_eq!(books.reservation(Run(2)).unwrap().state, State::Released);
     let first = books.reservation(Run(1)).unwrap();
     assert_eq!((first.state, first.counts), (State::Frozen, 25));
-    // It counts its worst in every epoch, whatever the owner resets to, until the
-    // owner corrects it.
-    events.extend([reset(26), admit(4, 2), admit(4, 1)]);
+    // It counts its worst in the epoch of its hold, and the owner's reset clears
+    // it: all of the new allowance can be reserved (as cut down, 2026-11-15: it
+    // counted its 25 in every epoch, and left 1 of 26, until it was corrected).
+    events.extend([reset(26), admit(4, 27), admit(4, 26)]);
     let (books, outcomes) = run_checked(&events).unwrap();
     assert_eq!(
         outcomes[15],
-        Outcome::Refused(Why::OverAllowance { left: 1 })
+        Outcome::Refused(Why::OverAllowance { left: 26 })
     );
     assert_eq!(outcomes[16], Outcome::Done);
     assert_eq!(books.balance().counted, 26);
+    let first = books.reservation(Run(1)).unwrap();
+    assert_eq!((first.state, first.counts), (State::Frozen, 25));
+    assert!(first.counts_in(1) && !first.counts_in(2));
+    // Its correction is taken and changes nothing that the new allowance can
+    // spend: the reservation was not counted there.
     events.extend([
         Event::Adjust {
             run: Run(1),
             micros: 5,
         },
-        admit(5, 25),
+        admit(5, 1),
     ]);
     let (books, outcomes) = run_checked(&events).unwrap();
-    assert!(outcomes[17..].iter().all(|one| *one == Outcome::Done));
+    assert_eq!(
+        outcomes[17..],
+        [
+            Outcome::Done,
+            Outcome::Refused(Why::OverAllowance { left: 0 })
+        ]
+    );
     assert_eq!(books.balance().counted, 26);
 }
 
@@ -4626,13 +4702,20 @@ fn the_limits_accepted_with_a_frozen_reservation_that_stops_nothing_else_each_co
     assert_eq!((balance.allowed, balance.counted), (20, 20));
     assert!(!balance.needs_owner && !balance.unknown);
     assert_eq!(committed(&books, &[1, 2]), 33);
-    // Where no amount can be counted at all the store still needs its owner, and
-    // nothing is admitted: history 67 (the hold lost, others left in other epochs)
-    // and history 70 (a charge over its bound lost with its guard and its place,
-    // which leaves the epoch a turn more than its names account for).
-    for number in [67, 70] {
-        assert!(named(number).balance().needs_owner, "{number}");
-    }
+    // History 67, limit (c), as cut down on 2026-11-15: the hold lost, others left
+    // in other epochs. No amount can be counted for it in its own epoch, and the
+    // store goes on: 10 are counted of 10, 20 are committed, 10 under, which is
+    // what was outstanding under the reservation whose hold was lost. (Before, the
+    // store needed its owner there, and nothing was admitted.)
+    let books = named(67);
+    let balance = books.balance();
+    assert_eq!((balance.allowed, balance.counted), (10, 10));
+    assert!(!balance.needs_owner && !balance.unknown);
+    assert_eq!(committed(&books, &[1, 2]), 20);
+    // Where an epoch's turns are not those its names account for, it still needs
+    // its owner, and nothing is admitted: history 70 (a charge over its bound lost
+    // with its guard and its place, which leaves the epoch a turn more).
+    assert!(named(70).balance().needs_owner);
     // The exception for an epoch's turns is of that epoch alone. History 88, limits
     // (b) and (d): a settlement at 12 over a bound of 5 is lost whole, the turn it
     // took left behind, after a reset closed its epoch. The old epoch needs its
