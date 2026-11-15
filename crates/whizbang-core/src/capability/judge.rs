@@ -1020,9 +1020,15 @@ impl JudgeHandle {
         };
         // The tally counted the request above; the wrappers stand between it and
         // the backend, and it is accounted for below, once they have returned.
-        let answer =
-            self.bounds
-                .through(Capability::Judge, declaration, classes, Turn::charge, ask);
+        let place = sent.as_ref().map(|sent| sent.place());
+        let answer = self.bounds.through(
+            place,
+            Capability::Judge,
+            declaration,
+            classes,
+            Turn::charge,
+            ask,
+        );
         // The provider's own words, in a turn or in a fault, have the run's secrets
         // taken out while they are whole, before anything keeps them or is told them.
         let redactor = self.bounds.redactor();

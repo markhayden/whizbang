@@ -953,7 +953,9 @@ its backend) and names ADR 0009, whose tally records each request. Tests named
 
 **`Around`, in the core** (`capability::Around`, also at `contract::Around`): what
 stands in one place between a handle and its backend. For each request it is told
-(`Wrapped`) the run, the run at the root of its tree, the capability, the backend's
+(`Wrapped`) the run, the run at the root of its tree, the request's place among
+those its run sent (added with task S10, for the run's spend lines: ADR 0016), the
+capability, the backend's
 declaration and its quote, the classes of data the request is said to hold, and the
 run's allowance and place for facts
 (`around::three_wrappers_see_a_request_in_the_stated_order_and_none_sees_one_the_handles_own_checks_refused`,

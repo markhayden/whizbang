@@ -44,6 +44,15 @@
 //! published fails the wrapper: the run is abandoned (ADR 0015), the dispatch has no
 //! settlement, and the request stays counted at its bound, in the process and in
 //! the books: over, never under.
+//!
+//! **Then it is a line of its run's record** (task S10; ADR 0013, "A paid request").
+//! Once the settlement is durable the meter notes the request in the run's place
+//! for facts ([`RunFacts::paid`](crate::contract::RunFacts::paid)): its place among
+//! the requests the run sent, what was held for it, what it was settled at, how much
+//! of that no answer settled, the stage it reached, and whether it is over its
+//! bound. The record lists the lines in the order the requests were sent, for a run
+//! of any outcome. The dispatch's own record names the same place. A request that
+//! was refused before it was dispatched has no line: it is among the run's refusals.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -51,7 +60,7 @@ use std::num::NonZeroU64;
 use std::sync::Arc;
 
 use crate::capability::{Around, Ended, Fault, FaultKind, Nothing, Open, Stage, Stop, Wrapped};
-use crate::contract::record::RECORD_KIND;
+use crate::contract::record::{Paid, RECORD_KIND};
 use crate::contract::{Clock, DispatchRefused, Dispatched, NotJudged, RefusalKind, RunId};
 use crate::store::{self, Generation, Store};
 
@@ -94,6 +103,7 @@ impl Books {
         &self,
         root: &RunId,
         by: &RunId,
+        request: Option<usize>,
         bound: Amount,
         failed: &RefCell<Option<String>>,
     ) -> Result<NonZeroU64, DispatchRefused> {
@@ -124,8 +134,11 @@ impl Books {
             let Some(place) = NonZeroU64::new(names.next_place()) else {
                 return Err(DispatchRefused::Frozen);
             };
-            // The run's own dispatches before this one: its place among them.
+            // The request's place among those its run sent, which is where the
+            // run's record lists it. A handle that was told none has only the
+            // run's own dispatches before this one to count.
             let before = names.at().iter().filter(|one| one.by.contains(by));
+            let request = request.map_or(before.count() as u64, |place| place as u64);
             let records = [
                 Record::Place {
                     run: root.clone(),
@@ -136,7 +149,7 @@ impl Books {
                     run: root.clone(),
                     place,
                     by: by.clone(),
-                    request: before.count() as u64,
+                    request,
                     bound,
                     at_ms: self.clock.now_ms(),
                 },
@@ -275,6 +288,20 @@ fn judged(ended: &Ended<'_>, bound: Amount) -> (Stage, Amount) {
     (stage, charged)
 }
 
+/// The line a run's record lists for a paid request that was settled (ADR 0013, "A
+/// paid request"): its place among the requests the run sent, what was held for
+/// it, which is its bound, and what it was settled at, by the stage it reached.
+fn line(request: usize, bound: Amount, stage: Stage, charged: Amount) -> Option<Paid> {
+    let held = bound.micros();
+    match stage {
+        Stage::NotSent => Paid::not_sent(request, held),
+        // The settled amount: the charge, or the bound where the answer gave none,
+        // and never nothing for an answer that stated no charge.
+        Stage::Answered => Paid::answered(request, held, charged.micros()),
+        Stage::Unresolved => Paid::unresolved(request, held),
+    }
+}
+
 /// A refusal of this kind that says this: the fault the action is handed says the
 /// same.
 fn stop(kind: RefusalKind, why: &str) -> Result<Box<dyn Open>, Stop> {
@@ -303,7 +330,10 @@ impl Around for Meter {
             return Ok(Box::new(Nothing));
         }
         let failed = RefCell::new(None);
-        let publish = || self.books.dispatch(asked.root, asked.run, bound, &failed);
+        let publish = || {
+            self.books
+                .dispatch(asked.root, asked.run, asked.request, bound, &failed)
+        };
         match allowance.dispatch(bound, publish) {
             Ok((dispatched, place)) => Ok(Box::new(Sent {
                 books: self.books.clone(),
@@ -348,6 +378,13 @@ impl Open for Sent {
         dispatched.answered(charged);
         books.settle(asked.root, place, bound, stage, charged)?;
         dispatched.settled(charged);
+        // The settlement is durable: the request is a line of its run's record
+        // (task S10), whatever the run then comes to.
+        if let Some(paid) = asked.request.and_then(|at| line(at, bound, stage, charged)) {
+            // A note that is not taken changes nothing that is counted: the books
+            // hold the request, and `spend status --run` shows it.
+            asked.facts.paid(paid);
+        }
         Ok(())
     }
 }

@@ -7,6 +7,7 @@ mod age;
 mod cap;
 mod close;
 mod fold;
+mod lines;
 mod meter;
 mod name;
 mod probe;
