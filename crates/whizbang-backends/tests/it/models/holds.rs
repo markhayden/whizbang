@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use whizbang_backends::models::{
-    Current, Hold, HoldRefused, Holds, InstallationRecord, ModelName, ModelsDir,
+    Current, Hold, HoldRefused, Holds, InstallRefused, InstallationRecord, ModelName, ModelsDir,
 };
 use whizbang_core::store::fs::{Fs, Held, RealFs};
 use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
@@ -16,10 +16,10 @@ use whizbang_testkit::threads;
 
 use super::attaching::{Other, root_from_parent, say, told};
 use super::publishing::{
-    entry_at, first, folder_of, hold_file_of, installations, installed, is_whole, reading,
-    record_of, second, tiny,
+    entry_at, first, flip, folder_of, hold_file_of, installations, installed, installing, is_whole,
+    reading, record_of, second, tiny,
 };
-use super::staging::names_under;
+use super::staging::{names_under, serving_both};
 use super::{MARKER, model, none, secrets};
 
 /// The holds of a process of its own over this directory, on the real file system.
@@ -137,6 +137,47 @@ fn a_hold_is_taken_under_the_directorys_lock_and_makes_nothing() {
     assert_eq!(names_under(&root), before);
     drop(held);
     assert_eq!(names_under(&root), before);
+}
+
+#[test]
+fn a_hold_asked_of_a_directory_where_nothing_was_installed_makes_the_directorys_lock_and_no_more() {
+    let scratch = Scratch::new("holds-empty");
+    let root = scratch.path();
+    let never = record_of(&second());
+    assert_eq!(
+        hold(&holds_over(root), &never).unwrap_err(),
+        HoldRefused::NotNamed
+    );
+    assert_eq!(names_under(root), ["LOCK"]);
+}
+
+#[test]
+fn a_hold_stops_a_repair_of_the_installation_in_use_until_it_is_let_go() {
+    // The installation in use is damaged: one byte of a file is another. A run
+    // holds it. Its repair would delete the folder: it is refused as held, the
+    // folder is kept as it is, and the pointer names it still.
+    let scratch = Scratch::new("holds-repair");
+    let root = scratch.path();
+    let record = installed(root, &second());
+    let damaged = folder_of(root, &record).join("files/graph.onnx");
+    flip(&damaged, 77);
+    let bytes = std::fs::read(&damaged).unwrap();
+    let holds = holds_over(root);
+    let held = hold(&holds, &record).unwrap();
+    let fake = serving_both();
+    let repair = installing(&Arc::new(ShimFs::new()), root, &second(), &fake);
+    assert_eq!(repair, Err(InstallRefused::Held));
+    assert_eq!(std::fs::read(&damaged).unwrap(), bytes);
+    assert_eq!(reading(root), Current::Installed(record.clone()));
+    assert_eq!(count(&holds, &record), 1);
+    // The pointer was put back: a second hold is given.
+    drop(hold(&holds, &record).unwrap());
+    // Let go: the repair passes, and the installation is whole.
+    held.let_go();
+    let repair = installing(&Arc::new(ShimFs::new()), root, &second(), &fake);
+    assert_eq!(repair, Ok(record.clone()));
+    is_whole(root, &record);
+    assert_eq!(reading(root), Current::Installed(record));
 }
 
 #[test]
