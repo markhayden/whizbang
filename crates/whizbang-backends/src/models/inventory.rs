@@ -13,9 +13,13 @@
 //! each time it is asked.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use whizbang_core::capability::{Installation, Installed, Inventory, Unready};
-use whizbang_core::contract::Secrets;
+use whizbang_core::capability::{
+    Around, Ended, Fault, FaultKind, Installation, Installed, Inventory, Nothing, Open, Stop,
+    Unready, Wrapped,
+};
+use whizbang_core::contract::{RefusalKind, Secrets};
 
 use super::install::{Current, current};
 use super::name::holds_secret;
@@ -110,8 +114,8 @@ impl Installations {
 
 impl Installations {
     /// A hold on the installation a run was admitted with, by its identity: what a
-    /// lease takes before a request to a local model leaves (ADR 0017, "What a
-    /// lease takes"). It is given or refused at once.
+    /// lease takes before a request to a local model leaves (ADR 0017, "The
+    /// lease"). It is given or refused at once.
     ///
     /// `model` is the name the backend declares, as [`Inventory::look`] is asked by
     /// it: looked up in the catalogue, and never made into a path. `admitted` is
@@ -139,5 +143,85 @@ impl Inventory for Installations {
             Ok(record) => Installed::Ready(Installation::of(record.identity().digest())),
             Err(why) => Installed::NotReady(why),
         }
+    }
+}
+
+/// The lease on an installation (ADR 0017, "The lease"; ADR 0015, "The backend a run
+/// is handed, and the lease's place"): what stands in the lease's place of an
+/// executor over this inventory ([`whizbang_core::contract::Place::Lease`]).
+///
+/// Before a request to a local model leaves, it takes a hold
+/// ([`Installations::hold`]) on the installation the run was admitted with: the
+/// identity the backend the run was handed declares as its version, which is the one
+/// the admission recorded. With the hold the request goes on, and the hold is let go
+/// when the request is over, however it ends. Without it the request is refused
+/// before the meter's place and the backend see it: its action is answered a fault
+/// that says nothing left, and the refusal is noted in the run's record. No other
+/// installation answers in the place of the one that was admitted.
+#[derive(Debug, Clone)]
+pub struct Lease {
+    installations: Arc<Installations>,
+}
+
+impl Lease {
+    /// The lease over the holds of this inventory's process.
+    pub fn over(installations: Arc<Installations>) -> Lease {
+        Lease { installations }
+    }
+}
+
+/// Why a request was refused a lease. Fixed words: no name, no path, no identity.
+fn why_not(refused: Option<HoldRefused>) -> String {
+    match refused {
+        None => "the run was not admitted under an installation of the model".to_owned(),
+        Some(HoldRefused::NotNamed) => {
+            "the model's installation was replaced or removed after the run was admitted".to_owned()
+        }
+        Some(other) => other.to_string(),
+    }
+}
+
+impl Around for Lease {
+    fn before(&self, asked: &Wrapped<'_>) -> Result<Box<dyn Open>, Stop> {
+        let declaration = asked.declaration;
+        // A backend that names a recipient answers with no model of this machine:
+        // nothing is held for it.
+        if !declaration.is_local() {
+            return Ok(Box::new(Nothing));
+        }
+        // A local backend is handed to a run under the identity of the installation
+        // the run was admitted with (ADR 0015). One that comes under any other
+        // version was admitted over no inventory: there is nothing to hold it to,
+        // and it is refused.
+        let model = declaration.model();
+        let held = match Installation::from_version(model.version()) {
+            Some(admitted) => self
+                .installations
+                .hold(model.model(), admitted)
+                .map_err(Some),
+            None => Err(None),
+        };
+        let why = match held {
+            Ok(hold) => return Ok(Box::new(Leased(hold))),
+            Err(refused) => why_not(refused),
+        };
+        let fault = Fault::new(FaultKind::Rejected, &why);
+        match Stop::new(RefusalKind::RequestNotReady, &why, fault) {
+            Some(stop) => Err(stop),
+            // The kind is one of a request: this is not reached.
+            None => Ok(Box::new(Nothing)),
+        }
+    }
+}
+
+/// What the lease holds for one request: the hold, which is let go when the lease
+/// is told how the request ended, and when it is dropped without being told (the
+/// backend panicked, or a place after the lease's did before the request left).
+struct Leased(Hold);
+
+impl Open for Leased {
+    fn after(self: Box<Self>, _: &Wrapped<'_>, _: &Ended<'_>) -> Result<(), String> {
+        self.0.let_go();
+        Ok(())
     }
 }

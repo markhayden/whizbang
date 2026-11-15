@@ -94,10 +94,11 @@ a link ("The inventory"; "A folder of the layout that is a link", what is not
 refused). Tests and words: a pointer or a record that cannot be read is damaged,
 by a refused call and by a refused permission; two limits of the inventory are on
 `docs/carry-over.md` with a milestone.
-Amended: 2026-11-15, with task M6b, as far as it could be built. Added: "What a
-lease takes", which is code (`inventory.rs`, `Installations::hold`), with the tests
-named `leases::…`. The lease itself, which stands in the lease's place of the
-executor (ADR 0015), is not built.
+Amended: 2026-11-15, with task M6b, in two pull requests. Added: "The lease", which
+is code (`inventory.rs`, `Installations::hold` and `Lease`), with the tests named
+`leases::…`. The first built the hold a lease takes, under the heading "What a lease
+takes"; the second, after the second half of task I7, the lease that stands in the
+lease's place of the executor (ADR 0015), and its tests go through an executor.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -172,8 +173,7 @@ installation record with its identity.
 | The deleting of a removed model's files | Code, with the tests named (task M5c) |
 | A folder of the layout that is a link | Code, with the tests named (task M5c, after its review) |
 | The inventory: readiness from what is installed | Code, with the tests named (task M6) |
-| What a lease takes: a hold on the admitted installation, by the declared name | Code, with the tests named (task M6b) |
-| The lease over it, in the executor | Not built: it stands in the lease's place (ADR 0015, "A wrapper around each request"), and waits for the run's backend, which is task I7's second half (`docs/carry-over.md`) |
+| The lease: a hold on the admitted installation, by the declared name, around each request to a local model | Code, with the tests named (task M6b) |
 
 ### The directory
 
@@ -1494,9 +1494,10 @@ offers one local backend.
   damaged after its publication and the first adapter that loads it: that
   adapter's task verifies, at the load or at the first lease in a process (1C,
   `docs/carry-over.md`).
-  *A run is handed no backend for a local model* until the lease is built (ADR
-  0015, "What waits"): "runs under the new installation" is what the run's action
-  is handed as its model's version, and no request reaches a model. *The draining
+  *In the inventory's own tests no request reaches a model:* "runs under the new
+  installation" is there what the run's action is handed as its model's version.
+  A run is handed its backend under that installation, and each request is
+  leased ("The lease"). *The draining
   mark is not read:* a model whose removal waits for holds is ready, and it is the
   lease that is refused then (task M6b); one whose pointer a removal has cleared
   is not installed. *An adapter this build does not have* makes an installed model
@@ -1505,46 +1506,74 @@ offers one local backend.
   is weighed with the command that lists models: 1C, `docs/carry-over.md`). *Nothing puts what a
   config offers over an inventory:* the tests give a roster (ADR 0015).
 
-### What a lease takes
+### The lease
 
-Code (task M6b: `inventory.rs`, `Installations::hold`; tests named `leases::…`).
-**The lease is not built.** It is what stands in the lease's place of the
-executor's order around a request (ADR 0015, "A wrapper around each request",
-`Place::Lease`). The place is there since task I3. No request reaches it for a
-local model over an inventory, because a run admitted for one is handed no backend
-yet: that is the second half of task I7 (ADR 0015, "What waits"), and the lease is
-built with it. What is here is what that lease will take, and it is complete on
-this side: `Installations::hold(model, admitted)` is a hold (`Holds::hold`) on the
-installation a run was admitted with, by its identity, asked by the name the
-backend declares.
+Code (task M6b: `inventory.rs`, `Lease` and `Installations::hold`; tests named
+`leases::…`). **The lease is what stands in the lease's place** of an executor over
+the inventory (ADR 0015, "A wrapper around each request", `Place::Lease`;
+`Engine::with_wrapper`): `Lease::over` an `Installations`. A run admitted for a local
+model is handed that model's backend under the identity of the installation the
+admission recorded (ADR 0015, "The backend a run is handed, and the lease's place"),
+and the lease is told that identity with every request of the run. Each test asks
+through an executor the test builds over the real inventory, with a fake meter in
+the place after the lease and a fake segmenter behind it.
 
+- **Before a request to a local model leaves, the lease takes a hold** on that
+  installation of that model, `Installations::hold(model, admitted)`: a hold of
+  "Holds" (`Holds::hold`), by the installation's identity, asked by the name the
+  backend declares. With it the request goes on to the meter's place and the
+  backend, and **the hold is let go when the request is over,** so the installation
+  is held exactly while a request is with its backend: taken alone by nobody
+  then, and free again after
+  (`leases::a_reinstall_or_a_removal_between_the_admission_and_the_lease_refuses_the_request_before_dispatch`,
+  its last part).
 - **The name is looked up in the catalogue,** as the inventory looks it up, and is
   never a path; a name the catalogue does not hold names no installation
   (`leases::a_hold_is_asked_by_a_declared_name_that_is_looked_up_in_the_catalogue`).
   The inventory keeps the holds of its process (`Holds`), so two requests of one
   process on one installation are one share of the hold file and a count.
 - **It is asked for the identity the admission recorded, not the one current at the
-  request.** When the pointer no longer names that installation, after a reinstall
-  under another revision or a removal, the hold is refused (`NotNamed`); while the
-  model is draining it is refused (`Draining`). No other installation answers in
-  its place: the hold is by identity, and there is no call that takes "whatever is
-  current".
-- **In the tests the action of an admitted run stands in the lease's place.** It
-  stops at a barrier once it is admitted, then asks for the hold on the identity
-  its call was prepared under, and reaches a counter that stands for the meter
-  only with it. With a reinstall, a removal, or a removal that is draining at the
-  barrier, the hold is refused and the counter has seen nothing; with nothing in
-  between it is given
-  (`leases::a_reinstall_or_a_removal_between_the_admission_and_the_lease_refuses_the_hold_and_nothing_is_metered`).
-  A second request of the same run, after the installation was replaced, is refused
-  the same way
+  request,** and a lease that cannot be had refuses the request before dispatch.
+  When the pointer no longer names that installation, after a reinstall under
+  another revision or a removal, the hold is refused (`NotNamed`); while the model
+  is draining it is refused (`Draining`). The request then reaches neither the
+  meter's place nor the backend: its action is answered a fault that says nothing
+  left (`rejected`, not sent), in fixed words that hold no name, no path and no
+  identity, and the refusal is noted in the run's record as a request that was not
+  ready. **No other installation answers in its place:** the hold is by identity,
+  and there is no call that takes "whatever is current". With a barrier between
+  the admission and the lease, a reinstall there, a removal there and a removal
+  that is draining there each end so, the fake meter and the backend having seen
+  nothing; with nothing in between the request is answered
+  (`leases::a_reinstall_or_a_removal_between_the_admission_and_the_lease_refuses_the_request_before_dispatch`).
+- **A retry inside an admitted run is leased again, for the same identity.** A run
+  whose installation was replaced after its first request is refused at its second
+  the same way, and the first's hold kept the superseded installation whole while
+  it was asked
   (`leases::a_retry_inside_an_admitted_run_whose_installation_was_replaced_is_refused_the_same_way`).
-  And a removal that starts while a request holds the model waits for it
+- **A removal that starts while a request holds the model waits for it,** and goes
+  on when the request is over
   (`leases::a_removal_that_starts_while_a_request_holds_the_model_waits_for_it`).
-  **These do not show the plan's clauses as worded:** "refused before dispatch" and
-  "a fake meter in the place after the lease" are the executor's order, which a
-  test's action cannot stand for. They show that the hold the lease will take
-  refuses in each case.
+- **The hold goes when what the lease holds is dropped,** and not only when the
+  lease is told how the request ended: when the backend panics under it, and when
+  the place after it panics before the request leaves, the installation was held
+  at that moment and is free afterwards
+  (`leases::a_lease_lets_its_hold_go_when_the_backend_panics_and_when_the_place_after_it_panics`).
+  The drop does nothing that can panic: it counts the process's holds on the
+  installation down under a guard that takes a poisoned lock as it is, and lets
+  the share of the hold file go with the last (`Hold::let_go`).
+- **What the lease does not hold.** A backend that names a recipient answers with
+  no model of this machine: its requests go by, and nothing is held for them. A
+  local backend that comes under a version that is no installation's identity
+  was admitted over no inventory: the lease has nothing to hold it to, and
+  refuses it
+  (`leases::a_backend_that_names_a_recipient_takes_no_lease_and_a_local_one_with_no_installation_is_refused`).
+- **Limits.** *A hold does not read the installation's files* ("Holds"; the
+  inventory's limit on unverified files, `docs/carry-over.md`). *A call with two
+  needs of one capability* is leased for the first's installation only (ADR 0015,
+  "An inventory", limits). *Nothing puts the lease in the binary's executor yet:*
+  that is its wiring (the plan's task W1), with what a config offers over an
+  inventory.
 - **The checkpoint's exit line for models** ("a model installs, attaches, cancels
   and drains with fake downloads", `SPEC.md` section 16) is one test, with this
   process on one side and a real second process on the other, each through this

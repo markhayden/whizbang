@@ -245,6 +245,11 @@ impl Hold {
 }
 
 impl Drop for Hold {
+    /// Lets the hold go if it was not let go. **Nothing here can panic:** a lease
+    /// drops its hold while a panic unwinds through the places around a request
+    /// (ADR 0015, "A wrapper around each request"), and a drop that panicked there
+    /// would abort the process. `let_go` takes its guard whether or not the lock is
+    /// poisoned, counts down without going under nothing, and drops a share.
     fn drop(&mut self) {
         self.let_go();
     }
