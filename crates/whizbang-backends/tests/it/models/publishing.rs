@@ -15,7 +15,7 @@ use whizbang_core::capability::{Fault, FaultKind};
 use whizbang_core::contract::{Cancellation, Secrets};
 use whizbang_core::store::fs::{Fs, Held, PIECE_MAX_BYTES, RealFs};
 use whizbang_testkit::downloads::FakeDownloader;
-use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
+use whizbang_testkit::fs_shim::{Event, Lost, ShimFs, Tail};
 use whizbang_testkit::scratch::Scratch;
 
 use super::staging::{
@@ -234,12 +234,6 @@ fn an_install_of_two_files_ends_with_the_pointer_naming_a_verified_installation(
     touches_only(&fs.events(), root);
     // Each staged file was read back from the disk before anything was published.
     let events = fs.events();
-    // The status is not made durable: no sync follows its rename.
-    let said_last = events
-        .iter()
-        .rposition(|event| matches!(event, Event::Rename(_, to) if to.ends_with("STATUS")))
-        .unwrap();
-    assert!(!events[said_last..].contains(&Event::SyncDir(tiny(root))));
     let renamed = index_of(
         &events,
         |event| matches!(event, Event::Rename(_, to) if *to == folder_of(root, &record)),
@@ -763,9 +757,15 @@ fn a_superseded_installation_is_deleted_when_no_hold_is_on_it_and_left_while_one
     let deleted = index_of(&events, |event| {
         *event == Event::Remove(folder_of(root, &new))
     });
-    let staged = index_of(&events, |event| matches!(event, Event::Begin(_)));
-    assert!(deleted < staged);
-    assert!(events[deleted..staged].contains(&Event::SyncDir(tiny(root).join("installations"))));
+    let pointing = index_of(&events, |event| *event == Event::Lock(root.join("LOCK")));
+    assert!(deleted < pointing);
+    assert_eq!(
+        events[deleted + 1],
+        Event::SyncDir(tiny(root).join("installations"))
+    );
+    // And not before the pointer it read was durable: the model's folder is synced
+    // before anything is deleted.
+    assert!(events[..deleted].contains(&Event::SyncDir(tiny(root))));
 }
 
 #[test]
@@ -795,6 +795,12 @@ fn what_the_pointer_does_not_name_is_deleted_and_a_folder_with_no_hold_file_gets
         b"not whizbang's"
     );
     touches_only(&fs.events(), root);
+    // With no pointer at all, the same: a folder that no pointer names is deleted,
+    // but for one of the identity being installed.
+    std::fs::remove_file(tiny(root).join("CURRENT")).unwrap();
+    std::fs::create_dir_all(folder_of(root, &never).join("files")).unwrap();
+    installed(root, &first());
+    assert_eq!(installations(root), [record.identity().hex()]);
     // With a pointer that cannot be read, which installation is in use is not
     // known: nothing is deleted before a new pointer is set.
     let held_one = installed(root, &second());
@@ -824,26 +830,37 @@ fn an_identity_that_is_on_the_disk_already_is_pointed_to_when_whole_and_replaced
             .iter()
             .any(|event| matches!(event, Event::Rename(_, to) if *to == folder))
     };
-    // In use and whole: nothing is renamed over it, the staging is dropped, and
-    // the pointer is as it was.
+    // In use and whole: nothing is downloaded and nothing is renamed over it. The
+    // folder that names it is synced, and the pointer is written and synced again:
+    // the install that made it may have been refused either sync.
+    // A staging folder that a dead install left is removed all the same.
+    std::fs::create_dir_all(incoming(root).join("files")).unwrap();
     let fs = Arc::new(ShimFs::new());
-    assert_eq!(
-        installing(&fs, root, &first(), &serving_both()).unwrap(),
-        record
-    );
+    let fake = serving_both();
+    assert_eq!(installing(&fs, root, &first(), &fake).unwrap(), record);
+    assert!(fake.requests().is_empty());
     assert!(!onto(&fs.events()));
-    assert!(!fs.events().iter().any(|event| matches!(event,
-            Event::Remove(p) | Event::Rename(_, p) if p.ends_with("CURRENT"))));
+    let events = fs.events();
+    let locked = index_of(&events, |event| *event == Event::Lock(root.join("LOCK")));
+    assert_eq!(
+        events[locked - 1],
+        Event::SyncDir(tiny(root).join("installations"))
+    );
+    assert_eq!(events[locked + 5], Event::SyncDir(tiny(root)));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, Event::Remove(p) if p.ends_with("CURRENT")))
+    );
     assert!(!incoming(root).exists());
     assert_eq!(said(root), Some((State::Installed, 2, 2)));
     // Superseded earlier and still held, whole: pointed to again, as it is.
     let hold = held(root, &record);
     let other = installed(root, &second());
     let fs = Arc::new(ShimFs::new());
-    assert_eq!(
-        installing(&fs, root, &first(), &serving_both()).unwrap(),
-        record
-    );
+    let fake = serving_both();
+    assert_eq!(installing(&fs, root, &first(), &fake).unwrap(), record);
+    assert!(fake.requests().is_empty());
     assert!(!onto(&fs.events()));
     assert_eq!(reading(root), Current::Installed(record.clone()));
     assert_eq!(installations(root), [record.identity().hex()]);
@@ -1025,25 +1042,41 @@ fn under_the_directorys_lock_a_publication_makes_the_hold_file_and_replaces_the_
 
 #[test]
 fn a_directory_whose_lock_is_not_let_go_refuses_the_publication_and_names_what_it_named() {
-    let scratch = Scratch::new("publish-directory-busy");
-    let root = scratch.path();
-    let before = installed(root, &first());
-    let other = RealFs
-        .hold_lock_file(&root.join("LOCK"), false)
-        .unwrap()
-        .unwrap();
-    let refused =
-        installing(&Arc::new(ShimFs::new()), root, &second(), &serving_both()).unwrap_err();
-    assert_eq!(refused, InstallRefused::DirectoryBusy);
-    assert_eq!(reading(root), Current::Installed(before.clone()));
-    // What was renamed in and never pointed to is deleted, and no hold file was
-    // made for it.
-    assert_eq!(installations(root), [before.identity().hex()]);
-    assert!(!hold_file_of(root, &record_of(&second())).exists());
-    assert_eq!(said(root), Some((State::Failed, 2, 2)));
-    drop(other);
-    let after = installed(root, &second());
-    assert_eq!(reading(root), Current::Installed(after));
+    // Over another installation, and as a first install.
+    for over in [true, false] {
+        let scratch = Scratch::new("publish-directory-busy");
+        let root = scratch.path();
+        let was = if over {
+            Current::Installed(installed(root, &first()))
+        } else {
+            Current::NotInstalled
+        };
+        let other = RealFs
+            .hold_lock_file(&root.join("LOCK"), true)
+            .unwrap()
+            .unwrap();
+        let refused =
+            installing(&Arc::new(ShimFs::new()), root, &second(), &serving_both()).unwrap_err();
+        assert_eq!(refused, InstallRefused::DirectoryBusy);
+        assert_eq!(reading(root), was);
+        // What was downloaded, read back and renamed in is not thrown away: it is
+        // left, whole and not named, with no hold file, for the next install of
+        // that identity.
+        let next = record_of(&second());
+        is_whole(root, &next);
+        assert_eq!(installations(root).len(), if over { 2 } else { 1 });
+        assert!(!hold_file_of(root, &next).exists());
+        assert_eq!(said(root), Some((State::Failed, 2, 2)));
+        drop(other);
+        // The next install of it downloads nothing, and points to it.
+        let fake = serving_both();
+        let fs = Arc::new(ShimFs::new());
+        assert_eq!(installing(&fs, root, &second(), &fake).unwrap(), next);
+        assert!(fake.requests().is_empty());
+        assert_eq!(reading(root), Current::Installed(next.clone()));
+        assert_eq!(installations(root), [next.identity().hex()]);
+        assert_eq!(said(root), Some((State::Installed, 2, 2)));
+    }
 }
 
 #[test]
@@ -1057,7 +1090,9 @@ fn a_mark_of_draining_stops_the_publication_before_a_hold_file_or_a_pointer_is_m
     let refused = installing(&fs, root, &second(), &serving_both()).unwrap_err();
     assert_eq!(refused, InstallRefused::Draining);
     assert_eq!(reading(root), Current::Installed(before.clone()));
-    assert_eq!(installations(root), [before.identity().hex()]);
+    // What was renamed in is left, whole and not named, with no hold file.
+    assert_eq!(installations(root).len(), 2);
+    is_whole(root, &record_of(&second()));
     assert!(!hold_file_of(root, &record_of(&second())).exists());
     assert!(
         !fs.events()
@@ -1380,4 +1415,113 @@ fn a_hold_file_that_was_made_and_never_synced_is_synced_by_the_next_to_publish_i
     fs.crash(Lost::Unsynced);
     assert_eq!(reading(root), Current::Installed(record.clone()));
     assert!(hold_file_of(root, &record).exists());
+}
+
+// --- nothing on the word of a name that is not durable ----------------------------------------
+
+/// The ways a crash loses names, for the tests of a refused sync and then a crash.
+const LOSSES: [Lost; 4] = [
+    Lost::Unsynced,
+    Lost::ContentOnly,
+    Lost::Names(0b0101),
+    Lost::Names(0b1010),
+];
+
+/// Installs the second entry with the sync that makes its pointer durable refused,
+/// over a directory prepared by `over`; says what the pointer was, and gives the
+/// disk it was done on. With `twice`, the next sync of the model's folder is
+/// refused too: the one that comes before anything is deleted.
+fn pointer_sync_refused(
+    root: &Path,
+    over: bool,
+    twice: bool,
+    tail: Tail,
+) -> (Current, Arc<ShimFs>) {
+    let before: Vec<Entry> = over.then(first).into_iter().collect();
+    let clean = events_after(&before.iter().collect::<Vec<_>>(), &second());
+    let synced = index_of(
+        &clean,
+        |event| matches!(event, Event::Rename(_, to) if to.ends_with("CURRENT")),
+    ) + 1;
+    let was = match before.first() {
+        Some(entry) => Current::Installed(installed(root, entry)),
+        None => Current::NotInstalled,
+    };
+    let fs = Arc::new(ShimFs::new().with_tail(tail).fail_before(synced));
+    if twice {
+        let (again, folder) = (fs.clone(), tiny(root));
+        fs.pause_before(synced, move || {
+            again.refuse_matching(0, move |event| *event == Event::SyncDir(folder.clone()));
+        });
+    }
+    let refused = installing(&fs, root, &second(), &serving_both()).unwrap_err();
+    assert!(matches!(refused, InstallRefused::Disk(_)), "{refused:?}");
+    // The rename has happened: the pointer names the new installation, not durably.
+    assert_eq!(reading(root), Current::Installed(record_of(&second())));
+    (was, fs)
+}
+
+const TAILS: [Tail; 4] = [Tail::Half, Tail::Zeroed, Tail::All, Tail::None];
+
+#[test]
+fn the_pointers_sync_refused_and_then_a_crash_leaves_the_old_installation_or_the_new_one_whole() {
+    let next = Current::Installed(record_of(&second()));
+    for (over, twice, tail) in [true, false]
+        .into_iter()
+        .flat_map(|over| [true, false].map(|twice| (over, twice)))
+        .flat_map(|(over, twice)| TAILS.map(|tail| (over, twice, tail)))
+    {
+        for lost in LOSSES {
+            let at = format!("over {over}, twice {twice}, {tail:?}, {lost:?}");
+            let scratch = Scratch::new("publish-sync-crash");
+            let root = scratch.path();
+            let (was, fs) = pointer_sync_refused(root, over, twice, tail);
+            // While the pointer is not durable, the installation it named before is
+            // not deleted.
+            if twice && over {
+                assert_eq!(installations(root).len(), 2, "{at}");
+            }
+            fs.crash(lost);
+            let now = reading(root);
+            assert!(now == was || now == next, "{at}: {now:?}");
+            if let Current::Installed(record) = &now {
+                is_whole(root, record);
+                assert!(hold_file_of(root, record).exists(), "{at}");
+            }
+            // The next install ends with the one installation, whole.
+            assert_eq!(installed(root, &second()), record_of(&second()), "{at}");
+            assert_eq!(reading(root), next, "{at}");
+            assert_eq!(installations(root), [record_of(&second()).identity().hex()]);
+        }
+    }
+}
+
+#[test]
+fn asking_again_after_the_pointers_sync_was_refused_makes_the_pointer_durable_before_it_answers() {
+    let next = record_of(&second());
+    for (over, twice, tail) in [true, false]
+        .into_iter()
+        .flat_map(|over| [true, false].map(|twice| (over, twice)))
+        .flat_map(|(over, twice)| TAILS.map(|tail| (over, twice, tail)))
+    {
+        let at = format!("over {over}, twice {twice}, {tail:?}");
+        let scratch = Scratch::new("publish-sync-retry");
+        let root = scratch.path();
+        let (_, fs) = pointer_sync_refused(root, over, twice, tail);
+        // The same process asks again. The installation is on the disk, whole and
+        // named: nothing is downloaded, and the answer is given only after the
+        // pointer was synced.
+        let fake = serving_both();
+        assert_eq!(
+            installing(&fs, root, &second(), &fake).unwrap(),
+            next,
+            "{at}"
+        );
+        assert!(fake.requests().is_empty(), "{at}");
+        fs.crash(Lost::Unsynced);
+        assert_eq!(reading(root), Current::Installed(next.clone()), "{at}");
+        is_whole(root, &next);
+        assert!(hold_file_of(root, &next).exists(), "{at}");
+        assert_eq!(installations(root), [next.identity().hex()], "{at}");
+    }
 }

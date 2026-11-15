@@ -182,6 +182,96 @@ fn a_crash_at_any_event_of_a_repair_leaves_it_as_it_was_not_installed_or_whole_p
     crashed_at_each_event(Sweep::Repair, 2, 3);
 }
 
+// --- a refused step, and then a crash ----------------------------------------------------------
+
+/// Installs the second entry with each event of one part of the install refused in
+/// turn, and crashes straight after: what a refused step left not durable is then
+/// lost, each way the disk can lose it. Under the loss of every name that was not
+/// synced, the same again with the install asked a second time before the crash:
+/// what it answers must be what the crash leaves.
+fn crashed_after_each_refused_step(sweep: Sweep, part: usize, parts: usize) {
+    let clean = {
+        let scratch = Scratch::new("crash-events");
+        sweep.prepare(scratch.path());
+        let fs = Arc::new(ShimFs::new());
+        installing(&fs, scratch.path(), &second(), &serving_both()).unwrap();
+        fs.events().len()
+    };
+    let next = record_of(&second());
+    let last = record_of(&sweep.reopening());
+    let cases = [
+        (Lost::Unsynced, false),
+        (Lost::Unsynced, true),
+        (Lost::Names(0b0101), false),
+        (Lost::Names(0b1010), false),
+    ];
+    let events = clean * part / parts..clean * (part + 1) / parts;
+    for (event, tail) in events.flat_map(|event| TAILS.map(|tail| (event, tail))) {
+        for (lost, again) in cases {
+            let at = format!("event {event}, {lost:?}, again {again}, {tail:?}");
+            let scratch = Scratch::new("crash-refused");
+            let root = scratch.path();
+            let was = sweep.prepare(root);
+            let fs = Arc::new(ShimFs::new().with_tail(tail).fail_before(event));
+            let mut ended = installing(&fs, root, &second(), &serving_both());
+            if again {
+                ended = installing(&fs, root, &second(), &serving_both());
+                assert_eq!(ended, Ok(next.clone()), "{at}");
+            }
+            fs.crash(lost);
+            let now = reading(root);
+            if ended.is_ok() {
+                // What was answered is what the crash left.
+                assert_eq!(now, Current::Installed(next.clone()), "{at}");
+            } else {
+                assert!(
+                    now == was || now == Current::Installed(next.clone()),
+                    "{at}: {now:?}"
+                );
+            }
+            if let Current::Installed(record) = &now {
+                is_whole(root, record);
+                assert!(hold_file_of(root, record).exists(), "{at}");
+            }
+            assert_eq!(installed(root, &sweep.reopening()), last, "{at}");
+            assert_eq!(reading(root), Current::Installed(last.clone()), "{at}");
+            is_whole(root, &last);
+            assert_eq!(installations(root), [last.identity().hex()], "{at}");
+            assert!(!incoming(root).exists(), "{at}");
+        }
+    }
+}
+
+#[test]
+fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_1_of_2()
+ {
+    crashed_after_each_refused_step(Sweep::First, 0, 2);
+}
+
+#[test]
+fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_2_of_2()
+ {
+    crashed_after_each_refused_step(Sweep::First, 1, 2);
+}
+
+#[test]
+fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_1_of_3()
+ {
+    crashed_after_each_refused_step(Sweep::Over, 0, 3);
+}
+
+#[test]
+fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_2_of_3()
+ {
+    crashed_after_each_refused_step(Sweep::Over, 1, 3);
+}
+
+#[test]
+fn a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_3_of_3()
+ {
+    crashed_after_each_refused_step(Sweep::Over, 2, 3);
+}
+
 // --- a process that dies inside a download -----------------------------------------------------
 
 #[test]

@@ -5,7 +5,7 @@
 //! It is written for whoever is not the installer: a second request that attaches to
 //! a running install (task M3), and a person. Nothing is decided from it. Whether an
 //! install is running is said by the model's lock; which installation is in use is
-//! said by the pointer. So it is not made durable, and a crash can leave one that
+//! said by the pointer. So it is given no sync of its own, and a crash can leave one that
 //! says "installing" with no installer alive: a status that says so while the model's
 //! lock is free is the status of an install that died.
 
@@ -165,8 +165,8 @@ pub fn status(
 }
 
 /// Replaces the model's status record, for one who holds the model's lock. The
-/// record is written whole beside the old one and renamed over it; the rename is not
-/// made durable.
+/// record is written whole beside the old one and renamed over it; the rename is
+/// given no sync of its own.
 pub(super) fn write(dir: &ModelsDir, model: &ModelName, status: &Status) -> io::Result<()> {
     let folder = dir.model(model);
     let new = folder.join("STATUS.new");

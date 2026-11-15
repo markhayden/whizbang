@@ -28,6 +28,12 @@ installation's folder belongs. Changed: "The pointer" and "Publishing" are code
 the second pull request's. Words, from the review of task M2: what a download asks
 for and keeps, what a refused staging removes, a link where a fixed folder or a lock
 file belongs, and that a disk's refusal of a piece is not a file that is too long.
+Amended: 2026-11-14, after the review of that pull request. Changed, in code and
+here: nothing is deleted, and no install is reported done, on the word of a name that
+is not durable ("Publishing"); an identity that is on the disk already and whole is
+not downloaded again; a publication refused after its folder was renamed in leaves
+the folder for the next install of that identity. Words: what a refused repair
+leaves, the limit on the last sync, and what the status says then.
 Amended: 2026-11-14, with the second pull request of task M2b. Tests only, named
 `crashes::…`: under "For later tasks", the crashes of an install name the tests that
 hold them, with what the test kit's disk cannot show; a process that dies inside a
@@ -175,8 +181,8 @@ of `docs/carry-over.md` on those locks names the models directory too.
   **How it is taken.** The store's interface has no lock taken alone that waits, so
   the directory's lock is tried, 20,000 times at most, giving way to other threads
   between tries and sleeping nowhere; whoever has it lets it go after a few calls of
-  the file system. One who is not given it by then is refused as busy and has
-  changed no pointer
+  the file system. One who is not given it by then is refused as busy; a
+  publication has changed no pointer, and a repair may have cleared one
   (`publishing::a_directory_whose_lock_is_not_let_go_refuses_the_publication_and_names_what_it_named`).
 - **A model's lock** (`models/<model>/LOCK`) is taken alone by one install of that
   model, for the whole of it, a download included; and by a removal for its work on
@@ -641,23 +647,29 @@ touched to the end
 
 1. **What the pointer does not name is deleted,** as below, and a pointer being
    written that a dead publication left (`CURRENT.new`) is removed.
-2. The files are staged, and **each staged file is read back from the disk** through
+2. **An identity that is on the disk already and whole is not downloaded again.**
+   The folder of the identity being installed, when there is one, is read against
+   the record: its `RECORD` byte for byte, its files each by size and hash, and
+   nothing else in it. Whole, it is what would be staged, and the install goes to
+   step 6 with it. Otherwise:
+3. The files are staged, and **each staged file is read back from the disk** through
    the store's streamed read (ADR 0018), a piece of at most 1 MiB at a time, counted,
    and stopped one byte past its size. It is held to its size and its hash, both: a
    file of the right length with one byte another, a file a byte longer or shorter, a
    missing file and a link where the file belongs each end the install, and nothing
    is published
    (`publishing::a_staged_file_that_is_not_on_the_disk_as_it_was_downloaded_is_not_published`).
-3. **A cancellation is asked for the last time here,** when the staged files have
+4. **A cancellation is asked for the last time here,** when the staged files have
    been read back. A cancel that arrives after the downloader handed over the last
-   file and before this ends the install as cancelled; from the rename of step 4 on,
+   file and before this ends the install as cancelled; from the rename of step 5 on,
    the publication runs to its end and the answer is the installation
    (`publishing::a_cancel_before_the_staged_folder_is_renamed_ends_the_install_and_one_after_it_does_not`).
-4. `RECORD` is written into the staging folder and the folder synced. The staged
+5. `RECORD` is written into the staging folder and the folder synced. The staged
    folder, with its `RECORD` and its `files/`, is renamed to
-   `installations/<64 hex digits>`, and `installations/` is synced. Nothing names it
-   yet.
-5. Under the directory's lock: the draining mark is read, and with one set nothing
+   `installations/<64 hex digits>`. Nothing names it yet.
+6. `installations/` is synced, for a folder renamed in now and for one found
+   whole: whoever renamed that one may have been refused this sync.
+7. Under the directory's lock: the draining mark is read, and with one set nothing
    more is published (the install is refused; task M5d makes it stop sooner); the
    identity's hold file is made if it is not there, and `holds/` synced, whether the
    file was made now or found; the new pointer is written beside the old and renamed
@@ -666,13 +678,24 @@ touched to the end
    (`publishing::under_the_directorys_lock_a_publication_makes_the_hold_file_and_replaces_the_pointer_and_no_more`,
    `publishing::a_mark_of_draining_stops_the_publication_before_a_hold_file_or_a_pointer_is_made`,
    `publishing::a_hold_file_that_was_made_and_never_synced_is_synced_by_the_next_to_publish_its_identity`).
-6. What the pointer does not name is deleted again, as below.
+8. What the pointer does not name is deleted again, as below.
+
+**Nothing is deleted, and no install is reported done, on the word of a name that is
+not durable.** The deleting syncs the model's folder before it reads the pointer, and
+deletes nothing when that sync is refused: a pointer whose rename a crash can still
+undo may come back naming what was superseded. And an install that finds its
+identity whole and named already goes through step 7 all the same, hold file, pointer
+and both syncs, before it answers: the install that set that pointer may have been
+refused the sync that makes it durable
+(`publishing::the_pointers_sync_refused_and_then_a_crash_leaves_the_old_installation_or_the_new_one_whole`,
+`publishing::asking_again_after_the_pointers_sync_was_refused_makes_the_pointer_durable_before_it_answers`).
 
 A crash before the pointer's rename is durable leaves the model as it was: the pointer
 names what it named, or nothing. A folder under `installations/` that the pointer does
 not name is not an installation in use, and is cleaned as below.
 
-- **A refused install leaves the pointer naming what it named,** removes its staging
+- **A refused install leaves the pointer naming what it named;** a repair refused
+  after it cleared the pointer leaves the model not installed. It removes its staging
   under the model's lock, and says how it ended in the status record
   (`publishing::a_failed_install_leaves_the_previous_installation_named_and_readable_and_its_status_says_how_it_ended`).
   Each step of the file system refused in turn leaves the model as it was, or, for a
@@ -686,6 +709,12 @@ not name is not an installation in use, and is cleaned as below.
   staging folder that is on another file system, by a link at `staging/`, makes the
   rename fail: that is a refusal, not damage
   (`publishing::a_staging_folder_on_another_file_system_is_a_refusal_and_not_damage`).
+- **A publication refused after its folder was renamed in leaves the folder,** whole
+  and not named: the mark was set, or the directory's lock was not let go, or a step
+  of the file system was refused. What was downloaded is not thrown away; the next
+  install of that identity finds it (step 2), and a removal, or an install of
+  another identity, deletes it
+  (`publishing::a_directory_whose_lock_is_not_let_go_refuses_the_publication_and_names_what_it_named`).
 - **A record that would spell a secret the installer was told of is not made,** and
   then nothing is made, asked or written; nothing an install writes holds one
   (`publishing::a_record_that_would_spell_a_secret_is_not_installed_and_nothing_written_holds_one`).
@@ -694,7 +723,8 @@ not name is not an installation in use, and is cleaned as below.
   `installations/` and the pointer does not name it; there is no mark for it. **It is
   deleted by one routine,** which every install runs under the model's lock, at its
   start and at its end, and which every removal of the model will run (tasks M5b and
-  M5c), over everything under `installations/` that the pointer does not name: it
+  M5c), over everything under `installations/` that the pointer does not name, but
+  for a folder of the identity an install is installing: it
   tries the hold file alone, once,
   without waiting; with it, it deletes the folder and syncs; without, it leaves the
   folder for the next install or removal
@@ -708,13 +738,12 @@ not name is not an installation in use, and is cleaned as below.
   (`publishing::what_the_pointer_does_not_name_is_deleted_and_a_folder_with_no_hold_file_gets_none`).
   The routine reads the pointer without the directory's lock: a pointer is changed
   only by one who holds the model's lock, which the routine's caller does.
-- **An identity that is on the disk already.** The same identity, installed before
-  and superseded while held, or in use: the folder that is there is read against the
-  record, its `RECORD` byte for byte, its files each by size and hash, and nothing
-  else in it. Whole, it is what was staged: the staging is dropped and the pointer
-  names it, or is left when it names it already. Damaged and not in use, it is
-  deleted when its hold file is free, and the staged folder renamed in; held, the
-  install is refused as busy
+- **An identity that is on the disk already** (step 2): installed before and
+  superseded while held, in use, or renamed in by an install that was refused before
+  it pointed to it. Whole, nothing is downloaded and the pointer is set to it, again
+  when it names it already. Damaged and not in use, it is deleted when its hold
+  file is free, and the staged folder renamed in; held, the install is refused as
+  busy
   (`publishing::an_identity_that_is_on_the_disk_already_is_pointed_to_when_whole_and_replaced_when_damaged`).
 - **A repair has the identity of what it repairs,** and so the same folder. Under the
   model's lock, the damaged installation is removed first, as a removal removes it:
@@ -760,7 +789,11 @@ under the format `status/1`, in one form:
   each file is staged, and when the install ends, however it ends. It is written
   whole beside the old one (`STATUS.new`) and renamed over it. An install that never
   had the lock (busy, a secret in a name, cancelled before it began) writes none.
-- **Nothing is decided from it, and it is not made durable.** Whether an install is
+- **After a refused sync of the pointer it says `failed` while the pointer names the
+  new installation** ("Limits"): the install was refused, and it is the pointer that
+  says what is installed. Asking again answers with the installation and says
+  `installed`.
+- **Nothing is decided from it, and it is given no sync of its own.** Whether an install is
   running is said by the model's lock; which installation is in use is said by the
   pointer. A crash can leave a status that says `installing` with no installer
   alive: a status that says so while the model's lock is free is the status of an
@@ -856,14 +889,20 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   pointer does not name it.
 - **The last sync of a publication.** When the sync that makes the new pointer
   durable is refused, the install is refused and the pointer names the new
-  installation, which is whole: the rename has happened, and is not taken back. A
-  crash then leaves the old pointer or the new one
-  (`publishing::each_step_of_the_file_system_refused_leaves_the_previous_installation_or_the_new_one_whole`).
+  installation, which is whole: the rename has happened, and is not taken back.
+  Until a sync of the model's folder passes, the installation the pointer named
+  before is not deleted, so a crash then leaves the old pointer with its
+  installation whole, or the new one with its own. Asking again syncs before it
+  answers
+  (`publishing::each_step_of_the_file_system_refused_leaves_the_previous_installation_or_the_new_one_whole`,
+  `publishing::the_pointers_sync_refused_and_then_a_crash_leaves_the_old_installation_or_the_new_one_whole`).
 - **The directory's lock is tried, not waited for,** a bounded count of times
   ("Three kinds of lock"). Under a holder that is slow to sync, a publication can be
   refused as busy with its installation renamed in and not named; the folder is
-  deleted at the end of that install or by the next. A lock taken alone that waits
-  is not in the store's interface (`docs/carry-over.md`).
+  left, and the next install of that identity points to it without a download. A
+  repair refused so after it cleared the pointer leaves the model not installed. A
+  lock taken alone that waits is not in the store's interface
+  (`docs/carry-over.md`).
 - **A reader that holds no lock does not read the files.** `current` answers from the
   pointer and the record; that the files are whole is held when they are published
   and when the same identity is published again.
@@ -946,7 +985,11 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   no hold file was never published: it is deleted, and no hold file is made for it.
 - **The crashes the tests of M2b and M5c hold,** each reopened by the next to take the
   model's lock. The first three rows and the last are held by task M2b, as below
-  the table; the two of removal are task M5c's:
+  the table; the two of removal are task M5c's. "Step 1" in it is the rename of the
+  staged folder and its sync (steps 5 and 6 of "Publishing"), and "step 2" the pointer
+  (step 7). Where a row says the next deletes a folder the pointer does not name, the
+  next is a removal or an install of another identity: an install of the same
+  identity points to the folder when it is whole, and deletes it when it is not:
 
   | A crash | What is on the disk | What the next does | The model is |
   |---|---|---|---|
@@ -978,6 +1021,13 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   - a repair of a damaged installation in use, where the model is also read as not
     installed once the pointer was cleared: the last row
     (`crashes::a_crash_at_any_event_of_a_repair_leaves_it_as_it_was_not_installed_or_whole_part_1_of_3`,
+    `…part_2_of_3`, `…part_3_of_3`).
+  - **a refused step and then a crash:** each event of an install refused in turn,
+    and the crash straight after, with the install asked again before the crash or
+    not. Asked again, the answer is given only for what the crash then leaves
+    (`crashes::a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_1_of_2`,
+    `…part_2_of_2`,
+    `crashes::a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_1_of_3`,
     `…part_2_of_3`, `…part_3_of_3`).
 
   **What the sweeps cannot show,** and what stands in for it. The test kit's disk

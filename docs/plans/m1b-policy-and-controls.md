@@ -1596,7 +1596,7 @@ file by its catalogue name, escaped and cut, with no path (rule 3).
 **Depends on:** M2. **Reads:** rascal `tools/python/src/rascal_tools/installs.py`
 (`publish`).
 
-- [x] Staged files become an installation and the pointer is replaced, through the same
+- [ ] Staged files become an installation and the pointer is replaced, through the same
       file-system interface the store uses, so the shim can crash it. The installer
       publishes a status record as it goes: installing, how far, and how it last ended.
 
