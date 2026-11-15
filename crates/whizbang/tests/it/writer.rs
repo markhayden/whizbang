@@ -41,18 +41,16 @@ fn the_binary_opens_a_store_to_write_in_one_place_and_through_the_entry_point() 
     ] {
         assert!(names.contains(&expected), "{names:?}");
     }
-    // The three ways the store module opens a store to write, and the entry point's
-    // own three: by any path to them, a call ends in one of these.
-    let opens = ["open(", "open_existing(", "open_in_existing_parent("];
+    // The store's own opens are named `open`, `open_existing` and
+    // `open_in_existing_parent`, and so are the entry point's: a line of code that
+    // names one, called or not, holds `Store::open` or `Opening::open`.
     for (name, text) in &sources {
         for line in code(text) {
-            // The store's own open is called nowhere: no writer without a recovery.
-            for open in opens {
-                assert!(
-                    !line.contains(&format!("Store::{open}")),
-                    "{name} opens a store to write past the entry point: {line}"
-                );
-            }
+            // The store's own open is named nowhere: no writer without a recovery.
+            assert!(
+                !line.contains("Store::open"),
+                "{name} opens a store to write past the entry point: {line}"
+            );
             // The store's type is named where a writer is held, and nowhere is it
             // brought in under another name.
             assert!(
@@ -60,11 +58,8 @@ fn the_binary_opens_a_store_to_write_in_one_place_and_through_the_entry_point() 
                 "{name}: {line}"
             );
             // The entry point is opened in the wiring, and nowhere else.
-            let opening = opens
-                .iter()
-                .any(|open| line.contains(&format!("Opening::{open}")));
             assert!(
-                !opening || name == "wiring.rs",
+                !line.contains("Opening::open") || name == "wiring.rs",
                 "{name} opens a store past `wiring::opening`: {line}"
             );
         }
