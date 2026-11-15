@@ -25,7 +25,7 @@ mod ways;
 pub(crate) use checked::NoWayOut;
 pub use checked::{CREDENTIALS_LIMIT, Denied, Hop, HopCheck, NoHop, Ways};
 pub use classes::{Classes, DataClass};
-pub use hops::{KEPT_OUT_LIMIT, SendCheck};
+pub use hops::{KEPT_OUT_LIMIT, MOVES_LIMIT, SendCheck};
 pub use policy::{APPROVED_LIMIT, DispatchPolicy};
 pub use recipient::{
     ACCOUNT_LIMIT, ADDRESS_MAX_BYTES, Account, Address, Credential, Origin, Recipient,

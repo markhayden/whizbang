@@ -7,8 +7,11 @@
 //! policy approves the recipient for every class of data the request holds. A check
 //! is asked last, and can only refuse.
 //!
-//! **This check approves a first address, and no address an answer pointed to.**
-//! Following an answer that points elsewhere is task E3's.
+//! **Every hop is checked** (task E3). An answer that points elsewhere comes back to
+//! the backend as an address, and the request the backend then makes of it is asked
+//! everything again, from the first question. What this check adds is the limit on a
+//! chain: one request of a backend is pointed elsewhere [`MOVES_LIMIT`] times at
+//! most.
 //!
 //! **And it looks at what would leave** (task E6): an image leaves only as the
 //! encoder writes its pixels (`pixels.rs`), and no part of a request holds an
@@ -23,9 +26,14 @@ use super::{Denied, Hop, HopCheck, NotAllowed};
 /// The most folders a check keeps out.
 pub const KEPT_OUT_LIMIT: usize = 8;
 
-/// What the check answers once an answer has pointed its backend elsewhere.
-const MOVED: &str = "an answer pointed this backend elsewhere in this run, and the address \
-                     of no request after that is approved";
+/// The most answers that may point one request of a backend elsewhere. It is the
+/// number squint followed (`MAX_REDIRECTS`), counted as squint counted it: for one
+/// request.
+pub const MOVES_LIMIT: u32 = 5;
+
+/// What the check answers of a request that was pointed elsewhere too often.
+const MOVED: &str = "the request was pointed elsewhere more than 5 times, and is not \
+                     followed further";
 
 /// What it answers of a part that holds a path.
 const PATH: &str = "a part of the request holds an absolute path, and no path leaves the \
@@ -86,14 +94,15 @@ fn starts_as_an_image(bytes: &[u8]) -> bool {
     webp || starts.iter().any(|start| bytes.starts_with(start))
 }
 
-/// The check behind a send. It approves an address while no answer has pointed its
-/// backend elsewhere in the run, and refuses every address after one has.
+/// The check behind a send. It approves an address while the request of the backend
+/// that the send is part of has been pointed elsewhere [`MOVES_LIMIT`] times at
+/// most, and refuses every address of that request after that.
 ///
-/// It goes by [`Hop::total_moves`], which never goes back, and not by the moves in a
-/// row: a request of the same backend that is answered meanwhile sets those back to
-/// nothing, and the address an answer pointed to would then pass for a first one.
-/// So once one answer of a backend has pointed elsewhere, every later request of
-/// that backend in that run is refused, a first address among them.
+/// It goes by [`Hop::request_moves`], which is one request's own and never goes
+/// back while the request lasts: not by the moves in a row, which a request of the
+/// same backend that is answered meanwhile sets back to nothing, and not by the
+/// moves of the whole run, which would stop a long run that is pointed elsewhere
+/// once for each of its requests.
 ///
 /// Of what would leave, it refuses, in fixed words that show nothing of it:
 ///
@@ -164,7 +173,7 @@ impl fmt::Debug for SendCheck {
 
 impl HopCheck for SendCheck {
     fn look(&self, hop: &Hop<'_>) -> Result<(), Denied> {
-        if hop.total_moves() > 0 {
+        if hop.request_moves() > MOVES_LIMIT {
             return Err(Denied::because(MOVED));
         }
         if self.keeps_out(hop.to().rest().as_bytes()) {

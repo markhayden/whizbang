@@ -994,7 +994,8 @@ impl JudgeHandle {
             sent.judged(None, request, &refused, None);
             return refused;
         }
-        let answer = self.backend.send(request, &self.bounds).and_then(|turn| {
+        let bounds = self.bounds.of_one_request();
+        let answer = self.backend.send(request, &bounds).and_then(|turn| {
             if turn.opaque().any(|opaque| opaque.adapter != backend) {
                 // An answer came, and it is not taken: what it said it cost stands.
                 let unfit = Unfit::NotAllowed {

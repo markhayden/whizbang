@@ -3,7 +3,9 @@
 Status: accepted. Changes ADR 0007 ("Admission": the executor's parts are asked in the
 admission's step; "A preparation handed to admission": a preparation carries the time it
 was made, and a request may carry a cap), and names ADR 0004 (`prepared/1` is as it
-was) and ADR 0013 (the kinds a record has for a refused call)
+was) and ADR 0013 (the kinds a record has for a refused call). Changed by 0019: a
+check is shown the pieces a request holds (`Hop::pieces`) and the moves of one request
+(`Hop::request_moves`), counted in the bounds each request is handed
 Date: 2026-11-14
 Amended: 2026-11-14, after the review of task I1. Changed under "A part in the
 admission": what a part's failure may hold (`NotJudged`: a failure of the store, a

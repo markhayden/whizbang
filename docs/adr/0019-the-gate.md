@@ -1,10 +1,15 @@
 # 0019. The gate: a config's approvals as the executor's policy, and the check behind a send
 
-Status: accepted. Names ADR 0011 (an `Approval`), ADR 0012 (a recipient) and ADR 0015
-("A policy before a send, and a checked send"), and changes none of them
+Status: accepted. Names ADR 0011 (an `Approval`) and ADR 0012 (a recipient). Changes
+ADR 0015 ("A policy before a send, and a checked send": a check is shown the pieces a
+request holds, and a third count, of the moves of one request, which a request's
+bounds carry)
 Date: 2026-11-14
 Amended: 2026-11-14, with task E6. Added: "Nothing but pixels", and its rows in the
 table of what was read.
+Amended: 2026-11-14, with task E3, its first pull request. Added: "Every hop". Changed:
+the check's rule for an answer that points elsewhere, which was that nothing is
+followed, and the two tests that held it.
 Spec: section 10, "Egress"
 
 ## Context
@@ -36,6 +41,8 @@ Nothing of it is ported:
 | The account must start with the profile's prefix | Rewritten. An approval is of an origin and an account, and a backend's recipient is that approval's only when its origin, its account and its upstreams are the same, each compared whole |
 | `Consent` and its list of upstreams | Rewritten by ADR 0012 as `Recipient`, and by ADR 0011 as `Approval` |
 | `redact_account` | Rewritten by ADR 0012 as `Account::shown` |
+| `same_origin` (`crates/squint-providers/src/http.rs`): a redirect was followed only to the scheme, host and port of the first address | Rewritten by ADR 0012 (`Origin`) and ADR 0015 (`Recipient::reaches`): to the recipient's own origin, or an upstream its approval names. Nothing follows a redirect by itself: it comes back to the backend as an address |
+| `MAX_REDIRECTS`, 5 for one request | Kept as `MOVES_LIMIT`, 5 for one request of a backend |
 | `scan`, which searched a recorded request for a marker and walked JSON so that image bytes were left out | Rewritten as the check's look at each part of a request before it is handed over: a part that is the encoder's file is pixels and is not read as words, and every other part is |
 | `FORBIDDEN_MARKERS`: how a path starts (a person's folders, the temporary folders, a private folder, `C:` and a backslash, an address of a file) | Rewritten: the same starts, and a drive of any one letter |
 | `FORBIDDEN_MARKERS`: `fixtures/` | Dropped: squint's own folder of recordings |
@@ -97,7 +104,7 @@ all the same.** Nothing looser is tried: no approval is found by its origin alon
   (`gate::a_backend_that_declares_other_upstreams_than_its_approval_is_approved_for_nothing`).
   Whoever makes a backend from a config makes its recipient from the approval itself.
 
-### The check behind a send, for a first address
+### The check behind a send
 
 `SendCheck` is the `HopCheck` an executor that sends is given. The executor has asked
 its four questions before it (ADR 0015): the backend declared a recipient, the request
@@ -106,18 +113,11 @@ upstreams, and the policy approves the recipient for every class of data the req
 holds. The check is asked last and can only refuse
 (`gate::under_the_strands_check_a_request_is_still_held_to_what_its_backend_declared_and_reaches`).
 
-**It approves an address while no answer has pointed its backend elsewhere in the run,
-and refuses every address after one has,** in fixed words. Following an answer that
-points elsewhere is task E3's, and until then nothing is followed. An upstream is
-approved as a first address: an upload address comes inside an answer, and the request
-to it is one no answer pointed to
-(`gate::the_check_approves_a_first_address_and_no_address_an_answer_pointed_to`).
-
-It goes by the moves of the whole run (`Hop::total_moves`), which never go back, and
-not by the moves in a row, which an answered request of the same backend sets back to
-nothing: with two requests through one handle at once, the address an answer pointed
-to would otherwise pass for a first one
-(`gate::a_request_that_was_answered_after_an_answer_pointed_elsewhere_does_not_make_the_next_address_a_first_one`).
+**It approves an address while its request has been pointed elsewhere five times at
+most** ("Every hop", below), in fixed words when it does not. An upstream is approved
+as a first address: an upload address comes inside an answer, and the request to it is
+one no answer pointed to
+(`hops::an_upload_address_and_a_download_address_outside_the_recipients_are_each_refused`).
 
 It holds nothing that changes and counts nothing. A check is still asked for a sender
 that was kept past its run (ADR 0015), and being asked changes nothing. What `{:?}`
@@ -148,6 +148,71 @@ prints of it is its name and how many folders it keeps out, never one of them
   in where its data went, as `refused`, with the origin and the account cut. Nothing of
   the address but its origin is in the store
   (`gate::a_run_whose_action_catches_the_refusal_and_completes_has_it_in_its_record_with_the_recipient_and_the_reason`).
+
+### Every hop
+
+Task E3, its first pull request. The code is the limit in `hops.rs`; one count in a
+request's bounds (`capability/mod.rs`: `Bounds::of_one_request`, and the line in each
+of the three handles that hands a backend its bounds); and `Hop::request_moves` in
+`checked.rs`. The tests are in `crates/whizbang-core/tests/it/egress/hops.rs`, named
+below as `hops::…`, against the test kit's sending fake.
+
+`SPEC.md` section 10: "Every hop is checked: redirects, upload services and returned
+download addresses. Credentials are never forwarded to another origin."
+
+**Nothing is followed by the sender.** An answer that points elsewhere comes back to
+the backend as an address (ADR 0012), and the request the backend then makes of it is
+a new request to the checked sender, asked everything again from the first question
+(ADR 0015). An upload address and a returned download address are addresses inside an
+answer, and reaching either is the same. So:
+
+- **A redirect to an origin that is neither the recipient's own nor one of its
+  upstreams is refused, and nothing is sent to it**
+  (`hops::a_redirect_to_an_origin_that_is_not_the_recipients_or_an_upstream_is_refused_and_nothing_is_sent_to_it`).
+- **A redirect to an approved upstream is followed without the credential.** The
+  executor attaches the credential it holds for the origin of each address, or none: an
+  upstream is handed the recipient's own never, and its own only when the executor was
+  given one bound to it, which in turn never goes to the recipient's own origin
+  (`hops::a_redirect_to_an_approved_upstream_is_followed_without_the_credential`,
+  `hops::a_credential_bound_to_an_upstream_goes_to_that_upstream_and_never_to_the_recipients_own_origin`).
+- **An upload address and a download address outside the recipient's are each
+  refused,** and ones inside it are sent
+  (`hops::an_upload_address_and_a_download_address_outside_the_recipients_are_each_refused`).
+- **A chain longer than the limit is refused.** One request of a backend is pointed
+  elsewhere 5 times at most (`MOVES_LIMIT`): the number squint followed
+  (`MAX_REDIRECTS`), counted as squint counted it, for one request. The address a
+  sixth answer names is handed nothing, and every later address of that request is
+  refused too (`hops::a_chain_longer_than_the_limit_is_refused`).
+
+**The count is one request's** (`Hop::request_moves`). A handle hands its backend, with
+each request, bounds that carry a count of their own, which starts at nothing; the
+checked sender adds one to the count of the bounds a send came with when its answer
+points elsewhere, and shows the check that count. It never goes back while the request
+lasts, an answered request between two hops included. It is not shared with another
+request through the same handle, at once or one after another; and a clone of a
+request's bounds holds the same count, so a backend does not start again by cloning
+(`hops::the_moves_of_one_request_are_its_own_and_a_clone_of_its_bounds_holds_the_same_count`,
+`hops::two_requests_through_one_handle_at_once_each_count_their_own_moves`,
+`hops::each_request_of_each_capability_is_handed_a_count_of_its_own`). A run that is
+pointed elsewhere once for each of thirty requests is not refused
+(`hops::a_long_run_that_is_pointed_elsewhere_once_for_each_request_is_not_refused`).
+`Hop::moves` and `Hop::total_moves` are as ADR 0015 has them, and this check uses
+neither.
+
+Limits of it, each stated:
+
+- **The limit is on what a server does, not on what a backend does.** The count is of
+  the bounds a send comes with. A backend that sends with the bounds of another of its
+  requests is counted there, and one that makes a new request starts at nothing:
+  adapters are trusted code, and a backend can ask as often as its run's bound on
+  requests lets it (ADR 0009).
+- **A real client makes a redirect's `Address` itself** from what a server sent, with
+  the executor's secrets (ADR 0012), and writes the `/` before a query: an address
+  with a query straight after its host is refused when it is made.
+- **A request with no answer that points elsewhere has no limit on its sends** but the
+  run's own: an upload in many parts is many answered requests.
+- **The probe and the download are not checked here.** They are this task's second
+  pull request.
 
 ### Nothing but pixels
 
@@ -248,10 +313,6 @@ Limits of it, each pinned or stated:
   fallback to take: a run is handed the backend its call resolved (ADR 0009). The test
   holds that a refusal adds none. It cannot show that a backend refused at the gate's
   place is not replaced, since there is no such place yet.
-- **Once an answer has pointed a backend elsewhere, every later request of that
-  backend in that run is refused,** a first address among them. The counts a check is
-  shown are for one backend of one run, not for one request (ADR 0015). Task E3 decides
-  what is followed.
 - **A class is what whoever built the piece stated** (ADR 0012). Nothing here knows a
   source image from a derived one.
 - **Nothing here reads a config or gives an executor its policy.** That is tasks I6
@@ -269,7 +330,6 @@ Limits of it, each pinned or stated:
 - **Task I3.** The gate's place asks the same policy the same question,
   `may_receive(recipient, classes)`, with the classes a capability's request holds
   before any piece is made; a request it refuses does not reach the checked sender.
-- **Task E3.** `SendCheck` is where a limit on a chain of answers goes.
 - **Tasks I6 and W1.** The check an executor is given is
   `SendCheck::new().keeping_out(root)`, with the root of its store.
 - **A real sender (1C).** It puts the pieces of a request into a wire format itself.
@@ -278,7 +338,8 @@ Limits of it, each pinned or stated:
 ## Consequences
 
 - An executor built with `Ways::through(sender).checked_by(SendCheck).under(policy)`
-  sends a first address to a recipient the config approves for what the request holds,
+  sends to a recipient the config approves for what the request holds, at its own
+  origin and its upstreams, through five answers that point elsewhere at most,
   and nothing else.
 - A config's `account` and `upstreams` are part of what is approved. Changing either in
   the file and not in the backend, or the other way, approves nothing.
@@ -313,3 +374,9 @@ Limits of it, each pinned or stated:
   could hold it.
 - **The check goes by the moves in a row.** Turned down: a request answered meanwhile
   sets them back.
+- **The limit on the moves of the whole run** (`Hop::total_moves`), which needs
+  nothing of the executor. Turned down: it is a budget for a run, and a judge whose
+  every turn is pointed elsewhere once would be refused at its sixth turn.
+- **The checked sender follows an answer itself, and counts as it goes.** Turned down
+  by ADR 0012 and ADR 0015: a hop that is not a new request is not asked the
+  executor's questions where a test can see it.
