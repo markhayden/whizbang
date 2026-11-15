@@ -34,6 +34,7 @@ mod context;
 mod descriptor;
 mod engine;
 mod facts;
+mod interrupted;
 mod journal;
 pub mod ledger;
 mod live;
@@ -67,6 +68,7 @@ pub use engine::{
     Spawn, WHIZBANG_VERSION,
 };
 pub use facts::RunFacts;
+pub use interrupted::Interrupted;
 pub use journal::{Clock, EXCHANGE_PREFIX, JournalLine, SystemClock, journal_bytes, read_journal};
 pub use ledger::{
     Closing, Declined, DispatchRefused, LEDGER_NAME_LIMIT, Ledger, MadeName, RESERVATION_RECORD,

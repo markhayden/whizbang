@@ -800,6 +800,116 @@ fn a_run_that_was_admitted_and_did_not_end_is_listed_and_shown_as_such() {
 }
 
 #[test]
+fn a_run_a_killed_process_left_is_ended_by_the_next_writing_command_and_then_shown_as_interrupted()
+{
+    // A process loses power while its action runs: the run stays as it was admitted.
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let id = RequestId::parse("order-17").unwrap();
+    {
+        let fs = Arc::new(ShimFs::new());
+        let store = Arc::new(Store::open(&root, fs.clone()).unwrap());
+        let mut registry = whizbang::wiring::registry().expect("the registry builds");
+        let boom = whizbang_core::contract::Kind::Primitive;
+        let boom = ActionDescriptor::draft("boom", "1.2.3", boom, "A test action.");
+        registry
+            .register(Arc::new(Boom(boom.build().unwrap(), fs)))
+            .unwrap();
+        let executor = whizbang::wiring::runner(registry, store);
+        let left = executor.request(&Request::new(Call::new("boom")).with_id(id));
+        assert!(matches!(left, Err(CallError::Store(_))), "{left:?}");
+    }
+    // A command that reads ends nothing: the run is listed as it was left, by
+    // whichever reader, however often.
+    for _ in 0..2 {
+        let listed = whizbang(&["list"], &root);
+        assert!(
+            listed.text().contains("\tadmitted, not ended\t"),
+            "{}",
+            listed.text()
+        );
+    }
+    let run = whizbang(&["list"], &root);
+    let run = run
+        .text()
+        .lines()
+        .nth(1)
+        .unwrap()
+        .split('\t')
+        .next()
+        .unwrap()
+        .to_owned();
+    // The next command that opens the store to write recovers it first: here, a
+    // prune, by the real binary, with the recovery the binary is wired with.
+    let pruned = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+        .args(["store", "prune", "--store"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert_eq!(pruned.status.code(), Some(0));
+    // The run is ended: an error, interrupted, with what its admission said and
+    // everything else named as lost. `runs list` says so in its line.
+    let listed = whizbang(&["list"], &root);
+    let line: Vec<&str> = listed.text().lines().nth(1).unwrap().split('\t').collect();
+    assert_eq!(
+        line[..3],
+        [
+            run.as_str(),
+            "error, interrupted (everything but what its admission says is lost)",
+            "boom 1.2.3"
+        ]
+    );
+    let shown = whizbang(&["show", &run], &root);
+    assert_eq!(shown.code, Some(0), "{}", shown.err);
+    let text = shown.text();
+    for line in [
+        format!("run: {run}"),
+        "request: order-17".to_owned(),
+        "action: boom 1.2.3".to_owned(),
+        "status: error".to_owned(),
+        "error: interrupted: the process that ran it ended before the run did".to_owned(),
+        "lost: arguments, settings, inputs, refusals, durations, models, requests, egress, \
+         steps, judge, diagnostics, version"
+            .to_owned(),
+        "egress: unknown".to_owned(),
+    ] {
+        has_line(text, &line);
+    }
+    let json = whizbang(&["show", &run, "--json"], &root);
+    let document: serde_json::Value = serde_json::from_slice(&json.out).unwrap();
+    let schema: serde_json::Value = serde_json::from_str(RUN_RECORD_SCHEMA).unwrap();
+    validate(&schema, &document).unwrap();
+    assert_eq!(document["outcome"]["error"]["kind"], "interrupted");
+    // Its record is the one made from its admission alone.
+    let admission = whizbang(&["show", &run, "--diagnostic", "admitted"], &root);
+    let admission = Admission::from_bytes(&admission.out).unwrap();
+    let made = RunRecord::interrupted(Left {
+        run: admission.run(),
+        whizbang: document["identity"]["whizbang"].as_str().unwrap(),
+        admitted: Some(Admitted {
+            request: admission.request(),
+            parent: admission.parent(),
+            action: admission.action(),
+            version: admission.version(),
+            reserved_micros: admission.reserved_micros(),
+            start_ms: admission.start_ms(),
+        }),
+        end_ms: document["time"]["end_ms"].as_u64().unwrap(),
+    });
+    let stored = whizbang(&["show", &run, "--diagnostic", "record"], &root);
+    assert_eq!(stored.out, made.unwrap().to_bytes());
+    // A second writing command finds it ended, and ends nothing twice.
+    let before = whizbang(&["show", &run, "--json"], &root).out;
+    let again = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+        .args(["store", "prune", "--store"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert_eq!(again.status.code(), Some(0));
+    assert_eq!(whizbang(&["show", &run, "--json"], &root).out, before);
+}
+
+#[test]
 fn a_run_shows_the_request_id_it_was_made_for() {
     let dir = Scratch::new("runs");
     let root = dir.path().join("store");
@@ -1091,6 +1201,116 @@ fn runs_show_says_unknown_for_every_group_a_record_has_lost_and_never_none() {
     let none: Vec<&str> = text.lines().filter(|l| l.ends_with(": none")).collect();
     assert_eq!(none, ["outputs: none"], "{text}");
     assert!(!text.contains("nothing reserved"), "{text}");
+}
+
+#[test]
+fn runs_list_and_runs_show_show_an_interrupted_run_as_ended_in_error_interrupted_with_what_is_lost_escaped()
+ {
+    // Two runs a dead process left, as a recovery ends them: one whose admission
+    // was read, and said an action whose name holds an escape sequence, as an
+    // admission that other hands wrote can; and one whose admission was not read.
+    // Beside them, a run that ended by itself in an error it calls interrupted.
+    let dir = Scratch::new("runs");
+    let root = dir.path().join("store");
+    let (read, unread) = (
+        RunId::parse("1000-1").unwrap(),
+        RunId::parse("1000-2").unwrap(),
+    );
+    let request = RequestId::parse("req-7").unwrap();
+    let admitted = Admitted {
+        request: Some(&request),
+        parent: None,
+        action: "he\u{1b}[31mal",
+        version: "1.0.0",
+        reserved_micros: Some(250_000),
+        start_ms: 1000,
+    };
+    let left = |run, admitted| Left {
+        run,
+        whizbang: "0.0.1",
+        admitted,
+        end_ms: 5000,
+    };
+    let own = ordinary_record().replace("1000-1", "1000-3").replace(
+        r#""status":"completed","error":null"#,
+        r#""status":"error","error":{"kind":"interrupted","message":"its own word"}"#,
+    );
+    {
+        let store = Store::open(&root, Arc::new(RealFs)).unwrap();
+        let mut publication = store.begin().unwrap();
+        let records = [
+            (
+                "1000-1",
+                RunRecord::interrupted(left(&read, Some(admitted)))
+                    .unwrap()
+                    .to_bytes(),
+            ),
+            (
+                "1000-2",
+                RunRecord::interrupted(left(&unread, None))
+                    .unwrap()
+                    .to_bytes(),
+            ),
+            ("1000-3", own.into_bytes()),
+        ];
+        for (run, record) in &records {
+            publication
+                .put_in(run, "record", Kind::Diagnostic, record)
+                .unwrap();
+        }
+        publication.publish().unwrap();
+    }
+    let listed = whizbang(&["list"], &root);
+    assert_eq!(listed.code, Some(0), "{}", listed.err);
+    let text = listed.text();
+    assert!(!text.contains('\u{1b}'), "{text:?}");
+    let lines: Vec<Vec<&str>> = text
+        .lines()
+        .skip(1)
+        .map(|l| l.split('\t').collect())
+        .collect();
+    assert_eq!(
+        lines[0][..3],
+        [
+            "1000-1",
+            "error, interrupted (everything but what its admission says is lost)",
+            "he\\u{1b}[31mal 1.0.0"
+        ]
+    );
+    assert_eq!(lines[0][4], "4000 ms");
+    assert_eq!(
+        lines[1],
+        [
+            "1000-2",
+            "error, interrupted (everything is lost, its admission too)",
+            "unknown unknown",
+            "unknown",
+            "unknown"
+        ]
+    );
+    // A run whose own error is called interrupted lost nothing, and is not said to.
+    assert_eq!(lines[2][..2], ["1000-3", "error"]);
+    // `runs show`: the error, what is lost, and the action escaped.
+    let shown = whizbang(&["show", "1000-1"], &root);
+    let text = shown.text();
+    assert!(!text.contains('\u{1b}'), "{text:?}");
+    has_line(text, "action: he\\u{1b}[31mal 1.0.0");
+    has_line(text, "status: error");
+    has_line(
+        text,
+        "error: interrupted: the process that ran it ended before the run did",
+    );
+    has_line(
+        text,
+        "lost: arguments, settings, inputs, refusals, durations, models, requests, egress, \
+         steps, judge, diagnostics, version",
+    );
+    let shown = whizbang(&["show", "1000-2"], &root);
+    has_line(shown.text(), "action: unknown unknown");
+    assert!(shown.text().contains(", diagnostics, version, admission\n"));
+    let shown = whizbang(&["show", "1000-3"], &root);
+    has_line(shown.text(), "error: interrupted: its own word");
+    assert!(!shown.text().contains("lost:"), "{}", shown.text());
 }
 
 #[test]
