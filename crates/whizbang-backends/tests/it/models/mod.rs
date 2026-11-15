@@ -7,6 +7,7 @@ mod attaching;
 mod catalogue;
 mod crashes;
 mod downloads;
+mod holds;
 mod identity;
 mod installation;
 mod names;

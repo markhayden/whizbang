@@ -49,6 +49,12 @@ record said that it waits ("Three kinds of lock"); every install writes `install
 as its first step, one that finds its identity on the disk included ("Publishing",
 "The status record"); a cancellation is asked before each file, at each piece and
 after each answer of the downloader ("Downloading into staging").
+Amended: 2026-11-15, with task M5. Added: "Holds" is code (`hold.rs`), with the
+tests named `holds::…`: a hold is asked of the holds of a process (`Holds`), which
+count; what each refusal of a hold is. Words and tests, from the review of task M3:
+under "Attaching and cancelling", the test of a request that finds no status or one
+it cannot read; under "Limits", an install that is refused every write of its
+status, and a request that met only another's share of the model's lock.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -97,10 +103,10 @@ a process id read from a file (R3).
 
 The code of this record that exists is `crates/whizbang-backends/src/models/`: `name.rs`,
 `catalogue.rs`, `installation.rs`, `json.rs`, `refused.rs`, `directory.rs`, `stage.rs`,
-`install.rs` and `status.rs`. Its tests are in
+`install.rs`, `status.rs` and `hold.rs`. Its tests are in
 `crates/whizbang-backends/tests/it/models/`, named below as `names::…`, `catalogue::…`,
 `installation::…`, `identity::…`, `refusals::…`, `downloads::…`, `staging::…`,
-`publishing::…`, `status::…`, `crashes::…` and `attaching::…`.
+`publishing::…`, `status::…`, `crashes::…`, `attaching::…` and `holds::…`.
 
 **What is code now, and what is decided for a later task.** Each part below says which
 it is. A part marked *decided, not built* has no code and no test yet, and names no
@@ -116,15 +122,16 @@ installation record with its identity.
 | Publishing; the pointer; the status record; the deleting of what the pointer does not name | Code, with the tests named (task M2b), the crashes of "For later tasks" among them |
 | Of the layout and the locks: what an install makes and takes | Code (tasks M2, M2b); each part says which |
 | Attaching to an install; cancelling one | Code, with the tests named (task M3) |
-| Holds; removal and its mark | Decided, not built: tasks M5 to M5c, M6 |
+| Holds | Code, with the tests named (task M5) |
+| Removal and its mark | Decided, not built: tasks M5b to M5c, M6 |
 
 ### The directory
 
 *Decided; of it, task M2 built `models/<model>/`, the model's `LOCK` taken alone by a
 try, and `staging/incoming/files/`; and task M2b built the directory's `LOCK`,
 `CURRENT`, `STATUS`, `holds/` with the hold file a publication makes, and
-`installations/`. `DRAINING` is read as there or not there, and nothing writes it.
-The rest is not built.* A models directory is one folder, given by whoever opens it: no
+`installations/`; task M5 built a hold's share of a hold file. `DRAINING` is read as
+there or not there, and nothing writes it. The rest is not built.* A models directory is one folder, given by whoever opens it: no
 default place and no variable is read for it here. In it:
 
 ```text
@@ -178,8 +185,8 @@ default place and no variable is read for it here. In it:
 *Decided; of it, task M2 built the model's lock taken alone by a try, task M2b
 the directory's lock around a publication, the making of a hold file, and a hold file
 taken alone by whoever deletes an installation's folder, and task M3 the model's
-lock shared by one who attaches. The rest is not built: a hold's share, and the
-mark.* All three are the locks of the store's file-system interface
+lock shared by one who attaches, and task M5 a hold's share of its hold file. The
+rest is not built: the mark.* All three are the locks of the store's file-system interface
 (`whizbang_core::store::fs`), which are `flock` on Linux and macOS, and everything
 `store/fs.rs` says of them holds here: a models directory on a network file system is
 not supported, and **no lock file is ever removed or replaced:** not the directory's
@@ -830,6 +837,7 @@ under the format `status/1`, in one form:
   says `installing`, and a status that says anything else under a held lock is not
   an installer's
   (`attaching::an_install_says_installing_before_anything_else_whether_it_downloads_or_finds_its_identity_whole`).
+  One case is not so: an install that is refused that first write ("Limits").
 - **After a refused sync of the pointer it says `failed` while the pointer names the
   new installation** ("Limits"): the install was refused, and it is the pointer that
   says what is installed. Asking again answers with the installation and says
@@ -884,7 +892,9 @@ attaches to whatever holds the lock, and ends as that ended
   A status that still says `installing` with the lock free is an install whose
   process is gone: failed, and the pointer names what it named
   (`attaching::when_the_installing_process_is_killed_the_attached_one_reports_the_install_as_failed`).
-  No status, or one that cannot be read: failed.
+  No status, or one that cannot be read: failed, with the pointer naming the
+  installation that was asked for as with any other
+  (`attaching::a_request_that_attached_and_finds_no_status_or_one_it_cannot_read_is_told_failed`).
 - **Never by the pointer alone.** After a refused sync of the pointer ("Limits") the
   status says `failed` over a pointer that names the new installation, which no
   sync has made durable. The attached request is told failed, as the installer was:
@@ -918,21 +928,64 @@ attaches to whatever holds the lock, and ends as that ended
 
 ### Holds
 
-*Decided, not built* (task M5). **A hold is a file lock, not a process id.** A hold on
-one installation is a shared lock on its hold file, `holds/<64 hex digits>`, taken
-under the directory's lock after the pointer was read and found to name that
-installation with no draining mark set. **A hold is given or refused at once:** its share
-of the hold file is a try that does not wait, and a hold file found held alone is a
-hold refused. The store's interface gains that try with task M5: its shared call waits
-today, and a holder waiting under the directory's lock would stall every model. So where the plan speaks of a waiting hold, here there is a hold that
-was refused and may be asked for again. The operating system lets a lock go when its
-process ends, however it ends, so a hold of a dead process is no hold; nothing reads a
-process id from a file, and nothing is signalled by one (rascal's R3 and R5).
+Code (task M5: `hold.rs`; tests named `holds::…`). **A hold is a file lock, not a
+process id.** A hold on one installation is a shared lock on its hold file,
+`holds/<64 hex digits>`, taken under the directory's lock after the draining mark and
+the pointer were read there: it is given when no mark is set and the pointer names
+that installation, and it makes nothing on the disk
+(`holds::a_hold_is_taken_under_the_directorys_lock_and_makes_nothing`). While it is
+there, nobody takes the hold file alone, so the installation's folder is not deleted:
+superseded, it stays until the hold is let go
+(`holds::a_hold_keeps_a_superseded_installation_on_the_disk_until_it_is_let_go`).
 
-**Holds are counted inside a process** as well. A process's own shared lock on a hold
+**A hold is given or refused at once:** its share of the hold file is a try that does
+not wait (ADR 0018, `try_share`), and nothing is waited for but the directory's lock.
+So where the plan speaks of a waiting hold, here there is a hold that was refused and
+may be asked for again. What a refusal is (`HoldRefused`), each fixed words and no
+path:
+
+| Refused as | When |
+|---|---|
+| `Draining` | The mark is set. It is read before the pointer, so a model whose pointer a removal has cleared is draining, not "not named" (`holds::a_hold_is_refused_while_the_mark_of_draining_is_set_whatever_the_count`) |
+| `NotNamed` | The pointer names another installation, or there is none: an installation that was superseded, one never installed, a model never installed (`holds::a_hold_on_an_identity_the_pointer_no_longer_names_is_refused`) |
+| `Damaged` | The pointer is not a pointer as it is written, or the installation it names has no hold file. A hold never makes one (`holds::a_pointer_that_cannot_be_read_or_a_missing_hold_file_is_damage_and_a_hold_makes_none`) |
+| `Deleting` | The hold file is held alone. That is whoever deletes the installation's folder, which is only for an installation the pointer does not name |
+| `DirectoryBusy` | The directory's lock was not let go ("Three kinds of lock") |
+| `Disk` | The file system refused a step, the try among them: a file system that answers that it cannot try has not said "held alone" (`holds::a_hold_file_held_alone_is_a_hold_refused_at_once_and_a_try_that_fails_is_an_error`, which holds the two rows above too) |
+| `HoldsSecret` | The model's name holds a secret the holder was told of. Nothing is opened by it (`holds::a_model_name_that_holds_a_secret_opens_nothing_and_no_refusal_shows_a_path`) |
+
+The operating system lets a lock go when its process ends, however it ends, so a hold
+of a dead process is no hold; nothing reads a process id from a file, and nothing is
+signalled by one (rascal's R3 and R5). A second process that holds an installation
+and is killed leaves the hold file free to be taken alone, and the next to take the
+model's lock deletes the superseded folder
+(`holds::a_child_process_that_holds_a_model_and_is_killed_leaves_no_hold`).
+
+**Holds are counted inside a process** as well (`Holds`, which a process makes once
+for a directory and takes every hold through). A process's own shared lock on a hold
 file stops its own try to take the file alone, as another process's would, and its
-second share of the file is a second lock; so a process keeps one share of a hold file
-and a count of its holds on it, and lets the share go when the count is nothing.
+second share of the file is a second lock; so a process keeps one share of a hold
+file and a count of its holds on it, and lets the share go when the count is nothing.
+Two holds in one process and one in a second process are all given, with one try at
+a share in the first
+(`holds::two_holds_in_one_process_and_one_in_a_real_second_process_are_all_given`).
+
+- **The count does not stand in for the check.** Every hold reads the mark and the
+  pointer under the directory's lock, whatever the count: with one hold counted on
+  an installation that was superseded, or whose model is draining, the next is
+  refused, and the one that was given stays (the tests of `NotNamed` and of
+  `Draining`, above).
+- **A hold let go twice is let go once** (`Hold::let_go`, and the drop): the count
+  goes down by one, whatever is called after
+  (`holds::a_hold_let_go_twice_is_let_go_once`).
+- **Letting the last hold go and taking a new one go through one guard** inside the
+  process, so that the share is not let go under a hold that was just counted
+  (`holds::the_last_hold_let_go_and_a_new_one_taken_by_two_threads_never_leave_a_hold_without_its_share`).
+- **Two sets of holds over one directory in one process** are as two processes are:
+  each has a share of its own. Nothing is wrong then but an open file more.
+- **A hold does not read the installation.** It is given on what the pointer names,
+  whether or not the folder is whole; that is the publication's and the inventory's
+  to say (task M6).
 
 ### Removal
 
@@ -1021,6 +1074,27 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   (`publishing::a_held_repair_that_could_not_put_the_pointer_back_leaves_the_model_not_installed_and_the_next_is_refused_as_held`).
   A lock taken alone that waits is not in the store's interface
   (`docs/carry-over.md`).
+- **An install that is refused every write of its status.** "While an installer has
+  the model's lock the status says `installing`" rests on the install's first step,
+  the write of that status. When it is refused, the install is refused and has
+  touched nothing else; it writes how it ended, and when that write is refused too
+  (a model's folder that cannot be written), the status is still what the install
+  before it left. So a repair of a damaged installation in use, refused so, leaves
+  the old `installed` under a lock an installer holds: one who attached meanwhile is
+  shown nothing, and is then told that the model is installed, of files nobody
+  read. The pointer does name that installation; that its files are whole was held
+  when they were published, and by nothing since (the limit on a reader that holds
+  no lock, below)
+  (`attaching::known_an_install_refused_every_write_of_its_status_leaves_the_last_status_and_one_who_attached_is_answered_from_it`).
+- **A request that met only another's share of the model's lock.** One who attached
+  has a share of the model's lock for the moment in which it reads the status and
+  the pointer. An install tried in that moment is busy, so the request that asked
+  for it attaches, to no install: it is given a share at once, `watch` is not
+  called, and it is answered by how the last install ended. `installed`, with the
+  pointer naming the installation it asked for, is true, and nothing needed to run.
+  `failed` or `cancelled` is how an earlier request's install ended, not this one's:
+  asked again, the request installs
+  (`attaching::known_a_request_that_met_only_anothers_share_of_the_lock_is_answered_from_the_last_installs_status`).
 - **A reader that holds no lock does not read the files.** `current` answers from the
   pointer and the record; that the files are whole is held when they are published
   and when the same identity is published again.
@@ -1094,12 +1168,19 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
 - **M5: the store's try for a share** (ADR 0018, `try_share`) is refused by the
   process's own lock on the file alone, and given beside its own shares as a second
   lock. A file system that answers that it cannot try is an error, never "held
-  alone".
+  alone". Built ("Holds").
 - **M5:** the count inside a process does not stand in for the check: every hold reads
   the pointer and the mark under the directory's lock, whatever the count. Letting the
   last hold go and taking a new one in another thread go through one guard inside the
   process, so that the share is not let go under a hold just counted. A hold on an
   installation whose hold file is missing is refused as damage; a hold never makes one.
+  Built ("Holds").
+- **M5b, from task M5:** a hold is refused as draining by a file at `DRAINING`,
+  whatever it holds, read with the pointer under the directory's lock. A removal that
+  puts the pointer back on its busy path does so before it takes the mark off, so a
+  hold that is given finds both as they were before the removal. And a removal that
+  waits for holds meets its own process's: `Holds` lets its share go only with the
+  last hold.
 - **M5b and M6:** a reader that holds no lock reads the mark as well as the pointer, and
   says "draining", not "not installed", of a model whose pointer a removal has cleared.
 - **M5c:** a folder under `installations/` that the pointer does not name and that has
