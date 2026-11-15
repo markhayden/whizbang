@@ -15,19 +15,24 @@ use whizbang_testkit::spend::{
 const SEED: u64 = 0x1B00_2026_1114;
 
 /// How many histories are generated, of each of the two shapes.
-const GENERATED: u64 = 4096;
+const GENERATED: u64 = 1000;
+
+/// How many of the first shape the test of what the generated histories reach goes
+/// through: the suite's own, and as many again, since the rarest of what it must
+/// reach is first met in history 1,731.
+const REACHING: u64 = 2000;
 
 /// How many books the ledger alone wrote are each changed by one name.
-const WHOLE: u64 = 2048;
+const WHOLE: u64 = 500;
 
 /// How many histories have two admissions that wait together to be confirmed.
-const PAIRED: u64 = 1024;
+const PAIRED: u64 = 250;
 
 /// How many histories have a turn moved by other hands around a late admission.
-const TURNED: u64 = 1536;
+const TURNED: u64 = 400;
 
 /// How many histories have amounts near the largest a name can state.
-const LARGE_HISTORIES: u64 = 1024;
+const LARGE_HISTORIES: u64 = 250;
 
 fn reset(micros: u64) -> Event {
     Event::Reset { micros }
@@ -107,20 +112,20 @@ fn every_generated_history_keeps_every_invariant() {
     // left of its reservation. That is reached, with runs that other runs called,
     // after a run above them had a request settled over its bound, and judged late
     // across what other hands did.
-    assert!(all.published > 1_000, "{all:?}");
-    assert!(all.by_a_called_run > 300, "{all:?}");
-    assert!(all.after_an_overrun > 300, "{all:?}");
-    assert!(all.after_an_overrun_of_something > 80, "{all:?}");
-    assert!(all.late_across_other_hands > 300, "{all:?}");
-    assert!(all.needs_owner > 300, "{all:?}");
+    assert!(all.published > 250, "{all:?}");
+    assert!(all.by_a_called_run > 75, "{all:?}");
+    assert!(all.after_an_overrun > 75, "{all:?}");
+    assert!(all.after_an_overrun_of_something > 20, "{all:?}");
+    assert!(all.late_across_other_hands > 75, "{all:?}");
+    assert!(all.needs_owner > 75, "{all:?}");
     // Every admission that stands is held to the truth and to the reading made
     // after its publication; some are published and not confirmed.
-    assert!(all.admitted > 2_000, "{all:?}");
-    assert!(all.not_confirmed > 50, "{all:?}");
+    assert!(all.admitted > 500, "{all:?}");
+    assert!(all.not_confirmed > 12, "{all:?}");
     // A dispatch that was judged before the store came to need its owner is
     // published where it needs it; none that was judged there is, which is held
     // of every dispatch of every suite.
-    assert!(all.judged_before_the_owner_was_needed > 20, "{all:?}");
+    assert!(all.judged_before_the_owner_was_needed > 5, "{all:?}");
     // The same seed and number give the same history.
     assert_eq!(generated(SEED, 7), generated(SEED, 7));
     assert_ne!(generated(SEED, 7), generated(SEED + 1, 7));
@@ -156,7 +161,7 @@ fn every_generated_history_of_whole_books_then_other_hands_keeps_every_invariant
         }
     }
     // Other hands freeze something in a good part of them.
-    assert!(frozen > 1000, "{frozen}");
+    assert!(frozen > 250, "{frozen}");
     // Every dispatch that is published is held by the checker to what was really
     // left of its reservation. That is reached with the two shapes the fourth
     // review round gave: a run that another run called, after a run above it had a
@@ -164,17 +169,17 @@ fn every_generated_history_of_whole_books_then_other_hands_keeps_every_invariant
     // asks now, after other hands took away two names or more of the reservation.
     // What the process holds of the tree refuses some of them where the names
     // would not.
-    assert!(all.published > 1_500, "{all:?}");
-    assert!(all.by_a_called_run > 150, "{all:?}");
-    assert!(all.after_an_overrun > 100, "{all:?}");
-    assert!(all.after_an_overrun_of_something > 20, "{all:?}");
-    assert!(all.late_across_other_hands > 100, "{all:?}");
-    assert!(all.after_losses > 50, "{all:?}");
-    assert!(all.over_tree > 5, "{all:?}");
-    assert!(all.needs_owner > 200, "{all:?}");
-    assert!(all.admitted > 4_000, "{all:?}");
-    assert!(all.not_confirmed > 30, "{all:?}");
-    assert!(all.judged_before_the_owner_was_needed > 50, "{all:?}");
+    assert!(all.published > 375, "{all:?}");
+    assert!(all.by_a_called_run > 37, "{all:?}");
+    assert!(all.after_an_overrun > 25, "{all:?}");
+    assert!(all.after_an_overrun_of_something > 5, "{all:?}");
+    assert!(all.late_across_other_hands > 25, "{all:?}");
+    assert!(all.after_losses > 12, "{all:?}");
+    assert!(all.over_tree > 1, "{all:?}");
+    assert!(all.needs_owner > 50, "{all:?}");
+    assert!(all.admitted > 1_000, "{all:?}");
+    assert!(all.not_confirmed > 7, "{all:?}");
+    assert!(all.judged_before_the_owner_was_needed > 12, "{all:?}");
     assert_eq!(generated_tampered(SEED, 7), generated_tampered(SEED, 7));
 }
 
@@ -825,16 +830,16 @@ fn every_name_of_whole_books_lost_or_damaged_alone_freezes_or_allows_no_more() {
     let tally = each_name_changed(SEED, WHOLE, Hands::LoseOrDamage);
     let tally = tally.unwrap_or_else(|why| panic!("{why}"));
     assert_eq!(tally.states, WHOLE);
-    assert!(tally.removals > 20_000, "{tally:?}");
+    assert!(tally.removals > 5_000, "{tally:?}");
     assert_eq!(tally.removals, tally.damages);
     // The two losses the record names are met: limits (b) and (c).
-    assert!(tally.charge_lost > 50, "{tally:?}");
-    assert!(tally.amount_lost > 1_000, "{tally:?}");
-    assert!(tally.needs_owner > 1_000, "{tally:?}");
+    assert!(tally.charge_lost > 12, "{tally:?}");
+    assert!(tally.amount_lost > 250, "{tally:?}");
+    assert!(tally.needs_owner > 250, "{tally:?}");
     // A frozen reservation whose hold states its amount stops nothing else; one
     // whose amount is unknown, or whose name took a turn, stops the store.
-    assert!(tally.goes_on > 10_000, "{tally:?}");
-    assert!(tally.stops > 5_000, "{tally:?}");
+    assert!(tally.goes_on > 2_500, "{tally:?}");
+    assert!(tally.stops > 1_250, "{tally:?}");
     assert_eq!(tally.goes_on + tally.stops, tally.frozen, "{tally:?}");
     // The one loss of one name that leaves more to reserve is met, and is always
     // a settlement over its bound.
@@ -854,9 +859,9 @@ fn a_name_made_alone_in_whole_books_freezes_or_allows_no_more() {
     assert!(tally.plants > 15 * WHOLE, "{tally:?}");
     // No name made alone is one whose amount is lost.
     assert_eq!((tally.charge_lost, tally.amount_lost), (0, 0), "{tally:?}");
-    assert!(tally.needs_owner > 1_000, "{tally:?}");
-    assert!(tally.goes_on > 1_000, "{tally:?}");
-    assert!(tally.stops > 1_000, "{tally:?}");
+    assert!(tally.needs_owner > 250, "{tally:?}");
+    assert!(tally.goes_on > 250, "{tally:?}");
+    assert!(tally.stops > 250, "{tally:?}");
     assert_eq!(tally.goes_on + tally.stops, tally.frozen, "{tally:?}");
     assert_eq!(tally.more_left, 0, "{tally:?}");
 }
@@ -864,7 +869,7 @@ fn a_name_made_alone_in_whole_books_freezes_or_allows_no_more() {
 #[test]
 fn the_generated_histories_reach_every_event_every_state_and_every_way_a_publication_ends() {
     let mut seen: BTreeSet<String> = BTreeSet::new();
-    for number in 0..GENERATED {
+    for number in 0..REACHING {
         let events = generated(SEED, number);
         let (books, outcomes) = run_checked(&events).unwrap();
         for (event, outcome) in events.iter().zip(&outcomes) {
@@ -3535,12 +3540,12 @@ fn every_generated_history_of_amounts_near_the_largest_keeps_every_invariant() {
     // Amounts by the scale, places at the last numbers, sums over what 64 bits hold
     // and sums that stop at the largest number: each is met.
     assert_eq!(LARGE, (u64::MAX - 1) / 6);
-    assert!(all.published > 150, "{all:?}");
-    assert!(all.after_an_overrun > 5, "{all:?}");
-    assert!(frozen > 200, "{frozen}");
-    assert!(far > 50, "{far}");
-    assert!(large > 100, "{large}");
-    assert!(saturated > 10, "{saturated}");
+    assert!(all.published > 37, "{all:?}");
+    assert!(all.after_an_overrun > 1, "{all:?}");
+    assert!(frozen > 50, "{frozen}");
+    assert!(far > 12, "{far}");
+    assert!(large > 25, "{large}");
+    assert!(saturated > 2, "{saturated}");
     assert_eq!(generated_large(SEED, 7), generated_large(SEED, 7));
     assert_eq!(generated_large(SEED, 8), generated_large(SEED, 8));
 }
@@ -3749,14 +3754,14 @@ fn every_generated_history_of_turns_moved_around_a_late_admission_keeps_every_in
     // what was really reserved; more do not, and nothing runs under those. Every
     // one that stands is held to the truth, late ones across what other hands did
     // and ones confirmed apart from their publication among them.
-    assert!(all.admitted > 3_000, "{all:?}");
-    assert!(all.admitted_late_across_other_hands > 200, "{all:?}");
-    assert!(all.confirmed_apart > 50, "{all:?}");
-    assert!(all.not_confirmed > 500, "{all:?}");
-    assert!(all.filled_and_stands > 200, "{all:?}");
-    assert!(all.filled_and_not_confirmed > 500, "{all:?}");
-    assert!(all.dispatched_after_filling > 400, "{all:?}");
-    assert!(all.published > 1_500, "{all:?}");
+    assert!(all.admitted > 750, "{all:?}");
+    assert!(all.admitted_late_across_other_hands > 50, "{all:?}");
+    assert!(all.confirmed_apart > 12, "{all:?}");
+    assert!(all.not_confirmed > 125, "{all:?}");
+    assert!(all.filled_and_stands > 50, "{all:?}");
+    assert!(all.filled_and_not_confirmed > 125, "{all:?}");
+    assert!(all.dispatched_after_filling > 100, "{all:?}");
+    assert!(all.published > 375, "{all:?}");
     assert_eq!(generated_turned(SEED, 7), generated_turned(SEED, 7));
 }
 
@@ -4168,10 +4173,10 @@ fn every_generated_history_of_two_admissions_that_wait_together_keeps_every_inva
         .filter(|one| !seen.contains(one))
         .collect();
     assert!(missing.is_empty(), "never reached: {missing:?}\n{seen:#?}");
-    assert!(all.waiting_together > 200, "{all:?}");
-    assert!(all.confirmed_apart > 300, "{all:?}");
-    assert!(all.not_confirmed > 150, "{all:?}");
-    assert!(all.admitted > 1_500, "{all:?}");
+    assert!(all.waiting_together > 50, "{all:?}");
+    assert!(all.confirmed_apart > 75, "{all:?}");
+    assert!(all.not_confirmed > 37, "{all:?}");
+    assert!(all.admitted > 375, "{all:?}");
     assert_eq!(generated_paired(SEED, 7), generated_paired(SEED, 7));
 }
 

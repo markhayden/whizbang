@@ -443,41 +443,41 @@ fn part(numbers: std::ops::Range<u64>, generated: fn(u64, u64) -> Vec<Event>) ->
 
 #[test]
 fn every_generated_history_folds_to_what_the_model_gives_after_every_event() {
-    let (frozen, corrections) = suite(4096, model::generated);
-    assert!(frozen > 500, "{frozen}");
-    assert!(corrections > 100, "{corrections}");
+    let (frozen, corrections) = suite(1000, model::generated);
+    assert!(frozen > 125, "{frozen}");
+    assert!(corrections > 25, "{corrections}");
 }
 
 #[test]
 fn every_generated_history_of_whole_books_then_other_hands_folds_to_what_the_model_gives() {
-    let (frozen, _) = part(0..2048, model::generated_tampered);
-    assert!(frozen > 500, "{frozen}");
+    let (frozen, _) = part(0..500, model::generated_tampered);
+    assert!(frozen > 125, "{frozen}");
 }
 
 #[test]
 fn every_generated_history_of_whole_books_then_other_hands_folds_so_in_the_second_half_too() {
-    let (frozen, _) = part(2048..4096, model::generated_tampered);
-    assert!(frozen > 500, "{frozen}");
+    let (frozen, _) = part(500..1000, model::generated_tampered);
+    assert!(frozen > 125, "{frozen}");
 }
 
 #[test]
 fn every_generated_history_of_amounts_near_the_largest_folds_to_what_the_model_gives() {
-    suite(1024, model::generated_large);
+    suite(250, model::generated_large);
 }
 
 #[test]
 fn every_generated_history_of_turns_moved_folds_to_what_the_model_gives() {
-    suite(1536, model::generated_turned);
+    suite(400, model::generated_turned);
 }
 
 #[test]
 fn every_generated_history_of_two_admissions_that_wait_folds_to_what_the_model_gives() {
-    suite(1024, model::generated_paired);
+    suite(250, model::generated_paired);
 }
 
 #[test]
 fn every_generated_history_of_whole_books_folds_to_what_the_model_gives() {
-    suite(2048, model::generated_whole);
+    suite(500, model::generated_whole);
 }
 
 /// Names of every form that other hands could make in these books, each alone: for
@@ -576,15 +576,15 @@ fn one_name_changed(seed: u64, count: u64) -> (u64, u64) {
     (changes, frozen)
 }
 
-/// The model's own suite of one name changed (2,048 books) is held by the model's
-/// fold. This is a sample of it against the real fold: 96 books from a seed, which is
-/// as few as give more than 10,000 changes from either seed (10,492 and 11,259, with
-/// 7,924 and 8,513 reservations frozen after them), in a test for each of two seeds,
-/// of which the second is written here.
+/// The model's own suite of one name changed (500 books) is held by the model's
+/// fold. This is a sample of it against the real fold: 24 books from a seed, which
+/// give more than 2,500 changes from either seed (2,603 and 2,978, with 1,973 and
+/// 2,308 reservations frozen after them), in a test for each of two seeds, of which
+/// the second is written here.
 fn a_sample_of_one_name_changed(seed: u64) {
-    let (changes, frozen) = one_name_changed(seed, 96);
-    assert!(changes > 10_000, "seed {seed:#x}: {changes} changes");
-    assert!(frozen > 3_000, "seed {seed:#x}: {frozen} frozen");
+    let (changes, frozen) = one_name_changed(seed, 24);
+    assert!(changes > 2_500, "seed {seed:#x}: {changes} changes");
+    assert!(frozen > 750, "seed {seed:#x}: {frozen} frozen");
 }
 
 #[test]
