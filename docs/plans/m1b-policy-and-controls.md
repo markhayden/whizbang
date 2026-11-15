@@ -1442,10 +1442,10 @@ time the task measures and states.
 
 **Depends on:** C1, C2, I6.
 
-- [ ] A `ConfigSource` over the config file and its env file: each time it is asked it
+- [x] A `ConfigSource` over the config file and its env file: each time it is asked it
       reads both and answers a snapshot (I6), or a refusal when either cannot be read as
       what it is.
-- [ ] A snapshot's roster. A backend kind is registered as an action is, by code the
+- [x] A snapshot's roster. A backend kind is registered as an action is, by code the
       binary and the tests share; the shipped binary registers none yet, and the tests
       register a fake kind.
 
@@ -1454,9 +1454,17 @@ with two fake backends of one capability and a default gives a roster that resol
 choice and the default as ADR 0006 says; a backend whose kind this build does not have is
 offered as not ready, with the reason, and never as another backend; a config whose
 backend changed between prepare and admission is `Stale::Config`, on the same executor; a
-config replaced by a file that does not parse refuses the next call, with no run, naming
-the key escaped and cut and no path, and the call after the file is put right is admitted
-(rule 3); a run that was admitted goes on under the snapshot it was admitted with.
+config replaced by a file that does not parse fails the next call as `CallError::Config`,
+with no run and the request's id not taken, in fixed words that name the file as "the
+config" and hold no key, no value and no path; the key is named, escaped and cut and with
+no path, by the reader's own refusal, which the source gives to whoever loads the config
+directly; and the call after the file is put right is admitted (rule 3); a run that was
+admitted goes on under the snapshot it was admitted with.
+**Reworded with the task,** after I6 (ADR 0015, "One snapshot of the config"): the clause
+on a file that does not parse said that it "refuses the next call, with no run, naming
+the key escaped and cut and no path". I6 ruled that a source which cannot answer is a
+failure of the call in fixed words and not a refusal of it, so the call no longer names
+the key; the key, escaped and cut, is still asked for, of the reader's refusal.
 **Carry-over:** the row on the executor built with no backends and the digest of no bytes
 (W1 wires it into the binary). **Size:** medium.
 

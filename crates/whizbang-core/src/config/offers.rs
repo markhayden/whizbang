@@ -12,7 +12,9 @@
 use std::collections::BTreeMap;
 
 use crate::capability::{Resolved, Roster, RosterError, Unresolved};
-use crate::contract::{Backends, Capability, Estimate, Made, ModelIdentity, Offered, Unavailable};
+use crate::contract::{
+    Backends, Capability, Estimate, Made, ModelIdentity, Offered, Secrets, Unavailable,
+};
 
 use super::{CAPABILITIES, Config, Credentials, KindRefused, Kinds, Table};
 
@@ -149,6 +151,20 @@ impl Offers {
         credentials: &Credentials,
         kinds: &Kinds,
     ) -> Result<Offers, RosterError> {
+        Offers::knowing(config, credentials, kinds, &Secrets::none())
+    }
+
+    /// [`Offers::of`], by a source that has read the files before and kept the
+    /// credentials of those readings: a kind is handed these secrets beside the
+    /// credentials', and its sentence is looked at with them all, so one that holds
+    /// a key the kind was shown at an earlier reading is replaced too.
+    pub fn knowing(
+        config: &Config,
+        credentials: &Credentials,
+        kinds: &Kinds,
+        earlier: &Secrets,
+    ) -> Result<Offers, RosterError> {
+        let secrets = &credentials.secrets().joined(earlier);
         let mut offers = Offers {
             roster: Roster::new(),
             not_ready: BTreeMap::new(),
@@ -166,7 +182,6 @@ impl Offers {
                     };
                     value.is_none().then(|| variable.to_owned())
                 });
-                let secrets = credentials.secrets();
                 let made = match (missing, kinds.get(backend.kind())) {
                     (Some(variable), _) => Err(NotReady::Missing { variable }),
                     (None, None) => Err(NotReady::UnknownKind),

@@ -15,9 +15,10 @@
 //! the settings a run records, and [`Loaded::of_files`] reads both files again each
 //! time it is asked. What a config offers is what a snapshot of the config holds as
 //! its backends ([`Offered`](crate::contract::Offered), ADR 0015), and a config makes
-//! the settings of a snapshot's runs ([`Settings`](crate::contract::Settings)). The
-//! source over the two files, the cap and the policy read from them are the later
-//! tasks of checkpoint 1B.
+//! the settings of a snapshot's runs ([`Settings`](crate::contract::Settings)).
+//! [`Files`] is the source an executor asks: it reads both files on each ask and
+//! answers a snapshot of them, or a refusal in fixed words. The cap, the policy and
+//! the settings of that snapshot are a later task of checkpoint 1B.
 
 mod env;
 mod kinds;
@@ -25,6 +26,7 @@ mod offers;
 mod read;
 mod refused;
 mod settings;
+mod source;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -44,6 +46,7 @@ pub use kinds::{
 pub use offers::{NotReady, Offers, Unanswered};
 pub use refused::{ConfigRefused, KEY_SHOWN_LIMIT};
 pub use settings::SettingsRefused;
+pub use source::Files;
 
 /// The longest config file, in bytes. A longer one is refused from its length, before
 /// it is read.

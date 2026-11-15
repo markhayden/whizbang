@@ -540,9 +540,9 @@ with fixed words (`SOURCE_WHY_WITHHELD`), and any other is cut at 256 characters
 a reason that held no secret holds none
 (`snapshot::a_sources_reason_that_holds_a_secret_is_replaced_and_a_long_one_is_cut`).
 **So a call does not name the key of the file that was wrong.** Task C4's "Done when"
-asks for the key, escaped and cut; that is the config reader's own refusal
-(`ConfigRefused`, ADR 0011), shown by whatever loads a config directly, and the task's
-words are to be changed (`docs/carry-over.md`).
+asked for the key, escaped and cut; that is the config reader's own refusal
+(`ConfigRefused`, ADR 0011), shown by whatever loads a config directly (`Files::load`),
+and the task's words were changed when its source was built.
 
 **A source, a kind or a `Settings` that panics** unwinds to its caller. The snapshot is
 taken before anything is held, and the settings are made before anything is taken or
@@ -621,7 +621,8 @@ its reason and never by another
   backends again: the runs admitted under one snapshot are answered by its backends
   and by no other's
   (`snapshot::a_backend_made_for_a_snapshot_answers_only_the_runs_admitted_under_it`).
-  **The digest does not cover the env file** (ADR 0011, "The digest"): a key that is
+  **The digest does not cover the env file** (ADR 0011, "The digest", where task C4
+  decided that this stands): a key that is
   rotated gives a new backend under the same digest, and a call prepared before it is
   not stale
   (`snapshot::known_a_key_rotated_in_the_env_file_gives_a_new_backend_under_the_same_digest_and_no_stale_config`).
@@ -665,9 +666,9 @@ hook while it is asked.
 
 **What waits.**
 
-- **The source over the config file and its env file is task C4's.** It has what it
-  needs: `Loaded::of_files`, `Offers` as an `Offered`, a `Config` as a `Settings`, and
-  the builders of `Snapshot`. The cap and the policy read from the file are task C5's.
+- **The source over the config file and its env file is built** (`Files`, ADR 0011,
+  "The source over both files"): the digest, the backends and the secrets of each
+  reading. The cap, the policy and the settings in its snapshot are task C5's.
 - **Nothing holds a call to the cap.** A part is shown it; task S3 is that part.
 - **The gate's place** (task I3) is given the policy of the run's snapshot, as the
   checked sender is.
