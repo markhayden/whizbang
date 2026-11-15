@@ -438,10 +438,16 @@ suite.
 
 ### Spend
 
+Spend control is a guard and a record: it keeps a mistake from running up a bill, and it
+shows what each run cost. It errs toward letting work run, it may count more than was spent
+and never promises to match a provider's bill to the cent, and it is not a hard control for
+production.
+
 - **A limit is enforced; an estimate is advice.** Each backend states which of its numbers is
   an enforceable upper bound on what a request can cost. A paid request with no enforceable
   bound is refused before dispatch.
 - **One ledger per store,** with one writer. An allowance is reset only by the owner's command.
+  A reset closes the books: nothing reserved before it counts against the new allowance.
 - **Admission is atomic.** A call reserves its bound before any request is sent.
 - **Dispatch is recorded first.** A reservation and a dispatch record are written durably
   before a request leaves.
@@ -449,17 +455,18 @@ suite.
 - **Settlement is per attempt.** A request whose cost is unknown is charged at its bound. A
   timeout does not prove a remote host stopped billing, so it is charged at its bound.
 - **After a crash,** nothing that was dispatched is replayed automatically. The reservation of
-  a run that a dead process left is charged in full, unless every request under it is shown
-  settled. A damaged spend record freezes its reservation. A person may adjust such a charge,
-  by a new record.
+  a run that a dead process left stays counted in full, which can be more than the run spent.
+  A damaged spend record freezes its own reservation and stops nothing else. `whizbang spend
+  status` names both, and the owner's reset clears them; nothing else does.
 - **Retries belong to the layer that issued the request,** and each is admitted like any other
   attempt.
 - **GPU time** on a self-hosted backend has a configured price per second. Its bound must
   come from a limit the host itself enforces, or a fixed maximum charge; a timeout on
   whizbang's side is not a bound.
 
-Tested at checkpoint 1B, with fakes: nested retries, simultaneous calls, cancellation after
-dispatch, a crash between dispatch and settlement, and a backend that offers only an estimate.
+Tested at checkpoint 1B, with fakes, one ordinary test or a few for each: nested retries,
+simultaneous calls, cancellation after dispatch, a store left by a process that died between
+dispatch and settlement, and a backend that offers only an estimate.
 
 ### Readiness
 
