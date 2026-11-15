@@ -405,6 +405,9 @@ impl Fs for NoStatus {
     fn try_share(&self, path: &Path) -> std::io::Result<Option<Box<dyn Held>>> {
         RealFs.try_share(path)
     }
+    fn is_link(&self, path: &Path) -> std::io::Result<bool> {
+        RealFs.is_link(path)
+    }
 }
 
 #[test]

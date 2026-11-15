@@ -10,14 +10,25 @@ slow-timeout = { period = "30s", terminate-after = 1 }
 [profile.default.junit]
 path = "junit.xml"
 
-# The tests that crash a store before every step of something, and try every way the
-# disk can lose what was not yet durable, each do thousands of small file operations.
-# Run beside each other inside a full check on a busy machine they took 17 to 19
-# seconds each against the limit of 30, and 2 to 5 alone. They run one at a time, so
-# that they do not compete with each other; every other test still runs beside them.
+# The tests that crash a store before every step of something, or refuse every step of
+# the file system in turn, and try every way the disk can lose what was not yet durable,
+# each do thousands of small file operations. Run all beside each other inside a full
+# check on a busy machine they took 17 to 19 seconds each against the limit of 30, and
+# 2 to 5 alone. They run two at a time, so that they hardly compete with each other;
+# every other test still runs beside them.
+#
+# Two and not one: one at a time, their seconds added up to the whole test time (116 of
+# 117 seconds on a Linux runner), which has a limit of its own (scripts/timing.sh). Two
+# at a time took the test time on a 16-core machine from 78 seconds to 56 with the
+# slowest sweep at 13; three at a time gained 5 seconds more and took the slowest sweep
+# from 15 seconds to 18, so it stays at two. The two sweeps that start with the run, when
+# every thread is busy, are the slow ones.
+#
+# A new sweep joins by its name: `a_crash_at_any_event`, `crashed_inside_its`,
+# `refused_and_then_a_crash` or `each_step_of_the_file_system_refused`.
 [test-groups]
-crash-sweeps = { max-threads = 1 }
+crash-sweeps = { max-threads = 2 }
 
 [[profile.default.overrides]]
-filter = 'test(a_crash_inside_the_admission_step) | test(a_crash_at_any_event) | test(crashed_inside_its) | test(random_runs_of_publications)'
+filter = 'test(a_crash_inside_the_admission_step) | test(a_crash_at_any_event) | test(crashed_inside_its) | test(random_runs_of_publications) | test(refused_and_then_a_crash) | test(each_step_of_the_file_system_refused)'
 test-group = 'crash-sweeps'

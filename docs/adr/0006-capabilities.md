@@ -5,7 +5,9 @@ answers `Backends::bound` from it; a fault says how far its request got, and eac
 response may carry a charge; and the table's "it was not sent" for `unsupported` holds
 of a handle's own refusal alone: a fault of any kind that states no stage reads as
 unresolved. Changed by ADR 0012: a declaration may name who receives
-its backend's requests
+its backend's requests. Changed by ADR 0015 ("A wrapper around each request"): between
+a handle's tally and its backend stand three places, the gate, the lease and the
+meter, and a request is accounted for only once the last of them has returned
 Date: 2026-11-12
 Amended: 2026-11-12, after the review of the first part, before it merged. Changed: what
 a fault's cleaning guarantees and what it does not find, with a rule for adapters; a

@@ -383,15 +383,41 @@ fn with_the_empty_policy_every_request_to_a_backend_with_a_recipient_is_refused_
 }
 
 #[test]
-fn known_until_the_gates_place_is_built_a_backend_that_is_refused_was_still_called() {
-    // The plan refuses a request at the gate's place, before its backend is called
-    // (task I3). That place is not built: the backend is called once, and what it
-    // cannot do is send. Task I3 turns this pin round.
+fn a_backend_that_is_refused_at_the_gates_place_is_not_called() {
+    // A request is refused at the gate's place, before its backend is called (ADR
+    // 0015, "A wrapper around each request"). Until that place was built a test here
+    // pinned that the backend was still called once, and could only not send. With
+    // the policy that a config which names no recipient makes, the backend's own
+    // count of requests is none, and so is the sender's.
     let sender = Arc::new(FakeSender::scripted(vec![ok()]));
     let filler = remote(recipient(), &format!("{API}/v1/fill"), a_prompt());
     let ran = run_one(filler.clone(), ways(&sender, ""), Secrets::none());
-    assert!(ran.fault.is_some());
-    assert_eq!((filler.requests(), sender.requests()), (1, 0));
+    let fault = ran.fault.clone().unwrap();
+    assert_eq!(
+        refused_as(&fault),
+        (FaultKind::Rejected, Stage::NotSent, NOT_APPROVED)
+    );
+    assert_eq!(fault.charge(), None);
+    assert_eq!((filler.requests(), sender.requests()), (0, 0));
+    // The refusal is in the run's record, with the recipient and the reason, and in
+    // where its data did not go. The request held no prompt, and its picture has no
+    // class before a piece is made of it.
+    let refused = ran.refused();
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0].0, RefusalKind::RequestNotApproved);
+    assert!(refused[0].1.contains(API) && refused[0].1.contains(NOT_APPROVED));
+    assert_eq!(
+        ran.went(),
+        [entry(
+            API,
+            Some(ACCOUNT_CUT),
+            Classes::none(),
+            Handed::Refused
+        )]
+    );
+    // No other backend is asked in its place: the run sent one request, to the
+    // backend its call resolved, which ended in that fault.
+    assert_eq!(ran.record.models().len(), 1);
 }
 
 #[test]
