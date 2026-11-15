@@ -5615,6 +5615,51 @@ pub fn histories() -> Vec<History> {
             (4, Left(18)),
         ],
     );
+    // The exception for an epoch's turns holds that one epoch and no other. A
+    // settlement over its bound is lost whole from an epoch that a reset has since
+    // closed, the turn it took left behind: the old epoch needs its owner, and the
+    // new one, whose turns start again, reads nothing counted and admits in full.
+    add(
+        "88 a settlement at 12 over a bound of 5 lost with its guard and its place \
+         after a reset closed its epoch: the old epoch needs its owner and shows 10, \
+         and the new one admits its full 20 where 12 were spent",
+        vec![
+            reset(20),
+            admit(1, 10),
+            dispatch(1, 5),
+            settle(1, 1, charged(12)),
+            reset(20),
+            Event::Remove(Name::Settled {
+                run: r(1),
+                place: 1,
+                stage: Stage::Answered,
+                micros: 12,
+            }),
+            Event::Remove(Name::Settling {
+                run: r(1),
+                place: 1,
+            }),
+            Event::Remove(Name::Place {
+                run: r(1),
+                place: 2,
+            }),
+            admit(2, 20),
+        ],
+        vec![
+            came(8, Outcome::Done),
+            Epoch(2),
+            // What is left of the old books is a set the ledger could have written:
+            // a reservation of 10 with a request of 5 outstanding.
+            state(r(1), State::Open),
+            EpochOf(r(1), 1),
+            Counts(r(1), 10),
+            Counts(r(2), 20),
+            Allowed(20),
+            Counted(20),
+            Left(0),
+        ],
+        vec![(4, Counted(0)), (7, Counted(0)), (7, Left(20))],
+    );
     table
 }
 

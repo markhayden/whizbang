@@ -17,8 +17,9 @@ use whizbang_core::contract::record::{DIAGNOSTICS_PREFIX, JOURNAL_NAME, Status};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Answer, Backends, Call, CallError, Cancel, Cancellation,
     Capabilities, Capability, Clock, Context, Declined, Ending, Engine, Executor, Failure,
-    Finished, InputPort, Kind, Ledger, NoBackends, Outcome, Produced, Refusal, Registry, Request,
-    RequestId, Reservation, RunId, RunState, Step, StoreFailure, Value, Watched, read_journal,
+    Finished, InputPort, Kind, Ledger, MadeName, NoBackends, Outcome, Produced, Refusal, Registry,
+    Request, RequestId, Reservation, RunId, RunState, Step, StoreFailure, Value, Watched,
+    read_journal,
 };
 use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::store::fs::{Fs, RealFs};
@@ -623,8 +624,13 @@ fn a_run_that_was_named_again_is_in_the_table_of_open_runs_under_its_last_id_alo
     let root = dir.path().join("store");
     let (fs, store) = Taker::store_taking_reservations(&root, 3);
     let barriers = Barriers::new();
-    let executor = engine(store.clone(), vec![busy(&barriers, "nothing")])
-        .with_ledger(Arc::new(FakeLedger::new()));
+    // The ledger keeps no books: a reservation's record with no hold is one whose
+    // amount no name states, and a ledger that folds the names admits nothing
+    // beside it (ADR 0016).
+    let unjudging =
+        Scripted(|_: &Reservation, step: &mut Step<'_, '_>| Ok(step.make("spend/turn/9/1", b"x")?));
+    let executor =
+        engine(store.clone(), vec![busy(&barriers, "nothing")]).with_ledger(Arc::new(unjudging));
     let Ok(Answer::Started(run)) = executor.start(&asked("order-1")) else {
         panic!("the request was not started");
     };
@@ -1236,9 +1242,13 @@ struct Scripted<F>(F);
 
 impl<F> Ledger for Scripted<F>
 where
-    F: Fn(&Reservation, &mut Step<'_, '_>) -> Result<(), Declined> + Send + Sync,
+    F: Fn(&Reservation, &mut Step<'_, '_>) -> Result<MadeName, Declined> + Send + Sync,
 {
-    fn reserve(&self, reservation: &Reservation, step: &mut Step<'_, '_>) -> Result<(), Declined> {
+    fn reserve(
+        &self,
+        reservation: &Reservation,
+        step: &mut Step<'_, '_>,
+    ) -> Result<MadeName, Declined> {
         (self.0)(reservation, step)
     }
 }
@@ -1263,14 +1273,13 @@ fn starving(
         if count == at {
             then();
         }
-        let name = format!("spend/taken/{count}");
+        let name = format!("spend/turn/9/{count}");
         let mut publication = store.begin().unwrap();
         publication
             .create(&name, store::Kind::Diagnostic, b"taken")
             .unwrap();
         publication.publish().unwrap();
-        step.make(&name, b"taken")?;
-        Ok(())
+        Ok(step.make(&name, b"taken")?)
     }))
 }
 
@@ -1283,7 +1292,7 @@ fn nothing_of_the_request(store: &Store, publications: u64) {
     let left: Vec<&String> = generation
         .entries()
         .keys()
-        .filter(|name| !name.starts_with("spend/taken/"))
+        .filter(|name| !name.starts_with("spend/turn/9/"))
         .collect();
     assert!(left.is_empty(), "{left:?}");
 }

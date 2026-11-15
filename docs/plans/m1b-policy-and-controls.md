@@ -800,7 +800,7 @@ until it passes.
 
 **Second pull request: the interface and the records.**
 
-- [ ] `Ledger::reserve` cannot return without having made its names: what it returns can
+- [x] `Ledger::reserve` cannot return without having made its names: what it returns can
       only be had from `Step::make`. `Ledger::settle`, called inside the publication
       that ends a run nothing called; a failure of it is a failure of that publication.
       **`Ledger::confirm`, and the confirmation in `Engine::admit`:** once an
@@ -811,7 +811,7 @@ until it passes.
       tree's tally made. One that does not stand is ended at once by the publication
       that ends a run, with its reservation closed in it and, for a request with an
       id, its ending made; its caller is refused with a reason of its own.
-- [ ] One parser of the ADR's grammar in the core, which every reader of a name under
+- [x] One parser of the ADR's grammar in the core, which every reader of a name under
       `spend/` uses. Reading reservations answers each entry by itself, sound or damaged.
       **The recogniser replays what the ledger checked** (the ADR's table "What the
       ledger can have written", its last row), and **the places of a frozen
@@ -820,7 +820,7 @@ until it passes.
       an epoch count for; and of one run's spend, "unknown, at most" or "unknown" with
       no most. **Every sum is of 128 bits and stops at the largest number,** in the
       fold and in every reading of it, and no name under `spend/` makes a reader fail.
-- [ ] `Allowance` as the ADR has it: debited before a request, given back to, in debt
+- [x] `Allowance` as the ADR has it: debited before a request, given back to, in debt
       where an overrun put it, and a child's remainder handed to its parent when the
       child's end is durable and the parent still executes. **Beside it, what the
       process holds of each tree's reservation, in memory:** its amount and what the
@@ -829,8 +829,8 @@ until it passes.
       refusals, each its own:** the run's allowance, the reservation by its names, a
       frozen or closed reservation, an epoch that needs its owner, and the tree as
       the process holds it.
-- [ ] The store's rule for a `put` under `requests/` and `spend/`, as the ADR decides.
-- [ ] The record types, written one way and read strictly, in
+- [x] The store's rule for a `put` under `requests/` and `spend/`, as the ADR decides.
+- [x] The record types, written one way and read strictly, in
       `crates/whizbang-core/src/spend/`, `spend-epoch/1`, a reset's guard, among them;
       the test kit's fake ledger brought in line.
 
@@ -838,6 +838,26 @@ until it passes.
 the ADR's list "What the second part builds, as decided here", which the first pull
 request's review rounds made longer than these boxes were: a builder ticks none of them
 without it.
+
+**Reworded with the task** (I2's second pull request, 2026-11-15). The second box above
+says "the recogniser replays", "counted and never walked", "the three shapes of a
+reading" and "in the fold and in every reading of it", and S1b's first box says "The
+fold: ... for the store, for one reservation, and for one run under it": both boxes
+named the fold. They are divided so. **I2's**, in `crates/whizbang-core/src/spend/`:
+`name.rs`, the one parser and writer of names; `record.rs`, the record types; and
+`reading.rs`, each entry by itself, sound or damaged, and what the names of *one*
+reservation say: the recogniser with its replay, the sums of its places, the most its
+names can mean with places counted and never walked, the reading's three shapes as
+types, and the sum of 128 bits that stops. **S1b's**, in `spend/fold.rs`: everything
+across reservations, built on that reading: epochs and their allowances, the turns an
+epoch is due and whether it needs its owner, whether a correction stands, each
+reservation's state and what it counts for, the store's balance, one run's spend,
+and the table of histories through a store. Until S1b merges, the cases of this
+task's "Done when" that need an epoch (the confirmation's second and third
+conditions, a dispatch where its epoch needs its owner) are shown through the test
+kit's fake ledger, which answers from the model's fold over the names a store
+holds; "is frozen" and "is folded without walking to it" are shown of the reading
+of one reservation.
 
 **Done when** these pass: a ledger that returns from `reserve` without making its names
 does not compile, or is refused, as the ADR says which; each form of name parses to its
@@ -868,6 +888,31 @@ the reason" until it was amended with ADR 0016, 2026-11-14); every test of `admi
 as changed; every claim of the ADR about code names its test (rule 5).
 **Carry-over:** the rows on "never removed" and `put`, and on the ledger (the token, the
 names). **Size:** medium, in two pull requests.
+
+**Reworded with the task** (I2's second pull request, 2026-11-15). Three clauses of
+the "Done when" above are met otherwise than they are worded; ADR 0016, "The second
+part, as built", names the test of every clause.
+
+- "a ledger that returns from `reserve` without making its names does not compile,
+  or is refused, as the ADR says which". The ADR said: does not compile. That is so,
+  by the type `reserve` returns, and the example on `Ledger` shows it; but the fast
+  tests run no examples, so no named test shows it. What a named test shows is the
+  refusal that was built beside it: a ledger that hands back a name it did not make
+  in this attempt is refused
+  (`ledger::a_ledger_that_hands_back_a_name_it_did_not_make_in_this_attempt_is_refused`).
+- "every test of `admit.rs`, `nested.rs` and `commit.rs` passes against the fake as
+  changed". They pass, and these were restated, because what they held is what this
+  task changes: the fake's own names (`spend/fake/<n>`, now a hold and a turn); a
+  reservation that counted for good once it was made (it is closed when its run
+  ends, so a test that needs money still held makes a hold); a damaged reservation
+  that stopped every admission with a failure (it freezes its own); a name that was
+  made and then replaced by `put` (refused); and, in `nested.rs`, a share that never
+  came back (a child's remainder is handed up). No test of `commit.rs` changed.
+- "a reservation whose names the ledger did not check into place is frozen" and "is
+  folded without walking to it" are shown of the reading of one reservation, as the
+  note on the split with S1b above has it; and the confirmation's and the
+  dispatch's cases that need an epoch are shown through the test kit's fake, which
+  judges by the model's fold.
 
 #### The histories the reviews produced
 
@@ -1140,6 +1185,13 @@ write, and not by one that reads; the shipped description does not change.
 ### S1b. The fold
 
 **Depends on:** I2. In `spend/` only. The real fold, held to I2's model.
+
+**Reworded with the task** (I2's second pull request, 2026-11-15; the note under I2
+has the reason). "The fold: ... for one reservation" in the first box below is built
+on I2's reading of one reservation's names (`spend/reading.rs`: the recogniser, the
+sums of its places, the most its names can mean). This task's is everything across
+reservations, in `spend/fold.rs`: epochs, turns, whether a correction stands, states,
+balances, one run's spend, and the histories through a store.
 
 - [ ] The fold: from the records and reservations a generation names, what is allowed,
       reserved, spent and unresolved, for the store, for one reservation, and for one run
