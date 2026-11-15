@@ -74,7 +74,15 @@ impl RecoveryPart for Interrupted {
                 })
             };
             // An admission that reads and would make a record its own reader
-            // refuses is no better than one that does not read.
+            // refuses is no better than one that does not read. No test reaches
+            // the fall back to the name: `RunRecord::interrupted` refuses an
+            // admission for an action or a version that is empty, a parent that
+            // is the run itself and the largest amount as what was reserved;
+            // `Admission::from_bytes`, the only way a stored admission is read,
+            // refuses each of those first, and `request::admitted` refuses one
+            // that names another run. The line is kept for a reader of
+            // admissions that takes more than the record's does (ADR 0015, "The
+            // interrupted record, and what readers say of it", "Limits").
             let (record, admission) = match from(admission.as_ref()) {
                 Some(record) => (record, admission),
                 None => match from(None) {

@@ -64,6 +64,10 @@ it". ADR 0007 is amended with it (the alternative it turned down for now).
 Amended: 2026-11-15, with task I4b. Added: "The interrupted record, and what readers
 say of it". ADR 0019 is amended with it ("The run's recipients": the limit that
 waited for the recovery).
+Amended: 2026-11-15, after the review of task I4b. Changed under "The interrupted
+record, and what readers say of it", "Limits": the fall back to the name that no test
+reaches, a run whose record cannot be made at all, and an admission the file system
+refused to read, as decided.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -1265,6 +1269,22 @@ in the binary's tests, through the real binary).
 - **An admission that cannot be read today is lost for good in the record,** though
   its bytes stay in the store: a read that failed for a passing reason is not tried
   again, since the run then has its record.
+- **An admission the file system refused to read is treated as one that cannot be
+  read:** the run is ended from its name alone, so that one unreadable run never
+  leaves a store without a writer; the cost is that a passing read error loses the
+  admission's facts in the record for good.
+- **The fall back to the name, for an admission that reads, has no test,** because
+  the case cannot be made through a store. `RunRecord::interrupted` refuses an
+  admission for four things: an action that is empty, an action's version that is
+  empty, a parent that is the run itself, and the largest amount as what was
+  reserved. `Admission::from_bytes`, the only way a stored admission is read,
+  refuses each of the four first, and `request::admitted` refuses an admission that
+  names another run than the one it is under. So a change of that line to one that
+  skips the run fails no test. The line is kept for a reader of admissions that
+  takes more than the record's does.
+- **A run whose record cannot be made from its name alone either is skipped, and
+  nothing says so:** it stays admitted for good, and every later recovery skips it
+  again.
 
 ## Consequences
 
