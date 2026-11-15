@@ -20,7 +20,8 @@ either. And after the fourth: the amount of a reservation whose own hold is lost
 unknown, and the books say so; an epoch that needs its owner takes no dispatch
 either; a dispatch is held to what its process holds of the tree; every sum of the
 fold stops at the largest number; and the recogniser replays what the ledger
-checked.
+checked. And after the fifth: an admission is confirmed on a reading of the names
+made after its publication, and nothing runs under it before.
 Spec: section 6, "Spend"; section 3, "Storage"
 
 ## Context
@@ -125,7 +126,7 @@ A name under `spend/` is one of these forms, to the character, and no other:
 | `spend/dispatched/<run>/<n>/<by>/<micros>` | The meter, before a request leaves | The reservation it draws on (the run at the root of its tree), its place, the run that sent it, and its bound |
 | `spend/settling/<run>/<n>` | The meter, when the request ends | Nothing but that the place `n` is settled |
 | `spend/settled/<run>/<n>/<stage>/<micros>` | The meter, in the same publication | The stage the request reached, and what it was charged |
-| `spend/closed/<run>/released`, `spend/closed/<run>/held` | The ledger, in the publication that ends the run; or recovery | That the reservation is closed, and whether the closing released what it held beyond its charges |
+| `spend/closed/<run>/released`, `spend/closed/<run>/held` | The ledger, in the publication that ends the run; or recovery; or the process that backs out an admission it could not confirm | That the reservation is closed, and whether the closing released what it held beyond its charges |
 | `spend/adjusted/<run>/<place>/<turn>/<seal>/<micros>` | A person's command | A correction: what the reservation is charged, the place and the turn it took, and a seal of the names it was made over |
 
 - `<run>` and `<by>` are run ids (ADR 0005). `<epoch>`, `<n>` and `<micros>` are
@@ -160,11 +161,13 @@ One publication each, all of its names or none. The model publishes exactly thes
 |---|---|
 | A reset | `reset/<epoch+1>/<micros>`, `epoch/<epoch+1>`, and the next `turn` of the epoch it closes |
 | An admission of a call nothing called | `reservations/<run>`, `held/<epoch>/<run>/<micros>` in the newest epoch, the next `turn` of that epoch; and the run and its admission (ADR 0007) |
+| The confirmation of that admission, where it stands | Nothing: a reading of the names |
+| The confirmation, where the admission does not stand | The closing of its reservation, as at the end of a run: `closed/<run>/released`, the next `place`, the next `turn` ("An admission is confirmed before anything runs under it") |
 | An admission of a nested call | Nothing under `spend/`: its share is taken from its caller's allowance (ADR 0008) |
 | A dispatch | The next `place` under the root's reservation, `dispatched/…` at it |
 | A settlement | `settling/…`, `settled/…`, the next `turn`; and when the charge is over the bound, the next `place` |
 | The end of a run nothing called | `closed/<run>/released` or `closed/<run>/held`, the next `place`, the next `turn` |
-| Recovery | The same three for every reservation that is not closed and whose run is not open in this process, in one publication: a turn for each |
+| Recovery | The same three for every reservation that is not closed and whose run is not open in this process, nor waiting there to be confirmed, in one publication: a turn for each |
 | A correction | `adjusted/<run>/<place>/<turn>/<seal>/<micros>`, the `place` it names, which is the next, and the `turn` it names, which is the next |
 | The end of a nested call, a crash, a deletion with a prune | Nothing under `spend/` |
 
@@ -524,8 +527,8 @@ only that a name a publication makes is not there (ADR 0007). So:
 The model holds this for every history, generated ones among them, in which an event
 is judged on earlier books and published later, in one process or in a second over the
 same store. The checker works out from the truth what is really left of the allowance
-and of each reservation, and no admission and no dispatch is published that it does not
-cover (`spend::every_generated_history_keeps_every_invariant`,
+and of each reservation, and no admission stands and no dispatch is published that it
+does not cover (`spend::every_generated_history_keeps_every_invariant`,
 `spend::two_processes_over_one_store_are_held_by_the_same_names`).
 
 **No dispatch after any closing.** A dispatch is refused when any `closed` name names
@@ -538,10 +541,89 @@ changed the books: its names collide with nothing they did. A dispatch judged be
 closing that other hands made without a place is published (history 48, its last
 event); so is an admission judged before a turn was lost (history 61), and a dispatch
 judged before its place's guard was lost (history 59). In each the books freeze, the
-reservation or the store, so nothing is released and nothing more is admitted; but the
-one publication stands. A dispatch among them is still held to what its process holds
-of the tree, so it does not pass what was really reserved (history 71). "Limits", (e),
-has it.
+reservation or the store, so nothing is released and nothing more is admitted. Such a
+dispatch stands, and is still held to what its process holds of the tree, so it does
+not pass what was really reserved (history 71). Such an admission is published and
+does not stand by that: the next section. "Limits", (e), has both.
+
+### An admission is confirmed before anything runs under it
+
+A turn keeps two admissions that judged the same books from both being published,
+and it is a name: other hands can take one away and make another. The fifth review
+round did that. A reservation of 10 is all of an allowance of 10, and all of it is
+sent. Other hands take away the epoch's first turn and make its second. An admission
+of 10 that judged before the first is then published with the turn that is free
+again: the turns are 1 and 2 for two holds, the epoch needs nobody, both
+reservations are sets the ledger could have written, and the books read 20 counted
+against 10. As this record stood the second run's request of 10 was then sent
+(history 76). No name that states money was lost or made; the admission's safety
+rested on one turn's name.
+
+**So the publication of an admission admits nothing by itself.** When it is durable,
+the process that made it reads the names again, as they then are, and folds them. The
+admission stands only if, on that reading:
+
+1. **its own reservation is a set the ledger could have written, and open:** the
+   record, one hold, and nothing else that names the run;
+2. **neither the epoch it fell under nor the newest epoch needs its owner,** which a
+   frozen reservation anywhere makes every epoch do;
+3. **the epoch it fell under is not over its allowance, with this reservation counted
+   in full:** what is counted there is no more than what is allowed. A call of
+   nothing adds nothing to what is counted and is not held to a debt that was there
+   before it, as it is not when it is judged (history 38).
+
+**Otherwise the process backs it out at once.** It closes its own reservation by the
+one rule of a closing ("Settlement, closing and recovery"): nothing was dispatched
+under it, so an open reservation is closed as `released` and counts for nothing from
+then on, and one that is not what the ledger wrote is closed as `held` and stays
+frozen. The closing takes the reservation's first place and the next turn of its
+epoch, as any closing does. The call is refused as not confirmed, a refusal of its
+own (`Why::NotConfirmed` in the model), and its run never executes.
+
+**Nothing is done under a reservation before it is confirmed:** no request is
+dispatched, no call is admitted from inside its run, the run does not start. Until
+then the reservation is open and counts in full, which is what makes the rule safe
+for two admissions at once: each reads after its own publication, so of any two the
+one published later has the other's names in its reading, and the two never both
+stand on books that hold only one of them.
+
+What follows from it:
+
+- **A reservation that cannot be closed stays as it is.** Where other hands made a
+  closing for it already, or took its names away, the process publishes nothing; the
+  reservation counts for what its names say, the call is refused, and nothing runs.
+  The same holds where the store refuses the closing's publication: the reservation
+  stays admitted, not executed and counted in full, and the next recovery closes it.
+- **A crash between the publication and the reading** leaves a reservation that was
+  admitted and never confirmed. Nothing ran under it, and it counts in full, which
+  is the most it can, until the next recovery. Recovery cannot tell it from a
+  reservation whose run died before it sent anything, because the names are the same
+  three; it closes it by the same rule, as `released` when its names are whole
+  (history 25), and as `held` when they are not. Recovery passes over an admission
+  that waits to be confirmed in the process that recovers: that one is its own to
+  confirm or to close.
+- **Two admissions that read at once can both be backed out,** each seeing the other
+  counted in full and neither seeing the other's closing. That is safe, and it is a
+  cost: both callers are refused where one could have run. The model reads one at a
+  time, and there the first to read is backed out and the other stands.
+- **A reading is of one moment.** What other hands do after it is what they do to any
+  books: limits (a) to (d).
+- **The cost for an admission that stands** is one more reading of the names and one
+  more fold, and no name. One that is backed out makes three names more, and takes a
+  place and a turn.
+
+An admission that was judged late and whose reading is sound and within the allowance
+stands: a late admission whose turn fills the place of a turn that was lost is
+published, and is then confirmed or not as any other
+(`spend::known_a_late_admission_whose_turn_fills_the_place_of_one_that_was_lost_is_published`).
+What the names leave out, they leave out of that reading too: a charge that was lost
+with its settlement is not counted against the admission, which is limits (b) and (d)
+and not a matter of when it was judged
+(`spend::known_an_admission_judged_before_a_settlement_that_other_hands_took_away_whole_is_published`).
+
+(`spend::an_admission_stands_only_when_it_is_confirmed_on_a_reading_made_after_its_publication`
+holds each of the three, alone; what backing out publishes; that nothing is done before
+the confirmation; the crash; and the two admissions.)
 
 ### Settlement, closing and recovery
 
@@ -634,15 +716,16 @@ state from the one the owner corrected, because it is the same state.
 | 3, no dispatch after a closing | No dispatch is published once a closing names its reservation, whenever it was judged (histories 48, 49) |
 | 4. Damage freezes one reservation | A name of a reservation that is damaged, made by other hands or lost changes no reservation but its own, and a damaged one's own counts in full |
 | 5. Every amount is in a name | Every name the model makes is in the alphabet, under the limit, and read back by the parser to the same name; the fold of the names read back is the same fold |
-| 6. No admission on a stale balance | No admission is published that what is really left of the allowance does not cover, and no dispatch that what was really reserved does not cover, late ones among them; and none as it was judged once the ledger has taken a turn in its epoch since |
+| 6. No admission on a stale balance | No admission stands, and nothing runs under one, unless the truth had room for it: the allowance the owner really set for its epoch, less every reservation really made in that epoch, each at its amount, or at what its requests really took where that is more, until the ledger released it or its owner corrected it. And unless the reading made after its publication showed its reservation whole and open, no epoch of the two needing its owner, and its epoch within its allowance. No dispatch is published that what was really reserved does not cover, late ones among them. No admission is published as it was judged once the ledger has taken a turn in its epoch since, unless other hands did something between (limit (e)); and no request is sent and no call made under a reservation that was not confirmed |
 | 7. A person corrects by a new record | A correction is a new name; nothing the ledger does removes or replaces one |
 
 What the checker leaves out is the limits under "Limits", and nothing else.
 
 The table has the 38 histories of the plan, in its order, this record's own after
 them (39 to 42), from 43 those of its review rounds, 68 from the hunt that
-followed the third, 69 to 72 the fourth round's, and 73 to 75 found while those were
-built or ruled with them. The generated histories are 4,096 of at most 24 events each, from a seed written
+followed the third, 69 to 72 the fourth round's, 73 to 75 found while those were
+built or ruled with them, 76 the fifth round's, and 77 a tree deeper than a generated
+history is long. The generated histories are 4,096 of at most 24 events each, from a seed written
 in the test, and 4,096 more of another shape: books the ledger alone wrote, then one to
 six things other hands do, then one to four things the ledger and its processes do
 (`spend::every_generated_history_of_whole_books_then_other_hands_keeps_every_invariant`); one that breaks an invariant is printed with the seed and its number.
@@ -656,6 +739,17 @@ other runs called, after a run above them overran, late across what other hands 
 and after names of the reservation were lost. 1,024 more histories, of both shapes,
 have amounts near the largest a name can state and places near the largest a name can
 name (`spend::every_generated_history_of_amounts_near_the_largest_keeps_every_invariant`).
+**A fourth shape moves a turn around a late admission:** 1,536 histories in which the
+ledger alone acts; other hands then take away one turn and make another, the one
+before the other and after it, in the newest epoch and in another; and an admission
+that was judged before they did, three times in four on the names as they were just
+before the lost turn was taken, is published. It is confirmed at once, or published
+and confirmed apart with other events between, a crash and a recovery among them;
+its run then asks for all it reserved; and the ledger and its processes go on
+(`spend::every_generated_history_of_turns_moved_around_a_late_admission_keeps_every_invariant`).
+**Every admission that stands is held to the truth,** in every suite: the allowance
+the owner really set covers every reservation really made in its epoch, each counted
+in full. The tests count what they reach of that and are held to it.
 Other hands make names of every form in them, at any point between the ledger's own
 events and its late judgements: a turn far ahead, a hold in any epoch up to three past
 the newest and for a run that has no reservation, a whole settlement, a correction with
@@ -708,6 +802,22 @@ and no set the ledger writes is another with one name gone.
 - **A dispatch's refusals,** each its own: the run's allowance, the reservation by
   its names, a frozen or closed reservation, an epoch that needs its owner, and the
   tree as the process holds it.
+- **The confirmation, in `Engine::admit`,** between the admission's publication and
+  the start of the run. The publication is as ADR 0007 has it: the run with its
+  admission, the request id's record, the reservation and the ledger's names, all or
+  none. Once it is durable the executor reads the store's generation again and the
+  ledger folds it and answers whether the admission stands (a part of the ledger's
+  interface, `Ledger::confirm`, given the run and its amount). Only then is the
+  run's thread made, its allowance and the tree's remainder set, and its action
+  run. Where it does not stand, the run is ended at once, having done nothing, by
+  the publication that ends a run: `Ledger::settle` closes the reservation in it,
+  the run's record says it ended as not confirmed, and for a request with an id
+  `requests/<id>/ended` is made in it, so that a repeat of the request is answered
+  from that ending and the id does not run later. The caller is refused with a
+  reason of its own. Where that publication fails, the run stays admitted and is
+  never started, and recovery ends it as it ends any run its process left. Recovery
+  in a live process passes over a run that waits there to be confirmed. A call from
+  inside an action has no reservation and is not confirmed: its parent's was.
 - **Sums that stop at the largest number,** in the fold and in every reading of it;
   no name under `spend/` makes a reader fail.
 - **The store refuses a `put` of a name under `requests/` and `spend/`:** those names
@@ -740,6 +850,8 @@ and no set the ledger writes is another with one name gone.
   sweep.
 - **The model has two processes and no more,** each with its own runs and requests,
   and a publication is whole in both.
+- **A confirmation is one event in the model:** the reading and what follows from it.
+  Two processes that read at once, each before the other's closing, are not in it.
 - **The fold reads every name each time.** What that costs as a store ages is on
   `docs/carry-over.md`, with milestone 2.
 
@@ -800,39 +912,42 @@ and the sixth is a ruling it cannot meet.
   (history 73).
 - **(e) One publication whose judgement was made before other hands planted,
   removed or damaged a name may still land.** The store refuses a publication only
-  for a name it makes, and each judgement is published once. **It is never worse
-  than a fresh judgement made on the names as other hands left them:** where a fresh
-  admission or dispatch on those names would be accepted, under limits (a) to (d),
-  the late one is too. **Afterwards the reservation or the store is frozen, or
-  nothing more is admitted in the epoch it fell under, or the books read as they
-  would to a fresh process.**
-  A judgement made before a turn was lost, before a place's guard was lost, or
-  before other hands made a closing without its place, is published (histories 61,
-  59 and 48), and an admission or a dispatch then stands that the books as they
-  were at publication would have refused: there the reservation is frozen or the
-  store needs its owner. Nothing is frozen, and no more is admitted in the epoch all
-  the same, where an admission falls under an epoch other hands closed by opening a
-  later one
-  (`spend::known_an_admission_judged_before_other_hands_opened_an_epoch_falls_under_the_old_one`),
-  or under an epoch whose reset they took away. And the books read as they would to
-  a fresh process where an admission was judged before a settlement that other
-  hands then took away whole, with its guard, its place and its turn: the turn it
-  chose is free again, and an admission judged on the names as they are would be
-  published too, with the same names
-  (`spend::known_an_admission_judged_before_a_settlement_that_other_hands_took_away_whole_is_published`).
-  What is held of every such publication: a dispatch stands after a closing only
-  under a reservation that other hands touched, and never over what was really
-  reserved, because the process's memory of the tree is asked when it is published
-  (history 71); and an admission stands only in an epoch where nothing more is then
-  admitted, because it needs its owner, has nothing left, or is no longer the
-  newest, or else where one judged now on the same names would stand, and then it
-  is held as that one is, to what is really left. The second review round did not
-  accept this limit. Closing it needs the store to refuse a publication for
-  something other than a name it makes, such as the generation it judged on having
-  changed, which is not ADR 0007's rule and is not decided here.
-  The hunt under this limit as restated found one admission that is worse than a
-  fresh judgement, and it is not ruled on: one whose turn fills the place of a turn
-  that other hands took away ("Review rounds").
+  for a name it makes, and each judgement is published once. What that gives a
+  dispatch and what it gives an admission are two things.
+  **A late dispatch stands.** One judged before a place's guard was lost, or before
+  other hands made a closing without its place, is published (histories 59 and 48),
+  where the books as they were at publication would have refused it: there the
+  reservation is frozen. It stands after a closing only under a reservation that
+  other hands touched, and never over what was really reserved, because the
+  process's memory of the tree is asked when it is published (history 71).
+  **A late admission may be published, and that is all: it is not confirmed unless
+  the books then read sound and within the allowance, and an admission that is not
+  confirmed runs nothing** ("An admission is confirmed before anything runs under
+  it"). One judged before a turn was lost is published, is not confirmed, and is
+  closed with everything released (history 61). So is one whose turn fills the
+  place of a turn that other hands took away, where the books then read over the
+  allowance (history 76). What the limit leaves of an admission is names, a record,
+  a hold and a turn, and then a closing, a place and a turn; and a reservation that
+  counts in full from its publication to its closing, which is over and never
+  under.
+  Where the reading made after its publication is sound and within the allowance,
+  a late admission stands, and not by this limit: the names as other hands left
+  them, its own among them, are books the ledger could have written, and it is held
+  as any admission is, to the truth with limits (a) to (d) in it. So one stands
+  that falls under an epoch other hands closed by opening a later one
+  (`spend::known_an_admission_judged_before_other_hands_opened_an_epoch_falls_under_the_old_one`);
+  one judged before a settlement that other hands then took away whole, with its
+  guard, its place and its turn, which is over what was really left by the charge
+  that was lost and no more, limits (b) and (d)
+  (`spend::known_an_admission_judged_before_a_settlement_that_other_hands_took_away_whole_is_published`);
+  and one whose turn fills the place of a turn that was lost, where the books then
+  read within the allowance
+  (`spend::known_a_late_admission_whose_turn_fills_the_place_of_one_that_was_lost_is_published`).
+  The second review round did not accept this limit. For an admission the fifth
+  closed it, with no change to what the store refuses. For a dispatch, closing it
+  needs the store to refuse a publication for something other than a name it
+  makes, such as the generation it judged on having changed, which is not ADR
+  0007's rule and is not decided here.
 - **(f) A correction stands again when the names return to exactly the set it was
   sealed over.** The ruling of the second round, that a correction never stands
   again once a later name ended it, cannot be met by a fold of names: made and taken
@@ -854,7 +969,7 @@ exemptions, all of them:
 | (d) | The count of a reservation where other hands only lost names of it and it is not frozen: believed when the second reading takes what is left | `held_to` and `believable` |
 | (d) | A reservation of which every name is lost is not held at all | `held_to` |
 | (d) | Where the newest epoch is lost, the allowance is not held | `really_left` |
-| (e) | A dispatch published late is not held to a closing where other hands did something between its judgement and it and touched its reservation. An admission published late, where they did something between, is not held to the turns the ledger took since its judgement, nor to what is left, where no more is then admitted in the epoch it fell under; and not to those turns, but to what is really left, where an admission of the same amount judged on the names as they are would be published | `unseen`, `excused` and `fresh` in `checked` |
+| (e) | A dispatch published late is not held to a closing where other hands did something between its judgement and it and touched its reservation. An admission published late, where they did something between, is not held to the turns the ledger took since its judgement: that is of its publication, and of nothing else. Whether it stands has no exemption | `unseen` and `between` in `checked` |
 | (f) | Nothing. The truth keeps the names the owner's last correction left, and the correction is the owner's again whenever the names are those | `held_to` |
 
 The first row and the seventh are one piece of code, told apart by what the truth wrote
@@ -863,8 +978,19 @@ in the table: it is the correction's stated meaning ("A person's correction"). N
 dispatch is in it either: whatever the names say, what its process holds of the tree
 holds each dispatch to what was really reserved. The round before had a run's own
 allowance do that, which it does not: a child's share is not what the tree has left.
+**Nor is an admission that stands.** It is held to the truth: the allowance the owner
+really set for its epoch covers every reservation really made there, each counted
+in full until it is released or corrected, this one among them. Limits (a) to (d)
+are in that truth as they are in any count, by the rows above, and nothing is left
+out for an admission as such. And it is held to the reading made after its
+publication, which the checker makes again in its own code: its reservation whole
+and open, neither its epoch nor the newest needing its owner, its epoch within its
+allowance. An admission that was backed out is held to this: nothing was dispatched
+under it, its run does not execute, and its reservation is released or still counts
+in full.
 Four exemptions were taken out after the third round and two made narrower; the
-fourth changed the row of (c) and no other ("Review rounds").
+fourth changed the row of (c) and no other; the fifth took out the two that the row
+of (e) gave an admission's money ("Review rounds").
 
 ## Review rounds
 
@@ -1165,8 +1291,130 @@ closing lies between, in each reading. What the rulings changed, the checker's
 excuse for a late admission and the answer counted in memory, was not put through
 the check again: history 75 holds the second.
 
+**2026-11-14, the fifth round.** The same review, with the limits and the checker's
+exemptions as the fourth round left them, found nothing in what a process holds of a
+tree, in a crash and its recovery, the replay, corrections, the sums that stop, epochs
+or amounts that are unknown; and one history outside the limits, in which no name
+that states money is lost or made. It was first a history that failed. The checker
+let it by: only what the history must give refused it.
+
+| Trace | What it showed | Held by | History |
+|---|---|---|---|
+| 1 | A reservation of 10 is all of the allowance, and all of it is sent. Other hands take away the epoch's first turn and make its second, and an admission of 10 that judged before the first is published with the turn that is free again. The turns are then exactly accounted for, both reservations are sets the ledger could have written, the books read 20 against 10, and the second run's request of 10 was placed. The checker excused the admission because the epoch it fell under had nothing left | An admission is confirmed on a reading of the names made after its publication, and nothing runs under it before. The checker holds every admission that stands to the truth and to that reading, with no exemption | 76 |
+
+The round named two things the generated histories cannot reach. A tree that two
+processes share cannot be made in this vocabulary: a call is made from inside a run
+of the process that acts. And no generated history is longer than 24 events.
+**History 77** is one that is: a tree 24 runs deep, each call made from inside the
+one before; the answer to the leaf's request says more than the whole tree
+reserved; a run half way up then publishes a request it judged before the leaf's,
+and so does the run at the root, judged now; and the process dies. What the process
+holds of the tree refuses both requests, where the names have 46 left, and recovery
+closes the tree's one reservation with nothing released.
+
+**What the fifth round changed in the histories before it.** One, the only one in
+which an admission that was judged late is published: in histories 1, 12, 47 and 60
+the store refuses it for its turn, and it is judged again.
+
+| History | Was | Is |
+|---|---|---|
+| 61 | The admission of 10 that judged before the turn was lost is published, and stands: 22 counted of 20, in an epoch that needs its owner | It is published and not confirmed, because the epoch needs its owner: its reservation is closed, releases the 10 and counts nothing, and 12 are counted. The epoch needs its owner as it did, the next admission is refused as it was, and after the owner's reset the balances are the same |
+
+**The tests that pin a late admission,** each as it now is:
+
+| Test | Was | Is |
+|---|---|---|
+| `spend::known_a_late_admission_whose_turn_fills_the_place_of_one_that_was_lost_is_published` | Published; the checker refused it as admitted on a stale balance, and the case was not ruled on | Ruled. It is published, and it stands, because the reading made after it is sound, with 8 counted of 20: the checker holds it to the truth and to that reading, and lets it by. With an allowance of 7 the same admission reads 8 of 7 and is not confirmed. The test has both |
+| `spend::known_an_admission_judged_before_a_settlement_that_other_hands_took_away_whole_is_published` | Published, and held by the checker as one judged now would be | Unchanged in what it gives. It stands by its confirmation: the reading is sound, with 19 and then 20 counted of 20. It is over the truth by the charge that was lost, which is limits (b) and (d) |
+| `spend::known_an_admission_judged_before_other_hands_opened_an_epoch_falls_under_the_old_one` | Published under the old epoch; the checker excused it, because that epoch was no longer the newest | Unchanged in what it gives. It stands by its confirmation: neither its epoch nor the newest needs its owner, and it is 10 of 11. The checker holds it to the truth of its own epoch, with no excuse |
+
+**Two things in the ruling for this round were not built as worded.**
+
+- **"No epoch needs its owner."** An epoch that needs its owner needs it for good:
+  its turns are never made right, and the owner's reset opens the next one (histories
+  47 and 61, whose last admissions follow such a reset and stand). Held to every
+  epoch, no admission would stand in such a store again. What is held is the epoch
+  the admission fell under and the newest one, which for an admission judged now are
+  one epoch; and a frozen reservation makes every epoch need its owner.
+- **"Recovery closes it as `held`."** An admission that was published and never
+  confirmed, because its process died between, has the three names of a reservation
+  whose run died before it sent anything, and no others: confirming makes no name.
+  The plan's history 25 has recovery release that reservation, so recovery releases
+  this one. It counts in full from its publication to that recovery, and nothing ran
+  under it. Telling the two apart needs a name made by the confirmation, which is a
+  cost for every admission and is not decided here.
+
+**The checker.** The two things the row of (e) left out for an admission's money are
+gone: the excuse where the epoch it fell under had nothing left or was no longer the
+newest, and the comparison with an admission judged now. In their place: the truth
+of its own epoch, whichever epoch that is, with each reservation really made there
+counted in full, where the check before it counted only what its requests took; the
+reading made after its publication, written a second time in the checker; and, of
+one that was backed out, that nothing ran under it.
+
+**The generators.** A fourth shape is new ("The invariants, and what holds them"),
+and the three generated tests that existed count the admissions that stand and those
+that are not confirmed, and are held to reaching both. On the seed written in the
+tests: of the fourth shape's 1,536 histories, 1,006 admissions are published with a
+turn that other hands had taken away. 291 of them stand, and 585 requests are sent
+under those, each held to what was really reserved; 715 are not confirmed. 4,290
+admissions stand in all, 297 of them judged late across what other hands did and 73
+confirmed apart from their publication, and 730 are published and not confirmed.
+Of the first shape's 4,096, 2,556 stand and 96 are not confirmed; of the second's,
+5,469 and 58. What the fourth round's counts were, they are.
+
+**The hunt.** All five suites were run from 32 other seeds, as a test that is not
+kept: 4,096 histories of each of the first two shapes and of the fourth, 1,024 with
+large amounts and 2,048 whole books for each seed, with 3,381,779 single names
+changed in all. Nothing failed: every one of the 425,984 histories passed, the two
+readings of every reservation gave one answer after every event, and no single name
+fell under limit (a) or (d). In them 634,416 admissions stand, each held to the
+truth, and 67,320 are published and not confirmed; 85,536 admissions are published
+with a turn that other hands had taken away, of which 24,741 stand.
+
+**The mutation check,** of what this round added: 28 changes of one rule each.
+Sixteen are to the ledger: the confirmation taken out; its own reservation not
+asked for, or asked only to be a set the ledger could have written; the epoch it
+fell under not asked; the newest epoch not asked; the allowance not asked, asked of
+a call of nothing too, or asked with its own reservation left out of the count; the
+closing of an admission that is backed out made `held`, or not made; a run made to
+execute when its admission is published, or after it was backed out; recovery
+closing an admission that waits in its own process; a crash that keeps what waits;
+a second process confirming what the first published; and an admission judged now
+not read back. Fifteen were caught by the tests. The last changes nothing the model
+can show: an admission judged now is published on the names it judged, so its
+reading is those names with its own three and always stands. In a store the
+judgement and the publication are two moments, and the reading is always made.
+Twelve make the checker looser, which no test can catch while the model is right:
+the excuse that was taken out put back; the truth not asked; a reservation counted
+in the truth only for what its requests took; the reading not asked, and each of
+its three parts; a request or a call under a reservation that was not confirmed;
+one that stands and does not execute; one that was backed out and ran something,
+or is neither released nor counted in full; and the turns taken since a late
+judgement. Each was shown to matter by a fault put in the model beside it, counted
+over the four generated suites on the seed in the tests. With the confirmation
+taken out the checker refuses 893 histories as it is and 227 with the old excuse
+back. With an open reservation counted for what is known of it and not for its
+amount, 1,027 are refused, all by the truth with each reservation counted in full,
+and none where a reservation counts in the truth for its requests alone; the
+generated tests assert that truth a second time, and refuse the same 1,027 where
+the checker does not ask it. With the epoch it fell under not asked, 28 are refused
+by the reading and none without it or without its part for the epochs; the part
+for its own reservation holds 1, and the part for the allowance 11 that the truth
+does not. A run that executes from the publication is refused in 358, in 6 by the
+rule for a request under a reservation that was not confirmed alone, and in 1
+without either. A reservation backed out as `held` in a fold that counts such a one
+for what is known is refused in 734, and in 156 without the rule for it. A store
+that takes a publication whose turn is taken is refused in 125, and in none without
+the rule for turns. A confirmation that says an admission stands and starts no run
+is refused in 6,620, and in none without the rule for it.
+
 ## Consequences
 
+- An admission is published and then read back: one more reading of the store and
+  one more fold for every call that nothing called, and no more names when it
+  stands. One that is backed out leaves six names, counts for nothing, and has
+  taken two turns.
 - An admission through the ledger makes three names under `spend/`, a paid request
   five (two when it is dispatched, three when it is settled), a closing three, a reset
   three, a correction three: a run with *n* paid requests, 5 *n* + 6. They are never removed, and each adds to what a publication
