@@ -259,8 +259,11 @@ done at admission, part by part, so that the refusal says what differs (ADR 0007
 preparation handed to admission").
 
 The config's digest is read each time a call is prepared (`ConfigSource`). An executor
-built with a digest has that one config for as long as it lives. There is no config
-yet, so the binary gives the digest of no bytes.
+built with a digest has that one config for as long as it lives. The binary gave the
+digest of no bytes while there was no config; since task W1 of checkpoint 1B its
+executor asks a source of snapshots, and a command that names no config is under the
+empty config, whose digest it records (ADR 0011, "The digest"; ADR 0015, "The binary
+wired").
 
 ### Who may state a derivation
 

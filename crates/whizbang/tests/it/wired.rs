@@ -410,8 +410,14 @@ fn with_no_config_the_binarys_executor_is_under_the_empty_config_and_a_call_with
     assert!(matches!(prepared.readiness(), Readiness::NotReady(_)));
     // No backend is there to hand: the call is refused as not ready, before
     // admission. No run is made and the action does not run.
+    // The sentence is the one what a config offers says, of a config that offers
+    // nothing: an executor that asked the backends it was built with, which are
+    // none, would say "no backend is configured for fill".
     let why = not_ready(executor.submit(&Call::new("paints")));
-    assert!(why.contains("fill"), "{why}");
+    assert_eq!(
+        why,
+        "no default backend is configured for fill, and the call chose none"
+    );
     assert_eq!(world.ran(), 0);
     assert!(world.held().is_empty(), "{:?}", world.held());
     // A call that needs no backend runs, and its record names the empty config.
@@ -537,6 +543,34 @@ fn a_call_over_the_cap_of_the_binarys_config_is_refused_before_a_run_exists() {
     assert_eq!((world.ran(), world.fakes.requests()), (1, 1));
 }
 
+#[test]
+fn a_request_that_is_both_too_old_and_over_the_cap_is_refused_as_stale() {
+    // The parts are asked in the order they were given, and the first refusal is
+    // the answer: the age's part stands before the cap's.
+    let world = World::new("wired-order");
+    let clock = Arc::new(Hand(AtomicU64::new(1_000_000)));
+    let executor = world
+        .runner(&world.config(&capped("0.10")))
+        .with_clock(clock.clone());
+    let prepared = executor.prepare(&Call::new("paints")).unwrap();
+    assert!(prepared.estimate().micros() > 100_000);
+    clock.0.fetch_add(PREPARATION_HOLDS_MS, Ordering::SeqCst);
+    let request = Request::new(Call::new("paints")).expecting(&prepared);
+    let refused = executor.request(&request);
+    let Err(CallError::Refused(Refusal::ByPart { part, .. })) = refused else {
+        panic!("not refused by a part: {refused:?}");
+    };
+    assert_eq!(part, AGE_PART);
+    // Young again, the same request is refused by the cap.
+    clock.0.fetch_sub(1, Ordering::SeqCst);
+    let refused = executor.request(&request);
+    let Err(CallError::Refused(Refusal::ByPart { part, .. })) = refused else {
+        panic!("not refused by a part: {refused:?}");
+    };
+    assert_eq!(part, CAP_PART);
+    assert!(world.held().is_empty());
+}
+
 /// A clock a test moves by hand.
 struct Hand(AtomicU64);
 
@@ -644,9 +678,12 @@ fn the_binarys_source_and_its_executor_are_told_of_the_same_secrets() {
 }
 
 #[test]
-fn a_key_of_the_env_file_is_taken_out_of_what_a_run_under_the_binarys_executor_writes() {
+fn the_value_of_a_variable_the_config_names_is_taken_out_of_what_a_run_under_the_binarys_executor_writes()
+ {
     // The env file named beside the config holds the value of the variable the
-    // config names: it is the executor's secret from the first call on.
+    // config names: that value is the executor's secret from the first call on. A
+    // value of the env file that the config does not name is no secret of the
+    // executor's, and nothing carries one into a run.
     let world = World::new("wired-env");
     let key = made_up_key("env");
     std::fs::write(world.env_path(), format!("FAKE_KEY={key}\n")).unwrap();

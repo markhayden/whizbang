@@ -1491,7 +1491,10 @@ else gives either executor a source, a secret or a part.
   that config's digest, what it offers, which is nothing, the policy that approves
   nothing, and no setting. So the executor is built with no backend of its own
   (`NoBackends`) and never asks or hands over any but a snapshot's: **a call with no
-  backend to hand is refused as not ready, before admission, with no run**
+  backend to hand is refused as not ready, before admission, with no run,** in the
+  sentence of what a config offers ("no default backend is configured for fill, and
+  the call chose none") and not in that of an executor with no backends, which is how
+  the test tells the two paths apart
   (`wired::with_no_config_the_binarys_executor_is_under_the_empty_config_and_a_call_with_no_backend_to_hand_is_refused_as_not_ready_with_no_run`).
   A backend whose kind the build does not have is not ready with that reason, and the
   build registers no kind (`wiring::kinds`)
@@ -1509,18 +1512,28 @@ else gives either executor a source, a secret or a part.
   that builds an executor. An executor told of a secret takes it out of what it
   writes, and its source refuses a config that holds it; told of none, both read that
   config (`wired::the_binarys_source_and_its_executor_are_told_of_the_same_secrets`).
-  A key of the env file is the executor's from the first call on
-  (`wired::a_key_of_the_env_file_is_taken_out_of_what_a_run_under_the_binarys_executor_writes`).
-  The binary itself tells neither of a secret: the env file is where its secrets are.
+  The value of a variable the config names is the executor's secret from the first
+  call on
+  (`wired::the_value_of_a_variable_the_config_names_is_taken_out_of_what_a_run_under_the_binarys_executor_writes`).
+  Only those values are: a value of the env file under a name the config does not
+  name is known to the config's reader while it reads, is no secret of the
+  executor's, and is not taken out of what a run writes; nothing in whizbang carries
+  such a value into a run. The binary itself tells neither of a secret: the env file
+  is where its secrets are.
 - **The parts of an admission are two, asked in this order:** the age of the
   preparation a request came with (`spend::PreparationAge`), then the cap of one call
   (`spend::CallCap`). A preparation that is too old is refused as stale before its
-  estimate, which is as old, is held to a cap
-  (`wired::a_request_that_comes_with_a_preparation_an_hour_old_is_refused_as_stale_by_the_binarys_executor`,
+  estimate, which is as old, is held to a cap: a request that is both is refused as
+  stale
+  (`wired::a_request_that_is_both_too_old_and_over_the_cap_is_refused_as_stale`,
+  `wired::a_request_that_comes_with_a_preparation_an_hour_old_is_refused_as_stale_by_the_binarys_executor`,
   `wired::a_call_over_the_cap_of_the_binarys_config_is_refused_before_a_run_exists`).
   **Neither writes a record into an admission,** so what the parts of this build add
   to a tree of runs is nothing
   (`wired::the_parts_the_binary_is_wired_with_add_no_record_to_an_admission`).
+  The carry-over row on what parts add across a tree of runs was taken off on the
+  strength of that. The ledger and the meter are no parts and put nothing under
+  `admission/`; a part that is ever given a record to write brings the row back.
 - **The policy is the config's `egress` table and nothing else.** The source gives
   every snapshot a policy, and under no config it is the one that approves nothing: a
   backend that names a recipient the table does not approve is refused at the gate's
@@ -1637,6 +1650,13 @@ in which the test installs a model with a fake of the download.
   (`SendCheck::new().keeping_out(root)`) is given with the first sender
   (`docs/carry-over.md`, checkpoint 1C).
 - **A snapshot holds no credential for a recipient** (ADR 0011, "What waits").
+- **What the source remembers of earlier keys is one process's.** A source keeps
+  every credential it has read for as long as it lives, and refuses a config that
+  holds one (ADR 0011, "The source over both files"). Every command is a new
+  process with a new source: after a key was rotated out of the env file, a config
+  that holds the old key is read by the next command, and the old key is written
+  into the store as it stands in the config, as a setting of the run. The old key is
+  a secret only while the env file gives it.
 - **The config is read once more by a command than by its call:** `wiring::loaded`
   reads both files, and the admission reads them again. A file changed between the
   two is used as it is at the admission, or refused there in the source's words.
