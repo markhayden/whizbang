@@ -2,18 +2,22 @@
 //! folder, a clock a test moves by hand, backends that state a bound, a config's
 //! source a test swaps, and actions that do what a test says.
 
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use whizbang_core::contract::record::{self, RunRecord};
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Answer, Backends, CallError, Capability, Clock, Context, Engine,
-    Estimate, Failure, Finished, Kind, ModelIdentity, PreparedCall, Produced, Refusal, RefusalKind,
-    Registry, Requirement, RunId, Snapshot, Unavailable,
+    Action, ActionDescriptor, Answer, Backends, CallError, Capability, Clock, Closing, Context,
+    Declined, Engine, Estimate, Failure, Finished, Kind, Ledger, MadeName, ModelIdentity,
+    NotJudged, PreparedCall, Produced, Refusal, RefusalKind, Registry, Requirement, Reread,
+    Reservation, RunId, Settled, Snapshot, Step, Unavailable, reservations,
 };
 use whizbang_core::identity::Digest;
-use whizbang_core::store::{Reader, Store};
+use whizbang_core::spend::fold::{Folded, fold};
+use whizbang_core::spend::{Amount, Record, StoreLedger, TurnBy};
+use whizbang_core::store::{self, Reader, Store};
 use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::scratch::Scratch;
 use whizbang_testkit::source::FakeSource;
@@ -232,3 +236,140 @@ pub fn by_part(
 
 /// What an action said of the calls it made, for the test to read afterwards.
 pub type Said<T> = Arc<Mutex<Vec<T>>>;
+
+// --- the real ledger, and the books of a store -------------------------------------------------
+
+/// The real ledger, with a count of how many times the executor asked it for each of
+/// the three things it asks. It judges nothing itself.
+#[derive(Debug, Default)]
+pub struct Counted {
+    inner: StoreLedger,
+    asked: AtomicU64,
+    confirmed: AtomicU64,
+    settled: AtomicU64,
+}
+
+impl Counted {
+    pub fn new() -> Arc<Counted> {
+        Arc::new(Counted::default())
+    }
+
+    /// How many times admission asked for a reservation: once for every attempt at
+    /// an admission's publication, those the store refused and those the ledger
+    /// declined among them.
+    pub fn asked(&self) -> u64 {
+        self.asked.load(Ordering::SeqCst)
+    }
+
+    /// How many admissions it was asked to confirm.
+    pub fn confirmed(&self) -> u64 {
+        self.confirmed.load(Ordering::SeqCst)
+    }
+
+    /// How many times it was asked to close a reservation at the end of a run.
+    pub fn settled(&self) -> u64 {
+        self.settled.load(Ordering::SeqCst)
+    }
+}
+
+impl Ledger for Counted {
+    fn reserve(
+        &self,
+        reservation: &Reservation,
+        step: &mut Step<'_, '_>,
+    ) -> Result<MadeName, Declined> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        self.inner.reserve(reservation, step)
+    }
+
+    fn confirm(&self, reservation: &Reservation, reading: &Reread<'_>) -> Result<bool, NotJudged> {
+        self.confirmed.fetch_add(1, Ordering::SeqCst);
+        self.inner.confirm(reservation, reading)
+    }
+
+    fn settle(&self, closing: &Closing<'_>, step: &mut Step<'_, '_>) -> Result<Settled, NotJudged> {
+        self.settled.fetch_add(1, Ordering::SeqCst);
+        self.inner.settle(closing, step)
+    }
+}
+
+/// Other hands, or a command there is not yet, make these records in one publication,
+/// each under its own name.
+pub fn plant(store: &Store, records: &[Record]) {
+    let named: Vec<(String, Vec<u8>)> = records
+        .iter()
+        .map(|record| (record.name().to_string(), record.to_bytes()))
+        .collect();
+    plant_bytes(store, &named);
+}
+
+/// The same, of names with any content: what is damaged, or of no form.
+pub fn plant_bytes(store: &Store, named: &[(String, Vec<u8>)]) {
+    let mut publication = store.begin().unwrap();
+    for (name, bytes) in named {
+        publication
+            .create(name, store::Kind::Diagnostic, bytes)
+            .unwrap();
+    }
+    publication.publish().unwrap();
+}
+
+/// The books of the store's current generation, by the real fold.
+pub fn books(store: &Store) -> Folded {
+    fold(&store.snapshot().unwrap(), |entry| store.read(entry))
+}
+
+/// The owner's reset, as the names have it (ADR 0016, "What each publication makes"):
+/// the next epoch with this allowance, its guard, and the next turn of the epoch it
+/// closes, in one publication. It stands for `whizbang spend reset` until that command
+/// is built (plan 1B, task S9). What comes back is the epoch it opened.
+pub fn allow(store: &Store, micros: u64) -> u64 {
+    let folded = books(store);
+    let closes = folded.epoch();
+    let epoch = NonZeroU64::new(closes + 1).unwrap();
+    plant(
+        store,
+        &[
+            Record::Reset {
+                epoch,
+                allowance: Amount::new(micros).unwrap(),
+                at_ms: 0,
+            },
+            Record::Epoch { epoch },
+            Record::Turn {
+                epoch: closes,
+                turn: NonZeroU64::new(folded.next_turn(closes)).unwrap(),
+                by: TurnBy::Reset,
+                run: None,
+            },
+        ],
+    );
+    epoch.get()
+}
+
+/// Every name the store holds under `spend/`, in their order.
+pub fn spend_names(store: &Store) -> Vec<String> {
+    let generation = store.snapshot().unwrap();
+    let names = generation.entries().keys();
+    names
+        .filter(|name| name.starts_with("spend/"))
+        .cloned()
+        .collect()
+}
+
+/// Every reservation the store's current generation names.
+pub fn reserved(store: &Store) -> Vec<Reservation> {
+    let generation = store.snapshot().unwrap();
+    reservations(&generation, |entry| store.read(entry)).unwrap()
+}
+
+/// The executor's record of a reservation of this run, as it is stored: what other
+/// hands leave beside a hold to make a reservation the ledger could have written.
+pub fn reservation_bytes(run: &str, micros: u64) -> (String, Vec<u8>) {
+    let bytes = format!(
+        "{{\"record\":\"reservation/1\",\"run\":\"{run}\",\"request\":null,\
+         \"admission\":\"sha256:{}\",\"reserved_micros\":{micros},\"start_ms\":0}}\n",
+        "0".repeat(64)
+    );
+    (format!("spend/reservations/{run}"), bytes.into_bytes())
+}
