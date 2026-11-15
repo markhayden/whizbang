@@ -2104,8 +2104,8 @@ asked at every preparation and a model's files are gigabytes; "verified" is what
 publication held the files to, and a file damaged since is found when the identity is
 installed again (pinned as `inventory::known_…`). And "runs on the new installation": the
 request is admitted and its action runs with the new installation's identity as its
-model's version; a run is handed no backend for a local model until the lease is built
-(task I7's second half, after I3), so no request reaches a model in that test.
+model's version; the executor of that test is given no backend, so no request reaches a
+model in it. Requests to a local model under its installation are task M6b's tests.
 **Carry-over:** rascal's R2 (reported), R4, and of R6 a corrupt installation record and a
 reinstall between a call and its retry. **Size:** small.
 
