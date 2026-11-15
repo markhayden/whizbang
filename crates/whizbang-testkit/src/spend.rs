@@ -5449,20 +5449,25 @@ pub fn histories() -> Vec<History> {
         ],
     );
     add(
-        "83 (A2) the same, and the process that sent the request dies with the \
-         provider's answer: the reservation stays corrected at nothing, and 10 are \
-         counted where 20 were charged",
-        with(
-            written_off(),
-            vec![
-                Event::Charge {
-                    root: r(1),
-                    place: 1,
-                    micros: 10,
-                },
-                Event::Crash,
-            ],
-        ),
+        "83 (A2) the process that sent the request dies with the provider's answer, \
+         the next recovers the store, the owner corrects to nothing and 10 more are \
+         admitted and spent: 10 are counted where 20 were charged",
+        vec![
+            reset(10),
+            admit(1, 10),
+            dispatch(1, 10),
+            Event::Charge {
+                root: r(1),
+                place: 1,
+                micros: 10,
+            },
+            Event::Crash,
+            Event::Recover,
+            adjust(1, 0),
+            admit(2, 10),
+            dispatch(2, 10),
+            settle(2, 1, charged(10)),
+        ],
         vec![
             state(r(1), State::Adjusted),
             Counts(r(1), 0),

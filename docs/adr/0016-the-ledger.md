@@ -106,11 +106,14 @@ and what the owner chose").
 **One case is kept apart: where no amount can be counted at all, the store needs its
 owner.** A frozen reservation that has no hold, or several, has an amount no name can
 be trusted for; and an epoch whose turns are not exactly those its publications took
-has lost or gained a name that changes what is left, and no name says which. There
-nothing is admitted and nothing dispatched until the owner corrects that reservation,
-or resets ("Epochs" has the table). What was dispatched before is still settled, a run
+has lost or gained a name that changes what is left, and no name says which. With
+the first, nothing is admitted and nothing dispatched anywhere in the store until the
+owner corrects that reservation. With the second, nothing is admitted in that epoch
+until the owner resets, and nothing is dispatched under that epoch's reservations;
+a reservation of another epoch still sends ("Epochs" has the table). What was dispatched before is still settled, a run
 still ends, recovery still closes what a dead process left, and the owner corrects
-and resets. This exception is not the plan's, and is to be put to the owner. A frozen
+and resets. This exception was not in the plan as it was written; the plan now
+records it beside its decision, as a case to be put to the owner. A frozen
 reservation over-counts heavily, and is the owner's to repair. A reset does not
 repair it: only the owner's correction of that reservation does.
 
@@ -480,8 +483,8 @@ run could never close:
 | The owner's reset | Taken: it opens the next epoch |
 
 (`spend::a_store_that_needs_its_owner_starts_no_paid_work_and_still_settles_ends_recovers_and_is_corrected`.)
-A reset opens an epoch whose turns start again, and where no reservation is frozen
-admissions start with it. **A run of the epoch that needed its owner sends nothing
+A reset opens an epoch whose turns start again, and admissions start with it, unless
+a frozen reservation's amount is unknown. **A run of the epoch that needed its owner sends nothing
 more:** that epoch's turns are never made right. It settles what it sent, and ends.
 
 **A reservation falls under the epoch its hold names, for good.** The balance an admission is judged on is the newest
@@ -595,8 +598,10 @@ dispatch that judged before it is refused by the store and judged again (history
 changed the books: its names collide with nothing they did. A dispatch judged before a
 closing that other hands made without a place is published (history 48, its last
 event); so is an admission judged before a turn was lost (history 61), and a dispatch
-judged before its place's guard was lost (history 59). In each the books freeze, the
-reservation or the store, so nothing is released and nothing more is admitted. Such a
+judged before its place's guard was lost (history 59). In the first and the last the
+reservation is frozen, so nothing more is dispatched under it and its closing
+releases nothing; in the second the epoch needs its owner, and nothing more is
+admitted in it. Such a
 dispatch stands, and is still held to what its process holds of the tree, so it does
 not pass what was really reserved (history 71). Such an admission is published and
 does not stand by that: the next section. And a dispatch that was judged while the
@@ -889,8 +894,8 @@ admission and dispatches asked of the ledger for real
 | The one name | What it comes to | How many |
 |---|---|---|
 | A name of a reservation, lost, damaged or made | The reservation is frozen. It counts for no less than it did and no less than its requests really took, and nothing is dispatched under it. Its amount is said to be unknown exactly where it has not one hold | 65,285 |
-| Of those: its one hold states its amount and the name took no turn | The store goes on: no epoch needs its owner that did not | 40,286 |
-| Of those: its amount is unknown, or the name is one that takes a turn | The store needs its owner: in every epoch where the amount is unknown, and otherwise in the epoch of its hold | 24,999 |
+| Of those: its one hold states its amount, and the name took no turn or is only damaged | The store goes on: no epoch needs its owner that did not | 40,286 |
+| Of those: its amount is unknown, or the name is one that takes a turn and is lost or made (damaged, it takes its turn still) | The store needs its owner: in every epoch where the amount is unknown, and otherwise in the epoch of its hold | 24,999 |
 | Of those: a settlement over its bound, lost | Limit (b). No less than the amount, and less than it counted by no more than the charge was over the bound. In 7 of them more can then be reserved than before, by no more than that | 78 |
 | Of those: the hold, lost | Limit (c). Every bound and every charge its other names say, and the amount said to be unknown | 5,840 |
 | A turn of the newest epoch, lost or made | The store needs its owner: nothing is admitted, and nothing is dispatched under a reservation of that epoch | 8,937 |
@@ -1112,7 +1117,7 @@ so that neither can be taken for covered.
   judgement made earlier cannot know: the names it makes collide with nothing that
   made the store need its owner, its own reservation untouched among them. **A
   dispatch judged after is refused,** one that is judged again among them. So with
-  another reservation damaged, or one turn lost, a request of 10 that was judged
+  another reservation's hold lost, or one turn lost, a request of 10 that was judged
   before is placed under a reservation of 10: what is counted is what it was, and
   the next request of that run is refused, for what its run has left when it was
   judged before and for the owner when it is judged then (histories 78 and 79).
@@ -1157,14 +1162,19 @@ so that neither can be taken for covered.
   admitted, sent and settled. The first process then settles its request at 10: 20
   are counted against 10, and the debt is 10 (history 82). At the second admission
   the books counted 10 while 20 were committed. Where the first process dies with
-  the provider's answer instead, the reservation stays corrected at nothing and the
+  the provider's answer, the next process recovers and the owner then corrects, the
+  reservation stays corrected at nothing and the
   books count 10 where 20 were charged, for good: no name ever states the first
   charge, which is limit (b) as well (history 83;
   `spend::a_correction_writes_off_a_request_in_flight_and_what_it_then_costs_is_past_the_cap`).
   **It is bounded:** by what was outstanding under the corrected reservation when it
-  was corrected, each such request at its bound, and by whatever such a request is
-  then charged over its bound. It never reaches what settlements with their whole
-  chain say, which a correction cannot go under.
+  was corrected, each such request at its bound; by whatever such a request is
+  then charged over its bound; and by what the reservation's settlements that are not
+  whole say, which the correction's stated meaning writes off as well ("A person's
+  correction"). So where other hands damaged a place whose request was settled at 10,
+  a correction to nothing writes off 10 that were charged: 20 counted of 20 where 30
+  were charged, in the test named above. It never reaches what settlements with
+  their whole chain say, which a correction cannot go under.
   **"Interrupted" does not say that nothing is in flight.** Recovery closes every
   reservation whose run is not open in the process that recovers, nor waiting there
   to be confirmed. Where that is
@@ -1179,9 +1189,10 @@ so that neither can be taken for covered.
   correct a reservation in it, and history 82 does not happen. It is reachable only
   where that lock does not hold, which the store's module names: a file system on
   which the lock does not work, and a lock file removed or replaced under a writer.
-  History 83 needs none of that. The process is dead, its lock went with it, the
-  next writer recovers and the owner corrects, as they are meant to; and the request
-  the dead process sent may be charged all the same. That is the case to expect.
+  History 83 needs none of that, and is written with one writer at a time. The
+  process dies, its lock goes with it, the next writer recovers and the owner
+  corrects, as they are meant to; and the request the dead process sent is charged
+  all the same. That is the case to expect.
 
 **What the checker leaves out, each under one limit.** The checker (`Books::check` and
 `Books::checked` in the model) takes its floor from the truth. These are its
@@ -1770,6 +1781,14 @@ and stands.
 |---|---|---|---|---|
 | 7 | 0 | 8 | 0 | 1 |
 | 8 | 0 | 3 | 0 | 2 |
+| 9, the first on the owner's choice | 0 | 2 | 0 | 4 |
+
+Round 9 was also asked to list every history that under-counts and the limit each
+falls under, and whether any sentence still stated the stricter rule as in force: it
+listed fifteen, each inside a stated limit; found the bound stated for limit (g)
+narrower than the correction's stated meaning, which is now said there; and found
+three sentences of the stricter rule, which are changed. Every finding was fixed in
+the plan or here before the next round.
 
 ## Consequences
 

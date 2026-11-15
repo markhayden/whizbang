@@ -124,9 +124,10 @@ the owner's own, given on 2026-11-13.
   no less than that: a frozen reservation counts for the most its names can mean,
   which is more, and counts so against every epoch's allowance. And a case this item
   does not speak of is kept as an exception, to be put to the owner: where no amount
-  can be counted at all (a frozen reservation that has no hold, or several; an epoch
-  whose turns are not those its publications took), the store takes no admission and
-  no dispatch until the owner corrects the reservation or resets (ADR 0016,
+  can be counted at all. With a frozen reservation that has no hold, or several, the
+  store takes no admission and no dispatch until the owner corrects it. In an epoch
+  whose turns are not those its publications took, nothing is admitted until the
+  owner resets, and nothing is dispatched under that epoch's reservations (ADR 0016,
   "Epochs").
 - **A person corrects, by a new record.** `whizbang spend adjust` (S12) releases or
   changes the charge of a named interrupted or frozen reservation. It writes a spend
@@ -1465,8 +1466,9 @@ damage proofs. A recovery's part (I4), in `spend/`.
 - [ ] No other reservation and no unrelated call is refused because of a frozen or
       interrupted one.
       (Kept as written, by the owner's choice, 2026-11-14: "Decisions". The one
-      exception is the ADR's: a frozen reservation that has no hold, or several, has
-      no amount that can be counted, and the store then needs its owner.)
+      exception is the ADR's, where no amount can be counted: a frozen reservation
+      that has no hold, or several, and an epoch whose turns are not those its
+      publications took.)
 
 **Done when** these pass: a process that died between dispatch and settlement leaves,
 after the next open to write, the reservation charged in full and nothing released; with reserve 10, two dispatches
@@ -1524,8 +1526,9 @@ seal is of the names as they are, which is the last made; a name of the reservat
 made, lost or damaged after an adjustment ends it, and the reservation then counts for
 the larger of its amount, what is known and what any adjustment said, or is frozen;
 an adjustment of a frozen reservation whose amount was unknown ends the store's need
-of its owner; freeze, reset, then adjust to nothing leaves the new allowance
-as the reset set it; adjust, then reset starts from the reset's amount; an adjustment
+of its owner for that reservation, and an epoch whose turns are wrong still needs its
+reset; freeze, reset, then adjust to nothing leaves the new allowance
+as the reset set it; adjust, then reset starts from the reset's amount, where the adjusted reservation has its one hold; an adjustment
 upward after the difference was spent is refused when the allowance cannot hold it; the command opens through I4's entry point, so it recovers
 first; its output and its refusals show names escaped and cut, and no path (rule 3);
 `adjust::a_crash_at_any_event…` leaves it done or not done (rule 2); no call the
@@ -2357,6 +2360,21 @@ invariants 1 and 6; the recovery summaries; task I2 (the five boxes and the case
 its second pull request, histories 14 and 15); the numbers of tasks S1b and S6; and
 tasks S9 and S12, restated as the ADR has a balance, a reset and a correction. None
 changes scope or order.
+
+The amendment was reviewed as a change to a plan is, by the independent review,
+read-only, with the ADR, the model and its tests in hand. Rounds 7 and 8 read the
+plan while it was amended toward the stricter rule; what they found of its other
+sentences was fixed and stands. Round 9 was the first on the owner's choice, and was
+also asked to list every history that under-counts and the limit it falls under.
+
+| Round | Date | Blockers | Follow-ups | What they were |
+|---|---|---|---|---|
+| 7 | 2026-11-14 | 8 | 1 | No under-count outside the ADR's limits. Sentences of the plan that differed from the ADR: invariants 1 and 6, the recovery summaries, an epoch's isolation in S9 and S12, S12's bounds, I2's case for a call of nothing, the `put` pin |
+| 8 | 2026-11-14 | 3 | 2 | No under-count. Three sentences more, in S9 and S12; two of wording |
+| 9 | 2026-11-14 | 6 | 4 | No under-count outside the limits: fifteen histories listed, each inside one. The bound the ADR stated for a correction's write-off was narrower than its meaning; two sentences where the plan and the ADR differed on the exception; three sentences of the ADR that still stated the stricter rule |
+
+The rounds are numbered after the ADR's six. Every blocker was fixed before the next
+round; ADR 0016, "Review rounds", has the same record.
 
 ## Risks
 ## Risks

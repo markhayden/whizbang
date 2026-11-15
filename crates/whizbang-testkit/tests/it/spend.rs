@@ -4337,9 +4337,11 @@ fn a_correction_writes_off_a_request_in_flight_and_what_it_then_costs_is_past_th
     );
     assert_eq!(books.really(Run(1)), Some((1, 10, 10)));
     assert_eq!(books.really(Run(2)), Some((1, 10, 10)));
-    // History 83, (A2). The first process dies with the provider's answer instead.
-    // No name states that charge, the reservation stays corrected at nothing, and
-    // the books count 10 where the two requests really took 20.
+    // History 83, (A2), with one writer at a time. The process dies with the
+    // provider's answer; the next recovers; the owner corrects to nothing; 10 more
+    // are admitted and spent. No name states the first charge, the reservation
+    // stays corrected at nothing, and the books count 10 where the two requests
+    // really took 20.
     let books = named(83);
     let balance = books.balance();
     assert_eq!(
@@ -4385,6 +4387,39 @@ fn a_correction_writes_off_a_request_in_flight_and_what_it_then_costs_is_past_th
     );
     assert_eq!(outcomes[9], Outcome::Done);
     assert_eq!(books.balance().counted, 10);
+    // And it writes off what a place without a whole settlement says: a request
+    // settled at 10 whose place is damaged afterwards is no longer under the least
+    // a correction may say. Corrected to nothing, 20 more are admitted: 20 counted
+    // of 20 where 30 were charged.
+    let events = [
+        reset(20),
+        admit(1, 10),
+        dispatch(1, 10),
+        settle(1, 1, 10),
+        Event::Damage(Name::Place {
+            run: Run(1),
+            place: 1,
+        }),
+        Event::End { run: Run(1) },
+        Event::Adjust {
+            run: Run(1),
+            micros: 0,
+        },
+        admit(2, 20),
+        dispatch(2, 20),
+    ];
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert!(
+        outcomes
+            .iter()
+            .all(|one| !matches!(one, Outcome::Refused(_)))
+    );
+    let balance = books.balance();
+    assert_eq!(
+        (balance.allowed, balance.counted, balance.debt),
+        (20, 20, 0)
+    );
+    assert_eq!(books.really(Run(1)), Some((1, 10, 10)));
 }
 
 #[test]
