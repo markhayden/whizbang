@@ -1208,7 +1208,8 @@ is held to the cap too; the two fixed vectors of `prepared/1` are as they were.
 `crates/whizbang-core/tests/it/spend/cap.rs`. A request's own cap of zero is refused; a
 snapshot whose cap is zero, which the config's reader never gives, is the part's
 failure and no refusal of the call. No refusal quotes an amount, so a cap that spells
-a secret is not shown. The part is given to an executor by whoever builds it: the
+a secret is not shown, and a snapshot prints only whether it holds a cap. A cost with
+no bound is refused under any cap. The part is given to an executor by whoever builds it: the
 binary's by task W1. The two vectors are held where they were, by
 `prepare::a_fingerprint_is_this_digest` and
 `prepare::a_fingerprint_with_one_of_everything_is_this_digest`, which did not change.)

@@ -47,7 +47,9 @@ lease, the other half of the task, waits for the wrappers of task I3 and is not 
 Amended: 2026-11-15, with task S3. Changed under "One snapshot of the config", "What
 waits": the part that holds a call to the cap is built.
 Amended: 2026-11-15, with task S8. Changed under "A part in the admission", "Limits":
-the kinds the two parts that refuse are recorded under.
+the kinds the two parts that refuse are recorded under. And, as the review of task S3
+asked, under "One snapshot of the config": a snapshot prints whether it holds a cap,
+and not the cap.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -683,9 +685,11 @@ pairs are noted in the run's place for facts when the run starts, and are in its
 record (`snapshot::the_settings_of_a_runs_snapshot_are_in_its_record`). A config is a
 `Settings` (`Config::settings_of`, ADR 0011).
 
-**What a snapshot prints** is its digest, whether it holds backends and settings, its
+**What a snapshot prints** is its digest, whether it holds backends, settings and a
 cap, its policy as a policy prints itself, and how many secrets it brings
-(`snapshot::a_snapshot_prints_no_credential_no_secret_and_no_setting`).
+(`snapshot::a_snapshot_prints_no_credential_no_secret_and_no_setting`). The cap's
+amount is not printed: the config's reader does not look for a secret in a number
+(ADR 0011, "What the reader does not do"), so a cap could spell one.
 
 **The fake.** `FakeSource` answers the snapshot a test gave it, which the test swaps;
 refuses or panics when told to; counts how often it was asked; and can run a test's

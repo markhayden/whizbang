@@ -184,8 +184,9 @@ pub trait Settings: Send + Sync {
 /// What a config says, of one reading: its digest, and what the executor uses of it.
 /// A clone is the same snapshot, with the same backends.
 ///
-/// What `{:?}` prints is the digest, whether it holds backends, the cap, the policy,
-/// and how many secrets it brings: never a credential, a secret or a setting.
+/// What `{:?}` prints is the digest, whether it holds backends, whether it holds a
+/// cap, the policy, and how many secrets it brings: never a credential, a secret, a
+/// setting or the cap's amount, which could spell a secret.
 #[derive(Clone)]
 pub struct Snapshot {
     digest: Digest,
@@ -445,7 +446,7 @@ impl std::fmt::Debug for Snapshot {
         f.debug_struct("Snapshot")
             .field("digest", &self.digest)
             .field("backends", &self.offered.is_some())
-            .field("cap", &self.cap)
+            .field("cap", &self.cap.is_some())
             .field("policy", &self.policy())
             .field("secrets", &self.secrets)
             .field("settings", &self.settings.is_some())
