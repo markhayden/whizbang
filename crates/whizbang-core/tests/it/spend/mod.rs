@@ -7,6 +7,7 @@ mod age;
 mod cap;
 mod fold;
 mod name;
+mod probe;
 mod reading;
 mod record;
 mod support;

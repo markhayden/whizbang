@@ -591,3 +591,362 @@ fn with_one_reservations_content_damaged_the_reading_gives_the_others_and_that_o
     let sound = Names::of(&run("7-1"), one.all().iter().cloned(), []);
     assert!(sound.reachable());
 }
+
+// --- rules that a change of one of them once passed every test --------------------------------
+
+/// A correction of the root's reservation at this place, to this amount, with a seal
+/// of no names: the recogniser leaves a correction's seal aside.
+fn adjusted(place: u64, turn: u64, micros: u64) -> Name {
+    Name::Adjusted {
+        run: run(ROOT),
+        place: n(place),
+        turn: n(turn),
+        seal: Seal::over([]),
+        micros: amount(micros),
+    }
+}
+
+/// A reservation of 10 with these names under it.
+fn under_ten(more: &[Name]) -> Names {
+    of(&[&[record(), held(0, 10)][..], more].concat())
+}
+
+/// A request of 5 at the first place, settled at 12: over its bound, which took the
+/// second place.
+fn overrun() -> Vec<Name> {
+    vec![
+        place(1),
+        dispatched(1, ROOT, 5),
+        settling(1),
+        settled(1, Stage::Answered, 12),
+        place(2),
+    ]
+}
+
+#[test]
+fn a_correction_is_taken_only_under_a_closing_that_held_at_a_place_of_its_own_above_it() {
+    // What the ledger writes: the closing takes a place, and a correction the next.
+    let closed_and_corrected = [place(1), closed(false), place(2), adjusted(2, 3, 4)];
+    assert!(under_ten(&closed_and_corrected).reachable());
+    let after_an_overrun = [
+        &overrun()[..],
+        &[place(3), closed(false), place(4), adjusted(4, 4, 12)],
+    ]
+    .concat();
+    assert!(under_ten(&after_an_overrun).reachable());
+    // In each of these every other row of the recogniser holds: the places are 1 to
+    // their count, and those that hold no dispatch are as many as the charges over
+    // their bounds, the closings and the corrections.
+    let cases: Vec<(&str, Vec<Name>)> = vec![
+        (
+            "a correction under a closing that released",
+            vec![place(1), closed(true), place(2), adjusted(2, 3, 4)],
+        ),
+        (
+            "a correction with no closing",
+            [&overrun()[..], &[place(3), adjusted(3, 3, 12)]].concat(),
+        ),
+        (
+            "two closings, each with a place",
+            vec![place(1), place(2), closed(true), closed(false)],
+        ),
+        (
+            "a correction at the place of a dispatch",
+            vec![
+                place(1),
+                dispatched(1, ROOT, 5),
+                place(2),
+                closed(false),
+                place(3),
+                adjusted(1, 2, 5),
+            ],
+        ),
+        (
+            "a correction that names a place that is not there",
+            vec![place(1), closed(false), place(2), adjusted(9, 3, 4)],
+        ),
+        (
+            "two corrections at one place",
+            vec![
+                place(1),
+                closed(false),
+                place(2),
+                place(3),
+                adjusted(2, 3, 4),
+                adjusted(2, 4, 4),
+            ],
+        ),
+        (
+            "a correction at the place after the last dispatch, which is the closing's",
+            vec![
+                place(1),
+                dispatched(1, ROOT, 5),
+                place(2),
+                place(3),
+                closed(false),
+                adjusted(2, 3, 5),
+            ],
+        ),
+        (
+            "a correction at the first place, with nothing dispatched",
+            vec![place(1), place(2), closed(false), adjusted(1, 3, 4)],
+        ),
+    ];
+    for (what, more) in cases {
+        let names = under_ten(&more);
+        assert!(!names.reachable(), "{what}");
+        assert!(names.frozen().is_some(), "{what}");
+    }
+}
+
+#[test]
+fn a_dispatch_at_a_place_whose_guard_is_lost_counts_every_place_below_it() {
+    // A dispatch of 1 that names the fifth place, and no guard of any place: each
+    // of the four numbers below it may be a dispatch whose name is lost, of any
+    // bound up to the amount. The dispatch's own name is what names the highest
+    // place here.
+    let names = under_ten(&[dispatched(5, ROOT, 1)]);
+    assert!(!names.reachable());
+    assert_eq!(names.unexplained(), 4);
+    assert_eq!(names.most(), Sum::new(10 + 1 + 4 * 10));
+    assert_eq!(names.frozen(), Some(Counted::Exactly(Sum::new(51))));
+    assert_eq!(
+        names.sent_by(&run(ROOT)),
+        Sent::Unknown {
+            at_most: Sum::new(51)
+        }
+    );
+}
+
+#[test]
+fn a_correction_that_says_more_than_the_names_do_is_the_most_they_can_mean() {
+    // Reachable: the amount is 10 and nothing is known against it; a correction
+    // says 50.
+    let names = under_ten(&[place(1), closed(false), place(2), adjusted(2, 3, 50)]);
+    assert!(names.reachable());
+    assert_eq!(names.corrections_most(), amount(50));
+    assert_eq!(names.most(), Sum::new(50));
+    // Of two corrections, the larger.
+    let two = under_ten(&[
+        place(1),
+        closed(false),
+        place(2),
+        place(3),
+        adjusted(2, 3, 7),
+        adjusted(3, 4, 50),
+    ]);
+    assert!(two.reachable());
+    assert_eq!(two.corrections_most(), amount(50));
+    assert_eq!(two.most(), Sum::new(50));
+    // Frozen, without its record: the amount, and the amount once more for each of
+    // its two places, is 30; the correction says 500.
+    let frozen = of(&[
+        held(0, 10),
+        place(1),
+        closed(false),
+        place(2),
+        adjusted(2, 3, 500),
+    ]);
+    assert!(!frozen.reachable());
+    assert_eq!(frozen.frozen(), Some(Counted::Exactly(Sum::new(500))));
+    // And where the names say more than the correction, the names.
+    let under = of(&[
+        held(0, 10),
+        place(1),
+        closed(false),
+        place(2),
+        adjusted(2, 3, 29),
+    ]);
+    assert_eq!(under.frozen(), Some(Counted::Exactly(Sum::new(30))));
+}
+
+#[test]
+fn the_replay_counts_a_charge_over_its_bound_before_the_dispatch_above_its_place() {
+    // A request of 5 settled at 9: the 4 over its bound took the second place. Of
+    // the 10, 1 is left when the third place is taken.
+    let first = [
+        place(1),
+        dispatched(1, ROOT, 5),
+        settling(1),
+        settled(1, Stage::Answered, 9),
+        place(2),
+        place(3),
+    ];
+    let then = |bound: u64| under_ten(&[&first[..], &[dispatched(3, ROOT, bound)]].concat());
+    assert!(then(1).reachable());
+    assert!(!then(2).reachable());
+    assert!(!then(3).reachable());
+    // Two charges over their bounds, by 1 and by 4, and one place between them and
+    // the next dispatch: the replay takes the smaller excess first, which leaves the
+    // most, so a dispatch of 5 fits what is left of 10 after 2, 2 and 1. The other
+    // excess took a place above.
+    let two = [
+        place(1),
+        dispatched(1, ROOT, 2),
+        settling(1),
+        settled(1, Stage::Answered, 3),
+        place(2),
+        dispatched(2, ROOT, 2),
+        settling(2),
+        settled(2, Stage::Answered, 6),
+        place(3),
+        place(4),
+        dispatched(4, ROOT, 5),
+        place(5),
+    ];
+    assert!(under_ten(&two).reachable());
+    let mut over = two.to_vec();
+    over[10] = dispatched(4, ROOT, 6);
+    assert!(!under_ten(&over).reachable());
+}
+
+#[test]
+fn a_seal_is_over_the_texts_of_no_form_too_and_marks_what_is_damaged() {
+    // The fixed form (ADR 0016, "The seal, in the core"): every name of the
+    // reservation as its text, a damaged one marked, a text of no form among them
+    // and never marked, the guard of the correction's place aside.
+    let names = [record(), held(0, 10), place(1), closed(false), place(2)];
+    let stray = "spend/place/7-1/01".to_owned();
+    let hurt = names.iter().map(|name| (name.clone(), *name == record()));
+    let with = Names::of(&run(ROOT), hurt.clone(), [stray]);
+    let fixed = Seal::over([
+        ("spend/reservations/7-1", true),
+        ("spend/held/0/7-1/10", false),
+        ("spend/place/7-1/1", false),
+        ("spend/closed/7-1/held", false),
+        ("spend/place/7-1/01", false),
+    ]);
+    assert_eq!(with.seal_aside(&[&place(2)]), fixed);
+    // Without the text of no form the seal is another: a correction sealed before
+    // such a text was made does not stand after it.
+    let without = Names::of(&run(ROOT), hurt, []);
+    assert_ne!(without.seal_aside(&[&place(2)]), fixed);
+    let correction = Name::Adjusted {
+        run: run(ROOT),
+        place: n(2),
+        turn: n(3),
+        seal: fixed,
+        micros: amount(4),
+    };
+    let all = names.iter().map(|name| (name.clone(), *name == record()));
+    let all = all.chain([(correction, false)]);
+    let stray = "spend/place/7-1/01".to_owned();
+    let [one] = Names::of(&run(ROOT), all.clone(), [stray])
+        .corrections()
+        .try_into()
+        .unwrap();
+    assert_eq!((one.sealed_over, one.seal), (fixed, fixed));
+    let [other] = Names::of(&run(ROOT), all, [])
+        .corrections()
+        .try_into()
+        .unwrap();
+    assert_ne!(other.sealed_over, fixed);
+}
+
+#[test]
+fn a_correction_is_at_its_place_only_where_the_place_is_sound_and_holds_nothing_else() {
+    // A reservation closed as held at its first place, and corrected at its second.
+    let base = [record(), held(0, 10), place(1), closed(false), place(2)];
+    let seal = of(&base).seal_aside(&[&place(2)]);
+    let correction = Name::Adjusted {
+        run: run(ROOT),
+        place: n(2),
+        turn: n(3),
+        seal,
+        micros: amount(4),
+    };
+    let all: Vec<Name> = base.iter().cloned().chain([correction]).collect();
+    let [stands] = of(&all).corrections().try_into().unwrap();
+    assert!(stands.at_its_place && stands.stands_but_for_its_turn());
+    // The guard of its place damaged. The guard is aside from the seal, so the seal
+    // is still the names': only the place tells.
+    let hurt = all.iter().map(|name| (name.clone(), *name == place(2)));
+    let [hurt] = Names::of(&run(ROOT), hurt, [])
+        .corrections()
+        .try_into()
+        .unwrap();
+    assert_eq!((hurt.seal, hurt.damaged), (hurt.sealed_over, false));
+    assert!(!hurt.at_its_place && !hurt.stands_but_for_its_turn());
+    // A dispatch, a settlement or a settlement's guard at its place: each alone.
+    for other in [
+        dispatched(2, ROOT, 1),
+        settled(2, Stage::Answered, 1),
+        settling(2),
+    ] {
+        let more: Vec<Name> = all.iter().cloned().chain([other.clone()]).collect();
+        let [one] = of(&more).corrections().try_into().unwrap();
+        assert!(!one.at_its_place, "with {other}");
+    }
+}
+
+#[test]
+fn an_entry_that_cannot_be_read_and_a_record_of_another_runs_reservation_are_damage() {
+    let dir = Scratch::new("spend-unread");
+    let store = Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap();
+    let mut publication = store.begin().unwrap();
+    let mut make = |name: &str, bytes: &[u8]| {
+        publication.create(name, Kind::Diagnostic, bytes).unwrap();
+    };
+    let hold = |id: &str| Record::Hold {
+        epoch: 0,
+        run: run(id),
+        reserved: amount(10),
+    };
+    for id in ["7-1", "7-2", "7-3"] {
+        make(&hold(id).name().to_string(), &hold(id).to_bytes());
+    }
+    make("spend/reservations/7-1", &reservation_bytes("7-1", 10));
+    // Under the second run's name, a record that is whole and is the reservation of
+    // the third run.
+    make("spend/reservations/7-2", &reservation_bytes("7-3", 10));
+    make("spend/reservations/7-3", &reservation_bytes("7-3", 10));
+    publication.publish().unwrap();
+    let generation = store.snapshot().unwrap();
+
+    // Read as it is: the first and the third are sound, the second is damaged by
+    // its record alone.
+    let reading = Reading::of(&generation, |entry| store.read(entry));
+    let sound = |id: &str| {
+        let names = &reading.reservations[&run(id)];
+        names.reachable() && !names.damaged()
+    };
+    assert!(sound("7-1") && sound("7-3"));
+    let two = &reading.reservations[&run("7-2")];
+    assert!(two.damaged() && !two.reachable());
+    assert_eq!(
+        two.all(),
+        [
+            (Name::Reservation(run("7-2")), true),
+            (hold("7-2").name(), false)
+        ]
+    );
+    assert_eq!(two.frozen(), Some(Counted::Exactly(Sum::new(10))));
+
+    // The content under the first run's hold cannot be read: that is damage, not a
+    // failure of the reading and not a sound entry.
+    let unread = generation.get("spend/held/0/7-1/10").unwrap().clone();
+    let asked = Cell::new(0);
+    let reading = Reading::of(&generation, |entry| {
+        if *entry == unread {
+            asked.set(asked.get() + 1);
+            return Err(whizbang_core::store::Error::Corrupt {
+                path: "objects".into(),
+                reason: "it could not be read".to_owned(),
+            });
+        }
+        store.read(entry)
+    });
+    assert_eq!(asked.get(), 1);
+    let one = &reading.reservations[&run("7-1")];
+    assert!(one.damaged() && !one.reachable());
+    assert_eq!(
+        one.all(),
+        [
+            (Name::Reservation(run("7-1")), false),
+            (hold("7-1").name(), true)
+        ]
+    );
+    assert_eq!(one.frozen(), Some(Counted::Exactly(Sum::new(10))));
+    let three = &reading.reservations[&run("7-3")];
+    assert!(three.reachable() && !three.damaged());
+}
