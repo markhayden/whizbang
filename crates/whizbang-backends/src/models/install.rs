@@ -295,6 +295,9 @@ impl Model<'_> {
         }
         self.dir.ensure_dir(&self.installations())?;
         self.dir.ensure_dir(&self.holds())?;
+        // The names that lead to the model's folder: a folder that was found made
+        // was made by one who may have been refused the sync of its name.
+        self.dir.sync_names()?;
         // Step 1: the installation in its place, under its identity, durably.
         if !adopted {
             if fs.exists(&target)? {
