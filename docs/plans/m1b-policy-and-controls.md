@@ -2039,13 +2039,25 @@ removal racing an install. **Size:** small.
 
 **Depends on:** M5d.
 
-- [ ] A removal that went on deletes the installation's files, through the file-system
+- [x] A removal that went on deletes the installation's files, through the file-system
       interface the shim can crash.
 
 **Done when** these pass: `remove::a_crash_at_any_event…` leaves the installation whole
 and named, or gone, never a pointer to files that are gone (rule 2); a removal interrupted
 after the pointer was cleared is finished by the next install or removal; nothing outside
 the models directory is touched, shown on the shim's list of events.
+**Reworded with the task,** after the review of its pull request (ADR 0017, "A folder of
+the layout that is a link"). The last clause said "nothing outside the models directory
+is touched, shown on the shim's list of events". The list spells every path inside the
+directory, so it cannot show a folder of the layout that is itself a link, and through
+one a removal did delete outside. The owner ruled that such a folder is refused, not
+followed. What is shown now: a link under `installations/` is deleted itself, on the list
+of events, as before (`models::remove::a_removal_deletes_every_installation…`); and with
+`models/`, the model's folder, its `installations/`, `staging/` or `holds/` a link, a
+removal and an install's cleaning are refused with no event on the list, and what the
+link leads to is, name for name and byte for byte, as it was (`models::links::…`). Not
+shown, and not so: a folder swapped for a link between the look and the call after it
+(ADR 0017, the limit of that section; `docs/carry-over.md`).
 **Size:** small. A file two models share is 1C's; until then each installation has its
 own files.
 
@@ -2053,7 +2065,7 @@ own files.
 
 **Depends on:** M5c, I7.
 
-- [ ] `Inventory` (I7) over the models directory: installed and verified, not installed,
+- [x] `Inventory` (I7) over the models directory: installed and verified, not installed,
       out of date, damaged, or not in the catalogue. Only the first is ready.
 
 **Done when** these pass, each with an executor a test builds over the inventory: a
@@ -2064,6 +2076,16 @@ nothing, is prepared as damaged, never ready, and a new install repairs it; afte
 reinstall, a new request with the old preparation is `Stale::Model`, one under a new id
 with no preparation runs on the new installation, and a repeat of the first request's id
 returns the first run.
+**Built** (ADR 0017, "The inventory"), each clause by a test named
+`models::inventory::…`. The box and the clauses keep their words; two phrases of them
+are shown as far as what is built allows. The box says "installed and verified": the
+inventory reads the pointer and the installation's record and no file, because it is
+asked at every preparation and a model's files are gigabytes; "verified" is what the
+publication held the files to, and a file damaged since is found when the identity is
+installed again (pinned as `inventory::known_…`). And "runs on the new installation": the
+request is admitted and its action runs with the new installation's identity as its
+model's version; a run is handed no backend for a local model until the lease is built
+(task I7's second half, after I3), so no request reaches a model in that test.
 **Carry-over:** rascal's R2 (reported), R4, and of R6 a corrupt installation record and a
 reinstall between a call and its retry. **Size:** small.
 
@@ -2083,6 +2105,22 @@ same way; a removal that starts while a request holds the model waits for it (M5
 model installs, is attached to, is cancelled and is drained, each through the crate's own
 interface from a test's process and a second real process, in one test that names the
 four clauses of the checkpoint's exit line.
+**Built in part; the box is not ticked** (ADR 0017, "What a lease takes";
+`docs/carry-over.md`). The lease stands in the lease's place of task I3's order, which
+is there; a run admitted for a local model over an inventory is handed no backend until
+task I7's second half, so no request reaches that place yet. Built here: the hold a lease
+takes, `models::Installations::hold`, by the declared name and the identity the admission
+recorded, refused when the pointer no longer names that installation or the model is
+draining. Shown with an admitted run's action standing in the lease's place, which is not
+the executor's order: `leases::a_reinstall_or_a_removal_between_the_admission_and_the_lease_refuses_the_hold_and_nothing_is_metered`,
+`leases::a_retry_inside_an_admitted_run_whose_installation_was_replaced_is_refused_the_same_way`.
+Shown as worded: a removal that starts while a request holds the model waits for it
+(`leases::a_removal_that_starts_while_a_request_holds_the_model_waits_for_it`), and the
+one test of the exit line's four clauses
+(`leases::a_model_installs_is_attached_to_is_cancelled_and_is_drained_from_this_process_and_a_second_one`).
+Not shown: "refused before dispatch" and "a fake meter in the place after the lease",
+through an executor; they are shown by the pull request that puts a lease over this
+hold in that place, after task I7's second half.
 **Size:** small.
 
 ### X1. A key directly after a word character
