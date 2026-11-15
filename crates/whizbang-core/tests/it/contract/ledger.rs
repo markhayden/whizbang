@@ -782,6 +782,30 @@ fn a_dispatch_is_debited_and_placed_and_the_end_of_its_run_closes_the_reservatio
 }
 
 #[test]
+fn what_is_given_back_once_a_run_has_entered_its_commit_step_is_dropped() {
+    // The action hands its request, of a bound of 6, out of the run; the run ends,
+    // and its reservation is closed as held, by its own names. The request is
+    // settled at 2 afterwards: the 4 that would have come back are dropped, because
+    // the run entered its commit step before.
+    let world = World::new(1000);
+    let (request, allowance) = inside(&world, |context, store, ledger, run| {
+        let (request, _) = dispatch(context, store, ledger, run, 6).unwrap();
+        (request, context.allowance().clone())
+    });
+    assert_eq!(allowance.left_micros(), Some(4));
+    request.settled(amount(2));
+    assert_eq!(allowance.left_micros(), Some(4));
+    // The same inside the run, before that step, is given back: 8 are left.
+    let world = World::new(1000);
+    let left = inside(&world, |context, store, ledger, run| {
+        let (request, _) = dispatch(context, store, ledger, run, 6).unwrap();
+        request.settled(amount(2));
+        context.allowance().left_micros()
+    });
+    assert_eq!(left, Some(8));
+}
+
+#[test]
 fn a_dispatch_is_refused_with_a_reason_of_its_own_by_each_thing_that_holds_it() {
     // The run's allowance.
     let world = World::new(1000);

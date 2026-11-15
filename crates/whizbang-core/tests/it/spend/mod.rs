@@ -3,6 +3,7 @@
 //! module here; the names, the records and the reading of one reservation are task
 //! I2's (ADR 0016).
 
+mod age;
 mod cap;
 mod name;
 mod reading;
