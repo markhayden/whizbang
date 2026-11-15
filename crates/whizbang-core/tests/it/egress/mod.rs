@@ -3,6 +3,7 @@
 //! far: each task adds its module here.
 
 mod gate;
+mod hops;
 mod pixels;
 mod support;
 mod ways_out;

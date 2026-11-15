@@ -1,38 +1,28 @@
 //! The gate: denied by default (ADR 0019; plan 1B, task E2). The policy a config's
-//! `egress` table makes, and the check behind a send for a first address, each through
+//! `egress` table makes, and the check behind a send (its hops are in `hops.rs`), each through
 //! an executor a test builds with them. Nothing is sent anywhere: the sender behind is
 //! the test kit's fake.
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
-use whizbang_core::capability::{
-    Bounds, Declaration, Fault, FaultKind, FillRequest, Filler, Painted, Stage,
-};
+use whizbang_core::capability::{Fault, FaultKind, Stage};
 use whizbang_core::config::Config;
 use whizbang_core::contract::record::{Handed, Status};
 use whizbang_core::contract::{
-    Call, Capabilities, Capability, Executor, ModelIdentity, Produced, RefusalKind, Requirement,
-    Secrets,
+    Call, Capabilities, Capability, Executor, Produced, RefusalKind, Requirement, Secrets,
 };
 use whizbang_core::egress::{
-    APPROVED_LIMIT, Classes, Credential, DataClass, Denied, DispatchPolicy, Hop, HopCheck,
-    NotAllowed, Outgoing, Piece, Recipient, SendCheck, Ways,
+    APPROVED_LIMIT, Classes, Credential, DataClass, DispatchPolicy, NotAllowed, Outgoing, Piece,
+    Recipient, SendCheck, Ways,
 };
-use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::capabilities::{FakeFiller, FakeJudge, FakeSegmenter, Paint, roster};
 use whizbang_testkit::sending::FakeSender;
-use whizbang_testkit::threads;
 
 use super::support::{
     ACCOUNT, ACCOUNT_CUT, API, ELSEWHERE, UPSTREAM, World, a_prompt, account, action, address,
-    approving, config, engine, entry, fill_request, holds, made_up_key, moved, ok, origin, policy,
+    approving, config, engine, entry, fill_request, holds, made_up_key, ok, origin, policy,
     policy_of, prompts, recipient, run_one, stored,
 };
-
-/// What the check answers once an answer has pointed its backend elsewhere.
-const MOVED: &str = "an answer pointed this backend elsewhere in this run, and the address \
-                     of no request after that is approved";
 
 const NOT_APPROVED: &str =
     "the recipient is not approved for the classes of data the request holds";
@@ -660,160 +650,6 @@ fn a_run_whose_action_catches_the_refusal_and_completes_has_it_in_its_record_wit
         assert!(!holds(bytes, "sig=abc123") && !holds(bytes, "/v1/fill"));
         assert!(!holds(bytes, ACCOUNT));
     }
-}
-
-#[test]
-fn the_check_approves_a_first_address_and_no_address_an_answer_pointed_to() {
-    // The recipient is approved for a prompt, and its upstream is one it reaches. The
-    // first address is sent to; it answers with another address, at the upstream and
-    // then at its own origin, and the request the backend then makes of that is
-    // refused by the check, in fixed words. Following an answer is task E3's.
-    for next in [
-        format!("{UPSTREAM}/put?sig=abc123"),
-        format!("{API}/v2/fill?sig=abc123"),
-    ] {
-        let sender = Arc::new(FakeSender::scripted(vec![moved(&next), ok()]));
-        let filler = remote(recipient(), &format!("{API}/v1/fill"), a_prompt());
-        let ran = run_one(
-            filler,
-            ways(&sender, &approving(&["prompts"])),
-            Secrets::none(),
-        );
-        let fault = ran.fault.clone().unwrap();
-        assert_eq!(
-            refused_as(&fault),
-            (FaultKind::Rejected, Stage::NotSent, MOVED)
-        );
-        let hops = sender.hops();
-        assert_eq!(
-            hops.len(),
-            1,
-            "the address the answer pointed to was handed nothing"
-        );
-        assert_eq!(hops[0].to().origin(), &origin(API));
-        let there = address(&next).origin().to_string();
-        let mut listed = vec![entry(API, Some(ACCOUNT_CUT), prompts(), Handed::Sent)];
-        listed.push(entry(&there, Some(ACCOUNT_CUT), prompts(), Handed::Refused));
-        assert_eq!(ran.went(), listed);
-        assert_eq!(
-            ran.refused(),
-            [(
-                RefusalKind::RequestNotApproved,
-                format!(
-                    "nothing was sent to {there}: {MOVED} (the classes of data the request \
-                     holds: prompts)"
-                )
-            )]
-        );
-        assert!(!holds(&ran.store, "sig=abc123"));
-    }
-
-    // An upstream is approved as a first address: an upload address comes in an
-    // answer, and the request to it is one no answer pointed to.
-    let sender = Arc::new(FakeSender::scripted(vec![ok()]));
-    let filler = remote(recipient(), &format!("{UPSTREAM}/put"), a_prompt());
-    let ran = run_one(
-        filler,
-        ways(&sender, &approving(&["prompts"])),
-        Secrets::none(),
-    );
-    assert_eq!((ran.fault.clone(), sender.requests()), (None, 1));
-    assert_eq!(
-        ran.went(),
-        [entry(UPSTREAM, Some(ACCOUNT_CUT), prompts(), Handed::Sent)]
-    );
-}
-
-/// A filler that names the recipient and does what a test tells it with the bounds
-/// of each request, and then answers with a fault.
-struct Custom {
-    declaration: Declaration,
-    with: Box<dyn Fn(&Bounds) + Send + Sync>,
-}
-
-impl Filler for Custom {
-    fn declaration(&self) -> &Declaration {
-        &self.declaration
-    }
-
-    fn fill(&self, _: &FillRequest, bounds: &Bounds) -> Result<Painted, Fault> {
-        (self.with)(bounds);
-        Err(Fault::new(FaultKind::Unsupported, "the test's filler paints nothing").not_sent())
-    }
-}
-
-/// The strand's check, which stops the first request it has answered at a barrier,
-/// after it answered and before the request is handed over.
-struct Stopping {
-    check: SendCheck,
-    asked: AtomicU32,
-    barriers: Barriers,
-}
-
-impl HopCheck for Stopping {
-    fn look(&self, hop: &Hop<'_>) -> Result<(), Denied> {
-        let answer = self.check.look(hop);
-        if self.asked.fetch_add(1, Ordering::SeqCst) == 0 {
-            self.barriers.stop_at("looked");
-        }
-        answer
-    }
-}
-
-#[test]
-fn a_request_that_was_answered_after_an_answer_pointed_elsewhere_does_not_make_the_next_address_a_first_one()
- {
-    // Two requests through one handle at once. The first is looked at while no answer
-    // has pointed elsewhere, and is held there. The second is sent and is pointed
-    // elsewhere. Then the first is sent and answered, which sets the moves in a row
-    // back to nothing. The address the second was pointed to is still not a first
-    // address: the check goes by the moves of the whole run, which never go back.
-    let barriers = Barriers::new();
-    let check = Arc::new(Stopping {
-        check: SendCheck::new(),
-        asked: AtomicU32::new(0),
-        barriers: barriers.clone(),
-    });
-    let next = format!("{API}/v2/fill");
-    let sender = Arc::new(FakeSender::scripted(vec![moved(&next), ok(), ok()]));
-    let ways = Ways::through(sender.clone())
-        .checked_by(check)
-        .under(policy(&approving(&["prompts"])));
-    let refused = Arc::new(Mutex::new(None));
-    let model = ModelIdentity::new("fake", "fake-filler", "1");
-    let filler = Arc::new(Custom {
-        declaration: Declaration::new(model, &[])
-            .unwrap()
-            .sending_to(recipient()),
-        with: Box::new({
-            let (refused, next) = (refused.clone(), next.clone());
-            move |bounds| {
-                let first = Outgoing::new(address(&format!("{API}/v1/fill")), a_prompt()).unwrap();
-                // Two threads show the race: the one made here, and this one.
-                threads::scope(|scope| {
-                    let held = scope.spawn(|| bounds.sender().send(&first, bounds));
-                    barriers.arrived("looked", 1);
-                    let pointed = bounds.sender().send(&first, bounds);
-                    // Let go before anything is asserted, so that a failure ends the
-                    // test and does not leave the other thread at the barrier.
-                    barriers.release("looked");
-                    let answered = held.join().unwrap();
-                    assert_eq!(pointed.unwrap().moved_to(), Some(&address(&next)));
-                    assert_eq!(answered.unwrap().status(), Some(200));
-                });
-                let on = Outgoing::new(address(&next), a_prompt()).unwrap();
-                *refused.lock().unwrap() = bounds.sender().send(&on, bounds).err();
-            }
-        }),
-    });
-    let ran = run_one(filler, ways, Secrets::none());
-    assert!(ran.fault.is_some());
-    let fault = refused.lock().unwrap().take().unwrap();
-    assert_eq!(
-        refused_as(&fault),
-        (FaultKind::Rejected, Stage::NotSent, MOVED)
-    );
-    assert_eq!(sender.requests(), 2);
 }
 
 #[test]

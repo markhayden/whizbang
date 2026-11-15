@@ -236,6 +236,10 @@ pub struct Bounds {
     /// The way out the executor made for this backend and this run (ADR 0015), when
     /// an executor made the handle.
     sender: Option<Arc<dyn Sender>>,
+    /// How many answers have pointed this one request elsewhere (ADR 0019, "Every
+    /// hop"). A clone holds the same count; each request a handle sends is handed
+    /// bounds with a count of its own ([`Bounds::of_one_request`]).
+    moved: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl std::fmt::Debug for Bounds {
@@ -584,7 +588,32 @@ impl Bounds {
             tally: None,
             clock: None,
             sender: None,
+            moved: Arc::default(),
         }
+    }
+
+    /// The bounds one request is handed: these, with a count of answers that pointed
+    /// elsewhere that starts at nothing and is this request's alone. A handle makes
+    /// one for each request it sends to its backend.
+    pub(crate) fn of_one_request(&self) -> Bounds {
+        Bounds {
+            moved: Arc::default(),
+            ..self.clone()
+        }
+    }
+
+    /// How many answers have pointed the request of these bounds elsewhere.
+    pub(crate) fn moved(&self) -> u32 {
+        self.moved.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// One more answer pointed the request of these bounds elsewhere. The count
+    /// stays at its largest, and never goes back.
+    pub(crate) fn moved_once_more(&self) {
+        let more = |now: u32| Some(now.saturating_add(1));
+        let order = std::sync::atomic::Ordering::SeqCst;
+        // The closure always answers, so the update is always made.
+        let _ = self.moved.try_update(order, order, more);
     }
 
     /// Sends through this: the checked sender the executor made for the backend.

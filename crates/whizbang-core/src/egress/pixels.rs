@@ -113,9 +113,9 @@ fn sizes(width: u32, height: u32) -> Option<(usize, usize)> {
         .checked_add(1)?;
     let rows = row.checked_mul(usize::try_from(height).ok()?)?;
     let stream = rows.checked_add(rows.div_ceil(BLOCK).checked_mul(5)?)?;
-    // A chunk's length is four bytes, and holds the stream between its two bytes of
-    // start and its four of checksum.
-    u32::try_from(stream.checked_add(6)?).ok()?;
+    // A chunk of a PNG is 2,147,483,647 bytes at most, and holds the stream between
+    // its two bytes of start and its four of checksum.
+    i32::try_from(stream.checked_add(6)?).ok()?;
     Some((rows, BEFORE.checked_add(stream)?.checked_add(AFTER)?))
 }
 
@@ -286,27 +286,27 @@ mod tests {
         // 255 rows of 257 bytes fill one block exactly; one row more starts a second.
         assert_eq!(sizes(64, 255), Some((65_535, BEFORE + 65_535 + 5 + AFTER)));
         assert_eq!(sizes(64, 256), Some((65_792, BEFORE + 65_792 + 10 + AFTER)));
-        // The rows of 16,383 by 65,000 pixels and the five bytes of each of their
-        // blocks fit the four bytes of a chunk's length; those of 16,384 by 65,535
-        // are that length alone, and do not fit with anything beside them.
-        let rows: usize = 65_533 * 65_000;
+        // A chunk of a PNG is 2,147,483,647 bytes at most. The rows of 16,383 by
+        // 32,000 pixels and the five bytes of each of their blocks fit it; those of
+        // 16,383 by 32,770 do not.
+        let rows: usize = 65_533 * 32_000;
         let stream = rows + 5 * rows.div_ceil(BLOCK);
-        assert_eq!(sizes(16_383, 65_000), Some((rows, BEFORE + stream + AFTER)));
-        assert_eq!(65_537 * 65_535, u32::MAX as usize);
+        assert_eq!(sizes(16_383, 32_000), Some((rows, BEFORE + stream + AFTER)));
+        assert_eq!(sizes(16_383, 32_770), None);
         assert_eq!(sizes(16_384, 65_535), None);
         assert_eq!(sizes(u32::MAX, u32::MAX), None);
-        // The last height of a column one pixel wide whose image data fits, and the
-        // first whose does not: its blocks alone would, and the six bytes around
+        // The last height of a column three pixels wide whose image data fits, and
+        // the first whose does not: its blocks alone would, and the six bytes around
         // them take it over.
-        let rows: usize = 5 * 858_927_924;
-        assert_eq!(rows + 5 * rows.div_ceil(BLOCK) + 6, 4_294_967_286);
+        let rows: usize = 13 * 165_178_446;
+        assert_eq!(rows + 5 * rows.div_ceil(BLOCK) + 6, 2_147_483_634);
         assert_eq!(
-            sizes(1, 858_927_924),
-            Some((rows, BEFORE + 4_294_967_280 + AFTER))
+            sizes(3, 165_178_446),
+            Some((rows, BEFORE + 2_147_483_628 + AFTER))
         );
-        let rows: usize = 5 * 858_927_925;
-        assert_eq!(rows + 5 * rows.div_ceil(BLOCK), 4_294_967_290);
-        assert_eq!(sizes(1, 858_927_925), None);
+        let rows: usize = 13 * 165_178_447;
+        assert_eq!(rows + 5 * rows.div_ceil(BLOCK), 2_147_483_646);
+        assert_eq!(sizes(3, 165_178_447), None);
     }
 
     #[test]

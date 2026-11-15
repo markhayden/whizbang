@@ -1509,7 +1509,7 @@ its record, with the recipient and the reason.
 (`same_origin`, `MAX_REDIRECTS`). Two pull requests: the hops; then the probe and the
 download.
 
-- [ ] Everything a `Sender` is asked to reach is checked against the recipient: a
+- [x] Everything a `Sender` is asked to reach is checked against the recipient: a
       redirect, an upload address and a returned download address, as the first address
       is. A credential is attached only for the origin it was configured for.
 - [ ] The download interface is checked the same way against the origins a catalogue entry

@@ -448,7 +448,9 @@ impl SegmentHandle {
         )?;
         let capability = crate::contract::Capability::Segment;
         self.bounds.send(capability, self.declaration(), || {
-            let response = self.backend.segment(request, &self.bounds)?;
+            let response = self
+                .backend
+                .segment(request, &self.bounds.of_one_request())?;
             // An answer came: when it is not taken, what it said it cost stands.
             let charge = response.charge;
             self.held(request, response)

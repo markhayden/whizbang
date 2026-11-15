@@ -353,7 +353,7 @@ impl FillHandle {
             crate::contract::Capability::Fill,
             self.declaration(),
             || {
-                let painted = self.backend.fill(request, &self.bounds)?;
+                let painted = self.backend.fill(request, &self.bounds.of_one_request())?;
                 let (expected, found) = (
                     (request.image.width(), request.image.height()),
                     (painted.width, painted.height),

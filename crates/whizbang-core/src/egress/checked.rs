@@ -38,6 +38,7 @@ pub struct Hop<'a> {
     policy: &'a DispatchPolicy,
     moves: u32,
     total: u32,
+    request: u32,
 }
 
 impl<'a> Hop<'a> {
@@ -88,6 +89,15 @@ impl<'a> Hop<'a> {
     /// this run. It never goes back.
     pub fn total_moves(&self) -> u32 {
         self.total
+    }
+
+    /// How many answers have pointed elsewhere within the one request of the backend
+    /// that this send is part of: 0 for its first address. It is counted with the
+    /// bounds that request was handed, so it never goes back while the request
+    /// lasts, is shared with no other request through the same handle, and is the
+    /// same count for a clone of those bounds.
+    pub fn request_moves(&self) -> u32 {
+        self.request
     }
 }
 
@@ -392,6 +402,7 @@ impl Sender for Checked {
             policy: &self.policy,
             moves: self.moves.load(Ordering::SeqCst),
             total: self.total.load(Ordering::SeqCst),
+            request: bounds.moved(),
         };
         if let Err(denied) = self.check.look(&hop) {
             return Err(self.refuse(origin, needs, denied.why()));
@@ -435,6 +446,7 @@ impl Sender for Checked {
         match &reply {
             // An answer that points elsewhere is one more move, in a row and in all.
             Ok(reply) if reply.moved_to().is_some() => {
+                bounds.moved_once_more();
                 for count in [&self.moves, &self.total] {
                     let more = |now: u32| Some(now.saturating_add(1));
                     // The closure always answers, so the update is always made.
