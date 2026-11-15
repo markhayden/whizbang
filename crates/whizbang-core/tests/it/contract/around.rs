@@ -780,14 +780,23 @@ fn a_wrapper_that_panics_after_the_backend_answered_leaves_the_run_abandoned_and
     let filler = Arc::new(FakeFiller::new(Paint::Inverse).charging(7));
     let wrappers = three();
     wrappers.2.panic_after("the meter went wrong");
-    // The action catches nothing: the panic unwinds through it.
-    let asks = action("asks", &[Capability::Fill], |_, context| {
-        let fill = context.capabilities().fill().unwrap();
-        fill.fill(&request(None))
-            .map(drop)
-            .map_err(|fault| Failure::error("fill", fault.sentence()))?;
-        Ok(Produced::nothing())
-    });
+    // The panic reaches the action, which catches it, keeps what it carried and
+    // completes: its run is abandoned all the same.
+    let reached: Arc<Mutex<Vec<String>>> = Arc::default();
+    let asks = {
+        let reached = reached.clone();
+        action("asks", &[Capability::Fill], move |_, context| {
+            let fill = context.capabilities().fill().unwrap();
+            let asked = std::panic::AssertUnwindSafe(|| fill.fill(&request(None)).map(drop));
+            let carried = std::panic::catch_unwind(asked).unwrap_err();
+            let text = carried
+                .downcast_ref::<String>()
+                .cloned()
+                .unwrap_or_default();
+            reached.lock().unwrap().push(text);
+            Ok(Produced::nothing())
+        })
+    };
     let ledger = Arc::new(FakeLedger::new());
     let engine = wrapped(
         world
@@ -807,6 +816,9 @@ fn a_wrapper_that_panics_after_the_backend_answered_leaves_the_run_abandoned_and
     );
     // The backend was called once, and had answered: the money may be spent.
     assert_eq!(filler.requests(), 1);
+    // The panic was resumed, and not swallowed: the action was handed no answer
+    // and no fault, but the panic itself, with what the wrapper's carried.
+    assert_eq!(*reached.lock().unwrap(), ["the meter went wrong"]);
     // The places before the meter's are told how the request ended all the same: a
     // panic of one does not keep the others from being told.
     let journal = wrappers.0.journal();
@@ -841,11 +853,21 @@ fn a_wrapper_that_panics_when_told_a_later_place_refused_leaves_the_run_abandone
     wrappers
         .2
         .refuse(RefusalKind::RequestNotReady, "nothing is left");
-    let asks = action("asks", &[Capability::Fill], |_, context| {
-        let fill = context.capabilities().fill().unwrap();
-        let _ = fill.fill(&request(None));
-        Ok(Produced::nothing())
-    });
+    let reached: Arc<Mutex<Vec<String>>> = Arc::default();
+    let asks = {
+        let reached = reached.clone();
+        action("asks", &[Capability::Fill], move |_, context| {
+            let fill = context.capabilities().fill().unwrap();
+            let asked = std::panic::AssertUnwindSafe(|| fill.fill(&request(None)).map(drop));
+            let carried = std::panic::catch_unwind(asked).unwrap_err();
+            let text = carried
+                .downcast_ref::<String>()
+                .cloned()
+                .unwrap_or_default();
+            reached.lock().unwrap().push(text);
+            Ok(Produced::nothing())
+        })
+    };
     let engine = wrapped(world.engine(filler.clone(), vec![asks]), &wrappers);
     let failed = match engine.request(&Request::new(Call::new("asks"))) {
         Err(failed) => failed,
@@ -858,6 +880,8 @@ fn a_wrapper_that_panics_when_told_a_later_place_refused_leaves_the_run_abandone
         "the lease panicked once its request was over",
     );
     assert_eq!(filler.requests(), 0);
+    // The panic reached the action, in place of the meter's refusal.
+    assert_eq!(*reached.lock().unwrap(), ["the lease went wrong"]);
     // The gate, before it, is told all the same.
     assert_eq!(
         wrappers.0.saw().last(),
