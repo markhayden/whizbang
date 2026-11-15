@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use whizbang_testkit::spend::{
     Books, Counted, Event, Folded, GENERATED_EVENTS, How, LARGE, Name, Outcome, Run, Sent, Stage,
-    Standing, State, WHOLE_EVENTS, Why, fold, generated, generated_large, generated_tampered,
-    generated_turned, generated_whole, histories, run_checked, seal,
+    Standing, State, WHOLE_EVENTS, Why, fold, generated, generated_large, generated_paired,
+    generated_tampered, generated_turned, generated_whole, histories, run_checked, seal,
 };
 
 /// The seed of the generated histories. A history that breaks an invariant is printed
@@ -19,6 +19,9 @@ const GENERATED: u64 = 4096;
 
 /// How many books the ledger alone wrote are each changed by one name.
 const WHOLE: u64 = 2048;
+
+/// How many histories have two admissions that wait together to be confirmed.
+const PAIRED: u64 = 1024;
 
 /// How many histories have a turn moved by other hands around a late admission.
 const TURNED: u64 = 1536;
@@ -113,6 +116,10 @@ fn every_generated_history_keeps_every_invariant() {
     // after its publication; some are published and not confirmed.
     assert!(all.admitted > 2_000, "{all:?}");
     assert!(all.not_confirmed > 50, "{all:?}");
+    // A dispatch that was judged before the store came to need its owner is
+    // published where it needs it; none that was judged there is, which is held
+    // of every dispatch of every suite.
+    assert!(all.judged_before_the_owner_was_needed > 20, "{all:?}");
     // The same seed and number give the same history.
     assert_eq!(generated(SEED, 7), generated(SEED, 7));
     assert_ne!(generated(SEED, 7), generated(SEED + 1, 7));
@@ -166,6 +173,7 @@ fn every_generated_history_of_whole_books_then_other_hands_keeps_every_invariant
     assert!(all.needs_owner > 200, "{all:?}");
     assert!(all.admitted > 4_000, "{all:?}");
     assert!(all.not_confirmed > 30, "{all:?}");
+    assert!(all.judged_before_the_owner_was_needed > 50, "{all:?}");
     assert_eq!(generated_tampered(SEED, 7), generated_tampered(SEED, 7));
 }
 
@@ -3191,6 +3199,11 @@ struct Reached {
     /// The dispatches published under a reservation whose admission was published
     /// with such a turn.
     dispatched_after_filling: u64,
+    /// The dispatches published where the store needed its owner, each judged
+    /// before it came to: the one publication limit (e) leaves a dispatch.
+    judged_before_the_owner_was_needed: u64,
+    /// The admissions published while another waited to be confirmed.
+    waiting_together: u64,
 }
 
 /// Runs a history through the checker, as `run_checked` does, holds the two
@@ -3219,6 +3232,15 @@ fn reached(events: &[Event], into: &mut Reached) -> Result<Books, String> {
         }
         let gone = |name: &&Name| !books.names().contains(*name);
         let gone: Vec<Name> = turns_lost.iter().filter(gone).cloned().collect();
+        // Whether a dispatch falls under an epoch that needs its owner: on the names
+        // it was judged on, and on the names as they are.
+        let (stopped_then, stopped_now) = match plain {
+            Event::Dispatch { by, .. } => (
+                books.dispatch_needs_owner(*by, judged),
+                books.dispatch_needs_owner(*by, None),
+            ),
+            _ => (false, false),
+        };
         let outcome = books.checked(event)?;
         // The fold's recogniser and the checker's second reading are two writings
         // of one rule: they give one answer of every reservation there is.
@@ -3236,6 +3258,9 @@ fn reached(events: &[Event], into: &mut Reached) -> Result<Books, String> {
                 parents.insert(*child, *parent);
             }
             Event::Admit { run, .. } | Event::Publish { run, .. } | Event::Confirm { run } => {
+                let waiting = books.waiting_in(false).len() + books.waiting_in(true).len();
+                let waits = matches!(plain, Event::Publish { .. }) && done;
+                into.waiting_together += u64::from(waits && waiting >= 2);
                 let since = |judged: usize| hands.iter().any(|when| (judged..at).contains(when));
                 // Published as it was judged, with a turn other hands had taken away.
                 let fills = !matches!(plain, Event::Confirm { .. })
@@ -3312,6 +3337,16 @@ fn reached(events: &[Event], into: &mut Reached) -> Result<Books, String> {
                     under |= overran.contains(run);
                     above = parents.get(run);
                 }
+                // No dispatch that was judged where the store needed its owner is
+                // published: one judged again is judged on the names as they are.
+                let again = matches!(outcome, Outcome::AskedAgain(_));
+                let judged_stopped = if again { stopped_now } else { stopped_then };
+                if done && judged_stopped {
+                    return Err(format!(
+                        "event {at}: dispatched, and judged where the store needed its owner"
+                    ));
+                }
+                into.judged_before_the_owner_was_needed += u64::from(done && stopped_now);
                 let root = books.root_of(*by);
                 into.dispatched_after_filling +=
                     u64::from(done && root.is_some_and(|root| filled.contains(&root)));
@@ -3909,4 +3944,97 @@ fn an_admission_stands_only_when_it_is_confirmed_on_a_reading_made_after_its_pub
         assert_eq!(state(&books, last), (State::Open, 10));
         assert_eq!((books.balance().counted, books.balance().left), (10, 0));
     }
+}
+
+#[test]
+fn every_generated_history_of_two_admissions_that_wait_together_keeps_every_invariant() {
+    let mut all = Reached::default();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for number in 0..PAIRED {
+        let events = generated_paired(SEED, number);
+        assert!((1..=GENERATED_EVENTS).contains(&events.len()), "{number}");
+        if let Err(why) = reached(&events, &mut all) {
+            panic!("seed {SEED:#x}, paired history {number}: {why}\n{events:#?}");
+        }
+        // What happens from the moment two wait together until both were asked.
+        let (_, outcomes) = Books::after(&events);
+        let (mut waiting, mut asked, mut stand) = (0, 0, 0);
+        let mut between: Vec<&str> = Vec::new();
+        for (event, outcome) in events.iter().zip(&outcomes) {
+            let (second, plain) = match event {
+                Event::Second(inner) => (true, &**inner),
+                other => (false, other),
+            };
+            let plain = match plain {
+                Event::Stale { event, .. } => &**event,
+                other => other,
+            };
+            let last = match outcome {
+                Outcome::AskedAgain(inner) => &**inner,
+                other => other,
+            };
+            match plain {
+                Event::Publish { .. } if *last == Outcome::Done => waiting += 1,
+                _ if waiting < 2 || asked == 2 => {}
+                Event::Crash if second => between.push("the second process dies"),
+                Event::Crash => between.push("the first process dies"),
+                Event::Recover if second => between.push("the second process recovers"),
+                Event::Recover => between.push("the first process recovers"),
+                Event::Plant(_) | Event::Remove(_) | Event::Damage(_) => {
+                    between.push("other hands act");
+                }
+                Event::Confirm { .. } => {
+                    asked += 1;
+                    stand += u64::from(*last == Outcome::Done);
+                    between.push(match last {
+                        Outcome::Done => "one is confirmed",
+                        Outcome::Refused(Why::NotConfirmed) => "one is not confirmed",
+                        Outcome::Refused(Why::NotPublished) => "one is no longer waiting",
+                        _ => "a confirmation ends otherwise",
+                    });
+                    if asked == 1 {
+                        between.push(if second {
+                            "the second process reads first"
+                        } else {
+                            "the first process reads first"
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        if waiting >= 2 && asked == 2 {
+            seen.extend(between);
+            seen.insert(match stand {
+                2 => "both stand",
+                1 => "one of the two stands",
+                _ => "neither stands",
+            });
+        }
+    }
+    let wanted = [
+        "the first process dies",
+        "the second process dies",
+        "the first process recovers",
+        "the second process recovers",
+        "other hands act",
+        "one is confirmed",
+        "one is not confirmed",
+        "one is no longer waiting",
+        "the first process reads first",
+        "the second process reads first",
+        "both stand",
+        "one of the two stands",
+        "neither stands",
+    ];
+    let missing: Vec<&str> = wanted
+        .into_iter()
+        .filter(|one| !seen.contains(one))
+        .collect();
+    assert!(missing.is_empty(), "never reached: {missing:?}\n{seen:#?}");
+    assert!(all.waiting_together > 200, "{all:?}");
+    assert!(all.confirmed_apart > 300, "{all:?}");
+    assert!(all.not_confirmed > 150, "{all:?}");
+    assert!(all.admitted > 1_500, "{all:?}");
+    assert_eq!(generated_paired(SEED, 7), generated_paired(SEED, 7));
 }

@@ -2820,6 +2820,19 @@ impl Books {
         let is_closing =
             |name: &&Name| matches!(name, Name::Closed { run, .. } if Some(*run) == drawn);
         let closing = books.names.iter().find(is_closing).cloned();
+        // Whether the reservation a dispatch draws on is of an epoch that needs its
+        // owner: on the names as they are, and on the names it was judged on, where
+        // that was earlier.
+        let stopped = |folded: &Folded| {
+            let one = drawn.and_then(|root| folded.reservations.get(&root));
+            one.is_some_and(|one| one.epoch.is_none_or(|epoch| folded.needs_owner(epoch)))
+        };
+        let stopped_now = stopped(&before);
+        let stopped_then = judged.map(|judged| {
+            let seen = judged.min(at).checked_sub(1);
+            let seen = seen.and_then(|seen| books.past.get(seen));
+            seen.is_some_and(|seen| stopped(&fold(&seen.0, &seen.1)))
+        });
         // Whether this is the first thing other hands do to the reservation a name
         // that is lost belongs to.
         let first = match plain {
@@ -2932,6 +2945,17 @@ impl Books {
             let room = room.unwrap_or(0);
             if u128::from(*micros) > room {
                 return Err(broke(format!("dispatched, and really {room} was left")));
+            }
+        }
+        // No dispatch is published where the store needs its owner, unless it was
+        // judged before the store came to need it (limit (e)): one judged then, or
+        // judged again then, is never let by.
+        if matches!(plain, Event::Dispatch { .. }) && done && stopped_now {
+            let before_it = landed && stopped_then == Some(false);
+            if !before_it {
+                return Err(broke(
+                    "dispatched where the store needs its owner, and not judged before".into(),
+                ));
             }
         }
         // Nothing runs under a reservation whose admission was not confirmed: no
@@ -3111,6 +3135,34 @@ impl Books {
         waiting.keys().copied().collect()
     }
 
+    /// What is left of the reservation of the tree this run is the root of, as the
+    /// process that runs it holds it in memory.
+    pub fn tree_left(&self, run: Run) -> Option<u64> {
+        let tree = self.trees.get(&run).or_else(|| self.other.trees.get(&run));
+        tree.map(Tree::left)
+    }
+
+    /// Whether a dispatch by this run would be refused because the epoch of its
+    /// tree's reservation needs its owner: judged on the names as they were after
+    /// the first `judged` events, or as they are.
+    pub fn dispatch_needs_owner(&self, by: Run, judged: Option<usize>) -> bool {
+        let Some(root) = self.open(by).map(|live| live.root) else {
+            return false;
+        };
+        let folded = match judged {
+            None => self.fold(),
+            Some(judged) => {
+                let seen = judged.min(self.past.len()).checked_sub(1);
+                match seen.and_then(|seen| self.past.get(seen)) {
+                    Some(seen) => fold(&seen.0, &seen.1),
+                    None => Folded::default(),
+                }
+            }
+        };
+        let needs = |one: &Standing| one.epoch.is_none_or(|epoch| folded.needs_owner(epoch));
+        folded.reservations.get(&root).is_some_and(needs)
+    }
+
     /// Whether the process that published this run's admission confirmed it.
     pub fn confirmed(&self, run: Run) -> bool {
         self.truth.get(&run).is_some_and(|truth| truth.confirmed)
@@ -3190,6 +3242,8 @@ pub enum Must {
     Closed(Run),
     /// No run executes, in either process.
     NothingExecutes,
+    /// What is left of this run's tree, as its process holds it in memory.
+    TreeLeft(Run, u64),
 }
 
 /// A named history: its events, and what the books must give, after the last event
@@ -3297,6 +3351,10 @@ impl Must {
                 true => Ok(()),
                 false => Err(format!("{run} is not closed")),
             },
+            Must::TreeLeft(run, micros) => {
+                let found = books.tree_left(*run).ok_or(format!("{run} runs no tree"))?;
+                same(&format!("{run}'s tree has left"), found.into(), *micros)
+            }
             Must::NothingExecutes => {
                 let mut runs = books.executing_in(false);
                 runs.extend(books.executing_in(true));
@@ -5137,6 +5195,80 @@ pub fn histories() -> Vec<History> {
             (28, state(r(1), State::Open)),
         ],
     );
+    // The sixth review round's, in its two forms. A request that was judged while
+    // the store was sound is published once the store needs its owner: by damage to
+    // another reservation, and by the loss of a turn.
+    let publish = |run, micros| Event::Publish {
+        run: r(run),
+        micros,
+    };
+    let confirm = |run| Event::Confirm { run: r(run) };
+    add(
+        "78 a request judged before another reservation was damaged: it is published \
+         where the store needs its owner, within what its tree really has left, and \
+         nothing that is judged afterwards is",
+        vec![
+            reset(20),
+            publish(1, 10),
+            confirm(1),
+            second(admit(2, 10)),
+            Event::Damage(Name::Reservation(r(2))),
+            stale(4, dispatch(1, 10)),
+            stale(4, dispatch(1, 1)),
+            dispatch(1, 0),
+            admit(3, 0),
+        ],
+        vec![
+            came(5, Outcome::Placed(1)),
+            came(6, refused(Why::OverRun { left: 0 })),
+            came(7, refused(Why::NeedsOwner)),
+            came(8, refused(Why::NeedsOwner)),
+            SameNamesAsAfter(5),
+            state(r(1), State::Open),
+            Counts(r(1), 10),
+            Outstanding(r(1), 10),
+            state(r(2), State::Frozen),
+            Counts(r(2), 10),
+            Counted(20),
+            Left(0),
+            Must::NeedsOwner,
+            Must::TreeLeft(r(1), 0),
+            Spendable(r(1), 0),
+        ],
+        vec![
+            (4, Must::NeedsOwner),
+            (4, Counted(20)),
+            (4, Must::TreeLeft(r(1), 10)),
+        ],
+    );
+    add(
+        "79 the same with nothing but a turn lost: the request judged before the \
+         loss is published, and one judged after it is refused",
+        vec![
+            reset(10),
+            publish(1, 10),
+            confirm(1),
+            Event::Remove(Name::Turn { epoch: 1, turn: 1 }),
+            stale(3, dispatch(1, 10)),
+            stale(3, dispatch(1, 1)),
+            dispatch(1, 0),
+            stale(4, dispatch(1, 0)),
+        ],
+        vec![
+            came(4, Outcome::Placed(1)),
+            came(5, refused(Why::OverRun { left: 0 })),
+            came(6, refused(Why::NeedsOwner)),
+            came(7, refused(Why::NeedsOwner)),
+            SameNamesAsAfter(4),
+            state(r(1), State::Open),
+            Counts(r(1), 10),
+            Outstanding(r(1), 10),
+            Counted(10),
+            Must::NeedsOwner,
+            Must::TreeLeft(r(1), 0),
+        ],
+        vec![(3, Must::NeedsOwner), (3, Must::TreeLeft(r(1), 10))],
+    );
     table
 }
 
@@ -5656,6 +5788,63 @@ impl Generating {
         self.push(wrap(Event::Dispatch { by: run, micros: 0 }));
     }
 
+    /// One thing that happens while two admissions wait to be confirmed: either
+    /// process dies, either process recovers the store, other hands do something,
+    /// or the ledger does. One event.
+    fn meanwhile(&mut self) {
+        let event = match self.seeded.below(6) {
+            0 => Event::Crash,
+            1 => second(Event::Crash),
+            2 => Event::Recover,
+            3 => second(Event::Recover),
+            4 => return self.hands(1),
+            _ => return self.ledger(true),
+        };
+        self.push(event);
+    }
+
+    /// Two admissions are published, each in either process, each judged now or
+    /// earlier, for all that is left or for less, and both wait. Up to two things
+    /// happen meanwhile; they are confirmed in either order, half the time with one
+    /// more thing between; and each run asks for all it reserved. Nine events at
+    /// most.
+    fn pair(&mut self) {
+        let now = self.events.len();
+        let mut waiting = Vec::new();
+        for _ in 0..2 {
+            let other = self.seeded.below(2) == 0;
+            let judged = self.seeded.below(now as u64 + 1) as usize;
+            let micros = match self.seeded.below(2) {
+                0 => self.books.balance().left,
+                _ => self.some(13),
+            };
+            let run = self.new_run();
+            let event = Event::Publish { run, micros };
+            let event = match self.seeded.below(2) {
+                0 => stale(judged, event),
+                _ => event,
+            };
+            self.push(if other { second(event) } else { event });
+            waiting.push((other, run, micros));
+        }
+        for _ in 0..self.seeded.below(3) {
+            self.meanwhile();
+        }
+        if self.seeded.below(2) == 0 {
+            waiting.reverse();
+        }
+        let wrap = |other: bool, event: Event| if other { second(event) } else { event };
+        for (at, (other, run, _)) in waiting.iter().enumerate() {
+            self.push(wrap(*other, Event::Confirm { run: *run }));
+            if at == 0 && self.seeded.below(2) == 0 {
+                self.meanwhile();
+            }
+        }
+        for (other, run, micros) in waiting {
+            self.push(wrap(other, Event::Dispatch { by: run, micros }));
+        }
+    }
+
     /// The events of the first shape, up to `length` of them: about one in four is
     /// other hands'. With `tree`, about one in four is a request of a run that
     /// another run called.
@@ -5767,6 +5956,32 @@ pub fn generated_turned(seed: u64, number: u64) -> Vec<Event> {
             0 => history.child_dispatch(false),
             _ => history.ledger(true),
         }
+    }
+    history.events
+}
+
+/// A generated history of a fifth shape, at most [`GENERATED_EVENTS`] events, the
+/// same for the same seed and number: the owner sets an allowance and the ledger
+/// alone acts; half the time other hands move a turn; then two admissions are
+/// published and wait together, in one process or in two, and are confirmed in
+/// either order, with a crash, a recovery by either process, other hands or the
+/// ledger between; each run asks for all it reserved; and the ledger goes on.
+pub fn generated_paired(seed: u64, number: u64) -> Vec<Event> {
+    let mut history = Generating::new(seed ^ 0x9A12_ED0F_7770, number);
+    // 6 at most, then 2, then 9, then 3: 20.
+    let allowance = 10 + history.seeded.below(40);
+    history.push(reset(allowance));
+    let first = 2 + history.seeded.below(5) as usize;
+    while history.events.len() < first {
+        history.ledger(false);
+    }
+    if history.seeded.below(2) == 0 {
+        history.turns_moved();
+    }
+    history.pair();
+    let length = history.events.len() + history.seeded.below(4) as usize;
+    while history.events.len() < length {
+        history.ledger(true);
     }
     history.events
 }
