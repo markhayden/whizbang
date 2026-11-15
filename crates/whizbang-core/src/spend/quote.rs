@@ -1,13 +1,14 @@
 //! Quotes (plan 1B, task S4; `SPEC.md` section 6): a paid request has an enforceable
 //! bound, or it is not sent.
 //!
-//! **At admission.** A roster answers [`Backends::bound`] with the quote of one
-//! request, from the price a backend declares (ADR 0010), and does not know how many
-//! requests a call sends. [`PerCall`] wraps any [`Backends`] and adds that part: the
-//! bound of a need is the bound of one request times the requests one call may send
-//! its backend, so what an admission reserves covers each of them. A backend that
-//! offers an estimate only has the amount that is no bound under it as it has
-//! without it, and a call that needs one is refused where an executor reserves
+//! **At admission.** A roster answers [`Backends::bound`](crate::contract::Backends::bound)
+//! with the quote of one request, from the price a backend declares (ADR 0010), and
+//! does not know how many requests a call sends. The need does: an action states it
+//! ([`Requirement::requests`](crate::contract::Requirement::requests), one unless it
+//! says more), and preparing a call makes the bound of a need the bound of one request
+//! times that number, so what an admission reserves covers each of them. A backend
+//! that offers an estimate only has the amount that is no bound, and a call that
+//! needs one is refused where an executor reserves
 //! ([`Refusal::NoBound`](crate::contract::Refusal::NoBound)).
 //!
 //! **Before a request leaves.** [`request_bound`] is what one request is held to
@@ -20,65 +21,11 @@
 //! [`Allowance::dispatch`](crate::contract::Allowance::dispatch).
 
 use std::fmt;
-use std::num::NonZeroU64;
-use std::sync::Arc;
 
 use crate::capability::{Declaration, QuoteKind};
-use crate::contract::{
-    Backends, Capability, Estimate, Made, ModelIdentity, Offered, RefusalKind, Unavailable,
-};
+use crate::contract::RefusalKind;
 
 use super::name::Amount;
-
-/// Any backends, with the bound of each need made to cover every request one call
-/// may send: the bound of one request, as the backends under it answer it, times
-/// that many.
-///
-/// Around what a snapshot of the config offers ([`Offered`]) it is that too: it
-/// hands a run the backends they made, as they are, so an executor that goes by a
-/// snapshot reserves for every request
-/// ([`Snapshot::offering_through`](crate::contract::Snapshot::offering_through)).
-pub struct PerCall<B: ?Sized = dyn Backends> {
-    requests: NonZeroU64,
-    backends: Arc<B>,
-}
-
-impl<B: ?Sized> PerCall<B> {
-    /// These backends, for calls that send one backend this many requests at most.
-    pub fn new(backends: Arc<B>, requests: NonZeroU64) -> PerCall<B> {
-        PerCall { requests, backends }
-    }
-}
-
-impl<B: Offered + ?Sized> Offered for PerCall<B> {
-    fn default_of(&self, capability: Capability) -> Option<&str> {
-        self.backends.default_of(capability)
-    }
-
-    fn made(&self, capability: Capability, name: &str) -> Option<Made> {
-        self.backends.made(capability, name)
-    }
-}
-
-impl<B: Backends + ?Sized> Backends for PerCall<B> {
-    fn resolve(
-        &self,
-        capability: Capability,
-        choice: Option<&str>,
-        features: &[String],
-    ) -> Result<ModelIdentity, Unavailable> {
-        self.backends.resolve(capability, choice, features)
-    }
-
-    /// The bound of one request times the requests one call may send. No bound stays
-    /// no bound, and a product that reaches the largest amount is no bound either:
-    /// over, never under.
-    fn bound(&self, capability: Capability, model: &ModelIdentity) -> Estimate {
-        let one = self.backends.bound(capability, model);
-        let all = one.micros().saturating_mul(self.requests.get());
-        Estimate::of_micros(all)
-    }
-}
 
 /// Why a request is not sent, by what its backend quotes and what its run has left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

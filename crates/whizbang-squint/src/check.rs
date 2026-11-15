@@ -146,7 +146,9 @@ impl Check {
             Requirement::new(Capability::Judge)
                 .feature("image")
                 .feature("tool")
-                .chosen_by("judge"),
+                .chosen_by("judge")
+                // What a call reserves covers every turn of the loop.
+                .requests(TURNS_LIMIT as u64),
         );
         Ok(Check {
             descriptor: draft.build()?,

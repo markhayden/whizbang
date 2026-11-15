@@ -5,7 +5,6 @@
 //! registry and nothing the binary would not also have, plus what the test added. Fakes
 //! live in `whizbang-testkit`, which this crate depends on for its tests only.
 
-use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -15,11 +14,11 @@ use whizbang_core::capability::{Inventory, NoInventory};
 use whizbang_core::config::{Config, Credentials, Files, Kinds, Offers};
 use whizbang_core::contract::{
     Action, ConfigSource, Engine, Interrupted, NoBackends, Opening, Place, Recovery, Registry,
-    Secrets, Snapshot, SourceRefused, SystemClock,
+    Secrets, Snapshot, SystemClock,
 };
 use whizbang_core::description::Description;
 use whizbang_core::egress::DispatchPolicy;
-use whizbang_core::spend::{CallCap, Meter, PerCall, PreparationAge, StoreLedger};
+use whizbang_core::spend::{CallCap, Meter, PreparationAge, StoreLedger};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{self, Store};
 
@@ -44,20 +43,6 @@ pub fn registry() -> Result<Registry, String> {
     }
     Ok(registry)
 }
-
-/// How many requests one call may send one backend, which is how many times the
-/// bound of one request an admission reserves for each backend the call needs
-/// (`spend::PerCall`). It is the most any action of this build sends one backend:
-/// the turns of `check`'s judge loop, `whizbang_squint::check::TURNS_LIMIT`, which a
-/// test holds this number to. `grow` and `view` send none.
-///
-/// Nothing ties the number to an action: one that sent a backend more requests than
-/// this would have reserved for too few. The meter then refuses the request that
-/// its run has nothing left for, unsent, so the cost of a number that is too small
-/// is a run that fails, never a request that was not counted. And a call reserves
-/// this many bounds whether or not it sends that many: what it did not spend is
-/// released when its run ends.
-pub const REQUESTS_PER_CALL: u64 = 16;
 
 /// The kinds of backend this build has (ADR 0011, "Kinds"): none. No network client
 /// and no local model is built at this checkpoint, so a backend a config names is of
@@ -174,15 +159,9 @@ impl Over {
     /// backends,** those a config offers or none at all, so the executor asks and
     /// hands over the snapshot's and never any it was built with: a call with no
     /// backend to hand is refused as not ready, before admission.
-    ///
-    /// **The backends of every snapshot stand behind `spend::PerCall`,** so the
-    /// bound a call is prepared with, held to a cap by and admitted with covers
-    /// [`REQUESTS_PER_CALL`] requests to each backend it needs.
     fn source(&self) -> Result<Arc<dyn ConfigSource>, String> {
-        let requests = NonZeroU64::new(REQUESTS_PER_CALL)
-            .ok_or("a call sends a backend one request at least")?;
         if let Some(files) = self.files() {
-            return Ok(Arc::new(Reserving { files, requests }));
+            return Ok(Arc::new(files));
         }
         let empty = Config::empty();
         let offers = Offers::of(&empty, &Credentials::none(), &self.kinds)
@@ -192,25 +171,7 @@ impl Over {
             .offering(Arc::new(offers))
             .sending_under(DispatchPolicy::none())
             .recording(Arc::new(empty));
-        Ok(Arc::new(per_call(snapshot, requests)))
-    }
-}
-
-/// This snapshot, with its backends behind `spend::PerCall` for this many requests.
-fn per_call(snapshot: Snapshot, requests: NonZeroU64) -> Snapshot {
-    snapshot.offering_through(|offered| Arc::new(PerCall::new(offered, requests)))
-}
-
-/// The source over the config's files, each of whose snapshots holds its backends
-/// behind `spend::PerCall`.
-struct Reserving {
-    files: Files,
-    requests: NonZeroU64,
-}
-
-impl ConfigSource for Reserving {
-    fn snapshot(&self) -> Result<Snapshot, SourceRefused> {
-        Ok(per_call(self.files.snapshot()?, self.requests))
+        Ok(Arc::new(snapshot))
     }
 }
 
@@ -276,10 +237,12 @@ pub fn executor(
 ///   run reserved before the request leaves, settles it when it ends, and notes it
 ///   in the run's record.
 ///
-/// **The three are given together, here and nowhere else:** the ledger, the bound of
-/// a call ([`REQUESTS_PER_CALL`], in the source) and the meter. With the meter alone a
+/// **The two are given together, here and nowhere else.** With the meter alone a
 /// bounded request of a run that reserved nothing passes unmetered; with the ledger
-/// alone nothing a run sends is charged to what it reserved.
+/// alone nothing a run sends is charged to what it reserved. What a call reserves is
+/// the bound of one request to each backend it needs, times the requests its action
+/// says the need is for (`Requirement::requests`; ADR 0010): one, unless the action
+/// says more, as `check` does for the turns of its judge.
 ///
 /// And the lease (`models::Lease`; ADR 0017, "The lease"), in the lease's place,
 /// over the models directory this was given ([`Over::installed`]): before a request

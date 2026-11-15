@@ -1578,6 +1578,29 @@ host's limit is admitted at price times limit, and with only a timeout of whizba
 is refused.
 **Carry-over:** the row on squint's `pricing` (where a price is stated). **Size:** small.
 
+**Reworded with the task** (after the review of W1, 2026-11-15). The first box said "A
+wrapper in `spend/` around any `Backends` ... the wrapper delegates to it and adds the
+per-call part, so that the bound a backend states for a need covers every request the
+call sends it". It was built so (`spend::PerCall`), and a wrapper around backends
+cannot know which action asks: it multiplied every need of every action by one
+number, and the binary's was 16, the most any action sends. A call of one request
+then reserved 16 bounds and was held to its cap and to the allowance against that
+sum, which refused ordinary work: at a bound of a quarter of a dollar, a cap of one
+dollar refused it. That is against what spend control is for ("Decisions", the last
+item: it errs toward letting work run). So the box holds as: **a need states how many
+requests one call may send its backend** (`Requirement::requests`, one unless the
+action says more; `check` states the turns of its judge), **and preparing a call
+makes the bound of a need the bound of one request times that number.** The wrapper
+is gone; the roster's own file is still not changed. Shown by
+`spend::quote::the_bound_of_a_need_covers_every_request_the_need_states_and_one_where_it_states_none`,
+`spend::quote::the_estimate_of_a_call_is_the_sum_of_its_needs_each_times_its_own_requests`
+and
+`check::a_call_of_check_may_cost_the_bound_of_one_request_to_its_judge_for_every_turn_of_its_loop`;
+through the binary's wiring by the four tests ADR 0015 names for it ("The binary
+wired"). The need's number is a field of the shipped description, whose version
+went from 4 to 5 (ADR 0003, "What changes the version"), with `docs/reference/`
+generated again.
+
 ### S5. Dispatch first
 
 **Depends on:** S4, S2, I3. One pull request.

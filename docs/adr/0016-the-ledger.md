@@ -61,6 +61,9 @@ and an earlier sentence differ, that section is the later decision.
 Amended: 2026-11-15, with task W1 (ADR 0015, "The binary wired"). Changed where a
 section said what waited for it: the binary's executor has the ledger, the bound of a
 call and the meter.
+Amended: 2026-11-15, after the review of task W1. Changed where a section named the
+bound of a call as the wiring's: a need states its own number of requests (ADR
+0010).
 Spec: section 6, "Spend"; section 3, "Storage"
 
 ## Context
@@ -1362,8 +1365,9 @@ for all three). It folds nothing, so it does not know an epoch that needs its ow
   handle's tally refuses it first (ADR 0015). `Allowance::dispatch` called by an
   action itself, outside any wrapper, is not refused there (`docs/carry-over.md`).
 - **Nothing put the meter in the binary's executor** until task W1, which gave it
-  the ledger, the bound of a call and the meter together (ADR 0015, "The binary
-  wired").
+  the ledger and the meter together (ADR 0015, "The binary wired"). What a call
+  reserves, which is what its requests draw on, is the sum of its needs, each for
+  the requests it states (ADR 0010).
 
 ### Settlement of each attempt (task S5b)
 

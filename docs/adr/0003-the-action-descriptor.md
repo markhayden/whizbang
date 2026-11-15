@@ -17,6 +17,9 @@ backend (`chosen_by`), with its rule. The description's version went from 3 to 4
 Amended: 2026-11-12, with the last part of ADR 0006. Added: a need under `not_given` of
 an argument cannot be chosen by that argument. The rule only refuses, so the
 description's version stays 4.
+Amended: 2026-11-15, with ADR 0010, after the review of task W1 of checkpoint 1B. Added:
+a need states how many requests one call may send its backend (`requests`). The
+description's version went from 4 to 5.
 Spec: section 3, "The execution contract" and "Primitives, recipes and loops"; section 6,
 "Readiness"; section 14, "Documentation that cannot drift"
 
@@ -139,6 +142,12 @@ call names its choice"). That argument is declared, takes a text, and is one a c
 leave without a value. A need that names none is answered by the default backend. A need
 that applies only when an argument is not given cannot name that argument as its choice.
 
+A need states how many requests one call may send the backend that answers it
+(`requests`; `Requirement::requests`): a whole number from 1, and 1 unless the action says
+more, as a loop does for its turns. What a call may cost for the need is the bound of one
+request times this number (ADR 0010). A need for no request is refused
+(`descriptor::a_need_states_how_many_requests_one_call_may_send_its_backend_and_is_for_one_unless_it_says`).
+
 **A condition** (`when`) is `always`, `given` an argument, or `not_given` an argument. The
 argument must be one a call may leave without a value. So which capabilities a call needs
 and which outputs it returns are decided from the names of the arguments it gives and from
@@ -159,9 +168,9 @@ nothing. The binary builds its registry in one function (`crates/whizbang/src/wi
 that its tests call too; a test then registers its fakes, which live in
 `whizbang-testkit`, a development dependency only (`scripts/crate-graph.txt`).
 
-### The static description, version 4
+### The static description, version 5
 
-`whizbang describe --json` is one object: `description_version` (now 4), `name`, `version`,
+`whizbang describe --json` is one object: `description_version` (now 5), `name`, `version`,
 `actions` and `artifact_types`. A `Description` is made from a registry and in no other
 way: its fields are private, so one cannot be written by hand with a name listed twice.
 
@@ -170,7 +179,7 @@ way: its fields are private, so one cannot be written by hand with a name listed
   the order its actions were registered (section 3: recipes are what is advertised, and
   primitives follow). The order does not depend on the order a build registers its tools in.
   Version 2 listed actions in registration order. Version 4 gave each need of an action
-  the field `chosen_by`.
+  the field `chosen_by`, and version 5 the field `requests`.
 - `artifact_types` holds the six types in ADR 0002's order, each with its `name`, a
   `purpose` that keeps the purpose rule, and `travels_as`, which is `canonical_file` for
   all six: a copy of the file is the artifact, and `whizbang store import` reads it.

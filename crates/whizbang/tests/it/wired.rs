@@ -528,16 +528,12 @@ fn a_call_over_the_cap_of_the_binarys_config_is_refused_before_a_run_exists() {
     // Before a run exists: nothing is in the store, and nothing ran or was sent.
     assert!(world.held().is_empty(), "{:?}", world.held());
     assert_eq!((world.ran(), world.fakes.requests()), (0, 0));
-    // The cap is held against what the call may cost, which is the bound of one
-    // request for each request a call may send: a quarter is the bound of one, and
-    // is not enough. Raised in the file to four dollars, it is the cap the next call
-    // is held to, and that call is admitted.
-    std::fs::write(world.config_path(), capped("0.25")).unwrap();
-    assert!(executor.submit(&Call::new("paints")).is_err());
-    assert!(world.held().is_empty(), "{:?}", world.held());
+    // The cap is held against what the call may cost, which is the bound of the
+    // one request its need is for: a quarter of a dollar. Raised in the file to
+    // that, it is the cap the next call is held to, and that call is admitted.
     drop(executor);
-    reset(&world.root, "4");
-    std::fs::write(world.config_path(), capped("4")).unwrap();
+    reset(&world.root, "0.25");
+    std::fs::write(world.config_path(), capped("0.25")).unwrap();
     let executor = world.runner(&over);
     executor.submit(&Call::new("paints")).unwrap();
     assert_eq!((world.ran(), world.fakes.requests()), (1, 1));
@@ -615,10 +611,10 @@ fn the_parts_the_binary_is_wired_with_add_no_record_to_an_admission() {
     // part in the admission"), and a tree of runs that much for each run. The two
     // parts of this build, the cap's and the age's, write none: a run's names hold
     // nothing under `admission/`, with a cap configured and a preparation shown.
-    // The call may cost four dollars: a quarter for each request a call may send.
+    // The call may cost a quarter of a dollar: the bound of its one request.
     let world = World::new("wired-parts");
-    let over = world.config(&capped("4"));
-    reset(&world.root, "4");
+    let over = world.config(&capped("0.25"));
+    reset(&world.root, "0.25");
     let executor = world.runner(&over);
     let prepared = executor.prepare(&Call::new("paints")).unwrap();
     executor
@@ -739,7 +735,7 @@ fn a_recipient_the_config_does_not_approve_is_refused_at_the_gate_and_one_its_eg
     // run cost nothing.
     has_line(
         &text,
-        "spend: $4.00 reserved; paid requests: none; cost: $0.00",
+        "spend: $0.25 reserved; paid requests: none; cost: $0.00",
     );
     // Approved for the class a fill with no prompt is said to hold, which is none
     // known: a recipient that may receive some class is let through, and its
@@ -798,22 +794,94 @@ fn over_allowance(refused: Result<impl std::fmt::Debug, CallError>) -> (u64, u64
 }
 
 #[test]
-fn a_call_reserves_for_as_many_requests_as_an_action_of_this_build_sends_one_backend() {
-    // The number is the most requests any action of this build sends one backend:
-    // the turns of `check`'s judge loop (ADR 0015, "The binary wired").
-    let turns = u64::try_from(whizbang_squint::check::TURNS_LIMIT).unwrap();
-    assert_eq!(wiring::REQUESTS_PER_CALL, turns);
-    let world = World::new("wired-per-call");
-    let executor = world.runner(&world.config(&priced(None)));
+fn a_paid_call_of_one_request_is_admitted_under_a_cap_and_an_allowance_that_cover_one_bound() {
+    // `paints` says nothing of how many requests its need is for, so it is for one,
+    // and a call of it may cost the bound of one: a quarter of a dollar. A cap of one
+    // call and an allowance of that much each cover it.
+    let world = World::new("wired-one-bound");
+    let over = world.config(&capped("0.25"));
+    reset(&world.root, "0.25");
+    let executor = world.runner(&over);
     let prepared = executor.prepare(&Call::new("paints")).unwrap();
-    assert_eq!(prepared.estimate().micros(), 250_000 * turns);
+    assert_eq!(prepared.estimate().micros(), 250_000);
+    let finished = executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!((world.ran(), world.fakes.requests()), (1, 1));
     // The read-only executor is told the same.
     drop(executor);
     let reader = Arc::new(Reader::open(&world.root, Arc::new(RealFs)).unwrap());
-    let over = world.config(&priced(None));
     let preparer = wiring::executor(world.registry(), reader, &over).unwrap();
     let prepared = preparer.prepare(&Call::new("paints")).unwrap();
-    assert_eq!(prepared.estimate().micros(), 250_000 * turns);
+    assert_eq!(prepared.estimate().micros(), 250_000);
+    has_line(
+        &shown(&world.root, finished.run().as_str()),
+        "spend: $0.25 reserved; paid requests: 1; cost: $0.25",
+    );
+}
+
+#[test]
+fn of_the_actions_this_build_ships_check_alone_needs_a_backend_and_states_the_turns_of_its_judge() {
+    // No number of requests is given to every action alike: each need states its
+    // own (ADR 0010). `check` sends its judge a request for each turn of its loop,
+    // and says so; `grow` and `view` need no backend.
+    let registry = wiring::registry().unwrap();
+    let needs = |name: &str| {
+        let needs = registry.get(name).unwrap().descriptor().needs().to_vec();
+        let stated = needs.iter().map(|need| (need.capability(), need.sends()));
+        stated.collect::<Vec<_>>()
+    };
+    let turns = u64::try_from(whizbang_squint::check::TURNS_LIMIT).unwrap();
+    assert_eq!(needs("check"), [(Capability::Judge, turns)]);
+    assert_eq!(turns, 16);
+    assert_eq!(needs("grow"), []);
+    assert_eq!(needs("view"), []);
+}
+
+/// `twice`: an action whose need for a filler is for two requests, and that calls
+/// `paints` once and sends nothing itself.
+fn twice() -> Arc<dyn Action> {
+    let draft = ActionDescriptor::draft("twice", "1.0.0", Kind::Recipe, "A test action.");
+    let descriptor = draft.needs(Requirement::new(Capability::Fill).requests(2));
+    Arc::new(Scripted {
+        descriptor: descriptor.build().unwrap(),
+        runs: Arc::new(AtomicU64::new(0)),
+        body: Box::new(|_, context| {
+            let called = context.executor().submit(&Call::new("paints"));
+            called.map_err(|error| Failure::error("called", &error.to_string()))?;
+            Ok(Produced::nothing())
+        }),
+    })
+}
+
+#[test]
+fn a_run_called_from_inside_a_run_takes_the_sum_of_its_own_needs_from_what_its_caller_reserved() {
+    // The caller's need is for two requests, so it reserves two bounds. The run it
+    // calls needs one, and takes one from what its caller has: it is held to no
+    // number but its own needs'.
+    let world = World::new("wired-nested");
+    let over = world.config(&priced(None));
+    reset(&world.root, "0.5");
+    let store = Arc::new(Store::open(&world.root, Arc::new(RealFs)).unwrap());
+    let mut registry = world.registry();
+    registry.register(twice()).unwrap();
+    let executor = wiring::runner(registry, store, &over).unwrap();
+    let finished = executor.submit(&Call::new("twice")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed", "{finished:?}");
+    assert_eq!(world.fakes.requests(), 1);
+    drop(executor);
+    let reserved: Vec<(String, Option<u64>)> = world
+        .held()
+        .iter()
+        .map(|(run, _)| {
+            let json = whizbang(&["runs", "show", run, "--json"], &world.root);
+            let record: serde_json::Value = serde_json::from_str(&json.out).unwrap();
+            let action = record["asked"]["action"].as_str().unwrap().to_owned();
+            (action, record["spend"]["reserved_micros"].as_u64())
+        })
+        .collect();
+    let of = |action: &str| reserved.iter().find(|(name, _)| name == action).unwrap().1;
+    assert_eq!(of("twice"), Some(500_000));
+    assert_eq!(of("paints"), Some(250_000));
 }
 
 #[test]
@@ -849,12 +917,12 @@ fn a_paid_call_is_refused_without_an_allowance_and_admitted_with_one_and_runs_sh
  {
     let world = World::new("wired-paid");
     let over = world.config(&priced(Some(100_000)));
-    // No reset was made in the store: it allows nothing, and the call may cost four
-    // dollars, a quarter for each request a call may send.
+    // No reset was made in the store: it allows nothing, and the call may cost a
+    // quarter of a dollar, the bound of its one request.
     let executor = world.runner(&over);
     assert_eq!(
         over_allowance(executor.submit(&Call::new("paints"))),
-        (4_000_000, 0)
+        (250_000, 0)
     );
     assert_eq!((world.ran(), world.fakes.requests()), (0, 0));
     assert!(world.held().is_empty());
@@ -872,7 +940,7 @@ fn a_paid_call_is_refused_without_an_allowance_and_admitted_with_one_and_runs_sh
     let text = shown(&world.root, run);
     has_line(
         &text,
-        "spend: $4.00 reserved; paid requests: 1; cost: $0.10",
+        "spend: $0.25 reserved; paid requests: 1; cost: $0.10",
     );
     has_line(
         &text,
@@ -890,36 +958,36 @@ fn a_paid_call_is_refused_without_an_allowance_and_admitted_with_one_and_runs_sh
 }
 
 #[test]
-fn every_request_of_a_run_is_debited_before_it_is_sent_and_the_one_its_reservation_does_not_cover_is_refused_unsent()
+fn a_request_beyond_what_its_need_stated_is_refused_unsent_by_the_meter_as_over_what_its_run_has_left()
  {
-    // The ledger, the bound of a call and the meter are given together: what a call
-    // reserved is what its requests draw on, one bound for each before it leaves.
-    // A run that asks once more than a call may is refused that request, unsent.
+    // The ledger and the meter are given together: what a call reserved is what its
+    // requests draw on, one bound for each before it leaves. `paints` states one
+    // request; a run of it that asks twice is refused the second, unsent, whatever
+    // the allowance of the store has.
     let world = World::new("wired-metered");
     let over = world.config(&priced(None));
     reset(&world.root, "5");
     let executor = world.runner(&over);
-    let asked = i64::try_from(wiring::REQUESTS_PER_CALL).unwrap() + 1;
-    let call = Call::new("paints").argument("times", Value::Integer(asked));
+    let call = Call::new("paints").argument("times", Value::Integer(2));
     let finished = executor.submit(&call).unwrap();
     assert_eq!(finished.outcome().name(), "error");
-    assert_eq!(world.fakes.requests(), wiring::REQUESTS_PER_CALL);
+    assert_eq!(world.fakes.requests(), 1);
     drop(executor);
     let text = shown(&world.root, finished.run().as_str());
-    // No answer stated a charge, so each request is settled at its bound.
+    // No answer stated a charge, so the request is settled at its bound.
     has_line(
         &text,
-        "spend: $4.00 reserved; paid requests: 16; cost: $4.00",
+        "spend: $0.25 reserved; paid requests: 1; cost: $0.25",
     );
     has_line(
         &text,
-        "  request 15\tanswered\theld $0.25\tsettled $0.25\tunresolved $0.00",
+        "  request 0\tanswered\theld $0.25\tsettled $0.25\tunresolved $0.00",
     );
-    assert!(!text.contains("  request 16\t"), "{text}");
+    assert!(!text.contains("  request 1\t"), "{text}");
     assert!(text.contains("\trequest_over_allowance\t"), "{text}");
     let said = status(&world.root);
-    assert!(said.contains("counted against it: $4.00\n"), "{said}");
-    assert!(said.contains("left: $1.00\n"), "{said}");
+    assert!(said.contains("counted against it: $0.25\n"), "{said}");
+    assert!(said.contains("left: $4.75\n"), "{said}");
 }
 
 /// `dies`: an action that needs a filler, asks it once, and then has the store's
@@ -947,7 +1015,7 @@ fn the_reservation_of_a_run_a_killed_process_left_is_named_by_spend_status_and_c
  {
     let world = World::new("wired-killed");
     let over = world.config(&priced(Some(100_000)));
-    reset(&world.root, "5");
+    reset(&world.root, "0.25");
     // A process is killed while its action runs, after its one paid request was
     // answered and settled.
     {
@@ -967,7 +1035,7 @@ fn the_reservation_of_a_run_a_killed_process_left_is_named_by_spend_status_and_c
     // reservation is named as open, counted in full, by whichever reader, however
     // often.
     let open = format!(
-        "  {run}  open  counts for $4.00  (reserved $4.00, charged $0.10, outstanding $0.00)"
+        "  {run}  open  counts for $0.25  (reserved $0.25, charged $0.10, outstanding $0.00)"
     );
     let books = world.books();
     for _ in 0..2 {
@@ -979,15 +1047,15 @@ fn the_reservation_of_a_run_a_killed_process_left_is_named_by_spend_status_and_c
         );
         let said = status(&world.root);
         has_line(&said, &open);
-        assert!(said.contains("counted against it: $4.00\n"), "{said}");
-        assert!(said.contains("left: $1.00\n"), "{said}");
+        assert!(said.contains("counted against it: $0.25\n"), "{said}");
+        assert!(said.contains("left: $0.00\n"), "{said}");
         assert_eq!(world.books(), books);
     }
     // So a paid call is refused: what is left does not cover it.
     let executor = world.runner(&over);
     assert_eq!(
         over_allowance(executor.submit(&Call::new("paints"))),
-        (4_000_000, 1_000_000)
+        (250_000, 0)
     );
     drop(executor);
     assert_eq!(world.books(), books);
@@ -1006,7 +1074,7 @@ fn the_reservation_of_a_run_a_killed_process_left_is_named_by_spend_status_and_c
     has_line(&status(&world.root), &open);
     has_line(
         &shown(&world.root, &run),
-        "spend: $4.00 reserved; paid requests: unknown; cost: unknown",
+        "spend: $0.25 reserved; paid requests: unknown; cost: unknown",
     );
     // The owner's reset clears it: nothing made before the reset counts, and a
     // paid call is admitted.
