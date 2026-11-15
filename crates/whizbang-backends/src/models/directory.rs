@@ -26,6 +26,32 @@ pub(super) enum Read {
     NotAFile,
 }
 
+/// What is carried, inside an error of the file system, by a refusal of a folder of
+/// the layout that is a link ([`ModelsDir::unlinked`]). It holds no path. Each kind
+/// of refusal here is made from an error of the file system, and looks for this
+/// first ([`is_linked`]), so that every way out of the installer, a hold and a
+/// removal says the same fixed words of it.
+#[derive(Debug)]
+struct Linked;
+
+/// The words every refusal for a link says.
+pub(super) const LINKED: &str =
+    "a folder of the models directory is a link, and nothing is done through it";
+
+impl std::fmt::Display for Linked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(LINKED)
+    }
+}
+
+impl std::error::Error for Linked {}
+
+/// Whether this error of the file system is the refusal of a folder of the layout
+/// that is a link.
+pub(super) fn is_linked(error: &io::Error) -> bool {
+    error.get_ref().is_some_and(|inner| inner.is::<Linked>())
+}
+
 /// One models directory. What `{:?}` prints holds no path.
 #[derive(Clone)]
 pub struct ModelsDir {
@@ -73,9 +99,45 @@ impl ModelsDir {
         self.staging(model).join("incoming")
     }
 
+    /// Whether no folder of the model's layout is a link: `models/` under the
+    /// directory, the model's folder under it, and the model's `installations/`,
+    /// `staging/` and `holds/`. Each name is looked at itself, without following it
+    /// ([`Fs::is_link`]); a name that nothing has is no link. With a link at one of
+    /// them the answer is an error that [`is_linked`] knows, and whoever asked does
+    /// nothing through it: lists nothing, deletes nothing, makes nothing.
+    ///
+    /// The directory's own folder is not looked at: it may be a link, which is how
+    /// the whole directory is put on another disk.
+    ///
+    /// **A look, not a guard.** A folder that is swapped for a link after this
+    /// answered is followed by the call that comes next (ADR 0017, "A folder of the
+    /// layout that is a link").
+    pub(super) fn unlinked(&self, model: &ModelName) -> io::Result<()> {
+        let folder = self.model(model);
+        // The model's folder before what is in it: a name under a link is a name
+        // of what the link leads to.
+        let layout = [
+            self.models(),
+            folder.clone(),
+            folder.join("installations"),
+            folder.join("staging"),
+            folder.join("holds"),
+        ];
+        for path in &layout {
+            if self.fs.is_link(path)? {
+                return Err(io::Error::other(Linked));
+            }
+        }
+        Ok(())
+    }
+
     /// Removes the model's staging folder and syncs the removal, for one who holds
     /// the model's lock. What cannot be removed now is removed by the next to stage.
+    /// Nothing is removed through a folder of the layout that is a link.
     pub(super) fn unstage(&self, model: &ModelName) {
+        if self.unlinked(model).is_err() {
+            return;
+        }
         let _ = self.remove(&self.incoming(model));
         let _ = self.fs.sync_dir(&self.staging(model));
     }

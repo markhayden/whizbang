@@ -62,7 +62,8 @@ pub fn runner(registry: Registry, store: Arc<Store>) -> Engine {
 /// to a writer, with recovery before it"): the parts, in the order they are asked.
 /// One, so far: the part that ends every run a dead process left, as interrupted
 /// (ADR 0015, "The interrupted record, and what readers say of it"). The one that
-/// settles what such a run reserved is task S6's, and is added here.
+/// would close what such a run reserved is the spend strand's, if it keeps one, and
+/// would be added here.
 pub fn recovery() -> Recovery {
     Recovery::none().with_part(Arc::new(Interrupted))
 }

@@ -419,7 +419,7 @@ fn a_run_that_a_wrappers_failure_abandoned_is_ended_at_the_next_open_and_its_res
     assert!(after.contains_key("requests/order-17/ended"));
     // Its reservation is not closed by this part, and nothing of it is released: it
     // is open, and counts in full. Closing it, as held, is the ledger's own part of
-    // the recovery (plan 1B, task S6).
+    // the recovery, if the spend strand keeps one.
     let reservation = format!("spend/reservations/{run}");
     assert_eq!(after[&reservation], before[&reservation]);
     assert!(!after.keys().any(|name| name.starts_with("spend/closed/")));

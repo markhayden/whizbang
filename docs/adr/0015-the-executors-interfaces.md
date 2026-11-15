@@ -1032,7 +1032,8 @@ what may have been spent at the most it can have been. What makes that cheap is 
 it is one publication of names made once, by parts that each look at what is there
 and add only what is missing, so that a crash inside it leaves it not done, and done
 twice it changes nothing. This section is the frame; what is recovered is each
-part's (the interrupted run: task I4b; the money: task S6).
+part's (the interrupted run: task I4b; the money: the spend strand's, if it keeps a
+part in the recovery).
 
 **One entry point opens a store to write** (`contract::Opening`, over `Store::open`
 and its two siblings, which it mirrors: `open`, `open_in_existing_parent`,
@@ -1144,6 +1145,13 @@ to `…_part_4_of_4`, in the group of crash sweeps).
   binary's own sources, line by line, for the calls by their names: a call made
   through another name for the type is not found, and the crates the binary calls
   are not read.
+- **What the scan of the binary's sources does not find.** It refuses the names
+  `Store::open`, `Store>::open` and `Store ::` in a line of code, a `Store` brought
+  in under another name, and a glob of the store module. A call through a type
+  alias, a trait or a function pointer made elsewhere is not found.
+- **`store import --create` on a store that cannot be recovered** says "created a
+  store at …" inside its complaint, on purpose: the store was made, by this
+  process, before its recovery failed, and the caller is told so with the reason.
 - **Tests and the test kit may open a store directly** (`Store::open`): the scan
   reads the binary's sources and nothing else, and a test that builds a store by
   hand, or that wants a writer with no recovery, is not held to the entry point.
@@ -1157,8 +1165,8 @@ to `…_part_4_of_4`, in the group of crash sweeps).
   another opening of the store, in another process or in this one, since a second
   opening in one process is refused like any second writer
   (`recovering::a_store_another_opening_holds_refuses_every_writing_command_in_words_true_of_this_process_and_of_another`).
-- **The binary's list of parts is empty** until tasks I4b and S6 add theirs: every
-  command recovers nothing yet, and confirms the generation it finds.
+- **The binary's list of parts** (`wiring::recovery`) held nothing when this task
+  was built; task I4b gave it the part that ends an interrupted run.
 - **The writer that is handed out is the store,** whole: nothing keeps whoever holds
   it from publishing anything. `Remover` narrows it for the one case that needs it.
 - **Recovery runs on the thread of the first to ask,** and is not cancelled: a part
@@ -1226,10 +1234,11 @@ open when a recovery runs.
 **The money is not this part's.** A run that was left, or that a wrapper's failure
 abandoned (above), keeps its reservation as it was: open, counted in full, nothing
 released. Closing it, as held unless every dispatch under it is shown settled (ADR
-0016), is the ledger's own part of the recovery, task S6. This part makes no name
+0016), would be the ledger's own part of the recovery, if the spend strand keeps
+one. This part makes no name
 under `spend/`
 (`interrupted::a_run_that_a_wrappers_failure_abandoned_is_ended_at_the_next_open_and_its_reservation_is_left_open`;
-`docs/carry-over.md` has the row that names this test for task S6).
+`docs/carry-over.md` has the row that names this test for the spend strand).
 
 **Where a run's data went is lost with the rest.** A run that sent data and was then
 left is recovered with `egress` named in `outcome.lost` and an empty list, which is
@@ -1295,7 +1304,7 @@ to `…_part_4_of_4`, in the group of crash sweeps).
 
 - A store is opened to write through `Opening`, and its first sync is the
   confirmation of the generation it found. A strand adds what it recovers as a
-  `RecoveryPart` and edits neither the entry point nor the store (tasks I4b, S6).
+  `RecoveryPart` and edits neither the entry point nor the store (task I4b).
   Nothing stored changes by the frame itself.
 - `Refusal` and `CallError` each have one more kind, and `Request` and `PreparedCall`
   one more thing they carry. Nothing stored changes: no record, no fingerprint, no
