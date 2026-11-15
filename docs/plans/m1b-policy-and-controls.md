@@ -1480,9 +1480,13 @@ these runs.
 **Depends on:** I5. **Reads:** squint `crates/squint-providers/src/privacy.rs`
 (`consent`).
 
-- [ ] The policy a config's `egress` table makes (I5's `DispatchPolicy`): which recipients
+- [x] The policy a config's `egress` table makes (I5's `DispatchPolicy`): which recipients
       may receive which classes of data.
-- [ ] The check behind a `Sender` (I5) for the first address.
+- [x] The check behind a `Sender` (I5) for the first address.
+      (Built before I3, so three parts of "Done when" below are not shown and are I3's
+      and S5's, with the gate's place: the fake backend counting none, the fake meter
+      having seen nothing, and no dispatch record. ADR 0019, "Limits";
+      `docs/carry-over.md`.)
 
 **Done when** these pass, each with an executor a test builds with the policy: with the
 empty policy every request to a backend with a recipient is refused and the fake counts
