@@ -44,6 +44,8 @@ Amended: 2026-11-14, with task E4. Changed under "A policy before a send, and a 
 send": the fourth question says why (ADR 0019, "The run's recipients").
 Amended: 2026-11-14, with the first half of task I7. Added: "An inventory". The
 lease, the other half of the task, waits for the wrappers of task I3 and is not here.
+Amended: 2026-11-15, with task S3. Changed under "One snapshot of the config", "What
+waits": the part that holds a call to the cap is built.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -689,7 +691,12 @@ hook while it is asked.
   "The source over both files"): the digest, the backends, the secrets, the cap, the
   policy and the settings of each reading. It gives a snapshot no credential: a kind
   has no way to hand one over yet (ADR 0011, "What waits").
-- **Nothing holds a call to the cap.** A part is shown it; task S3 is that part.
+- **Nothing in the executor holds a call to the cap.** A part is shown it, and task
+  S3 built that part (`spend::CallCap`, `crates/whizbang-core/src/spend/cap.rs`, which
+  says what it refuses, under which kind of a record, and why no refusal quotes an
+  amount; its tests are `cap::…` in `crates/whizbang-core/tests/it/spend/cap.rs`). An
+  executor holds calls to the cap only when it is given the part; the binary's is
+  given it by its wiring (task W1).
 - **The gate's place** (task I3) is given the policy of the run's snapshot, as the
   checked sender is.
 
