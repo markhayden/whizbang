@@ -13,12 +13,17 @@
 //! Beside the books are two parts in the admission (`contract::AdmissionPart`), which
 //! an executor is given ([`crate::contract::Engine::with_part`]): [`CallCap`], the cap
 //! of one call, and [`PreparationAge`], the hour a preparation holds.
+//!
+//! And quotes (task S4): [`PerCall`], which makes the bound of a need cover every
+//! request a call sends its backend, and [`request_bound`], what one request is held
+//! to before it leaves.
 
 mod age;
 mod cap;
 pub mod fold;
 mod ledger;
 pub mod name;
+mod quote;
 pub mod reading;
 pub mod record;
 
@@ -29,6 +34,7 @@ pub use cap::{
 };
 pub use ledger::StoreLedger;
 pub use name::{Amount, Belongs, EpochWord, NAME_LIMIT, Name, NotAName, SPEND_PREFIX, Seal};
+pub use quote::{NotQuoted, PerCall, request_bound};
 pub use reading::{
     AtPlace, Correction, Counted, Formless, Names, Reading, RunSpend, Sent, Sum, lowest_free,
     stage_allows,
