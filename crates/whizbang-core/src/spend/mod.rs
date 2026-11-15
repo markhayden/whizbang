@@ -17,6 +17,7 @@
 mod age;
 mod cap;
 pub mod fold;
+mod ledger;
 pub mod name;
 pub mod reading;
 pub mod record;
@@ -26,6 +27,7 @@ pub use cap::{
     CAP_PART, CallCap, OVER_ITS_OWN_CAP, OVER_THE_CAP, OWN_CAP_ABOVE, OWN_CAP_ZERO,
     SNAPSHOT_CAP_ZERO,
 };
+pub use ledger::StoreLedger;
 pub use name::{Amount, Belongs, EpochWord, NAME_LIMIT, Name, NotAName, SPEND_PREFIX, Seal};
 pub use reading::{
     AtPlace, Correction, Counted, Formless, Names, Reading, RunSpend, Sent, Sum, lowest_free,

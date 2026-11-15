@@ -10,7 +10,8 @@ mod name;
 mod probe;
 mod reading;
 mod record;
-mod support;
+mod reserve;
+pub(crate) mod support;
 
 use std::num::NonZeroU64;
 

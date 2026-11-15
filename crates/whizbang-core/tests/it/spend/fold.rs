@@ -288,8 +288,15 @@ fn compare(books: &Books, real: &Folded) -> Result<(), String> {
     for (run, other) in &wanted.reservations {
         let root = id(*run);
         let one = &real.reservations()[&root];
+        // An admission stands, or does not, as the model says of the amount its hold
+        // states; and of any other amount it does not stand, whatever the model
+        // says: the real fold holds what it is asked of to the hold.
         let whole = Amount::new(other.amount).is_some_and(|micros| {
-            real.stands(&root, micros) == model::stands(&wanted, *run, other.amount)
+            let stated = one.names().stated() == Some(micros);
+            // The same amount with its last bit turned: another amount.
+            let another = Amount::new(other.amount ^ 1);
+            real.stands(&root, micros) == (stated && model::stands(&wanted, *run, other.amount))
+                && another.is_none_or(|another| !real.stands(&root, another))
         });
         let same = one.names().most().micros() == other.most()
             && one.left().micros() == other.left()
@@ -298,8 +305,7 @@ fn compare(books: &Books, real: &Folded) -> Result<(), String> {
             && epochs
                 .iter()
                 .all(|epoch| one.counts_in(*epoch) == other.counts_in(*epoch))
-            && whole
-            && real.stands(&root, Amount::ZERO) == model::stands(&wanted, *run, 0);
+            && whole;
         if !same {
             return Err(format!("{run}: a reading of {one:?} is not the model's"));
         }
@@ -472,6 +478,123 @@ fn every_generated_history_of_two_admissions_that_wait_folds_to_what_the_model_g
 #[test]
 fn every_generated_history_of_whole_books_folds_to_what_the_model_gives() {
     suite(2048, model::generated_whole);
+}
+
+/// Names of every form that other hands could make in these books, each alone: for
+/// each reservation there is and for a run that has none, at numbers the books have
+/// and at numbers far outside them; and of the forms that belong to an epoch, in an
+/// epoch there is and in one far ahead.
+fn made_alone(books: &Books) -> Vec<Name> {
+    let folded = books.fold();
+    let newest = folded.epoch();
+    let mut runs: Vec<Run> = folded.reservations.keys().copied().collect();
+    runs.push(Run(9_999));
+    let mut made = Vec::new();
+    for (at, run) in runs.into_iter().enumerate() {
+        let run_at = at as u64;
+        for place in [1, 2, 40 + run_at] {
+            made.push(Name::Place { run, place });
+            made.push(Name::Settling { run, place });
+            made.push(Name::Dispatched {
+                run,
+                place,
+                by: run,
+                micros: 1 + run_at,
+            });
+            made.push(Name::Settled {
+                run,
+                place,
+                stage: model::Stage::Answered,
+                micros: 3,
+            });
+        }
+        for epoch in [0, newest, newest + 2] {
+            made.push(Name::Held {
+                epoch,
+                run,
+                micros: 7 + run_at,
+            });
+        }
+        made.push(Name::Closed {
+            run,
+            released: true,
+        });
+        made.push(Name::Closed {
+            run,
+            released: false,
+        });
+        made.push(Name::Reservation(run));
+        made.push(Name::Stray { run, count: 1 });
+    }
+    for epoch in [newest, newest + 1, newest + 3] {
+        for turn in [1, folded.next_turn(epoch), 900] {
+            made.push(Name::Turn { epoch, turn });
+        }
+        if epoch >= 1 {
+            made.push(Name::Epoch(epoch));
+            made.push(Name::Reset { epoch, micros: 50 });
+        }
+    }
+    made.push(Name::Unplaced { count: 1 });
+    made.retain(|name| !books.names().contains(name));
+    made.sort();
+    made.dedup();
+    made
+}
+
+/// One name changed, alone, in each of the first `count` books the ledger alone wrote
+/// from this seed: every name lost, every name damaged, and a sample of names made.
+/// After each, the real fold of the names is held to the model's, as after every
+/// event of a history. What comes back is how many changes were compared, and how
+/// many reservations were frozen after them.
+fn one_name_changed(seed: u64, count: u64) -> (u64, u64) {
+    let (mut changes, mut frozen) = (0, 0);
+    for number in 0..count {
+        let events = model::generated_whole(seed, number);
+        let said =
+            |why: String| format!("seed {seed:#x}, whole books {number}: {why}\n{events:#?}");
+        let mut whole = beside(&events).unwrap_or_else(|why| panic!("{}", said(why)));
+        let mut hands = Vec::new();
+        for name in whole.books.names() {
+            hands.push(Event::Remove(name.clone()));
+            hands.push(Event::Damage(name.clone()));
+        }
+        hands.extend(made_alone(&whole.books).into_iter().map(Event::Plant));
+        for hand in hands {
+            let mut changed = whole.books.clone();
+            changed.apply(&hand);
+            let names = whole.texts.names(&changed);
+            let real = folded(&names);
+            if let Err(why) = compare(&changed, &real) {
+                panic!("{}", said(format!("{hand:?}: {why}")));
+            }
+            let cold = |one: &&fold::Standing| one.state() == State::Frozen;
+            frozen += real.reservations().values().filter(cold).count() as u64;
+            changes += 1;
+        }
+    }
+    (changes, frozen)
+}
+
+/// The model's own suite of one name changed (2,048 books) is held by the model's
+/// fold. This is a sample of it against the real fold: 96 books from a seed, which is
+/// as few as give more than 10,000 changes from either seed (10,492 and 11,259, with
+/// 7,924 and 8,513 reservations frozen after them), in a test for each of two seeds,
+/// of which the second is written here.
+fn a_sample_of_one_name_changed(seed: u64) {
+    let (changes, frozen) = one_name_changed(seed, 96);
+    assert!(changes > 10_000, "seed {seed:#x}: {changes} changes");
+    assert!(frozen > 3_000, "seed {seed:#x}: {frozen} frozen");
+}
+
+#[test]
+fn one_name_lost_damaged_or_made_alone_in_whole_books_folds_to_what_the_model_gives() {
+    a_sample_of_one_name_changed(SEED);
+}
+
+#[test]
+fn one_name_lost_damaged_or_made_alone_folds_to_what_the_model_gives_from_another_seed() {
+    a_sample_of_one_name_changed(0x5EED_0002_2026_1115);
 }
 
 /// A store that is given the names of a history as they come.
@@ -870,6 +993,115 @@ const SECOND_AT_0: [&str; 3] = [
     "spend/settled/7000-1/2/answered/0",
     "spend/turn/1/3",
 ];
+
+#[test]
+fn an_admission_stands_under_each_of_its_three_conditions_and_only_for_the_amount_its_hold_states()
+{
+    // A reservation of 10 that is all of an allowance of 10, as its admission's
+    // publication left it: the record, one hold, the epoch's first turn.
+    const OWN: [&str; 6] = [
+        "spend/reset/1/10",
+        "spend/epoch/1",
+        "spend/turn/0/1",
+        "spend/reservations/7000-1",
+        "spend/held/1/7000-1/10",
+        "spend/turn/1/1",
+    ];
+    // Another admission in the same epoch, of 1, which other hands made whole.
+    const OTHER: [&str; 3] = [
+        "spend/reservations/7000-2",
+        "spend/held/1/7000-2/1",
+        "spend/turn/1/2",
+    ];
+    let ten = amount(10);
+    let stands = |more: &[&str]| of(&joined(&[&OWN, more])).stands(&one(), ten);
+    assert!(stands(&[]));
+
+    // The first condition: the record and one hold, and nothing else that names the
+    // run; and open.
+    assert!(!stands(&["spend/place/7000-1/1"]));
+    assert!(!stands(&[
+        "spend/place/7000-1/1",
+        "spend/dispatched/7000-1/1/7000-1/5"
+    ]));
+    assert!(!stands(&["spend/held/1/7000-1/3"]));
+    assert!(!stands(&[
+        "spend/closed/7000-1/released",
+        "spend/place/7000-1/1",
+        "spend/turn/1/2"
+    ]));
+    let without = |gone: &str| {
+        let left: Vec<&str> = OWN.iter().copied().filter(|name| *name != gone).collect();
+        of(&left).stands(&one(), ten)
+    };
+    assert!(!without("spend/reservations/7000-1"));
+    assert!(!without("spend/held/1/7000-1/10"));
+    let hurt = with_damage(&OWN, &["spend/held/1/7000-1/10"]);
+    assert!(!hurt.stands(&one(), ten));
+    // A run the books do not name has no admission that stands.
+    assert!(!of(&OWN).stands(&two(), ten));
+
+    // The second: neither the epoch it fell under nor the newest needs its owner.
+    assert!(!stands(&["spend/turn/1/5"]));
+    assert!(!without("spend/turn/1/1"));
+    const RESET: [&str; 3] = ["spend/reset/2/50", "spend/epoch/2", "spend/turn/1/2"];
+    assert!(stands(&RESET));
+    assert!(!stands(&joined(&[&RESET, &["spend/turn/2/3"]])));
+    // A frozen reservation whose amount no name states makes every epoch need it.
+    assert!(!stands(&["spend/place/7000-9/1"]));
+    // One whose hold states its amount, and that the allowance covers, does not.
+    let beside = [
+        "spend/reset/1/12",
+        "spend/epoch/1",
+        "spend/turn/0/1",
+        "spend/reservations/7000-1",
+        "spend/held/1/7000-1/10",
+        "spend/turn/1/1",
+        "spend/held/1/7000-9/2",
+        "spend/turn/1/2",
+    ];
+    assert!(of(&beside).stands(&one(), ten));
+
+    // The third: its own epoch is not over its allowance, with it counted in full.
+    // That is of the epoch its hold names, whatever the newest has left.
+    assert!(!stands(&OTHER));
+    assert!(!stands(&joined(&[
+        &OTHER,
+        &["spend/reset/2/50", "spend/epoch/2", "spend/turn/1/3"]
+    ])));
+    assert!(stands(&[
+        "spend/reset/2/0",
+        "spend/epoch/2",
+        "spend/turn/1/2"
+    ]));
+
+    // A call of nothing adds nothing to what is counted, and is not held to a debt
+    // that was there before it.
+    let nothing = [
+        "spend/reset/1/10",
+        "spend/epoch/1",
+        "spend/turn/0/1",
+        "spend/reservations/7000-1",
+        "spend/held/1/7000-1/0",
+        "spend/turn/1/1",
+        "spend/reservations/7000-2",
+        "spend/held/1/7000-2/11",
+        "spend/turn/1/2",
+    ];
+    let in_debt = of(&nothing);
+    assert_eq!(in_debt.balance_of(1).debt, Sum::new(1));
+    assert!(in_debt.stands(&one(), Amount::ZERO));
+    assert!(!in_debt.stands(&two(), amount(11)));
+
+    // It stands only for the amount its hold states. Asked of nothing, where the
+    // hold states 10 and the epoch is in debt, it does not: no caller is let past
+    // the debt by the amount it passes. Nor of any other amount.
+    let over = of(&joined(&[&OWN, &OTHER]));
+    assert!(!over.stands(&one(), Amount::ZERO));
+    assert!(!of(&OWN).stands(&one(), Amount::ZERO));
+    assert!(!of(&OWN).stands(&one(), amount(9)));
+    assert!(!of(&OWN).stands(&one(), amount(11)));
+}
 
 fn joined<'a>(parts: &[&[&'a str]]) -> Vec<&'a str> {
     parts.iter().flat_map(|part| part.iter().copied()).collect()
