@@ -342,7 +342,7 @@ fn a_recipient_written_another_way_is_the_same_recipient_named_twice_and_the_one
     assert!(!made.may_receive(&declared, Classes::of(&[DataClass::Evidence])));
 }
 
-// --- the check behind a send, for a first address ---------------------------------------------
+// --- the check behind a send -----------------------------------------------------------------
 
 #[test]
 fn with_the_empty_policy_every_request_to_a_backend_with_a_recipient_is_refused_and_the_sending_fake_is_handed_none()

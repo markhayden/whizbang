@@ -1512,7 +1512,7 @@ download.
 - [x] Everything a `Sender` is asked to reach is checked against the recipient: a
       redirect, an upload address and a returned download address, as the first address
       is. A credential is attached only for the origin it was configured for.
-- [ ] The download interface is checked the same way against the origins a catalogue entry
+- [x] The download interface is checked the same way against the origins a catalogue entry
       names. A probe is refused unless the config approves probing that recipient, apart
       from any class of data.
 

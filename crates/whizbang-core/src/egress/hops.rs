@@ -132,14 +132,12 @@ impl SendCheck {
 
     /// The same check, which also refuses a request that holds this folder's path,
     /// as it is written here: the root of the executor's store. Slashes and
-    /// backslashes at its end are left off, while more than one byte remains, so
-    /// that the folder is found where it is written bare. Refused: a path of
-    /// nothing, and one more folder than [`KEPT_OUT_LIMIT`].
+    /// backslashes at its end are left off, so that the folder is found where it is
+    /// written bare. Refused: a path of nothing, or of nothing but slashes, which
+    /// every address holds; and one more folder than [`KEPT_OUT_LIMIT`].
     pub fn keeping_out(mut self, folder: &Path) -> Result<SendCheck, NotAllowed> {
         let mut written = folder.as_os_str().as_encoded_bytes();
-        while let [bare @ .., b'/' | b'\\'] = written
-            && !bare.is_empty()
-        {
+        while let [bare @ .., b'/' | b'\\'] = written {
             written = bare;
         }
         if written.is_empty() {
