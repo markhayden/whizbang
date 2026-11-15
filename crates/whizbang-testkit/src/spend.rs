@@ -3182,7 +3182,11 @@ impl Books {
     /// The reservations of which the two readings give two answers: none, while
     /// the two are one rule.
     pub fn read_apart(&self) -> Vec<Run> {
-        let folded = self.fold();
+        self.read_apart_of(&self.fold())
+    }
+
+    /// As [`Books::read_apart`], of these books folded already.
+    pub fn read_apart_of(&self, folded: &Folded) -> Vec<Run> {
         let apart = |(run, one): (&Run, &Standing)| {
             (one.reachable != self.believable(*run)).then_some(*run)
         };

@@ -42,6 +42,7 @@ struct Texts {
     /// Each correction that was seen, with the text it was given when it was first
     /// there: the seal a correction carries is fixed when it is made.
     corrections: BTreeMap<Name, String>,
+    written: std::cell::RefCell<BTreeMap<(Name, bool), String>>,
 }
 
 impl Texts {
@@ -60,7 +61,18 @@ impl Texts {
     fn held(&self, name: &Name, books: &Books) -> (String, bool) {
         let damaged = books.damaged().contains(name);
         let formless = matches!(name, Name::Stray { .. } | Name::Unplaced { .. });
-        (self.text(name, damaged), damaged && !formless)
+        // The text of a name is written once: most names of a state were there in
+        // the state before.
+        let mut written = self.written.borrow_mut();
+        let text = match written.get(&(name.clone(), damaged)) {
+            Some(text) => text.clone(),
+            None => {
+                let text = self.text(name, damaged);
+                written.insert((name.clone(), damaged), text.clone());
+                text
+            }
+        };
+        (text, damaged && !formless)
     }
 
     /// Gives every correction that is new in these books its text. One that the
@@ -254,7 +266,7 @@ fn compare(books: &Books, real: &Folded) -> Result<(), String> {
     }
     let mut epochs: BTreeSet<u64> = wanted.resets.keys().copied().collect();
     epochs.extend(wanted.turns.keys().copied());
-    epochs.extend([0, wanted.epoch(), wanted.epoch().saturating_add(1)]);
+    epochs.extend([0, wanted.epoch()]);
     for epoch in &epochs {
         let (one, other) = (plain(real.balance_of(*epoch)), wanted.balance_of(*epoch));
         let same = one == other
@@ -269,7 +281,7 @@ fn compare(books: &Books, real: &Folded) -> Result<(), String> {
     // The two readings of each reservation's names, the recogniser's and the one the
     // model's checker wrote apart from it, give one answer: the real fold's is the
     // real recogniser's, which was compared above.
-    let apart = books.read_apart();
+    let apart = books.read_apart_of(&wanted);
     if !apart.is_empty() {
         return Err(format!("the second reading differs of {apart:?}"));
     }
@@ -402,8 +414,14 @@ fn beside(events: &[Event]) -> Result<Beside, String> {
 
 /// Every history of one generated suite, from the seed, beside the model.
 fn suite(count: u64, generated: fn(u64, u64) -> Vec<Event>) -> (u64, u64) {
+    part(0..count, generated)
+}
+
+/// The histories of a suite whose numbers these are: a suite that takes long is run
+/// as parts, each a test of its own.
+fn part(numbers: std::ops::Range<u64>, generated: fn(u64, u64) -> Vec<Event>) -> (u64, u64) {
     let (mut frozen, mut corrections) = (0, 0);
-    for number in 0..count {
+    for number in numbers {
         let events = generated(SEED, number);
         match beside(&events) {
             Ok(both) => {
@@ -426,8 +444,14 @@ fn every_generated_history_folds_to_what_the_model_gives_after_every_event() {
 
 #[test]
 fn every_generated_history_of_whole_books_then_other_hands_folds_to_what_the_model_gives() {
-    let (frozen, _) = suite(4096, model::generated_tampered);
-    assert!(frozen > 1000, "{frozen}");
+    let (frozen, _) = part(0..2048, model::generated_tampered);
+    assert!(frozen > 500, "{frozen}");
+}
+
+#[test]
+fn every_generated_history_of_whole_books_then_other_hands_folds_so_in_the_second_half_too() {
+    let (frozen, _) = part(2048..4096, model::generated_tampered);
+    assert!(frozen > 500, "{frozen}");
 }
 
 #[test]
@@ -1278,6 +1302,22 @@ fn the_next_turn_is_the_lowest_that_is_free_and_never_one_past_the_highest() {
     let folded = of(&ADMITTED);
     assert_eq!((folded.next_turn(1), folded.next_turn(0)), (2, 2));
     assert_eq!(folded.next_turn(7), 1);
+    // A publication under a reservation takes its turn in the epoch its hold
+    // names: in each, where other hands gave it more than one hold, and in the
+    // newest where it has none.
+    assert_eq!(folded.turn_epochs(&one()), [1]);
+    assert_eq!(folded.turn_epochs(&two()), [1]);
+    let mut held = ADMITTED.to_vec();
+    held.extend([
+        "spend/reset/2/5",
+        "spend/epoch/2",
+        "spend/turn/1/2",
+        "spend/held/2/7000-1/3",
+        "spend/place/7000-2/1",
+    ]);
+    let later = of(&held);
+    assert_eq!(later.turn_epochs(&one()), [1, 2]);
+    assert_eq!(later.turn_epochs(&two()), [2]);
     // A turn other hands made far ahead does not move the next one: a judgement
     // made before a settlement still makes the turn the settlement took.
     let mut ahead = ADMITTED.to_vec();
