@@ -131,7 +131,7 @@ impl Installations {
         // An installation's identity is a digest, written as one: the text is read
         // back as the identity it is.
         let Ok(identity) = InstallationId::from_text(&admitted.to_string(), &self.secrets) else {
-            return Err(HoldRefused::HoldsSecret);
+            return Err(HoldRefused::NotAnIdentity);
         };
         self.holds.hold(entry.name(), identity, &self.secrets)
     }

@@ -1052,6 +1052,7 @@ path:
 | `Deleting` | The hold file is held alone. That is an install that deletes the installation's folder, which is only for an installation the pointer does not name; or a removal, the first to take a hold file alone while the pointer names its installation, whose mark refuses the hold as `Draining` before the hold file is tried (`remove::a_removal_marks_under_the_directorys_lock_says_removing_and_clears_the_pointer_with_every_hold_file_its_own`) |
 | `DirectoryBusy` | The directory's lock was not let go ("Three kinds of lock") |
 | `Disk` | The file system refused a step, the try among them: a file system that answers that it cannot try has not said "held alone" (`holds::a_hold_file_held_alone_is_a_hold_refused_at_once_and_a_try_that_fails_is_an_error`, which holds the two rows above too) |
+| `NotAnIdentity` | Of a hold asked through the inventory (`Installations::hold`, "The lease"): the identity that was asked for cannot be read back as an installation's, because its text holds a secret the inventory was told of. Until the review of task M6b's first pull request this was answered as `HoldsSecret`, whose words are of a model's name (`leases::a_hold_is_asked_by_a_declared_name_that_is_looked_up_in_the_catalogue`) |
 | `HoldsSecret` | The model's name holds a secret the holder was told of. Nothing is opened by it (`holds::a_model_name_that_holds_a_secret_opens_nothing_and_no_refusal_shows_a_path`) |
 
 The operating system lets a lock go when its process ends, however it ends, so a hold
@@ -1542,7 +1543,10 @@ the place after the lease and a fake segmenter behind it.
   never a path; a name the catalogue does not hold names no installation
   (`leases::a_hold_is_asked_by_a_declared_name_that_is_looked_up_in_the_catalogue`).
   The inventory keeps the holds of its process (`Holds`), so two requests of one
-  process on one installation are one share of the hold file and a count.
+  process on one installation are one share of the hold file and a count. The
+  same test asks, with the model installed and ready, for a hold on another
+  identity: refused as not named, and the installation that is current is not
+  held in its place.
 - **It is asked for the identity the admission recorded, not the one current at the
   request,** and a lease that cannot be had refuses the request before dispatch.
   When the pointer no longer names that installation, after a reinstall under
@@ -1555,7 +1559,10 @@ the place after the lease and a fake segmenter behind it.
   and there is no call that takes "whatever is current". With a barrier between
   the admission and the lease, a reinstall there, a removal there and a removal
   that is draining there each end so, the fake meter and the backend having seen
-  nothing; with nothing in between the request is answered
+  nothing; with nothing in between the request is answered. What a run answers
+  when its lease is refused as draining is in that test too: its action is told
+  that nothing left, the run ends as its action ends it, and its record holds
+  the refusal
   (`leases::a_reinstall_or_a_removal_between_the_admission_and_the_lease_refuses_the_request_before_dispatch`).
 - **A retry inside an admitted run is leased again, for the same identity.** A run
   whose installation was replaced after its first request is refused at its second

@@ -17,6 +17,8 @@ use whizbang_core::capability::{
     Bounds, Declaration, Fault, FaultKind, Installation, Installed, InstalledRoster, Inventory,
     Picture, Query, Roster, SegmentRequest, SegmentResponse, Segmenter, Stage,
 };
+use whizbang_core::contract::RefusalKind;
+use whizbang_core::contract::record::RunRecord;
 use whizbang_core::contract::{
     Action, ActionDescriptor, Around, Call, Cancellation, Capabilities, Capability, Clock, Context,
     Engine, Executor, Failure, Kind, ModelIdentity, Open, Place, PreparedCall, Produced, Registry,
@@ -24,8 +26,8 @@ use whizbang_core::contract::{
 };
 use whizbang_core::egress::{Origin, Recipient};
 use whizbang_core::identity::{CanonicalPixels, Digest};
-use whizbang_core::store::Store;
 use whizbang_core::store::fs::RealFs;
+use whizbang_core::store::{Reader, Store};
 use whizbang_testkit::around::{FakeWrapper, Saw};
 use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::capabilities::FakeSegmenter;
@@ -124,7 +126,22 @@ struct Run {
     segmenter: Arc<FakeSegmenter>,
     answers: Arc<Mutex<Vec<Answered>>>,
     ended: std::thread::JoinHandle<Result<String, String>>,
-    _store: Scratch,
+    store: Arc<Scratch>,
+}
+
+/// The refusals in the record of the one run this store holds.
+fn refusals(store: &Path) -> Vec<(RefusalKind, String)> {
+    let reader = Reader::open(&store.join("store"), Arc::new(RealFs)).unwrap();
+    let generation = reader.snapshot().unwrap();
+    let [run] = generation.runs().values().collect::<Vec<_>>()[..] else {
+        panic!("not one run");
+    };
+    let record = reader.read(&run.entries()["record"]).unwrap();
+    let record = RunRecord::from_bytes(&record).unwrap();
+    let refusals = record.outcome().refusals.iter();
+    refusals
+        .map(|refusal| (refusal.kind(), refusal.why().to_owned()))
+        .collect()
 }
 
 /// An executor over the inventory of this directory whose one action, `cuts`, makes
@@ -204,7 +221,7 @@ impl Run {
             segmenter,
             answers,
             ended,
-            _store: store,
+            store: Arc::new(store),
         }
     }
 
@@ -218,7 +235,8 @@ impl Run {
     }
 
     /// Lets everything go on, and says how each request was answered and how many
-    /// reached the meter's place and the backend.
+    /// reached the meter's place and the backend. The store outlives it for one
+    /// who kept a share of its folder.
     fn ended(self) -> (Vec<Answered>, (usize, u64)) {
         self.barriers.open("admitted");
         self.barriers.open("held");
@@ -271,10 +289,19 @@ fn a_reinstall_or_a_removal_between_the_admission_and_the_lease_refuses_the_requ
     let clock = Arc::new(Hand::new());
     let remover = removal_on_a_thread(root, &barriers, &clock);
     barriers.arrived("try", 1);
+    // What the run answers then: its action is told that nothing left, in the
+    // words of a model that is being removed; the run itself ends as its action
+    // ends it, here completed; and its record holds the refusal, as a request
+    // that was not ready.
+    let store = run.store.clone();
     assert_eq!(
         run.ended(),
         (vec![refused(DRAINING)], (0, 0)),
         "while draining"
+    );
+    assert_eq!(
+        refusals(store.path()),
+        [(RefusalKind::RequestNotReady, DRAINING.to_owned())]
     );
     kept.let_go();
     barriers.open("try");
@@ -329,8 +356,9 @@ fn a_removal_that_starts_while_a_request_holds_the_model_waits_for_it() {
     let run = Run::admitted(root, 1);
     run.barriers.release("admitted");
     run.barriers.arrived("held", 1);
-    // The request is with the backend, under its lease. A removal starts: it marks
-    // the model and waits.
+    // The request is with the backend, under its lease: the installation is held.
+    assert!(alone(root, &record).is_none(), "held while it is asked");
+    // A removal starts: it marks the model and waits.
     let barriers = Barriers::new();
     let clock = Arc::new(Hand::new());
     let remover = removal_on_a_thread(root, &barriers, &clock);
@@ -515,6 +543,32 @@ fn a_hold_is_asked_by_a_declared_name_that_is_looked_up_in_the_catalogue() {
         let refused = asked.hold(name, admitted).unwrap_err();
         assert_eq!(refused, HoldRefused::NotNamed, "{name:?}");
     }
+    // By the identity that was admitted, never by what is current: with the model
+    // installed and ready, a hold on another identity is refused as not named,
+    // and the installation that is current is not held in its place.
+    let another = Installation::of(record_of(&entry_at("2026-11.3")).identity().digest());
+    assert_eq!(asked.look("tiny"), Installed::Ready(admitted));
+    assert_eq!(
+        asked.hold("tiny", another).unwrap_err(),
+        HoldRefused::NotNamed
+    );
+    assert!(
+        alone(root, &record).is_some(),
+        "the current one is not held"
+    );
+    // An identity that cannot be read back, because its text holds a secret the
+    // inventory was told of, is refused under that name, and holds nothing.
+    let hex = record.identity().hex();
+    let knowing = Installations::of(
+        ModelsDir::at(Arc::new(RealFs), root),
+        Catalogue::new(vec![second()], &none()).unwrap(),
+        [(second().adapter().clone(), adapter())],
+        Secrets::new([hex[8..24].to_owned()]).unwrap(),
+    );
+    let refused = knowing.hold("tiny", admitted).unwrap_err();
+    assert_eq!(refused, HoldRefused::NotAnIdentity);
+    assert!(!refused.to_string().contains(&hex[8..24]));
+    assert!(alone(root, &record).is_some());
     // Two holds through one inventory are one share of the hold file, and a count.
     let one = asked.hold("tiny", admitted).unwrap();
     let two = asked.hold("tiny", admitted).unwrap();

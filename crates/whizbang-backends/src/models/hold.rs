@@ -50,6 +50,10 @@ pub enum HoldRefused {
     Deleting,
     /// The directory's lock was not let go by whoever has it.
     DirectoryBusy,
+    /// The identity that was asked for cannot be read back as an installation's:
+    /// its text holds a secret the holder was told of. No installation is named by
+    /// it, and nothing was opened.
+    NotAnIdentity,
     /// A folder of the model's layout is a link. No hold is taken through it, and
     /// nothing was made.
     Linked,
@@ -70,6 +74,9 @@ impl std::fmt::Display for HoldRefused {
             HoldRefused::Deleting => "the installation is being deleted",
             HoldRefused::DirectoryBusy => {
                 "the models directory is locked by another, which did not let it go"
+            }
+            HoldRefused::NotAnIdentity => {
+                "the installation's identity cannot be read as one, and is not shown"
             }
             HoldRefused::Linked => LINKED,
             HoldRefused::Disk(_) => "the models directory could not be read or locked",
