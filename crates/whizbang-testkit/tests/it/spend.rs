@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use whizbang_testkit::spend::{
     Books, Counted, Event, Folded, GENERATED_EVENTS, How, LARGE, Name, Outcome, Run, Sent, Stage,
     Standing, State, WHOLE_EVENTS, Why, fold, generated, generated_large, generated_tampered,
-    generated_whole, histories, run_checked, seal,
+    generated_turned, generated_whole, histories, run_checked, seal,
 };
 
 /// The seed of the generated histories. A history that breaks an invariant is printed
@@ -19,6 +19,9 @@ const GENERATED: u64 = 4096;
 
 /// How many books the ledger alone wrote are each changed by one name.
 const WHOLE: u64 = 2048;
+
+/// How many histories have a turn moved by other hands around a late admission.
+const TURNED: u64 = 1536;
 
 /// How many histories have amounts near the largest a name can state.
 const LARGE_HISTORIES: u64 = 1024;
@@ -106,6 +109,10 @@ fn every_generated_history_keeps_every_invariant() {
     assert!(all.after_an_overrun_of_something > 80, "{all:?}");
     assert!(all.late_across_other_hands > 300, "{all:?}");
     assert!(all.needs_owner > 300, "{all:?}");
+    // Every admission that stands is held to the truth and to the reading made
+    // after its publication; some are published and not confirmed.
+    assert!(all.admitted > 2_000, "{all:?}");
+    assert!(all.not_confirmed > 50, "{all:?}");
     // The same seed and number give the same history.
     assert_eq!(generated(SEED, 7), generated(SEED, 7));
     assert_ne!(generated(SEED, 7), generated(SEED + 1, 7));
@@ -157,6 +164,8 @@ fn every_generated_history_of_whole_books_then_other_hands_keeps_every_invariant
     assert!(all.after_losses > 50, "{all:?}");
     assert!(all.over_tree > 5, "{all:?}");
     assert!(all.needs_owner > 200, "{all:?}");
+    assert!(all.admitted > 4_000, "{all:?}");
+    assert!(all.not_confirmed > 30, "{all:?}");
     assert_eq!(generated_tampered(SEED, 7), generated_tampered(SEED, 7));
 }
 
@@ -3166,6 +3175,22 @@ struct Reached {
     /// needs its owner.
     over_tree: u64,
     needs_owner: u64,
+    /// The admissions that stand, each held by the checker to the truth and to the
+    /// reading made after its publication, and held here to the truth once more;
+    /// and of them, those judged late with other hands between the judgement and
+    /// the publication, and those confirmed apart from their publication.
+    admitted: u64,
+    admitted_late_across_other_hands: u64,
+    confirmed_apart: u64,
+    /// The admissions that were published and not confirmed.
+    not_confirmed: u64,
+    /// The admissions published with a turn that other hands had taken away: those
+    /// that stand, and those that do not.
+    filled_and_stands: u64,
+    filled_and_not_confirmed: u64,
+    /// The dispatches published under a reservation whose admission was published
+    /// with such a turn.
+    dispatched_after_filling: u64,
 }
 
 /// Runs a history through the checker, as `run_checked` does, holds the two
@@ -3177,6 +3202,8 @@ fn reached(events: &[Event], into: &mut Reached) -> Result<Books, String> {
     let mut overran: BTreeSet<Run> = BTreeSet::new();
     let mut hands: Vec<usize> = Vec::new();
     let mut lost: BTreeMap<Run, u64> = BTreeMap::new();
+    let mut turns_lost: BTreeSet<Name> = BTreeSet::new();
+    let mut filled: BTreeSet<Run> = BTreeSet::new();
     for (at, event) in events.iter().enumerate() {
         let (mut plain, mut judged) = (event, None);
         // A second process's, a late one, or both: two wrappings at most.
@@ -3190,6 +3217,8 @@ fn reached(events: &[Event], into: &mut Reached) -> Result<Books, String> {
                 _ => {}
             }
         }
+        let gone = |name: &&Name| !books.names().contains(*name);
+        let gone: Vec<Name> = turns_lost.iter().filter(gone).cloned().collect();
         let outcome = books.checked(event)?;
         // The fold's recogniser and the checker's second reading are two writings
         // of one rule: they give one answer of every reservation there is.
@@ -3206,9 +3235,44 @@ fn reached(events: &[Event], into: &mut Reached) -> Result<Books, String> {
             Event::Child { parent, child, .. } if done => {
                 parents.insert(*child, *parent);
             }
+            Event::Admit { run, .. } | Event::Publish { run, .. } | Event::Confirm { run } => {
+                let since = |judged: usize| hands.iter().any(|when| (judged..at).contains(when));
+                // Published as it was judged, with a turn other hands had taken away.
+                let fills = !matches!(plain, Event::Confirm { .. })
+                    && !matches!(outcome, Outcome::AskedAgain(_))
+                    && books.really(*run).is_some()
+                    && gone.iter().any(|name| books.names().contains(name));
+                if fills {
+                    filled.insert(*run);
+                }
+                let stands = done && !matches!(plain, Event::Publish { .. });
+                if stands {
+                    // The truth had room for it, counted in full.
+                    let amount = books.really(*run).map_or(0, |(_, amount, _)| amount);
+                    if let Some((counted, allowed)) = books.really_counted_with(*run)
+                        && amount > 0
+                        && counted > allowed
+                    {
+                        return Err(format!(
+                            "event {at}: {run} stands, and really {counted} is counted of {allowed}"
+                        ));
+                    }
+                    into.admitted += 1;
+                    into.admitted_late_across_other_hands += u64::from(judged.is_some_and(since));
+                    into.confirmed_apart += u64::from(matches!(plain, Event::Confirm { .. }));
+                    into.filled_and_stands += u64::from(filled.contains(run));
+                }
+                if *last == Outcome::Refused(Why::NotConfirmed) {
+                    into.not_confirmed += 1;
+                    into.filled_and_not_confirmed += u64::from(filled.contains(run));
+                }
+            }
             Event::Plant(_) | Event::Damage(_) => hands.push(at),
             Event::Remove(name) => {
                 hands.push(at);
+                if matches!(name, Name::Turn { .. }) && done {
+                    turns_lost.insert(name.clone());
+                }
                 if let Some(run) = name.of().filter(|_| done) {
                     *lost.entry(run).or_default() += 1;
                 }
@@ -3248,6 +3312,9 @@ fn reached(events: &[Event], into: &mut Reached) -> Result<Books, String> {
                     under |= overran.contains(run);
                     above = parents.get(run);
                 }
+                let root = books.root_of(*by);
+                into.dispatched_after_filling +=
+                    u64::from(done && root.is_some_and(|root| filled.contains(&root)));
                 if done {
                     into.published += 1;
                     into.by_a_called_run += u64::from(parents.contains_key(by));
@@ -3360,14 +3427,14 @@ fn known_an_admission_judged_before_a_settlement_that_other_hands_took_away_whol
 
 #[test]
 fn known_a_late_admission_whose_turn_fills_the_place_of_one_that_was_lost_is_published() {
-    // Found by the hunt once limit (e) was restated, and not ruled on. An admission
-    // is judged on an empty epoch and chooses its first turn. A call is admitted,
-    // which takes that turn, and its request is settled, which takes the second.
-    // Other hands take away the settlement and its guard, and the first turn: the
-    // epoch has one turn, the second, for one hold, and needs its owner. An
-    // admission judged now is refused. The late one is published, and its turn is
-    // the one that was missing: the epoch's turns are 1 and 2 for two holds, and it
-    // needs nobody any more.
+    // Found by the hunt once limit (e) was restated. An admission is judged on an
+    // empty epoch and chooses its first turn. A call is admitted, which takes that
+    // turn, and its request is settled, which takes the second. Other hands take
+    // away the settlement and its guard, and the first turn: the epoch has one
+    // turn, the second, for one hold, and needs its owner. An admission judged now
+    // is refused. The late one is published, and its turn is the one that was
+    // missing: the epoch's turns are 1 and 2 for two holds, and it needs nobody
+    // any more.
     let run = Run(1);
     let lost = [
         Name::Settled {
@@ -3379,21 +3446,467 @@ fn known_a_late_admission_whose_turn_fills_the_place_of_one_that_was_lost_is_pub
         Name::Settling { run, place: 1 },
         Name::Turn { epoch: 1, turn: 1 },
     ];
-    let mut events = vec![reset(20), admit(1, 6), dispatch(1, 6), settle(1, 1, 6)];
-    events.extend(lost.map(Event::Remove));
-    let mut now = events.clone();
+    let before = |allowance: u64| {
+        let mut events = vec![
+            reset(allowance),
+            admit(1, 6),
+            dispatch(1, 6),
+            settle(1, 1, 6),
+        ];
+        events.extend(lost.clone().map(Event::Remove));
+        events
+    };
+    let mut now = before(20);
     now.push(admit(2, 2));
     let (books, outcomes) = run_checked(&now).unwrap();
     assert_eq!(outcomes[7], Outcome::Refused(Why::NeedsOwner));
     assert!(books.balance().needs_owner);
-    events.push(late(1, admit(2, 2)));
-    let (books, outcomes) = Books::after(&events);
-    assert_eq!(outcomes[7], Outcome::Done);
+    // It is published, and that is all limit (e) gives it. The process that made it
+    // reads the names again: they are sound, with 8 counted of 20, and it stands.
+    // The checker holds it to the truth, in which 6 were taken of 20, and to that
+    // reading, with no excuse.
+    let mut events = before(20);
+    events.extend([late(1, admit(2, 2)), dispatch(2, 2)]);
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[7..], [Outcome::Done, Outcome::Placed(1)]);
     let balance = books.balance();
     assert_eq!((balance.counted, balance.left), (8, 12));
     assert!(!balance.needs_owner);
-    // It is worse than one judged now, which "Limits", (e), says it never is, and
-    // the checker does not let it by.
-    let broke = run_checked(&events).unwrap_err();
-    assert!(broke.contains("admitted on a stale balance"), "{broke}");
+    assert!(books.confirmed(Run(2)));
+    assert_eq!(books.really_counted_with(Run(2)), Some((8, 20)));
+    // With an allowance of 7 the same reading is over it, 8 counted of 7: the
+    // admission is not confirmed. Its reservation is closed, which releases the 2,
+    // and nothing runs under it.
+    let mut events = before(7);
+    events.extend([late(1, admit(2, 2)), dispatch(2, 2), admit(3, 1)]);
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(
+        outcomes[7..],
+        [
+            Outcome::Refused(Why::NotConfirmed),
+            Outcome::Refused(Why::NotExecuting),
+            Outcome::Done,
+        ]
+    );
+    let one = books.reservation(Run(2)).unwrap();
+    assert_eq!((one.state, one.counts), (State::Released, 0));
+    assert!(!books.confirmed(Run(2)));
+    let balance = books.balance();
+    assert_eq!((balance.counted, balance.left), (7, 0));
+}
+
+#[test]
+fn every_generated_history_of_turns_moved_around_a_late_admission_keeps_every_invariant() {
+    let mut all = Reached::default();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for number in 0..TURNED {
+        let events = generated_turned(SEED, number);
+        assert!((1..=GENERATED_EVENTS).contains(&events.len()), "{number}");
+        if let Err(why) = reached(&events, &mut all) {
+            panic!("seed {SEED:#x}, turned history {number}: {why}\n{events:#?}");
+        }
+        // The turns that are moved: lost before the other is made and after it, in
+        // the newest epoch of the time and in another.
+        let (_, outcomes) = Books::after(&events);
+        // The newest epoch, as the owner's resets left it.
+        let mut newest = 0;
+        let mut first = None;
+        for (event, outcome) in events.iter().zip(&outcomes) {
+            let done = !matches!(outcome, Outcome::Refused(_));
+            let moved = match event {
+                Event::Remove(Name::Turn { epoch, .. }) if done => Some(("lost", *epoch)),
+                Event::Plant(Name::Turn { epoch, .. }) => Some(("made", *epoch)),
+                _ => None,
+            };
+            if let Some((what, epoch)) = moved {
+                let order = first.get_or_insert(what);
+                let whose = if epoch == newest {
+                    "the newest"
+                } else {
+                    "another"
+                };
+                seen.insert(format!("a turn {what} in {whose} epoch, {order} first"));
+            }
+            let plain = match event {
+                Event::Second(inner) => inner,
+                other => other,
+            };
+            newest += u64::from(matches!(plain, Event::Reset { .. }) && *outcome == Outcome::Done);
+            let kind = match plain {
+                Event::Stale { event, .. } => match **event {
+                    Event::Admit { .. } => "late Admit",
+                    Event::Publish { .. } => "late Publish",
+                    _ => continue,
+                },
+                Event::Confirm { .. } => "Confirm",
+                _ => continue,
+            };
+            let came = match outcome {
+                Outcome::Done => "done".to_owned(),
+                Outcome::AskedAgain(_) => "asked again".to_owned(),
+                other => format!("{other:?}"),
+            };
+            seen.insert(format!("{kind}: {came}"));
+        }
+    }
+    let wanted = [
+        "a turn lost in the newest epoch, lost first",
+        "a turn lost in the newest epoch, made first",
+        "a turn made in the newest epoch, lost first",
+        "a turn made in the newest epoch, made first",
+        "a turn lost in another epoch, lost first",
+        "a turn lost in another epoch, made first",
+        "a turn made in another epoch, lost first",
+        "a turn made in another epoch, made first",
+        "late Admit: done",
+        "late Admit: asked again",
+        "late Admit: Refused(NotConfirmed)",
+        "late Publish: done",
+        "late Publish: asked again",
+        "Confirm: done",
+        "Confirm: Refused(NotConfirmed)",
+        "Confirm: Refused(NotPublished)",
+    ];
+    let missing: Vec<&str> = wanted
+        .into_iter()
+        .filter(|one| !seen.contains(*one))
+        .collect();
+    assert!(missing.is_empty(), "never reached: {missing:?}\n{seen:#?}");
+    // An admission is published with a turn that other hands took away, and the
+    // reading made after it decides: some stand, on books that read sound and
+    // within the allowance, and requests are then sent under them, each held to
+    // what was really reserved; more do not, and nothing runs under those. Every
+    // one that stands is held to the truth, late ones across what other hands did
+    // and ones confirmed apart from their publication among them.
+    assert!(all.admitted > 3_000, "{all:?}");
+    assert!(all.admitted_late_across_other_hands > 200, "{all:?}");
+    assert!(all.confirmed_apart > 50, "{all:?}");
+    assert!(all.not_confirmed > 500, "{all:?}");
+    assert!(all.filled_and_stands > 200, "{all:?}");
+    assert!(all.filled_and_not_confirmed > 500, "{all:?}");
+    assert!(all.dispatched_after_filling > 400, "{all:?}");
+    assert!(all.published > 1_500, "{all:?}");
+    assert_eq!(generated_turned(SEED, 7), generated_turned(SEED, 7));
+}
+
+fn publish(run: u32, micros: u64) -> Event {
+    Event::Publish {
+        run: Run(run),
+        micros,
+    }
+}
+
+fn confirm(run: u32) -> Event {
+    Event::Confirm { run: Run(run) }
+}
+
+fn turn(epoch: u64, turn: u64) -> Name {
+    Name::Turn { epoch, turn }
+}
+
+/// The names these books have that they had not after the first `events` events.
+fn made_since(books: &Books, events: usize) -> Vec<String> {
+    let before = books.names_after(events).unwrap();
+    let made = books.names().difference(before);
+    made.map(Name::to_string).collect()
+}
+
+#[test]
+fn an_admission_stands_only_when_it_is_confirmed_on_a_reading_made_after_its_publication() {
+    let not_confirmed = Outcome::Refused(Why::NotConfirmed);
+    let not_executing = Outcome::Refused(Why::NotExecuting);
+    let state = |books: &Books, run: u32| {
+        let one = books.reservation(Run(run)).unwrap();
+        (one.state, one.counts)
+    };
+    // The fifth review round's trace (history 76), with the turn lost before the
+    // other is made and after it. A reservation of 10 is all the allowance, and all
+    // of it is sent. An admission of 10 that judged before it is published once
+    // other hands have moved a turn: the names are sound, and read 20 against 10.
+    // It is not confirmed. What it published was the record, the hold and the turn;
+    // what backing it out publishes is the closing, its place and its turn.
+    let moved = [Event::Remove(turn(1, 1)), Event::Plant(turn(1, 2))];
+    for order in [[0, 1], [1, 0]] {
+        let mut trace = vec![reset(10), admit(1, 10), dispatch(1, 10)];
+        trace.extend(order.map(|at| moved[at].clone()));
+        trace.extend([late(1, admit(2, 10)), dispatch(2, 10)]);
+        let (books, outcomes) = run_checked(&trace).unwrap();
+        assert_eq!(
+            outcomes[5..],
+            [not_confirmed.clone(), not_executing.clone()]
+        );
+        assert_eq!(
+            made_since(&books, 5),
+            [
+                "spend/turn/1/1",
+                "spend/turn/1/3",
+                "spend/reservations/7000-2",
+                "spend/held/1/7000-2/10",
+                "spend/place/7000-2/1",
+                "spend/closed/7000-2/released",
+            ]
+        );
+        assert_eq!(state(&books, 2), (State::Released, 0));
+        assert!(!books.confirmed(Run(2)));
+        let balance = books.balance();
+        assert_eq!((balance.counted, balance.debt, balance.left), (10, 0, 0));
+        // The truth: 10 were reserved and sent of 10, and the second counts nothing.
+        assert_eq!(books.really_counted_with(Run(2)), Some((10, 10)));
+    }
+
+    // Each of the three things the reading must show, alone.
+    // Its own reservation as the ledger wrote it, and open. Other hands close it
+    // whole, with a place and a turn, between its publication and the reading:
+    // the names are sound and within the allowance, and it does not stand. It
+    // cannot be closed a second time: it stays as it is, counted in full.
+    let closed = [
+        Name::Closed {
+            run: Run(1),
+            released: false,
+        },
+        Name::Place {
+            run: Run(1),
+            place: 1,
+        },
+        turn(1, 2),
+    ];
+    let mut events = vec![reset(20), publish(1, 10)];
+    events.extend(closed.map(Event::Plant));
+    events.extend([confirm(1), dispatch(1, 1)]);
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(
+        outcomes[5..],
+        [not_confirmed.clone(), not_executing.clone()]
+    );
+    assert!(!books.balance().needs_owner);
+    assert_eq!(state(&books, 1), (State::Interrupted, 10));
+    assert!(made_since(&books, 5).is_empty());
+    // An epoch that needs nobody. A turn of its epoch is lost: 22 counted of 30,
+    // and the turns are two for three publications.
+    let events = [
+        reset(30),
+        admit(1, 10),
+        dispatch(1, 5),
+        settle(1, 1, 12),
+        Event::Remove(turn(1, 2)),
+        late(3, admit(2, 10)),
+    ];
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[5], not_confirmed);
+    let balance = books.balance();
+    assert_eq!((balance.counted, balance.debt), (12, 0));
+    assert!(balance.needs_owner);
+    assert_eq!(state(&books, 2), (State::Released, 0));
+    // And so for the newest epoch, where it fell under an older one. The owner
+    // resets after the judgement, and other hands move the turn the reset took:
+    // the admission is published under the epoch it judged, whose turns are then
+    // two for a hold and a reset, with 10 counted of 10. It stands there, as one
+    // made before the reset would. With a turn made far ahead in the newest
+    // epoch, which then needs its owner, it does not.
+    let under = [
+        reset(10),
+        reset(20),
+        Event::Remove(turn(1, 1)),
+        Event::Plant(turn(1, 2)),
+    ];
+    let mut events = under.to_vec();
+    events.extend([late(1, admit(1, 10)), dispatch(1, 10)]);
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[4..], [Outcome::Done, Outcome::Placed(1)]);
+    assert_eq!(books.reservation(Run(1)).unwrap().epoch, Some(1));
+    let balance = books.balance();
+    assert_eq!((balance.epoch, balance.counted, balance.left), (2, 0, 20));
+    let mut events = under.to_vec();
+    events.extend([Event::Plant(turn(2, 5)), late(1, admit(1, 10))]);
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[5], not_confirmed);
+    assert!(!books.fold().needs_owner(1));
+    assert!(books.fold().needs_owner(2));
+    assert_eq!(state(&books, 1), (State::Released, 0));
+    // And with the turn the reset took lost and none made, the epoch it fell under
+    // needs its owner and the newest does not: it does not stand either.
+    let mut events = under[..3].to_vec();
+    events.push(late(1, admit(1, 10)));
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[3], not_confirmed);
+    assert!(books.fold().needs_owner(1));
+    assert!(!books.fold().needs_owner(2));
+    // Within the allowance, with its own reservation counted in full: the trace
+    // above. A call of nothing adds nothing, and stands in a store that is in debt
+    // already, as it is admitted there when it is judged.
+    let events = [
+        reset(10),
+        admit(1, 10),
+        dispatch(1, 5),
+        settle(1, 1, 12),
+        admit(2, 0),
+    ];
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[4], Outcome::Done);
+    assert_eq!(books.balance().debt, 2);
+    assert!(books.confirmed(Run(2)));
+
+    // A reservation that is not what the ledger wrote is closed with nothing
+    // released, by the one rule of a closing.
+    let second_hold = Name::Held {
+        epoch: 1,
+        run: Run(1),
+        micros: 3,
+    };
+    let events = [
+        reset(20),
+        publish(1, 10),
+        Event::Plant(second_hold),
+        confirm(1),
+    ];
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[3], not_confirmed);
+    assert_eq!(
+        made_since(&books, 3),
+        [
+            "spend/turn/1/2",
+            "spend/place/7000-1/1",
+            "spend/closed/7000-1/held",
+        ]
+    );
+    assert_eq!(books.reservation(Run(1)).unwrap().state, State::Frozen);
+
+    // Nothing is done under an admission before it is confirmed: no request, no
+    // call from inside it, no end. It counts in full meanwhile. It is confirmed
+    // once, by the process that published it.
+    let events = [
+        reset(20),
+        publish(1, 10),
+        dispatch(1, 1),
+        child(1, 2, 1),
+        Event::End { run: Run(1) },
+        second(confirm(1)),
+        confirm(1),
+        confirm(1),
+        dispatch(1, 1),
+        child(1, 2, 1),
+    ];
+    let mut counted = Vec::new();
+    let (books, outcomes) = whizbang_testkit::spend::run_watched(&events, |_, books, _| {
+        counted.push(books.balance().counted);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        outcomes[1..],
+        [
+            Outcome::Done,
+            not_executing.clone(),
+            not_executing.clone(),
+            not_executing.clone(),
+            Outcome::Refused(Why::NotPublished),
+            Outcome::Done,
+            Outcome::Refused(Why::NotPublished),
+            Outcome::Placed(1),
+            Outcome::Done,
+        ]
+    );
+    assert_eq!(counted[1..6], [10; 5]);
+    assert!(books.confirmed(Run(1)));
+    // Published as it was judged, an admission is asked again like any other when
+    // the store refuses it: two that judged the same books chose one turn.
+    let events = [reset(10), publish(1, 10), late(1, publish(2, 10))];
+    let (_, outcomes) = run_checked(&events).unwrap();
+    let over = Outcome::Refused(Why::OverAllowance { left: 0 });
+    assert_eq!(outcomes[2], Outcome::AskedAgain(Box::new(over)));
+
+    // Other hands between the publication and the reading: the turn the admission
+    // took is lost, and it is not confirmed. Its closing takes the turn again.
+    let events = [
+        reset(20),
+        publish(1, 10),
+        Event::Remove(turn(1, 1)),
+        confirm(1),
+    ];
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[3], not_confirmed);
+    assert_eq!(
+        made_since(&books, 3),
+        [
+            "spend/turn/1/1",
+            "spend/place/7000-1/1",
+            "spend/closed/7000-1/released",
+        ]
+    );
+
+    // Recovery passes over an admission that waits in the process that recovers,
+    // and closes one that waits in another, as it closes any: the reading then
+    // finds it closed, and it does not stand.
+    let events = [reset(20), publish(1, 10), Event::Recover, confirm(1)];
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[2..], [Outcome::Done, Outcome::Done]);
+    assert_eq!(state(&books, 1), (State::Open, 10));
+    let events = [
+        reset(20),
+        publish(1, 10),
+        second(Event::Recover),
+        confirm(1),
+    ];
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[2..], [Outcome::Done, not_confirmed.clone()]);
+    assert_eq!(state(&books, 1), (State::Released, 0));
+
+    // A crash between the publication and the reading leaves a reservation that
+    // nothing ran under, counted in full. Recovery closes it as it closes any
+    // reservation whose process is gone: nothing was dispatched under it, so all
+    // of it is released (history 25). Here the names read 20 against 10 until then.
+    let mut events = vec![reset(10), admit(1, 10), dispatch(1, 10)];
+    events.extend(moved.clone());
+    events.extend([late(1, publish(2, 10)), Event::Crash]);
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(outcomes[5], Outcome::Done);
+    assert_eq!(state(&books, 2), (State::Open, 10));
+    assert_eq!((books.balance().counted, books.balance().debt), (20, 10));
+    assert!(books.executing_runs().is_empty());
+    events.extend([confirm(2), Event::Recover, admit(3, 0)]);
+    let (books, outcomes) = run_checked(&events).unwrap();
+    assert_eq!(
+        outcomes[7..],
+        [
+            Outcome::Refused(Why::NotPublished),
+            Outcome::Done,
+            Outcome::Done
+        ]
+    );
+    assert_eq!(state(&books, 1), (State::Interrupted, 10));
+    assert_eq!(state(&books, 2), (State::Released, 0));
+    assert_eq!((books.balance().counted, books.balance().debt), (10, 0));
+
+    // Two admissions, each published before either is confirmed, in two processes:
+    // each reading has the other's names in it. The first to read is backed out,
+    // and the second then reads the first as released, and stands; in either
+    // order, never both. (Two that read before either closing is published are
+    // both backed out: the model reads one at a time.)
+    for first in [1, 2] {
+        let last = 3 - first;
+        let by = |run: u32, event: Event| if run == 2 { second(event) } else { event };
+        let mut events = vec![reset(10), publish(1, 10)];
+        events.extend(moved.clone());
+        events.extend([
+            second(late(1, publish(2, 10))),
+            by(first, confirm(first)),
+            by(last, confirm(last)),
+            by(first, dispatch(first, 10)),
+            by(last, dispatch(last, 10)),
+        ]);
+        let (books, outcomes) = run_checked(&events).unwrap();
+        assert_eq!(
+            outcomes[4..],
+            [
+                Outcome::Done,
+                not_confirmed.clone(),
+                Outcome::Done,
+                not_executing.clone(),
+                Outcome::Placed(1),
+            ]
+        );
+        assert_eq!(state(&books, first), (State::Released, 0));
+        assert_eq!(state(&books, last), (State::Open, 10));
+        assert_eq!((books.balance().counted, books.balance().left), (10, 0));
+    }
 }
