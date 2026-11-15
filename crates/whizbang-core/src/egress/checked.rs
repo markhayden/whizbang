@@ -233,6 +233,16 @@ impl Ways {
         Ok(self)
     }
 
+    /// This policy and these credentials, behind the sender and the check of those
+    /// ways: what a run admitted under a snapshot of the config sends through (ADR
+    /// 0015, "One snapshot of the config"). The policy and the credentials of
+    /// `executors` are not used.
+    pub(crate) fn behind(mut self, executors: &Ways) -> Ways {
+        self.sender = executors.sender.clone();
+        self.check = executors.check.clone();
+        self
+    }
+
     /// The policy these ways are under.
     pub fn policy(&self) -> &DispatchPolicy {
         &self.policy

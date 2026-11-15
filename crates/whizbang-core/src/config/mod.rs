@@ -13,8 +13,11 @@
 //! ([`Kinds`]), [`Offers::of`] makes what the config offers: a roster of the backends
 //! that are ready, and each that is not with its reason. [`Config::settings_of`] gives
 //! the settings a run records, and [`Loaded::of_files`] reads both files again each
-//! time it is asked. No executor is built over any of them yet: the source that
-//! answers a snapshot, the cap and the policy are the later tasks of checkpoint 1B.
+//! time it is asked. What a config offers is what a snapshot of the config holds as
+//! its backends ([`Offered`](crate::contract::Offered), ADR 0015), and a config makes
+//! the settings of a snapshot's runs ([`Settings`](crate::contract::Settings)). The
+//! source over the two files, the cap and the policy read from them are the later
+//! tasks of checkpoint 1B.
 
 mod env;
 mod kinds;
@@ -34,7 +37,10 @@ pub use env::{
     Credentials, ENV_BYTES_LIMIT, ENV_VALUE_LIMIT, ENV_VARIABLES_LIMIT, EnvFile, EnvRefused,
     Handed, KeyValue, LoadRefused, Loaded,
 };
-pub use kinds::{KINDS_LIMIT, Kind, KindNotRegistered, KindRefused, Kinds, Table};
+pub use kinds::{
+    KIND_SENTENCE_LIMIT, KIND_SENTENCE_WITHHELD, KINDS_LIMIT, Kind, KindNotRegistered, KindRefused,
+    Kinds, Table,
+};
 pub use offers::{NotReady, Offers, Unanswered};
 pub use refused::{ConfigRefused, KEY_SHOWN_LIMIT};
 pub use settings::SettingsRefused;
