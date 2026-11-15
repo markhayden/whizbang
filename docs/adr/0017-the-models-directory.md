@@ -983,7 +983,9 @@ Code (task M5: `hold.rs`; tests named `holds::…`). **A hold is a file lock, no
 process id.** A hold on one installation is a shared lock on its hold file,
 `holds/<64 hex digits>`, taken under the directory's lock after the draining mark and
 the pointer were read there: it is given when no mark is set and the pointer names
-that installation, and it makes nothing on the disk
+that installation, and it makes nothing on the disk but the directory's `LOCK`,
+which is made when it is taken and is not there: a hold asked of a directory where
+nothing was ever installed makes that one file, and is refused
 (`holds::a_hold_is_taken_under_the_directorys_lock_and_makes_nothing`). While it is
 there, nobody takes the hold file alone, so the installation's folder is not deleted:
 superseded, it stays until the hold is let go
@@ -1000,7 +1002,7 @@ path:
 | `Draining` | The mark is set. It is read before the pointer, so a model whose pointer a removal has cleared is draining, not "not named" (`holds::a_hold_is_refused_while_the_mark_of_draining_is_set_whatever_the_count`) |
 | `NotNamed` | The pointer names another installation, or there is none: an installation that was superseded, one never installed, a model never installed (`holds::a_hold_on_an_identity_the_pointer_no_longer_names_is_refused`) |
 | `Damaged` | The pointer is not a pointer as it is written, or the installation it names has no hold file. A hold never makes one (`holds::a_pointer_that_cannot_be_read_or_a_missing_hold_file_is_damage_and_a_hold_makes_none`) |
-| `Deleting` | The hold file is held alone. That is whoever deletes the installation's folder, which is only for an installation the pointer does not name |
+| `Deleting` | The hold file is held alone. That is an install that deletes the installation's folder, which is only for an installation the pointer does not name; or a removal, the first to take a hold file alone while the pointer names its installation, whose mark refuses the hold as `Draining` before the hold file is tried (`remove::a_removal_marks_under_the_directorys_lock_says_removing_and_clears_the_pointer_with_every_hold_file_its_own`) |
 | `DirectoryBusy` | The directory's lock was not let go ("Three kinds of lock") |
 | `Disk` | The file system refused a step, the try among them: a file system that answers that it cannot try has not said "held alone" (`holds::a_hold_file_held_alone_is_a_hold_refused_at_once_and_a_try_that_fails_is_an_error`, which holds the two rows above too) |
 | `HoldsSecret` | The model's name holds a secret the holder was told of. Nothing is opened by it (`holds::a_model_name_that_holds_a_secret_opens_nothing_and_no_refusal_shows_a_path`) |
@@ -1011,6 +1013,11 @@ signalled by one (rascal's R3 and R5). A second process that holds an installati
 and is killed leaves the hold file free to be taken alone, and the next to take the
 model's lock deletes the superseded folder
 (`holds::a_child_process_that_holds_a_model_and_is_killed_leaves_no_hold`).
+
+**A hold stops a repair.** A repair of the installation in use deletes its folder,
+so with a hold on it the repair is refused as held, the folder is kept and the
+pointer names it still; it passes once the hold is gone
+(`holds::a_hold_stops_a_repair_of_the_installation_in_use_until_it_is_let_go`).
 
 **Holds are counted inside a process** as well (`Holds`, which a process makes once
 for a directory and takes every hold through). A process's own shared lock on a hold
