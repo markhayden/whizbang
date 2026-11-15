@@ -55,6 +55,23 @@ count; what each refusal of a hold is. Words and tests, from the review of task 
 under "Attaching and cancelling", the test of a request that finds no status or one
 it cannot read; under "Limits", an install that is refused every write of its
 status, and a request that met only another's share of the model's lock.
+Amended: 2026-11-15, with task M5b. Added: "Removal" is code up to its decision
+(`remove.rs`), with the tests named `remove::…`; the mark is a record, `draining/1`.
+Changed, in code and here: the status record is `status/2`, which names the
+installation an install is of and has two states of a removal, and a request that
+attached is answered busy after a removal and after an install of another identity
+("The status record", "Attaching and cancelling"); a removal waits for the holds
+before it clears the pointer, where this record said that it clears the pointer
+first and puts it back, and it waits for the holds on every installation of the
+model that is on the disk ("Removal", with the reason; "Three kinds of lock").
+Amended: 2026-11-15, with task M5d. Added, in code and under "Removal": an install
+reads the mark where it asks its cancellation and stops as draining; whoever takes
+the model's lock to install takes off a mark it finds, and a removal sets its own
+again; what "does not go on beside it" means. Tests named `remove::…`.
+Amended: 2026-11-15, with task M5c. Added, in code and under "Removal": a removal
+deletes every installation of the model under its hold files once the cleared
+pointer is durable, and one that finds no pointer deletes what was left; how the
+crashes of a removal are held, and what no crash shows.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 
 ## Context
@@ -103,10 +120,10 @@ a process id read from a file (R3).
 
 The code of this record that exists is `crates/whizbang-backends/src/models/`: `name.rs`,
 `catalogue.rs`, `installation.rs`, `json.rs`, `refused.rs`, `directory.rs`, `stage.rs`,
-`install.rs`, `status.rs` and `hold.rs`. Its tests are in
+`install.rs`, `status.rs`, `hold.rs` and `remove.rs`. Its tests are in
 `crates/whizbang-backends/tests/it/models/`, named below as `names::…`, `catalogue::…`,
 `installation::…`, `identity::…`, `refusals::…`, `downloads::…`, `staging::…`,
-`publishing::…`, `status::…`, `crashes::…`, `attaching::…` and `holds::…`.
+`publishing::…`, `status::…`, `crashes::…`, `attaching::…`, `holds::…` and `remove::…`.
 
 **What is code now, and what is decided for a later task.** Each part below says which
 it is. A part marked *decided, not built* has no code and no test yet, and names no
@@ -123,15 +140,17 @@ installation record with its identity.
 | Of the layout and the locks: what an install makes and takes | Code (tasks M2, M2b); each part says which |
 | Attaching to an install; cancelling one | Code, with the tests named (task M3) |
 | Holds | Code, with the tests named (task M5) |
-| Removal and its mark | Decided, not built: tasks M5b to M5c, M6 |
+| Removal to its decision, inside one process; the mark | Code, with the tests named (task M5b) |
+| Removal against an install and across processes | Code, with the tests named (task M5d) |
+| The deleting of a removed model's files | Code, with the tests named (task M5c) |
 
 ### The directory
 
 *Decided; of it, task M2 built `models/<model>/`, the model's `LOCK` taken alone by a
 try, and `staging/incoming/files/`; and task M2b built the directory's `LOCK`,
 `CURRENT`, `STATUS`, `holds/` with the hold file a publication makes, and
-`installations/`; task M5 built a hold's share of a hold file. `DRAINING` is read as
-there or not there, and nothing writes it. The rest is not built.* A models directory is one folder, given by whoever opens it: no
+`installations/`; task M5 built a hold's share of a hold file; and task M5b built
+`DRAINING`, which a removal writes and takes off. The rest is not built.* A models directory is one folder, given by whoever opens it: no
 default place and no variable is read for it here. In it:
 
 ```text
@@ -176,7 +195,7 @@ default place and no variable is read for it here. In it:
   same file. A reader takes nothing in
   the directory on trust: a name that is not one this layout gives, a link, a folder
   where a file belongs, and a file longer than its bound are refused, never followed.
-- **The content of `DRAINING`** is decided by the task that builds it (M5b). The
+- **The content of `DRAINING`** is under "Removal". The
   content of `STATUS` is under "The status record", and the one staging folder under
   "Downloading into staging".
 
@@ -222,7 +241,8 @@ of `docs/carry-over.md` on those locks names the models directory too.
 | The directory's lock | Nothing | Takes no model's lock. Takes a hold file only to share it, as below, which does not wait. Waits for no hold |
 | A model's lock, alone | The directory's lock | Waits for no hold file: it takes one alone by a try that does not wait, or not at all |
 | A model's lock, shared (attached) | Nothing | Takes no other lock: it reads the status record and the pointer, and lets its share go |
-| A hold file, alone | Nothing | Takes no lock and waits for none: it deletes the folder, syncs, and lets the hold file go before it takes the directory's lock or sets a pointer |
+| A hold file, alone, by an install that deletes | Nothing | Takes no lock and waits for none: it deletes the folder, syncs, and lets the hold file go before it takes the directory's lock or sets a pointer |
+| A hold file, alone, by a removal | The directory's lock, to clear the pointer | Sets no pointer. Its mark is set, so nobody is given a hold on that model under the directory's lock meanwhile |
 | A hold | The directory's lock, to take another hold | Never waits for that model's lock, alone or shared: a run that holds a model neither installs it, removes it nor attaches to its install |
 
 - **A hold is taken only under the directory's lock,** after the pointer was read and
@@ -231,9 +251,13 @@ of `docs/carry-over.md` on those locks names the models directory too.
   being deleted, by a holder of the model's lock, after the pointer stopped naming
   that installation; and the pointer cannot name it again until that holder has let
   the hold file go, which it does as soon as the folder is deleted, before it takes the
-  directory's lock again and before any pointer is set.
+  directory's lock again and before any pointer is set. Or it is held alone by a
+  removal, which has set the mark: a hold that is asked for then is refused for the
+  mark, before the hold file is tried.
 - **A hold file is taken alone only by a try that does not wait,** by a holder of the
-  model's lock, and only for an installation the pointer does not name.
+  model's lock, and only for an installation the pointer does not name, or, by a
+  removal, for the installations of a model whose mark is set
+  (`remove::a_removal_marks_under_the_directorys_lock_says_removing_and_clears_the_pointer_with_every_hold_file_its_own`).
 - So the directory's lock is last in every chain, and its holder waits for nothing;
   nobody waits for a hold; and a holder of a hold never waits for the model's lock.
   There is no cycle.
@@ -617,7 +641,8 @@ An install stages through the same code under a lock it took itself, and publish
   (`staging::a_download_that_fails_or_is_cancelled_fails_the_staging_and_leaves_nothing_staged`,
   `staging::a_download_that_ends_as_cancelled_ends_the_staging_as_cancelled`).
 - **A cancellation is asked before the lock is taken, before each file, at each
-  piece, and after each answer of the downloader** (task M3). The sink answers no
+  piece, and after each answer of the downloader** (task M3), and at the last three
+  the model's draining mark is read too (task M5d; "Removal"). The sink answers no
   to a piece that comes after a cancel, whether or not the downloader asks the
   cancellation itself; and when the downloader has answered, with bytes or with
   another address, a cancel ends the staging as cancelled before a move is followed
@@ -759,7 +784,7 @@ not name is not an installation in use, and is cleaned as below.
   delete it: a run may hold it. An installation is superseded when it is under
   `installations/` and the pointer does not name it; there is no mark for it. **It is
   deleted by one routine,** which every install runs under the model's lock, at its
-  start and at its end, and which every removal of the model will run (tasks M5b and
+  start and at its end, and which every removal of the model will run (task
   M5c), over everything under `installations/` that the pointer does not name, but
   for a folder of the identity an install is installing: it
   tries the hold file alone, once,
@@ -800,34 +825,52 @@ not name is not an installation in use, and is cleaned as below.
 
 ### The status record
 
-Code (task M2b: `status.rs`; tests named `status::…`). `models/<model>/STATUS` is
-what the installer last said: whether the model is being installed, how many of
-the entry's files are staged, and how the last install ended. It is compact JSON
-under the format `status/1`, in one form:
+Code (tasks M2b and M5b: `status.rs`; tests named `status::…`). `models/<model>/STATUS`
+is what the holder of the model's lock last said: whether the model is being
+installed or removed, which installation an install is of and how many of the
+entry's files are staged, and how the last install or removal ended. It is compact
+JSON under the format `status/2`, in one form, which is one of two shapes. Of an
+install:
 
 ```json
-{"format":"status/1","state":"installing","files_done":1,"files":2}
+{"format":"status/2","state":"installing","installation":"sha256:9d10eec43a1b6f8abc3225115d33d98d2469e7bfd9c68c2c5ff428b50b5dd772","files_done":1,"files":2}
+```
+
+and of a removal:
+
+```json
+{"format":"status/2","state":"removing"}
 ```
 
 | Field | What it is |
 |---|---|
-| `state` | `installing`; or how the last install ended: `installed`, `failed`, `cancelled` |
-| `files_done` | How many files were staged and held to their size and hash, when the record was written |
-| `files` | How many files the entry has: 1 to 64 |
+| `state` | Of an install: `installing`; or how the last install ended: `installed`, `failed`, `cancelled`. Of a removal: `removing`; or `removed`, when the last removal cleared the pointer |
+| `installation` | Of an install only: the identity of the installation it is of, as an identity is written |
+| `files_done` | Of an install only: how many files were staged and held to their size and hash, when the record was written |
+| `files` | Of an install only: how many files the entry has: 1 to 64 |
 
 - **It is read strictly,** as an installation's record is ("How a record is read"):
   at most 256 bytes (`STATUS_MAX_BYTES`), refused over that before anything of it is
   looked at; an unknown field, a missing one, a value of another kind, a state that
-  is none of the four, more files staged than there are, and any bytes but the one
-  form are refused. It is read through the streamed read, so a link is not followed
+  is none of the six, more files staged than there are, and any bytes but the one
+  form are refused. A removal's record with a field of an install, an install's
+  without its installation, and an identity that is not one as it is written are
+  refused. It is read through the streamed read, so a link is not followed
   (`status::a_status_record_round_trips_in_one_form`,
+  `status::a_status_of_an_install_names_its_installation_and_one_of_a_removal_names_none`,
   `status::a_status_counts_one_to_a_bounded_count_of_files_and_no_more_staged_than_there_are`,
   `status::a_status_record_is_read_strictly_and_refused_over_its_bound`,
   `publishing::the_status_says_installing_and_how_many_files_are_staged_while_the_install_goes`).
+- **`status/1` is read no more.** It had no state for a removal and named no
+  installation. No models directory that is kept holds one (the plan, "What undoing
+  each task takes"): a record of that format is refused as another format, which a
+  request that attached takes as no status, and the next install or removal writes
+  over it.
 - **It is written by the holder of the model's lock:** when an install starts, after
-  each file is staged, and when the install ends, however it ends. It is written
-  whole beside the old one (`STATUS.new`) and renamed over it. An install that never
-  had the lock (busy, a secret in a name, cancelled before it began) writes none.
+  each file is staged, and when the install ends, however it ends; when a removal
+  has the lock, and when it ends. It is written whole beside the old one
+  (`STATUS.new`) and renamed over it. An install that never had the lock (busy, a
+  secret in a name, cancelled before it began) writes none.
 - **Every install says `installing` as its first step under the lock** (task M3),
   before it deletes, reads or downloads anything, and so does one that finds its
   identity on the disk: reading it whole can take minutes, and until task M3 such
@@ -838,23 +881,32 @@ under the format `status/1`, in one form:
   an installer's
   (`attaching::an_install_says_installing_before_anything_else_whether_it_downloads_or_finds_its_identity_whole`).
   One case is not so: an install that is refused that first write ("Limits").
+- **Every removal says `removing` as its first step under the lock** (task M5b),
+  before it reads the pointer, and `removed` once it has taken the pointer away,
+  whether or not the sync after that passed. **A removal that changed no pointer
+  puts the status back:** the record it found, or none when it found none or one it
+  could not read. So `removed` is said only of a model whose pointer a removal took
+  away, and after a removal that answered busy the status says how the last install
+  ended, as before it
+  (`remove::a_removal_during_a_held_installation_refuses_a_new_hold_and_goes_on_when_the_hold_is_let_go`,
+  `remove::with_the_hold_kept_past_the_deadline_the_removal_answers_busy_the_mark_is_gone_and_the_next_hold_is_given`,
+  `remove::each_step_of_the_file_system_refused_leaves_the_model_installed_or_removed`).
 - **After a refused sync of the pointer it says `failed` while the pointer names the
   new installation** ("Limits"): the install was refused, and it is the pointer that
   says what is installed. Asking again answers with the installation and says
   `installed`. One who attached to that install is told failed, as the installer
   was ("Attaching and cancelling").
 - **No install, hold or removal is decided from it, and it is given no sync of its
-  own.** Whether an install is running is said by the model's lock; which
-  installation is in use is said by the pointer. One thing is answered from it: how
-  an install ended, to a request that attached to it and never held the lock
-  ("Attaching and cancelling"). A crash can leave a status that says `installing` with no installer
-  alive: a status that says so while the model's lock is free is the status of an
-  install that died. A status that cannot be written fails an install that has not
-  published, and changes nothing of one that has.
-- **It holds no name and no path:** a state's word and two counts.
-- It has no state for a remover. An installer says `installing` for as long as it
-  has the lock; the task that makes a removal hold the model's lock (M5b) gives the
-  record a state for it, in a new format ("For later tasks").
+  own.** Whether an install or a removal is running is said by the model's lock;
+  which installation is in use is said by the pointer. One thing is answered from
+  it: how an install ended, to a request that attached to it and never held the lock
+  ("Attaching and cancelling"). A crash can leave a status that says `installing` or
+  `removing` with nobody alive: a status that says so while the model's lock is free
+  is the status of one that died. A status that cannot be written fails an install
+  that has not published and a removal that has done no more than set its mark, and
+  changes nothing of one that has decided.
+- **It holds no name and no path:** a state's word, and of an install an identity
+  and two counts.
 
 ### Attaching and cancelling
 
@@ -889,6 +941,15 @@ attaches to whatever holds the lock, and ends as that ended
   `cancelled`: cancelled. `failed`: failed (`InstallRefused::Failed`), with no
   reason, which only the installer has
   (`attaching::a_request_that_attaches_ends_as_the_install_ended_failed_or_cancelled`).
+  **Only of an install of what it asked for** (task M5b): the status names the
+  installation the install was of, and one that was cancelled, failed or died as an
+  install of another identity is busy, as one that was installed is; until `status/2`
+  such a request was told failed or cancelled of an identity nobody had tried to
+  install for it. **And `removing` or `removed` is busy:** what had the lock was a
+  removal, and the request is never told installed across one that cleared the
+  pointer
+  (`attaching::an_attached_request_is_answered_by_the_status_of_an_install_of_what_it_asked_for_and_is_busy_after_any_other`,
+  `remove::one_who_attaches_to_a_removal_is_answered_busy_and_to_one_that_changed_nothing_as_before`).
   A status that still says `installing` with the lock free is an install whose
   process is gone: failed, and the pointer names what it named
   (`attaching::when_the_installing_process_is_killed_the_attached_one_reports_the_install_as_failed`).
@@ -906,8 +967,8 @@ attaches to whatever holds the lock, and ends as that ended
   passed, and every install that takes the lock after it says `installing` before
   it touches the pointer.
 - **What is shown between tries is an install or nothing.** Under a lock held by one
-  who is not installing, the status is how the last install ended, and is not
-  shown as progress
+  who is not installing, the status says `removing`, or how the last install ended,
+  and is not shown as progress
   (`attaching::while_the_lock_is_held_and_the_status_says_no_install_is_running_nothing_is_shown`).
 - **An install is cancelled by the request that started it,** and by no other: its
   cancellation is asked before the lock is taken, before each file, at each piece,
@@ -932,7 +993,9 @@ Code (task M5: `hold.rs`; tests named `holds::…`). **A hold is a file lock, no
 process id.** A hold on one installation is a shared lock on its hold file,
 `holds/<64 hex digits>`, taken under the directory's lock after the draining mark and
 the pointer were read there: it is given when no mark is set and the pointer names
-that installation, and it makes nothing on the disk
+that installation, and it makes nothing on the disk but the directory's `LOCK`,
+which is made when it is taken and is not there: a hold asked of a directory where
+nothing was ever installed makes that one file, and is refused
 (`holds::a_hold_is_taken_under_the_directorys_lock_and_makes_nothing`). While it is
 there, nobody takes the hold file alone, so the installation's folder is not deleted:
 superseded, it stays until the hold is let go
@@ -949,7 +1012,7 @@ path:
 | `Draining` | The mark is set. It is read before the pointer, so a model whose pointer a removal has cleared is draining, not "not named" (`holds::a_hold_is_refused_while_the_mark_of_draining_is_set_whatever_the_count`) |
 | `NotNamed` | The pointer names another installation, or there is none: an installation that was superseded, one never installed, a model never installed (`holds::a_hold_on_an_identity_the_pointer_no_longer_names_is_refused`) |
 | `Damaged` | The pointer is not a pointer as it is written, or the installation it names has no hold file. A hold never makes one (`holds::a_pointer_that_cannot_be_read_or_a_missing_hold_file_is_damage_and_a_hold_makes_none`) |
-| `Deleting` | The hold file is held alone. That is whoever deletes the installation's folder, which is only for an installation the pointer does not name |
+| `Deleting` | The hold file is held alone. That is an install that deletes the installation's folder, which is only for an installation the pointer does not name; or a removal, the first to take a hold file alone while the pointer names its installation, whose mark refuses the hold as `Draining` before the hold file is tried (`remove::a_removal_marks_under_the_directorys_lock_says_removing_and_clears_the_pointer_with_every_hold_file_its_own`) |
 | `DirectoryBusy` | The directory's lock was not let go ("Three kinds of lock") |
 | `Disk` | The file system refused a step, the try among them: a file system that answers that it cannot try has not said "held alone" (`holds::a_hold_file_held_alone_is_a_hold_refused_at_once_and_a_try_that_fails_is_an_error`, which holds the two rows above too) |
 | `HoldsSecret` | The model's name holds a secret the holder was told of. Nothing is opened by it (`holds::a_model_name_that_holds_a_secret_opens_nothing_and_no_refusal_shows_a_path`) |
@@ -960,6 +1023,11 @@ signalled by one (rascal's R3 and R5). A second process that holds an installati
 and is killed leaves the hold file free to be taken alone, and the next to take the
 model's lock deletes the superseded folder
 (`holds::a_child_process_that_holds_a_model_and_is_killed_leaves_no_hold`).
+
+**A hold stops a repair.** A repair of the installation in use deletes its folder,
+so with a hold on it the repair is refused as held, the folder is kept and the
+pointer names it still; it passes once the hold is gone
+(`holds::a_hold_stops_a_repair_of_the_installation_in_use_until_it_is_let_go`).
 
 **Holds are counted inside a process** as well (`Holds`, which a process makes once
 for a directory and takes every hold through). A process's own shared lock on a hold
@@ -989,30 +1057,202 @@ a share in the first
 
 ### Removal
 
-*Decided, not built* (tasks M5b, M5d, M5c). In this order:
+Code up to the decision, inside one process (task M5b: `remove.rs`, `remove`; tests
+named `remove::…`), and against an install and across processes (task M5d, below).
+and the deleting (task M5c). In this order:
 
-1. **The draining mark comes first.** It is set under the directory's lock, before the
-   removal has the model's lock. From then no hold on that model is given, and no
-   install of it publishes: an installer that holds the model's lock for a download
-   reads the mark, between files and inside one, and stops, which lets the model's
-   lock go.
-2. The removal takes the model's lock alone, by trying until the same deadline as step
-   4. Past it the removal answers busy and takes the mark off under the directory's
-   lock. Having the lock, it sets the mark again if it is gone: whoever takes the
-   model's lock cannot tell a dead remover's mark from a live one's, and takes it off.
-3. Under the directory's lock, the pointer is cleared.
-4. **The holds are waited for by trying, not by waiting:** the hold file is tried
-   alone, without waiting, again and again until a deadline of the injected clock.
-   The core does not sleep between tries; what paces them is given by the caller, and
-   a test moves the clock by hand.
-5. With the hold file alone, the installation's folder is deleted and
-   `installations/` synced; the hold file is let go, and stays. The mark is taken off
-   under the directory's lock. Past the deadline the removal answers busy: under the
-   directory's lock the pointer is put back first, and then the mark is taken off, so
-   that no reader and no crash finds the model with neither a pointer nor a mark.
+1. **The draining mark comes first.** It is set under the directory's lock, before
+   the removal has the model's lock, and whatever was at its name is replaced. From
+   then no hold on that model is given, and no install of it publishes. A model that
+   has no folder was never installed: it is not marked, and nothing is made.
+2. The removal takes the model's lock alone, by trying until its deadline. Past it
+   the removal answers busy (`RemoveRefused::Busy`) and takes the mark off.
+3. **It says `removing`** in the status record ("The status record"), and syncs the
+   model's folder before it reads the pointer: nothing is decided on the word of a
+   pointer that is not durable. **A model with no pointer is not installed,** and
+   the removal says so (`RemoveRefused::NotInstalled`)
+   (`remove::a_removal_of_a_model_that_is_not_installed_says_so`).
+4. **The holds are waited for by trying, not by waiting:** the hold file of each
+   installation of the model is tried alone, without waiting, again and again until
+   the deadline, and kept once it is given. The deadline is `patience` from the
+   start, of the injected clock (`Clock::now`). Nothing here sleeps and nothing
+   reads another clock: what comes between two tries, of the model's lock and of a
+   hold file, is one call of `pause`, which the caller gives, and a test moves the
+   clock by hand there. On a clock that stands still a removal tries for as long as
+   the hold is kept.
+5. **With every hold file its own, the removal clears the pointer,** under the
+   directory's lock, and syncs the model's folder. That is the decision: the model
+   is not installed. It says `removed`. **Then it deletes** (task M5c): everything
+   under `installations/`, each by its name as the listing gave it, a link itself
+   and not what it leads to; it syncs `installations/`, removes the staging folder
+   an install left when there is one, and only then lets the hold files go. They
+   stay, as every lock file does.
+6. **The mark is taken off at the end, however the removal ended,** under the
+   directory's lock, and the model's folder synced. **Past the deadline the removal
+   answers busy** (`RemoveRefused::Held`): it has changed no pointer, it lets go the
+   hold files it had, puts the status back and takes the mark off, and the next hold
+   is given.
 
-A mark left by a process that died is taken off by the next to take the model's lock,
-which also finishes a removal that had cleared the pointer (tasks M5d and M5c).
+(`remove::a_removal_during_a_held_installation_refuses_a_new_hold_and_goes_on_when_the_hold_is_let_go`,
+`remove::with_the_hold_kept_past_the_deadline_the_removal_answers_busy_the_mark_is_gone_and_the_next_hold_is_given`,
+`remove::a_removal_marks_under_the_directorys_lock_says_removing_and_clears_the_pointer_with_every_hold_file_its_own`.)
+
+- **The pointer is cleared after the holds are let go, not before** (changed with
+  task M5b). The first form of this record cleared the pointer and then waited, and
+  on its busy path put the pointer back before it took the mark off. The mark
+  alone refuses every new hold, so nothing is gained by clearing first; and
+  clearing last means that a removal that answers busy has changed no pointer and
+  has none to put back, which a refused step could have left cleared; that a crash
+  while a removal waits leaves the model installed, with a stale mark, and never
+  "not installed" under a run that still holds it; and that a reader never finds a
+  model without a pointer that is then given one back. It is also what the plan's
+  task says: the holds are waited for, "then the removal goes on", and "goes on"
+  is the pointer cleared.
+- **Which holds.** Those on every installation of the model that is on the disk:
+  the one the pointer names, whether or not its folder is there, and any that was
+  superseded and is still held by a run. A model is not removed under a run that
+  uses an older installation of it
+  (`remove::a_removal_waits_for_a_hold_on_a_superseded_installation_too`). A folder
+  with no hold file was never published and is held by nobody.
+- **A waiting hold.** A hold is given or refused at once ("Holds"), so what the
+  plan calls a waiting hold is one that was refused and is asked for again by its
+  caller. A removal cancels it by the mark: asked again while the mark is set, it
+  is refused as draining, by its own process and by any other, each time.
+- **A pointer that cannot be read** does not stop a removal: which installation was
+  in use is not known, every hold file is waited for, and what is at the pointer's
+  name is taken away
+  (`remove::a_removal_of_a_model_whose_pointer_cannot_be_read_clears_it`).
+- **A removal and an install do not go on beside each other.** Each needs the
+  model's lock. An install that is asked for while a removal has it is busy and
+  touches nothing; a removal that finds an install running has changed nothing but
+  the mark when its deadline comes, and takes it off
+  (`remove::a_removal_and_an_install_in_one_process_do_not_go_on_beside_each_other`).
+  And an install that is downloading stops for the mark (below).
+- **Each step refused** (the removal has some twenty events): the model is
+  installed, whole, with its status as it was, or it is not installed; a removal
+  that answered has made that durable; and the next removal ends with the model
+  not installed, no mark and nothing left of it
+  (`remove::each_step_of_the_file_system_refused_leaves_the_model_installed_or_removed`).
+  The crashes are under "On the disk", below.
+- **A refusal is fixed words and no path,** and a model's name that holds a secret
+  the remover was told of is refused before anything is touched
+  (`remove::a_model_name_that_holds_a_secret_is_not_removed_and_no_refusal_shows_a_path`).
+
+**The mark** is `models/<model>/DRAINING`, a record under the format `draining/1`
+in one form, 23 bytes:
+
+```json
+{"format":"draining/1"}
+```
+
+It says that a removal of the model has begun, and nothing else: it names no
+process and no time, and whether its remover is alive is not read from it (rascal's
+R3). It is at most 64 bytes (`DRAINING_MAX_BYTES`) and is read strictly, as every
+record here is: refused over its bound before anything of it is looked at, with an
+unknown field, in another format, and in any bytes but the one form
+(`remove::the_mark_is_a_record_read_strictly_and_bounded`). **Who reads it and who
+decides by it are two.** `draining` is the reader for one who holds no lock (the
+inventory, task M6; a command that lists models, 1C): no mark, a mark, or a refusal
+of what is there and is none. A hold and a publication take anything at the mark's
+name for a mark, a link and a folder included, so that a mark that cannot be read
+still stops them; and a removal replaces whatever is there with its own
+(`remove::a_mark_on_the_disk_is_read_strictly_by_a_reader_and_as_there_by_whoever_decides_by_it`).
+The mark is given no sync when it is set: a crash that loses it leaves the model as
+its pointer says.
+
+**Against an install, and across processes** (task M5d). Nothing here reads a
+process id, and nothing is signalled (rascal's R3): a removal reaches an install in
+another process by the mark alone.
+
+- **An install stops for the mark.** Once it has the model's lock, an install reads
+  the mark wherever it asks its cancellation: before each file, at each piece, and
+  after each answer of the downloader. With one set it ends as
+  `InstallRefused::Draining`, removes its staging, says `failed`, and lets the
+  model's lock go; the piece that came after the mark is not kept, whatever the
+  downloader does. It leaves the mark, which is the remover's. The mark is read
+  there as there or not there, without the directory's lock: stopping is always
+  safe, and what a publication decides from is read under that lock, at its end
+  (`remove::an_install_stops_for_a_mark_before_each_file_and_at_each_piece_whatever_the_downloader_does`).
+- **A removal of a model that is installing cancels the install,** in its own
+  process or another, and then goes on, of what was installed before: that is
+  removed, and nothing of the install is left. When the removal's deadline comes
+  first it is busy, what was installed before is kept, named and whole, and the
+  install goes on. Never half of either
+  (`remove::a_removal_of_a_model_that_is_installing_cancels_the_install_and_what_was_installed_before_is_removed_or_kept`,
+  `remove::a_removal_cancels_an_install_that_runs_in_a_second_process`).
+- **What "does not go on beside it" means** (the plan's task M5d left it to this
+  task). With an install stopped after it took the model's lock and read the
+  pointer, a removal sets its mark and tries for the lock: it changes nothing else,
+  and at its deadline it is busy and takes the mark off; if the install is let go
+  sooner, the install stops for the mark and the removal goes on. With a removal
+  stopped there, an install is busy and touches nothing, and so is a second
+  removal. So: busy, or stopped by the mark; in no case do two act on the model
+  (`remove::with_an_install_stopped_after_it_read_the_pointer_a_removal_does_not_go_on_beside_it`,
+  `remove::with_a_removal_stopped_after_it_read_the_pointer_an_install_is_busy_and_touches_nothing`).
+  Each stopped before its first step and let go together, they end in one of the
+  two orders: the install whole and then removed; or the removal of what was
+  there, and the install after it whole, or stopped for the mark, or busy
+  (`remove::a_removal_and_an_install_let_go_together_end_in_one_of_the_two_orders`).
+- **A mark left by a process that died is taken off by the next to take the model's
+  lock.** An install, as its first change after it said `installing`, takes off a
+  mark it finds, under the directory's lock: whoever set it does not have the
+  model's lock. The sync of the model's folder that follows is the one every
+  install makes before it deletes anything; a mark that a crash brings back is
+  a stale mark again. It cannot tell a dead remover's mark from that of one
+  that is alive and trying for the lock, so **a removal sets its mark again**
+  when it is gone: each time it is not given the lock, and once it has it, from
+  when nobody takes it off but itself. A removal replaces whatever mark it finds
+  with its own and takes it off at its end
+  (`remove::a_mark_left_by_a_process_that_died_is_taken_off_by_the_next_to_take_the_lock`,
+  `remove::a_removal_that_is_not_given_the_models_lock_sets_its_mark_again_and_again_when_it_is`).
+- **The two cases of draining with the hold in a real second process:** kept past
+  the deadline, busy; let go, the removal goes on
+  (`remove::the_two_cases_of_a_removal_with_the_hold_in_a_real_second_process`).
+- **Limits.** Between an install taking a live remover's mark off and the remover
+  setting it again, a hold can be given; the remover then waits for it as for any
+  other. An install that is reading back what it staged, or reading an identity it
+  found on the disk, asks neither its cancellation nor the mark until it is done:
+  the mark stops it at the publication, under the directory's lock. And an
+  install that stopped for a mark whose remover then died is not started again by
+  anything here: it is asked for again.
+
+**On the disk** (task M5c).
+
+- **Nothing is deleted before the cleared pointer is durable,** and nothing while a
+  hold file is another's: the deleting follows the sync of the model's folder, and
+  the hold files of every folder that is deleted are the removal's alone until the
+  deleting is synced. So a crash leaves the installation whole and named, or the
+  model not installed: never a pointer to files that are gone. Nothing outside the
+  models directory is touched, shown on the list of events with a link that leads
+  out of it among what is deleted
+  (`remove::a_removal_deletes_every_installation_of_the_model_under_its_hold_files_and_touches_nothing_outside`).
+- **A removal interrupted after the pointer was cleared is finished by the next
+  install or removal.** It died or was refused with no pointer and the folder
+  there, with its mark or without. The next install takes the mark off and deletes
+  what no pointer names, as every install does, or adopts a folder of its own
+  identity that is whole. The next removal finds no pointer: it says that the
+  model is not installed, and before it answers it deletes what no pointer names
+  by the installer's own routine (`clean`), each folder when its hold file is free
+  by one try, and only after the sync of the model's folder passed; a folder a run
+  still holds is left
+  (`remove::a_removal_interrupted_after_the_pointer_was_cleared_is_finished_by_the_next_install_or_removal`,
+  `remove::a_removal_that_finds_no_pointer_leaves_a_folder_a_run_still_holds_and_deletes_nothing_when_its_sync_is_refused`).
+- **The crashes.** A crash is put in place of each event of a removal of an
+  installation that nothing holds: from the clearing of the pointer on under six
+  ways of losing names, and before it, where only the mark's and the status's
+  names are not durable, under the loss of every name and of none. After each, one
+  who holds no lock reads the model as installed, whole, with its hold file, or as
+  not installed, never as damaged; and the next removal ends with no pointer, no
+  mark and nothing under `installations/`
+  (`remove::a_crash_at_any_event_of_a_removal_leaves_the_model_installed_or_not_installed`).
+- **What no crash shows.** The sync after the deleting: with it taken out the sweep
+  passes, since a folder that a crash brings back is deleted by the next to take
+  the lock; it is held on the lists of events of the two tests above. And a folder
+  half deleted is not produced: the test kit's disk removes a tree as one event
+  ("For later tasks").
+- **A removal that was refused after it cleared the pointer** answers with the
+  disk's refusal, of a model that is not installed and says `removed`; asked
+  again, it says not installed, and finishes.
 
 ### What a refusal says
 
@@ -1095,6 +1335,12 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   `failed` or `cancelled` is how an earlier request's install ended, not this one's:
   asked again, the request installs
   (`attaching::known_a_request_that_met_only_anothers_share_of_the_lock_is_answered_from_the_last_installs_status`).
+- **A mark that is left.** A removal takes its mark off at its end, and the step
+  can be refused: the removal answers as it ended, and the mark stays. So does the
+  mark of a remover that died. While it is there no hold on the model is given and
+  no install of it publishes, though its pointer may name an installation that is
+  whole. The next removal of the model takes it off, and so does the next install
+  (task M5d).
 - **A reader that holds no lock does not read the files.** `current` answers from the
   pointer and the record; that the files are whole is held when they are published
   and when the same identity is published again.
@@ -1155,16 +1401,21 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
 - **M6 compares two revisions by equality only.** Nothing is newer or older.
 - **M5b and M5d:** the status record says whether the holder of the model's lock is an
   installer or a remover, so that one who attaches knows what it is waiting for. An
-  installer says `installing` from its first step (task M3); `status/1` has no state
-  for a remover, and the task that makes a removal hold the model's lock adds one.
-  Until then one who attaches under a lock held by another than an installer is
-  shown nothing, and is answered by what the last install left: installed, when the
-  status says so and the pointer names its installation. A removal that clears the
-  pointer must change that status under the same lock.
+  installer says `installing` from its first step (task M3), and a remover
+  `removing` (task M5b, `status/2`). Built ("The status record").
 - **M5b:** the draining mark is read by a publication as there or not there
   (`DRAINING` in the model's folder), under the directory's lock. A mark with content
-  is read the same way. A stale mark stops every publication of the model until the
-  task that takes one off (M5d).
+  is read the same way. Built ("Removal"). A stale mark stops every publication of
+  the model, and every hold on it, until a removal of the model or the task that
+  has the next to take the lock take one off (M5d).
+- **M5d, from task M5b:** an install that takes a stale mark off takes a live one
+  off with it, so a removal sets its mark again; an install reads the mark where
+  it asks its cancellation. Built ("Removal").
+- **M5c, from task M5b:** the hold files a removal has alone when it clears the
+  pointer are the ones it deletes under; it lets them go only after the deleting
+  and its sync. A removal that finds no pointer still deletes what no pointer
+  names, as `clean` does, after the same sync of the model's folder. Built
+  ("Removal": on the disk).
 - **M5: the store's try for a share** (ADR 0018, `try_share`) is refused by the
   process's own lock on the file alone, and given beside its own shares as a second
   lock. A file system that answers that it cannot try is an error, never "held
@@ -1176,18 +1427,18 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   installation whose hold file is missing is refused as damage; a hold never makes one.
   Built ("Holds").
 - **M5b, from task M5:** a hold is refused as draining by a file at `DRAINING`,
-  whatever it holds, read with the pointer under the directory's lock. A removal that
-  puts the pointer back on its busy path does so before it takes the mark off, so a
-  hold that is given finds both as they were before the removal. And a removal that
-  waits for holds meets its own process's: `Holds` lets its share go only with the
-  last hold.
-- **M5b and M6:** a reader that holds no lock reads the mark as well as the pointer, and
-  says "draining", not "not installed", of a model whose pointer a removal has cleared.
+  whatever it holds, read with the pointer under the directory's lock. A removal
+  that answers busy has changed no pointer (task M5b), so a hold that is given
+  after it finds the pointer as it was. And a removal that waits for holds meets
+  its own process's: `Holds` lets its share go only with the last hold.
+- **M5b and M6:** a reader that holds no lock reads the mark as well as the pointer
+  (`draining`, beside `current`), and can say "draining", not "not installed", of a
+  model whose pointer a removal has cleared and whose mark is still set.
 - **M5c:** a folder under `installations/` that the pointer does not name and that has
   no hold file was never published: it is deleted, and no hold file is made for it.
 - **The crashes the tests of M2b and M5c hold,** each reopened by the next to take the
   model's lock. The first three rows and the last are held by task M2b, as below
-  the table; the two of removal are task M5c's. "Step 1" in it is the rename of the
+  the table; the two of removal are task M5c's ("Removal": on the disk). "Step 1" in it is the rename of the
   staged folder and its sync (steps 5 and 6 of "Publishing"), and "step 2" the pointer
   (step 7). Where a row says the next deletes a folder the pointer does not name, the
   next is a removal or an install of another identity: an install of the same
@@ -1198,8 +1449,8 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   | Publishing, after step 1 | A folder the pointer does not name, with no hold file, or with one from an earlier publication of that identity | Deletes it, taking the hold file alone when there is one | As it was |
   | Publishing, inside step 2, before the pointer's rename is durable | The same, with the hold file made | Takes the hold file alone and deletes the folder | As it was |
   | Publishing, after the pointer's rename is durable | The new pointer; the old folder, superseded | Cleans the old folder when its hold file is free | The new installation |
-  | Removal, after step 1 | The mark; the pointer as it was | Takes the mark off | Installed |
-  | Removal, after step 3 | The mark; no pointer; the folder | Finishes the removal: deletes the folder, takes the mark off | Not installed |
+  | Removal, after step 1 and until its pointer's removal is durable (step 5) | The mark; the pointer as it was | Takes the mark off | Installed |
+  | Removal, after its pointer's removal is durable | The mark; no pointer; the folder | Finishes the removal: deletes the folder, takes the mark off | Not installed |
   | Cleaning a superseded folder, or a repair, part-way through deleting | Part of a folder the pointer does not name | Deletes the rest | As the pointer says: for a repair, not installed |
 
   **How task M2b holds them.** A crash is put in place of each event of an install
