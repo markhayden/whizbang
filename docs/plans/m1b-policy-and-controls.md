@@ -351,8 +351,8 @@ task is not done while one that applies to it has no test.
     calling the test runner directly.
 11. **A crash sweep is named as one.** A test that crashes before every step has
     `a_crash_at_any_event` in its name, so the `crash-sweeps` group of
-    `.config/nextest.toml` takes it and runs it alone, and it takes under about 5 seconds
-    alone. A sweep that cannot is cut into sweeps of a part of the steps each.
+    `.config/nextest.toml` takes it and runs it beside at most one other sweep, and it
+    takes under about 5 seconds alone. A sweep that cannot is cut into sweeps of a part of the steps each.
 
 ## Strands, and what each owns
 
