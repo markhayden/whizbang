@@ -805,7 +805,78 @@ fn a_roster_over_an_inventory_does_not_resolve_a_backend_that_names_a_recipient_
         Installation::from_version(&installation.to_string()),
         Some(installation)
     );
-    for other in ["1", "sha256:abc", "SHA256:00", ""] {
+    let hex = installation.identity().hex();
+    let others = [
+        "1".to_owned(),
+        "sha256:abc".to_owned(),
+        "SHA256:00".to_owned(),
+        String::new(),
+        // Upper case, a digit short and a digit over.
+        format!("sha256:{}", hex.to_uppercase()),
+        format!("sha256:{}", &hex[..63]),
+        format!("sha256:{hex}0"),
+        hex.clone(),
+    ];
+    assert_ne!(hex.to_uppercase(), hex);
+    for other in &others {
         assert_eq!(Installation::from_version(other), None, "{other:?}");
     }
+}
+
+#[test]
+fn of_two_local_backends_of_one_model_the_one_that_declares_the_identity_itself_is_handed() {
+    // One local filler declares the model under a version of its own; another
+    // declares the very identity the call resolved. The second is the exact
+    // match, by all three texts, and is handed as it is, whichever comes first
+    // among the executor's backends. With none that declares the identity, the
+    // first of that backend and model is handed, under the identity.
+    let installation = Installation::of(Digest::of_bytes(b"a filler, whole"));
+    let resolved = ModelIdentity::new("fake", "fake-filler", &installation.to_string());
+    let local = |version: &str| {
+        let model = ModelIdentity::new("fake", "fake-filler", version);
+        let declared = Declaration::new(model, &[]).unwrap();
+        Arc::new(FakeFiller::new(Paint::Inverse).declared_as(declared))
+    };
+    let asked = |held: Capabilities| {
+        let world = World::new();
+        let paints = action(
+            "paints",
+            vec![Requirement::new(Capability::Fill)],
+            |_, context| {
+                if let Some(fill) = context.capabilities().fill() {
+                    let _ = fill.fill(&fill_request());
+                }
+                Ok(Produced::nothing())
+            },
+        );
+        let lease = FakeWrapper::new("lease");
+        let executor = engine(&world, Always(resolved.clone()), held, vec![paints])
+            .with_wrapper(Place::Lease, Arc::new(lease.clone()));
+        executor.submit(&Call::new("paints")).unwrap();
+        versions(&lease)
+    };
+    for exact_first in [false, true] {
+        let (plain, exact) = (local("1"), local(&installation.to_string()));
+        let held = match exact_first {
+            true => Capabilities::none()
+                .with_fill(exact.clone())
+                .with_fill(plain.clone()),
+            false => Capabilities::none()
+                .with_fill(plain.clone())
+                .with_fill(exact.clone()),
+        };
+        assert_eq!(asked(held), [installation.to_string()], "{exact_first}");
+        assert_eq!(
+            (plain.requests(), exact.requests()),
+            (0, 1),
+            "the exact one first: {exact_first}"
+        );
+    }
+    // None declares the identity: the first is handed, and not the last.
+    let (first, last) = (local("1"), local("2"));
+    let held = Capabilities::none()
+        .with_fill(first.clone())
+        .with_fill(last.clone());
+    assert_eq!(asked(held), [installation.to_string()]);
+    assert_eq!((first.requests(), last.requests()), (1, 0));
 }

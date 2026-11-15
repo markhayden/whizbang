@@ -123,10 +123,12 @@ installable!(Judge);
 ///   its version.
 /// - **A version that is an installation's identity is a local model's.** A roster
 ///   over an inventory resolves a local backend under the identity of its model's
-///   installation, which no backend declares. So the run is handed the first local
-///   backend that declares this backend and this model, whatever version it
-///   declares, wrapped so that it declares the identity: the one the admission
-///   recorded, which is the one in the prepared call. **A backend that names a
+///   installation, which no backend declares. So the run is handed a local
+///   backend that declares this backend and this model: one that declares this
+///   very version, when there is one, as it is and wherever it stands; and
+///   otherwise the first, whatever version it declares, wrapped so that it
+///   declares the identity: the one the admission recorded, which is the one in
+///   the prepared call. **A backend that names a
 ///   recipient is never handed for such a version,** though it declare the same
 ///   three texts: a run that was resolved as local sends nothing away.
 pub(crate) fn under<B: Installable + ?Sized>(
@@ -139,18 +141,22 @@ pub(crate) fn under<B: Installable + ?Sized>(
             .find(|backend| backend.declared().model() == model)
             .cloned();
     };
-    let mut local = backends.iter().filter(|backend| {
-        let declared = backend.declared();
-        declared.is_local()
-            && declared.model().backend() == model.backend()
-            && declared.model().model() == model.model()
-    });
-    let found = local.next()?;
-    // One that declares the identity itself is handed as it is.
-    Some(match found.declared().model() == model {
-        true => found.clone(),
-        false => found.under(installation),
-    })
+    let local = || {
+        backends.iter().filter(|backend| {
+            let declared = backend.declared();
+            declared.is_local()
+                && declared.model().backend() == model.backend()
+                && declared.model().model() == model.model()
+        })
+    };
+    // One that declares the identity itself is the exact match, by all three
+    // texts, as it was before an inventory: it is handed as it is, wherever it
+    // stands among the others. Only with none is the first of that backend and
+    // that model handed, under the identity.
+    if let Some(exact) = local().find(|backend| backend.declared().model() == model) {
+        return Some(exact.clone());
+    }
+    local().next().map(|first| first.under(installation))
 }
 
 impl std::fmt::Display for Installation {

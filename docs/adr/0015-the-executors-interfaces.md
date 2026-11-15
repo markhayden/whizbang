@@ -908,7 +908,19 @@ was told nothing of is not in its catalogue
   hex digits as a model's version means a local model under an installation, to the
   executor and to a roster over an inventory. A backend that names a recipient and
   declares such a version is handed to no run. A local backend that declares one
-  itself, with no inventory, is handed as it is.
+  itself is the exact match, by all three texts, as it was before an inventory:
+  it is handed as it is, wherever it stands among the executor's backends, before
+  any other local backend of that backend and model
+  (`inventory::of_two_local_backends_of_one_model_the_one_that_declares_the_identity_itself_is_handed`).
+  The first form of this half took the first local backend of that backend and
+  model whatever it declared, and so passed the exact one over when another stood
+  before it; the review found it.
+- **Under a roster alone, a backend that names a recipient and declares such a
+  version is admitted and handed nothing.** Only a roster over an inventory
+  refuses to resolve it. It fails closed: the action finds no handle. And a
+  snapshot that holds backends still matches by all three texts
+  (`Snapshot::handed`), so the two paths will not agree on such a backend once a
+  config's offers are put over an inventory (`docs/carry-over.md`, for task W1).
 - **A call with two needs of one capability is handed the backend of the first**
   (ADR 0009). Each need is resolved by a question of its own to the inventory, so
   with the model installed again between the two, one call can be prepared with two
@@ -917,9 +929,9 @@ was told nothing of is not in its catalogue
   second is not held by anything. No action that ships has two needs of one
   capability.
 - **The executor's own backends are searched, not the roster's names.** Of two local
-  backends that declare one backend and one model under two versions, the first the
-  executor holds is handed, whichever name the call chose, as the bound of such a
-  pair is the larger of theirs.
+  backends that declare one backend and one model under two versions, neither of
+  them the identity, the first the executor holds is handed, whichever name the
+  call chose, as the bound of such a pair is the larger of theirs.
 - **An inventory that panics** unwinds to whoever prepared the call. Prepare holds
   nothing and writes nothing. No test holds it.
 - **The sentence is not looked at for a secret here.** It is made of a capability's
@@ -1004,8 +1016,10 @@ such a one alone is what it was without it: its run ends as an error that says i
 action panicked. That is what the gate is.
 
 **Each place is empty by default, but for the gate's.** `Engine::with_wrapper` puts a
-wrapper in a place. The lease's and the meter's stay empty until tasks I7 and S5 fill
-them. The gate's, when nothing was put there, holds the gate of the policy the run
+wrapper in a place. The lease's stays empty unless an executor is given a lease: the
+place is task I7's ("An inventory": the backend a run is handed, and the lease's
+place), and the lease over the models directory's holds is task M6b's (ADR 0017). The
+meter's stays empty until task S5 fills it. The gate's, when nothing was put there, holds the gate of the policy the run
 executes under: the policy of the run's snapshot where the snapshot holds one, and
 otherwise the executor's, which approves nothing unless it was told to ("A policy
 before a send, and a checked send"; "One snapshot of the config"). A fake wrapper is
@@ -1053,9 +1067,12 @@ reserves, and it is kept: reserving the largest cannot reserve too little
 
 **Limits, each stated.**
 
-- **Nothing stands in the lease's or the meter's place.** A paid request is not
-  debited, recorded before it leaves or settled until task S5; and a request to a
-  local model takes no lease until the rest of task I7.
+- **Nothing stands in the meter's place, and in the lease's only what an executor
+  is given.** A paid request is not debited, recorded before it leaves or settled
+  until task S5. A request to a local model is told to the lease's place under
+  the installation its run was admitted with (task I7), and takes a lease where
+  an executor was given one (task M6b); the binary's executor is given none until
+  its wiring (task W1).
 - **A wrapper that panics in `Around::before`** unwinds as a backend's panic does
   under no wrapper: it is the fault of one action; what the places before it held is
   dropped, and nothing here marks the run. (A panic of `Open::after` abandons the
