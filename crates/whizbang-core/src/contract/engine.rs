@@ -1194,6 +1194,13 @@ impl Engine {
                         })
                         .into());
                     }
+                    Err(Declined::NeedsOwner { epoch }) => {
+                        return Err(CallError::Refused(Refusal::NeedsOwner {
+                            action: prepared.action().to_owned(),
+                            epoch,
+                        })
+                        .into());
+                    }
                     // As a part's failure: the store's as it was, or a sentence
                     // that is cleaned, and never a refusal.
                     Err(Declined::Failed(failure)) => {

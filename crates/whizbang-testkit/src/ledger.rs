@@ -428,7 +428,12 @@ impl Ledger for FakeLedger {
         // The judgement is of the generation the step shows, on the newest epoch.
         let balance = books.folded.balance();
         let micros = reservation.micros();
-        if balance.needs_owner || micros > balance.left {
+        if balance.needs_owner {
+            return Err(Declined::NeedsOwner {
+                epoch: balance.epoch,
+            });
+        }
+        if micros > balance.left {
             return Err(Declined::OverAllowance {
                 left_micros: balance.left,
             });
