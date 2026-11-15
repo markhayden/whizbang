@@ -46,6 +46,8 @@ Amended: 2026-11-14, with the first half of task I7. Added: "An inventory". The
 lease, the other half of the task, waits for the wrappers of task I3 and is not here.
 Amended: 2026-11-15, with task S3. Changed under "One snapshot of the config", "What
 waits": the part that holds a call to the cap is built.
+Amended: 2026-11-15, with task S8. Changed under "A part in the admission", "Limits":
+the kinds the two parts that refuse are recorded under.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -249,9 +251,13 @@ asked.
 **Limits, each stated.**
 
 - **A part's refusal has no kind of its own in a run's record.** `run/3` fixes the
-  kinds, so a part chooses one of them, and its own name is in the sentence only. A
-  part that finds no kind that fits needs a new version of the record
-  (`docs/carry-over.md`).
+  kinds, so a part chooses one of them, and its own name is in the sentence only. The
+  two parts that refuse each found one, and say why it fits where they are written:
+  the cap of one call is `over_allowance`, or `invalid` for a cap that is none (task
+  S3, `crates/whizbang-core/src/spend/cap.rs`), and the age of a preparation is
+  `stale` (task S8, `spend/age.rs`); each has a test of a call from inside an action
+  that it refused, in its caller's record. A part that finds no kind that fits needs
+  a new version of the record.
 - **The window before the publication is as it was.** Between a part's answer and the
   publication nothing holds still what the part judged on, as nothing holds the config
   (ADR 0007, "The window that is left"). A part whose answer depends on what the store

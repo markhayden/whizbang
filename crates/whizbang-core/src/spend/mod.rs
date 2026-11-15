@@ -8,12 +8,14 @@
 //! executor's interface to a ledger is `contract::Ledger` and nothing implements it
 //! outside the test kit.
 //!
-//! What is here so far is a part in the admission (`contract::AdmissionPart`), which
-//! an executor is given ([`crate::contract::Engine::with_part`]): [`CallCap`], the cap
-//! of one call.
+//! What is here so far are two parts in the admission (`contract::AdmissionPart`),
+//! which an executor is given ([`crate::contract::Engine::with_part`]): [`CallCap`],
+//! the cap of one call, and [`PreparationAge`], the hour a preparation holds.
 
+mod age;
 mod cap;
 
+pub use age::{AGE_PART, MADE_AFTER_NOW, PREPARATION_HOLDS_MS, PreparationAge, TOO_OLD};
 pub use cap::{
     CAP_PART, CallCap, OVER_ITS_OWN_CAP, OVER_THE_CAP, OWN_CAP_ABOVE, OWN_CAP_ZERO,
     SNAPSHOT_CAP_ZERO,
