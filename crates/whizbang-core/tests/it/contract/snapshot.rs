@@ -1537,6 +1537,15 @@ fn a_snapshot_prints_no_credential_no_secret_and_no_setting() {
         "{printed}"
     );
     assert!(printed.contains("Secrets(1)"), "{printed}");
+    // Nor its cap, whose millionths could spell a secret the config's reader does not
+    // find in a number (ADR 0011): only whether it holds one.
+    assert!(printed.contains("cap: true"), "{printed}");
+    let spelled = Snapshot::of(digest("one")).capped_at(Estimate::of_micros(73_190_482_655));
+    let printed = format!("{spelled:?}");
+    assert!(printed.contains("cap: true"), "{printed}");
+    assert!(!printed.contains("73190482655"), "{printed}");
+    let uncapped = format!("{:?}", Snapshot::of(digest("one")));
+    assert!(uncapped.contains("cap: false"), "{uncapped}");
     // A snapshot that was given a credential and no policy sends under the policy
     // that approves nothing, and not under the executor's.
     assert_eq!(snapshot.policy(), Some(&DispatchPolicy::none()));

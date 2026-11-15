@@ -55,6 +55,9 @@ limits of "The source over both files": what reading the two files one after the
 can pair. Changed in "The digest": what a guess at a key would be hashed with. And of
 `Files::knowing`: the secrets a source is told of from the start are kept however many
 they are.
+Amended: 2026-11-15, an eleventh note, with task S3. Changed in "The source over both
+files": the cap's clause is shown with the part that holds a call to the cap, where a
+part of the test's own stood for it.
 Spec: section 4, "Backends" (config, resolution, credentials); section 6, "Spend";
 section 10, "Egress"
 
@@ -829,12 +832,12 @@ makes a `Credential` and has no way to hand it to the snapshot ("What waits").
 
 What follows is task C5's, each on one executor across a change of the file.
 
-- **A cap lowered in the file is the cap the next admission is shown.** The executor
-  holds no call to a cap (ADR 0015): the part that does is task S3's, which is not
-  built. With a part of the test's own in its place, which refuses a call whose
-  estimate is over the cap of the snapshot it is shown, a call of 1.5 dollars is
-  admitted under a cap of 2, refused with no run once the file says 1, and admitted
-  again under 1.5 and under no cap
+- **A cap lowered in the file is the cap the next admission is held to.** The executor
+  holds no call to a cap (ADR 0015): the part that does is task S3's (`spend::CallCap`),
+  which refuses a call whose estimate is over the cap of the snapshot it is shown.
+  With that part, and one of the test's own before it that keeps each cap an admission
+  was shown, a call of 1.5 dollars is admitted under a cap of 2, refused with no run
+  once the file says 1, and admitted again under 1.5 and under no cap
   (`source::a_cap_lowered_in_the_config_is_the_cap_the_next_admission_is_held_to_on_one_executor`).
 - **A recipient taken out of the `egress` table is refused on the next call.** A run
   whose backend sends a prompt is let through while the table approves its recipient
@@ -896,8 +899,9 @@ What follows is task C5's, each on one executor across a change of the file.
 
 **What waits.**
 
-- **The part that holds a call to the cap** (task S3). The snapshot carries the cap;
-  nothing but a test's part reads it.
+- **The part that holds a call to the cap in the binary.** The part is built (task
+  S3, `spend::CallCap`) and reads the snapshot's cap; the binary's executor is given
+  it by the wiring (task W1).
 - **A recipient's credential in the snapshot.** The executor attaches a credential
   only from its ways (ADR 0015, "A policy before a send, and a checked send"), and a
   snapshot's ways are given one by `Snapshot::with_credential`. A kind makes the
