@@ -5,8 +5,9 @@
 //! installed, the record of one installation, and that installation's identity. On
 //! them: a download into staging ([`stage`]), an install that publishes what it staged
 //! and replaces the model's pointer ([`install`]), the reader of that pointer
-//! ([`current`]) and the status record an installer writes ([`status`]). Attaching to
-//! an install, the holds, removal and the inventory are built by the later tasks of
+//! ([`current`]), the status record an installer writes ([`status`]), and a request
+//! that attaches to an install that is running ([`install_or_attach`]). The holds,
+//! removal and the inventory are built by the later tasks of
 //! checkpoint 1B's models strand (`docs/plans/`). The disk is reached only through
 //! the store's file-system interface, and every download is behind the interface of
 //! ADR 0012: no network client is in the build.
@@ -36,7 +37,7 @@ pub use catalogue::{
     FEATURES_LIMIT, FILES_LIMIT, MODELS_LIMIT, ORIGINS_LIMIT,
 };
 pub use directory::ModelsDir;
-pub use install::{Current, Damage, InstallRefused, current, install};
+pub use install::{Current, Damage, InstallRefused, current, install, install_or_attach};
 pub use installation::{
     INSTALLATION_FORMAT, INSTALLATION_MAX_BYTES, InstallationId, InstallationRecord, InstalledFile,
 };

@@ -3,7 +3,9 @@
 //! installer, over the test kit's disk and its fake of a download. No test asks
 //! anything of a network.
 
+mod attaching;
 mod catalogue;
+mod crashes;
 mod downloads;
 mod identity;
 mod installation;

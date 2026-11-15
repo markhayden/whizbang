@@ -25,7 +25,7 @@ use super::{MARKER, file_name, hash, model, none, parts, revision, secrets};
 
 /// The entry `tiny` at this revision of the catalogue: the same two files under
 /// each, so two revisions are two installations of the same bytes.
-fn entry_at(catalogue: &str) -> Entry {
+pub(super) fn entry_at(catalogue: &str) -> Entry {
     entry_of(
         catalogue,
         &[("graph.onnx", graph()), ("LICENSE.txt", TERMS.to_vec())],
@@ -46,24 +46,24 @@ fn entry_of(catalogue: &str, files: &[(&str, Vec<u8>)]) -> Entry {
     Entry::new(parts, &none()).unwrap()
 }
 
-fn first() -> Entry {
+pub(super) fn first() -> Entry {
     entry_at("2026-11.1")
 }
 
-fn second() -> Entry {
+pub(super) fn second() -> Entry {
     entry_at("2026-11.2")
 }
 
 /// The adapter's revision. No adapter is in the build: the test states one.
-fn adapter() -> Revision {
+pub(super) fn adapter() -> Revision {
     revision("7")
 }
 
-fn record_of(entry: &Entry) -> InstallationRecord {
+pub(super) fn record_of(entry: &Entry) -> InstallationRecord {
     InstallationRecord::of(entry, adapter(), &none()).unwrap()
 }
 
-fn installing(
+pub(super) fn installing(
     fs: &Arc<ShimFs>,
     root: &Path,
     entry: &Entry,
@@ -74,12 +74,12 @@ fn installing(
 }
 
 /// Installs on a shim of its own: a process that came, installed and went.
-fn installed(root: &Path, entry: &Entry) -> InstallationRecord {
+pub(super) fn installed(root: &Path, entry: &Entry) -> InstallationRecord {
     installing(&Arc::new(ShimFs::new()), root, entry, &serving_both()).unwrap()
 }
 
 /// What the pointer says, read by one who holds no lock, on the real file system.
-fn reading(root: &Path) -> Current {
+pub(super) fn reading(root: &Path) -> Current {
     reading_with(root, &none())
 }
 
@@ -92,7 +92,7 @@ fn reading_with(root: &Path, secrets: &Secrets) -> Current {
     .unwrap()
 }
 
-fn said(root: &Path) -> Option<(State, u64, u64)> {
+pub(super) fn said(root: &Path) -> Option<(State, u64, u64)> {
     status(
         &ModelsDir::at(Arc::new(RealFs), root),
         &model("tiny"),
@@ -102,17 +102,17 @@ fn said(root: &Path) -> Option<(State, u64, u64)> {
     .map(|status| (status.state(), status.files_done(), status.files()))
 }
 
-fn tiny(root: &Path) -> PathBuf {
+pub(super) fn tiny(root: &Path) -> PathBuf {
     root.join("models/tiny")
 }
 
-fn folder_of(root: &Path, record: &InstallationRecord) -> PathBuf {
+pub(super) fn folder_of(root: &Path, record: &InstallationRecord) -> PathBuf {
     tiny(root)
         .join("installations")
         .join(record.identity().hex())
 }
 
-fn hold_file_of(root: &Path, record: &InstallationRecord) -> PathBuf {
+pub(super) fn hold_file_of(root: &Path, record: &InstallationRecord) -> PathBuf {
     tiny(root).join("holds").join(record.identity().hex())
 }
 
@@ -127,7 +127,7 @@ fn held(root: &Path, record: &InstallationRecord) -> Box<dyn Held> {
 
 /// The installation is on the disk whole: its record in the one form, its two files,
 /// and nothing else.
-fn is_whole(root: &Path, record: &InstallationRecord) {
+pub(super) fn is_whole(root: &Path, record: &InstallationRecord) {
     let folder = folder_of(root, record);
     assert_eq!(on_disk(&folder.join("RECORD")).unwrap(), record.to_bytes());
     assert_eq!(on_disk(&folder.join("files/graph.onnx")).unwrap(), graph());
@@ -139,7 +139,7 @@ fn is_whole(root: &Path, record: &InstallationRecord) {
 }
 
 /// The installations on the disk, by the names of their folders.
-fn installations(root: &Path) -> Vec<String> {
+pub(super) fn installations(root: &Path) -> Vec<String> {
     names_under(&tiny(root).join("installations"))
         .into_iter()
         .filter(|name| !name.contains('/'))
@@ -152,13 +152,13 @@ fn reads_staged(event: &Event) -> bool {
         if p.components().any(|part| part.as_os_str() == "incoming"))
 }
 
-fn index_of(events: &[Event], what: impl Fn(&Event) -> bool) -> usize {
+pub(super) fn index_of(events: &[Event], what: impl Fn(&Event) -> bool) -> usize {
     events.iter().position(what).unwrap()
 }
 
 /// The events of installing `entry` after these were installed, each by a process of
 /// its own.
-fn events_after(before: &[&Entry], entry: &Entry) -> Vec<Event> {
+pub(super) fn events_after(before: &[&Entry], entry: &Entry) -> Vec<Event> {
     let scratch = Scratch::new("publish-events");
     for earlier in before {
         installed(scratch.path(), earlier);
@@ -182,7 +182,7 @@ fn holds_no_path(refused: &InstallRefused, root: &Path) {
 }
 
 /// Changes one byte of a file and keeps its length.
-fn flip(path: &Path, place: usize) {
+pub(super) fn flip(path: &Path, place: usize) {
     let mut bytes = std::fs::read(path).unwrap();
     bytes[place] ^= 1;
     std::fs::write(path, bytes).unwrap();
@@ -388,6 +388,14 @@ fn every_refusal_of_an_install_says_one_sentence_of_fixed_words() {
         (
             InstallRefused::Disk(std::io::ErrorKind::CrossesDevices),
             "the models directory could not be written: the system refused",
+        ),
+        (
+            InstallRefused::Failed,
+            "the install of the model that was running did not install it",
+        ),
+        (
+            InstallRefused::Left,
+            "the request stopped waiting for the install of the model, which goes on",
         ),
     ];
     for (refused, sentence) in sentences {
@@ -1137,6 +1145,72 @@ fn a_mark_of_draining_stops_the_publication_before_a_hold_file_or_a_pointer_is_m
     drop(hold);
     std::fs::remove_file(tiny(root).join("DRAINING")).unwrap();
     installed(root, &second());
+}
+
+#[test]
+fn a_held_repair_that_could_not_put_the_pointer_back_leaves_the_model_not_installed_and_the_next_is_refused_as_held()
+ {
+    // A held repair takes the directory's lock twice: to clear the pointer, and to
+    // put it back. The second is not given: refused by the file system, or held by
+    // another until the tries run out.
+    for busy in [false, true] {
+        let scratch = Scratch::new("publish-held-repair");
+        let root = scratch.path();
+        let record = installed(root, &first());
+        let folder = folder_of(root, &record);
+        flip(&folder.join("files/graph.onnx"), 9);
+        let hold = held(root, &record);
+        let locks = {
+            let fs = Arc::new(ShimFs::new());
+            let refused = installing(&fs, root, &first(), &serving_both()).unwrap_err();
+            assert_eq!(refused, InstallRefused::Held);
+            let events = fs.events();
+            let locks: Vec<usize> = (0..events.len())
+                .filter(|at| events[*at] == Event::Lock(root.join("LOCK")))
+                .collect();
+            assert_eq!(locks.len(), 2);
+            locks
+        };
+        let fs = Arc::new(ShimFs::new());
+        let other = Arc::new(Mutex::new(None));
+        let refused = if busy {
+            let (keep, lock) = (other.clone(), root.join("LOCK"));
+            fs.pause_before(locks[1], move || {
+                *keep.lock().unwrap() = RealFs.hold_lock_file(&lock, true).unwrap();
+            });
+            let refused = installing(&fs, root, &first(), &serving_both()).unwrap_err();
+            assert!(other.lock().unwrap().take().is_some());
+            assert_eq!(refused, InstallRefused::DirectoryBusy);
+            refused
+        } else {
+            fs.refuse_before(locks[1]);
+            installing(&fs, root, &first(), &serving_both()).unwrap_err()
+        };
+        assert!(
+            matches!(
+                refused,
+                InstallRefused::Disk(_) | InstallRefused::DirectoryBusy
+            ),
+            "{refused:?}"
+        );
+        // No pointer names the damaged folder, which the run still holds.
+        assert_eq!(reading(root), Current::NotInstalled, "busy {busy}");
+        assert!(folder.exists() && hold_file_of(root, &record).exists());
+        assert_eq!(said(root).map(|said| said.0), Some(State::Failed));
+        assert!(!incoming(root).exists());
+        // The next install of that identity is refused as held, and changes
+        // nothing, until the run lets the folder go.
+        let refused =
+            installing(&Arc::new(ShimFs::new()), root, &first(), &serving_both()).unwrap_err();
+        assert_eq!(refused, InstallRefused::Held, "busy {busy}");
+        assert_eq!(reading(root), Current::NotInstalled, "busy {busy}");
+        assert!(folder.exists());
+        drop(hold);
+        assert_eq!(installed(root, &first()), record, "busy {busy}");
+        assert_eq!(reading(root), Current::Installed(record.clone()));
+        is_whole(root, &record);
+        assert_eq!(installations(root), [record.identity().hex()]);
+    }
 }
 
 #[test]

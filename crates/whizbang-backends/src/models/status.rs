@@ -3,9 +3,10 @@
 //! how far the install is, and how the last one ended.
 //!
 //! It is written for whoever is not the installer: a second request that attaches to
-//! a running install (task M3), and a person. Nothing is decided from it. Whether an
-//! install is running is said by the model's lock; which installation is in use is
-//! said by the pointer. So it is given no sync of its own, and a crash can leave one that
+//! a running install ([`super::install_or_attach`]), and a person. No install, hold
+//! or removal is decided from it; a request that attached is told from it how the
+//! install ended. Whether an install is running is said by the model's lock; which
+//! installation is in use is said by the pointer. So it is given no sync of its own, and a crash can leave one that
 //! says "installing" with no installer alive: a status that says so while the model's
 //! lock is free is the status of an install that died.
 
