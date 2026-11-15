@@ -1519,7 +1519,7 @@ as it was written, by the owner's choice.
 **Done when** these pass: an interrupted reservation adjusted to a lower charge releases
 the difference and the next paid call can use it; a frozen one is unfrozen by its
 adjustment, and the damaged content is still in the store and still named; an adjustment
-below what the reservation's settlements with their whole chain say, one over the most its names can mean, one that raises its count by more than the newest epoch has left, of a released reservation, of one that is not closed and of a run the store does not know
+below what the reservation's settlements with their whole chain say, one over the most its names can mean, one that raises what it counts for in the newest epoch by more than is left there (a reservation of an earlier epoch with its one hold is raised whatever the newest has left: history 42), of a released reservation, of one that is not closed and of a run the store does not know
 are each refused; a second adjustment of the same reservation makes a second record,
 sealed over the first among the reservation's names, and the fold takes the one whose
 seal is of the names as they are, which is the last made; a name of the reservation
@@ -2372,9 +2372,10 @@ also asked to list every history that under-counts and the limit it falls under.
 | 7 | 2026-11-14 | 8 | 1 | No under-count outside the ADR's limits. Sentences of the plan that differed from the ADR: invariants 1 and 6, the recovery summaries, an epoch's isolation in S9 and S12, S12's bounds, I2's case for a call of nothing, the `put` pin |
 | 8 | 2026-11-14 | 3 | 2 | No under-count. Three sentences more, in S9 and S12; two of wording |
 | 9 | 2026-11-14 | 6 | 4 | No under-count outside the limits: fifteen histories listed, each inside one. The bound the ADR stated for a correction's write-off was narrower than its meaning; two sentences where the plan and the ADR differed on the exception; three sentences of the ADR that still stated the stricter rule |
+| 10 | 2026-11-14 | 2 | 1 | No under-count outside the limits: sixteen histories listed, each inside one, its cost covered. One sentence of the ADR on an epoch's isolation, and one case of S12 on a correction upward |
 
-The rounds are numbered after the ADR's six. Every blocker was fixed before the next
-round; ADR 0016, "Review rounds", has the same record.
+The rounds are numbered after the ADR's six. Every blocker was fixed; no round
+followed the tenth. ADR 0016, "Review rounds", has the same record.
 
 ## Risks
 ## Risks

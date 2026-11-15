@@ -491,7 +491,10 @@ more:** that epoch's turns are never made right. It settles what it sent, and en
 epoch's, so a reset closes the books before it: a reservation of an earlier epoch
 counts against that epoch's allowance and no other (history 30), and a correction of
 one is recorded and changes nothing the new allowance can spend, downward or upward
-(histories 31, 32 and 42).
+(histories 32 and 42). That is of a reservation with its one hold that is not frozen.
+A frozen one, and one with no hold or several, counts in every epoch ("What a
+reservation counts for"): the correction of a frozen one ends what it counted in the
+new epoch, and never leaves more there than the reset set (history 31).
 A run that is still executing when its epoch is closed goes on drawing on its own
 reservation, and its settlements and its closing take their turns in that epoch.
 **So a reset does not stop what was admitted before it.** With three reservations of 10
@@ -1782,13 +1785,17 @@ and stands.
 | 7 | 0 | 8 | 0 | 1 |
 | 8 | 0 | 3 | 0 | 2 |
 | 9, the first on the owner's choice | 0 | 2 | 0 | 4 |
+| 10 | 0 | 2 | 0 | 1 |
 
 Round 9 was also asked to list every history that under-counts and the limit each
 falls under, and whether any sentence still stated the stricter rule as in force: it
 listed fifteen, each inside a stated limit; found the bound stated for limit (g)
 narrower than the correction's stated meaning, which is now said there; and found
-three sentences of the stricter rule, which are changed. Every finding was fixed in
-the plan or here before the next round.
+three sentences of the stricter rule, which are changed. Round 10 listed sixteen
+histories that under-count, each inside a stated limit with its cost covered, found
+no sentence of the stricter rule left, and found two sentences on an epoch's
+isolation and a correction upward where the plan and this record differed. Every
+finding was fixed in the plan or here; no round followed the tenth.
 
 ## Consequences
 
@@ -1810,9 +1817,11 @@ the plan or here before the next round.
 - Every admission, settlement and closing takes a turn, so they are published one at a
   time over one store, and the later of two that judged the same books is judged again: as with the fake of
   ADR 0007, and bounded as there by the caller's signal and deadline.
-- The store's balance is never more than the truth, and can be less: an interrupted
+- What the store reports as left of an allowance is never more than is really left,
+  outside the limits (a) to (g), and can be less: an interrupted
   reservation counts in full, an ancestor loses a whole overrun, and a judgement that
-  missed a release is refused.
+  missed a release is refused. Inside the limits it can be more: by 10 in history 86
+  and by 13 in history 87.
 - A name of a reservation that is made, lost or damaged freezes it, and stops its
   own dispatches and nothing else, while its one hold states its amount. Where it
   leaves no hold or several, it stops every admission and every dispatch in the store
