@@ -41,6 +41,7 @@ pub use declare::{
 };
 pub use fault::{FAULT_LIMIT, Fault, FaultKind};
 pub use fill::{FillHandle, FillRequest, Filler, PROMPT_LIMIT, Painted, Support};
+pub(crate) use inventory::{Installable, under};
 pub use inventory::{Installation, Installed, InstalledRoster, Inventory, NoInventory, Unready};
 pub(crate) use judge::Judged;
 pub use judge::{
