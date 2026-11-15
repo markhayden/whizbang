@@ -37,7 +37,8 @@
 //! # Links
 //!
 //! The shim makes no link, and models one only where a removal or a replacing rename
-//! meets it. [`Fs::remove_all`] on a link, or on a folder that holds links, removes the
+//! meets it. A test makes one on the real disk, and [`Fs::is_link`] sees it through the
+//! shim as the real file system does; that look is no event. [`Fs::remove_all`] on a link, or on a folder that holds links, removes the
 //! links themselves, as the real file system does, and never follows one: what a link
 //! leads to is not read, copied, cut or removed. What is kept of a link, so that a
 //! crash can bring it back, is where it leads. A crash that undoes the removal, or the
@@ -1000,6 +1001,12 @@ impl Fs for ShimFs {
         };
         state.events.push(event);
         Ok(Some(Self::keep(&mut state, held)))
+    }
+
+    fn is_link(&self, path: &Path) -> io::Result<bool> {
+        // A look at one name, as `exists` is: not an event.
+        let _state = self.alive()?;
+        self.real.is_link(path)
     }
 }
 

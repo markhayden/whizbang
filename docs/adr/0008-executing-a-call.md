@@ -715,7 +715,13 @@ look and a lock.
 `Accepted` promises that nothing of the run is committed. That the run then ends as
 cancelled needs the store: when the end of a cancelled run is refused by the store, or
 the run's admission was itself not confirmed, the run is abandoned ("A run with nothing
-behind it", below), with no output.
+behind it", below), with no output. And it needs the ledger's books: a run whose
+admission does not stand on them (ADR 0016, "An admission is confirmed before anything
+runs under it") ends as not confirmed, as ADR 0013 has it, whether or not a cancellation
+was accepted between its admission's publication and that reading. It never was a run
+that could execute; its record and its caller say why, and neither says cancelled.
+Nothing of it is committed either way
+(`ledger::a_run_cancelled_before_its_admission_is_answered_as_not_standing_ends_as_not_confirmed`).
 
 **What is held, and for how long.** The run's lock is held to read or change the phase
 and to set or read the signal: a few instructions. It is never held across a call to

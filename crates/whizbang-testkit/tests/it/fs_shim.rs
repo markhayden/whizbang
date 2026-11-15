@@ -304,6 +304,7 @@ fn after_a_crash_every_call_fails_and_nothing_more_reaches_the_disk() {
     assert!(fs.read_at_most(&file, u64::MAX).is_err());
     assert!(fs.list(dir.path()).is_err());
     assert!(fs.exists(&file).is_err());
+    assert!(fs.is_link(&file).is_err());
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     assert_eq!(on_disk(&file).unwrap(), b"content");
 }
@@ -450,6 +451,27 @@ fn events_are_recorded_in_order_and_reads_are_not_events() {
             Event::Remove(g.clone()),
         ]
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_a_test_made_is_seen_through_the_shim_and_the_look_is_no_event() {
+    let dir = Scratch::new("shim-is-link");
+    let fs = ShimFs::new();
+    let folder = dir.path().join("folder");
+    let link = dir.path().join("link");
+    std::fs::create_dir(&folder).unwrap();
+    std::os::unix::fs::symlink(&folder, &link).unwrap();
+    assert!(fs.is_link(&link).unwrap());
+    assert!(!fs.is_link(&folder).unwrap());
+    assert!(!fs.is_link(&dir.path().join("missing")).unwrap());
+    assert_eq!(fs.events(), vec![]);
+    // Seen, not followed and not changed: the link leads where it led.
+    assert_eq!(std::fs::read_link(&link).unwrap(), folder);
+    // A removal through the shim takes the link itself, and the look then says so.
+    fs.remove_all(&link).unwrap();
+    assert!(!fs.is_link(&link).unwrap());
+    assert!(folder.is_dir());
 }
 
 #[test]

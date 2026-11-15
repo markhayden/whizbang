@@ -222,7 +222,7 @@ impl Streamed {
 fn streams_nothing<T>() -> io::Result<T> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "this file system streams no file and tries no share",
+        "this file system streams no file, tries no share and looks at no link",
     ))
 }
 
@@ -297,6 +297,17 @@ pub trait Fs: Send + Sync {
     /// As [`Fs::share`], without waiting: `None` when one has the file alone
     /// ([`Fs::try_alone`], or a lock file held on it). It returns at once either way.
     fn try_share(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
+        let _ = path;
+        streams_nothing()
+    }
+    /// Whether the name itself is a symbolic link, looked at without following it:
+    /// what it leads to, and whether anything is there, is not asked. False when
+    /// nothing has the name, or a name on the way to it is no directory; a link on
+    /// the way to the name is followed, as by every call here. It reads one name and
+    /// changes nothing. Added with the models directory (ADR 0017, "A folder of the
+    /// layout that is a link"), and answered as the three calls above are by a file
+    /// system that does not give it.
+    fn is_link(&self, path: &Path) -> io::Result<bool> {
         let _ = path;
         streams_nothing()
     }
@@ -657,6 +668,21 @@ impl Fs for RealFs {
 
     fn try_share(&self, path: &Path) -> io::Result<Option<Box<dyn Held>>> {
         Ok(try_share(path)?.map(|file| Box::new(file) as Box<dyn Held>))
+    }
+
+    fn is_link(&self, path: &Path) -> io::Result<bool> {
+        match std::fs::symlink_metadata(path) {
+            Ok(found) => Ok(found.is_symlink()),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                ) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 
