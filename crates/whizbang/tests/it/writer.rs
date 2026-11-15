@@ -53,8 +53,9 @@ fn the_binary_opens_a_store_to_write_in_one_place_and_through_the_entry_point() 
     for (name, text) in &sources {
         for line in code(text) {
             // The store's own open is named nowhere: no writer without a recovery.
+            let named = ["Store::open", "Store>::open", "Store ::"];
             assert!(
-                !line.contains("Store::open"),
+                !named.iter().any(|name| line.contains(name)),
                 "{name} opens a store to write past the entry point: {line}"
             );
             // The store's type is named where a writer is held, and nowhere is it
