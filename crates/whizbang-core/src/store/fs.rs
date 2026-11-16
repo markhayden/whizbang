@@ -311,6 +311,30 @@ pub trait Fs: Send + Sync {
         let _ = path;
         streams_nothing()
     }
+    /// Whose this folder is and who else may write it, by its owner and its mode. A
+    /// link at the name is followed: the folder asked about is the one the name
+    /// leads to. What has the name and is no folder is an error, and so is a name
+    /// nothing has. It reads one name and changes nothing in the folder or beside
+    /// it. Added with the models directory (ADR 0017, "A models directory is its
+    /// owner's alone"), and answered as the calls above are by a file system that
+    /// does not give it. Lists of who else may reach a folder that a system keeps
+    /// beside its mode are not read.
+    fn who_may_write(&self, path: &Path) -> io::Result<Writers> {
+        let _ = path;
+        streams_nothing()
+    }
+}
+
+/// Who may write a folder, by its owner and its mode: what [`Fs::who_may_write`]
+/// answers. It holds no name and no number of a user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Writers {
+    /// The folder's owner is the user this process runs as.
+    pub owner_is_this_user: bool,
+    /// The folder's mode lets its group write it.
+    pub group: bool,
+    /// The folder's mode lets anyone write it.
+    pub anyone: bool,
 }
 
 /// An open file with a lock on it, which ends when this value is dropped, and the id of
@@ -453,6 +477,70 @@ fn new_file(path: &Path) -> io::Result<std::fs::File> {
         options.mode(0o600);
     }
     options.open(path)
+}
+
+/// The user this process runs as, as the number the system knows it by: the owner of
+/// a file the process has just made. The standard library does not say who the
+/// process runs as, and the workspace has no crate and no `unsafe` that would; the
+/// system gives a new file to whoever made it. The file is made in the system's
+/// temporary folder under a name that was free, following no link, owner-only and
+/// empty, and is removed at once; it is asked once in a process.
+#[cfg(unix)]
+fn this_user() -> io::Result<u32> {
+    use std::os::unix::fs::MetadataExt;
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static USER: OnceLock<u32> = OnceLock::new();
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    if let Some(user) = USER.get() {
+        return Ok(*user);
+    }
+    let folder = std::env::temp_dir();
+    // A name that is taken is another's file, and is left: the next name is tried, a
+    // bounded count of times.
+    for _ in 0..16 {
+        let path = folder.join(format!(
+            "whizbang-user-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        match new_file(&path) {
+            Ok(file) => {
+                let user = file.metadata().map(|made| made.uid());
+                let _ = std::fs::remove_file(&path);
+                let user = user?;
+                return Ok(*USER.get_or_init(|| user));
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::ErrorKind::AlreadyExists.into())
+}
+
+/// [`Fs::who_may_write`] for the real file system.
+#[cfg(unix)]
+fn who_may_write(path: &Path) -> io::Result<Writers> {
+    use std::os::unix::fs::MetadataExt;
+    let found = std::fs::metadata(path)?;
+    if !found.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            "what has the name is no folder",
+        ));
+    }
+    Ok(Writers {
+        owner_is_this_user: found.uid() == this_user()?,
+        group: found.mode() & 0o020 != 0,
+        anyone: found.mode() & 0o002 != 0,
+    })
+}
+
+/// Where a folder has no owner and no mode to read, nothing is said of it.
+#[cfg(not(unix))]
+fn who_may_write(_path: &Path) -> io::Result<Writers> {
+    streams_nothing()
 }
 
 /// [`NewFile`] for the real file system.
@@ -683,6 +771,10 @@ impl Fs for RealFs {
             }
             Err(error) => Err(error),
         }
+    }
+
+    fn who_may_write(&self, path: &Path) -> io::Result<Writers> {
+        who_may_write(path)
     }
 }
 
