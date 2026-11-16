@@ -1,15 +1,14 @@
 # Checkpoint 1B note
 
-Checkpoint 1B, "policy and controls", has every build task merged as of 2026-11-15. Its
-plan is `m1b-policy-and-controls.md`; this note says what shipped, what the entry check
+Checkpoint 1B, "policy and controls", is complete: its build tasks were all merged by
+2026-11-15. Its plan is `m1b-policy-and-controls.md`; this note says what shipped, what the entry check
 changed in the plan, what the owner decided on the way and what each decision cost, the
 limits that were accepted, how long things take, what was spent, what moved to the
 carry-over list, a test that failed twice on one runner, and what a reader should not
 assume. It was written by the exit check
-(task Z1) from `main` at commit c9ecf9c, the merge of pull request #135. The tag `m1b` is
-made by the orchestrator, and waits on the investigation of that test ("A test that
-failed twice on Linux and has passed since"); a later edit records its commit, as the
-note of 1A does.
+(task Z1) from `main` at commit c9ecf9c, the merge of pull request #135, and brought up
+to date by the two pull requests after it. The tag `m1b` is on the merge of the last
+pull request of the checkpoint, which made the last edit to this note.
 
 ## What whizbang can do at this tag
 
@@ -25,7 +24,8 @@ backend, every download and every recipient in every test is a fake from the tes
 
 ## What shipped, by strand
 
-Eighty pull requests, #56 to #135. Each strand's records are its ADRs.
+Eighty-three pull requests: #56 to #137, and the last pull request of the checkpoint.
+Each strand's records are its ADRs.
 
 | Strand | Pull requests | What |
 |---|---|---|
@@ -39,9 +39,7 @@ Eighty pull requests, #56 to #135. Each strand's records are its ADRs.
 | Models (M1 to M6b) | #74, #78, #79, #80, #85, #87, #89, #100, #101, #102, #103, #104, #108, #109, #111, #122 | A models directory outside any store: a catalogue, an installation and its identity; staging a download checked by size and hash; publication with a crash at each step; attach and cancel, across processes; holds as file locks; removal that drains and answers busy at its deadline; readiness from what is installed; a lease on the admitted installation (ADRs 0017 and 0018) |
 | The binary wired (W1) | #132, #133, #134, #135 | The binary's executor built over the config's source, the real ledger, the cap and the hour, the gate, the meter, and the inventory and the lease where it is given a models directory |
 | Tooling (X1 to X6) | #58, #60, #63, #66, #67, #69, #75, #113 | A key directly after a word character; a planted registry fails `just deny`; a pull request's title and body scanned; a push made around the hooks; a script read whole before it runs; no quiet search after a pipe; the crash sweeps two at a time |
-
-The exit check's own pull request adds two tests through the binary's wiring, splits
-one crash sweep, brings the carry-over list and the records in line, and this note.
+| Exit (Z1) | #136, #137, and the last pull request of the checkpoint | The exit check: two tests through the binary's wiring, one crash sweep split, the carry-over list and the records brought in line, and this note; the fix of a store refused as held by the process that had let it go (below); two more tests of that fix, and the note and the plan as they are at the tag |
 
 ## The clauses of the spec's row, each with its tests
 
@@ -208,8 +206,10 @@ The plan changed far more after that, and not at the entry check: the next secti
 
 ## Timing
 
-Measured on 2026-11-15, on the tree of the exit check's pull request (1,993 fast tests;
-`main` has 1,987).
+Measured on 2026-11-15 by the exit check, on the tree of its pull request, #136 (1,993
+fast tests; `main` at c9ecf9c had 1,987). The tree at the tag has 1,998: the fix of
+the store refused as held added three, and the last pull request two. With them, one run of `just check` on the owner's Mac, other builds at work on the machine, took 75.8
+seconds of tests.
 
 | What | Where | Time |
 |---|---|---|
@@ -229,7 +229,7 @@ measured here: under 3 minutes of test time, and under 10 minutes of pull-reques
 on both runners, the macOS job with less than a minute to spare.
 
 Seconds by suite, summed over tests that run side by side, so the rows add up to more
-than the test time (the third local run):
+than the test time (the third local run, on the exit check's tree):
 
 | Suite | Tests | Seconds |
 |---|---|---|
@@ -301,7 +301,7 @@ No limit was touched. The test of 256 calls
 is as it was: its time is the cost of a publication, which is milestone 2's (its
 carry-over row).
 
-## A test that failed twice on Linux and has passed since
+## A test that failed twice on Linux: a fault of the code, found and fixed before the tag
 
 Two pushes to `main` on 2026-11-15 failed on the Linux runner, and on nothing else: the
 merges of pull requests #130 (commit 6808ee8) and #131 (commit 7873c2a). It was not a
@@ -349,7 +349,15 @@ out of the table of open runs through a value that holds the table and no writer
 `started::a_wait_for_a_started_run_answers_only_when_its_thread_holds_nothing_of_the_store`
 and, among the core's unit tests,
 `engine::tests::the_executors_hold_on_a_run_holds_nothing_of_the_store_when_a_wait_can_answer`.
-The test that failed is unchanged, and passed 200 times of 200 after the fix. ADR 0015
+The test that failed is unchanged, and passed 200 times of 200 after the fix. The last
+pull request of the checkpoint added two tests for what those two leave open, each
+shown to fail on the change it is there for:
+`engine::tests::a_started_run_that_was_admitted_leaves_the_table_with_its_thread_holding_nothing_of_the_store`
+takes the hold that an admission makes on a run, where the unit test above builds one
+by hand; and
+`started::a_started_run_whose_executor_panics_outside_its_action_is_abandoned_only_when_its_thread_holds_nothing_of_the_store`
+has the executor's clock panic once the action has come back, so that the thread lets
+go by unwinding. ADR 0015
 says what is left ("One way to a writer, with recovery before it", limits): only a wait
 is that event, and the thread of a started run that nobody waited for holds the writer
 until it is done (its carry-over row, beside the one on the locks).
@@ -375,10 +383,13 @@ cut.
 | What the cut of the spend strand left unbuilt; the money in a recovery; an overrun taken whole from every run above it; a dispatch asked outside a wrapper and a record's kinds for a refused dispatch; a fuller record of what an interrupted run did | None; reopen on need |
 | A push that runs no hook; a key of one shape after a word character | Dropped: accepted by the owner, each kept as a line |
 | A reader that ends early after a pipe, in the forms the rule does not find | When a pipeline fails at random |
+| A writer let go, and the store opened again, while the thread of a started run that nobody waited for still holds it | 5, before `whizbang serve`; sooner with the first door that starts a run and lets its writer go |
 
 The exit check removed one row as met (a refused request has no dispatch record:
 `meter::a_request_the_gate_refused_has_no_dispatch_record`), took the finished halves
 out of five rows and gave what was left its later owner, and added one (`runs show`).
+It also added the row on the test that failed on Linux; the fix left in it what remains,
+for milestone 5.
 
 ## What the fake ledger is still for
 
@@ -431,8 +442,7 @@ module's own comment says the same.
 
 ## What checkpoint 1C starts from
 
-`main` at the commit tagged `m1b`, once the investigation above allows the tag, with CI
-green and both scans clean; `run/3` as the
+`main` at the commit tagged `m1b`, with CI green and both scans clean; `run/3` as the
 record's version; a build with no kind of backend, no network client and no catalogue;
 the interfaces a first local backend meets, each proven against a fake: a kind made
 from a config's table, the inventory and the lease over a models directory, the gate
