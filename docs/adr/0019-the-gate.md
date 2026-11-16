@@ -39,6 +39,8 @@ Amended: 2026-11-15, with task W1 (ADR 0015, "The binary wired"). Changed under
 "Limits" and "For later tasks": the binary's executor is given its config's policy,
 and the check over a sender goes to the task that gives it a sender.
 Spec: section 10, "Egress"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 
 ## Context
 

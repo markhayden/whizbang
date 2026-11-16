@@ -106,6 +106,8 @@ Amended: 2026-11-15, with task W1 (ADR 0015, "The binary wired"). Changed under 
 inventory" and "The lease": what a config offers is put over an inventory, and the
 binary's wiring takes the inventory and puts the lease in its place.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 
 ## Context
 

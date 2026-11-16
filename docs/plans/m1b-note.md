@@ -4,10 +4,12 @@ Checkpoint 1B, "policy and controls", has every build task merged as of 2026-11-
 plan is `m1b-policy-and-controls.md`; this note says what shipped, what the entry check
 changed in the plan, what the owner decided on the way and what each decision cost, the
 limits that were accepted, how long things take, what was spent, what moved to the
-carry-over list, and what a reader should not assume. It was written by the exit check
+carry-over list, a test that failed twice on one runner, and what a reader should not
+assume. It was written by the exit check
 (task Z1) from `main` at commit c9ecf9c, the merge of pull request #135. The tag `m1b` is
-made by the orchestrator on the merge of the pull request that brings this note; a later
-edit records its commit, as the note of 1A does.
+made by the orchestrator, and waits on the investigation of that test ("A test that
+failed twice on Linux and has passed since"); a later edit records its commit, as the
+note of 1A does.
 
 ## What whizbang can do at this tag
 
@@ -127,7 +129,7 @@ The plan changed far more after that, and not at the entry check: the next secti
   record, owner none).
 - **The ledger's arithmetic was settled with code in hand (2026-11-13).** Six rounds had
   each gone one level deeper into names and sums written as prose. Task I2 wrote ADR
-  0016 beside an executable model of the fold and a table of named histories, 87 in
+  0016 beside an executable model of the fold and a table of named histories, 89 in
   the end, run as tests. Cost: the longest record of the project and a strand that
   started late.
 - **The less strict rule for a damaged spend record (2026-11-14, and again on
@@ -247,7 +249,7 @@ On the two runners, for `main` at c9ecf9c (1,987 tests), in the same order: macO
 1.0, 2.4, 15.2, 0.0 and 9.8. Each of the binary's tests starts a process, which costs
 most on the owner's Mac.
 
-**Each crash sweep alone.** The sweeps crash a store or a models directory before every
+**The crash sweeps with nothing else beside them, two at a time.** The sweeps crash a store or a models directory before every
 step of something and try every way the disk can lose what was not durable. They run
 two at a time (`.config/nextest.toml`). Run with nothing else beside them, on the
 owner's Mac, as the sum of a sweep's parts and its slowest part:
@@ -298,6 +300,31 @@ quarter off the slowest and leaves it where the next two sweeps to start already
 No limit was touched. The test of 256 calls
 is as it was: its time is the cost of a publication, which is milestone 2's (its
 carry-over row).
+
+## A test that failed twice on Linux and has passed since
+
+Two pushes to `main` on 2026-11-15 failed on the Linux runner, and on nothing else: the
+merges of pull requests #130 (commit 6808ee8) and #131 (commit 7873c2a). It was not a
+limit on time: both runs stopped at the first failure after about 22 seconds of tests.
+It was one test, the same both times, failing in 0.04 seconds:
+`interrupted::a_run_that_is_executing_in_this_process_and_one_this_process_abandoned_are_left_alone`.
+
+Both times it panicked in the helper that opens its store again as the next process
+would, straight after a run whose action lost power and whose executor was dropped
+(`crates/whizbang-core/tests/it/contract/interrupted.rs`, line 97): the store was
+refused as held to write. The first run said `Held { root: ".../store", holder: None }`,
+the second `Held { root: ".../store", holder: Some("process <the test's own> (it-…)") }`.
+So the writer's lock was still held by the test's own process when it asked again.
+
+It is intermittent. The runs of both pull requests were green on their own heads, the
+macOS runner passed on both pushes, `main` was green before them and has been green on
+every run since, and neither the test nor anything it uses of the store or the
+executor changed in between. **The cause was not established when this note was
+written.** The carry-over row on the store's locks knows a writer refused as held with
+no holder named, from a child process being started; this test starts none that the
+exit check could see. A separate investigation was started before the tag, and **the
+tag `m1b` waits on it**: if the fault is in the code and not in the test, it is 1B's
+to fix (its carry-over row, beside the one on the locks).
 
 ## Spend
 
@@ -351,6 +378,12 @@ module's own comment says the same.
   has stated cases where it counts less. Its proofs are the model, the table of
   histories and the crash sweep of an admission; the meter, a settlement, a closing and
   the two commands have ordinary tests and no sweep.
+- **A free run does not touch the spend books, and a paid one reads all of them.** A
+  call that may cost nothing is admitted without the ledger and makes no name under
+  `spend/`, so the books do not list it. A paid admission folds every name the store
+  holds under `spend/`, those of epochs a reset closed among them, so it is slower the
+  longer a store has been paid from. The remedy is milestone 2's (the carry-over row
+  on what every publication costs).
 - **"Through the binary" mostly means through its wiring.** `spend status`, `spend
   reset`, `runs show`, `runs list` and `store prune` are run as the real binary in
   those tests; the call itself is made by a test on the executor the binary's own
@@ -370,7 +403,8 @@ module's own comment says the same.
 
 ## What checkpoint 1C starts from
 
-`main` at the commit tagged `m1b`, with CI green and both scans clean; `run/3` as the
+`main` at the commit tagged `m1b`, once the investigation above allows the tag, with CI
+green and both scans clean; `run/3` as the
 record's version; a build with no kind of backend, no network client and no catalogue;
 the interfaces a first local backend meets, each proven against a fake: a kind made
 from a config's table, the inventory and the lease over a models directory, the gate

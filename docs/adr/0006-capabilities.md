@@ -50,6 +50,8 @@ declaration's three names are bounded; a fault and a turn are redacted whole by 
 handle before they are cleaned and cut.
 Spec: section 3, "Crates and their edges", "Identities" and "Storage"; section 4,
 "Backends"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 
 ## Context
 

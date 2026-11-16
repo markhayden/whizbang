@@ -68,6 +68,8 @@ Amended: 2026-11-15, after the review of task W1. Added: "A call that may cost
 nothing", after "The strand cut down": the executor admits it without asking the
 ledger, whatever the books say. Changed with it: three rows of "The real ledger".
 Spec: section 6, "Spend"; section 3, "Storage"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 
 ## Context
 

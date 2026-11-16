@@ -20,6 +20,8 @@ origin alone holds (`https://HOST/Path` or `https://host:443/Path` for a secret
 `host/Path`); such an address is refused as one that holds a secret
 (`ways_out::a_secret_that_folding_an_address_makes_across_its_host_and_its_path_is_refused`).
 Spec: section 4, "Backends"; section 6, "Spend"; section 10, "Egress"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 
 ## Context
 

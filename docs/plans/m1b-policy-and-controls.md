@@ -2667,6 +2667,10 @@ and every script test passes on both runners.
 - The tag is the orchestrator's, after the pull request of this task is reviewed and
   merged: the box stays open in this pull request, and is ticked by the one that
   records the tag's commit in the note.
+  It also waits on one thing the exit check found and did not settle: a test of
+  the core that failed twice on the Linux runner on pushes to `main` and has passed
+  since (the note, "A test that failed twice on Linux and has passed since"; its row
+  in `docs/carry-over.md`).
 
 **Reworded with the task.** "Each crash sweep's time alone" is given for each sweep
 with every sweep running and nothing else beside them, two at a time as the test

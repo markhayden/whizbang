@@ -62,6 +62,8 @@ before what is listed, a text that could mean two runs is refused, and `store de
 finds a run as `runs show` does.
 Spec: section 3, "What every run records", "The execution contract", "Storage" and "Metrics
 from ordinary runs"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 
 ## Context
 

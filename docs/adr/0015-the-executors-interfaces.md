@@ -89,6 +89,8 @@ Amended: 2026-11-15, after the review of task W1, a second change. Changed under
 binary wired": a call that may cost nothing is admitted without the ledger (ADR
 0016, "A call that may cost nothing"), so a free run has no name under `spend/`.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 
 ## Context
 

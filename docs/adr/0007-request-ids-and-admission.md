@@ -11,8 +11,12 @@ opened to write, which "Alternatives" turned down for now.
 Changed by ADR 0016, from the
 second pull request of its task on: what a ledger's names are, and their grammar; a
 ledger cannot return from `reserve` without having made its names, and takes part in
-the publication that ends a run; a `put` under `requests/` or `spend/` is refused
+the publication that ends a run; a `put` under `requests/` or `spend/` is refused;
+and since 2026-11-15 a call whose estimate is nothing makes no reservation ("A call
+that may cost nothing")
 Date: 2026-11-12
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 Amended: 2026-11-15, with task S2 of checkpoint 1B: the sweep of a crash inside the
 admission's publication is run with the real ledger, and is named anew ("Admission").
 Amended: 2026-11-12, with the second pull request of task A6. Added: "The estimate" and
@@ -330,7 +334,8 @@ zero; a call from inside an action has none, and draws on its parent's (ADR 0008
 "Nested calls"). An executor
 without one reserves nothing, writes `reserved_micros` as null and makes no name under
 `spend/`: that is the binary today, which has no ledger until checkpoint 1B. (It has the real
-one since: ADR 0015, "The binary wired"; ADR 0016.)
+one since: ADR 0015, "The binary wired"; ADR 0016; and since 2026-11-15 a call whose
+estimate is nothing makes no reservation: ADR 0016, "A call that may cost nothing".)
 
 **What "takes part in the step" means.** The interface is `Ledger::reserve`, called
 inside admission once for every attempt at the admission's publication, after the
@@ -652,7 +657,9 @@ before.
   no implementation had to change. Its answer is an `Estimate`, which carries the unit.
 - Every admission through a ledger adds two names outside runs, the reservation's and
   the ledger's, which are never removed: with the two of an id, four for a request. They
-  add to the cost of every publication named above.
+  add to the cost of every publication named above. (Since 2026-11-15 an admission
+  whose estimate is nothing adds none of the ledger's: ADR 0016, "A call that may cost
+  nothing".)
 - An admission written by the first two parts of this task has no `reserved_micros` and
   is not read; a `run/1` record is another version. A store is not kept before the tag
   of checkpoint 1A (ADR 0005).

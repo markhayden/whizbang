@@ -18,6 +18,8 @@ hold. Changed: what remains of a record over the limit, which is nothing (ADR 00
 call; and the sentence of the plan on the tool list, which is corrected there.
 Spec: section 3, "The execution contract", "What a run publishes", "What a judge model may
 call" and "What every run records"; section 4, "Backends"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 
 ## Context
 

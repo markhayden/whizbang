@@ -65,6 +65,10 @@ env file a second time was considered and is not done, with why. And under "What
 config offers": over an inventory.
 Spec: section 4, "Backends" (config, resolution, credentials); section 6, "Spend";
 section 10, "Egress"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; and under "Kinds", that a backend which names a
+recipient must not declare a version written as a bare identity, which ADR 0015
+already decided. No decision changed.
 
 ## Context
 

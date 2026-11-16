@@ -58,6 +58,8 @@ prepare does, in order": the two bounds on what a call may hold, its texts and i
 inputs, which ADR 0008 decides.
 Spec: section 3, "The execution contract", "Identities" and "Storage"; section 6,
 "Readiness"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 
 ## Context
 
