@@ -861,9 +861,9 @@ pinned tools.
 
 **Depends on:** C0. It contacts nothing and needs no approval.
 
-- [ ] The module roots `pack/` and `net/` in `whizbang-backends`, and the subcommands
+- [x] The module roots `pack/` and `net/` in `whizbang-backends`, and the subcommands
       `models`, `backends` and `setup` as stubs that say they are not built.
-- [ ] The folder `pack/conformance/vectors/`, empty but for a line saying what it holds.
+- [x] The folder `pack/conformance/vectors/`, empty but for a line saying what it holds.
 
 **Done when** `just check` passes; each stub says it is not built and exits with an
 error; `whizbang describe` and the generated reference are unchanged. **Size:** small.
@@ -1137,9 +1137,9 @@ download and a probe", "For later tasks"; `egress/ways.rs`, `chains.rs`, `hops.r
 **Depends on:** C1a. **Reads:** ADR 0017, "Three kinds of lock", "A folder of the layout
 that is a link", "Limits"; `models/directory.rs`; `store/fs.rs`.
 
-- [ ] D13: a models directory is made for its owner only, and one that another can
+- [x] D13: a models directory is made for its owner only, and one that another can
       write is refused when it is opened, with a refusal that says how to fix it.
-- [ ] The directory's lock is asked for until a time, by an amendment to ADR 0017,
+- [x] The directory's lock is asked for until a time, by an amendment to ADR 0017,
       "Three kinds of lock": tries paced by the injected clock for 5 seconds, then
       busy. The 20,000 tries stay beside it as a ceiling, so that a clock that stands
       still, as a test's does, cannot make the tries endless. A lock that blocks

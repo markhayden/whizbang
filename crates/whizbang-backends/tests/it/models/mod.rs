@@ -6,6 +6,8 @@
 mod attaching;
 mod catalogue;
 mod crashes;
+#[cfg(unix)]
+mod directory;
 mod downloads;
 mod holds;
 mod identity;
