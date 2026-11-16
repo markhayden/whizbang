@@ -8,7 +8,9 @@
 //!
 //! A hold is given or refused at once, under the directory's lock, after the draining
 //! mark and the pointer were read there: it is given only on the installation the
-//! pointer names, and only while no mark is set. It makes nothing on the disk but the
+//! pointer names, and only while no mark is set whose remover is alive
+//! ([`super::draining`]). It has the model's count of removals as it read it there
+//! ([`Hold::removals`]). It makes nothing on the disk but the
 //! directory's `LOCK`, when that is not there yet; the hold file was made by the
 //! install that first published the identity.
 //!
@@ -29,6 +31,7 @@ use whizbang_core::store::fs::Held;
 use super::directory::{LINKED, is_linked};
 use super::install::{Pointer, read_pointer};
 use super::name::holds_secret;
+use super::remove::{removals_read, stops};
 use super::{InstallationId, ModelName, ModelsDir};
 
 /// Why a hold was not given. Fixed words, and no path.
@@ -42,7 +45,8 @@ pub enum HoldRefused {
     NotNamed,
     /// The model is being removed.
     Draining,
-    /// The pointer cannot be read as a pointer, or the installation it names has no
+    /// The pointer cannot be read as a pointer, the model's count of removals
+    /// cannot be read as a count, or the installation the pointer names has no
     /// hold file. A hold makes none.
     Damaged,
     /// The hold file is held alone by one who is deleting the installation's folder.
@@ -69,7 +73,7 @@ impl std::fmt::Display for HoldRefused {
             HoldRefused::NotNamed => "the installation is not the one the model's pointer names",
             HoldRefused::Draining => "the model is being removed, and no hold on it is given",
             HoldRefused::Damaged => {
-                "the model's pointer cannot be read, or its installation has no hold file"
+                "the model's pointer or its count of removals cannot be read, or its installation has no hold file"
             }
             HoldRefused::Deleting => "the installation is being deleted",
             HoldRefused::DirectoryBusy => {
@@ -135,8 +139,9 @@ impl Holds {
 
     /// A hold on this installation of this model, given or refused at once.
     ///
-    /// Under the directory's lock, for a moment: the draining mark is read, then the
-    /// pointer, and the hold is given only when no mark is set and the pointer names
+    /// Under the directory's lock, for a moment: the draining mark is asked after
+    /// ([`super::draining`]), then the pointer is read, then the count of removals,
+    /// and the hold is given only when no live mark is set and the pointer names
     /// this installation. Then the process's share of the hold file is counted up, or,
     /// when the process has none, tried for, without waiting. Nothing is made but
     /// the directory's lock file when there is none, and nothing is waited for but
@@ -159,7 +164,9 @@ impl Holds {
         let folder = dir.model(model);
         let file = folder.join("holds").join(installation.hex());
         let _directory = dir.lock()?.ok_or(HoldRefused::DirectoryBusy)?;
-        if dir.fs().exists(&folder.join("DRAINING"))? {
+        // The one question of a mark: set, and its remover alive. The mark of a
+        // remover that died stops no hold.
+        if stops(dir, model, secrets)? {
             return Err(HoldRefused::Draining);
         }
         match read_pointer(dir, &folder, secrets)? {
@@ -167,6 +174,12 @@ impl Holds {
             Pointer::Names(_) | Pointer::None => return Err(HoldRefused::NotNamed),
             Pointer::Damaged => return Err(HoldRefused::Damaged),
         }
+        // The count of removals, read under the same lock a removal raises it
+        // under: a removal that sets its mark after this hold was given has moved
+        // it from what the hold has.
+        let Some(removals) = removals_read(dir, model, secrets)? else {
+            return Err(HoldRefused::Damaged);
+        };
         // One guard for the count and the share: the last hold let go by one thread
         // and a new one taken by another cannot cross, so no share is let go under a
         // hold that was just counted.
@@ -195,6 +208,7 @@ impl Holds {
             shares: self.shares.clone(),
             file,
             installation,
+            removals,
             gone: AtomicBool::new(false),
         })
     }
@@ -216,6 +230,7 @@ pub struct Hold {
     shares: Shares,
     file: PathBuf,
     installation: InstallationId,
+    removals: u64,
     gone: AtomicBool,
 }
 
@@ -229,6 +244,16 @@ impl Hold {
     /// The installation that is held.
     pub fn installation(&self) -> InstallationId {
         self.installation
+    }
+
+    /// The model's count of removals as this hold read it, under the directory's
+    /// lock, when it was given ([`super::removals`]). Each removal that sets its
+    /// mark raises the count under that lock, and a hold is given only while no
+    /// live mark is set: so a count that has moved from this one says that a
+    /// removal of the model began after the hold was given, whether or not its
+    /// mark is still there (the plan of checkpoint 1C, decision D5).
+    pub fn removals(&self) -> u64 {
+        self.removals
     }
 
     /// Lets the hold go. The first call counts the process's holds on the installation

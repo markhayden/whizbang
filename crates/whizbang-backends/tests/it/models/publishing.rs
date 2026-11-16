@@ -21,7 +21,7 @@ use whizbang_testkit::scratch::Scratch;
 use super::staging::{
     TERMS, at, graph, incoming, names_under, on_disk, serving_both, touches_only,
 };
-use super::{MARKER, file_name, hash, model, none, parts, revision, secrets};
+use super::{MARKER, file_name, hash, live_remover, model, none, parts, revision, secrets};
 
 /// The entry `tiny` at this revision of the catalogue: the same two files under
 /// each, so two revisions are two installations of the same bytes.
@@ -1103,7 +1103,9 @@ fn a_mark_of_draining_stops_the_publication_before_a_hold_file_or_a_pointer_is_m
     // The mark is set when every file is staged and read back, just before the
     // directory's lock is taken to point: a download would have stopped for one
     // set earlier (task M5d), and one that is there when the install starts is
-    // taken off as a dead remover's. It is read as there or not there.
+    // taken off as a dead remover's. It is the mark of a remover that is alive:
+    // the remover's lock is held throughout. It is read as there or not there.
+    let remover = live_remover(root);
     let mark = tiny(root).join("DRAINING");
     let pointing = first_lock_of_the_directory(&events_after(&[&first()], &second()));
     let fs = Arc::new(ShimFs::new());
@@ -1138,9 +1140,11 @@ fn a_mark_of_draining_stops_the_publication_before_a_hold_file_or_a_pointer_is_m
         installing(&fs, scratch.path(), &first(), &serving_both()).unwrap();
         first_lock_of_the_directory(&fs.events())
     };
+    drop(remover);
     let scratch = Scratch::new("publish-draining-repair");
     let root = scratch.path();
     let before = damaged(root);
+    let remover = live_remover(root);
     let folder = folder_of(root, &before);
     let mark = tiny(root).join("DRAINING");
     let fs = Arc::new(ShimFs::new());
@@ -1176,6 +1180,7 @@ fn a_mark_of_draining_stops_the_publication_before_a_hold_file_or_a_pointer_is_m
     held_repair(&fs);
     assert!(tiny(root).join("DRAINING").exists());
     drop(hold);
+    drop(remover);
     std::fs::remove_file(tiny(root).join("DRAINING")).unwrap();
     installed(root, &second());
 }
