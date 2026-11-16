@@ -37,7 +37,7 @@ pub use catalogue::{
     CATALOGUE_FORMAT, CATALOGUE_MAX_BYTES, Catalogue, CatalogueFile, Entry, EntryParts,
     FEATURES_LIMIT, FILES_LIMIT, MODELS_LIMIT, ORIGINS_LIMIT,
 };
-pub use directory::ModelsDir;
+pub use directory::{ModelsDir, OpenRefused};
 pub use hold::{Hold, HoldRefused, Holds};
 pub use install::{Current, Damage, InstallRefused, current, install, install_or_attach};
 pub use installation::{

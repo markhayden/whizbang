@@ -996,9 +996,9 @@ download and a probe", "For later tasks"; `egress/ways.rs`, `chains.rs`, `hops.r
 **Depends on:** C1a. **Reads:** ADR 0017, "Three kinds of lock", "A folder of the layout
 that is a link", "Limits"; `models/directory.rs`; `store/fs.rs`.
 
-- [ ] D13: a models directory is made for its owner only, and one that another can
+- [x] D13: a models directory is made for its owner only, and one that another can
       write is refused when it is opened, with a refusal that says how to fix it.
-- [ ] The directory's lock is asked for until a time, by an amendment to ADR 0017,
+- [x] The directory's lock is asked for until a time, by an amendment to ADR 0017,
       "Three kinds of lock": tries paced by the injected clock for 5 seconds, then
       busy. The 20,000 tries stay beside it as a ceiling, so that a clock that stands
       still, as a test's does, cannot make the tries endless. A lock that blocks
