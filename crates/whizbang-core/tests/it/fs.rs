@@ -637,7 +637,61 @@ fn a_file_system_without_the_new_calls_says_so_and_touches_nothing() {
     let error = Bare.is_link(&file).err().unwrap();
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
     path_free(&error, &dir);
+    // Not "its owner's alone": whose a folder is was not said.
+    let error = Bare.who_may_write(dir.path()).err().unwrap();
+    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+    path_free(&error, &dir);
     assert!(Bare.try_alone(&file).unwrap().is_some(), "and nothing held");
+}
+
+// --- whose a folder is, and who else may write it -------------------------------------------------
+
+#[cfg(unix)]
+#[test]
+fn who_may_write_a_folder_is_read_from_its_owner_and_its_mode_and_a_link_to_it_is_followed() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let dir = Scratch::new("fs-writers");
+    let folder = dir.path().join("folder");
+    // A folder this file system made is its user's, and nobody else's to write.
+    RealFs.create_dir(&folder).unwrap();
+    let alone = RealFs.who_may_write(&folder).unwrap();
+    assert!(alone.owner_is_this_user && !alone.group && !alone.anyone);
+    // The two bits are read each by itself; the bits that let others read, and the
+    // owner's own, are not asked.
+    let link = dir.path().join("link");
+    symlink(&folder, &link).unwrap();
+    for (mode, group, anyone) in [
+        (0o700, false, false),
+        (0o755, false, false),
+        (0o500, false, false),
+        (0o720, true, false),
+        (0o702, false, true),
+        (0o722, true, true),
+        (0o1777, true, true),
+    ] {
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(mode)).unwrap();
+        for name in [&folder, &link] {
+            let found = RealFs.who_may_write(name).unwrap();
+            assert!(found.owner_is_this_user, "{mode:o}");
+            assert_eq!((found.group, found.anyone), (group, anyone), "{mode:o}");
+        }
+    }
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+    // It changes nothing, and leaves nothing beside the folder.
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 0);
+    // A file is no folder, and a name nothing has is not there: each an error, with
+    // no path.
+    let file = dir.path().join("file");
+    std::fs::write(&file, b"content").unwrap();
+    let error = RealFs.who_may_write(&file).err().unwrap();
+    assert_eq!(error.kind(), io::ErrorKind::NotADirectory);
+    path_free(&error, &dir);
+    let error = RealFs
+        .who_may_write(&dir.path().join("missing"))
+        .err()
+        .unwrap();
+    assert_eq!(error.kind(), io::ErrorKind::NotFound);
 }
 
 // --- a look at a name for a link -----------------------------------------------------------------

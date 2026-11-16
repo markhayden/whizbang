@@ -91,7 +91,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use whizbang_core::store::fs::{Fs, Held, LockFile, NewFile, OpenFile, RealFs, Streamed};
+use whizbang_core::store::fs::{Fs, Held, LockFile, NewFile, OpenFile, RealFs, Streamed, Writers};
 
 /// One recorded call that changes the disk or makes a change durable. The reads of the
 /// store's own calls are not events; the opening and the pieces of a file read piece by
@@ -1007,6 +1007,12 @@ impl Fs for ShimFs {
         // A look at one name, as `exists` is: not an event.
         let _state = self.alive()?;
         self.real.is_link(path)
+    }
+
+    fn who_may_write(&self, path: &Path) -> io::Result<Writers> {
+        // A look at one name, as `is_link` is: not an event.
+        let _state = self.alive()?;
+        self.real.who_may_write(path)
     }
 }
 
