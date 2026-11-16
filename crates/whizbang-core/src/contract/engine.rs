@@ -2201,11 +2201,14 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicBool;
     use std::time::{Duration, Instant};
 
+    use whizbang_testkit::barrier::Barriers;
     use whizbang_testkit::scratch::Scratch;
 
     use super::*;
+    use crate::contract::{Kind, NoBackends};
     use crate::store::fs::RealFs;
 
     #[test]
@@ -2400,6 +2403,94 @@ mod tests {
         );
         drop(not_told);
         letting_go.join().unwrap();
+        live.wait_until_over();
+    }
+
+    /// A clock that stops at the barrier `end` the first time it is asked the time
+    /// once a test has armed it.
+    struct StopsOnceArmed {
+        barriers: Barriers,
+        armed: AtomicBool,
+    }
+
+    impl Clock for StopsOnceArmed {
+        fn now_ms(&self) -> u64 {
+            if self.armed.swap(false, Ordering::SeqCst) {
+                self.barriers.stop_at("end");
+            }
+            9000
+        }
+    }
+
+    /// The action `work`, which stops at the barrier `busy`.
+    struct Works(ActionDescriptor, Barriers);
+
+    impl Action for Works {
+        fn descriptor(&self) -> &ActionDescriptor {
+            &self.0
+        }
+
+        fn run(&self, _: &PreparedCall, _: &Context) -> Result<Produced, Failure> {
+            self.1.stop_at("busy");
+            Ok(Produced::nothing())
+        }
+    }
+
+    #[test]
+    fn a_started_run_that_was_admitted_leaves_the_table_with_its_thread_holding_nothing_of_the_store()
+     {
+        // The test above builds the executor's hold on a run by hand. This one takes
+        // the hold an admission makes: a run is started, and its thread is stopped
+        // where it has let the run go from the table of open runs and is about to
+        // tell whoever waits. It is stopped there by the lock a waiter is told under,
+        // which this test takes while the thread is held at the clock: the executor
+        // asks the time once the run's end has begun, which is the last time it takes
+        // that lock before it tells. At that moment the only writer is this test's.
+        let dir = Scratch::new("over");
+        let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap());
+        let barriers = Barriers::new();
+        let clock = Arc::new(StopsOnceArmed {
+            barriers: barriers.clone(),
+            armed: AtomicBool::new(false),
+        });
+        let draft = ActionDescriptor::draft("work", "1.0.0", Kind::Primitive, "Works.");
+        let mut registry = Registry::new();
+        registry
+            .register(Arc::new(Works(draft.build().unwrap(), barriers.clone())))
+            .unwrap();
+        let executor = Engine::over(
+            registry,
+            Arc::new(NoBackends),
+            store.clone(),
+            Digest::of_bytes(b""),
+        )
+        .with_clock(clock.clone());
+        let request = Request::new(Call::new("work")).with_id(RequestId::parse("order-1").unwrap());
+        let run = match executor.start(&request) {
+            Ok(Answer::Started(run)) => run,
+            other => panic!("the request was not started: {other:?}"),
+        };
+        barriers.arrived("busy", 1);
+        let live = live::of(store.attached(run.as_str()).unwrap()).unwrap();
+        drop(executor);
+        clock.armed.store(true, Ordering::SeqCst);
+        barriers.release("busy");
+        barriers.arrived("end", 1);
+        let not_told = live.not_told_yet();
+        barriers.release("end");
+        let limit = Instant::now() + Duration::from_secs(10);
+        while store.attached(run.as_str()).is_some() {
+            assert!(Instant::now() < limit, "the run never left the table");
+            std::thread::yield_now();
+        }
+        assert!(!not_told.is_over());
+        assert_eq!(
+            Arc::strong_count(&store),
+            1,
+            "the run left the table, and whoever waits is about to be told, while the \
+             hold its admission made on it, or its thread, holds the writer"
+        );
+        drop(not_told);
         live.wait_until_over();
     }
 }

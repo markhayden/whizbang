@@ -8,14 +8,14 @@
 //! for an event, with a limit.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::time::{Duration, Instant};
 
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Answer, Backends, BoundRefused, Call, CallError, Capability, Context,
-    Executor, Failure, Kind, MESSAGE_LIMIT, ModelIdentity, Outcome, PreparedCall, Produced,
-    Refusal, Request, RequestId, Requirement, RunId, RunState, STARTED_RUNS_CEILING,
+    Action, ActionDescriptor, Answer, Backends, BoundRefused, Call, CallError, Capability, Clock,
+    Context, Executor, Failure, Kind, MESSAGE_LIMIT, ModelIdentity, Outcome, PreparedCall,
+    Produced, Refusal, Request, RequestId, Requirement, RunId, RunState, STARTED_RUNS_CEILING,
     STARTED_RUNS_DEFAULT, Secrets, Unavailable, Watched, read_journal,
 };
 use whizbang_core::store::fs::RealFs;
@@ -489,6 +489,71 @@ fn a_wait_for_a_started_run_answers_only_when_its_thread_holds_nothing_of_the_st
     // the store is opened to write again at once.
     let Ok(store) = Arc::try_unwrap(store) else {
         panic!("something of the run still holds the store's writer");
+    };
+    drop(store);
+    Store::open(&root, Arc::new(ShimFs::new())).unwrap();
+}
+
+/// A clock that panics the first time it is asked the time once a test has armed it.
+struct PanicsOnceArmed(AtomicBool);
+
+impl Clock for PanicsOnceArmed {
+    fn now_ms(&self) -> u64 {
+        assert!(
+            !self.0.swap(false, Ordering::SeqCst),
+            "the clock of this test gave up"
+        );
+        9000
+    }
+}
+
+#[test]
+fn a_started_run_whose_executor_panics_outside_its_action_is_abandoned_only_when_its_thread_holds_nothing_of_the_store()
+ {
+    // The executor asks its clock the time when a run's action has come back, to end
+    // the run. A clock that panics there is a panic outside the action, which nothing
+    // catches: the run's thread unwinds, and the run is abandoned. Whoever waits is
+    // answered so, and may drop its writer and open the store again, as after any
+    // other answer. So the thread lets its executor go before the run's place is
+    // given back in a panic too, and the backends, which are dropped with the
+    // thread's executor, see the place still taken.
+    let dir = Scratch::new("started");
+    let (root, store) = open(&dir);
+    let barriers = Barriers::new();
+    let taken = Arc::new(Mutex::new(None));
+    let backends = Arc::new(NotedWhenLetGo {
+        store: Arc::downgrade(&store),
+        taken: taken.clone(),
+    });
+    let clock = Arc::new(PanicsOnceArmed(AtomicBool::new(false)));
+    let executor = engine_on(store.clone(), backends, vec![held("first", &barriers)])
+        .with_clock(clock.clone())
+        .with_started_bound(1)
+        .unwrap();
+    // Another executor, with a clock of its own, asks after the run.
+    let asking = engine(store.clone(), Vec::new());
+    let run = started(executor.start(&asked("first", "order-1")));
+    barriers.arrived("first", 1);
+    drop(executor);
+    clock.0.store(true, Ordering::SeqCst);
+    barriers.release("first");
+    let waited = within("the wait", {
+        let run = run.clone();
+        move || asking.wait(&run)
+    });
+    let waited = waited.unwrap();
+    let abandoned = matches!(waited.state(), RunState::Abandoned { failure: None });
+    assert!(abandoned, "{:?}", waited.state());
+    assert!(!clock.0.load(Ordering::SeqCst), "the clock was not asked");
+
+    assert_eq!(
+        *taken.lock().unwrap(),
+        Some(true),
+        "the wait was answered as abandoned before the run's thread let the executor \
+         go, or the thread let it go after the run's place was given back"
+    );
+    let Ok(store) = Arc::try_unwrap(store) else {
+        panic!("something of the abandoned run still holds the store's writer");
     };
     drop(store);
     Store::open(&root, Arc::new(ShimFs::new())).unwrap();
