@@ -88,12 +88,12 @@ snapshot's backends (`Snapshot::offering_through`), which nothing uses now.
 Amended: 2026-11-15, after the review of task W1, a second change. Changed under "The
 binary wired": a call that may cost nothing is admitted without the ledger (ADR
 0016, "A call that may cost nothing"), so a free run has no name under `spend/`.
-Amended: 2026-11-15, after a test of task I4b failed twice on the Linux runner. Added
-under "One way to a writer, with recovery before it", "Limits": what of a started run
-holds the writer, and until when.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
 that said something was still to come; no decision changed.
+Amended: 2026-11-15, after a test of task I4b failed twice on the Linux runner. Added
+under "One way to a writer, with recovery before it", "Limits": what of a started run
+holds the writer, and until when.
 
 ## Context
 
