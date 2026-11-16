@@ -15,6 +15,16 @@
 //! is judged by that reset. And a person's correction never stands for it: the
 //! model's seal is not the core's.
 //!
+//! **Kept at the exit check of checkpoint 1B, where the real ledger is built**
+//! (`whizbang_core::spend`), because tests of the executor still use it: those that
+//! need a ledger with an allowance set in memory, one that counts how often it was
+//! asked, or a dispatch made by hand, and are not about the real ledger's books. They
+//! are the core's `contract::{around, cancel, interrupted, ledger, nested, part,
+//! prepare}` and `spend::{age, cap, reserve}`, `grow_runs` in `whizbang-rascal` and
+//! `check` in `whizbang-squint`. The binary and the tests of the money itself
+//! (`spend::{meter, settle, close, lines, quote}`, and the binary's own) use the real
+//! one.
+//!
 //! It counts two things, and they are not the same. [`FakeLedger::asked`] is how many
 //! times admission asked it: once for every attempt at an admission's publication, the
 //! attempts the store refused among them. [`FakeLedger::reservations`] is what was

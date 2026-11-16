@@ -38,7 +38,7 @@ pub enum State {
     Interrupted,
     /// Its names are not a set the ledger could have written: it counts for the most
     /// they can mean, in each epoch a hold of it names, and nothing lowers it but
-    /// its owner's correction.
+    /// its owner's correction, which no command writes: a reset passes it.
     Frozen,
     /// Its owner corrected it, and the correction stands: it counts for what the
     /// correction says, and never under what its whole settlements say.

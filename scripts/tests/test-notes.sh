@@ -49,4 +49,8 @@ done
 [ "$(cited docs/plans/m1a-note.md | wc -l | tr -d ' ')" -ge 40 ] ||
   fail "docs/plans/m1a-note.md cites fewer than 40 tests: its table of clauses is gone or is no longer read"
 
+# So does the note of checkpoint 1B, for its row and for the controls of section 6.
+[ "$(cited docs/plans/m1b-note.md | wc -l | tr -d ' ')" -ge 40 ] ||
+  fail "docs/plans/m1b-note.md cites fewer than 40 tests: its tables of clauses are gone or are no longer read"
+
 finished

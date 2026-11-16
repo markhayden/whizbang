@@ -23,7 +23,10 @@ message; work put off belongs on `docs/carry-over.md`.
 - An accepted ADR is not rewritten. A new ADR supersedes it, and each names the other in its
   status line. One exception: until the milestone or checkpoint that introduced it closes,
   an accepted ADR may be amended in place, with a dated `Amended:` line in its header that
-  says what changed. After that, only a new ADR changes it.
+  says what changed. After that, only a new ADR changes a decision. An ADR whose
+  checkpoint has closed may still be given a dated note in place that says what was
+  built since, or corrects a sentence that has become untrue, with an `Amended:` line
+  in its header, provided no decision changes.
 - A later ADR that changes part of an accepted one, and does not replace it, says so in its
   own status line, and the earlier one gains `Changed by NNNN:` and what changed in its
   status line. Nothing else in the earlier one is edited.

@@ -92,6 +92,8 @@ Amended: 2026-11-15, after a test of task I4b failed twice on the Linux runner. 
 under "One way to a writer, with recovery before it", "Limits": what of a started run
 holds the writer, and until when.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 
 ## Context
 
@@ -519,7 +521,9 @@ following an answer that points elsewhere 8 times at most.
   adapters are trusted code.
 - **The fault a backend is answered with is the backend's to hand on.** A backend that
   swallows it and answers all the same has still sent nothing.
-- **Until the wiring (task W1) the binary's executor has no ways out.**
+- **Until the wiring (task W1) the binary's executor has no ways out.** (Wired
+  since: it has its config's policy at the gate's place and behind the checked
+  sender, and still no sender, "The binary wired".)
 
 ### One snapshot of the config
 
@@ -972,7 +976,8 @@ admission (the eight cases above).
 
 **What waits.**
 
-- **The inventory over the models directory** is task M6's.
+- **The inventory over the models directory** is task M6's (built: ADR 0017, "The
+  inventory").
 
 **Limits, each stated.**
 
@@ -1160,7 +1165,8 @@ reserves, and it is kept: reserving the largest cannot reserve too little
   was given no meter until its wiring, and has it since ("The binary wired"). A request to a local model is told to the lease's place under
   the installation its run was admitted with (task I7), and takes a lease where
   an executor was given one (task M6b); the binary's executor is given none until
-  its wiring (task W1).
+  its wiring (task W1), and since it has the lease wherever it is given a models
+  directory, which no command gives yet ("The binary wired").
 - **A wrapper that panics in `Around::before`** unwinds as a backend's panic does
   under no wrapper: it is the fault of one action; what the places before it held is
   dropped, and nothing here marks the run. (A panic of `Open::after` abandons the
@@ -1271,7 +1277,8 @@ deletion made room the next open recovers
 **Every writing command of the binary opens through it,** in one place
 (`wiring::opening`, in `crates/whizbang/src/wiring.rs`, with the parts of this build
 from `wiring::recovery`): the executor of `rascal grow`, `store delete`, `store
-prune` and `store import`. `whizbang spend` writes nothing yet. A test holds the
+prune` and `store import`. `whizbang spend` writes nothing yet (since task S9, `spend reset` writes, through
+the same entry point). A test holds the
 binary's sources to that one place: no file of the binary calls an open of
 `Store`, and none but the wiring an open of `Opening`
 (`writer::the_binary_opens_a_store_to_write_in_one_place_and_through_the_entry_point`,
