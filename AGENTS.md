@@ -45,6 +45,7 @@ manifest. This file holds what you cannot work out from the code.
 | `just scan-range <base> <head>` | Before a merge: the same two scans and the attribution check over every commit in `base..head` (contents, paths, messages) and the tree of `head` |
 | `just scan-range-secrets <base> <head>` | The range scan without the clean-room scan: what CI runs over the commits of a pull request (with the base branch's copy of the scan), and of a push to `main` |
 | `just ci` | What a pull request runs: `check`, advisories, a smoke of the release binary, the example that must not compile, the secrets scan |
+| `just ci-without-scripts`, `just ci-scripts` | Never by hand: the two halves of `just ci` as CI's macOS runner runs them, in two jobs side by side, because the script tests alone take that runner three to five minutes. `check (macos-15)` runs the first, everything but the script tests; `scripts (macos-15)` runs the second, the script tests. `check (ubuntu-22.04)` runs `just ci` whole. A pull request waits for those three jobs and for the aggregate `ci`, which needs all three and is the one check the protection of `main` requires. `scripts/tests/test-ci-jobs.sh` holds the halves to `just ci` |
 | `just compile-fail` | After changing `Ledger`, `MadeName` or the example on `Ledger` that must not compile: the example is compiled against the core, must fail with the one error it is there for and no other, and must compile without the line that causes it (`scripts/compile-fail.sh`). Heavy |
 | `just test-scripts-slow` | After changing `.config/nextest.toml` or `scripts/timing.sh`: about 40 seconds; a 31-second test really fails by timeout (CI runs that part as `just test-timeout`) |
 | `just search-canary` | When a scan test fails once and passes on a rerun: 30 seconds of the scan's search against its known output (CI runs it on macOS) |
@@ -69,7 +70,7 @@ stopped half-way, so a test passes only when that line ran. A script that sets a
 copies the first lines and the trap of `scripts/scan.sh`; `scripts/tests/test-syntax.sh` holds
 it to that.
 
-These are heavy: `just check`, `just ci`, `just test`, `just test-only`, `just timing`,
+These are heavy: `just check`, `just ci`, `just ci-without-scripts`, `just test`, `just test-only`, `just timing`,
 `just clippy`, `just docs`, `just docs-check`, `just smoke`, `just compile-fail`,
 `just test-scripts-slow`, and
 any `cargo` command that builds or tests. When another agent may be building on the machine,

@@ -109,12 +109,14 @@ If one is missing, ask the orchestrator. Do not guess.
       (`a. `, `Note: `, `<p>`), which it only lists. It lists each line that says
       "co-authored-by" or "generated with" and is not refused: go through those. Then
       open the pull request against `main`.
-- [ ] 11. Wait for CI on the head: the jobs `check (macos-15)` and `check (ubuntu-22.04)`,
-      and the aggregate `ci`. `ci` is listed only once both check jobs have finished: the
+- [ ] 11. Wait for CI on the head: the jobs `check (macos-15)`, `scripts (macos-15)` and
+      `check (ubuntu-22.04)`, and the aggregate `ci`. The macOS runner has two jobs side by
+      side: `scripts (macos-15)` runs the script tests, and `check (macos-15)` everything
+      else. `ci` is listed only once the other three have finished: the
       Linux job takes about 90 seconds and the macOS job about 3 minutes. Straight after
       the pull request is opened, `gh pr checks` exits 1 and
       says "no checks reported"; after a second push it shows the run before for a moment.
-      So ask until a run whose commit is the head lists all three (the loop below), then
+      So ask until a run whose commit is the head lists all four (the loop below), then
       watch. The loop outlasts one shell call of the usual length:
       give the call a longer time limit, or enter the loop again. It gives up after 20
       minutes: hand back then, saying that CI did not start. A pull request that conflicts
@@ -193,18 +195,18 @@ gh pr create --base main --head <slug> --title "$(cat "$text/title.txt")" --body
 gh pr edit <number> --title "$(cat "$text/title.txt")" --body-file "$text/body.md"
 rm -rf "$text"
 
-# 11: ask every 20 seconds until the run for the head lists three jobs, for 20 minutes
+# 11: ask every 20 seconds until the run for the head lists four jobs, for 20 minutes
 # at most. The macOS job takes about 3 minutes: give the shell call a longer time limit,
 # or enter the loop again.
 head=$(git rev-parse HEAD)
 tries=0
 until run=$(gh run list --commit "$head" --json databaseId --jq '.[0].databaseId // empty') &&
-  [ -n "$run" ] && [ "$(gh run view "$run" --json jobs --jq '.jobs | length')" -ge 3 ]; do
+  [ -n "$run" ] && [ "$(gh run view "$run" --json jobs --jq '.jobs | length')" -ge 4 ]; do
   tries=$((tries + 1))
-  [ "$tries" -le 60 ] || { echo "no run with three jobs for $head after 20 minutes"; break; }
+  [ "$tries" -le 60 ] || { echo "no run with four jobs for $head after 20 minutes"; break; }
   sleep 20
 done
-gh pr checks <number> --watch                  # check (macos-15), check (ubuntu-22.04), ci
+gh pr checks <number> --watch                  # check (macos-15), scripts (macos-15), check (ubuntu-22.04), ci
 
 # 12
 git rev-parse HEAD                             # the head you hand back
@@ -224,7 +226,8 @@ Pull request: #<number> <url>
 Branch: <slug>
 Base: <full commit of origin/main the branch started from>
 Head: <full commit; the pull request shows the same>
-CI: check (macos-15) <result>, check (ubuntu-22.04) <result>, ci <result>
+CI: check (macos-15) <result>, scripts (macos-15) <result>, check (ubuntu-22.04) <result>,
+    ci <result>
     <any rerun: the job and the reason; otherwise "no rerun">
 Local: just check <result>, just scan <result>, on the head
 Refused push: <which scan refused, the commit, path and line if named, and what was done;
