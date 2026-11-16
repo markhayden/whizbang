@@ -282,7 +282,9 @@ pub fn install(
 ///   model's lock, which is given once whoever has the lock alone lets it go, by
 ///   finishing or by dying. Between two tries `watch` is called once, with what the
 ///   status record says when it says that an install is running, and with nothing
-///   otherwise. Nothing sleeps here: `watch` paces the tries, and shows progress.
+///   otherwise. These tries do not sleep: `watch` paces them, and shows progress.
+///   The install it begins with is another matter: each asking for the directory's
+///   lock may wait up to five seconds of the directory's clock.
 /// - **It ends by what the status record says** once it has its share, when no
 ///   install can be running: `installed`, and the pointer names the installation of
 ///   this entry, is that installation; `installed` with any other pointer is

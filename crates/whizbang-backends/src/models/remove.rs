@@ -8,8 +8,12 @@
 //! hold on it is given and no install of it publishes. It takes the model's lock, by
 //! trying until its deadline, and says `removing` in the status record. It waits for
 //! the holds by trying each hold file alone, again and again until the same
-//! deadline, which is one of the injected clock; nothing here sleeps, and what comes
-//! between two tries is the caller's (`pause`). With every hold file its own, it
+//! deadline, which is one of the injected clock; its own tries, for the remover's
+//! lock, the model's lock and a hold file, do not sleep, and what comes between
+//! two of them is the caller's (`pause`). The directory's lock, which it asks for
+//! around its mark, its count and the pointer, is another matter: each asking may
+//! wait up to five seconds of the directory's clock ([`ModelsDir::open`]), which on
+//! the machine's clock sleeps between its tries. With every hold file its own, it
 //! clears the pointer under the directory's lock, and that is the decision: the
 //! model is not installed. Past the deadline it answers that the model is held, has
 //! changed no pointer, and takes the mark off.
@@ -308,8 +312,10 @@ impl Removed {
 ///   the mark is the removal's own, and it is taken off at the end. A model with
 ///   no folder was never installed: it is not marked, and nothing is made.
 /// - **The model's lock is tried for until the deadline;** `pause` is called once
-///   between two tries, and nothing here sleeps. Not given by then, the answer is
-///   [`RemoveRefused::Busy`].
+///   between two tries, and these tries do not sleep. Not given by then, the
+///   answer is [`RemoveRefused::Busy`]. Each asking for the directory's lock may
+///   wait up to five seconds of the directory's clock on top of the patience, and
+///   then answers [`RemoveRefused::DirectoryBusy`].
 /// - **The status says `removing` before anything else is done under the lock,** and
 ///   `removed` once the pointer is cleared. A removal that changed no pointer puts
 ///   the status back as it found it.
