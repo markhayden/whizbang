@@ -169,6 +169,43 @@ classes = []
 | `classes` | What it may receive, of `source_images`, `derived_images`, `prompts` and `evidence`. Always given; `[]` is nothing |
 | `probe` | Whether it may be asked if it is reachable. Not unless this says `true` |
 
+## Where models are kept
+
+```toml
+[models]
+dir = "/srv/whizbang/models"
+download_least_kib_per_second = 256
+```
+
+Both keys may be left out. `dir` is the models directory, where installed models are
+kept. A command's `--models-dir` is asked before it; with neither, the directory is
+the one in your machine's data folder for whizbang: `Library/Application
+Support/whizbang/models` under your home folder on macOS, and
+`$XDG_DATA_HOME/whizbang/models` on Linux, or `.local/share/whizbang/models` under
+your home folder when that variable is not set. Whichever it is, it must be yours
+alone to write: a folder that your group or anyone can write, or that is another
+user's, is refused, and the refusal says how to mend it. The folder itself is made
+when it is not there; the folder that is to hold it must be there, unless it is the
+one in your data folder.
+
+`dir` is an absolute path. A relative one would be another folder from each place you
+run a command in, and `~` is not read as your home folder:
+
+```toml refused
+[models]
+dir = "models"
+```
+
+```text
+the config's key `models.dir` must be an absolute path: it starts with / and holds no
+control character; a ~ is not read as a home folder; what is written there is not
+shown
+```
+
+`download_least_kib_per_second` is the least rate a download of a model must keep up
+over any whole minute, in kibibytes a second, from 1 to 1048576; a slower one is ended
+as timed out. It is 256 when you do not say.
+
 ## What is refused
 
 The file is read strictly, so that a slip is told and not guessed at. A refusal names
@@ -212,8 +249,9 @@ the config gives the key `call_cap_usd` twice, the second time at line 3
 
 Also refused: a path that names a folder or anything else that is not a file; a file
 over 256 KiB; bytes that are not UTF-8, or a control character; a
-table `tools`, which has no shape until milestone 2; any key in the table `models`,
-which has none yet; and a text with a letter outside ASCII, outside a comment.
+table `tools`, which has no shape until milestone 2; a key in the table `models`
+that is not one of its two; and a text with a letter outside ASCII, outside a comment
+and outside the models directory's path.
 
 ## Two files that say the same
 

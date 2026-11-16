@@ -7,12 +7,14 @@
 
 use whizbang_core::egress::NotAllowed;
 
-use super::{FILE_MAX_BYTES, FILE_NAME_LIMIT, LICENCE_LIMIT, MODEL_NAME_LIMIT, REVISION_LIMIT};
+use super::{
+    FILE_MAX_BYTES, FILE_NAME_LIMIT, LICENCE_LIMIT, MODEL_NAME_LIMIT, REVISION_LIMIT, TITLE_LIMIT,
+};
 
 /// Which of the records a refusal is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum What {
-    /// The catalogue, `catalogue/1`.
+    /// The catalogue, `catalogue/2`.
     Catalogue,
     /// An installation record, `installation/1`.
     Installation,
@@ -54,6 +56,12 @@ pub enum Rule {
     Revision,
     /// Not a licence's name.
     Licence,
+    /// Not a title.
+    Title,
+    /// Not the name of a platform a catalogue can name.
+    Platform,
+    /// A model names no platform it runs on.
+    NoPlatforms,
     /// Not a feature's name.
     Feature,
     /// Not `sha256:` and 64 lower-case hex digits.
@@ -110,6 +118,15 @@ impl std::fmt::Display for Rule {
                 "is not a licence's name: 1 to {LICENCE_LIMIT} printable ASCII characters \
                  and spaces, with no space at either end"
             ),
+            Rule::Title => write!(
+                f,
+                "is not a title: 1 to {TITLE_LIMIT} printable ASCII characters and spaces, \
+                 with no space at either end"
+            ),
+            Rule::Platform => {
+                f.write_str("is not a platform a catalogue names: linux-x86_64 or macos-arm64")
+            }
+            Rule::NoPlatforms => f.write_str("names no platform, and a model runs on one at least"),
             Rule::Feature => f.write_str(
                 "is not a feature's name: a lower-case letter, then lower-case letters, \
                  digits, underscores and hyphens, 64 characters at most",

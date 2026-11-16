@@ -35,7 +35,7 @@ mod status;
 
 pub use catalogue::{
     CATALOGUE_FORMAT, CATALOGUE_MAX_BYTES, Catalogue, CatalogueFile, Entry, EntryParts,
-    FEATURES_LIMIT, FILES_LIMIT, MODELS_LIMIT, ORIGINS_LIMIT,
+    FEATURES_LIMIT, FILES_LIMIT, MODELS_LIMIT, ORIGINS_LIMIT, PLATFORMS_LIMIT,
 };
 pub use directory::{ModelsDir, OpenRefused};
 pub use hold::{Hold, HoldRefused, Holds};
@@ -46,7 +46,7 @@ pub use installation::{
 pub use inventory::{Installations, Lease};
 pub use name::{
     FILE_MAX_BYTES, FILE_NAME_LIMIT, FileName, LICENCE_LIMIT, Licence, MODEL_NAME_LIMIT, ModelName,
-    REVISION_LIMIT, Revision, SHOWN_LIMIT,
+    Platform, REVISION_LIMIT, Revision, SHOWN_LIMIT, TITLE_LIMIT, Title,
 };
 pub use refused::{Refused, Rule, What};
 pub use remove::{

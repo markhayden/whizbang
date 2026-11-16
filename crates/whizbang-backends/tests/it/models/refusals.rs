@@ -168,7 +168,7 @@ fn values_nested_past_what_the_reader_follows_are_refused_and_not_followed() {
     // A list of many small values in an unknown field is read and refused as the
     // unknown field it is.
     let wide = format!(
-        "{{\"format\":\"catalogue/1\",\"models\":[],\"more\":[{}0]}}",
+        "{{\"format\":\"catalogue/2\",\"models\":[],\"more\":[{}0]}}",
         "0,".repeat(100_000)
     );
     assert_eq!(

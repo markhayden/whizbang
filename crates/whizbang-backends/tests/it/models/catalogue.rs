@@ -5,7 +5,8 @@
 use serde_json::{Value, json};
 use whizbang_backends::models::{
     CATALOGUE_MAX_BYTES, Catalogue, CatalogueFile, Entry, FEATURES_LIMIT, FILE_MAX_BYTES,
-    FILES_LIMIT, MODELS_LIMIT, ORIGINS_LIMIT, Refused, Rule, What,
+    FILES_LIMIT, InstallationRecord, MODELS_LIMIT, ORIGINS_LIMIT, PLATFORMS_LIMIT, Platform,
+    Refused, Rule, TITLE_LIMIT, Title, What,
 };
 use whizbang_core::egress::{Address, NotAllowed};
 
@@ -14,12 +15,14 @@ use super::{MARKER, entry, file, file_name, hash, none, origin, parts, secrets, 
 /// A catalogue of one model with two files, as a person would write it.
 fn written() -> Value {
     json!({
-        "format": "catalogue/1",
+        "format": "catalogue/2",
         "models": [{
             "name": "tiny",
+            "title": "Tiny, for tests",
             "revision": "2026-11.1",
             "adapter": "owlv2-sam2",
             "licence": "Apache-2.0",
+            "platforms": ["macos-arm64", "linux-x86_64"],
             "features": ["phrase", "box"],
             "origins": ["https://weights.example.org"],
             "files": [
@@ -96,6 +99,185 @@ fn a_catalogue_is_read_as_its_models_and_their_files() {
 }
 
 #[test]
+fn an_entry_of_the_second_version_holds_a_title_and_its_platforms_and_the_first_version_is_refused()
+{
+    let catalogue = read(&written()).unwrap();
+    let tiny = catalogue.entry("tiny").unwrap();
+    assert_eq!(tiny.title().as_str(), "Tiny, for tests");
+    // The platforms are kept in the order of their names, whatever order they were
+    // written in, and each is one this reader knows.
+    assert_eq!(
+        tiny.platforms(),
+        [Platform::LinuxX86_64, Platform::MacosArm64]
+    );
+    let names: Vec<&str> = tiny.platforms().iter().map(|p| p.name()).collect();
+    assert_eq!(names, ["linux-x86_64", "macos-arm64"]);
+    assert!(tiny.runs_on(Platform::MacosArm64) && tiny.runs_on(Platform::LinuxX86_64));
+    let mut one = written();
+    one["models"][0]["platforms"] = json!(["macos-arm64"]);
+    let mac_only = read(&one).unwrap();
+    let mac_only = mac_only.entry("tiny").unwrap();
+    assert!(mac_only.runs_on(Platform::MacosArm64) && !mac_only.runs_on(Platform::LinuxX86_64));
+    // Both are written again, in the format's order, and read back.
+    let bytes = String::from_utf8(catalogue.to_bytes()).unwrap();
+    assert!(
+        bytes.starts_with(
+            "{\"format\":\"catalogue/2\",\"models\":[{\"name\":\"tiny\",\
+             \"title\":\"Tiny, for tests\",\"revision\":"
+        ),
+        "{bytes}"
+    );
+    assert!(
+        bytes.contains(
+            "\"licence\":\"Apache-2.0\",\"platforms\":[\"linux-x86_64\",\"macos-arm64\"],\
+             \"features\":"
+        ),
+        "{bytes}"
+    );
+    assert_eq!(
+        Catalogue::parse(bytes.as_bytes(), &none()).unwrap(),
+        catalogue
+    );
+    // Each of the two platforms has its name, and no other name is a platform; this
+    // build's is one of them, on the two the fast tier runs on.
+    for platform in Platform::ALL {
+        assert_eq!(Platform::named(platform.name()), Some(platform));
+    }
+    for name in [
+        "",
+        "macos",
+        "Macos-arm64",
+        "macos-arm64 ",
+        "linux-arm64",
+        "windows-x86_64",
+    ] {
+        assert_eq!(Platform::named(name), None, "{name}");
+    }
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        assert_eq!(Platform::this(), Some(Platform::MacosArm64));
+    }
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        assert_eq!(Platform::this(), Some(Platform::LinuxX86_64));
+    }
+
+    // The first version is no longer read: no catalogue of it was shipped. It is
+    // refused for its format, with or without the two new fields.
+    let mut first = written();
+    first["format"] = json!("catalogue/1");
+    assert_eq!(
+        read(&first).unwrap_err(),
+        value_refused("format", Rule::Format)
+    );
+    let fields = first["models"][0].as_object_mut().unwrap();
+    fields.remove("title");
+    fields.remove("platforms");
+    assert_eq!(
+        read(&first).unwrap_err(),
+        value_refused("format", Rule::Format)
+    );
+    // And an entry of the second version has both.
+    for field in ["title", "platforms"] {
+        let refused = refusal_after(|v| {
+            v["models"][0].as_object_mut().unwrap().remove(field);
+        });
+        assert_eq!(
+            refused,
+            value_refused(&format!("models[0].{field}"), Rule::Missing)
+        );
+    }
+
+    // A title is 1 to 100 printable ASCII characters and spaces, with no space at
+    // either end; one that holds a secret is refused as a secret.
+    let longest = "t".repeat(TITLE_LIMIT);
+    let mut long = written();
+    long["models"][0]["title"] = json!(longest);
+    assert_eq!(
+        read(&long).unwrap().entry("tiny").unwrap().title().as_str(),
+        longest
+    );
+    for title in [
+        json!(""),
+        json!(" Tiny"),
+        json!("Tiny "),
+        json!("Tiny\nfor tests"),
+        json!("Tiny \u{e9}"),
+        json!("t".repeat(TITLE_LIMIT + 1)),
+    ] {
+        assert_eq!(
+            refusal_after(|v| v["models"][0]["title"] = title.clone()),
+            value_refused("models[0].title", Rule::Title),
+            "{title}"
+        );
+    }
+    assert_eq!(
+        refusal_after(|v| v["models"][0]["title"] = json!(7)),
+        value_refused("models[0].title", Rule::Kind)
+    );
+    let mut secret = written();
+    secret["models"][0]["title"] = json!(format!("Tiny {MARKER}"));
+    assert_eq!(
+        Catalogue::parse(secret.to_string().as_bytes(), &secrets()).unwrap_err(),
+        Refused::HoldsSecret
+    );
+    assert_eq!(
+        Title::new(&format!("Tiny {MARKER}"), &secrets()),
+        Err(Refused::HoldsSecret)
+    );
+
+    // The platforms: one at least, each a platform's name, each named once, and at
+    // most as many as the bound, counted before any is looked at.
+    assert_eq!(
+        refusal_after(|v| v["models"][0]["platforms"] = json!([])),
+        value_refused("models[0].platforms", Rule::NoPlatforms)
+    );
+    assert_eq!(
+        refusal_after(|v| v["models"][0]["platforms"] = json!(["macos-arm64", "linux-arm64"])),
+        value_refused("models[0].platforms[1]", Rule::Platform)
+    );
+    assert_eq!(
+        refusal_after(|v| v["models"][0]["platforms"] = json!(["macos-arm64", 7])),
+        value_refused("models[0].platforms[1]", Rule::Kind)
+    );
+    assert_eq!(
+        refusal_after(|v| v["models"][0]["platforms"] = json!(["macos-arm64", "macos-arm64"])),
+        value_refused("models[0].platforms", Rule::NamedTwice)
+    );
+    assert_eq!(
+        refusal_after(|v| v["models"][0]["platforms"] = json!(vec!["nowhere"; PLATFORMS_LIMIT + 1])),
+        value_refused(
+            "models[0].platforms",
+            Rule::Count {
+                most: PLATFORMS_LIMIT
+            }
+        )
+    );
+    // The same rules hold an entry that is made and not read.
+    let mut made = parts("tiny");
+    made.platforms = Vec::new();
+    assert_eq!(
+        Entry::new(made, &none()).unwrap_err(),
+        value_refused("platforms", Rule::NoPlatforms)
+    );
+    let mut made = parts("tiny");
+    made.platforms = vec![Platform::MacosArm64, Platform::MacosArm64];
+    assert_eq!(
+        Entry::new(made, &none()).unwrap_err(),
+        value_refused("platforms", Rule::NamedTwice)
+    );
+    // An installation is of the files and the two revisions: a title or a platform
+    // changed alone, against the rule that whoever changes an entry changes its
+    // revision, is the same installation.
+    let mut retitled = parts("tiny");
+    retitled.title = Title::new("Another title", &none()).unwrap();
+    retitled.platforms = vec![Platform::MacosArm64];
+    let retitled = Entry::new(retitled, &none()).unwrap();
+    assert_ne!(retitled, entry("tiny"));
+    let record =
+        |entry: &Entry| InstallationRecord::of(entry, super::revision("7"), &none()).unwrap();
+    assert_eq!(record(&retitled), record(&entry("tiny")));
+}
+
+#[test]
 fn a_catalogue_round_trips() {
     let mut second = parts("sam3");
     second.features = Vec::new();
@@ -134,7 +316,7 @@ fn a_catalogue_round_trips() {
     );
     // An empty catalogue is one, and round-trips.
     let empty = Catalogue::new(Vec::new(), &none()).unwrap();
-    assert_eq!(empty.to_bytes(), br#"{"format":"catalogue/1","models":[]}"#);
+    assert_eq!(empty.to_bytes(), br#"{"format":"catalogue/2","models":[]}"#);
     assert_eq!(Catalogue::parse(&empty.to_bytes(), &none()).unwrap(), empty);
 }
 
@@ -264,7 +446,7 @@ fn a_catalogue_that_is_not_json_is_refused_by_its_line() {
     };
     not_json("", 1);
     not_json("oops", 1);
-    not_json("{\n\"format\": \"catalogue/1\",\n\"models\": [oops]}", 3);
+    not_json("{\n\"format\": \"catalogue/2\",\n\"models\": [oops]}", 3);
     let whole = written().to_string();
     not_json(&whole[..whole.len() - 1], 1);
     not_json(&format!("{whole}{whole}"), 1);
@@ -381,7 +563,7 @@ fn a_catalogue_with_a_value_of_another_kind_is_refused() {
     );
     // The catalogue itself is an object with its fields by name: its values in a list,
     // in the order of the fields, are no catalogue.
-    for text in ["[]", "null", "7", "\"catalogue/1\"", "[\"catalogue/1\",[]]"] {
+    for text in ["[]", "null", "7", "\"catalogue/2\"", "[\"catalogue/2\",[]]"] {
         assert_eq!(
             Catalogue::parse(text.as_bytes(), &none()).unwrap_err(),
             value_refused("", Rule::Kind),
@@ -435,7 +617,13 @@ fn a_catalogue_with_a_field_given_twice_is_refused_by_its_line() {
 
 #[test]
 fn a_catalogue_of_another_format_is_refused() {
-    for format in ["catalogue/2", "catalogue/1 ", "installation/1", ""] {
+    for format in [
+        "catalogue/1",
+        "catalogue/3",
+        "catalogue/2 ",
+        "installation/1",
+        "",
+    ] {
         assert_eq!(
             refusal_after(|v| v["format"] = json!(format)),
             value_refused("format", Rule::Format)
@@ -915,9 +1103,9 @@ fn what_is_printed_of_the_parts_of_an_entry_is_counts_and_never_a_feature() {
     let printed = format!("{parts:?}");
     assert_eq!(
         printed,
-        "EntryParts { name: ModelName(tiny), revision: Revision(2026-11.1), \
-         adapter: ModelName(owlv2-sam2), licence: Licence(Apache-2.0), features: 2, \
-         origins: 1, files: 2 }"
+        "EntryParts { name: ModelName(tiny), title: Title(Tiny, for tests), \
+         revision: Revision(2026-11.1), adapter: ModelName(owlv2-sam2), \
+         licence: Licence(Apache-2.0), platforms: 2, features: 2, origins: 1, files: 2 }"
     );
     assert!(!printed.contains(MARKER) && !printed.contains("example.org"));
 }

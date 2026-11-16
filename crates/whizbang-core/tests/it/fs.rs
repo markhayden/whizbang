@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use whizbang_core::store::fs::{Fs, Held, LockFile, PIECE_MAX_BYTES, RealFs, Streamed};
+use whizbang_core::store::fs::{
+    Fs, Held, LockFile, PIECE_MAX_BYTES, RealFs, Streamed, UserUnknown,
+};
 use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::scratch::Scratch;
 
@@ -692,6 +694,54 @@ fn who_may_write_a_folder_is_read_from_its_owner_and_its_mode_and_a_link_to_it_i
         .err()
         .unwrap();
     assert_eq!(error.kind(), io::ErrorKind::NotFound);
+}
+
+#[cfg(unix)]
+#[test]
+fn the_real_file_system_says_that_a_folder_of_another_user_is_not_this_users() {
+    use std::os::unix::fs::MetadataExt;
+    // Who the process runs as is read from a socket pair it has just made, and is
+    // the owner of a folder and of a file it makes: on both runners, or this fails.
+    let dir = Scratch::new("fs-anothers");
+    let folder = dir.path().join("folder");
+    RealFs.create_dir(&folder).unwrap();
+    let file = dir.path().join("file");
+    std::fs::write(&file, b"content").unwrap();
+    let mine = std::fs::metadata(&file).unwrap().uid();
+    assert_eq!(std::fs::metadata(&folder).unwrap().uid(), mine);
+    assert!(RealFs.who_may_write(&folder).unwrap().owner_is_this_user);
+    // The root of the file system is a real folder of another user: the one who
+    // administers the machine. No test runs anything as another user. Where the
+    // tests are themselves run as that user there is no folder of another's to
+    // ask about, and only then is nothing asked.
+    let root = Path::new("/");
+    if std::fs::metadata(root).unwrap().uid() == mine {
+        return;
+    }
+    let found = RealFs.who_may_write(root).unwrap();
+    assert!(!found.owner_is_this_user, "the root folder is another's");
+    // And asked again, the same: the answer about the user is kept, not the folder's.
+    assert!(!RealFs.who_may_write(root).unwrap().owner_is_this_user);
+    assert!(RealFs.who_may_write(&folder).unwrap().owner_is_this_user);
+}
+
+#[test]
+fn a_failure_to_learn_the_user_is_an_error_of_its_own_kind_and_never_a_name_that_is_not_there() {
+    let error = UserUnknown::error();
+    assert!(UserUnknown::is(&error));
+    // `open` reads "not found" as a directory that is still to be made: this is
+    // never that, whatever the system said when it refused.
+    assert_eq!(error.kind(), io::ErrorKind::Other);
+    assert_eq!(
+        error.to_string(),
+        "the user this process runs as could not be learned"
+    );
+    for other in [
+        io::Error::from(io::ErrorKind::NotFound),
+        io::Error::other("another failure"),
+    ] {
+        assert!(!UserUnknown::is(&other));
+    }
 }
 
 // --- a look at a name for a link -----------------------------------------------------------------

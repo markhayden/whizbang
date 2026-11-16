@@ -789,6 +789,7 @@ Proposed; exact verbs are settled as each milestone builds them.
 whizbang rascal <task|operation> …
 whizbang rascal grow --mask <identity> --px <n> [--down-px <n>] --store <dir>
                     [--request-id <id>] [--config <file> [--env-file <file>]]
+                    [--models-dir <dir>]
                                        # the first operation, and the first command that
                                        # runs an action (docs/reference/tools/grow.md)
 whizbang squint check <use-case> …

@@ -1,6 +1,6 @@
 //! The texts that come from outside the build and become names on a disk or words in a
-//! record (ADR 0017, "Names"): a model's name, a file's name, a revision and a
-//! licence.
+//! record (ADR 0017, "Names"): a model's name, a file's name, a revision, a licence
+//! and a title; and the platforms a catalogue can name.
 //!
 //! A model's name is the name of a folder and a file's is the name of a file, so each
 //! is one plain name: it starts with a letter or a digit and holds no separator, so it
@@ -22,6 +22,9 @@ pub const REVISION_LIMIT: usize = 64;
 
 /// The most characters of a licence's name.
 pub const LICENCE_LIMIT: usize = 200;
+
+/// The most characters of a model's title.
+pub const TITLE_LIMIT: usize = 100;
 
 /// The most bytes of one file: a tebibyte.
 pub const FILE_MAX_BYTES: u64 = 1 << 40;
@@ -137,6 +140,63 @@ name!(
             && !text.ends_with(' ')
     }
 );
+
+name!(
+    /// A model's title, as it is shown to a person: 1 to [`TITLE_LIMIT`] printable
+    /// ASCII characters and spaces, with no space at either end. It names nothing on
+    /// a disk and is compared with nothing.
+    Title,
+    Rule::Title,
+    |text| {
+        (1..=TITLE_LIMIT).contains(&text.len())
+            && text.bytes().all(|b| b.is_ascii_graphic() || b == b' ')
+            && !text.starts_with(' ')
+            && !text.ends_with(' ')
+    }
+);
+
+/// A platform a model runs on, by the name a catalogue gives it. The two are the
+/// platforms of `SPEC.md` section 1; the names are the ones rascal's catalogue gave
+/// them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Platform {
+    /// `linux-x86_64`: Linux on x86-64.
+    LinuxX86_64,
+    /// `macos-arm64`: macOS on Apple silicon.
+    MacosArm64,
+}
+
+impl Platform {
+    /// Every platform, in the order of their names.
+    pub const ALL: [Platform; 2] = [Platform::LinuxX86_64, Platform::MacosArm64];
+
+    /// The name a catalogue gives it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Platform::LinuxX86_64 => "linux-x86_64",
+            Platform::MacosArm64 => "macos-arm64",
+        }
+    }
+
+    /// The platform of this name, exactly as written, when there is one.
+    pub fn named(name: &str) -> Option<Platform> {
+        Platform::ALL
+            .into_iter()
+            .find(|platform| platform.name() == name)
+    }
+
+    /// The platform this build is for, when it is one a catalogue can name. A build
+    /// for any other is for none of them: no model of a catalogue runs on it.
+    pub fn this() -> Option<Platform> {
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            Some(Platform::MacosArm64)
+        } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+            Some(Platform::LinuxX86_64)
+        } else {
+            None
+        }
+    }
+}
 
 /// The rules a list of files keeps, in a catalogue's entry and in an installation
 /// record alike: one file at least, `most` at most, and no two of one name. Two names

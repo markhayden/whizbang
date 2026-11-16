@@ -18,7 +18,9 @@ use whizbang_backends::models::{
     ModelsDir, OpenRefused, current, install,
 };
 use whizbang_core::contract::{Cancellation, Clock};
-use whizbang_core::store::fs::{Fs, Held, LockFile, NewFile, OpenFile, RealFs, Writers};
+use whizbang_core::store::fs::{
+    Fs, Held, LockFile, NewFile, OpenFile, RealFs, UserUnknown, Writers,
+};
 use whizbang_testkit::fs_shim::{Event, ShimFs};
 use whizbang_testkit::scratch::Scratch;
 use whizbang_testkit::threads;
@@ -116,6 +118,9 @@ impl Clock for Paced {
 struct Asked {
     calls: Mutex<Vec<&'static str>>,
     anothers: bool,
+    /// From this asking of whose a folder is on, counted from 0, the answer is that
+    /// the user this process runs as could not be learned.
+    unknown_from: Option<usize>,
 }
 
 impl Asked {
@@ -123,6 +128,17 @@ impl Asked {
         Arc::new(Asked {
             calls: Mutex::new(Vec::new()),
             anothers,
+            unknown_from: None,
+        })
+    }
+
+    /// The real file system, but that it cannot learn who its user is, from this
+    /// asking on.
+    fn unknown_from(asking: usize) -> Arc<Asked> {
+        Arc::new(Asked {
+            calls: Mutex::new(Vec::new()),
+            anothers: false,
+            unknown_from: Some(asking),
         })
     }
 
@@ -201,7 +217,15 @@ impl Fs for Asked {
         RealFs.is_link(path)
     }
     fn who_may_write(&self, path: &Path) -> std::io::Result<Writers> {
+        let asked = self.calls();
+        let asking = asked
+            .iter()
+            .filter(|call| **call == "who_may_write")
+            .count();
         self.note("who_may_write");
+        if self.unknown_from.is_some_and(|from| asking >= from) {
+            return Err(UserUnknown::error());
+        }
         let mut writers = RealFs.who_may_write(path)?;
         if self.anothers {
             writers.owner_is_this_user = false;
@@ -389,11 +413,154 @@ fn a_models_directory_that_its_group_or_anyone_can_write_is_refused_and_nothing_
 }
 
 #[test]
+fn a_failure_to_learn_who_the_user_is_has_its_own_refusal_and_is_never_read_as_a_directory_that_is_absent()
+ {
+    let scratch = Scratch::new("directory-user");
+    // A directory that is there, with a model in it: it is not used, and the one
+    // thing asked was whose it is.
+    let root = scratch.path().join("kept");
+    ModelsDir::open(Arc::new(RealFs), &root, Paced::standing()).unwrap();
+    installed(&root, &second());
+    let names = names_under(&root);
+    let fs = Asked::unknown_from(0);
+    let refused = ModelsDir::open(fs.clone(), &root, Paced::standing()).unwrap_err();
+    assert_eq!(refused, OpenRefused::UserUnknown);
+    assert_eq!(fs.calls(), ["who_may_write"]);
+    assert_eq!(names_under(&root), names);
+    // A directory that is not there: the failure is not "nothing has the name", so
+    // no folder is made to be refused afterwards.
+    let absent = scratch.path().join("absent");
+    let fs = Asked::unknown_from(0);
+    let refused = ModelsDir::open(fs.clone(), &absent, Paced::standing()).unwrap_err();
+    assert_eq!(refused, OpenRefused::UserUnknown);
+    assert_eq!(fs.calls(), ["who_may_write"]);
+    assert!(!absent.exists());
+    // Learned once and then not: the folder that was made is refused the same way,
+    // and not as a failure of the disk.
+    let fs = Asked::unknown_from(1);
+    let refused = ModelsDir::open(fs.clone(), &absent, Paced::standing()).unwrap_err();
+    assert_eq!(refused, OpenRefused::UserUnknown);
+    assert_eq!(fs.calls().last(), Some(&"who_may_write"));
+    // It has a sentence of its own, with nothing of a path, which is not the
+    // sentence of a disk that refused.
+    let said = printed(OpenRefused::UserUnknown, &root);
+    assert!(said.contains("which user whizbang runs as"), "{said:?}");
+    assert_ne!(
+        OpenRefused::UserUnknown.to_string(),
+        OpenRefused::Disk(std::io::ErrorKind::Other).to_string()
+    );
+    // A failure of the disk is still that, and "not found" of the folder that is to
+    // hold the directory is not a user that could not be learned.
+    let orphan = scratch.path().join("no-such-folder").join("models");
+    assert_eq!(
+        ModelsDir::open(Arc::new(RealFs), &orphan, Paced::standing()).unwrap_err(),
+        OpenRefused::Disk(std::io::ErrorKind::NotFound)
+    );
+}
+
+/// Whether this source text names the opening that asks nothing, `ModelsDir::at`, or
+/// gives `ModelsDir` another name under which it could. Lines that are comments
+/// are not read; everything else is, with its white space taken out, so that
+/// nothing is hidden by where a line breaks. What it looks for:
+///
+/// - the path itself, `ModelsDir::at` and `<ModelsDir>::at`, called or not;
+/// - `ModelsDir as`, which gives the type another name where it is imported;
+/// - a `type` whose right side ends in `ModelsDir`;
+/// - `Self::at` in a file that holds an `impl ModelsDir`.
+///
+/// A tripwire, not a proof: a macro that builds the name from pieces is not seen.
+fn names_the_unasked_opening(source: &str, defines_it: bool) -> bool {
+    let code: String = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .flat_map(str::chars)
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let path = ["ModelsDir::at", "ModelsDir>::at", "Self::at"]
+        .into_iter()
+        .filter(|path| !path.starts_with("Self") || code.contains("implModelsDir"))
+        .any(|path| {
+            code.match_indices(path)
+                .any(|(at, _)| !code[at + path.len()..].starts_with(word))
+        });
+    // `as` and then a name: `&ModelsDir as &dyn …` is no alias, and is not code here.
+    let renamed = code.contains("ModelsDiras");
+    let aliased = code.split(';').any(|piece| {
+        piece
+            .rfind("type")
+            .is_some_and(|at| piece[at..].contains('=') && piece.ends_with("ModelsDir"))
+    });
+    // The one file that defines it holds its one definition; no other file that
+    // holds an `impl ModelsDir` defines a function of that name.
+    let defined = match code.contains("implModelsDir") {
+        true => code.matches("fnat(").count(),
+        false => 0,
+    };
+    path || renamed || aliased || defined != usize::from(defines_it)
+}
+
+#[test]
 fn the_binary_names_a_models_directory_only_through_the_opening_that_asks_whose_it_is() {
     // `ModelsDir::at` asks nothing of the folder. The lines that accept a look and
-    // then an act (`docs/carry-over.md`) rest on the binary never using it.
-    let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("../whizbang/src");
-    let mut left = vec![sources];
+    // then an act (`docs/carry-over.md`) rest on no code of the product using it:
+    // not the binary, and not a crate the binary is built from, under any name.
+    // First the detector, against each way round it and against what it must let by.
+    for dodge in [
+        "let dir = ModelsDir::at(fs, root);",
+        "let dir = ModelsDir :: at (fs, root);",
+        "let dir = ModelsDir::\n    at(fs, root);",
+        "let make = ModelsDir::at;",
+        "let dir = <ModelsDir>::at(fs, root);",
+        "use whizbang_backends::models::ModelsDir as Dir;",
+        "use whizbang_backends::models::{Catalogue, ModelsDir\n    as Dir};",
+        "type Dir = ModelsDir;",
+        "pub(crate) type Dir = whizbang_backends::models::ModelsDir;",
+        "let x = \"https://h\"; let dir = ModelsDir::at(fs, root);",
+        "impl ModelsDir { pub fn sly(fs: F, root: &Path) -> ModelsDir { Self::at(fs, root) } }",
+        "impl ModelsDir { pub fn at(fs: F) -> ModelsDir { todo() } }",
+        "impl ModelsDir { pub(crate) fn at(fs: F) -> ModelsDir { todo() } }",
+    ] {
+        assert!(names_the_unasked_opening(dodge, false), "{dodge}");
+    }
+    for plain in [
+        "let dir = ModelsDir::open(fs, root, clock)?;",
+        "    /// A test's is `ModelsDir::at`.\n    // ModelsDir::at(fs, root)\nfn f(dir: &ModelsDir) {}",
+        "return Err(Refused::at(\"files\", Rule::NoFiles));",
+        "use whizbang_backends::models::{Installations, ModelsDir};",
+        "type Read<T> = Result<T, ConfigRefused>; fn f(dir: ModelsDir) {}",
+        "impl Other { fn f() -> Other { Self::at(1) } }",
+        "impl Other { pub fn at(place: usize) -> Other { Other(place) } }",
+    ] {
+        assert!(!names_the_unasked_opening(plain, false), "{plain}");
+    }
+    let defining = "impl ModelsDir { pub fn at(fs: F) -> ModelsDir { ModelsDir { fs } } }";
+    assert!(!names_the_unasked_opening(defining, true));
+
+    // Then every source file of every product crate. The test kit is no product.
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let products = [
+        "whizbang",
+        "whizbang-backends",
+        "whizbang-core",
+        "whizbang-eval",
+        "whizbang-rascal",
+        "whizbang-squint",
+    ];
+    let listed: Vec<String> = std::fs::read_dir(&crates)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name != "whizbang-testkit" && !name.starts_with('.'))
+        .collect();
+    assert_eq!(
+        listed.len(),
+        products.len(),
+        "a crate is not looked at: {listed:?}"
+    );
+    let mut left: Vec<_> = products
+        .iter()
+        .map(|name| crates.join(name).join("src"))
+        .collect();
     let mut read = 0;
     while let Some(folder) = left.pop() {
         for entry in std::fs::read_dir(&folder).unwrap() {
@@ -402,12 +569,17 @@ fn the_binary_names_a_models_directory_only_through_the_opening_that_asks_whose_
                 left.push(path);
             } else if path.extension().is_some_and(|extension| extension == "rs") {
                 let text = std::fs::read_to_string(&path).unwrap();
-                assert!(!text.contains("ModelsDir::at"), "{}", path.display());
+                let defines_it = path.ends_with("whizbang-backends/src/models/directory.rs");
+                assert!(
+                    !names_the_unasked_opening(&text, defines_it),
+                    "{}",
+                    path.display()
+                );
                 read += 1;
             }
         }
     }
-    assert!(read > 5, "{read} files of the binary were read");
+    assert!(read > 100, "{read} source files were read");
 }
 
 // --- the directory's lock, asked for until a time ----------------------------------------------

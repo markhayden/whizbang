@@ -117,6 +117,18 @@ with, five seconds, where it was tried a count of times and nothing more; the co
 stays as a ceiling ("Three kinds of lock"; "Limits"). Words: under "A folder of the
 layout that is a link" and "Limits", what is accepted because nobody but the
 directory's owner can write it.
+Amended: 2026-11-15, with task N3a of checkpoint 1C. Changed, in code and here: the
+catalogue is `catalogue/2`, whose entry has a title and the platforms it runs on, and
+`catalogue/1` is refused as any other format is ("The catalogue"); the inventory
+answers that this build has no adapter, installed or not, where it said out of date
+or not installed ("The inventory"). Added: "Where the directory is", with the
+binary's wiring of the inventory. From the review of task N2: who whizbang runs as is
+read from a pair of sockets, where it was read from a file in the system's temporary
+folder, and a failure to learn it has a refusal of its own and is never read as a
+directory that is not there; the test that no product code names `ModelsDir::at`
+reads every product crate and is not passed by another name for the type; four
+limits; and two sentences that said nothing in the library sleeps, which the lock
+asked for until a time had made untrue.
 
 ## Context
 
@@ -200,7 +212,8 @@ try, and `staging/incoming/files/`; and task M2b built the directory's `LOCK`,
 `CURRENT`, `STATUS`, `holds/` with the hold file a publication makes, and
 `installations/`; task M5 built a hold's share of a hold file; and task M5b built
 `DRAINING`, which a removal writes and takes off. The rest is not built (nothing is left: every part of the layout below is built by the task it names).* A models directory is one folder, given by whoever opens it: no
-default place and no variable is read for it here. In it:
+default place and no variable is read for it here ("Where the directory is" says
+what the binary gives). In it:
 
 ```text
 <models>/
@@ -285,18 +298,49 @@ and writable by its owner only, and refuses one that anyone else can write.
   `fs::who_may_write_a_folder_is_read_from_its_owner_and_its_mode_and_a_link_to_it_is_followed`).
 - **Who whizbang runs as** is not something the standard library says, and the
   workspace has no crate and no `unsafe` that would ask the system. It is read as
-  the owner of a file the process has just made, which the system gives to whoever
-  made it: an empty file in the system's temporary folder, under a name that was
-  free, following no link, readable by its owner only, removed at once; once in a
-  process, and only when a models directory is opened. No test runs anything as
-  another user: a folder that is another's is the answer of a file system that says
-  so.
+  the owner of something the process has just made, which the system gives to
+  whoever made it: one end of a pair of connected sockets (`UnixStream::pair`),
+  asked through the open socket itself, which has no name anywhere, touches no
+  folder and is closed at once; once in a process, and only when a models
+  directory is opened. Until task N3a it was an empty file made in the system's
+  temporary folder and removed, which needed that folder to be there and
+  writable. That the owner of the socket is the owner of a file and of a folder
+  the process makes is held on both platforms, by a test that also asks about a
+  real folder of another user, the root of the file system, and is told it is not
+  this user's; where the tests are themselves run as the user who owns the root
+  there is no such folder to ask about, and that half is not asked
+  (`whizbang-core`'s
+  `fs::the_real_file_system_says_that_a_folder_of_another_user_is_not_this_users`).
+  No test runs anything as another user.
+- **A failure to learn it has a refusal of its own** (`OpenRefused::UserUnknown`):
+  "which user whizbang runs as could not be learned, so whose the models directory
+  is cannot be told, and it is not used; nothing in it was read and nothing was
+  made; ask again". The file system asks who its user is before it looks at the
+  folder, and says a failure as an error of its own kind (`fs::UserUnknown`),
+  whatever the system said: so it is never taken for "nothing has the name",
+  which the opening reads as a directory that is still to be made. Until task
+  N3a a temporary folder that was not there made an empty directory, which was
+  then refused as a failure of the disk
+  (`directory::a_failure_to_learn_who_the_user_is_has_its_own_refusal_and_is_never_read_as_a_directory_that_is_absent`,
+  `fs::a_failure_to_learn_the_user_is_an_error_of_its_own_kind_and_never_a_name_that_is_not_there`).
 - **Two ways to a `ModelsDir`.** `ModelsDir::open` is the one above, and the only one
-  the binary uses: no source file of the binary names the other
-  (`directory::the_binary_names_a_models_directory_only_through_the_opening_that_asks_whose_it_is`;
-  no command names a models directory before task N3a). `ModelsDir::at` asks nothing
-  of the folder and is given no clock: it is for a folder its caller made, which is
-  a test's.
+  the product uses: the binary's wiring opens the directory a command names with it
+  ("Where the directory is"), and no source file of a product crate names the
+  other. `ModelsDir::at` asks nothing of the folder and is given no clock: it is
+  for a folder its caller made, which is a test's. The test reads every source
+  file of the six product crates (the test kit is no product), comment lines
+  apart, with the white space taken out, and fails on the path `ModelsDir::at`,
+  called or not; on `ModelsDir as`, which gives the type another name where it is
+  imported; on a `type` whose right side ends in `ModelsDir`; on `Self::at` in a
+  file that holds an `impl ModelsDir`; and on a second definition of `at`. It runs
+  each of those against its own detector first
+  (`directory::the_binary_names_a_models_directory_only_through_the_opening_that_asks_whose_it_is`).
+  A scan was chosen over a cargo feature that would compile `at` only for tests:
+  `just check` builds every target with the test kit's dependencies, so under it
+  the feature would be on in the binary's own build too, and only a build of the
+  binary alone would refuse a use; and it would put a feature into the crate graph
+  for one function. The scan is a tripwire and not a proof: a macro that builds
+  the name from pieces is not seen.
 
 **Limits.** It is a look, when the directory is opened: a mode or an owner changed
 afterwards is not seen until the next opening. The folders above the directory are
@@ -305,6 +349,115 @@ Only the directory's own folder is asked about; what is under it whizbang made, 
 its owner only, and a mode its owner changed there afterwards is not looked for.
 Lists of who else may reach a folder that a system keeps beside its mode are not
 read. And the user who administers the machine can write every folder on it.
+**A file system that reports no owner:** some report every folder as the user's
+who asks, or as one fixed user, whatever is on the disk (a disk mounted without
+owners, some network and shared folders). On the first, a folder another user can
+write is opened as this user's; on the second, this user's own is refused as
+another's, and the refusal's advice (`chown`) does not help: name a folder on
+another disk. Nothing here can tell such a file system from one that keeps
+owners. **When the directory's own folder is a link,** the folder asked about is
+the one the link leads to, and the link's own owner is not asked: one who can
+replace the link, which is one who can write the folder that holds it, chooses
+the directory, as one who can rename a folder above it does.
+
+### Where the directory is
+
+Code (task N3a of checkpoint 1C: `crates/whizbang/src/wiring.rs`, `Models`,
+`Over::installed`, `models_dir`, `platform_models_dir`; the flag in
+`crates/whizbang/src/rascal.rs`; tests named `wired::…`, in
+`crates/whizbang/tests/it/wired.rs`). The library is given its directory by whoever
+opens it. This is what the binary gives.
+
+- **Three may say where it is, in this order:** the command's flag, `--models-dir
+  <DIR>`; then the config's `[models] dir`, an absolute path (ADR 0011, "What the
+  file holds"); then the platform's data folder for whizbang. The first that says
+  is the directory, whatever the others say
+  (`wired::the_models_directory_is_the_flags_then_the_configs_then_the_platforms`).
+  With none of the three the command is refused, and says how to name one.
+- **The platform's** is `Library/Application Support/whizbang/models` under the home
+  folder on macOS; elsewhere `whizbang/models` under the folder `XDG_DATA_HOME`
+  names, or under `.local/share` of the home folder when it names none. A folder
+  the environment names is taken only when it is an absolute path; a machine with
+  no home folder has no such directory, and nothing is guessed. Rascal read a
+  variable of its own, then looked beside its pack, then in the user's cache
+  folder: none of the three is kept. A cache is what a system may empty, and a
+  model is gigabytes a person chose to download.
+- **It is opened by `ModelsDir::open` and by nothing else** ("A models directory is
+  its owner's alone"), with the machine's clock, so one that another can write is
+  refused before anything in it is read, and the refusal says which of the three
+  named it and never its path. That opening makes the directory's own folder and
+  no folder above it. **The wiring makes the folders above the platform's,** each
+  for its owner only: nobody made a data folder for whizbang before its first use.
+  It does not make the folders above one a person named, by the flag or in the
+  config: a path written wrong is said, not made.
+- **The inventory is told the secrets the executor is told,** by the one who gives
+  the executor its own: `Over::knowing` gives them to the executor, to the source
+  of its config and to the inventory, which is made again over the same directory
+  when they are given after it. Nobody else makes the inventory of an executor,
+  so the two never know two sets
+  (`wired::a_secret_the_executor_is_told_of_is_refused_as_a_models_name_by_the_binarys_inventory`).
+- **What the binary gives it** is the catalogue it ships (`wiring::catalogue`),
+  which holds no model until its first entry is written (plan 1C, task N5), under
+  the adapters it has (`wiring::adapters`), which are none until the first
+  (task R2a). A test gives its own catalogue and adapters to the same wiring, and
+  a call for an installed model is then prepared under its installation's
+  identity and holds a lease while its request is out
+  (`wired::under_the_binarys_wiring_a_call_for_an_installed_model_is_prepared_under_its_identity_and_holds_a_lease`);
+  one for a model whose adapter the build lacks is prepared as not ready, with
+  that reason
+  (`wired::a_call_for_a_model_whose_adapter_this_build_lacks_is_refused_when_prepared_with_that_reason`).
+- **Where no model could be asked for, no directory is opened or made:** under a
+  catalogue that holds no model, since the inventory of it reads no directory; and
+  for a command that names neither a config nor a directory, whose executor has no
+  backend to ask for one. Such an executor is over the inventory that knows no
+  model, as every executor was before this task.
+- **The platform's is not even worked out unless it is the one.** The wiring is
+  given what says where it is (`Models::platform`), and asks it only when a
+  directory is about to be opened and neither the flag nor the config named one:
+  never under a catalogue of no model, never for a command that names neither a
+  config nor a directory, and never when one of the other two said. The test
+  counts the askings.
+- **Which commands open a models directory, and which ask for the platform's.** At
+  this head, under the catalogue the build ships: none opens one and none asks.
+  One command is handed what says the platform's place, `whizbang rascal grow`,
+  the only one that builds an executor; `describe`, `store`, `runs`, `spend` and
+  the three stubs are handed nothing and have no way to it. Once the catalogue
+  holds a model, `rascal grow` opens a directory when it is given `--config` or
+  `--models-dir`, and asks for the platform's only when it is given a config that
+  has no `[models] dir` and no `--models-dir`.
+- **No test touches the data folder of whoever runs it.** The function that works
+  out the platform's place reads nothing: it is handed what the environment says,
+  and its test hands it made-up values. One function of the binary reads the
+  environment; `main` alone names it, and hands it on without calling it; and
+  nothing else in the binary reads the environment at all
+  (`wired::only_main_reads_where_the_platforms_data_folder_is`). A test of the
+  wiring gives its own, which answers a place in the test's scratch folder, or
+  gives none. That leaves a test that starts the binary itself, which inherits
+  the tester's environment unless it clears it: none can reach the folder today,
+  because the shipped catalogue holds no model, so no command opens a directory
+  or asks where the platform's is. The test that holds that starts the binary
+  with a cleared environment, a temporary home folder and the directory named,
+  by the flag and then by the config, and fails on the day the catalogue is
+  given an entry
+  (`wired::with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory`).
+
+**Limits.** The config is read once for `[models] dir`, when the executor is built
+over it: the source reads the config again at every ask, and a directory named in
+it afterwards is not seen by an executor already built, which a command that runs
+once does not meet and a server that stays up will (milestone 5,
+`docs/carry-over.md`). The secrets the inventory is told are those given from the
+start: the value of a variable the env file holds is the executor's secret from
+the first call on (ADR 0011, "The source over both files") and is not the
+inventory's; a model's name is a `ModelName` from a catalogue the build ships, and
+the config that would ask for a model by a key's value is refused whole by its
+source. A config whose backends are all remote still opens the directory, and is
+refused when it cannot be: where the directory is asked about only when a local
+model is first looked for, the refusal that says how to mend it would have no
+place to be said. The folders above the platform's are made with the mode `0700`
+where they are made; ones that are there are left as they are, and are not asked
+whose they are ("A models directory is its owner's alone", limits). And `~` in a
+path is nobody's home: the flag's is what the shell made of it, and the config's
+is refused.
 
 ### Three kinds of lock, and their order
 
@@ -440,16 +593,20 @@ one model:
 | Field | What it is |
 |---|---|
 | `name` | The model's name, a `ModelName` |
+| `title` | The model's title, as it is shown to a person, a `Title`: 1 to 100 printable ASCII characters and spaces (`TITLE_LIMIT`), with no space at either end. It names nothing on a disk and is compared with nothing |
 | `revision` | The revision of this entry, a `Revision`. Whoever changes anything of an entry changes its revision |
 | `adapter` | The adapter that runs the model, by its name, a `ModelName` |
 | `licence` | The licence the files are under, as their maker states it |
+| `platforms` | The platforms the model runs on: 1 to 8 (`PLATFORMS_LIMIT`), each named once, each a `Platform`. There are two, the platforms of `SPEC.md` section 1 under the names rascal's catalogue gave them: `macos-arm64` and `linux-x86_64` |
 | `features` | The features the adapter gives with this model: at most 16 (`FEATURES_LIMIT`), each a feature's name as a backend declares one (ADR 0006), each stated once |
 | `origins` | The origins a download of the files may reach: at most 8 (`ORIGINS_LIMIT`), each named once |
 | `files` | 1 to 64 files (`FILES_LIMIT`), each with its `name`, its `size` in bytes, its `sha256`, and `from`, the address it is first asked for at |
 
 (`catalogue::a_catalogue_is_read_as_its_models_and_their_files`,
 `catalogue::an_entry_holds_a_bounded_count_of_features_each_a_name_declared_once`,
-`catalogue::every_other_field_of_an_entry_keeps_its_rule`.) What an entry is made from,
+`catalogue::every_other_field_of_an_entry_keeps_its_rule`; the title and the
+platforms:
+`catalogue::an_entry_of_the_second_version_holds_a_title_and_its_platforms_and_the_first_version_is_refused`.) What an entry is made from,
 `EntryParts`, holds features that no constructor has looked at yet, so what `{:?}`
 prints of it is its names and three counts
 (`catalogue::what_is_printed_of_the_parts_of_an_entry_is_counts_and_never_a_feature`).
@@ -469,23 +626,35 @@ prints of it is its names and three counts
   address it is moved to (task M2). An origin is written as an origin, with no path
   after it
   (`catalogue::an_entry_names_a_bounded_count_of_origins_once_each_and_every_file_comes_from_one_of_them`).
-- **Features, origins, files and models are kept in the order of their texts,** whatever
+- **A title and the platforms are in the entry and not in an installation.** An
+  installation's record and its identity are made from the entry's name, its
+  revision, its adapter and its files ("An installation and its record"), as
+  before: a title corrected alone, against the rule that whoever changes an entry
+  changes its revision, is the same installation. `Entry::runs_on` is the
+  question the command that gets a model asks (plan 1C, task N3b), and
+  `Platform::this` is the platform a build is for, or none where it is for
+  neither. The inventory does not ask ("Limits").
+- **Platforms, features, origins, files and models are kept in the order of their texts,** whatever
   order they were written in. Every such text is ASCII, so the order of its bytes and
   the order of its characters are one order; "the order of their names" and "the order
   of the bytes of their names" in this record mean that one.
 
 **The file.** A catalogue is a file a person writes, in JSON, under the format
-`catalogue/1`:
+`catalogue/2`. The first format, `catalogue/1`, had no title and no platforms; no
+catalogue of it was ever shipped, so it is not read: it is refused for its format,
+as any format but the one is, and nothing converts one.
 
 ```json
 {
-  "format": "catalogue/1",
+  "format": "catalogue/2",
   "models": [
     {
       "name": "tiny",
+      "title": "Tiny, for tests",
       "revision": "2026-11.1",
       "adapter": "owlv2-sam2",
       "licence": "Apache-2.0",
+      "platforms": ["macos-arm64", "linux-x86_64"],
       "features": ["phrase", "box"],
       "origins": ["https://weights.example.org"],
       "files": [
@@ -1060,8 +1229,10 @@ attaches to whatever holds the lock, and ends as that ended
   once,** with what the status record says when that is `installing`, and with
   nothing when it says anything else or cannot be read. `watch` is where progress
   is shown, and it is what paces the tries: the caller waits there as long as it
-  chooses. Nothing in the library sleeps, and nothing in it tries twice without
-  that call in between, so it does not spin by itself; a caller whose `watch`
+  chooses. One who attaches does not sleep here, and does not try twice without
+  that call in between, so it does not spin by itself (the one place in the
+  library where anything waits by itself is the directory's lock, since task N2:
+  "Three kinds of lock"); a caller whose `watch`
   returns at once tries as fast as the file system answers, which is what the
   tests do, giving way to other threads. The pause a command makes there is the
   command's (1C, `docs/carry-over.md`).
@@ -1215,10 +1386,13 @@ and the deleting (task M5c). In this order:
 4. **The holds are waited for by trying, not by waiting:** the hold file of each
    installation of the model is tried alone, without waiting, again and again until
    the deadline, and kept once it is given. The deadline is `patience` from the
-   start, of the injected clock (`Clock::now`). Nothing here sleeps and nothing
-   reads another clock: what comes between two tries, of the model's lock and of a
-   hold file, is one call of `pause`, which the caller gives, and a test moves the
-   clock by hand there. On a clock that stands still a removal tries for as long as
+   start, of the injected clock (`Clock::now`). Between two tries, of the model's
+   lock and of a hold file, nothing sleeps and nothing reads another clock: what
+   comes there is one call of `pause`, which the caller gives, and a test moves
+   the clock by hand there. The directory's lock is another matter since task N2:
+   a removal asks for it as everyone does, and each asking paces its own tries by
+   the clock the directory was opened with, for five seconds at most ("Three
+   kinds of lock"; "Limits" has the sum). On a clock that stands still a removal tries for as long as
    the hold is kept.
 5. **With every hold file its own, the removal clears the pointer,** under the
    directory's lock, and syncs the model's folder. That is the decision: the model
@@ -1564,7 +1738,8 @@ Code (task M6: `inventory.rs`, `Installations`; tests named `inventory::…`).
 `Installations` is the core's `Inventory` (ADR 0015, "An inventory") over one models
 directory: it is made from the directory, a catalogue, each adapter this build has
 with the revision it states (no adapter is in the build yet, so whoever makes the
-inventory states them), and the executor's secrets. It answers one question, of one
+inventory states them: the binary's wiring states none, `wiring::adapters`), and
+the executor's secrets. It answers one question, of one
 model, from what is on the disk now, each time it is asked. Each test asks it
 through an executor the test builds over it (`InstalledRoster::over`), whose roster
 offers one local backend.
@@ -1572,9 +1747,10 @@ offers one local backend.
 | The answer | When |
 |---|---|
 | Not in the catalogue | The catalogue holds no model of exactly that name (`inventory::a_configured_model_that_the_catalogue_does_not_hold_is_prepared_as_not_ready_saying_so`) |
+| No adapter | The catalogue holds the model, and the build has no adapter of the name its entry gives. Said before anything of the model is looked for on the disk, so it is the answer whether the model is installed, not installed or damaged: nothing this build installs would make it ready (task N3a; until then an installed one was out of date and one that was not was not installed) (`inventory::a_model_whose_adapter_this_build_lacks_is_not_ready_for_that_reason_installed_or_not`) |
 | Not installed | The model has no pointer: never installed, or removed |
 | Ready, under the installation's identity | The pointer names an installation whose record is the record an install would make now: from the catalogue's entry, under the revision this build's adapter states (`inventory::a_model_in_the_catalogue_is_ready_when_installed_and_not_installed_otherwise`) |
-| Out of date | The pointer names an installation with any other record: another revision of the entry, another revision of the adapter, or an adapter this build does not have. Two revisions are the same or they are not; nothing is newer (`inventory::an_installation_whose_recorded_catalogue_or_adapter_revision_is_not_the_current_one_is_prepared_as_out_of_date`) |
+| Out of date | The pointer names an installation with any other record: another revision of the entry, or another revision of the adapter. Two revisions are the same or they are not; nothing is newer (`inventory::an_installation_whose_recorded_catalogue_or_adapter_revision_is_not_the_current_one_is_prepared_as_out_of_date`) |
 | Damaged | What `current` reports as damage ("The pointer"): a pointer that is not one as it is written, a record that is not there, is not in the one form, is another installation's or holds a secret the inventory was told of; a disk that cannot be read, by a call it refuses or a permission it does not give (`inventory::a_pointer_or_a_record_that_cannot_be_read_is_prepared_as_damaged_never_ready_and_never_not_installed`, `inventory::a_pointer_or_a_record_the_system_refuses_permission_to_read_is_damaged_and_never_not_installed`); and a model one of whose layout folders is a link, which every install, hold and removal refuses (`inventory::a_model_one_of_whose_layout_folders_is_a_link_is_damaged_and_never_ready`). Never ready, and never "not installed"; a new install repairs it, but for the link, which its owner takes away (`inventory::an_installation_record_that_is_damaged_or_a_pointer_that_names_nothing_is_prepared_as_damaged_and_a_new_install_repairs_it`, `inventory::a_record_that_holds_a_secret_the_inventory_was_told_of_is_damage_and_what_is_said_holds_nothing_of_the_disk`) |
 
 - **The name it is asked by is never a path.** It is the name a backend declares
@@ -1614,13 +1790,13 @@ offers one local backend.
   leased ("The lease"). *The draining
   mark is not read:* a model whose removal waits for holds is ready, and it is the
   lease that is refused then (task M6b); one whose pointer a removal has cleared
-  is not installed. *An adapter this build does not have* makes an installed model
-  out of date, and a model that is not installed is said to be not installed:
-  neither says that no install here could make it ready (a reason of its own
-  is weighed with the command that lists models: 1C, `docs/carry-over.md`). *What a
+  is not installed. *An adapter this build does not have* has a reason of its
+  own since task N3a (the table above); the command that lists models says it
+  with task N3b. *What a
   config offers is put over an inventory* since task W1 (ADR 0015, "What a config
-  offers, over an inventory"), and the binary's wiring takes this one
-  (`wiring::Over::installed`); the tests here give a roster.
+  offers, over an inventory"), and the binary's wiring makes this one
+  (`wiring::Over::installed`, "Where the directory is"); the tests here give a
+  roster.
 
 ### The lease
 
@@ -1778,7 +1954,16 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   A lock taken alone that waits is not in the store's interface, and one that
   waits with no end is not wanted: the tries stay (`docs/carry-over.md`, the line
   that accepts them). And one who asks for several things under the lock in turn
-  asks for it each time: each asking has its own five seconds.
+  asks for it each time: each asking has its own five seconds. **A removal asks
+  at least four times:** to set its mark, to set it again once it has the model's
+  lock, to clear the pointer, and to take its mark off; and once more between
+  every two tries while it waits for the model's lock or for a hold. Its deadline
+  is looked at between two askings and never inside one. So a removal that waits
+  for nothing can take some twenty seconds under a directory whose lock is given
+  each time just inside the five; and one that waits can overrun its patience by
+  the five seconds of the asking it was in. An asking that is not given by then
+  ends the removal as busy at once. The sum is rough: it is counted from the code
+  as task N2 left it, and the remover's own lock (plan 1C, task P5a) adds to it.
 - **An install that is refused every write of its status.** "While an installer has
   the model's lock the status says `installing`" rests on the install's first step,
   the write of that status. When it is refused, the install is refused and has
@@ -1812,9 +1997,13 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
 - **A name that is one plain name on macOS and Linux may be none elsewhere.** A name
   that ends in a dot, and the names Windows keeps for devices (`con`, `nul`, `aux` and
   the like), are accepted: the platforms are macOS and Linux (`SPEC.md` section 1).
-- **Not in `catalogue/1`:** a model's title, the platforms it runs on, and a credential
-  for a download that needs one. Each comes with the first catalogue entry that needs
-  it, at checkpoint 1C, and is on `docs/carry-over.md`.
+- **Not in `catalogue/2`:** a credential for a download that needs one. It comes
+  with the task that reads one (plan 1C, task N4), and is on `docs/carry-over.md`.
+  A model's title and the platforms it runs on came with `catalogue/2` (task N3a).
+- **A platform is asked by nobody yet.** An entry says which platforms its model
+  runs on, and the inventory does not ask: on a platform the entry does not name,
+  a model that is installed is ready. The command that lists and gets models says
+  so and refuses to get one (plan 1C, task N3b).
 
 ### For later tasks
 
