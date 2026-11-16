@@ -15,13 +15,14 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use crate::capability::{Declaration, Filler, Judge, Segmenter, Shown};
+use crate::capability::{Declaration, Filler, Judge, Segmenter, Shown, under};
 use crate::egress::{Credential, DispatchPolicy, NotAllowed, Recipient, Ways};
 use crate::identity::Digest;
 
 use super::record::{SETTINGS_LIMIT, Setting};
 use super::{
-    Backends, Capabilities, Capability, Estimate, Missing, NotJudged, PreparedCall, Secrets, Value,
+    Backends, Capabilities, Capability, Estimate, Missing, ModelIdentity, NotJudged, PreparedCall,
+    Secrets, Value,
 };
 
 /// The most secrets an executor keeps, over every snapshot it has taken. A snapshot
@@ -142,6 +143,19 @@ impl Made {
             Made::Segment(backend) => backend.declaration(),
             Made::Fill(backend) => backend.declaration(),
             Made::Judge(backend) => backend.declaration(),
+        }
+    }
+}
+
+impl Made {
+    /// This backend as a run that resolved this model is handed it, or none when it
+    /// does not answer that model: the match an executor makes among the backends
+    /// it was built with, of this one backend.
+    fn under(self, model: &ModelIdentity) -> Option<Made> {
+        match self {
+            Made::Segment(backend) => under(&[backend], model).map(Made::Segment),
+            Made::Fill(backend) => under(&[backend], model).map(Made::Fill),
+            Made::Judge(backend) => under(&[backend], model).map(Made::Judge),
         }
     }
 }
@@ -385,9 +399,14 @@ impl Snapshot {
             seen.push(capability);
             let name = resolved.iter().find(|(of, _)| *of == capability);
             let made = name.and_then(|(_, name)| offered.made(capability, name));
+            // Whether the backend under the name answers the model that was
+            // resolved is the executor's own match (`capability::inventory::under`,
+            // ADR 0015, "The backend a run is handed"): by all three texts, but
+            // for a version that is an installation's identity, where it is a
+            // local backend of that backend and model, declaring the identity.
             let made = made
                 .filter(|made| made.capability() == capability)
-                .filter(|made| made.declaration().model() == model);
+                .and_then(|made| made.under(model));
             handed = match made {
                 Some(Made::Segment(backend)) => handed.with_segment(backend),
                 Some(Made::Fill(backend)) => handed.with_fill(backend),

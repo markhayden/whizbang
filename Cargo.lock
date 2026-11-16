@@ -490,6 +490,7 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "serde_json",
+ "whizbang-backends",
  "whizbang-core",
  "whizbang-rascal",
  "whizbang-squint",

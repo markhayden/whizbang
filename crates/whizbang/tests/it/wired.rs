@@ -9,19 +9,24 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use whizbang::wiring::{self, Over};
+use whizbang_backends::models::{
+    Catalogue, CatalogueFile, Entry, EntryParts, FileName, Installations, Licence, ModelName,
+    ModelsDir, Revision, install,
+};
 use whizbang_core::capability::{Declaration, FillRequest, Picture, Price, Support};
 use whizbang_core::config::{self, Config, KindRefused, Kinds, Setting, Table};
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Argument, Call, CallError, Capability, Clock, Context, Engine,
-    Executor, Failure, Kind, Made, ModelIdentity, PreparedCall, Produced, Readiness, Refusal,
-    RefusalKind, Registry, Request, Requirement, Secrets, Value, ValueType,
+    Action, ActionDescriptor, Argument, Call, CallError, Cancellation, Capability, Clock, Context,
+    Engine, Executor, Failure, Kind, Made, ModelIdentity, PreparedCall, Produced, Readiness,
+    Refusal, RefusalKind, Registry, Request, Requirement, Secrets, Value, ValueType,
 };
-use whizbang_core::egress::Recipient;
-use whizbang_core::identity::CanonicalPixels;
+use whizbang_core::egress::{Address, Origin, Recipient};
+use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::spend::{AGE_PART, CAP_PART, OVER_THE_CAP, PREPARATION_HOLDS_MS, TOO_OLD};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Reader, Store};
 use whizbang_testkit::capabilities::{FakeFiller, Paint};
+use whizbang_testkit::downloads::FakeDownloader;
 use whizbang_testkit::echo::Echo;
 use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::scratch::Scratch;
@@ -36,9 +41,13 @@ fn made_up_key(tail: &str) -> String {
     ["made", "up", "key", "0123456789", tail].join("-")
 }
 
+/// The model a backend of the fake kind declares when its table names none: the one
+/// model the test's catalogue holds, installed in every [`World`].
+pub const MODEL: &str = "paint-1";
+
 /// A kind named `fake`, whose backends are fake fillers that send nothing. A backend
-/// of it declares the model its table gives, of the backend `fake` at the version
-/// `1`; names the origin of its table's address as its recipient, when the table has
+/// of it declares the model its table gives ([`MODEL`] when it gives none), of the
+/// backend `fake` at the version `1`; names the origin of its table's address as its recipient, when the table has
 /// one; states the price its setting `at_most_micros` gives, when it gives one; and
 /// reports the charge its setting `charges_micros` gives with every answer, when it
 /// gives one. It keeps each filler it made.
@@ -64,7 +73,7 @@ impl config::Kind for Shared {
     }
 
     fn make(&self, table: &Table<'_>) -> Result<Made, KindRefused> {
-        let model = table.backend().model().unwrap_or("m");
+        let model = table.backend().model().unwrap_or(MODEL);
         let mut declaration = Declaration::new(ModelIdentity::new("fake", model, "1"), &[])
             .map_err(|_| KindRefused::Table("a fake backend cannot declare that model"))?;
         if let Some(address) = table.backend().address() {
@@ -166,12 +175,47 @@ pub fn paints(runs: &Arc<AtomicU64>) -> Arc<dyn Action> {
 }
 
 /// A scratch folder with a store in it, a place for a config file and an env file,
-/// the fake kind, and a count of the runs of `paints`.
+/// a models directory in which [`MODEL`] is installed, the fake kind, and a count of
+/// the runs of `paints`.
 pub struct World {
     dir: Scratch,
     pub root: PathBuf,
     pub fakes: Arc<Fakes>,
     pub runs: Arc<AtomicU64>,
+    /// What is installed in the models directory, for the catalogue's first revision.
+    pub installed: Arc<Installations>,
+}
+
+/// The catalogue's entry for [`MODEL`] at this revision: one file, whose content
+/// names the revision, so that two revisions are two installations.
+fn entry(revision: &str) -> (Entry, FakeDownloader) {
+    let none = Secrets::none();
+    let name = |text: &str| ModelName::new(text, &none).unwrap();
+    let content = format!("weights of {revision}").into_bytes();
+    let from = Address::of("https://weights.example.org/files/weights.bin", &none).unwrap();
+    let file = CatalogueFile::new(
+        FileName::new("weights.bin", &none).unwrap(),
+        content.len() as u64,
+        Digest::of_bytes(&content),
+        from.clone(),
+        &none,
+    );
+    let parts = EntryParts {
+        name: name(MODEL),
+        revision: Revision::new(revision, &none).unwrap(),
+        adapter: name("fake-adapter"),
+        licence: Licence::new("Apache-2.0", &none).unwrap(),
+        features: Vec::new(),
+        origins: vec![Origin::of("https://weights.example.org", &none).unwrap()],
+        files: vec![file.unwrap()],
+    };
+    let entry = Entry::new(parts, &none).unwrap();
+    (entry, FakeDownloader::new().serving(&from, content))
+}
+
+/// The revision the one adapter of the tests states of itself.
+fn adapter() -> Revision {
+    Revision::new("7", &Secrets::none()).unwrap()
 }
 
 impl World {
@@ -179,12 +223,41 @@ impl World {
         let dir = Scratch::new(label);
         let root = dir.path().join("store");
         drop(Store::open(&root, Arc::new(RealFs)).unwrap());
-        World {
+        let models = dir.path().join("models");
+        std::fs::create_dir(&models).unwrap();
+        let (first, _) = entry("2026-11.1");
+        let installed = Installations::of(
+            ModelsDir::at(Arc::new(RealFs), &models),
+            Catalogue::new(vec![first.clone()], &Secrets::none()).unwrap(),
+            [(first.adapter().clone(), adapter())],
+            Secrets::none(),
+        );
+        let world = World {
             dir,
             root,
             fakes: Arc::new(Fakes::default()),
             runs: Arc::new(AtomicU64::new(0)),
-        }
+            installed: Arc::new(installed),
+        };
+        world.install("2026-11.1");
+        world
+    }
+
+    /// Installs [`MODEL`] at this revision of its entry, with a fake of the download:
+    /// the identity of the installation the model's pointer then names.
+    pub fn install(&self, revision: &str) -> String {
+        let (entry, downloads) = entry(revision);
+        let dir = ModelsDir::at(Arc::new(RealFs), &self.dir.path().join("models"));
+        let none = Secrets::none();
+        let record = install(
+            &dir,
+            &entry,
+            &adapter(),
+            &downloads,
+            &Cancellation::new(),
+            &none,
+        );
+        record.unwrap().identity().digest().to_string()
     }
 
     pub fn config_path(&self) -> PathBuf {
@@ -196,12 +269,14 @@ impl World {
     }
 
     /// Writes the config file, and answers what a command that names it is built
-    /// over: that file, no env file, and the kinds with the fake.
+    /// over: that file, no env file, the kinds with the fake, and what is installed
+    /// in this world's models directory.
     pub fn config(&self, text: &str) -> Over {
         std::fs::write(self.config_path(), text).unwrap();
         Over::nothing()
             .config(Some(&self.config_path()))
             .kinds(kinds_with(&self.fakes))
+            .installed(self.installed.clone())
     }
 
     /// The actions of this build with `paints` and `echo` registered beside them.
@@ -282,6 +357,17 @@ pub fn whizbang(args: &[&str], root: &Path) -> Ran {
     }
 }
 
+/// The version of the one model a run's record names, whole: `runs show` cuts a text
+/// at 64 characters, and an installation's identity is longer.
+pub fn version_of(root: &Path, run: &str) -> String {
+    let json = whizbang(&["runs", "show", run, "--json"], root);
+    assert_eq!(json.code, Some(0), "{}", json.err);
+    let record: serde_json::Value = serde_json::from_str(&json.out).unwrap();
+    let models = record["models"].as_array().unwrap();
+    assert_eq!(models.len(), 1, "{models:?}");
+    models[0]["version"].as_str().unwrap().to_owned()
+}
+
 /// What `runs show` prints of this run.
 pub fn shown(root: &Path, run: &str) -> String {
     let shown = whizbang(&["runs", "show", run], root);
@@ -324,8 +410,14 @@ fn with_no_config_the_binarys_executor_is_under_the_empty_config_and_a_call_with
     assert!(matches!(prepared.readiness(), Readiness::NotReady(_)));
     // No backend is there to hand: the call is refused as not ready, before
     // admission. No run is made and the action does not run.
+    // The sentence is the one what a config offers says, of a config that offers
+    // nothing: an executor that asked the backends it was built with, which are
+    // none, would say "no backend is configured for fill".
     let why = not_ready(executor.submit(&Call::new("paints")));
-    assert!(why.contains("fill"), "{why}");
+    assert_eq!(
+        why,
+        "no default backend is configured for fill, and the call chose none"
+    );
     assert_eq!(world.ran(), 0);
     assert!(world.held().is_empty(), "{:?}", world.held());
     // A call that needs no backend runs, and its record names the empty config.
@@ -381,11 +473,15 @@ fn under_a_config_a_run_is_handed_the_backend_its_kind_made_and_runs_show_prints
     has_line(&text, "settings: 2");
     has_line(&text, "  backends.fill.default.kind = \"fake\"");
     has_line(&text, "  backends.fill.default.model = \"paint-1\"");
+    // The model is local: it was admitted under the identity of its installation,
+    // which is the version its record names.
     has_line(&text, "models: 1");
-    assert!(
-        text.contains("  fill\tfake paint-1 1\tanswered\t"),
-        "{text}"
+    let identity = world.installed.ready(MODEL).unwrap().identity().digest();
+    assert_eq!(
+        version_of(&world.root, finished.run().as_str()),
+        identity.to_string()
     );
+    assert!(text.contains("  fill\tfake paint-1 sha256:"), "{text}");
     // A config that is changed is read again by the next call: the same executor
     // prepares under the new digest.
     let executor = world.runner(&over);
@@ -445,6 +541,34 @@ fn a_call_over_the_cap_of_the_binarys_config_is_refused_before_a_run_exists() {
     let executor = world.runner(&over);
     executor.submit(&Call::new("paints")).unwrap();
     assert_eq!((world.ran(), world.fakes.requests()), (1, 1));
+}
+
+#[test]
+fn a_request_that_is_both_too_old_and_over_the_cap_is_refused_as_stale() {
+    // The parts are asked in the order they were given, and the first refusal is
+    // the answer: the age's part stands before the cap's.
+    let world = World::new("wired-order");
+    let clock = Arc::new(Hand(AtomicU64::new(1_000_000)));
+    let executor = world
+        .runner(&world.config(&capped("0.10")))
+        .with_clock(clock.clone());
+    let prepared = executor.prepare(&Call::new("paints")).unwrap();
+    assert!(prepared.estimate().micros() > 100_000);
+    clock.0.fetch_add(PREPARATION_HOLDS_MS, Ordering::SeqCst);
+    let request = Request::new(Call::new("paints")).expecting(&prepared);
+    let refused = executor.request(&request);
+    let Err(CallError::Refused(Refusal::ByPart { part, .. })) = refused else {
+        panic!("not refused by a part: {refused:?}");
+    };
+    assert_eq!(part, AGE_PART);
+    // Young again, the same request is refused by the cap.
+    clock.0.fetch_sub(1, Ordering::SeqCst);
+    let refused = executor.request(&request);
+    let Err(CallError::Refused(Refusal::ByPart { part, .. })) = refused else {
+        panic!("not refused by a part: {refused:?}");
+    };
+    assert_eq!(part, CAP_PART);
+    assert!(world.held().is_empty());
 }
 
 /// A clock a test moves by hand.
@@ -545,17 +669,21 @@ fn the_binarys_source_and_its_executor_are_told_of_the_same_secrets() {
     assert!(!why.contains(&key));
     assert_eq!(world.held().len(), 1);
     // An executor that was told of no secret reads that config: the two were told
-    // the same, which is nothing.
+    // the same, which is nothing. The config is used, and its model, which is the
+    // key, is none the catalogue holds.
     drop(executor);
     let untold = world.runner(&over.clone().knowing(Secrets::none()));
     let prepared = untold.prepare(&Call::new("paints")).unwrap();
-    assert_eq!(prepared.readiness(), &Readiness::Ready);
+    assert!(matches!(prepared.readiness(), Readiness::NotReady(_)));
 }
 
 #[test]
-fn a_key_of_the_env_file_is_taken_out_of_what_a_run_under_the_binarys_executor_writes() {
+fn the_value_of_a_variable_the_config_names_is_taken_out_of_what_a_run_under_the_binarys_executor_writes()
+ {
     // The env file named beside the config holds the value of the variable the
-    // config names: it is the executor's secret from the first call on.
+    // config names: that value is the executor's secret from the first call on. A
+    // value of the env file that the config does not name is no secret of the
+    // executor's, and nothing carries one into a run.
     let world = World::new("wired-env");
     let key = made_up_key("env");
     std::fs::write(world.env_path(), format!("FAKE_KEY={key}\n")).unwrap();
@@ -895,4 +1023,115 @@ fn the_reservation_of_a_run_a_killed_process_left_is_named_by_spend_status_and_c
     let of_run = whizbang(&["spend", "status", "--run", &run], &world.root);
     assert_eq!(of_run.code, Some(0), "{}", of_run.err);
     assert!(of_run.out.contains("$0.10"), "{}", of_run.out);
+}
+
+// --- the inventory and the lease ---------------------------------------------------------------
+
+#[test]
+fn a_local_backend_is_ready_only_where_the_models_directory_holds_its_model_installed_and_is_never_ready_under_no_inventory()
+ {
+    let world = World::new("wired-inventory");
+    let local = |model: &str| format!("[backends.fill]\nkind = \"fake\"\nmodel = \"{model}\"\n");
+    // A command that names no models directory has the inventory that knows no
+    // model: a local backend is not ready, and says why. No other answers for it.
+    std::fs::write(world.config_path(), local(MODEL)).unwrap();
+    let over = Over::nothing()
+        .config(Some(&world.config_path()))
+        .kinds(kinds_with(&world.fakes));
+    let executor = world.runner(&over);
+    assert_eq!(
+        not_ready(executor.submit(&Call::new("paints"))),
+        "the fill backend default is local, and its model is not ready: it is not in the \
+         catalogue"
+    );
+    drop(executor);
+    // Over the models directory, the model the catalogue holds and the directory
+    // has installed is ready, and its run is admitted and answered.
+    let executor = world.runner(&world.config(&local(MODEL)));
+    let finished = executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!((world.ran(), world.fakes.requests()), (1, 1));
+    // A model the catalogue does not hold is not ready.
+    std::fs::write(world.config_path(), local("paint-2")).unwrap();
+    assert_eq!(
+        not_ready(executor.submit(&Call::new("paints"))),
+        "the fill backend default is local, and its model is not ready: it is not in the \
+         catalogue"
+    );
+    // Installed again from another revision of its entry than the catalogue's, the
+    // model is out of date: the inventory answers from what is on the disk now.
+    std::fs::write(world.config_path(), local(MODEL)).unwrap();
+    world.install("2026-11.2");
+    assert_eq!(
+        not_ready(executor.submit(&Call::new("paints"))),
+        "the fill backend default is local, and its model is not ready: its installation \
+         is out of date"
+    );
+    assert_eq!((world.ran(), world.fakes.requests()), (1, 1));
+    assert_eq!(world.held().len(), 1);
+}
+
+/// `swaps`: an action that needs a filler, installs the model again from another
+/// revision of its entry, and then asks the filler once. What the request came to
+/// is what it returns: an error of the kind `fill` with the fault's sentence.
+fn swaps(again: impl Fn() + Send + Sync + 'static) -> Arc<dyn Action> {
+    let draft = ActionDescriptor::draft("swaps", "1.0.0", Kind::Primitive, "A test action.");
+    let descriptor = draft.needs(Requirement::new(Capability::Fill)).build();
+    Arc::new(Scripted {
+        descriptor: descriptor.unwrap(),
+        runs: Arc::new(AtomicU64::new(0)),
+        body: Box::new(move |_, context| {
+            let fill = context.capabilities().fill().expect("a filler is handed");
+            again();
+            match fill.fill(&fill_request()) {
+                Ok(_) => Ok(Produced::nothing()),
+                Err(fault) => Err(Failure::error("fill", fault.sentence())),
+            }
+        }),
+    })
+}
+
+#[test]
+fn a_request_to_a_local_model_takes_a_lease_on_the_installation_its_run_was_admitted_with_and_is_refused_unsent_once_that_is_replaced()
+ {
+    let world = Arc::new(World::new("wired-lease"));
+    let over = world.config("[backends.fill]\nkind = \"fake\"\n");
+    let admitted_with = world.installed.ready(MODEL).unwrap().identity().digest();
+    let mut registry = world.registry();
+    let again = world.clone();
+    let replaced = Arc::new(Mutex::new(None));
+    let noted = replaced.clone();
+    registry
+        .register(swaps(move || {
+            *noted.lock().unwrap() = Some(again.install("2026-11.2"));
+        }))
+        .unwrap();
+    let store = Arc::new(Store::open(&world.root, Arc::new(RealFs)).unwrap());
+    let executor = wiring::runner(registry, store, &over).unwrap();
+    // The run is admitted under the installation that was current; between its
+    // admission and its request the model is installed again, as another
+    // installation. The lease is for the one the admission recorded, which the
+    // pointer no longer names: the request is refused before it leaves, and no
+    // other installation answers in its place.
+    let finished = executor.submit(&Call::new("swaps")).unwrap();
+    let replaced = replaced.lock().unwrap().clone().unwrap();
+    assert_ne!(replaced, admitted_with.to_string());
+    assert_eq!(finished.outcome().name(), "error");
+    assert_eq!(world.fakes.requests(), 0);
+    drop(executor);
+    let text = shown(&world.root, finished.run().as_str());
+    // As it is printed, with its apostrophe escaped.
+    let why = "the model\\'s installation was replaced or removed after the run was admitted";
+    has_line(&text, &format!("error: fill: {why}"));
+    has_line(&text, &format!("  none\trequest_not_ready\t{why}"));
+    // The record names the model under the installation the run was admitted with,
+    // and nothing was held or paid for the request.
+    assert_eq!(
+        version_of(&world.root, finished.run().as_str()),
+        admitted_with.to_string()
+    );
+    has_line(
+        &text,
+        "spend: $0.00 reserved; paid requests: none; cost: $0.00",
+    );
 }

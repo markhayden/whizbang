@@ -1375,7 +1375,7 @@ wires, and through them every other side task of spend, egress, config and model
 (As cut down, 2026-11-15: it named S7b and S12, which are cut; S9 and S11 are the
 last of the spend strand in their place.)
 
-- [ ] `wiring::runner` builds the executor with the real ledger, the config's source, the
+- [x] `wiring::runner` builds the executor with the real ledger, the config's source, the
       admission's parts (S3, S8), the wrappers (the gate, the lease, the meter), the
       recovery's parts and the inventory. With no config file it has no backend, as
       before. (As cut down, 2026-11-15: the recovery's parts are I4b's. The ledger
@@ -1392,6 +1392,46 @@ admitted; the shipped description does not change.
 (As cut down, 2026-11-15: the clauses on `runs show`, `spend status` and
 `spend reset` are added, as the one test of the whole strand through the binary.)
 **Size:** small.
+
+**Built, in three pull requests** (2026-11-15; ADR 0015, "The binary wired", names the
+test of everything the wiring gives). "Through the binary" is through the function
+that builds the binary's executor (`wiring::runner`), with a fake kind and the
+actions a test registers, and through the real binary for every command that exists:
+no command runs an action that needs a backend yet. Each clause, and its test in the
+binary's tests:
+
+- with no config, `grow` runs and its run has a reservation of nothing:
+  `rascal::grow_runs_under_the_config_its_flag_names_and_under_the_empty_config_with_none`
+  (the real binary), with
+  `wired::with_no_config_a_run_has_a_reservation_of_nothing_in_a_store_that_allows_nothing`;
+- a paid call is refused without an allowance and admitted with one, and `runs show`
+  lists its paid request with what it was charged:
+  `wired::a_paid_call_is_refused_without_an_allowance_and_admitted_with_one_and_runs_show_lists_its_request_with_what_it_was_charged`;
+- a store left by a killed process is recovered by the next command that opens it to
+  write, and not by one that reads; its reservation is named by `spend status` as
+  still held; and after a `spend reset` a paid call is admitted:
+  `wired::the_reservation_of_a_run_a_killed_process_left_is_named_by_spend_status_and_cleared_by_spend_reset_and_recovery_makes_no_name_of_the_ledgers`;
+- the shipped description does not change:
+  `describe::describe_json_pretty_prints_the_bytes_the_reference_holds`, with
+  `docs/reference/` in none of the three diffs.
+
+**Reworded with the task** (W1, 2026-11-15). Two things are as the task found them
+and not as the words above have them.
+
+- "With no config, `grow` runs as at `m1a`", and the box's "With no config file it
+  has no backend, as before". It runs, with no backend, and commits what it
+  committed. Two things its record says differently, each by a decision this plan
+  or its records made: the digest of its config is the empty config's (ADR 0011,
+  "Where the file is" and "The digest"), where `m1a` recorded the digest of no
+  bytes, because the executor goes by a snapshot of a config and a command given
+  none has the empty one; and `reserved_micros` is 0, where it was null, which is
+  the clause's own "a reservation of nothing".
+- "The inventory" is `models::Installations` wherever the wiring is given a models
+  directory, and the inventory that knows no model where it is given none. No
+  command names a models directory: an inventory is of a catalogue, and the first
+  catalogue entry is checkpoint 1C's ("Decisions": no network client and no
+  catalogue in 1B). The test gives one over a scratch folder, and the row on the
+  shipped catalogue in `docs/carry-over.md` has the command's flag.
 
 ### S1b. The fold
 

@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use whizbang_core::capability::{
-    Declaration, Fault, FaultKind, FillRequest, Picture, Price, Stage, Support,
+    Declaration, Fault, FaultKind, FillRequest, Installation, Picture, Place, Price, Stage, Support,
 };
 use whizbang_core::config::{
     self, ConfigRefused, EnvRefused, Files, KEY_SHOWN_LIMIT, KIND_SENTENCE_WITHHELD, KindRefused,
@@ -29,8 +29,10 @@ use whizbang_core::egress::{
 use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::spend::{CallCap, OVER_THE_CAP};
 use whizbang_core::store::{Reader, Store};
+use whizbang_testkit::around::FakeWrapper;
 use whizbang_testkit::capabilities::{FakeFiller, Paint};
 use whizbang_testkit::fs_shim::ShimFs;
+use whizbang_testkit::inventory::FakeInventory;
 use whizbang_testkit::kinds::FakeKind;
 use whizbang_testkit::scratch::Scratch;
 use whizbang_testkit::sending::{FakeCheck, FakeSender};
@@ -1322,4 +1324,162 @@ fn an_upstream_that_holds_a_secret_the_source_knows_is_refused_where_the_config_
             .name(),
         "completed"
     );
+}
+
+// --- what a config offers, over an inventory (plan 1B, task W1) --------------------------------
+
+/// A kind named `local`, whose backends are fillers that name no recipient and state
+/// a bound of 70,000 millionths for a request. A backend of it declares the model its
+/// table gives, of the backend `local`, at the version `declared`.
+struct Local;
+
+impl config::Kind for Local {
+    fn name(&self) -> &str {
+        "local"
+    }
+
+    fn make(&self, table: &Table<'_>) -> Result<Made, KindRefused> {
+        let model = ModelIdentity::new("local", table.backend().model().unwrap_or("m"), "declared");
+        let declaration = Declaration::new(model, &[])
+            .map_err(|_| KindRefused::Table("a local backend cannot declare that model"))?
+            .priced(Price::at_most(70_000.0).unwrap());
+        Ok(Made::Fill(Arc::new(
+            FakeFiller::new(Paint::Inverse).declared_as(declaration),
+        )))
+    }
+}
+
+/// Why the one filler a call of `asks` needs is not ready.
+#[track_caller]
+fn fill_not_ready(executor: &Engine) -> String {
+    let prepared = executor.prepare(&Call::new("asks")).unwrap();
+    let Readiness::NotReady(missing) = prepared.readiness() else {
+        panic!("the call is ready: {prepared:?}");
+    };
+    assert_eq!(missing.len(), 1);
+    missing[0].why().to_owned()
+}
+
+#[test]
+fn what_a_config_offers_over_an_inventory_prepares_a_local_model_under_its_installation_and_its_run_is_handed_its_backend_under_it()
+ {
+    // The source over the files, with the models of its local backends looked up in
+    // an inventory (`Files::over`): what a roster over an inventory does (ADR 0015,
+    // "An inventory"), of what a config offers.
+    let world = World::new("[backends.fill]\nkind = \"fake\"\nmodel = \"lama\"\n", None);
+    let inventory = Arc::new(FakeInventory::new());
+    let mut kinds = Kinds::new();
+    kinds.register(world.kind.clone()).unwrap();
+    kinds.register(Arc::new(Local)).unwrap();
+    let files = Files::new(&world.config_path(), None, kinds).over(inventory.clone());
+    let lease = FakeWrapper::new("lease");
+    let executor = world
+        .executor(vec![asks()])
+        .with_config(Arc::new(files))
+        .with_wrapper(Place::Lease, Arc::new(lease.clone()));
+    // A model that is not installed makes its backend not ready, with the reason: the
+    // call is refused at admission, with no run.
+    assert_eq!(
+        fill_not_ready(&executor),
+        "the fill backend default is local, and its model is not ready: it is not in the \
+         catalogue"
+    );
+    let refused = executor.submit(&Call::new("asks"));
+    assert!(
+        matches!(refused, Err(CallError::Refused(Refusal::NotReady { .. }))),
+        "{refused:?}"
+    );
+    assert_eq!((world.runs(), world.requests("default")), (0, 0));
+    assert_eq!(inventory.asked(), ["lama", "lama"]);
+    // Installed, it is prepared under the identity of its installation, as its
+    // version; its run is handed the backend its kind made, declaring that identity;
+    // and the lease's place is told it.
+    let installation = inventory.install("lama", b"weights");
+    let prepared = executor.prepare(&Call::new("asks")).unwrap();
+    assert_eq!(prepared.readiness(), &Readiness::Ready);
+    let under = ModelIdentity::new("fake", "lama", &installation.to_string());
+    assert_eq!(prepared.needs()[0].model(), Some(&under));
+    let finished = executor.submit(&Call::new("asks")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!((world.runs(), world.requests("default")), (1, 1));
+    let told: Vec<String> = lease
+        .requests()
+        .into_iter()
+        .map(|asked| asked.model.2)
+        .collect();
+    assert_eq!(told, [installation.to_string()]);
+    let record = world.record(&finished);
+    assert_eq!(record.models()[0].version, installation.to_string());
+    // Installed again, the preparation a caller was shown is stale.
+    let again = inventory.install("lama", b"other weights");
+    assert_ne!(again, installation);
+    let stale = executor.request(&Request::new(Call::new("asks")).expecting(&prepared));
+    assert!(
+        matches!(
+            stale,
+            Err(CallError::Refused(Refusal::Stale {
+                why: Stale::Model { .. },
+                ..
+            }))
+        ),
+        "{stale:?}"
+    );
+    // A backend that is not ready for a reason of the config's keeps that reason,
+    // and the inventory is not asked about it.
+    let asked = inventory.asked().len();
+    world.config("[backends.fill]\nkind = \"service\"\nmodel = \"lama\"\n");
+    assert_eq!(
+        fill_not_ready(&executor),
+        "the default fill backend is not ready: its kind is not one this build has"
+    );
+    assert_eq!(inventory.asked().len(), asked);
+    // What one request to a local backend may cost is found under the identity,
+    // which no declaration holds: the estimate is its price, and not nothing.
+    world.config("[backends.fill]\nkind = \"local\"\nmodel = \"lama\"\n");
+    let prepared = executor.prepare(&Call::new("asks")).unwrap();
+    assert_eq!(prepared.readiness(), &Readiness::Ready);
+    assert_eq!(prepared.estimate().micros(), 70_000);
+}
+
+#[test]
+fn a_backend_of_a_config_that_names_a_recipient_and_declares_an_identity_is_not_ready_with_or_without_an_inventory()
+ {
+    // One rule on every path (ADR 0015, "An inventory"): such a backend is refused
+    // where it is resolved, with the reason. Here, where a config offers it.
+    let identity = Installation::of(Digest::of_bytes(b"weights")).to_string();
+    let config = format!(
+        "[backends.fill]\nkind = \"fake\"\nurl = \"{API}/v1\"\n\n[backends.fill.settings]\n\
+         version = \"{identity}\"\n"
+    );
+    let world = World::new(&config, None);
+    let why = "the fill backend default names a recipient, and declares the identity of an \
+               installation as its version";
+    // With no inventory.
+    let executor = world.executor(vec![asks()]);
+    assert_eq!(fill_not_ready(&executor), why);
+    assert!(executor.submit(&Call::new("asks")).is_err());
+    assert_eq!((world.runs(), world.requests("default")), (0, 0));
+    drop(executor);
+    // Over one, which is not asked about it.
+    let inventory = Arc::new(FakeInventory::new());
+    let mut kinds = Kinds::new();
+    kinds.register(world.kind.clone()).unwrap();
+    let files = Files::new(&world.config_path(), None, kinds).over(inventory.clone());
+    let executor = world.executor(vec![asks()]).with_config(Arc::new(files));
+    assert_eq!(fill_not_ready(&executor), why);
+    assert!(executor.submit(&Call::new("asks")).is_err());
+    assert_eq!((world.runs(), world.requests("default")), (0, 0));
+    assert!(inventory.asked().is_empty());
+    // A backend that names a recipient and declares any other version is answered as
+    // declared, over an inventory too, and the inventory is not asked.
+    world.config(&format!(
+        "[backends.fill]\nkind = \"fake\"\nurl = \"{API}/v1\"\n"
+    ));
+    let prepared = executor.prepare(&Call::new("asks")).unwrap();
+    assert_eq!(prepared.readiness(), &Readiness::Ready);
+    assert_eq!(
+        prepared.needs()[0].model(),
+        Some(&ModelIdentity::new("fake", "m", "1"))
+    );
+    assert!(inventory.asked().is_empty());
 }
