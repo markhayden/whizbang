@@ -18,6 +18,8 @@ hold. Changed: what remains of a record over the limit, which is nothing (ADR 00
 call; and the sentence of the plan on the tool list, which is corrected there.
 Spec: section 3, "The execution contract", "What a run publishes", "What a judge model may
 call" and "What every run records"; section 4, "Backends"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 
 ## Context
 
@@ -77,7 +79,8 @@ What is not held, and is known:
   holds one to the other. A call that resolved a model no held backend declares is
   admitted, and its action finds no handle
   (`asked::known_an_executor_built_with_a_digest_alone_holds_its_backends_apart_from_its_roster`).
-  The binary's executor holds none. Both are the config's, at checkpoint 1B: under a
+  The binary's executor holds none (until its wiring at checkpoint 1B: ADR 0015,
+  "The binary wired"). Both are the config's, at checkpoint 1B: under a
   snapshot of the config that holds backends, one thing makes both, and such a call is
   refused at admission (ADR 0015, "One snapshot of the config").
 - A call with two needs of one capability is handed the backend of the first.
@@ -565,7 +568,8 @@ that only its parent reads, in the store and in the commit step; it is on
 - **Refuse, at admission, a call whose resolved model no held backend declares.** Turned
   down for now: every executor built without backends, the binary's among them, would
   refuse every call that needs a capability, where today such a call is not ready for
-  want of a roster. It comes with the config.
+  want of a roster. It comes with the config. (It came: ADR 0015, "One snapshot of the
+  config".)
 - **Let the action report its judge turns to the record.** Turned down: a loop that
   forgot one, or failed before it reported, would leave a request with no turn, and the
   failed turn is the one a reader most needs.

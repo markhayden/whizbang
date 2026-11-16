@@ -50,6 +50,8 @@ declaration's three names are bounded; a fault and a turn are redacted whole by 
 handle before they are cleaned and cut.
 Spec: section 3, "Crates and their edges", "Identities" and "Storage"; section 4,
 "Backends"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 
 ## Context
 
@@ -276,7 +278,7 @@ A `Roster` holds the backends on offer: for each capability, declarations by nam
 most one default. A name keeps the rule of an action's name and names one backend of a
 capability; the same name under another capability is another entry. A default names a
 backend that is offered. The config will fill a roster at checkpoint 1B; until then a
-test does.
+test does. (It does since: ADR 0011, "What a config offers".)
 
 `Roster::resolve(capability, choice, features)` answers which backend answers a
 capability for a call:

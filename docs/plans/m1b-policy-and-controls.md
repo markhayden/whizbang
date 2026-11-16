@@ -515,7 +515,7 @@ Two things a side task needs of a root file, and where each is made. B0b also ma
 empty module root `downloads` of the test kit, so that M2 fills
 `crates/whizbang-testkit/src/downloads.rs` and leaves the test kit's `lib.rs` alone. And
 a side task may change `Cargo.lock` in one way: by adding a dependency to the manifest
-of its own strand's crate, as M1 will to `whizbang-backends`. A crate that is new to the
+of its own strand's crate, as M1 did to `whizbang-backends`. A crate that is new to the
 lock file is justified in that pull request as B0b's TOML reader was, and `just deny`
 passes on it. Any other change to a root file is a base task's.
 
@@ -1432,6 +1432,12 @@ and not as the words above have them.
   catalogue entry is checkpoint 1C's ("Decisions": no network client and no
   catalogue in 1B). The test gives one over a scratch folder, and the row on the
   shipped catalogue in `docs/carry-over.md` has the command's flag.
+  Under the binary's own commands no lease is in place either (added at the exit
+  check): the lease stands in its place only where the wiring is given a models
+  directory to take a hold in (`wiring::Over::installed`), and no command gives
+  one. Nothing is left unheld by that, since with no inventory no local backend is
+  ready and no request reaches the lease's place
+  (`wired::a_local_backend_is_ready_only_where_the_models_directory_holds_its_model_installed_and_is_never_ready_under_no_inventory`).
 
 **Reworded with the task** (after the review of W1, 2026-11-15). Two clauses of "Done
 when" are no longer as they were worded, each by a change the review asked for.
@@ -1548,7 +1554,9 @@ real ledger is not the fake: an allowance is the owner's reset, which a test mak
 as its three names until task S9 builds the command, so the store holds those names
 and the epoch is 1; a store allows nothing until one is made; and no reservation is
 closed when its run ends, because the real ledger's `settle` is task S11's, so a
-reservation counts in full where the fake had released it.
+reservation counts in full where the fake had released it. (Both are built since:
+the reset is `spend::reset`, task S9, and a run's end closes its reservation, task
+S11.)
 **The sweep took the place of two in `admit.rs`** (the orchestrator's ruling,
 2026-11-15): the every-choice sweep with a ledger of one name
 (`admit::a_crash_inside_the_admission_step_*`, four tests), which it holds all of and
@@ -1583,7 +1591,7 @@ and `crates/rascal-mask/src/describe.rs` (`common_properties`, `max_spend_usd`);
 table-manners `CONTRACT.md` section 4.5. An admission's part, in `spend/`.
 
 - [x] A cap on what one call may reserve, from the snapshot (C5 reads it from the config;
-      until then a test gives it). A request may carry a lower cap of its own; I1's
+      until then a test gives it: C5 is built, and the cap is the file's). A request may carry a lower cap of its own; I1's
       section says where a request carries it.
 
 **Done when** these pass: a call whose estimate is over the cap is refused before a run
@@ -1888,8 +1896,11 @@ store that an executor with the real ledger wrote:
 action a test registers, which stands for a paid request, runs once before the state
 is made, not at all for `status`, for `reset` or for the call that is refused, and
 once more for the call the new allowance admits. No fake backend is sent a request
-in these tests, because no meter is built yet (tasks S5 and S5b): what a run a dead
-process left had dispatched is planted as its names.
+in these tests, because no meter was built when they were written (tasks S5 and S5b,
+since merged): what a run a dead process left had dispatched is planted as its names.
+The same store made by a meter, through the binary's wiring, is
+`wired::a_store_left_by_a_process_that_died_between_a_dispatch_and_its_settlement_counts_the_request_at_its_bound_until_the_owners_reset`
+(added at the exit check).
 "an open reservation of a run a dead process left" is listed by `status` as "open":
 the books do not say whether a run's process is alive, and `status` reads only the
 books. "with the holder named" is the store's own sentence, which names the writer
@@ -2177,6 +2188,10 @@ has no dispatch record" is task S5's (`docs/carry-over.md`). The other three tha
 waited for the gate's place were shown with task I3: the fake backend counts none, a
 fake in the meter's place saw nothing, and no other backend is asked in a refused
 one's place (ADR 0019, "Limits"; ADR 0015, "A wrapper around each request").
+**Shown since, with task S5:**
+`spend::meter::a_request_the_gate_refused_has_no_dispatch_record`, with the policy a
+config that names no recipient makes, the real ledger and the meter. Every part of
+"Done when" is now shown, and the row is off `docs/carry-over.md` (the exit check).
 
 **Done when** these pass, each with an executor a test builds with the policy: with the
 empty policy every request to a backend with a recipient is refused and the fake counts
@@ -2602,25 +2617,64 @@ and every script test passes on both runners.
 
 ### Z1. Exit check
 
-- [ ] Each clause of the checkpoint 1B row in `SPEC.md` section 16 is matched to a named
+- [x] Each clause of the checkpoint 1B row in `SPEC.md` section 16 is matched to a named
       test in the note, and each of the five spend cases of section 6 by name.
       (As cut down, 2026-11-15, the five and their tasks: nested retries, S5b;
       simultaneous calls, S2; cancellation after dispatch, S5b; a store left by a
       process that died between dispatch and settlement, S9, and W1 through the
       binary; a backend that offers only an estimate, S4.)
-- [ ] Each kept row of `SPEC.md` section 6, "Controls from table-manners", that 1B owns
+- [x] Each kept row of `SPEC.md` section 6, "Controls from table-manners", that 1B owns
       (estimates; the per-call cap and budget; model installs; removing a model in use)
       is matched to a test.
-- [ ] Every carry-over row whose owner was 1B is gone, or has the owner the table below
+- [x] Every carry-over row whose owner was 1B is gone, or has the owner the table below
       gives it. `whizbang backends status`, the `models` commands, the real network
       client, the shipped catalogue and what the worker's queue owes to removal each have
       a row for 1C.
-- [ ] The test kit's fake ledger is removed, or kept with a line saying what still uses it.
-- [ ] `just check` is inside its budget; the timing table is in the note, with each crash
+- [x] The test kit's fake ledger is removed, or kept with a line saying what still uses it.
+- [x] `just check` is inside its budget; the timing table is in the note, with each crash
       sweep's time alone.
-- [ ] `docs/plans/m1b-note.md`: what shipped, what B0 changed in this plan, the timing
+- [x] `docs/plans/m1b-note.md`: what shipped, what B0 changed in this plan, the timing
       table, what was spent (nothing), what moved to the carry-over list.
 - [ ] Tag `m1b`.
+
+**As built, 2026-11-15**, box by box. The note is `docs/plans/m1b-note.md`.
+
+- The row and the five cases: the note, "The clauses of the spec's row, each with its
+  tests"; every test it names is held to exist by `scripts/tests/test-notes.sh`, which
+  now asks the note of 1B for forty at least, and each was run by name. **One case
+  was short of the box's words and is met by a test this task added.** "W1 through
+  the binary" for a store left between a dispatch and its settlement: task W1's test
+  leaves its store after the settlement. Added:
+  `wired::a_store_left_by_a_process_that_died_between_a_dispatch_and_its_settlement_counts_the_request_at_its_bound_until_the_owners_reset`.
+  And one test the reviews of W1 asked for:
+  `wired::a_paid_call_from_inside_a_run_that_may_cost_nothing_is_refused_as_over_its_caller_with_nothing_sent_and_the_books_unchanged`.
+- The controls: the note, "The controls of section 6 that 1B owns".
+- The carry-over rows. Read again, every row: seven still named 1B or one of its
+  tasks as an owner. Removed, as met: a refused request has no dispatch record
+  (`spend::meter::a_request_the_gate_refused_has_no_dispatch_record`). The finished
+  half taken out, with its tests named in the row, and the rest given its owner: the
+  run record's lists (1C, 2 and 3); whether a failed call may have been charged (1C,
+  the adapter's rule); what a provider adapter said of itself (2); what the meter
+  does beyond the wrapper's interface (none; reopen on need); what the old configs
+  held (1C and 2). Re-owned as not met by 1B: a mark left by a remover that died,
+  which named the lease of task I7 "or 1C with `whizbang models`, if what it needs
+  is a command": it needs one, and is 1C's. No row names a cut task as its owner.
+  The five rows for 1C are there; the two that named this task no longer do. Added:
+  `runs show` cuts an installation's identity (1C).
+- The fake ledger is kept: twelve test files use it, named in the comment at the top
+  of `crates/whizbang-testkit/src/ledger.rs` and in the note.
+- The budget and the timing: the note, "Timing". The limits are unchanged.
+- The tag is the orchestrator's, after the pull request of this task is reviewed and
+  merged: the box stays open in this pull request, and is ticked by the one that
+  records the tag's commit in the note.
+  It also waits on one thing the exit check found and did not settle: a test of
+  the core that failed twice on the Linux runner on pushes to `main` and has passed
+  since (the note, "A test that failed twice on Linux and has passed since"; its row
+  in `docs/carry-over.md`).
+
+**Reworded with the task.** "Each crash sweep's time alone" is given for each sweep
+with every sweep running and nothing else beside them, two at a time as the test
+runner has them, and not for each in a run of its own.
 
 ## Carry-over rows and their tasks
 
@@ -2975,7 +3029,6 @@ more than a guard and a record need.
 Both blockers were fixed before the twelfth round, which found each answered. Two of
 its follow-ups were fixed; the third is put to the owner. No round followed it.
 
-## Risks
 ## Risks
 
 | Risk | Effect | What we do |

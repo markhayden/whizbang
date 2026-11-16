@@ -162,9 +162,14 @@ fn a_cancel_before_the_commit_step_is_accepted_and_the_run_ends_cancelled_with_n
     assert_eq!(reader.read(notes.unwrap()).unwrap(), b"so far");
 
     // The id's ending says cancelled too. The run could cost nothing, so the ledger
-    // was not asked and there is no reservation; that a cancelled run's reservation
-    // stays is held where a run reserves (`spend::close::`, and the records of
-    // `check`).
+    // was not asked and there is no reservation. What becomes of the reservation of
+    // a cancelled run that had one is held where a run reserves, through the real
+    // ledger: its end closes it, released, at what its requests were charged
+    // (`spend::close::a_run_that_reserved_ten_and_spent_three_leaves_seven_for_the_next_call_however_it_ended`,
+    // whose fourth case is a cancellation), and a request still out when the
+    // cancellation came stays counted at its bound, as unresolved
+    // (`spend::settle::a_run_cancelled_after_dispatch_whose_request_ends_with_no_answer_is_charged_the_bound_as_unresolved`,
+    // `spend::close::a_run_with_an_unresolved_request_releases_only_what_is_not_unresolved`).
     let ended = ending(&world.root(), world.fs.clone(), "r-1").unwrap();
     assert_eq!((ended.run(), ended.status()), (&run, Status::Cancelled));
     assert_eq!(ledger.reservations(store.as_ref()).unwrap(), []);

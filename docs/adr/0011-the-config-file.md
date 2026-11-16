@@ -65,6 +65,10 @@ env file a second time was considered and is not done, with why. And under "What
 config offers": over an inventory.
 Spec: section 4, "Backends" (config, resolution, credentials); section 6, "Spend";
 section 10, "Egress"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; and under "Kinds", that a backend which names a
+recipient must not declare a version written as a bare identity, which ADR 0015
+already decided. No decision changed.
 
 ## Context
 
@@ -682,6 +686,14 @@ backend is what the backend that was made declares, so a model a call resolved i
 always held (ADR 0015, "One snapshot of the config"). A backend is made each time a
 config is offered, from the table and from nothing else: nothing is sent, and nothing
 is read from a disk.
+
+**A kind whose backend names a recipient must not declare a version written as a bare
+identity,** `sha256:` and 64 lower-case hex digits. That text as a model's version
+means a local model under an installation, to the executor and to a roster over an
+inventory, and a backend that names a recipient and declares one is handed to no run
+(ADR 0015, "An inventory", its limits). Nothing refuses such a kind when it is
+registered: the rule is the kind's to keep, and a provider's own digest of a model is
+written another way, with a prefix of the kind's.
 
 ### What a config offers
 

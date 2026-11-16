@@ -394,7 +394,7 @@ pub enum DispatchRefused {
     /// Its reservation, by its names, has less left: how much.
     OverReservation { left_micros: u64 },
     /// Its reservation is frozen: its names are not a set the ledger could have
-    /// written, and nothing is dispatched under it until its owner corrects it.
+    /// written, and nothing is dispatched under it; the owner's reset clears it.
     Frozen,
     /// A closing names its reservation: nothing is dispatched after one.
     Closed,

@@ -66,6 +66,8 @@ is stated. Added, in "Nested calls": the executor in a context answers without t
 store's paths.
 Spec: section 3, "The execution contract", "What a run publishes", "Nested calls",
 "Storage" and "What every run records"; section 6, "Spend"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 
 ## Context
 
@@ -375,7 +377,8 @@ built on has no way left to read a file whole (`Fs::read_at_most` is its one rea
   **A store at that limit is full, and not stuck.** A publication that adds names is
   refused with `GenerationTooLarge`: an admission, so no run is made and the caller is
   told of the store's failure; an import; and, when checkpoint 1B builds it, a
-  settlement, which adds names too (`docs/carry-over.md`). A run that was admitted
+  settlement, which adds names too (`docs/carry-over.md`; built, with its case at
+  the limit: ADR 0016). A run that was admitted
   before the store filled and cannot publish its end is abandoned, as a run is whose
   end the store refuses for any reason ("A run with nothing behind it"). A deletion
   is still published, because it makes the file smaller, and after it there is room
@@ -851,7 +854,8 @@ before each, in the ways the commit's test does
 `cancel::a_cancelled_run_crashed_inside_its_end_reopens_with_no_status_or_with_both`).
 No output of either kind is committed: neither the run's own references
 (`outputs/<port>/<n>`) nor an artifact's name. The run's reservation stays: settling it
-is the ledger's, at checkpoint 1B. A repeat of its request is answered
+is the ledger's, at checkpoint 1B (built: under the real ledger a run's end closes
+its reservation, ADR 0016). A repeat of its request is answered
 `Ended(Cancelled)`, `wait` and `status` say the same, and `whizbang runs list` and
 `runs show` show the run as cancelled.
 
@@ -1036,7 +1040,8 @@ capability requests take nothing from what is left, and nothing checks them agai
 it: a parent can give all of its allowance to its children and still send requests of
 its own. So what a tree really spends can exceed the root's reservation until
 checkpoint 1B debits each request before it is sent (`SPEC.md` section 6;
-`docs/carry-over.md`).
+`docs/carry-over.md`). (Built: the meter debits a run's own requests, ADR 0016, "The
+meter".)
 
 *Where it is decided.* The look at what is left and the taking are one step under the
 allowance's own lock (`Allowance::take`), in memory, in the process that runs the
@@ -1049,7 +1054,8 @@ so what was taken for it stays taken, though its action never runs: the admissio
 that name a run never add up to more than that run was given
 (`nested::a_call_whose_admission_is_visible_and_not_confirmed_keeps_what_was_taken_for_it`).
 Nothing is given back when a child ends, however it ended and whatever it used: that
-is settlement, and checkpoint 1B's
+is settlement, and checkpoint 1B's (built: a child's remainder goes back to its
+caller, ADR 0016, "An allowance holds a signed balance")
 (`nested::a_nested_call_draws_on_the_allowance_of_the_run_that_made_it_and_the_ledger_is_asked_once`,
 `nested::two_calls_at_once_cannot_both_take_the_last_of_the_allowance`).
 
@@ -1229,7 +1235,7 @@ writer of its store).
 **What is not built.** A parent's record does not list a child whose admission became
 visible and was not confirmed: that child is abandoned, never ran, and names its
 parent in its own admission. What was taken for a child is not given back when it
-ends. The store in a context takes a snapshot of the current generation at every look
+ends (it is since checkpoint 1B: ADR 0016). The store in a context takes a snapshot of the current generation at every look
 once a child has committed (`docs/carry-over.md`).
 
 **What the executor in a context answers holds no path.** An action's messages are

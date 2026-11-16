@@ -68,6 +68,8 @@ Amended: 2026-11-15, after the review of task W1. Added: "A call that may cost
 nothing", after "The strand cut down": the executor admits it without asking the
 ledger, whatever the books say. Changed with it: three rows of "The real ledger".
 Spec: section 6, "Spend"; section 3, "Storage"
+Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
+that said something was still to come; no decision changed.
 
 ## Context
 
@@ -110,7 +112,12 @@ the real ledger, the meter, recovery and the commands are the spend strand's tas
 (S1b to S12), each held to the table; until they merge the one ledger is the test
 kit's fake, which keeps the names of this record in a store and judges by the
 model's fold. (Since then: the real fold, "The real fold", and a real ledger that
-reserves and confirms, "The real ledger".)
+reserves and confirms, "The real ledger". And, as the strand was cut down on
+2026-11-15: the meter, "The meter"; settlement, "Settlement of each attempt"; the
+closing at a run's end; the run's spend lines; and `whizbang spend status` and
+`reset`, "The strand cut down". Recovery has no part of the ledger's and no command
+corrects one reservation: tasks S6 and S12 are cut, and only task S9 added to the
+table.)
 
 ## Decision
 
@@ -825,7 +832,9 @@ provider it asked is not. What that means for a correction is limit (g). A run t
 ### A person's correction
 
 `adjusted/<run>/<place>/<turn>/<seal>/<micros>` sets what a reservation is charged. It
-is the owner's deliberate act (`whizbang spend adjust`, task S12) and is trusted for
+is the owner's deliberate act (`whizbang spend adjust`, task S12; **cut on
+2026-11-15 and not built:** no command writes one, and the fold still reads one, "The
+strand cut down") and is trusted for
 what it says. **What it means is stated here and is not an exemption: a correction
 writes off what is outstanding under its reservation, and what a place without a whole
 settlement says.** It never writes off what settlements with their whole chain say. It
@@ -909,7 +918,8 @@ stated under "Limits" in money with a history that asserts the figure it is unde
 **The last two rows are not the plan's rule and not yet the owner's:** there no worst
 case can be counted, so that going on would let the whole of what is unknown be
 spent again, and this record keeps the refusal until the owner has ruled on exactly
-those cases. With the refusal lifted there too, histories 67 and 70 would read as
+those cases. (The owner ruled on 2026-11-15, and the refusal is ended: "The strand
+cut down", with task S9.) With the refusal lifted there too, histories 67 and 70 would read as
 they did before the third and fourth rounds: 20 committed against 10, and 17 taken of
 a reservation of 10.
 
@@ -1075,7 +1085,8 @@ because of what it is:
   outcome. Whether that is an error of a new kind, which is `run/4`, or one of the
   kinds there are with the reason in its sentence, is decided before the confirmation
   is built, with the base task that owns the record.
-- **Two tests of the model are to be ported to the real fold** (task S1b):
+- **Two tests of the model are to be ported to the real fold** (task S1b; ported
+  since, "The real fold"):
   `spend::a_name_can_name_any_place_and_state_any_amount_and_the_fold_still_ends`, and
   the check that two readings of every reservation, written apart, give one answer
   after every event (`Books::read_apart` in the model, asserted by the generated
@@ -1114,7 +1125,7 @@ and `src/contract/`), each with the test that shows it. Tests named `ledger::`,
   sum that stopped is written as the largest number of 128 bits.
 - *A run that ended as not confirmed:* decided with ADR 0013, which has it: an error
   whose kind is the word `not_confirmed`, in `run/3` as it is.
-- *The two tests for the real fold* are task S1b's.
+- *The two tests for the real fold* were task S1b's, and are built ("The real fold").
 
 **Decided while it was built, and not in the first part.**
 
@@ -1434,7 +1445,8 @@ at the store's generation limit).
 
 **Not here.** The reservation is not closed when its run ends (task S11), and a
 run's record does not list its paid requests (task S10): the meter notes nothing
-in the run's place for facts yet. (The closing is built since: the next section.)
+in the run's place for facts yet. (Both are built since: the closing in the next
+section, and the lines in "The run's spend lines", task S10.)
 
 ### The reservation settled when its run ends (task S11)
 
@@ -1581,7 +1593,8 @@ was the request's place among the paid requests of its run.
   a store. The real fold is held to it by task S1b, history by history.
 - **A crash is whole in the model:** a publication is there or it is not. A crash
   inside a publication is the store's to keep whole, and each ledger task has its own
-  sweep.
+  sweep. (Not since 2026-11-15: of the ledger's tasks only the admission, task S2,
+  has one; "The strand cut down".)
 - **The model has two processes and no more,** each with its own runs and requests,
   and a publication is whole in both.
 - **A confirmation is one event in the model:** the reading and what follows from it.
@@ -1865,8 +1878,9 @@ histories as the fold's test, the real ledger's `reserve` and `confirm` (task S2
 the allowance with what a process holds of a tree, the per-call cap and the hour of
 an estimate.
 
-**What is still to be built,** each as one pull request with ordinary tests (the plan's
-tasks): a paid request with no enforceable bound is refused (S4); the meter quotes a
+**What was still to be built on that day, and is built since** (each section of this
+record that names its task names its tests), each as one pull request with ordinary
+tests (the plan's tasks): a paid request with no enforceable bound is refused (S4); the meter quotes a
 request, debits it and makes its dispatch durable before it leaves (S5); each attempt
 is settled by its stage (S5b); a reservation is closed when its run ends (S11);
 `whizbang spend status` and `reset` (S9); and each run's record lists its paid
@@ -2637,7 +2651,8 @@ finding was fixed in the plan or here; no round followed the tenth.
   which are no longer contained by a store that stops: 10 under in history 86 and 13
   in history 87, the second with no bound. One exception is kept and is to be put to
   the owner: where no amount can be counted, the store needs its owner ("Invariant
-  4, and what the owner chose").
+  4, and what the owner chose"). (Put to the owner on 2026-11-15 and ended: "The
+  strand cut down".)
 - An admission is published and then read back: one more reading of the store and
   one more fold for every call that nothing called, and no more names when it
   stands. One that is backed out, with no name of it touched by other hands, leaves six names, counts for nothing, and has
@@ -2657,7 +2672,8 @@ finding was fixed in the plan or here; no round followed the tenth.
 - A name of a reservation that is made, lost or damaged freezes it, and stops its
   own dispatches and nothing else, while its one hold states its amount. Where it
   leaves no hold or several, it stops every admission and every dispatch in the store
-  until the owner corrects that reservation. A turn that
+  until the owner corrects that reservation (ended on 2026-11-15: it stops nothing,
+  counts nowhere, and `spend status` names it; "The strand cut down"). A turn that
   is made or lost stops them in its epoch: admissions until the owner resets, and
   the dispatches of that epoch's runs for good. Runs in flight settle and end.
 - A reset sets what may be admitted from then on, and stops nothing that was admitted
