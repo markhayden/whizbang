@@ -7,8 +7,8 @@ limits that were accepted, how long things take, what was spent, what moved to t
 carry-over list, a test that failed twice on one runner, and what a reader should not
 assume. It was written by the exit check
 (task Z1) from `main` at commit c9ecf9c, the merge of pull request #135, and brought up
-to date by the two pull requests after it. The tag `m1b` is on the merge of the last
-pull request of the checkpoint, which made the last edit to this note.
+to date by the two pull requests after it. The tag `m1b` is on the merge of pull
+request #138, the last of the checkpoint, which made the last edit to this note.
 
 ## What whizbang can do at this tag
 
@@ -24,8 +24,7 @@ backend, every download and every recipient in every test is a fake from the tes
 
 ## What shipped, by strand
 
-Eighty-three pull requests: #56 to #137, and the last pull request of the checkpoint.
-Each strand's records are its ADRs.
+Eighty-three pull requests, #56 to #138. Each strand's records are its ADRs.
 
 | Strand | Pull requests | What |
 |---|---|---|
@@ -39,7 +38,7 @@ Each strand's records are its ADRs.
 | Models (M1 to M6b) | #74, #78, #79, #80, #85, #87, #89, #100, #101, #102, #103, #104, #108, #109, #111, #122 | A models directory outside any store: a catalogue, an installation and its identity; staging a download checked by size and hash; publication with a crash at each step; attach and cancel, across processes; holds as file locks; removal that drains and answers busy at its deadline; readiness from what is installed; a lease on the admitted installation (ADRs 0017 and 0018) |
 | The binary wired (W1) | #132, #133, #134, #135 | The binary's executor built over the config's source, the real ledger, the cap and the hour, the gate, the meter, and the inventory and the lease where it is given a models directory |
 | Tooling (X1 to X6) | #58, #60, #63, #66, #67, #69, #75, #113 | A key directly after a word character; a planted registry fails `just deny`; a pull request's title and body scanned; a push made around the hooks; a script read whole before it runs; no quiet search after a pipe; the crash sweeps two at a time |
-| Exit (Z1) | #136, #137, and the last pull request of the checkpoint | The exit check: two tests through the binary's wiring, one crash sweep split, the carry-over list and the records brought in line, and this note; the fix of a store refused as held by the process that had let it go (below); two more tests of that fix, and the note and the plan as they are at the tag |
+| Exit (Z1) | #136, #137, #138 | The exit check: two tests through the binary's wiring, one crash sweep split, the carry-over list and the records brought in line, and this note; the fix of a store refused as held by the process that had let it go (below); two more tests of that fix, and the note and the plan as they are at the tag |
 
 ## The clauses of the spec's row, each with its tests
 
@@ -208,8 +207,8 @@ The plan changed far more after that, and not at the entry check: the next secti
 
 Measured on 2026-11-15 by the exit check, on the tree of its pull request, #136 (1,993
 fast tests; `main` at c9ecf9c had 1,987). The tree at the tag has 1,998: the fix of
-the store refused as held added three, and the last pull request two. With them, one run of `just check` on the owner's Mac, other builds at work on the machine, took 75.8
-seconds of tests.
+the store refused as held added three, and #138 two. With them, one run of `just check`
+on the owner's Mac, other builds at work on the machine, took 75.8 seconds of tests.
 
 | What | Where | Time |
 |---|---|---|
@@ -349,8 +348,8 @@ out of the table of open runs through a value that holds the table and no writer
 `started::a_wait_for_a_started_run_answers_only_when_its_thread_holds_nothing_of_the_store`
 and, among the core's unit tests,
 `engine::tests::the_executors_hold_on_a_run_holds_nothing_of_the_store_when_a_wait_can_answer`.
-The test that failed is unchanged, and passed 200 times of 200 after the fix. The last
-pull request of the checkpoint added two tests for what those two leave open, each
+The test that failed is unchanged, and passed 200 times of 200 after the fix. Pull
+request #138 added two tests for what those two leave open, each
 shown to fail on the change it is there for:
 `engine::tests::a_started_run_that_was_admitted_leaves_the_table_with_its_thread_holding_nothing_of_the_store`
 takes the hold that an admission makes on a run, where the unit test above builds one

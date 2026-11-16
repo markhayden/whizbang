@@ -2635,7 +2635,7 @@ and every script test passes on both runners.
       sweep's time alone.
 - [x] `docs/plans/m1b-note.md`: what shipped, what B0 changed in this plan, the timing
       table, what was spent (nothing), what moved to the carry-over list.
-- [x] Tag `m1b`. (Tagged at the merge of the last pull request of the checkpoint.)
+- [x] Tag `m1b`. (Tagged at the merge of pull request #138.)
 
 **As built, 2026-11-15**, box by box. The note is `docs/plans/m1b-note.md`.
 
@@ -2664,7 +2664,7 @@ and every script test passes on both runners.
 - The fake ledger is kept: twelve test files use it, named in the comment at the top
   of `crates/whizbang-testkit/src/ledger.rs` and in the note.
 - The budget and the timing: the note, "Timing". The limits are unchanged.
-- The tag is the orchestrator's, on the merge of the last pull request of the
+- The tag is the orchestrator's, on the merge of pull request #138, the last of the
   checkpoint, which ticks the box and says so in the note. The box stayed open in
   the pull request of the exit check, #136.
   The tag waited on one thing the exit check found: a test of the core that failed
