@@ -9,14 +9,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::time::{Duration, Instant};
 
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Answer, BoundRefused, Call, CallError, Capability, Context, Executor,
-    Failure, Kind, MESSAGE_LIMIT, Outcome, PreparedCall, Produced, Refusal, Request, RequestId,
-    Requirement, RunId, RunState, STARTED_RUNS_CEILING, STARTED_RUNS_DEFAULT, Secrets, Watched,
-    read_journal,
+    Action, ActionDescriptor, Answer, Backends, BoundRefused, Call, CallError, Capability, Context,
+    Executor, Failure, Kind, MESSAGE_LIMIT, ModelIdentity, Outcome, PreparedCall, Produced,
+    Refusal, Request, RequestId, Requirement, RunId, RunState, STARTED_RUNS_CEILING,
+    STARTED_RUNS_DEFAULT, Secrets, Unavailable, Watched, read_journal,
 };
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{Reader, Store};
@@ -25,7 +25,7 @@ use whizbang_testkit::fs_shim::ShimFs;
 use whizbang_testkit::scratch::Scratch;
 
 use super::redact::made_up_key;
-use super::watch::{completed, engine, work};
+use super::watch::{completed, engine, engine_on, work};
 
 /// How long an answer may take before the test fails: far beyond what any takes here.
 const LIMIT: Duration = Duration::from_secs(10);
@@ -412,6 +412,86 @@ fn a_wait_for_a_started_run_answers_only_when_its_place_is_free() {
     waiting.join().unwrap();
     assert_eq!(executor.wait(&next).unwrap().state(), &completed());
     assert_eq!(executor.waiting_for(&run), 0);
+}
+
+/// Backends that resolve nothing. When the last executor that holds them lets them go,
+/// they note whether a place among the started runs of the store was taken at that
+/// moment: a run's place is given back before anyone who waits for the run is answered,
+/// so a place still taken says that nobody had been answered yet.
+struct NotedWhenLetGo {
+    store: Weak<Store>,
+    taken: Arc<Mutex<Option<bool>>>,
+}
+
+impl Backends for NotedWhenLetGo {
+    fn resolve(
+        &self,
+        _: Capability,
+        _: Option<&str>,
+        _: &[String],
+    ) -> Result<ModelIdentity, Unavailable> {
+        Err(Unavailable::new("these backends hold no model"))
+    }
+}
+
+impl Drop for NotedWhenLetGo {
+    fn drop(&mut self) {
+        let taken = self.store.upgrade().map(|s| s.start_place(1).is_none());
+        *self.taken.lock().unwrap() = taken;
+    }
+}
+
+#[test]
+fn a_wait_for_a_started_run_answers_only_when_its_thread_holds_nothing_of_the_store() {
+    // The thread of a started run holds a clone of the executor, and with it the
+    // store's writer and its lock. Whoever waited for the run may drop its own writer
+    // and open the store to write again, and is refused as held if the thread still
+    // has its clone then. So the thread lets the executor go before the run's place
+    // is given back, which is before anyone who waits is answered. Nothing outside
+    // can stop the thread between the two: the executor's backends are dropped with
+    // the last clone of it, which is the thread's here, and look at that moment.
+    let dir = Scratch::new("started");
+    let (root, store) = open(&dir);
+    let barriers = Barriers::new();
+    let taken = Arc::new(Mutex::new(None));
+    let backends = Arc::new(NotedWhenLetGo {
+        store: Arc::downgrade(&store),
+        taken: taken.clone(),
+    });
+    let executor = engine_on(store.clone(), backends, vec![held("first", &barriers)])
+        .with_started_bound(1)
+        .unwrap();
+    // Another executor over the same writer asks after the run: the one that started
+    // it is dropped while the run's action is still stopped.
+    let asking = engine(store.clone(), Vec::new());
+    let run = started(executor.start(&asked("first", "order-1")));
+    barriers.arrived("first", 1);
+    drop(executor);
+    assert_eq!(
+        *taken.lock().unwrap(),
+        None,
+        "the run's thread held no executor"
+    );
+    barriers.release("first");
+    let waited = within("the wait", {
+        let run = run.clone();
+        move || asking.wait(&run)
+    });
+    assert_eq!(waited.unwrap().state(), &completed());
+
+    assert_eq!(
+        *taken.lock().unwrap(),
+        Some(true),
+        "the wait was answered before the run's thread let the executor go, or the \
+         thread let it go after the run's place was given back"
+    );
+    // So this test's is the one hold on the writer that is left: it is dropped, and
+    // the store is opened to write again at once.
+    let Ok(store) = Arc::try_unwrap(store) else {
+        panic!("something of the run still holds the store's writer");
+    };
+    drop(store);
+    Store::open(&root, Arc::new(ShimFs::new())).unwrap();
 }
 
 // --- a thread that cannot be made -------------------------------------------------------------
