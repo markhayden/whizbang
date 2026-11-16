@@ -535,7 +535,15 @@ fn text_of(record: &RunRecord) -> String {
     // not known either; with the requests lost, neither is the cost. A run that no
     // ledger reserved for and that lists no paid request, as every run of a build
     // before the ledger is, is said to have reserved nothing, and no cost is stated
-    // of it: its requests were not counted.
+    // of it: its requests were not counted. A run a ledger admitted at no cost
+    // reserved `$0.00` and cost `$0.00`: it was counted, with nothing to spend.
+    //
+    // What was reserved is never `unknown` beside a count of requests. A record that
+    // has lost its admission has lost every other group with it, its requests among
+    // them (ADR 0013, "What is lost": what is lost is nothing, every group but the
+    // admission, or every group, and the record's reader takes no other), so its
+    // line is `spend: unknown; paid requests: unknown; cost: unknown`. The arm below
+    // that states no cost is reached only by a record that has lost nothing.
     let spend = record.spend();
     let uncounted = spend.reserved_micros.is_none() && spend.requests.is_empty();
     let came_to = match (lost(Lost::Requests), uncounted) {

@@ -279,8 +279,10 @@ impl Engine {
         self
     }
 
-    /// The same executor, admitting every run with a reservation that this ledger is
-    /// asked for (ADR 0007, "The reservation"). Without one nothing is reserved.
+    /// The same executor, admitting every run that may cost something with a
+    /// reservation that this ledger is asked for (ADR 0007, "The reservation"). A run
+    /// that may cost nothing is admitted without asking it, with an allowance of
+    /// nothing. Without a ledger nothing is reserved and nothing is counted.
     pub fn with_ledger(mut self, ledger: Arc<dyn Ledger>) -> Engine {
         self.ledger = Some(ledger);
         self
@@ -1058,6 +1060,13 @@ impl Engine {
             .into());
         }
         let reserved = counted.then(|| prepared.estimate().micros());
+        // A call that may cost nothing is admitted without asking the ledger, whatever
+        // the books say: nothing is reserved for it, so no name of the ledger's is
+        // made or read at its admission, and none at its end (`SPEC.md` section 6:
+        // spend control errs toward letting work run). It is counted all the same,
+        // with nothing to spend: its run has an allowance of nothing, which a paid
+        // request or a paid call from inside it is refused against.
+        let booked = reserved.filter(|micros| *micros > 0);
         let mut taken = match (under, reserved) {
             (Some(under), Some(micros)) => under.allowance.take(micros).map_err(|left_micros| {
                 CallError::Refused(Refusal::OverCaller {
@@ -1162,7 +1171,7 @@ impl Engine {
             // The ledger is asked for a run that nothing called, and for no other:
             // nothing is reserved twice (`SPEC.md` section 6).
             let ledger = self.ledger.as_ref().filter(|_| under.is_none());
-            if let (Some(ledger), Some(micros)) = (ledger, reserved) {
+            if let (Some(ledger), Some(micros)) = (ledger, booked) {
                 let reservation = Reservation::new(
                     run.clone(),
                     request.cloned(),
@@ -1796,8 +1805,10 @@ impl Engine {
         // builds"). A closing takes its reservation's next place and its epoch's next
         // turn; where another publication took one meanwhile the store refuses this
         // one whole, and it is made again on the store as it is then.
+        // A run that reserved nothing has no reservation to close, and the ledger is
+        // not asked: nothing of the books is read for it.
         let closing = match (&self.ledger, reserved, &family.parent) {
-            (Some(ledger), Some(micros), None) => Some((ledger, micros)),
+            (Some(ledger), Some(micros), None) if micros > 0 => Some((ledger, micros)),
             _ => None,
         };
         let mut attempts = 0;

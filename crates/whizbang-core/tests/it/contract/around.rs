@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use whizbang_core::capability::{
     Bounds, Controls, Declaration, Fault, FaultKind, FillRequest, Filler, JudgeRequest, Message,
-    Painted, Part, Picture, Query, Role, SegmentRequest, Stage, StopReason, Support, Turn,
+    Painted, Part, Picture, Price, Query, Role, SegmentRequest, Stage, StopReason, Support, Turn,
 };
 use whizbang_core::contract::Secrets;
 use whizbang_core::contract::record::{Handed, RunRecord, Status};
@@ -416,7 +416,9 @@ fn abandoned(world: &World, engine: &Engine, failed: CallError, says: &str) -> R
 #[test]
 fn a_wrapper_that_fails_after_the_backend_answered_leaves_the_run_abandoned_and_not_ended() {
     let world = World::new();
-    let filler = Arc::new(FakeFiller::new(Paint::Inverse).charging(7));
+    // The filler states a price, so its call reserves something: a call that may
+    // cost nothing has no reservation.
+    let filler = Arc::new(priced_filler().charging(7));
     let meter = FakeWrapper::new("meter");
     meter.fail_after("its settlement was not published");
     let seen: Arc<Mutex<Vec<(FaultKind, Stage)>>> = Arc::default();
@@ -460,6 +462,11 @@ fn a_wrapper_that_fails_after_the_backend_answered_leaves_the_run_abandoned_and_
         "{names:?}"
     );
     assert!(names.contains(&&format!("spend/reservations/{run}")));
+}
+
+/// A filler that states a bound of ten millionths for a request.
+fn priced_filler() -> FakeFiller {
+    FakeFiller::new(Paint::Inverse).priced(Price::at_most(10.0).unwrap())
 }
 
 /// A filler that panics when it is asked, and counts.
@@ -777,7 +784,9 @@ fn a_gate_that_refuses_stops_a_segmentation_and_a_judge_request_before_its_backe
 #[test]
 fn a_wrapper_that_panics_after_the_backend_answered_leaves_the_run_abandoned_and_not_ended() {
     let world = World::new();
-    let filler = Arc::new(FakeFiller::new(Paint::Inverse).charging(7));
+    // The filler states a price, so its call reserves something: a call that may
+    // cost nothing has no reservation.
+    let filler = Arc::new(priced_filler().charging(7));
     let wrappers = three();
     wrappers.2.panic_after("the meter went wrong");
     // The panic reaches the action, which catches it, keeps what it carried and
@@ -894,7 +903,9 @@ fn a_wrapper_that_panics_when_told_a_later_place_refused_leaves_the_run_abandone
 #[test]
 fn a_repeat_of_the_request_of_an_abandoned_run_is_answered_with_that_run_and_never_runs_again() {
     let world = World::new();
-    let filler = Arc::new(FakeFiller::new(Paint::Inverse).charging(7));
+    // The filler states a price, so its call reserves something: a call that may
+    // cost nothing has no reservation.
+    let filler = Arc::new(priced_filler().charging(7));
     let meter = FakeWrapper::new("meter");
     meter.fail_after("its settlement was not published");
     let answered: Answered = Arc::default();

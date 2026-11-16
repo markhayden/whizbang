@@ -893,6 +893,24 @@ fn a_need_can_name_the_argument_that_chooses_its_backend() {
 }
 
 #[test]
+fn a_need_states_how_many_requests_one_call_may_send_its_backend_and_is_for_one_unless_it_says() {
+    // What a call may cost for a need is the bound of one request times this number
+    // (ADR 0010): one, unless the action says more, as a loop does for its turns.
+    let fake = base()
+        .needs(Requirement::new(Capability::Fill))
+        .needs(Requirement::new(Capability::Segment).requests(16))
+        .build()
+        .unwrap();
+    assert_eq!(fake.needs()[0].sends(), 1);
+    assert_eq!(fake.needs()[1].sends(), 16);
+    // A need for no request is no need.
+    refused(
+        base().needs(Requirement::new(Capability::Fill).requests(0)),
+        &["the need for fill is for no request"],
+    );
+}
+
+#[test]
 fn a_descriptor_as_data_holds_every_field_in_a_fixed_order() {
     let fake = base()
         .argument(Argument::with_default(
@@ -906,7 +924,11 @@ fn a_descriptor_as_data_holds_every_field_in_a_fixed_order() {
                 .when(When::given("filler"))
                 .chosen_by("filler"),
         )
-        .needs(Requirement::new(Capability::Segment).feature("phrase"))
+        .needs(
+            Requirement::new(Capability::Segment)
+                .feature("phrase")
+                .requests(4),
+        )
         .concurrent(true)
         .build()
         .unwrap();
@@ -919,8 +941,8 @@ fn a_descriptor_as_data_holds_every_field_in_a_fixed_order() {
             r#""inputs":[{"name":"image","artifact":"image","purpose":"The image.","count":{"min":1,"max":1},"belongs_to":null}],"#,
             r#""outputs":[{"name":"mask","artifact":"mask","purpose":"The mask.","count":{"min":1,"max":1},"when":"always","#,
             r#""belongs_to":{"input":"image"},"derived_from":null,"rebound_onto":null}],"#,
-            r#""needs":[{"capability":"fill","features":[],"when":{"given":"filler"},"chosen_by":"filler"},"#,
-            r#"{"capability":"segment","features":["phrase"],"when":"always","chosen_by":null}],"#,
+            r#""needs":[{"capability":"fill","features":[],"when":{"given":"filler"},"chosen_by":"filler","requests":1},"#,
+            r#"{"capability":"segment","features":["phrase"],"when":"always","chosen_by":null,"requests":4}],"#,
             r#""concurrent":true}"#
         )
     );

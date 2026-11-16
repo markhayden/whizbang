@@ -14,8 +14,9 @@ use crate::contract::{ActionDescriptor, Kind, Registry};
 /// purpose. Version 2 lists each action as its whole descriptor and adds the artifact
 /// types. Version 3 lists actions by kind, recipes first, where 2 listed them as they were
 /// registered. Version 4 adds `chosen_by` to each need: the argument that chooses the
-/// backend, or null.
-pub const DESCRIPTION_VERSION: u32 = 4;
+/// backend, or null. Version 5 adds `requests` to each need: how many requests one
+/// call may send the backend that answers it.
+pub const DESCRIPTION_VERSION: u32 = 5;
 
 /// Everything a door can offer, as one document.
 #[derive(Debug, Clone, PartialEq, Serialize)]

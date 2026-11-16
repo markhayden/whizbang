@@ -16,10 +16,10 @@ use whizbang_core::capability::{FaultKind, FillRequest, Picture, Support};
 use whizbang_core::contract::record::{DIAGNOSTICS_PREFIX, JOURNAL_NAME, Status};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Answer, Backends, Call, CallError, Cancel, Cancellation,
-    Capabilities, Capability, Clock, Closing, Context, Declined, Ending, Engine, Executor, Failure,
-    Finished, InputPort, Kind, Ledger, MadeName, NoBackends, NotJudged, Outcome, Produced, Refusal,
-    Registry, Request, RequestId, Reread, Reservation, RunId, RunState, Settled, Step,
-    StoreFailure, Value, Watched, read_journal,
+    Capabilities, Capability, Clock, Closing, Context, Declined, Ending, Engine, Estimate,
+    Executor, Failure, Finished, InputPort, Kind, Ledger, MadeName, ModelIdentity, NoBackends,
+    NotJudged, Outcome, Produced, Refusal, Registry, Request, RequestId, Reread, Reservation,
+    RunId, RunState, Settled, Step, StoreFailure, Unavailable, Value, Watched, read_journal,
 };
 use whizbang_core::identity::{CanonicalPixels, Digest};
 use whizbang_core::store::fs::{Fs, RealFs};
@@ -161,12 +161,14 @@ fn a_cancel_before_the_commit_step_is_accepted_and_the_run_ends_cancelled_with_n
     let notes = of_run.get(&format!("{DIAGNOSTICS_PREFIX}notes.txt"));
     assert_eq!(reader.read(notes.unwrap()).unwrap(), b"so far");
 
-    // The id's ending says cancelled too, and the reservation stays.
+    // The id's ending says cancelled too. The run could cost nothing, so the ledger
+    // was not asked and there is no reservation; that a cancelled run's reservation
+    // stays is held where a run reserves (`spend::close::`, and the records of
+    // `check`).
     let ended = ending(&world.root(), world.fs.clone(), "r-1").unwrap();
     assert_eq!((ended.run(), ended.status()), (&run, Status::Cancelled));
-    let reserved = ledger.reservations(store.as_ref()).unwrap();
-    assert_eq!(reserved.len(), 1);
-    assert_eq!(reserved[0].run(), &run);
+    assert_eq!(ledger.reservations(store.as_ref()).unwrap(), []);
+    assert_eq!(ledger.asked(), 0);
 
     // Asked again, by its request's id or by its own, the run is one that was
     // cancelled; nothing runs, and nothing is published.
@@ -629,8 +631,16 @@ fn a_run_that_was_named_again_is_in_the_table_of_open_runs_under_its_last_id_alo
     // beside it (ADR 0016).
     let unjudging =
         Scripted(|_: &Reservation, step: &mut Step<'_, '_>| Ok(step.make("spend/turn/9/1", b"x")?));
+    // The run may cost something: a run that may cost nothing has no reservation.
+    let stops = {
+        let barriers = barriers.clone();
+        work_needing(&[Capability::Fill], move |_, _| {
+            barriers.stop_at("busy");
+            Ok(Produced::nothing())
+        })
+    };
     let executor =
-        engine(store.clone(), vec![busy(&barriers, "nothing")]).with_ledger(Arc::new(unjudging));
+        engine_on(store.clone(), Arc::new(Costs), vec![stops]).with_ledger(Arc::new(unjudging));
     let Ok(Answer::Started(run)) = executor.start(&asked("order-1")) else {
         panic!("the request was not started");
     };
@@ -1261,6 +1271,30 @@ where
     }
 }
 
+/// Backends under which a call that needs a model may cost one millionth: the ledger
+/// is asked for a call that may cost something, and for no other.
+struct Costs;
+
+impl Backends for Costs {
+    fn resolve(
+        &self,
+        _: Capability,
+        _: Option<&str>,
+        _: &[String],
+    ) -> Result<ModelIdentity, Unavailable> {
+        Ok(ModelIdentity::new("fake", "m", "1"))
+    }
+
+    fn bound(&self, _: Capability, _: &ModelIdentity) -> Estimate {
+        Estimate::of_micros(1)
+    }
+}
+
+/// An executor with these actions, whose calls that need a model may cost something.
+fn costly(store: &Arc<Store>, actions: Vec<Arc<dyn Action>>) -> Engine {
+    engine_on(store.clone(), Arc::new(Costs), actions)
+}
+
 /// A ledger under which no admission is ever published: each time it is asked, another
 /// publication makes, first, the name it then adds to the step, so the store refuses
 /// the admission and the ledger is asked again. It counts the times it was asked, and
@@ -1327,7 +1361,7 @@ fn a_cancellation_that_arrives_while_a_ledger_is_asked_again_ends_the_admission(
         let ran = ran.clone();
         move || {
             let ran = ran.clone();
-            work(move |_, _| {
+            work_needing(&[Capability::Fill], move |_, _| {
                 ran.fetch_add(1, Ordering::SeqCst);
                 Ok(Produced::nothing())
             })
@@ -1340,7 +1374,7 @@ fn a_cancellation_that_arrives_while_a_ledger_is_asked_again_ends_the_admission(
         let signal = signal.clone();
         move || signal.cancel()
     });
-    let executor = engine(store.clone(), vec![counting()]).with_ledger(ledger);
+    let executor = costly(&store, vec![counting()]).with_ledger(ledger);
     let refused = executor
         .request(&asked("order-1").cancelled_by(signal.clone()))
         .unwrap_err();
@@ -1370,7 +1404,7 @@ fn a_cancellation_that_arrives_while_a_ledger_is_asked_again_ends_the_admission(
 
     // The id was not taken: the same request, not cancelled, under a ledger that lets
     // it through, runs.
-    let executor = engine(store.clone(), vec![counting()]).with_ledger(Arc::new(FakeLedger::new()));
+    let executor = costly(&store, vec![counting()]).with_ledger(Arc::new(FakeLedger::new()));
     let Ok(Answer::Ran(finished)) = executor.request(&asked("order-1")) else {
         panic!("the request did not run");
     };
@@ -1391,7 +1425,8 @@ fn a_deadline_that_passes_while_a_ledger_is_asked_again_ends_the_admission() {
         let clock = clock.clone();
         move || *clock.0.lock().unwrap() = deadline
     });
-    let executor = engine(store.clone(), vec![work(|_, _| Ok(Produced::nothing()))])
+    let works = work_needing(&[Capability::Fill], |_, _| Ok(Produced::nothing()));
+    let executor = costly(&store, vec![works])
         .with_clock(clock.clone())
         .with_ledger(ledger);
     let refused = executor

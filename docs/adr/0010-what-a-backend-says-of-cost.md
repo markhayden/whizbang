@@ -29,6 +29,10 @@ Amended: 2026-11-14, with task B3. Added: a charge made of a whole number
 Amended: 2026-11-15, with task W1 (ADR 0015, "The binary wired"). Changed: the wrapper
 that makes a need's bound cover every request stands around what a snapshot offers,
 in the binary's executor.
+Amended: 2026-11-15, after the review of task W1. Changed, in the limit that a roster's
+answer is of one request: a need states its own number of requests and preparing a
+call multiplies by it, where a wrapper around the backends (`spend::PerCall`)
+multiplied every need of every action by one number.
 Spec: section 4, "Backends"; section 6, "Spend"
 
 ## Context
@@ -204,14 +208,32 @@ text.
   Task S4 owns the rest: "the bound a backend states for a need covers every request
   the call sends it", in a wrapper around the roster. Until S4, no executor with a
   ledger is built from a roster outside a test.
-  **Built with task S4:** `spend::PerCall` wraps any `Backends` and answers the bound
-  of one request times the requests one call may send its backend, a number it is
-  built with; no bound stays none, and a product that reaches the largest amount is
-  none (`spend::quote::the_bound_of_a_need_covers_every_request_the_call_sends_its_backend`).
-  The roster is as it was. Task W1 put the wrapper around the backends of every
-  snapshot the binary's executor asks, for 16 requests (ADR 0015, "The binary
-  wired"): `PerCall` is an `Offered` around an `Offered`, so it stands around what a
-  config offers and hands a run the backend that was made. And `spend::request_bound` is what one request is held to
+  **Built with task S4, and changed after the review of task W1: a need states how
+  many requests it is for.** An action says of each need how many requests one call
+  may send the backend that answers it (`Requirement::requests`; ADR 0003, "A
+  need"): one, unless it says more, as a loop does for its turns. Preparing a call
+  makes the bound of a need the bound of one request, as the backends answer it,
+  times that number, and the estimate of the call the sum over its needs; no bound
+  stays none, and a product or a sum that reaches the largest amount is none
+  (`spend::quote::the_bound_of_a_need_covers_every_request_the_need_states_and_one_where_it_states_none`,
+  `spend::quote::the_estimate_of_a_call_is_the_sum_of_its_needs_each_times_its_own_requests`).
+  The roster is as it was. Of the actions this build ships, `check` alone needs a
+  backend, and states the 16 turns of its judge's loop (`check::TURNS_LIMIT`)
+  (`check::a_call_of_check_may_cost_the_bound_of_one_request_to_its_judge_for_every_turn_of_its_loop`).
+  A run that sends a backend more requests than its need stated has reserved for too
+  few, and the meter refuses the request its run has nothing left for, unsent: the
+  cost of a number that is too small is a run that fails, never a request that was
+  not counted. A run called from inside a run takes the sum of its own needs from
+  what its caller reserved, so a caller that calls paid actions states enough for
+  them or they are refused as over what it has.
+  **What it was, and why it changed.** As first built, a wrapper around the backends
+  (`spend::PerCall`) multiplied every need of every action by one number, and task
+  W1 gave the binary 16, the most any action sends. So a call of one request
+  reserved 16 bounds and was held to its cap and to the allowance against that sum:
+  at a bound of a quarter of a dollar, a cap of one dollar refused it and so did an
+  allowance of three. That refused ordinary work, against what spend control is for
+  (`SPEC.md` section 6: it errs toward letting work run). The wrapper and the number
+  are gone. And `spend::request_bound` is what one request is held to
   before it leaves: the bound its own backend quotes, refused where that is an
   estimate only, or no price from a backend that names a recipient, or over what
   its run has left

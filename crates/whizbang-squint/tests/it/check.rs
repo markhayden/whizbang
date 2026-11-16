@@ -1083,8 +1083,25 @@ fn a_secret_in_a_judges_turn_a_tool_argument_and_a_tool_error_is_in_nothing_unde
 
 // --- the record, against the spec's list ------------------------------------------------------
 
+#[test]
+fn a_call_of_check_may_cost_the_bound_of_one_request_to_its_judge_for_every_turn_of_its_loop() {
+    // The need for a judge states the most requests one run sends it (ADR 0010), so
+    // what a call is prepared with, and reserves, covers every turn; `view`, which
+    // `check` calls, needs no backend and may cost nothing.
+    let world = World::new();
+    let executor = world.engine_priced(judge(LOOK_CLOSER, &[]), Secrets::none(), |a| a, 250);
+    let prepared = executor.prepare(&world.check()).unwrap();
+    assert_eq!(prepared.estimate().micros(), 250 * TURNS_LIMIT as u64);
+    let view = Call::new("view")
+        .input("image", world.photo.id())
+        .argument("bbox", Value::text("0,0,1,1"));
+    if let Ok(prepared) = executor.prepare(&view) {
+        assert_eq!(prepared.estimate().micros(), 0);
+    }
+}
+
 /// Runs `check` on the photograph against the look-closer script, through an executor
-/// with a ledger whose judge states a bound of 250, under the request id `exit-1`; the
+/// with a ledger whose judge states a bound of 250 for a request, under the request id `exit-1`; the
 /// run ends as `how` says: it completes, its judge fails on the second turn, or it is
 /// cancelled while the judge holds its second request.
 fn ended(world: &World, how: &str, ledger: Arc<whizbang_testkit::ledger::FakeLedger>) -> RunId {
@@ -1226,7 +1243,7 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
         // paid request, since no fake charges. The reservation is in the store.
         assert_eq!(
             record["spend"],
-            json!({"reserved_micros": 250, "requests": []}),
+            json!({"reserved_micros": 250 * TURNS_LIMIT, "requests": []}),
             "{how}"
         );
         let reader = whizbang_core::store::Reader::open(&world.root(), world.fs.clone());
@@ -1234,7 +1251,7 @@ fn the_records_of_check_completed_failed_and_cancelled_hold_what_the_spec_lists(
         let [reservation] = reserved.as_slice() else {
             panic!("{how}: {} reservations", reserved.len());
         };
-        assert_eq!((reservation.run(), reservation.micros()), (&run, 250));
+        assert_eq!((reservation.run(), reservation.micros()), (&run, 4000));
         assert_eq!(record["egress"], json!([]), "{how}");
 
         // Judge: every turn, with what was sent and received kept whole in the

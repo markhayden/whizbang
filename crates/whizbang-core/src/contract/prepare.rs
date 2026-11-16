@@ -1360,9 +1360,13 @@ pub(super) fn prepare(
         });
         let model = match backends.resolve(capability, choice.as_deref(), features) {
             Ok(model) => {
-                // A sum past the largest amount is the largest amount, never a small one.
-                let bound = backends.bound(capability, &model);
-                estimate.micros = estimate.micros.saturating_add(bound.micros);
+                // The bound of a need is the bound of one request, as the backends
+                // answer it, times the requests the need says one call may send (ADR
+                // 0010). A product or a sum past the largest amount is the largest
+                // amount, which is no bound, and never a small one.
+                let one = backends.bound(capability, &model);
+                let bound = one.micros.saturating_mul(requirement.sends());
+                estimate.micros = estimate.micros.saturating_add(bound);
                 Some(model)
             }
             Err(unavailable) => {

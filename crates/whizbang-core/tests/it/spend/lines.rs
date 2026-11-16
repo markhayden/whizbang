@@ -4,7 +4,6 @@
 //! were sent, for a run of any outcome. Each test is through an executor built with
 //! the real ledger and the meter.
 
-use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -18,12 +17,12 @@ use whizbang_core::contract::{
     Produced, Registry, RunId, RunState,
 };
 use whizbang_core::identity::Digest;
-use whizbang_core::spend::{Meter, PerCall, Record, StoreLedger, Sum};
+use whizbang_core::spend::{Meter, Record, StoreLedger, Sum};
 use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::capabilities::{FakeFiller, FakeJudge, FakeSegmenter, roster};
 
 use super::meter::{PRICE, call, fill_request, metered, priced};
-use super::support::{Said, World, allow, books, ran};
+use super::support::{Said, Times, World, allow, books, ran};
 
 /// A filler that answers each request as the next of these does, in turn: so one run
 /// has requests that end in different ways. All of them declare the same.
@@ -176,7 +175,7 @@ fn engine_of(
 ) -> Engine {
     let mut registry = Registry::new();
     registry.register(action).unwrap();
-    let backends = PerCall::new(Arc::new(offered), NonZeroU64::new(2).unwrap());
+    let backends = Times(2, Arc::new(offered));
     let meter = Meter::new(world.store.clone(), world.clock.clone());
     Engine::over(
         registry,

@@ -94,15 +94,49 @@ pub fn counting(
     needs: &[Capability],
     body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
 ) -> Arc<dyn Action> {
+    let needs: Vec<_> = needs.iter().map(|need| Requirement::new(*need)).collect();
+    stating(runs, name, needs, body)
+}
+
+/// The same, with these needs as they are stated.
+pub fn stating(
+    runs: &Arc<AtomicU64>,
+    name: &str,
+    needs: Vec<Requirement>,
+    body: impl Fn(&PreparedCall, &Context) -> Result<Produced, Failure> + Send + Sync + 'static,
+) -> Arc<dyn Action> {
     let mut draft = ActionDescriptor::draft(name, "1.0.0", Kind::Primitive, "A test action.");
     for need in needs {
-        draft = draft.needs(Requirement::new(*need));
+        draft = draft.needs(need);
     }
     Arc::new(Scripted {
         descriptor: draft.build().unwrap(),
         runs: runs.clone(),
         body: Box::new(body),
     })
+}
+
+/// Any backends, answering as the bound of one request that of this many: what stands
+/// behind an action of a test whose one need is for that many requests, where the test
+/// is of what a run does with what it reserved and its action is made elsewhere. What
+/// makes the bound of a need cover the requests the need states is preparing a call,
+/// and its tests are in `quote.rs`.
+pub struct Times<B: ?Sized>(pub u64, pub Arc<B>);
+
+impl<B: Backends + ?Sized> Backends for Times<B> {
+    fn resolve(
+        &self,
+        capability: Capability,
+        choice: Option<&str>,
+        features: &[String],
+    ) -> Result<ModelIdentity, Unavailable> {
+        self.1.resolve(capability, choice, features)
+    }
+
+    fn bound(&self, capability: Capability, model: &ModelIdentity) -> Estimate {
+        let one = self.1.bound(capability, model);
+        Estimate::of_micros(one.micros().saturating_mul(self.0))
+    }
 }
 
 /// A store on a scratch folder, a source of the config a test swaps, a clock it moves,

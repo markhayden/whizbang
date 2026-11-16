@@ -1,5 +1,5 @@
 {
-  "description_version": 4,
+  "description_version": 5,
   "name": "whizbang",
   "version": "0.0.1",
   "actions": [
@@ -60,7 +60,8 @@
             "tool"
           ],
           "when": "always",
-          "chosen_by": "judge"
+          "chosen_by": "judge",
+          "requests": 16
         }
       ],
       "concurrent": false

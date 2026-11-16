@@ -16,9 +16,9 @@
 //! an executor is given ([`crate::contract::Engine::with_part`]): [`CallCap`], the cap
 //! of one call, and [`PreparationAge`], the hour a preparation holds.
 //!
-//! And quotes (task S4): [`PerCall`], which makes the bound of a need cover every
-//! request a call sends its backend, and [`request_bound`], what one request is held
-//! to before it leaves.
+//! And quotes (task S4): [`request_bound`], what one request is held to before it
+//! leaves. The bound of a need, which covers every request the need says a call may
+//! send its backend, is made where a call is prepared.
 //!
 //! And the meter (task S5): [`Meter`], which stands in the meter's place between a
 //! handle and its backend, and debits and records a paid request before it leaves.
@@ -42,7 +42,7 @@ pub use cap::{
 pub use ledger::StoreLedger;
 pub use meter::Meter;
 pub use name::{Amount, Belongs, EpochWord, NAME_LIMIT, Name, NotAName, SPEND_PREFIX, Seal};
-pub use quote::{NotQuoted, PerCall, request_bound};
+pub use quote::{NotQuoted, request_bound};
 pub use reading::{
     AtPlace, Correction, Counted, Formless, Names, Reading, RunSpend, Sent, Sum, lowest_free,
     stage_allows,

@@ -7,11 +7,15 @@
 //! two executors over one store, and a process opened after a crash, judge on the same
 //! books, and there is no balance in memory to disagree with them.
 //!
-//! **Reserving.** An admission is judged on the newest epoch
+//! **Reserving.** An executor asks for a call that may cost something, and for no
+//! other: a call that may cost nothing is admitted without the ledger, whatever the
+//! books say, and has no name here
+//! ([`Engine::with_ledger`](crate::contract::Engine::with_ledger)). An admission it
+//! is asked for is judged on the newest epoch
 //! ([`Folded::balance`](super::fold::Folded::balance)). It is declined where that epoch
-//! needs its owner, a call of nothing among them, and where its amount is more than
-//! what is left; a store that no reset ever set an allowance for has nothing left, so
-//! it takes calls of nothing and no other. Admitted, it makes two names in the
+//! needs its owner, and where its amount is more than what is left; a store that no
+//! reset ever set an allowance for has nothing left, so every call that may cost
+//! something is refused there. Admitted, it makes two names in the
 //! admission's publication: the hold, which states the amount and the epoch, and the
 //! epoch's next turn. The turn is what keeps a judgement from being published on
 //! books that changed: another admission, a settlement, a closing, a correction or a

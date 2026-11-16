@@ -568,25 +568,44 @@ impl OutputPort {
     }
 }
 
-/// A capability an action needs, the features it needs of it, when, and which argument
-/// of a call, if any, chooses the backend that answers (ADR 0006, "Resolution").
+/// A capability an action needs, the features it needs of it, when, which argument
+/// of a call, if any, chooses the backend that answers (ADR 0006, "Resolution"), and
+/// how many requests one call may send that backend (ADR 0010).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Requirement {
     capability: Capability,
     features: Vec<String>,
     when: When,
     chosen_by: Option<String>,
+    requests: u64,
 }
 
 impl Requirement {
-    /// The capability, needed by every call, with no feature asked of it.
+    /// The capability, needed by every call, with no feature asked of it, for one
+    /// request.
     pub fn new(capability: Capability) -> Requirement {
         Requirement {
             capability,
             features: Vec::new(),
             when: When::Always,
             chosen_by: None,
+            requests: 1,
         }
+    }
+
+    /// One call may send the backend this many requests, where it would be one: the
+    /// turns of a loop, or its tries. What a call may cost for this need is the bound
+    /// of one request times this number (ADR 0010), so an action that sends more than
+    /// it states here has reserved for too few, and the meter refuses the request its
+    /// run has nothing left for. A number of none is no descriptor.
+    pub fn requests(mut self, requests: u64) -> Requirement {
+        self.requests = requests;
+        self
+    }
+
+    /// How many requests one call may send the backend that answers this need.
+    pub fn sends(&self) -> u64 {
+        self.requests
     }
 
     /// With a feature the capability must have, by name.
@@ -951,6 +970,11 @@ impl ActionDescriptor {
                     }
                     Some(_) => {}
                 }
+            }
+            if requirement.requests == 0 {
+                return Err(format!(
+                    "the need for {capability} is for no request: a need is for one at least"
+                ));
             }
             let mut features = BTreeSet::new();
             for feature in &requirement.features {

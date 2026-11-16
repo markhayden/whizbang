@@ -18,13 +18,15 @@ use whizbang_core::contract::{
 };
 use whizbang_core::egress::{DispatchPolicy, Origin, Recipient, SendCheck, Ways};
 use whizbang_core::identity::{CanonicalPixels, Digest};
-use whizbang_core::spend::{ClosedBy, Meter, PerCall, PlaceBy, Record, StoreLedger, Sum};
+use whizbang_core::spend::{ClosedBy, Meter, PlaceBy, Record, StoreLedger, Sum};
 use whizbang_core::store::GENERATION_MAX_BYTES;
 use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::capabilities::{FakeFiller, Paint, roster};
 use whizbang_testkit::sending::FakeSender;
 
-use super::support::{Said, World, allow, books, plant, plant_bytes, ran, reserved, spend_names};
+use super::support::{
+    Said, Times, World, allow, books, plant, plant_bytes, ran, reserved, spend_names,
+};
 
 /// What one request to the priced filler may cost, in millionths.
 pub(super) const PRICE: u64 = 250_000;
@@ -65,7 +67,7 @@ pub(super) fn metered_with(
         registry.register(action).unwrap();
     }
     let offered = Arc::new(roster(None, Some(filler.as_ref()), None));
-    let backends = PerCall::new(offered, NonZeroU64::new(requests).unwrap());
+    let backends = Times(requests, offered);
     let meter = Meter::new(world.store.clone(), world.clock.clone());
     Engine::over(
         registry,

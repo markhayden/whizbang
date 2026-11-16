@@ -81,6 +81,13 @@ Amended: 2026-11-15, with the third part of task W1. Added under "An inventory":
 a config offers, over an inventory" and "One rule for a backend that names a
 recipient and declares an identity"; changed there "What waits" and two limits. Added
 under "The binary wired": the inventory and the lease.
+Amended: 2026-11-15, after the review of task W1. Changed under "The binary wired": a
+need states its own number of requests (ADR 0010), where the binary gave every
+action 16. Taken out under "One snapshot of the config": what stood around a
+snapshot's backends (`Snapshot::offering_through`), which nothing uses now.
+Amended: 2026-11-15, after the review of task W1, a second change. Changed under "The
+binary wired": a call that may cost nothing is admitted without the ledger (ADR
+0016, "A call that may cost nothing"), so a free run has no name under `spend/`.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -541,14 +548,13 @@ all of one reading.
 | The secrets | `with_secrets` | Kept by the executor from then on |
 | What makes a run's settings | `recording`, a `Settings` | Made and held to a record's rules at admission, noted when the run starts |
 
-**What stands around a snapshot's backends** (`Snapshot::offering_through`, with task
-W1): a snapshot hands the backends it holds to a wrapper and holds what the wrapper
-answers in their place. It is for a wrapper that changes what prepare is answered and
-hands a run the same backends, and one exists: `spend::PerCall` (ADR 0010), which is
-an `Offered` around an `Offered` and makes the bound of a need cover every request a
-call sends. An executor under a snapshot that holds backends never asks those it was
-built with, so a wrapper around the executor's own would not be asked. A snapshot
-that holds no backends is as it was, and the wrapper is not asked
+**Nothing stands around a snapshot's backends.** Task W1 added a method for it
+(`Snapshot::offering_through`), for the one wrapper there was: `spend::PerCall`, which
+made the bound of every need cover one number of requests. Both are gone since the
+review of that task: a need states its own number, and preparing a call multiplies
+by it, whichever backends it asks (ADR 0010). Under a snapshot that holds backends
+the bound of a need is made of what those answer, and the run is handed the backend
+the snapshot made
 (`quote::under_a_snapshot_that_holds_backends_the_bound_of_a_need_covers_every_request_and_the_run_is_handed_the_snapshots_backend`,
 in `crates/whizbang-core/tests/it/spend/`).
 
@@ -1477,7 +1483,8 @@ binary's executor is built with; it adds no interface but one method of a snapsh
 ("One snapshot of the config": what stands around its backends). **The first part:
 the source of the config, the secrets, and the parts of an admission. The second: the
 ledger, the bound of a call and the meter, and what `runs show` says of money. The
-third: the inventory and the lease.**
+third: the inventory and the lease.** After the review of the second part, the bound
+of a call is no longer the wiring's: a need states its own number of requests.
 
 **What an executor of this build is built over** is one value, `wiring::Over`: the
 config file and the env file as the command line names them (`--config`,
@@ -1545,29 +1552,44 @@ else gives either executor a source, a secret or a part.
   0011, "The source over both files")
   (`rascal::a_config_grow_cannot_use_is_said_with_its_key_and_no_path_before_the_store_is_opened`).
 
-**The money: the ledger, the bound of a call and the meter, given together**
+**The money: the ledger and the meter, given together**
 (`wiring::runner`; `SPEC.md` section 6; ADR 0016). Tests named `wired::` as above.
 
 - **The real ledger** (`spend::StoreLedger`) reserves what a call may cost at its
   admission, against the allowance the owner's reset set, and closes the reservation
-  when the run ends. A store no reset was made in allows nothing and takes calls of
-  nothing: with no config, a run is admitted as before and **has a reservation of
-  nothing**, where it had none: its record says `reserved_micros` 0, not null, and
-  the books name it
-  (`wired::with_no_config_a_run_has_a_reservation_of_nothing_in_a_store_that_allows_nothing`,
+  when the run ends. A store no reset was made in allows nothing. **A call that may
+  cost nothing is admitted without the ledger being asked** (ADR 0016, "A call that
+  may cost nothing"): with no config, a run is admitted as before, its record says
+  `reserved_micros` 0, not null, because it ran under a ledger with nothing to
+  spend, and the books name nothing of it. Its admission and its end make no name
+  under `spend/` and read the content of none, and it is admitted with no
+  allowance, with nothing left, and where the books need their owner
+  (`wired::with_no_config_a_free_run_is_admitted_in_a_store_that_allows_nothing_and_the_books_name_nothing`,
+  `wired::a_free_run_makes_no_name_under_spend_and_reads_none_of_the_books_and_a_paid_run_does_both`,
+  `wired::a_free_run_is_admitted_with_no_allowance_with_nothing_left_and_when_the_books_need_their_owner`,
   `rascal::grow_runs_under_the_config_its_flag_names_and_under_the_empty_config_with_none`).
-- **The bound of a call covers 16 requests to each backend it needs**
-  (`wiring::REQUESTS_PER_CALL`, given to `spend::PerCall` around the backends of
-  every snapshot the source answers). The number is the most any action of this
-  build sends one backend: the turns of `check`'s judge loop
-  (`whizbang_squint::check::TURNS_LIMIT`), and a test holds the two to one number.
-  `grow` and `view` send none. So a paid call reserves 16 bounds whether or not it
-  sends 16 requests, the cap of one call is held against that, and what the call did
-  not spend is released at its run's end. Nothing ties the number to an action: one
-  that sent more would have reserved for too few, and the meter refuses the request
-  its run has nothing left for, unsent
-  (`wired::a_call_reserves_for_as_many_requests_as_an_action_of_this_build_sends_one_backend`,
-  `wired::every_request_of_a_run_is_debited_before_it_is_sent_and_the_one_its_reservation_does_not_cover_is_refused_unsent`).
+  As first built by this task, a free run had a reservation of nothing, six names
+  under `spend/`; the review of the task found what that cost every later run.
+- **The bound of a call is the sum of its needs, each for the requests it states**
+  (`Requirement::requests`; ADR 0010): one, unless the action says more. Of the
+  actions this build ships, `check` alone needs a backend, and states the 16 turns
+  of its judge's loop (`whizbang_squint::check::TURNS_LIMIT`); `grow` and `view`
+  need none. So a paid call of one request reserves one bound, and is admitted under
+  a cap of one call and an allowance that each cover that
+  (`wired::a_paid_call_of_one_request_is_admitted_under_a_cap_and_an_allowance_that_cover_one_bound`,
+  `wired::of_the_actions_this_build_ships_check_alone_needs_a_backend_and_states_the_turns_of_its_judge`).
+  A run that sends a backend more than its need stated is refused that request by
+  the meter, unsent, as over what its run has left, whatever the store's allowance
+  has
+  (`wired::a_request_beyond_what_its_need_stated_is_refused_unsent_by_the_meter_as_over_what_its_run_has_left`).
+  A run called from inside a run takes the sum of its own needs from what its caller
+  reserved
+  (`wired::a_run_called_from_inside_a_run_takes_the_sum_of_its_own_needs_from_what_its_caller_reserved`).
+  **It was one number for every action,** 16, given by the wiring to a wrapper
+  around every snapshot's backends (`wiring::REQUESTS_PER_CALL`, `spend::PerCall`):
+  a call of one request reserved 16 bounds and was held to its cap and to the
+  allowance against that, which refused ordinary work. The review of this part
+  found it, and the number, the wrapper and the snapshot's method for it are gone.
 - **The meter** (`spend::Meter`) stands in the meter's place, over the store the
   executor writes, with the system's clock. Each paid request is debited from what
   its run reserved before it leaves, settled when it ends, and is a line of its
@@ -1636,12 +1658,19 @@ in which the test installs a model with a fake of the download.
   called cost is in that run's record (ADR 0016, "The run's spend lines"), and
   nothing adds a tree up. `whizbang spend status --run` shows what the books hold
   of a run, an interrupted one among them.
-- **A free call writes names under `spend/` too:** its reservation of nothing, its
-  turn and its closing. Those names are never removed (ADR 0016), so every run of
-  the binary now adds to what the store's generation file holds
-  (`docs/carry-over.md`, the row on the store's limit).
-- **One number of requests for every action** (above). An action that states how
-  many requests it sends one backend is for the task that first needs one.
+- **Where the books need their owner, every paid call is refused and every free
+  call runs.** The ledger declines an admission it is asked for until the owner's
+  reset (`Refusal::NeedsOwner`), and it is not asked for a call that may cost
+  nothing. A run that is already executing goes on within its own reservation (ADR
+  0016, "The strand cut down").
+- **A paid call writes names under `spend/` that are never removed** (ADR 0016), and
+  the ledger reads all of them at each admission: what a paid call costs to admit
+  grows with the paid calls a store has seen (`docs/carry-over.md`, the row on what
+  every publication writes, milestone 2). A free call writes none and reads none.
+- **Nothing holds an action to the number of requests its need states** but the
+  meter, which refuses the request its run has nothing left for. An action that
+  states too many reserves more than it spends, released at its run's end; one that
+  states too few fails at the request it did not reserve for.
 - **The read-only executor reserves nothing and has no meter:** it admits nothing.
   Its source is the same, so what it prepares states the same bound.
 - **The binary's ways out have no sender, and the check that approves no address.**
