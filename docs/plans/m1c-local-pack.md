@@ -1,8 +1,10 @@
 # Plan: checkpoint 1C, the local pack
 
-Draft 4, 2026-11-15. From `SPEC.md` sections 4, 5, 10, 13, 16 and 17. This file is the
+Draft 5, 2026-11-15. From `SPEC.md` sections 4, 5, 10, 13, 16 and 17. This file is the
 task list. Written from `main` at the tag `m1b` (commit 75f7dd6): the code, ADRs 0001 to
 0019, `docs/plans/m1b-note.md` and the carry-over list as the exit check of 1B left it.
+Draft 5 is the entry check's (task C0): its measurements, four follow-ups of the review,
+and what the owner decided on 2026-11-15 ("Review rounds", at the end, lists them).
 
 The plan of 1B grew past 3,000 lines and its length cost review time. This one states
 each thing once. Where a task must decide a detail, the plan gives the constraint and the
@@ -209,18 +211,47 @@ pinned Python and nothing else. The runtime and the SAM 3 adapter's imports are 
 extra, installed only where a model runs.
 
 **D11. Weights are downloaded as their maker published them, by whizbang's installer,**
-from the Hub at a pinned revision, checked by size and hash. Whizbang hosts and
-redistributes no model file, so the licence's distribution terms do not bind it; the
-catalogue entry names the licence. Only `model.safetensors` and the small text files are
+from the Hub at a pinned revision, checked by size and hash. In 1C whizbang hosts and
+redistributes no model file: the weights are fetched as their maker publishes them, so
+in 1C the licence's distribution terms do not bind it; the catalogue entry names the
+licence. That is true of 1C only. The owner expects whizbang to host the model later,
+so that a customer needs no Hugging Face account of their own (the owner's statement,
+as the orchestrator passed it on, 2026-11-15); the owner's token is for testing and for
+getting the model onto whizbang's side. Hosting is not designed and not built in 1C:
+its carry-over row is milestone 4's and starts with reading the licence for what
+redistribution requires. Only `model.safetensors` and the small text files are
 listed: `sam3.pt` is a pickle and is never downloaded or loaded. The worker loads from
 the installation's folder with `HF_HUB_OFFLINE=1`, `HF_HUB_DISABLE_TELEMETRY=1` and
 `DO_NOT_TRACK=1` set, so the runtime's libraries contact nobody.
 
-**D12. A download's credential is named by the config, per origin,** read from the env
-file like every key, known to redaction, sent to its own origin only and never to another
-origin (ADR 0012; a hop back to the same origin carries it, as ADR 0019 has it). The catalogue entry says that its origin
-needs one. No agent reads the token: the owner writes it into the env file that git
-ignores, whose values the secrets scan already searches for.
+**D12. A download's credential is named by the config, per origin, and for the Hub it
+is read from the sign-in the Hub's command-line tool already keeps on the machine.** The
+owner chose this on 2026-11-15, in the owner's words "for now": whizbang reads the token
+of that sign-in, and the owner writes it nowhere else. The config names, for an origin,
+where its token is: that sign-in, or a variable of the env file, which stays as the way
+for anyone without the sign-in and is read like every key. Whichever it is:
+
+- It is read only when a download from that origin needs it, and not before: no other
+  command, and no `get` of a model from another origin, opens the sign-in's store.
+- It is read by the binary and by nothing else: no agent, no test and no script reads
+  the owner's store, and no command prints it or takes it as an argument.
+- It is told to redaction before a request is made, and is in no output, log, status
+  record, run record or fault's sentence.
+- It is sent to its own origin only, `huggingface.co`, and never to another origin (ADR
+  0012; a hop back to the same origin carries it, as ADR 0019 has it).
+- It is never handed to the worker: P3a's allow-list passes no variable that holds it,
+  and the worker's environment points the Hub's libraries away from the sign-in's
+  store, so the runtime does not read it either (open question 9).
+- **A test cannot reach the owner's store.** The store's place is a value the binary's
+  wiring is given. Only `main` gives the real one, by the one function that names it,
+  and `just check` refuses a call of that function anywhere else. Every test gives a
+  temporary folder that holds a made-up token; a test that starts the real binary
+  starts it with a cleared environment whose home folder is a temporary one, so the
+  real place cannot be reached from it. CI has no sign-in and needs none.
+
+The catalogue entry says that its origin needs a token. The secrets scan does not know
+this token's value, since it is in no env file: what it has is its pattern for a token
+of the Hub's shape (`scripts/scan.sh`), and N5 records fields, never raw output.
 
 **D13. A models directory is its owner's alone.** Whizbang makes it readable and
 writable by its owner only, and refuses one that anyone else can write. With that, the
@@ -257,14 +288,14 @@ are run one way). A resident worker and a GPU runtime add these.
 |---|---|---|
 | Worker processes | One in a whizbang process (D4). A test file starts at most one at a time; the tests that start one are a group in `.config/nextest.toml`, `pack-workers`, two at a time | The supervisor; the group |
 | A worker a test started | Killed and waited for on every path, a panic included | One guard type in the test kit (task P3a), whose drop kills and waits; `just check` refuses a test that starts the pack another way |
-| A worker nobody waits for | Ends by itself: at the end of its input, whatever it is doing then (inside a `load`, or a call that ignores `cancel`: the reading thread ends the process and waits for nothing); and at `--max-lifetime-s`, which the test kit's guard passes (120) and which the kind `pack` passes from its setting `max_lifetime_s`, set by every test that starts a worker through the binary's wiring (P6a, P6b, P7a, P7b, Y1, R2b) | The worker; a test of each (P2, P6a) |
-| `uv` | One at a time, started only by `whizbang setup` and `just test-pack` (and once by hand for Y1's lock). A cleared environment with P3a's allow-list; no user's configuration (`--no-config`); `UV_CONCURRENT_DOWNLOADS=4`, `UV_CONCURRENT_INSTALLS=4`, `UV_CONCURRENT_BUILDS=1`. Killed and waited for on every path out of `setup`. 60 s with no extra, which is offline; 30 minutes with one. The Mac's install with an extra, and the making of the lock, run through `scripts/heavy.sh` with the thread limit at 200, and the peak is in the hand-back | Y1: `setup::a_uv_that_does_not_end_within_its_limit_is_killed_and_waited_for`, `setup::uv_is_given_the_allow_list_and_no_users_config` |
+| A worker nobody waits for | Ends by itself: at the end of its input, whatever it is doing then (inside a `load`, or a call that ignores `cancel`: the reading thread ends the process and waits for nothing); and at `--max-lifetime-s`, which the test kit's guard passes (120) and which the kind `pack` passes from its setting `max_lifetime_s`, set by every test that starts a worker through the binary's wiring (P6a, P6b, P7a, P7b, R2b). `whizbang setup` is built before the kind (Y1 needs P3a only), so it takes no setting: the worker it starts for its hello check is given a fixed lifetime, 120, by `setup` itself | The worker; a test of each (P2, P6a, Y1) |
+| `uv` | One at a time, started only by `whizbang setup` and `just test-pack` (and once by hand for Y1's lock). A cleared environment with P3a's allow-list; no user's configuration (`--no-config`); `UV_CONCURRENT_DOWNLOADS=4`, `UV_CONCURRENT_INSTALLS=4`, `UV_CONCURRENT_BUILDS=1`. Killed and waited for on every path out of `setup`. 60 s with no extra, which is offline; 30 minutes with one. The stand-in for a `uv` that never ends, which the test of the limit starts, ends itself: after 120 s and not before, so that it outlasts the limit the test passes and still ends when the test is killed and nothing is left to kill it. The Mac's install with an extra, and the making of the lock, run through `scripts/heavy.sh` with the thread limit at 200, and the peak is in the hand-back | Y1: `setup::a_uv_that_does_not_end_within_its_limit_is_killed_and_waited_for`, `setup::uv_is_given_the_allow_list_and_no_users_config` |
 | The pack's Python tests | Run under `scripts/thread-guard.sh`. The runner ends itself at a stated limit, 60 s, by the standard library's `faulthandler.dump_traceback_later(…, exit=True)`. A thread a test starts is a daemon thread, so no test's thread keeps the runner alive | C1b |
 | Threads in the worker | Three of the worker's own (reader, call, main). The runtime's pools are held to 8 threads each, before the runtime is imported: by the environment the supervisor sets (`OMP_NUM_THREADS`, `MKL_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS`, `TOKENIZERS_PARALLELISM=false`) and by the adapter's own calls to the runtime; R1 lists every pool the chosen runtime has, from its documentation | The worker reports its count in `hello` and after each call; over 64 with a fake model fails the conformance suite |
-| Threads in the worker, real model | 200 at most, enforced while it runs | R1's script and `just test-models` run under `scripts/thread-guard.sh` with its limit set to 200: it counts the command and everything it started, during the load and the call, and kills on the first count over. The evidence record holds the peak it saw |
+| Threads in the worker, real model | 200 at most, enforced while it runs | R1's script and `just test-models` run under `scripts/thread-guard.sh` with its limit set to 200: it counts the command and everything it started, during the load and the call, and kills on the first count over. Both also run under the watch on resident memory of the row below. The evidence record holds the peak it saw |
 | Threads in whizbang | Two for each worker (its output, its error output), through the supervisor | The supervisor's tests count them |
 | GPU memory | The allocator's high watermark, set by the supervisor below 1.0 of the device's recommended maximum; R1 starts at 0.5 and writes the value it ends with | The environment the supervisor sets; the evidence record's peak |
-| The worker's resident memory, on the CPU path too | Measured, and capped only in the model tier: `scripts/model-evidence.sh` reads the worker's resident size beside its threads and kills it over 24 GiB. In ordinary use it is not capped, because nothing in the standard library caps a process's memory in a way macOS is documented to hold to; what bounds it is one resident model, one call, and the ceilings on a picture and a result. If R1 finds a cap that holds, the supervisor sets it | R1 (the search, the peak), R2b |
+| The worker's resident memory, on the CPU path too | Measured, and capped only in the model tier, by one watch that three things run under: R1's script, `just test-models` and `scripts/model-evidence.sh`. It reads the resident size of the command and of everything it started, beside their threads, and kills them over 24 GiB. R1 writes the watch, since R1 is the first to load the model, and R2b's recipe and script use the same one. In ordinary use it is not capped, because nothing in the standard library caps a process's memory in a way macOS is documented to hold to; what bounds it is one resident model, one call, and the ceilings on a picture and a result. If R1 finds a cap that holds, the supervisor sets it | R1 (the search, the peak), R2b |
 | Time, a worker | The limits of D7, each finite with no caller's deadline | The supervisor; a test of each |
 | Memory, one result | 1 GiB of payload (D2), refused before it is allocated; a result's header bounded from its request; the adapter cuts candidates to the most instances asked before it makes a full-size plane | P1, R2a |
 | Memory, beside a result | 256 events and 64 KiB of diagnostics for one request (D2) | P1, P4 |
@@ -274,14 +305,15 @@ are run one way). A resident worker and a GPU runtime add these.
 | Network | No test of the fast tier leaves the machine. The client's tests use a listener on loopback, made through the test kit, that serves a fixed number of connections. The client has a limit to connect (10 s), a limit between two reads (30 s), and a least rate for a download, a setting whose default is 256 KiB a second: under it over any whole minute ends the download as timed out. A test passes its own limits, under a second. Root certificates are compiled in: the platform's verifier may ask a revocation service nobody approved | Task N1 |
 
 What kills a worker, in full: the end of its input; the supervisor at a deadline or when
-it is dropped; its own lifetime limit in a test; and the test kit's guard. Nothing else
-signals a process, and nothing kills a process whizbang did not start.
+it is dropped; its own lifetime limit in a test; the test kit's guard; and, in the model
+tier only, the watches on threads and on resident memory. Nothing else signals a
+process, and nothing kills a process whizbang did not start.
 
 ## Origins, and what needs the owner
 
 Nothing was contacted while this plan was written beyond reading the public pages above.
 Each origin below is new, carries no user data, and needs the owner's approval before
-the task named.
+the task named. What the owner has approved since is under the table.
 
 | Origin | What for | First used by | Where |
 |---|---|---|---|
@@ -293,8 +325,40 @@ the task named.
 
 Also the owner's, before N5: that the account behind the token has been granted access
 to `facebook/sam3` (the old repo says the terms were accepted on 2026-11-05; the grant
-shares the account's name and address with the model's maker), and the token written
-into the env file by the owner.
+shares the account's name and address with the model's maker), and the token, which
+whizbang reads from the Hub's command-line sign-in on the Mac (D12).
+
+### What the owner approved, and what is still asked
+
+The orchestrator asked the owner in one message, as C0's last box says, and passed the
+answer on. Given by the owner on 2026-11-15 (the owner's local date):
+
+| Approved | For | Where | Needed before |
+|---|---|---|---|
+| Downloading a pinned Python from GitHub's releases | `uv` installing the Python the pack pins | The owner's Mac and both CI runners | C1b |
+| Downloading the runtime's Python packages from `pypi.org` and `files.pythonhosted.org` | The lock file, then `whizbang setup` with the extra | The owner's Mac; never CI | Y1 |
+| Downloading the SAM 3 files from Hugging Face, with the owner's token sent to Hugging Face | `whizbang models get sam3`, `whizbang models pin`, and N5's reading of the pinned revision's file listing | The owner's Mac; never CI | N5 |
+
+The owner also said, the same day:
+
+- Access to `facebook/sam3` is already granted on the owner's account. This is the
+  owner's statement; N5 finds out for real, and its fifth credential test says what a
+  refusal looks like.
+- The token is read from the Hub's command-line sign-in already on the Mac, "for now"
+  (D12).
+- Whizbang is expected to host the model later, for customers (D11). Not in 1C.
+
+Three hosts are still unnamed, and each is named to the owner before its first contact.
+The approvals above do not cover a host by a name nobody has read:
+
+- The host GitHub serves a release's files from: C1b names it to the owner before the
+  first download of a Python.
+- Where the CI action fetches `uv` itself from: C1b names it to the owner before the
+  step is added to CI.
+- The host the Hub moves a file download to, its storage: N5 names it to the owner
+  before the entry lists it as an origin (open question 2). A second package index
+  for Linux with CUDA, if a lock needs one, is Y1's to name the same way (open
+  question 5).
 
 **Spend: nothing.** Every model call is local, the downloads are free, and no task makes
 a paid call. A task that would spend stops and goes to the owner.
@@ -305,7 +369,8 @@ a paid call. A task that would spend stops and goes to the owner.
 
 Each is settled by the task named, from documentation or by the owner; none blocks C0.
 
-1. Has the owner's account access to `facebook/sam3` today? (Owner, before N5.)
+1. Has the owner's account access to `facebook/sam3` today? The owner says it has
+   (2026-11-15); N5 finds out for real.
 2. Which host does the Hub move a file download to? The entry's origins must name it.
    A refusal cannot tell: ADR 0019's refusals quote nothing of an address. N5 takes it
    from the Hub's documentation, or `whizbang models pin` prints the origin, and only
@@ -332,6 +397,14 @@ Each is settled by the task named, from documentation or by the owner; none bloc
 8. A fixture picture for the model tier that may be committed to a public repo. R2b uses
    an example picture already in `docs/reference/tools/` if one holds a thing with a
    name; otherwise it asks the owner for one.
+9. Where the Hub's command-line tool keeps the token of a sign-in, which variables move
+   that place, and which variables keep the Hub's libraries in the worker from reading
+   it. Not verified here: nothing was read for it when D12 changed. Each is taken from
+   the Hub's documentation of its environment variables, the page "What was looked
+   up" already cites: the first two by N4, written in its amendment to ADR 0011, and
+   the third by P3a, which sets the worker's environment. If the
+   sign-in keeps its token somewhere a file read cannot reach (a system keychain), N4
+   stops: the env-file key is then the only way, and the owner is told.
 
 ## Strands and order
 
@@ -360,7 +433,7 @@ Two strands run side by side after C1a and join at P6a.
 | N2 A models directory that is its owner's; a lock asked for until a time | S | C1a |
 | N3a The catalogue's second version, the fifth reason, where the directory is | S | N2 |
 | N3b `whizbang models list`, `get`, `remove` | M | N1, N3a |
-| N4 A download's credential | S | N3b |
+| N4 A download's credential | M | N3b |
 | N5 The shipped catalogue, and SAM 3 installed on the Mac | M | N4 |
 | Y1 `whizbang setup`, and the lock file | M | P3a |
 | P6a The kind `pack`: a local segmenter through the executor | M | P5b, N3b |
@@ -374,11 +447,14 @@ Two strands run side by side after C1a and join at P6a.
 
 Twenty-six tasks, one pull request each.
 
-**What can be built with no approval from the owner:** C0; C0b when C0 chooses the cache
-or the smoke on one runner; C1a, P1, P5a, N1, N2, N3a, N3b and N4. These contact nothing
-new. Everything from P2 on runs the pack's Python and waits for C1b's origin: P2, P3a,
-P3b, P4, P5b, P6a, P6b, P7a and P7b. Y1 waits for the package index as well; N5 for the
-Hub, the access and the token; R1, R2a and R2b for all of them.
+**What can be built with no approval from the owner:** C0; C0b, since C0 chose an
+option that changes no coverage and no budget; C1a, P1, P5a, N1, N2, N3a, N3b and N4.
+These contact nothing new. Everything from P2 on runs the pack's Python and waits for
+C1b's origins: P2, P3a, P3b, P4, P5b, P6a, P6b, P7a and P7b. Y1 waits for the package
+index as well; N5 for the Hub, the access and the sign-in; R1, R2a and R2b for all of
+them. The origins themselves were approved on 2026-11-15 ("What the owner approved,
+and what is still asked"); C1b and N5 each still wait for the naming of their unnamed
+hosts, and Y1 for nothing more unless its lock needs a second index.
 
 ## Commit strategy
 
@@ -421,44 +497,215 @@ builder that finds a clause cannot be shown as worded rewords it here in the for
 **Depends on:** the tag `m1b`. **Reads:** `docs/plans/m1b-note.md`, `docs/carry-over.md`,
 the job logs of the last twenty runs of `ci` on `main`.
 
-- [ ] `main` at the tag: CI green on both runners, `just check` and `just scan` pass,
+- [x] `main` at the tag: CI green on both runners, `just check` and `just scan` pass,
       and each file, type and function this plan names is there. A line that no longer
       fits is corrected here.
-- [ ] Every carry-over row that names 1C has the task or the owner that "Carry-over rows
+- [x] Every carry-over row that names 1C has the task or the owner that "Carry-over rows
       and their tasks" gives it; the new rows it asks for are added.
-- [ ] **The macOS job, measured before anything is changed.** From the logs: for each of
+- [x] **The macOS job, measured before anything is changed.** From the logs: for each of
       twenty runs, the time of each recipe inside `just ci` (the debug build and lint,
       the tests, the advisories, the release build of the smoke, the example that must
       not compile, the scan), and whether the build cache was restored. Then the
       coverage review section 13 asks for: the ten slowest tests on that runner and what
       each guards.
-- [ ] One option is chosen from the measurements and written here for C0b:
+- [x] One option is chosen from the measurements and written here for C0b:
       (a) the cache: restore it on pull requests from `main`'s, if runs are building
       from nothing; (b) the release build of the smoke and the example that must not
       compile run on the Linux runner only, if the second build is what costs; (c) the
       heaviest crash sweeps move to a tier that runs on `main` and before a tag, if
       test time is what costs, each named with what still guards its behaviour on a
-      pull request; (d) the owner changes the budget. Options (c) and (d) are put to
-      the owner before C0b; (a) and (b) change no coverage on any commit that merges.
-- [ ] The owner is asked, in one message, for what "Origins, and what needs the owner"
+      pull request; (d) the owner changes the budget; (e) the script tests run in a job
+      of their own on the macOS runner, beside the job that builds and tests, if the
+      script tests are what costs. Options (c) and (d) are put to the owner before C0b;
+      (a), (b) and (e) change no coverage on any commit that merges.
+      **Reworded with the task:** the box offered "(a) … (b) … (c) … (d)" and ended
+      "(a) and (b) change no coverage on any commit that merges". The measurements
+      show that what costs is none of the four: it is the script tests, which the box
+      did not name. So (e) is added, and it is the one chosen.
+- [x] The owner is asked, in one message, for what "Origins, and what needs the owner"
       lists, with the task each is needed before.
+      **Reworded with the task:** nothing in the words changed; who did it did. The
+      orchestrator asked, since only the orchestrator speaks with the owner, and passed
+      the answer on while this task was open: "What the owner approved, and what is
+      still asked", under "Origins", holds it.
 
 **Done when** the measurements are in this file under this task, the rows are re-owned,
 and `just check` passes. **Size:** small. Documents only.
+
+#### What the check found
+
+`main` is the tag `m1b` and one merge, of this plan (pull request #139), which changed
+no other file. At the tag, run 43795459690 of `ci` was green on both runners, and so was run
+43803956633 on the plan's merge, where the macOS job took 10 min 6 s, 4 min 36 s of it
+the script tests; `just
+check` (1,998 tests, 76.6 s of tests on the owner's Mac) and `just scan` pass on the
+plan's merge. Every file, type, function, test and ADR section a task names as already
+there was looked up and is there, and every path a "Reads" line gives in an old repo is
+there at its commit in `docs/sources.toml`. Two things did not fit, and neither changes
+what is built:
+
+- P3a's "Reads" line called squint's `minimal.rs` and `full.rs` the tests of
+  `crates/squint-tools/src/mcp/mod.rs`. They are, and they are in that folder, as test
+  modules of the client (`src/mcp/minimal.rs`, `src/mcp/full.rs`), not under the
+  crate's `tests/`. The line now says so.
+- Two of the five new rows this plan asked C0 to add were already on the carry-over
+  list, under "Evaluations": other runtimes for local models, and holding several
+  models with calls side by side. C0 brought those two rows up to date and added no
+  second copy. It added the other three, and a fourth the owner's decision on hosting
+  asks for (D11).
+
+The thirty rows that named 1C each have their task or their new owner. Six left 1C, as
+the table says: the filler's row to milestone 3; installs that share a file to 1D; the
+sender and a real prober, a backend that sends with no credential, a recipient compared
+with its upstreams, and the encoder for sending, to milestone 2.
+
+#### The macOS job, measured
+
+Read through `gh` from the logs of finished runs of `ci`, nothing pushed to find it
+out: the twenty runs on `main` before the plan's merge (commits 5cc7d96 to 75f7dd6, 15
+and 16 November in UTC), and the twenty latest finished runs on pull requests. Seconds,
+from the time stamps of the log's lines; a recipe ends where the next begins. "Before"
+is everything before `just ci` starts: the checkout, the toolchain, the cache and the
+tools. "Lint" is the format check, clippy on a restored cache, the crate graph and the
+licences. "Test build" is `scripts/timing.sh` up to the first test, and "tests" is the
+test time nextest reports, which is what the limit of 180 s is held against.
+
+`check (macos-15)` on `main`, newest first:
+
+| Commit | Cache restored (its step) | Before | Lint | Script tests | Reference check | Test build | Tests | Advisories | Release build of the smoke | Example that must not compile | Scan | Scan of the range (its step) | Canary | The job |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 75f7dd6 | full (6 s) | 22 | 24 | 259 | 16 | 42 | 83.0 | 1 | 26 | 8 | 12 | 14 | 30 | 9:02 |
+| c42b854 | full (5 s) | 20 | 23 | 251 | 13 | 40 | 116.9 | 2 | 28 | 10 | 15 | 19 | 31 | 9:31 |
+| d725b43 | full (3 s) | 16 | 15 | 233 | 17 | 45 | 112.1 | 2 | 27 | 11 | 14 | 16 | 30 | 9:02 |
+| c9ecf9c | partial (4 s) | 16 | 22 | 224 | 13 | 44 | 99.0 | 1 | 29 | 15 | 15 | 23 | 30 | 9:08 |
+| 392fe50 | partial (7 s) | 20 | 24 | 269 | 18 | 45 | 118.7 | 1 | 30 | 14 | 13 | 15 | 30 | 10:14 |
+| 8025977 | full (5 s) | 22 | 25 | 261 | 18 | 55 | 128.4 | 1 | 31 | 20 | 17 | 18 | 30 | 10:32 |
+| 5caa3e2 | full (7 s) | 18 | 15 | 223 | 17 | 42 | 77.5 | 1 | 22 | 11 | 12 | 13 | 30 | 8:06 |
+| 7873c2a | full (9 s) | 30 | 42 | 317 | 17 | 55 | 129.5 | 1 | 37 | 19 | 17 | 18 | 30 | 11:56 |
+| 6808ee8 | full (8 s) | 33 | 21 | 273 | 17 | 53 | 111.1 | 1 | 29 | 16 | 15 | 17 | 30 | 10:20 |
+| 44cfe7b | full (6 s) | 22 | 28 | 298 | 19 | 61 | 128.3 | 2 | 33 | 17 | 16 | 23 | 30 | 11:21 |
+| 0181cf6 | full (5 s) | 21 | 24 | 256 | 16 | 55 | 91.2 | 1 | 28 | 13 | 14 | 20 | 31 | 9:34 |
+| fd2b650 | full (6 s) | 19 | 24 | 261 | 23 | 59 | 114.5 | 2 | 32 | 15 | 15 | 49 | 30 | 10:48 |
+| 1d56085 | full (12 s) | 25 | 13 | 196 | 10 | 29 | 71.0 | 1 | 20 | 10 | 12 | 32 | 31 | 7:35 |
+| b1297e3 | full (11 s) | 33 | 23 | 288 | 14 | 61 | 100.2 | 1 | 23 | 13 | 12 | 18 | 30 | 10:21 |
+| 3bb7c29 | full (9 s) | 23 | 38 | 275 | 13 | 43 | 118.9 | 1 | 26 | 16 | 14 | 34 | 30 | 10:37 |
+| aa4bcb4 | full (8 s) | 24 | 26 | 308 | 21 | 65 | 142.2 | 1 | 36 | 24 | 18 | 55 | 30 | 12:36 |
+| 53d53ff | full (7 s) | 19 | 18 | 210 | 17 | 48 | 113.0 | 1 | 34 | 15 | 13 | 14 | 30 | 8:58 |
+| fa6ff68 | full (7 s) | 22 | 19 | 316 | 16 | 61 | 117.8 | 1 | 30 | 19 | 16 | 31 | 30 | 11:25 |
+| ef29ccc | full (7 s) | 25 | 26 | 272 | 17 | 48 | 120.9 | 1 | 31 | 17 | 16 | 20 | 30 | 10:28 |
+| 5cc7d96 | full (5 s) | 20 | 26 | 295 | 16 | 48 | 129.3 | 2 | 25 | 13 | 13 | 21 | 30 | 10:41 |
+
+The same in short, least, median and most, with the pull requests' runs and the Linux
+job beside it:
+
+| Part | macOS, `main` (20) | macOS, pull requests (20) | Linux, `main` (20) |
+|---|---|---|---|
+| Before `just ci` | 16, 22, 33 | 15, 20, 27 | 13, 19, 22 |
+| Lint | 13, 24, 42 | 16, 20, 32 | 11, 16, 19 |
+| **Script tests** | **196, 265, 317** | **181, 256, 334** | 53, 106, 118 |
+| Reference check | 10, 17, 23 | 11, 17, 27 | 6, 9, 10 |
+| Test build | 29, 48, 65 | 30, 46, 80 | 24, 34, 43 |
+| Tests | 71, 116, 142 | 72, 109, 149 | 41, 68, 89 |
+| Advisories | 1, 1, 2 | 1, 1, 3 | 0, 1, 1 |
+| Release build of the smoke | 20, 29, 37 | 20, 32, 38 | 16, 22, 26 |
+| Example that must not compile | 8, 15, 24 | 8, 14, 23 | 6, 11, 13 |
+| Scan | 12, 14, 18 | 11, 15, 19 | 1, 2, 3 |
+| Scan of the range | 13, 20, 55 | 13, 18, 71 | 2, 4, 7 |
+| Canary (macOS), real timeout (Linux) | 30 | 30 | 30 |
+| The job | 7:35, 10:20, 12:36 | 6:57, 9:38, 13:32 | 3:27, 5:17, 6:15 |
+| Jobs over 10 minutes | 12 of 20 | 8 of 20 | none |
+
+The Linux column leaves the two runs that failed (commits 6808ee8 and 7873c2a, the fault
+`docs/plans/m1b-note.md` describes) out of the parts after the tests, where they stopped.
+Two of the pull requests' runs are a second attempt: the first failed on the macOS
+runner on test time alone, every test passing, at 180.0 s and at 194.9 s.
+
+What the numbers say:
+
+- **The cache is restored on every run.** All forty macOS jobs restored it, on pull
+  requests as on `main`, thirty-six from the exact key and four from an older one, in 3
+  to 12 seconds. No run built from nothing: clippy took 12 to 38 seconds. Option (a)
+  has nothing to gain.
+- **The script tests are the largest part of the job, and nobody had named them.** On
+  the macOS runner `scripts/tests/run.sh` takes 3 to 5 and a half minutes, 44 of every
+  100 seconds of the job on `main`, more than the test build and the fast tests
+  together. On Linux the same tests take a minute and three quarters. Three of them are
+  most of it, by median on macOS and on Linux: `test-scan.sh` 83 s and 24 s,
+  `test-skills.sh` 60 s and 24 s, `test-thread-guard.sh` 28 s and 14 s; then
+  `test-rules.sh` and `test-hooks.sh` 17 s each, `test-syntax.sh` 15 s, and thirteen
+  more that share about 50 s. They start thousands of small processes, which that
+  runner is slow at.
+- **The second build is not what costs.** The release build of the smoke and the example
+  that must not compile are 30 to 60 seconds together, 44 at the median. With both off
+  the macOS job, six of the twenty runs on `main` and four of the pull requests' twenty
+  would still have been over 10 minutes. Option (b) alone does not meet the budget.
+- **Test time is not what costs the 10 minutes.** With the test time halved, four runs
+  on `main` and two on pull requests would still have been over. Option (c) would give
+  up coverage on pull requests and not meet the budget either.
+- **With the script tests off the job, every one of the forty is under.** The longest
+  would have been 7 min 28 s on `main` and 7 min 58 s on a pull request.
+
+The ten slowest tests on the macOS runner, as the ten that were most often among a
+run's ten slowest over the twenty runs on `main`, with the least and the most each
+took:
+
+| Test | Seconds | What it guards |
+|---|---|---|
+| `nested::a_run_calls_as_many_actions_as_its_record_lists_and_one_more_is_refused` | 6.5 to 13.3 | A run calls 256 actions and the 257th is refused. Its time is 514 publications, each writing the whole generation: the carry-over row on what a publication costs, milestone 2's |
+| `reserve::a_crash_at_any_event_of_an_admission_through_the_real_ledger_leaves_all_of_it_or_none`, its six parts | 3.7 to 11.3 each | An admission through the real ledger, crashed before every step and with every way a disk loses what was not durable, leaves the whole admission or none of it. The only crash sweep the spend strand has |
+| `crashes::a_crash_at_any_event_of_a_repair_leaves_it_as_it_was_not_installed_or_whole`, part 3 of 4 | 4.0 to 11.6 | A repair of a model, crashed at any event, leaves the installation as it was, not installed, or whole |
+| `crashes::a_crash_at_any_event_of_an_install_leaves_the_previous_or_the_new_whole`, part 3 of 4 | 3.7 to 11.3 | An install over a previous one, crashed at any event, leaves the previous installation or the new one, whole: "the previous install left in place on failure" of `SPEC.md` section 6 |
+| `execute::many_runs_from_two_executors_at_one_instant_are_all_kept` | 4.2 to 7.7 | Two executors that write many runs at one instant lose none: the store's one-writer rule under contention |
+
+None is near the limit of 30 seconds for one test: the slowest single test in the twenty
+runs took 15.6 s. Eight of the ten are crash sweeps, which already run two at a time.
+Each guards a rule the spec states, and none has a cheaper test that guards the same
+thing on a pull request, so the review finds nothing to cut and nothing to move.
+
+#### The option chosen for C0b
+
+**(e): the script tests run in a job of their own on the macOS runner, beside the job
+that builds and tests.** Every commit still runs every script test and every recipe of
+`just ci` on both runners, so no coverage moves and no budget changes; `just check` on
+a developer's machine is unchanged. The job that builds and tests loses 3 to 5 and a
+half minutes and comes to 8 minutes at most by these runs. The new job is the script
+tests and a checkout, about 6 minutes at most: as far as C0 read them, none of the
+script tests builds the workspace, which C0b confirms before it leaves the toolchain or
+the cache out of that job. The Linux job is inside its budget and stays one job. The
+aggregate `ci` needs the new job too, so that a merge still waits for it.
+
+What (e) does not fix, and C0b does not touch: **the fast tier's test time on the macOS
+runner against its limit of 180 seconds.** On unchanged code it was 71 to 149 seconds
+in these forty runs, and two more attempts failed at 180.0 and 194.9 seconds with every
+test passing. A job with fewer steps before the tests may run them a little steadier,
+and may not. Moving a sweep to another tier, (c), or changing the limit, (d), is the
+owner's, and C0 recommends neither on these numbers: the tests are not what breaks the
+10 minutes, and each slow test guards something. The carry-over row keeps this half
+for the owner, and Z1's timing table says what the job and the tests take afterwards.
 
 ### C0b. The macOS job inside its budget
 
 **Depends on:** C0.
 
-- [ ] The option C0 chose, and nothing else.
+- [ ] The option C0 chose, and nothing else: (e), the script tests in a job of their own
+      on the macOS runner ("The option chosen for C0b", under C0). Every script test
+      and every recipe of `just ci` still runs on both runners for every commit; `just
+      check` is unchanged; the aggregate `ci` needs the new job; `AGENTS.md` and the
+      `kickoff` skill name the jobs a builder waits for.
 
 **Done when**, before the merge, five runs of `check (macos-15)` in a row on the branch's
-head (the same commit, run again) each take under 10 minutes, with the test time of
-each in the hand-back; or the owner's line on the budget is in `SPEC.md` section 13 and
-the carry-over row. What the job takes on `main` afterwards is Z1's, in the note's
-timing table. No limit in `scripts/timing.sh` or `.config/nextest.toml` is raised by
-this task.
-**Carry-over:** the row on pull-request CI on the macOS runner. **Size:** small.
+head (the same commit, run again) each take under 10 minutes, and so does the new job
+in each, with the test time of each in the hand-back; or the owner's line on the budget
+is in `SPEC.md` section 13 and the carry-over row. What the jobs take on `main`
+afterwards is Z1's, in the note's timing table. No limit in `scripts/timing.sh` or
+`.config/nextest.toml` is raised by this task.
+**Reworded with the task** (by C0, which chose the option): the clause read "five runs
+of `check (macos-15)` in a row … each take under 10 minutes". The option chosen adds a
+job on that runner, and a budget met by one job while the other is over it would not be
+met, so the clause now holds both.
+**Carry-over:** the row on pull-request CI on the macOS runner, whose half on the 10
+minutes this closes; its half on the fast tier's test time stays, for the owner.
+**Size:** small.
 
 ### C1a. Rust roots
 
@@ -571,14 +818,15 @@ time, three times in all, each killed and waited for in the test's cleanup.
 
 **Depends on:** P2. **Reads:** `crates/whizbang-core/src/store/fs.rs`, "What these locks
 are, and are not"; the carry-over row on the store's locks; squint
-`crates/squint-tools/src/mcp/mod.rs` and its tests `minimal.rs` and `full.rs` (the
-client that survives, D1: what is ported and what is not is in the commit message);
+`crates/squint-tools/src/mcp/mod.rs` and its test modules beside it, `minimal.rs` and
+`full.rs` (the client that survives, D1: what is ported and what is not is in the commit message);
 rascal `crates/rascal-mcp/src/client/env.rs` (the environment's allow-list).
 
 - [ ] `whizbang_backends::pack::Worker`: started from a command line it is given, with a
       cleared environment and an allow-list (no variable whose name ends in `_KEY`,
       `_TOKEN` or `_SECRET`, and none the config names as a key), the thread limits and
-      the offline variables of D11 set; a hello each way; stopped as D7 says. Its error
+      the offline variables of D11 set, and with them the variables that keep the
+      Hub's libraries from reading the token of a sign-in (D12; open question 9); a hello each way; stopped as D7 says. Its error
       output is read by line, 256 lines of 4,096 bytes kept, redacted.
 - [ ] `whizbang_testkit::worker`: the guard of "Rules", and the pack with fake models
       and fake faults as a fixture.
@@ -590,6 +838,7 @@ rascal `crates/rascal-mcp/src/client/env.rs` (the environment's allow-list).
 - `worker::a_worker_of_another_protocol_version_is_refused_at_the_hello_and_is_not_left_running`
 - `worker::the_worker_is_handed_no_descriptor_but_its_three_and_none_of_the_store`
 - `worker::the_workers_environment_holds_the_allow_list_and_no_key`
+- `worker::the_workers_environment_points_the_hubs_libraries_away_from_the_sign_ins_store`
 - `worker::a_dropped_supervisor_closes_the_input_and_the_worker_is_gone_when_the_drop_returns`
 - `worker::a_worker_that_does_not_end_at_the_end_of_its_input_is_killed_at_the_deadline_and_waited_for`
 - `worker::the_error_output_kept_is_bounded_and_a_secret_in_it_is_redacted`
@@ -817,23 +1066,46 @@ list` says of a link. **Size:** medium.
 download and a probe"; ADR 0011 on keys from the env file.
 
 - [ ] D12, by amendments to ADRs 0011, 0012 and 0017: the config's key for an origin's
-      token; an entry's statement that its origin needs one; the installer attaching it
-      to a request for that origin.
+      token, which names where the token is (the Hub's command-line sign-in, or a
+      variable of the env file); an entry's statement that its origin needs one; the
+      installer attaching it to a request for that origin.
+- [ ] The reader of the sign-in's store: one function names the real place, from the
+      Hub's documentation (open question 9), and only `main` calls it, which `just
+      check` holds; the wiring is given the place as a value. The token is read when a
+      download from its origin is about to be asked and not before, told to redaction
+      before the request is made, and kept nowhere after the install ends.
 
-**Done when** these pass (`tests/it/models/credential.rs`, `tests/it/config/`):
+**Done when** these pass (`tests/it/models/credential.rs`, `tests/it/config/`, and the
+last in `crates/whizbang/tests/it/models.rs`), each with a made-up token in a temporary
+folder:
 
 - `credential::a_download_from_an_origin_the_config_names_a_token_for_carries_it_and_one_from_another_origin_does_not`
 - `credential::a_download_moved_to_another_origin_is_asked_there_with_no_credential`
-- `credential::an_entry_whose_origin_needs_a_token_the_config_does_not_name_is_refused_before_anything_is_asked_and_says_which_key_to_set`
+- `credential::an_entry_whose_origin_needs_a_token_the_config_does_not_name_is_refused_before_anything_is_asked_and_says_how_to_sign_in_or_which_key_to_set`
 - `credential::the_token_is_in_no_status_record_no_refusal_and_nothing_get_prints`
 - `credential::an_origin_that_answers_that_access_is_refused_ends_the_install_with_a_sentence_that_says_to_ask_for_access`
+- `credential::a_token_of_the_sign_in_is_read_from_the_place_the_wiring_was_given_and_sent_to_its_origin_only`
+- `credential::the_sign_ins_store_is_not_opened_by_a_command_that_downloads_nothing_from_its_origin`
+- `credential::a_sign_in_that_is_not_there_or_cannot_be_read_ends_the_install_before_anything_is_asked_and_its_refusal_holds_no_path`
+- `credential::a_token_of_the_sign_in_is_redacted_from_a_fault_made_after_it_was_read`
+- `models::the_real_binary_started_with_a_temporary_home_reads_the_sign_in_there_and_no_other`
 
-**Carry-over:** a credential for a download that needs one. **Size:** small.
+and in `scripts/tests/`: `just check` refuses a call of the function that names the
+real place of the sign-in's store anywhere but `main`.
+
+**Reworded with the task** (by C0, with the owner's decision of 2026-11-15, D12): the
+third test's name ended "…and_says_which_key_to_set"; a missing token is now a missing
+sign-in or a missing key, so its refusal says both. Five tests and the script test are
+added for the sign-in. What keeps the worker from the sign-in's store is P3a's, with
+the worker's environment.
+**Carry-over:** a credential for a download that needs one. **Size:** small, now
+medium.
 
 ### N5. The shipped catalogue, and SAM 3 installed on the Mac
 
-**Depends on:** N4. **Needs the owner:** the Hub's origins approved; access to the
-model; the token in the env file. **Runs on:** the owner's Mac, for its last box.
+**Depends on:** N4. **Needs the owner:** the Hub's storage host approved by name
+(the Hub itself was approved on 2026-11-15); access to the model, which the owner says is
+granted; the Hub's command-line sign-in on the Mac, which the owner has. **Runs on:** the owner's Mac, for its last box.
 
 - [ ] The shipped catalogue, built into the binary, with one entry, `sam3`: the files
       of D11, each `from` an address at a pinned revision of `facebook/sam3`, the
@@ -841,7 +1113,14 @@ model; the token in the env file. **Runs on:** the owner's Mac, for its last box
       The adapter's revision is fixed here, in the binary's table of adapters, as the
       one R2a will ship under: it is part of an installation's identity (ADR 0017), so
       a revision changed later is a second download of 3.44 GB. Until R2a merges the
-      pack has no such adapter and a `load` of `sam3` is refused as unsupported.
+      pack has no such adapter and a `load` of `sam3` would be refused as unsupported.
+      So the table says of each adapter whether this build's pack ships it, and N5
+      enters `sam3` as not yet shipped: in that window the inventory gives the model
+      N3a's fifth reason, this build has no adapter for it. `models list` shows it as
+      installed and not ready for that reason, and a call for it is refused when it is
+      prepared, before a worker is started. Nothing calls the model ready while a load
+      of it would be refused. The identity does not depend on the mark, so R2a changes
+      it and nothing is downloaded again.
 - [ ] How the sizes and hashes were fixed, written in the entry's comment and the ADR:
       the large file's from the Hub's public listing of the pinned revision, which
       states its SHA-256 (read by the builder, outside whizbang: "Origins"); the small
@@ -852,7 +1131,9 @@ model; the token in the env file. **Runs on:** the owner's Mac, for its last box
       gains the command.
 - [ ] On the Mac: `whizbang models get sam3`, by the owner or with the owner's leave,
       into a models directory outside the repo. Nothing but whizbang downloads a file.
-      The token is never printed, passed as an argument or read by an agent.
+      The token is read by the binary from the sign-in (D12), and is never printed,
+      passed as an argument or read by an agent: no agent opens, lists or prints the
+      sign-in's store, before or after.
 
 **Done when** these pass in the fast tier:
 
@@ -860,11 +1141,19 @@ model; the token in the env file. **Runs on:** the owner's Mac, for its last box
 - `catalogue::every_file_of_the_shipped_entry_is_at_an_origin_the_entry_names_and_at_one_pinned_revision`
 - `catalogue::the_shipped_entry_names_no_pickle`
 - `models::pin_prints_the_size_and_hash_of_each_file_it_fetched_through_the_checked_downloader_and_installs_nothing`
+- `inventory::a_model_whose_adapter_the_binarys_table_names_as_not_yet_shipped_is_not_ready_for_want_of_an_adapter_installed_or_not`
+- `catalogue::every_adapter_the_binarys_table_names_as_shipped_is_an_adapter_the_pack_has`
 
 and, on the Mac, recorded in the pull request as fields (the installation's identity,
 the state `models list` gives, the bytes installed, the time), never as a command's raw
 output, which holds absolute paths: `sam3` is installed; a second `get` installs
-nothing; the secrets scan passes over the working tree with the token in the env file.
+nothing; `models list` gives it as installed and not ready, for want of an adapter; the
+secrets scan passes over the working tree, which holds no token.
+**Reworded with the task** (by C0, with the owner's decision of 2026-11-15, D12): the
+last clause read "the secrets scan passes over the working tree with the token in the
+env file". The token is in the sign-in's store and in no env file, so the scan cannot
+search for its value; the clause now says what the scan can show. Two tests are added
+for the window before R2a, a follow-up of the plan's review.
 **Carry-over:** the shipped catalogue. **Size:** medium.
 
 ### Y1. `whizbang setup`, and the lock file
@@ -878,12 +1167,15 @@ as reference for what is dropped).
 - [ ] The pack's extra for candidate A, and `pack/uv.lock`, made on the Mac.
 - [ ] `whizbang setup [--extra <name>]`: `uv sync --locked` of the pack into the
       environment, by `uv` at its pinned version, under the row of "Rules" on `uv`, and a check that the worker it made
-      says hello. The kind `pack` finds the worker there. `docs/guides/setup.md` says
+      says hello. `setup` starts that worker itself, with `--max-lifetime-s 120`: the
+      kind and its setting `max_lifetime_s` come later, with P6a. The kind `pack` finds
+      the worker there. `docs/guides/setup.md` says
       what it installs and every origin it contacts.
 
 **Done when** these pass (`crates/whizbang/tests/it/setup.rs`; all are in the fast
 tier, install no package and run offline, the limit's with a stand-in for `uv` that
-never ends):
+never answers and ends itself after 120 s and not before, since nothing is left to kill
+it if the test is killed):
 
 - `setup::setup_with_no_extra_makes_an_environment_offline_whose_worker_says_hello`
 - `setup::setup_refuses_a_lock_file_that_does_not_match_the_pack_and_changes_nothing`
@@ -892,6 +1184,7 @@ never ends):
 - `setup::the_lock_file_names_no_index_but_the_approved_one`
 - `setup::a_uv_that_does_not_end_within_its_limit_is_killed_and_waited_for`
 - `setup::uv_is_given_the_allow_list_and_no_users_config`
+- `setup::the_worker_setup_starts_for_its_hello_is_given_a_lifetime_of_120_seconds_and_is_gone_when_setup_ends`
 
 and, on the Mac, recorded in the pull request as fields (how it ended, the
 environment's size, the time, the peak of threads), never as raw output: `whizbang
@@ -998,7 +1291,10 @@ Tag `m1c-fakes` on the merge. **Carry-over:** `backends status`. **Size:** small
       supervisor's bounds itself: a cleared environment with P3a's allow-list; the
       offline and no-telemetry variables of D11; the thread limits of "Rules"; the
       watermark, starting at 0.5; and its own end at 10 minutes, by
-      `faulthandler.dump_traceback_later(600, exit=True)`. It places the model on the
+      `faulthandler.dump_traceback_later(600, exit=True)`. It runs under the watch on
+      resident memory of "Rules", which this task writes as a script beside the
+      thread guard and which kills over 24 GiB; `scripts/tests/` holds the watch to
+      that with a stand-in that grows. It places the model on the
       device itself, by name, and uses no `device_map="auto"`.
 - [ ] ADR 0022, the first runtime: each candidate against the bar, with the page that
       shows point, box and CUDA support; what was measured (the device, load time, the
@@ -1021,7 +1317,8 @@ lock: `setup::the_runtime_the_adr_names_is_the_one_the_lock_pins`.
 
 - [ ] The adapter `sam3` in the pack, on the chosen runtime: image features computed
       once for a batch; a phrase for each query; the settings of P6a; the answer in the
-      fixed order. It declares `phrase` only, under the revision N5 fixed. It asks its runtime for the GPU, falls
+      fixed order. It declares `phrase` only, under the revision N5 fixed, and the binary's
+      table now names it as shipped, so the inventory calls an installed `sam3` ready. It asks its runtime for the GPU, falls
       back to the CPU, and reports the device it got.
 - [ ] Its tests run in CI against a stand-in for the runtime that the tests give it: no
       runtime is imported.
@@ -1036,6 +1333,10 @@ lock: `setup::the_runtime_the_adr_names_is_the_one_the_lock_pins`.
 - `test_sam3.Device.test_with_no_gpu_the_adapter_runs_on_the_cpu_and_says_so`
 - `test_sam3.Revision.test_the_adapters_revision_is_the_one_the_binarys_table_names`
 
+and, in the fast tier, N5's
+`catalogue::every_adapter_the_binarys_table_names_as_shipped_is_an_adapter_the_pack_has`
+now covers `sam3`.
+
 **Size:** small.
 
 ### R2b. SAM 3 answers a phrase on the Mac's GPU
@@ -1045,7 +1346,8 @@ lock: `setup::the_runtime_the_adr_names_is_the_one_the_lock_pins`.
 - [ ] `just test-models` and `scripts/model-evidence.sh` (D15), and the fixture picture
       with a loose box drawn by hand around the thing its phrase names, committed
       with no metadata (no EXIF, no profile, no text chunk; a test holds it). The recipe is
-      heavy, runs under `scripts/thread-guard.sh` with its limit at 200, refuses without
+      heavy, runs under `scripts/thread-guard.sh` with its limit at 200 and under R1's
+      watch on resident memory (24 GiB), as the evidence script does, refuses without
       a models directory named in the local environment, and is listed in `AGENTS.md`.
 - [ ] The catalogue's entry and the adapter's revision are unchanged from N5, so
       nothing is downloaded again. `docs/reference/` is unchanged: no action is added
@@ -1131,7 +1433,11 @@ from the worker to whizbang, for tools beside the model (milestone 2); holding s
 models and running calls side by side (none; reopen on need, as section 4 defers it); a
 second runtime (none; on a measured need, as section 17 says); a user's own weights
 and a user's own adapter with the conformance test they are given (1D, with the
-`add-adapter` skill).
+`add-adapter` skill). C0 added the first, the second and the last; the third and the
+fourth were already rows under "Evaluations", which C0 brought up to date. And one
+more, from the owner's decision of 2026-11-15: hosting the model's files for customers
+(milestone 4, "The loop and a release", the first milestone at which someone who is not
+the owner installs whizbang; its "done when" starts with reading the licence).
 
 ## Risks
 
@@ -1139,7 +1445,7 @@ and a user's own adapter with the conformance test they are given (1D, with the
 |---|---|---|
 | Candidate A does not run SAM 3 on the Apple GPU | The last clause of the row is not met | R1 runs before the adapter is written and needs only N5 and Y1, so it is known early; the tag `m1c-fakes` holds everything else. B is then a change to this plan, and the owner is told |
 | It runs only with operations falling back to the CPU | "On the GPU" is arguable | D8: the fallback is off for the evidence; with it on, the operations are listed and the owner decides |
-| Access to the model is refused, or the token is not there | N5, R1, R2a and R2b wait | Asked at C0, needed at N5; both strands up to P7b need neither |
+| Access to the model is refused, or the sign-in is not there or cannot be read as a file | N5, R1, R2a and R2b wait | Asked at C0: the owner says access is granted and the sign-in is on the Mac. Needed at N5; both strands up to P7b need neither. The env-file key is the other way in (D12) |
 | The Hub moves a download to a host nobody approved | The installer refuses, as built | Open question 2: the host is named to the owner before it is added |
 | A worker outlives its test or its parent | Processes pile up on the owner's machine | Four things end a worker ("Rules"), each with a test; a worker is started lazily and one at a time |
 | The runtime starts more threads than a machine should hold | The machine is slowed or worse | The pools are set before the runtime is imported; the count is read after each call and fails the run over 200 |
@@ -1185,3 +1491,20 @@ worker started through the binary's wiring had no lifetime limit, `uv` and the p
 Python tests were unbounded, and seven tests named faults that no fake could produce.
 Draft 4 fixes the three and folds in its sixteen follow-ups: C1, P3 and P6 are each
 split in two, and P5a is medium.
+
+Draft 5 is the entry check's, task C0, and had no review round of its own beyond the
+review of C0's pull request. It holds three kinds of change:
+
+- **What C0 measured and chose** (under C0): the tables, option (e) added to C0's box
+  and chosen, and C0b's "Done when" holding the new job too.
+- **Four follow-ups of the review of this plan's pull request:** Y1's stand-in for a
+  `uv` that never ends now ends itself; R1's script and `just test-models` run under
+  the same watch on resident memory as the evidence script; `setup` passes its hello
+  check a fixed lifetime, since Y1 is built before the kind; and in the window between
+  N5 and R2a the inventory calls `sam3` not ready, for want of an adapter.
+- **What the owner decided on 2026-11-15,** as the orchestrator passed it on. These
+  are the owner's own decisions, so they took no review round: the three origins
+  approved ("What the owner approved, and what is still asked"); access to the model,
+  as the owner's statement; the token read from the Hub's command-line sign-in, "for
+  now" (D12, N4, N5, P3a's environment, open question 9); and hosting the model for
+  customers as the owner's intent, not built in 1C (D11, and its carry-over row).
