@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +27,16 @@ pub trait Clock: Send + Sync {
     fn now(&self) -> Instant {
         Instant::now()
     }
+
+    /// Lets this much time pass, for one who tries a thing again and again until a
+    /// time of this clock and must not spin meanwhile. The machine's clock sleeps
+    /// ([`SystemClock`]). A clock that does not say otherwise gives way to other
+    /// threads and returns at once, so a test's clock never sleeps unless it was
+    /// written to: it counts the call, or moves itself by `span`.
+    fn pause(&self, span: Duration) {
+        let _ = span;
+        std::thread::yield_now();
+    }
 }
 
 /// The machine's clock.
@@ -39,6 +49,10 @@ impl Clock for SystemClock {
             .duration_since(UNIX_EPOCH)
             .map(|since| u64::try_from(since.as_millis()).unwrap_or(u64::MAX))
             .unwrap_or(0)
+    }
+
+    fn pause(&self, span: Duration) {
+        std::thread::sleep(span);
     }
 }
 

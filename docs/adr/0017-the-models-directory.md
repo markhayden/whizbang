@@ -108,6 +108,15 @@ binary's wiring takes the inventory and puts the lease in its place.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
 that said something was still to come; no decision changed.
+Amended: 2026-11-15, with task N2 of checkpoint 1C (`docs/plans/m1c-local-pack.md`,
+decision D13). Added, in code (`directory.rs`, `ModelsDir::open`; `Fs::who_may_write`
+in the store's file-system interface) and here: "A models directory is its owner's
+alone", with the tests named `directory::…`. Changed, in code and here: the
+directory's lock is asked for until a time of the clock its directory was opened
+with, five seconds, where it was tried a count of times and nothing more; the count
+stays as a ceiling ("Three kinds of lock"; "Limits"). Words: under "A folder of the
+layout that is a link" and "Limits", what is accepted because nobody but the
+directory's owner can write it.
 Amended: 2026-11-15, with task P5a of checkpoint 1C (`docs/plans/m1c-local-pack.md`,
 decisions D5 and D6). Added, in code (`remove.rs`, `hold.rs`, `install.rs`, `stage.rs`)
 and under "Removal": "A mark is live only while its remover is, and the count of
@@ -171,7 +180,7 @@ The code of this record that exists is `crates/whizbang-backends/src/models/`: `
 `crates/whizbang-backends/tests/it/models/`, named below as `names::…`, `catalogue::…`,
 `installation::…`, `identity::…`, `refusals::…`, `downloads::…`, `staging::…`,
 `publishing::…`, `status::…`, `crashes::…`, `attaching::…`, `holds::…`, `remove::…`,
-`links::…`, `inventory::…` and `leases::…`.
+`links::…`, `inventory::…`, `leases::…` and `directory::…`.
 
 **What is code now, and what is decided for a later task.** Each part below says which
 it is. A part marked *decided, not built* has no code and no test yet, and names no
@@ -194,6 +203,7 @@ installation record with its identity.
 | A folder of the layout that is a link | Code, with the tests named (task M5c, after its review) |
 | The inventory: readiness from what is installed | Code, with the tests named (task M6) |
 | The lease: a hold on the admitted installation, by the declared name, around each request to a local model | Code, with the tests named (task M6b) |
+| A models directory is its owner's alone; its lock asked for until a time | Code, with the tests named (task N2 of checkpoint 1C) |
 | A mark is live only while its remover is; the count of removals | Code, with the tests named (task P5a of checkpoint 1C), under "Removal" |
 
 ### The directory
@@ -254,6 +264,64 @@ default place and no variable is read for it here. In it:
   content of `STATUS` is under "The status record", and the one staging folder under
   "Downloading into staging".
 
+### A models directory is its owner's alone
+
+Code (task N2 of checkpoint 1C: `directory.rs`, `ModelsDir::open` and `OpenRefused`;
+`Fs::who_may_write` in the store's file-system interface; tests named
+`directory::…`). The plan's decision D13: whizbang makes a models directory readable
+and writable by its owner only, and refuses one that anyone else can write.
+
+- **Opened where nothing has the name, the folder is made** with the mode `0700`, as
+  every folder under it is, and every file in it with `0600`
+  (`whizbang_core::store::fs`, `RealFs`); its name is made durable in the folder
+  that holds it, which must be there
+  (`directory::a_new_models_directory_is_readable_and_writable_by_its_owner_only`,
+  which reads the mode of every name an install made).
+- **A folder that is there is asked whose it is before anything else,** and two are
+  refused (`OpenRefused`): one that is another user's, whatever its mode, since its
+  owner can write it and is not the user whizbang runs as; and one of this user's
+  whose mode lets its group, or anyone, write it. The mark that keeps one user from
+  deleting another's names in a folder changes nothing: it keeps nobody from adding
+  a name. A folder of this user's that others may read, and none of them write, is
+  taken as it is: the decision is about who can write.
+- **Nothing in a refused folder is read, listed, locked or made.** The one call made
+  of the file system is the question. The folder's mode is not changed for its
+  user: the refusal says how to mend it, in fixed words, and quotes nothing of the
+  folder's name, as no refusal here does: "the models directory can be written by
+  its group or by anyone, and is not used; take that away (chmod go-w on the
+  folder) and ask again"; "the models directory belongs to another user, and is not
+  used; name a folder of your own, or make this one yours (chown) and ask again"
+  (`directory::a_models_directory_that_its_group_or_anyone_can_write_is_refused_and_nothing_in_it_is_read`).
+- **The question is `Fs::who_may_write`:** the folder's owner and the two bits of its
+  mode, read through the name, so that a link at the directory's own folder is
+  followed as it is everywhere ("A folder of the layout that is a link"). On the
+  test kit's disk it is no event. A file system that does not give the call answers
+  that it is unsupported, and a models directory over it is not opened
+  (`whizbang-core`'s
+  `fs::who_may_write_a_folder_is_read_from_its_owner_and_its_mode_and_a_link_to_it_is_followed`).
+- **Who whizbang runs as** is not something the standard library says, and the
+  workspace has no crate and no `unsafe` that would ask the system. It is read as
+  the owner of a file the process has just made, which the system gives to whoever
+  made it: an empty file in the system's temporary folder, under a name that was
+  free, following no link, readable by its owner only, removed at once; once in a
+  process, and only when a models directory is opened. No test runs anything as
+  another user: a folder that is another's is the answer of a file system that says
+  so.
+- **Two ways to a `ModelsDir`.** `ModelsDir::open` is the one above, and the only one
+  the binary uses: no source file of the binary names the other
+  (`directory::the_binary_names_a_models_directory_only_through_the_opening_that_asks_whose_it_is`;
+  no command names a models directory before task N3a). `ModelsDir::at` asks nothing
+  of the folder and is given no clock: it is for a folder its caller made, which is
+  a test's.
+
+**Limits.** It is a look, when the directory is opened: a mode or an owner changed
+afterwards is not seen until the next opening. The folders above the directory are
+not looked at: one who can rename a folder above it can put another in its place.
+Only the directory's own folder is asked about; what is under it whizbang made, for
+its owner only, and a mode its owner changed there afterwards is not looked for.
+Lists of who else may reach a folder that a system keeps beside its mode are not
+read. And the user who administers the machine can write every folder on it.
+
 ### Three kinds of lock, and their order
 
 *Decided; of it, task M2 built the model's lock taken alone by a try, task M2b
@@ -272,12 +340,35 @@ of `docs/carry-over.md` on those locks names the models directory too.
   reading of the pointer and the mark that a hold or a publication decides from. It is
   never held across a download or while anything is waited for
   (`publishing::under_the_directorys_lock_a_publication_makes_the_hold_file_and_replaces_the_pointer_and_no_more`).
-  **How it is taken.** The store's interface has no lock taken alone that waits, so
-  the directory's lock is tried, 20,000 times at most, giving way to other threads
-  between tries and sleeping nowhere; whoever has it lets it go after a few calls of
-  the file system. One who is not given it by then is refused as busy; a
-  publication has changed no pointer, and a repair may have cleared one
-  (`publishing::a_directory_whose_lock_is_not_let_go_refuses_the_publication_and_names_what_it_named`).
+  **How it is taken: asked for until a time** (task N2 of checkpoint 1C; until
+  then it was tried 20,000 times with nothing between two tries but giving way to
+  other threads, and under a holder that was slow to sync a publication could be
+  refused within a moment). The store's interface has no lock taken alone that
+  waits, and a lock that blocks without an end is not used: a lease and a
+  removal's wait must each end. So the lock is tried; when it is not given, the
+  clock the directory was opened with is asked to let a millisecond pass
+  (`Clock::pause`), and it is tried again, until five seconds of that clock have
+  passed since the first try. One who is not given it by then is refused as busy,
+  and asks nothing more of the clock; a publication has changed no pointer, and a
+  repair may have cleared one
+  (`directory::a_directory_whose_lock_is_held_past_five_seconds_of_the_clock_answers_busy_and_nothing_waits_longer`,
+  `publishing::a_directory_whose_lock_is_not_let_go_refuses_the_publication_and_names_what_it_named`).
+  Whoever has the lock lets it go after a few calls of the file system, and one
+  who came meanwhile is then given it
+  (`directory::two_publications_at_once_both_end_and_neither_is_refused_as_busy`).
+  **The machine's clock sleeps through a pause; a test's does not,** and counts it
+  or moves itself: this is the one place in the models directory's code where
+  anything waits by itself, and between two tries for any other lock what comes is
+  still the caller's ("Attaching and cancelling", "Removal"). A lock that is free
+  is given at the first try, before anything is asked of the clock.
+  **The 20,000 tries stay, as a ceiling.** A clock that stands still, as a test's
+  does, never comes to the time, and the tries must end all the same: at the
+  20,000th the answer is busy whatever the clock says
+  (`directory::under_a_clock_that_stands_still_a_held_lock_answers_busy_at_the_ceiling_of_tries`).
+  Under a clock that keeps time the time comes first: five seconds hold 5,000
+  tries a millisecond apart. A directory that was given no clock (`ModelsDir::at`,
+  a test's) has the ceiling alone, and gives way to other threads between two
+  tries, as before.
 - **A model's lock** (`models/<model>/LOCK`) is taken alone by one install of that
   model, for the whole of it, a download included; and by a removal for its work on
   the disk, after its mark is set ("Removal", below). So one install of a model runs
@@ -1591,7 +1682,13 @@ written where the link leads until the publication looks
 which pins that, and that nothing that was there is deleted). The swap needs one
 who can write the model's folder, and the directory is its owner's alone (every
 folder here is made readable and writable by its owner only): one who can do it
-can delete the same files without whizbang.
+can delete the same files without whizbang. **The moment is accepted** (task N2
+of checkpoint 1C, the plan's decision D13): since that task a models directory
+that is another user's, or that its group or anyone can write, is refused when it
+is opened, so the only one who could make the swap is the directory's owner ("A
+models directory is its owner's alone", with its limits;
+`directory::a_new_models_directory_is_readable_and_writable_by_its_owner_only`,
+`directory::a_models_directory_that_its_group_or_anyone_can_write_is_refused_and_nothing_in_it_is_read`).
 
 **What is not refused.** A reader that holds no lock (`current`, `draining`,
 `status`) itself still reads through such a link, and changes nothing: asked
@@ -1791,7 +1888,9 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   link locks, or makes, the file it leads to, and so does the directory's, and a
   hold file that is a link is locked where it leads (`docs/carry-over.md`, the row
   on a file read piece by piece). Whoever can put a link there can write the
-  directory itself. **A link where one of the fixed folders belongs is refused,**
+  directory itself, and since task N2 of checkpoint 1C that is its owner alone ("A
+  models directory is its owner's alone"): accepted so, with a pipe put under the
+  name of a file that is read. **A link where one of the fixed folders belongs is refused,**
   since the review of task M5c's pull request: `models/`, a model's folder,
   `staging/`, `installations/` and `holds/` ("A folder of the layout that is a
   link", with its own limit: a folder swapped for a link between the look and the
@@ -1809,8 +1908,9 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   answers
   (`publishing::each_step_of_the_file_system_refused_leaves_the_previous_installation_or_the_new_one_whole`,
   `publishing::the_pointers_sync_refused_and_then_a_crash_leaves_the_old_installation_or_the_new_one_whole`).
-- **The directory's lock is tried, not waited for,** a bounded count of times
-  ("Three kinds of lock"). Under a holder that is slow to sync, a publication can be
+- **The directory's lock is tried, not waited for,** until five seconds of the
+  clock have passed, and 20,000 times at most ("Three kinds of lock"). Under a
+  holder that has not let it go by then, a publication is
   refused as busy with its installation renamed in and not named; the folder is
   left, and the next install of that identity points to it without a download. A
   repair refused so after it cleared the pointer leaves the model not installed.
@@ -1819,8 +1919,10 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   new hold is given on it, and the next install of that identity is refused as held
   until the run lets it go
   (`publishing::a_held_repair_that_could_not_put_the_pointer_back_leaves_the_model_not_installed_and_the_next_is_refused_as_held`).
-  A lock taken alone that waits is not in the store's interface
-  (`docs/carry-over.md`).
+  A lock taken alone that waits is not in the store's interface, and one that
+  waits with no end is not wanted: the tries stay (`docs/carry-over.md`, the line
+  that accepts them). And one who asks for several things under the lock in turn
+  asks for it each time: each asking has its own five seconds.
 - **An install that is refused every write of its status.** "While an installer has
   the model's lock the status says `installing`" rests on the install's first step,
   the write of that status. When it is refused, the install is refused and has
