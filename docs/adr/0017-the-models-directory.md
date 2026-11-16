@@ -187,7 +187,7 @@ installation record with its identity.
 try, and `staging/incoming/files/`; and task M2b built the directory's `LOCK`,
 `CURRENT`, `STATUS`, `holds/` with the hold file a publication makes, and
 `installations/`; task M5 built a hold's share of a hold file; and task M5b built
-`DRAINING`, which a removal writes and takes off. The rest is not built.* A models directory is one folder, given by whoever opens it: no
+`DRAINING`, which a removal writes and takes off. The rest is not built (nothing is left: every part of the layout below is built by the task it names).* A models directory is one folder, given by whoever opens it: no
 default place and no variable is read for it here. In it:
 
 ```text
@@ -242,7 +242,7 @@ default place and no variable is read for it here. In it:
 the directory's lock around a publication, the making of a hold file, and a hold file
 taken alone by whoever deletes an installation's folder, and task M3 the model's
 lock shared by one who attaches, and task M5 a hold's share of its hold file. The
-rest is not built: the mark.* All three are the locks of the store's file-system interface
+rest is not built: the mark (built since, by task M5b: "Removal").* All three are the locks of the store's file-system interface
 (`whizbang_core::store::fs`), which are `flock` on Linux and macOS, and everything
 `store/fs.rs` says of them holds here: a models directory on a network file system is
 not supported, and **no lock file is ever removed or replaced:** not the directory's
@@ -331,7 +331,7 @@ read back. Each has a type with a private field, made by a constructor that chec
   No folder and no file is named but from a `ModelName`, a `FileName` or the hex of an
   installation's identity, so a name that holds a secret the reader was told of never becomes a
   name on a disk. Nothing writes to a disk yet: the tasks that do each search every name
-  and every byte they wrote for a planted secret.
+  and every byte they wrote for a planted secret. (They write since task M2, and do.)
 - **What is shown of a name** is its first 64 characters (`SHOWN_LIMIT`), and three dots
   when there are more. Every character a name may hold is printable ASCII, so nothing of
   it needs an escape. It is what `{:?}` prints
@@ -824,8 +824,8 @@ not name is not an installation in use, and is cleaned as below.
   delete it: a run may hold it. An installation is superseded when it is under
   `installations/` and the pointer does not name it; there is no mark for it. **It is
   deleted by one routine,** which every install runs under the model's lock, at its
-  start and at its end, and which every removal of the model will run (task
-  M5c), over everything under `installations/` that the pointer does not name, but
+  start and at its end, and which every removal of the model runs (task
+  M5c, built), over everything under `installations/` that the pointer does not name, but
   for a folder of the identity an install is installing: it
   tries the hold file alone, once,
   without waiting; with it, it deletes the folder and syncs; without, it leaves the
@@ -1850,8 +1850,9 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
     refused in turn, and the crash straight after, under the same losses and tails.
     Under the loss of every name and of none, the install is also asked again
     before the crash: its answer is given only for what the crash then leaves
-    (`crashes::a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_1_of_4`
-    to `…part_4_of_4`,
+    (`crashes::a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_1_of_8`
+    to `…part_8_of_8`, in eight parts since the exit check of checkpoint 1B, where
+    its first two of four had come near the limit on one test's time,
     `crashes::a_crash_at_any_event_after_a_refused_step_of_an_install_leaves_the_previous_or_the_new_whole_part_1_of_4`
     to `…part_4_of_4`,
     `crashes::a_crash_at_any_event_after_a_refused_step_of_a_repair_leaves_it_as_it_was_not_installed_or_whole_part_1_of_4`

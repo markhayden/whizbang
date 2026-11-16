@@ -568,7 +568,8 @@ Limits of it, each pinned or stated:
   (`around::with_the_default_policy_a_backend_that_names_a_recipient_is_refused_at_the_gates_place_and_one_that_names_none_is_sent`).
   One thing the plan's task asks is still not shown: that a refused request has no
   dispatch record, which no request has until the meter (task S5;
-  `docs/carry-over.md`).
+  `docs/carry-over.md`). Shown since, with the meter:
+  `spend::meter::a_request_the_gate_refused_has_no_dispatch_record`.
 - **The gate's place knows a prompt and no other class.** What a request holds
   before any piece is made is less than what its backend then hands over: a picture
   has no class at a handle. So a recipient approved for prompts and not for source

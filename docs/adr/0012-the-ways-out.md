@@ -334,9 +334,11 @@ code here.
   class, and the rule above puts the statement with whoever builds a piece. Tasks I3
   and E2 decide who that is for a capability's request, before the test that a
   recipient approved for prompts and not for source images is refused a source image.
+  (Built: ADR 0019.)
 - **`Credential::expose` is public.** The types stop a credential being forwarded by
   accident, not by intent: code that holds one can read its value and put it anywhere.
-  Task E3 keeps credentials inside the checked sender, and hands a backend none.
+  Task E3 keeps credentials inside the checked sender, and hands a backend none
+  (built: ADR 0019).
 - **A real client makes a redirect's `Address` itself,** from what a server sent, and
   needs the executor's secrets to make it.
 - **`Sender::send` is given no recipient.** It is one request to one address. Task I5
@@ -357,7 +359,8 @@ code here.
 - A real network client, when one is added (1C at the earliest), implements three small
   traits and never decides where it may go.
 - Reversing this costs every backend that names a recipient and every task of the
-  egress strand. Nothing but tests uses it yet.
+  egress strand. Nothing but tests uses it yet. (Since then the config's reader,
+  the gate and the checked sender do: ADR 0011, ADR 0015, ADR 0019.)
 
 ## Alternatives
 

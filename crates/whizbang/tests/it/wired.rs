@@ -14,7 +14,9 @@ use whizbang_backends::models::{
     Catalogue, CatalogueFile, Entry, EntryParts, FileName, Installations, Licence, ModelName,
     ModelsDir, Revision, install,
 };
-use whizbang_core::capability::{Declaration, FillRequest, Picture, Price, Support};
+use whizbang_core::capability::{
+    Bounds, Declaration, Fault, FillRequest, Filler, Painted, Picture, Price, Support,
+};
 use whizbang_core::config::{self, Config, KindRefused, Kinds, Setting, Table};
 use whizbang_core::contract::{
     Action, ActionDescriptor, Argument, Call, CallError, Cancellation, Capability, Clock, Context,
@@ -57,6 +59,7 @@ pub const MODEL: &str = "paint-1";
 #[derive(Default)]
 pub struct Fakes {
     made: Mutex<Vec<Arc<FakeFiller>>>,
+    dies: Mutex<Option<Arc<ShimFs>>>,
 }
 
 impl Fakes {
@@ -64,6 +67,30 @@ impl Fakes {
     pub fn requests(&self) -> u64 {
         let made = self.made.lock().unwrap();
         made.iter().map(|filler| filler.requests()).sum()
+    }
+
+    /// From now on, a backend it made that is sent a request has this file system
+    /// refuse the next call that changes the disk, and then answers: the first
+    /// publication after the request left, which is its settlement, fails.
+    pub fn die_once_a_request_has_left(&self, fs: &Arc<ShimFs>) {
+        *self.dies.lock().unwrap() = Some(fs.clone());
+    }
+}
+
+/// A fake filler as the fake kind hands it over: it answers as the filler it holds
+/// does, after doing what [`Fakes::die_once_a_request_has_left`] asked for.
+struct Handed(Arc<FakeFiller>, Arc<Fakes>);
+
+impl Filler for Handed {
+    fn declaration(&self) -> &Declaration {
+        self.0.declaration()
+    }
+
+    fn fill(&self, request: &FillRequest, bounds: &Bounds) -> Result<Painted, Fault> {
+        if let Some(fs) = self.1.dies.lock().unwrap().as_ref() {
+            fs.refuse_before(fs.events().len());
+        }
+        self.0.fill(request, bounds)
     }
 }
 
@@ -108,7 +135,7 @@ impl config::Kind for Shared {
             None => filler,
         });
         self.0.made.lock().unwrap().push(filler.clone());
-        Ok(Made::Fill(filler))
+        Ok(Made::Fill(Arc::new(Handed(filler, self.0.clone()))))
     }
 }
 
@@ -887,6 +914,78 @@ fn a_run_called_from_inside_a_run_takes_the_sum_of_its_own_needs_from_what_its_c
     assert_eq!(of("paints"), Some(250_000));
 }
 
+/// How a call from inside a run was refused as over its caller: the action, what it
+/// asked and what its caller had left; or whatever else came back, as words.
+type OverCaller = Result<(String, u64, u64), String>;
+
+/// `asks_paints`: an action with no needs, so a run of it may cost nothing, that calls
+/// `paints` once from inside its run and keeps how that call was answered.
+fn asks_paints(answers: &Arc<Mutex<Vec<OverCaller>>>) -> Arc<dyn Action> {
+    let draft = ActionDescriptor::draft("asks_paints", "1.0.0", Kind::Recipe, "A test action.");
+    let answers = answers.clone();
+    Arc::new(Scripted {
+        descriptor: draft.build().unwrap(),
+        runs: Arc::new(AtomicU64::new(0)),
+        body: Box::new(move |_, context| {
+            let answer = match context.executor().submit(&Call::new("paints")) {
+                Err(CallError::Refused(Refusal::OverCaller {
+                    action,
+                    asked_micros,
+                    left_micros,
+                })) => Ok((action, asked_micros, left_micros)),
+                other => Err(format!("{other:?}")),
+            };
+            answers.lock().unwrap().push(answer);
+            Ok(Produced::nothing())
+        }),
+    })
+}
+
+#[test]
+fn a_paid_call_from_inside_a_run_that_may_cost_nothing_is_refused_as_over_its_caller_with_nothing_sent_and_the_books_unchanged()
+ {
+    // The store allows five dollars, which would cover the paid call many times
+    // over if it were made by a caller. It is made from inside a run that needs no
+    // backend: that run was admitted without the ledger, with nothing to spend, and
+    // a call from inside a run draws on its caller and never on the store's books.
+    let world = World::new("wired-nested-free");
+    let over = world.config(&priced(Some(100_000)));
+    reset(&world.root, "5");
+    let books = world.books();
+    let answers: Arc<Mutex<Vec<OverCaller>>> = Arc::default();
+    let store = Arc::new(Store::open(&world.root, Arc::new(RealFs)).unwrap());
+    let mut registry = world.registry();
+    registry.register(asks_paints(&answers)).unwrap();
+    let executor = wiring::runner(registry, store, &over).unwrap();
+    let finished = executor.submit(&Call::new("asks_paints")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed", "{finished:?}");
+    drop(executor);
+    // Refused as over its caller: a quarter of a dollar asked, nothing left.
+    assert_eq!(
+        *answers.lock().unwrap(),
+        [Ok(("paints".to_owned(), 250_000, 0))]
+    );
+    // No run was made for it, its action did not run and no backend was sent
+    // anything.
+    assert_eq!((world.ran(), world.fakes.requests()), (0, 0));
+    let held = world.held();
+    assert_eq!(held.len(), 1, "{held:?}");
+    // The books are as the reset left them: nothing was reserved, by the caller or
+    // by the call, and the allowance is whole.
+    assert_eq!(world.books(), books);
+    let said = status(&world.root);
+    assert!(said.contains("counted against it: $0.00\n"), "{said}");
+    assert!(said.contains("left: $5.00\n"), "{said}");
+    // The caller's record says that nothing was reserved for it, and holds the
+    // refusal.
+    let text = shown(&world.root, finished.run().as_str());
+    has_line(
+        &text,
+        "spend: $0.00 reserved; paid requests: none; cost: $0.00",
+    );
+    assert!(text.contains("  paints\tover_caller\t"), "{text}");
+}
+
 #[test]
 fn with_no_config_a_free_run_is_admitted_in_a_store_that_allows_nothing_and_the_books_name_nothing()
 {
@@ -1095,6 +1194,70 @@ fn the_reservation_of_a_run_a_killed_process_left_is_named_by_spend_status_and_c
     let of_run = whizbang(&["spend", "status", "--run", &run], &world.root);
     assert_eq!(of_run.code, Some(0), "{}", of_run.err);
     assert!(of_run.out.contains("$0.10"), "{}", of_run.out);
+}
+
+#[test]
+fn a_store_left_by_a_process_that_died_between_a_dispatch_and_its_settlement_counts_the_request_at_its_bound_until_the_owners_reset()
+ {
+    let world = World::new("wired-died-unsettled");
+    let over = world.config(&priced(Some(100_000)));
+    reset(&world.root, "0.25");
+    // A process sends its one paid request and is gone before the settlement is in
+    // the store: the dispatch is durable, the backend was asked, and the
+    // publication of the settlement fails. Its run is abandoned, as it was admitted.
+    {
+        let fs = Arc::new(ShimFs::new());
+        let store = Arc::new(Store::open(&world.root, fs.clone()).unwrap());
+        world.fakes.die_once_a_request_has_left(&fs);
+        let executor = wiring::runner(world.registry(), store, &over).unwrap();
+        let left = executor.submit(&Call::new("paints"));
+        assert!(matches!(left, Err(CallError::Abandoned { .. })), "{left:?}");
+    }
+    assert_eq!(world.fakes.requests(), 1);
+    let held = world.held();
+    assert_eq!(held.len(), 1);
+    let run = held[0].0.clone();
+    let books = world.books();
+    let named = |part: &str| books.iter().filter(|name| name.contains(part)).count();
+    assert_eq!((named("/dispatch"), named("/settl")), (1, 0), "{books:?}");
+    // The answer said ten cents. No settlement says so, so the request is counted
+    // at its bound, a quarter of a dollar, and nothing is left.
+    let open = format!(
+        "  {run}  open  counts for $0.25  (reserved $0.25, charged $0.00, outstanding $0.25)"
+    );
+    let said = status(&world.root);
+    has_line(&said, &open);
+    assert!(said.contains("left: $0.00\n"), "{said}");
+    // Nothing sends the request again: a paid call is refused, and the next command
+    // that opens the store to write ends the run as interrupted and leaves the books
+    // as they are.
+    let executor = world.runner(&over);
+    assert_eq!(
+        over_allowance(executor.submit(&Call::new("paints"))),
+        (250_000, 0)
+    );
+    drop(executor);
+    let pruned = whizbang(&["store", "prune"], &world.root);
+    assert_eq!(pruned.code, Some(0), "{}", pruned.err);
+    let listed = whizbang(&["runs", "list"], &world.root);
+    assert!(
+        listed.out.contains("\terror, interrupted ("),
+        "{}",
+        listed.out
+    );
+    assert_eq!(world.books(), books);
+    has_line(&status(&world.root), &open);
+    assert_eq!((world.ran(), world.fakes.requests()), (1, 1));
+    // The owner's reset clears it, and a paid call is admitted.
+    reset(&world.root, "5");
+    let said = status(&world.root);
+    assert!(!said.contains(&run), "{said}");
+    assert!(said.contains("left: $5.00\n"), "{said}");
+    *world.fakes.dies.lock().unwrap() = None;
+    let executor = world.runner(&over);
+    let finished = executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!((world.ran(), world.fakes.requests()), (2, 2));
 }
 
 // --- a call that may cost nothing ------------------------------------------------------------

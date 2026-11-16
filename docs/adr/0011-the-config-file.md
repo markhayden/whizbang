@@ -683,6 +683,14 @@ always held (ADR 0015, "One snapshot of the config"). A backend is made each tim
 config is offered, from the table and from nothing else: nothing is sent, and nothing
 is read from a disk.
 
+**A kind whose backend names a recipient must not declare a version written as a bare
+identity,** `sha256:` and 64 lower-case hex digits. That text as a model's version
+means a local model under an installation, to the executor and to a roster over an
+inventory, and a backend that names a recipient and declares one is handed to no run
+(ADR 0015, "An inventory", its limits). Nothing refuses such a kind when it is
+registered: the rule is the kind's to keep, and a provider's own digest of a model is
+written another way, with a prefix of the kind's.
+
 ### What a config offers
 
 `Offers::of` takes a config, the credentials of its env file and the kinds of a build.

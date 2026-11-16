@@ -551,7 +551,8 @@ that was admitted and has not ended is listed and shown as such, from its admiss
 0007); one with no record and no admission, or with a record this build does not read,
 is listed with the reason. No
 command of the binary runs an action yet; the tests run `echo` through the executor the
-binary builds (`wiring::runner`).
+binary builds (`wiring::runner`). (Since then `whizbang rascal grow` runs one: ADR
+0008, "The first door".)
 
 **What is not built, and what follows from that.**
 
@@ -597,7 +598,8 @@ inputs. "Every artifact records what produced it" (the spec's invariant) holds b
   every list that must be empty, and on the records the executor writes.
 - Redaction is only as good as the list of secrets the executor is given
   (`Engine::with_secrets`). There is no config yet and nothing reads a key, so the binary
-  gives none.
+  gives none. (Since checkpoint 1B it gives the values its config's env file holds:
+  ADR 0011, "The source over both files"; ADR 0015, "The binary wired".)
 - A record is read whole and written again to be compared, on every read.
 - Reversing this costs every stored record. A change to the fields is a new version.
 

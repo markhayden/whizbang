@@ -329,7 +329,8 @@ call it admits that no action made has a reservation, of zero when the estimate 
 zero; a call from inside an action has none, and draws on its parent's (ADR 0008,
 "Nested calls"). An executor
 without one reserves nothing, writes `reserved_micros` as null and makes no name under
-`spend/`: that is the binary today, which has no ledger until checkpoint 1B.
+`spend/`: that is the binary today, which has no ledger until checkpoint 1B. (It has the real
+one since: ADR 0015, "The binary wired"; ADR 0016.)
 
 **What "takes part in the step" means.** The interface is `Ledger::reserve`, called
 inside admission once for every attempt at the admission's publication, after the
@@ -379,7 +380,8 @@ not asked; a stored admission, reservation or run record that holds it is refuse
 reading
 (`admit::a_call_whose_cost_has_no_bound_is_not_admitted_and_the_ledger_is_not_asked`).
 An executor without a ledger still admits it: it reserves nothing. The refusal of a paid
-request whose backend states no enforceable bound is checkpoint 1B's.
+request whose backend states no enforceable bound is checkpoint 1B's. (Built: ADR
+0010; ADR 0016, "The meter".)
 
 **What was reserved is what the current generation names.** A call to `reserve` is not
 a reservation. An attempt that the store refuses, because the run's id was taken
@@ -419,7 +421,10 @@ read strictly, and held to be of the run its name says. One that fails stops the
 admission that needed it (`CallError::Record`), with what it quotes escaped and cut and
 no path, and nothing is published.
 
-**What is left to settlement, which is checkpoint 1B's.** Nothing here releases,
+**What is left to settlement, which is checkpoint 1B's.** (Built since, with the
+real ledger: a request is settled by its stage, a run's end closes its reservation,
+and what a dead process left stays counted until the owner's reset; ADR 0016. What
+follows is the fake's.) Nothing here releases,
 charges or removes a reservation. When its run completes, fails or is invalid, when its
 action panics, and when the process dies between admission and the end, the reservation
 stays as it was made, and counts against the fake's allowance for good. An admission
@@ -430,7 +435,7 @@ taken for it, and holds the amount; a run that ended has a record and, with an i
 ending; a run that did not has neither. A nested call draws on its parent's allowance
 and reserves nothing, and its admission names its parent and the amount (ADR 0008,
 "Nested calls"). Dispatch records, the allowance and its reset, and what a failed
-request cost are all 1B's (`SPEC.md` section 6).
+request cost are all 1B's (`SPEC.md` section 6), and are built (ADR 0016).
 
 **What was not covered, and is.** `Publication::put` replaced any name, a
 reservation's too. ADR 0016 decided it with the ledger's names: the store refuses a
@@ -450,7 +455,8 @@ No backend has a price before the ledger of checkpoint 1B, so `Backends::bound`,
 answer is an `Estimate` and so carries its unit, answers nothing unless an implementation says otherwise, and every estimate the binary can make
 today is zero. A test's backends state a bound. Which of a backend's numbers is an
 enforceable bound, and the refusal of a paid request that has none (`SPEC.md` section
-6), are checkpoint 1B's.
+6), are checkpoint 1B's. (Built: a backend states a price, ADR 0010, and a config's
+backend may state one.)
 
 The estimate is not in the fingerprint `prepared/1`, which stays as ADR 0004 gives it:
 its two fixed vectors are as they were. Admission compares the estimate beside it.
@@ -500,6 +506,7 @@ gap:
   and so at admission (`Engine::with_config`). Since ADR 0015 the source answers a
   snapshot, of which the digest is one part, and may refuse. An executor built with a digest alone
   has a config that never changes, which is what the binary has until there is a config.
+  (Since checkpoint 1B the binary's executor asks a source for a snapshot: ADR 0015.)
 - **The window that is left.** Between the second preparation and the admission's
   publication nothing holds the config or the backends still (accepted: ADR 0008, "The
   generation a run reads", which holds the store's generation). What is recorded with the

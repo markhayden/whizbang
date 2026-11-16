@@ -276,7 +276,7 @@ A `Roster` holds the backends on offer: for each capability, declarations by nam
 most one default. A name keeps the rule of an action's name and names one backend of a
 capability; the same name under another capability is another entry. A default names a
 backend that is offered. The config will fill a roster at checkpoint 1B; until then a
-test does.
+test does. (It does since: ADR 0011, "What a config offers".)
 
 `Roster::resolve(capability, choice, features)` answers which backend answers a
 capability for a call:

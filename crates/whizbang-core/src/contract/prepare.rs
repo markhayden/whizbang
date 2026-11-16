@@ -825,8 +825,8 @@ pub enum Refusal {
     /// The call is ready, and the ledger admits nothing: the books of `epoch`, the
     /// newest, need their owner (ADR 0016, "Epochs: what a reset bounds", and "The
     /// strand cut down"). Its turns are not those its publications took. Until the
-    /// owner resets the allowance (`whizbang spend reset`), no call is admitted, one
-    /// that costs nothing among them. No run was made, nothing was reserved, and the
+    /// owner resets the allowance (`whizbang spend reset`), no call that may cost
+    /// something is admitted; one that may cost nothing is, without the ledger. No run was made, nothing was reserved, and the
     /// request's id is not taken by this request.
     NeedsOwner { action: String, epoch: u64 },
     /// The call is ready, and what it may cost has no bound that can be counted: its

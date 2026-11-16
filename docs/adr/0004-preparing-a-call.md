@@ -346,7 +346,9 @@ The types an executing action is handed and hands back:
   diagnostics. ADR 0005 says what each holds when an action runs today.
 - `SegmentHandle`, `FillHandle`, `JudgeHandle`, and `Capabilities`, which offers each or
   none. The handles are the capability interfaces' (ADR 0006); the executor hands an
-  action none of them yet. `Allowance` is empty, until there is a ledger.
+  action none of them yet. `Allowance` is empty, until there is a ledger. (Since then:
+  an action is handed the handles of the backends its call resolved, ADR 0009, and
+  an allowance is what its run may still spend, ADR 0016.)
 - `Outcome`: completed with its committed outputs, cancelled, error with a type and a
   message, or invalid with a reason; and `Finished`, an outcome with its run's id. The
   executor makes the outcome; what an action hands back is `Produced` or a `Failure` (ADR

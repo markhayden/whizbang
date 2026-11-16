@@ -374,28 +374,54 @@ fn crashed_after_each_refused_step(sweep: Sweep, part: usize, parts: usize) {
     }
 }
 
+// In eight parts where the two sweeps after it are in four: its first two of four took
+// 14 and 17 seconds inside a full check on a busy machine, against the limit of 30.
 #[test]
-fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_1_of_4()
+fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_1_of_8()
  {
-    crashed_after_each_refused_step(Sweep::First, 0, 4);
+    crashed_after_each_refused_step(Sweep::First, 0, 8);
 }
 
 #[test]
-fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_2_of_4()
+fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_2_of_8()
  {
-    crashed_after_each_refused_step(Sweep::First, 1, 4);
+    crashed_after_each_refused_step(Sweep::First, 1, 8);
 }
 
 #[test]
-fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_3_of_4()
+fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_3_of_8()
  {
-    crashed_after_each_refused_step(Sweep::First, 2, 4);
+    crashed_after_each_refused_step(Sweep::First, 2, 8);
 }
 
 #[test]
-fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_4_of_4()
+fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_4_of_8()
  {
-    crashed_after_each_refused_step(Sweep::First, 3, 4);
+    crashed_after_each_refused_step(Sweep::First, 3, 8);
+}
+
+#[test]
+fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_5_of_8()
+ {
+    crashed_after_each_refused_step(Sweep::First, 4, 8);
+}
+
+#[test]
+fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_6_of_8()
+ {
+    crashed_after_each_refused_step(Sweep::First, 5, 8);
+}
+
+#[test]
+fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_7_of_8()
+ {
+    crashed_after_each_refused_step(Sweep::First, 6, 8);
+}
+
+#[test]
+fn a_crash_at_any_event_after_a_refused_step_of_a_first_install_leaves_it_not_installed_or_whole_part_8_of_8()
+ {
+    crashed_after_each_refused_step(Sweep::First, 7, 8);
 }
 
 #[test]
