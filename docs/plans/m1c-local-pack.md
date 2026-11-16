@@ -737,10 +737,13 @@ met, so the clause now holds both.
 **Reworded with the task** (by C0b): the clause reads "five runs of `check (macos-15)`
 in a row on the branch's head (the same commit, run again)". The five runs are of
 commit d7d3adb, which holds every change this task makes to CI, the justfile, the
-script tests and the skills. The head that merges is one commit later and changes
-documents only: it writes those runs down, here and in the carry-over row, and a commit
-cannot hold the times of its own runs. That head's own run is in the pull request, a
-sixth sample. The times are under "What the runs showed", and in the hand-back.
+script tests and the skills. The head that merges is later, by documents and a merge:
+a commit that writes those runs down, here and in the carry-over row, since a commit
+cannot hold the times of its own runs; a merge of `main` at 4c2f6c2, which had moved by
+two tasks (C1a and N2) and brought eleven fast tests; and a line of N3c's sizing. The
+run on that head is in the pull request, a sixth sample and the only one with `main`'s
+new tests in it. The times of the five are under "What the runs showed", and in the
+hand-back.
 **Carry-over:** the row on pull-request CI on the macOS runner, whose half on the 10
 minutes this closes; its half on the fast tier's test time stays, for the owner.
 **Size:** small.
@@ -798,7 +801,7 @@ nextest reports, in seconds, which is what the limit of 180 s is held against.
 Every job was green in every attempt, and none was run again for a failure. All twenty
 script tests ran and passed on each runner each time: in `scripts (macos-15)` on
 macOS, inside `check (ubuntu-22.04)` on Linux. The fast tier ran its 1,998 tests on
-both.
+both, as a pull request merges them with `main` at e207510.
 
 Beside C0's tables:
 
@@ -1212,7 +1215,7 @@ list` says of a link. **Size:** medium.
 
 ### N3c. One way for a test to start the real binary
 
-**Depends on:** N3b. **Reads:** D12, "A test cannot reach the owner's store"; the eight
+**Depends on:** N3b. **Reads:** D12, "A test cannot reach the owner's store"; the nine
 files of `crates/whizbang/tests/it/` that start the binary.
 
 - [ ] The test kit has the one function that starts the real binary, with a cleared
@@ -1227,11 +1230,11 @@ files of `crates/whizbang/tests/it/` that start the binary.
 `scripts/tests/`, `just check` refuses the binary's path anywhere in a test but as that
 function's argument, shown on planted files; and every test that starts the binary
 today passes through the function.
-**Why a task of its own** (sized by C0b's pull request, from `main` at e207510): the
-binary is started by `Command::new(env!("CARGO_BIN_EXE_whizbang"))` in eighteen places
-in eight files (`describe.rs`, `escape.rs`, `import.rs`, `rascal.rs`, `runs.rs`,
-`spend.rs`, `store.rs`, `wired.rs`), most of them a helper many tests call, and a
-nineteenth hands the path to a shell script (`describe.rs`); N3b adds `models.rs`.
+**Why a task of its own** (sized by C0b's pull request, from `main` at 4c2f6c2): the
+binary is started by `Command::new(env!("CARGO_BIN_EXE_whizbang"))` in nineteen places
+in nine files (`describe.rs`, `escape.rs`, `import.rs`, `rascal.rs`, `runs.rs`,
+`spend.rs`, `store.rs`, `stubs.rs`, `wired.rs`), most of them a helper many tests call,
+and one more hands the path to a shell script (`describe.rs`); N3b adds `models.rs`.
 None clears the environment today, so each is looked at for a variable it relied on
 without saying so. That is a small task, and it is not N4's: N4 is already medium,
 and its own files are the credential's.
