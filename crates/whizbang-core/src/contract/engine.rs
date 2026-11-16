@@ -676,8 +676,10 @@ impl Engine {
         }
         let run = admitted.run.clone();
         // The action runs on a thread of its own, which holds what it needs of this
-        // executor, the store among it. How the run ended is in the store, and is
-        // what whoever asks after the run is told; nobody is handed this result.
+        // executor, the store among it, and lets all of it go before anyone who waits
+        // for the run is answered (`Engine::execute_and_let_go`). How the run ended
+        // is in the store, and is what whoever asks after the run is told; nobody is
+        // handed this result.
         // The thread takes the run out of a cell that this caller holds too: a thread
         // that could not be made never ran what it was given, and the run is still
         // there to be ended, here.
@@ -687,7 +689,7 @@ impl Engine {
             move || {
                 let admitted = cell.lock().unwrap_or_else(PoisonError::into_inner).take();
                 if let Some(admitted) = admitted {
-                    drop(engine.execute(admitted));
+                    engine.execute_and_let_go(admitted);
                 }
             }
         };
@@ -833,9 +835,12 @@ impl Contents for Pinned {
 struct Over {
     /// The run's place among the started runs, when it was started.
     place: Option<store::Place>,
-    /// The store and the run's id, once the run is admitted: what to let go of in the
-    /// store's table of open runs.
-    kept: Option<(Arc<Store>, RunId)>,
+    /// Once the run is admitted: what lets it go from the store's table of open runs.
+    /// It holds the table and not the store's writer. A wait answers once the run has
+    /// left the table, and whoever waited may then drop its writer and open the store
+    /// again: nothing here may hold the writer, and its lock, at that moment (ADR
+    /// 0015, "One way to a writer, with recovery before it", limits).
+    kept: Option<store::Closer>,
     live: Arc<LiveRun>,
     ended: bool,
     failure: Option<StoreFailure>,
@@ -853,6 +858,19 @@ impl Admitted {
     }
 }
 
+impl Over {
+    /// How the run's end went, for what this says when it is dropped: ended, when the
+    /// end was published and confirmed; abandoned otherwise, with the store's failure
+    /// when there was one.
+    fn told_of(&mut self, ended: &Result<Finished, CallError>) {
+        match ended {
+            Ok(_) => self.ended = true,
+            Err(CallError::Store(failure)) => self.failure = Some(failure.clone()),
+            Err(_) => {}
+        }
+    }
+}
+
 impl Drop for Over {
     fn drop(&mut self) {
         drop(self.place.take());
@@ -863,8 +881,8 @@ impl Drop for Over {
         // and was not confirmed stays in the table, abandoned: a cancel or a wait
         // that begins later finds it there, and does not say it ended (ADR 0008,
         // "Visible before durable").
-        if let (true, Some((store, run))) = (self.ended, &self.kept) {
-            store.let_go(run.as_str());
+        if let (true, Some(kept)) = (self.ended, &self.kept) {
+            kept.let_go();
         }
         self.live.over(self.ended, self.failure.take());
     }
@@ -1294,7 +1312,7 @@ impl Engine {
         }
         // From here the run is in the store's table under this id: what its guard lets
         // go of, when its end was visible and it was kept there.
-        over.kept = Some((store.clone(), run.clone()));
+        over.kept = Some(store.closer(run.as_str()));
         // The confirmation (ADR 0016, "An admission is confirmed before anything runs
         // under it"). The publication admitted nothing by itself: the store is read
         // again, as it is now that the admission is durable, and the ledger answers
@@ -1476,14 +1494,33 @@ impl Engine {
         // A panic in there unwinds through here, and the run is abandoned.
         let ended = self.run_and_end(admitted, unstarted);
         if let Some(over) = &mut over {
-            match &ended {
-                Ok(_) => over.ended = true,
-                Err(CallError::Store(failure)) => over.failure = Some(failure.clone()),
-                Err(_) => {}
-            }
+            over.told_of(&ended);
         }
         drop(over);
         ended
+    }
+
+    /// Executes a run on the thread that was made for it, and lets go of this clone of
+    /// the executor, which only that thread holds, before the executor is done with
+    /// the run: before the run's place is given back, before the run leaves the
+    /// store's table of open runs, and before whoever waits for it is told. An
+    /// executor holds the store's writer, and with it the writer lock. Whoever waited
+    /// for the run may drop its own writer and open the store again at once, and
+    /// would be refused as held for as long as this thread still had its clone (ADR
+    /// 0015, "One way to a writer, with recovery before it", limits).
+    fn execute_and_let_go(self, mut admitted: Admitted) {
+        // Values are dropped in the reverse of the order they are named in, on a
+        // return and in a panic that unwinds alike: the guard is named first, so it
+        // goes last, after the executor.
+        let mut over = admitted.over.take();
+        let executor = self;
+        let ended = executor.run_and_end(admitted, None);
+        if let Some(over) = &mut over {
+            over.told_of(&ended);
+        }
+        drop(ended);
+        drop(executor);
+        drop(over);
     }
 
     fn run_and_end(
@@ -2198,7 +2235,7 @@ mod tests {
         let live = Arc::new(LiveRun::new(kept, Cancellation::new(), Arc::default()));
         let over = Over {
             place: Some(store.start_place(1).unwrap()),
-            kept: Some((store.clone(), RunId::minted(1, 1))),
+            kept: Some(store.closer(RunId::minted(1, 1).as_str())),
             live: live.clone(),
             ended: true,
             failure: None,
@@ -2275,7 +2312,7 @@ mod tests {
         let live = Arc::new(LiveRun::new(kept, Cancellation::new(), Arc::default()));
         let over = Over {
             place: Some(store.start_place(1).unwrap()),
-            kept: Some((store.clone(), run.clone())),
+            kept: Some(store.closer(run.as_str())),
             live: live.clone(),
             ended: true,
             failure: None,
@@ -2289,6 +2326,80 @@ mod tests {
             Some(true),
             "the run left the table while its place was still taken"
         );
+        live.wait_until_over();
+    }
+
+    /// What a test attaches to a run: when the store's table of open runs lets the
+    /// run go, this is dropped, and notes how many held the store's writer at that
+    /// moment.
+    struct Holders {
+        store: std::sync::Weak<Store>,
+        held_by: Arc<std::sync::Mutex<Option<usize>>>,
+    }
+
+    impl Drop for Holders {
+        fn drop(&mut self) {
+            *self.held_by.lock().unwrap() = Some(self.store.strong_count());
+        }
+    }
+
+    #[test]
+    fn the_executors_hold_on_a_run_holds_nothing_of_the_store_when_a_wait_can_answer() {
+        // A wait answers at one of two moments: when the run has left the table of
+        // open runs, or when it is told. Whoever waited may then drop its writer and
+        // open the store again, and is refused as held while anything of the run
+        // holds the writer. So the executor's hold on the run holds none: at both
+        // moments the only writer is this test's. The first is seen by what the table
+        // held for the run, which is dropped as it lets go; the second by holding the
+        // lock a waiter is told under, where the thread that drops the hold stops.
+        let dir = Scratch::new("over");
+        let store = Arc::new(Store::open(&dir.path().join("store"), Arc::new(RealFs)).unwrap());
+        let run = RunId::minted(1, 1);
+        let held_by = Arc::new(std::sync::Mutex::new(None));
+        let holders = Holders {
+            store: Arc::downgrade(&store),
+            held_by: held_by.clone(),
+        };
+        let mut publication = store.begin().unwrap();
+        publication.create_run(run.as_str()).unwrap();
+        publication.attach(run.as_str(), Arc::new(holders));
+        publication.publish().unwrap();
+        let mut publication = store.begin().unwrap();
+        publication.close_run(run.as_str()).unwrap();
+        publication.keep_until_let_go(run.as_str());
+        publication.publish().unwrap();
+
+        let kept = Arc::new(Kept::new(Arc::new(SystemClock), Secrets::none()));
+        let live = Arc::new(LiveRun::new(kept, Cancellation::new(), Arc::default()));
+        let over = Over {
+            place: None,
+            kept: Some(store.closer(run.as_str())),
+            live: live.clone(),
+            ended: true,
+            failure: None,
+            started_under: None,
+        };
+        let not_told = live.not_told_yet();
+        let letting_go = whizbang_testkit::threads::spawn(move || drop(over));
+        let limit = Instant::now() + Duration::from_secs(10);
+        while store.attached(run.as_str()).is_some() {
+            assert!(Instant::now() < limit, "the run never left the table");
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            *held_by.lock().unwrap(),
+            Some(1),
+            "the run left the table while the executor's hold on it held the writer"
+        );
+        assert!(!not_told.is_over());
+        assert_eq!(
+            Arc::strong_count(&store),
+            1,
+            "whoever waits is about to be told while the executor's hold on the run \
+             holds the writer"
+        );
+        drop(not_told);
+        letting_go.join().unwrap();
         live.wait_until_over();
     }
 }

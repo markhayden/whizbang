@@ -678,8 +678,9 @@ pub struct Store {
     /// visible until its closing or its deletion is visible; or, for a run whose
     /// closing publication asked for that ([`Publication::keep_until_let_go`]), until
     /// its closer lets it go ([`Store::let_go`]). The flag says that the run's closing
-    /// is visible and it is kept for its closer.
-    made_runs: Mutex<BTreeMap<String, OpenRun>>,
+    /// is visible and it is kept for its closer. It is shared with each [`Closer`],
+    /// which holds the table and nothing else of this value.
+    made_runs: Arc<Mutex<BTreeMap<String, OpenRun>>>,
     /// How many places are taken now among the runs of this value that were started on
     /// threads of their own ([`Store::start_place`]). It is kept here, beside the table
     /// of open runs, because it is this writer's count, whoever starts the runs.
@@ -709,6 +710,28 @@ pub struct Place(Arc<AtomicUsize>);
 impl Drop for Place {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// What lets one run go from a writer's table of open runs ([`Store::closer`]). It
+/// holds the table and not the writer: whoever keeps one keeps no [`Store`] alive, and
+/// so no writer lock. Whoever is waiting for the run to leave the table may drop the
+/// writer and open the store again as soon as it has, and the closer, which let the run
+/// go a moment before, must not be what still holds the lock then.
+pub struct Closer {
+    made_runs: Arc<Mutex<BTreeMap<String, OpenRun>>>,
+    run: String,
+}
+
+impl Closer {
+    /// Takes the run out of the table, when its closing is visible and it was kept
+    /// there for its closer ([`Store::let_go`]). After the writer is gone it does
+    /// nothing that anyone sees.
+    pub fn let_go(&self) {
+        let mut made = self.made_runs.lock().unwrap_or_else(|e| e.into_inner());
+        if made.get(&self.run).is_some_and(|(_, closed, _)| *closed) {
+            made.remove(&self.run);
+        }
     }
 }
 
@@ -875,9 +898,16 @@ impl Store {
     /// to any other run: one that is still open stays, and so does one whose closing
     /// publication never became visible.
     pub fn let_go(&self, run: &str) {
-        let mut made = self.made_runs.lock().unwrap_or_else(|e| e.into_inner());
-        if made.get(run).is_some_and(|(_, closed, _)| *closed) {
-            made.remove(run);
+        self.closer(run).let_go();
+    }
+
+    /// What lets the run `run` go from the table of open runs, as [`Store::let_go`]
+    /// does, without this value: for a closer that must hold nothing of the writer
+    /// when it lets the run go.
+    pub fn closer(&self, run: &str) -> Closer {
+        Closer {
+            made_runs: self.made_runs.clone(),
+            run: run.to_string(),
         }
     }
 
@@ -969,7 +999,7 @@ impl Store {
             publishing: Mutex::new(()),
             in_progress: Mutex::new(BTreeMap::new()),
             waiting: AtomicUsize::new(0),
-            made_runs: Mutex::new(BTreeMap::new()),
+            made_runs: Arc::new(Mutex::new(BTreeMap::new())),
             started: Arc::new(AtomicUsize::new(0)),
             generation_max: std::sync::atomic::AtomicU64::new(GENERATION_MAX_BYTES),
             created,

@@ -310,21 +310,49 @@ It was one test, the same both times, failing in 0.04 seconds:
 `interrupted::a_run_that_is_executing_in_this_process_and_one_this_process_abandoned_are_left_alone`.
 
 Both times it panicked in the helper that opens its store again as the next process
-would, straight after a run whose action lost power and whose executor was dropped
-(`crates/whizbang-core/tests/it/contract/interrupted.rs`, line 97): the store was
+would (`crates/whizbang-core/tests/it/contract/interrupted.rs`, line 97): the store was
 refused as held to write. The first run said `Held { root: ".../store", holder: None }`,
 the second `Held { root: ".../store", holder: Some("process <the test's own> (it-…)") }`.
 So the writer's lock was still held by the test's own process when it asked again.
 
-It is intermittent. The runs of both pull requests were green on their own heads, the
-macOS runner passed on both pushes, `main` was green before them and has been green on
-every run since, and neither the test nor anything it uses of the store or the
-executor changed in between. **The cause was not established when this note was
-written.** The carry-over row on the store's locks knows a writer refused as held with
-no holder named, from a child process being started; this test starts none that the
-exit check could see. A separate investigation was started before the tag, and **the
-tag `m1b` waits on it**: if the fault is in the code and not in the test, it is 1B's
-to fix (its carry-over row, beside the one on the locks).
+It was intermittent. The runs of both pull requests were green on their own heads, the
+macOS runner passed on both pushes, and `main` was green before them and on every run
+after them until the fix. Nothing under the core's `contract/` or `store/`, and nothing
+of the test kit but one test of its own, changed between the last green `main` (commit
+44cfe7b) and the two failures: what those two merges changed is the spend strand's
+ledger and meter and the wrappers around a capability request, and this test uses the
+test kit's fake ledger and asks no capability. After the failures `contract/engine.rs`
+did change (commit 85eab0f, merged with #135), but only for a call whose estimate is
+nothing, and this test's calls reserve 250,000, so its path is the same. The fault was
+there from the day the test was added (task I4b); the two merges changed what else ran
+beside it on the runner, and no more.
+
+**The cause, found before the tag: a fault of the code, and fixed.** The helper is
+called twice in that test, and it was the second call that failed: after the test
+waited for a run it had started on a thread of its own, dropped its executor and its
+opening, and opened the store again. A started run's thread holds a clone of its
+executor, which holds the store's writer and with it the lock; and whoever waited for
+the run was answered while the thread still had that clone, and while the run's guard
+held the writer too. The test then asked for the lock a moment before the thread let it
+go. It was told of its own process while the thread still held the writer, and of
+nobody when the thread was dropping it at that moment: a writer takes its name out of
+the lock file before its lock ends. Both were shown on a Mac by holding the thread at
+each of the two points: the test then failed every time, with each of the two holders
+in turn. No child process is in it, so it is not the case of the row on the store's
+locks. No command of the binary starts a run on a thread of its own, so no user of
+this build's binary could meet it; a process that keeps a store and starts runs could.
+
+The executor now lets go of everything a started run holds of the writer before a wait
+for the run can answer: the thread drops its clone first, and the guard takes the run
+out of the table of open runs through a value that holds the table and no writer
+(`store::Closer`). Two tests fail without it, each on an assertion and without a race:
+`started::a_wait_for_a_started_run_answers_only_when_its_thread_holds_nothing_of_the_store`
+and, among the core's unit tests,
+`engine::tests::the_executors_hold_on_a_run_holds_nothing_of_the_store_when_a_wait_can_answer`.
+The test that failed is unchanged, and passed 200 times of 200 after the fix. ADR 0015
+says what is left ("One way to a writer, with recovery before it", limits): only a wait
+is that event, and the thread of a started run that nobody waited for holds the writer
+until it is done (its carry-over row, beside the one on the locks).
 
 ## Spend
 

@@ -724,6 +724,41 @@ fn a_closed_run_that_was_kept_for_its_closer_stays_in_the_table_until_it_is_let_
 }
 
 #[test]
+fn a_closer_lets_its_run_go_as_the_store_does_and_holds_no_writer() {
+    // A closer is for whoever must hold nothing of the writer when it lets a run go:
+    // it holds the table of open runs, and neither the writer nor its lock.
+    let dir = Scratch::new("store-names");
+    let store = Store::open(&root(&dir), Arc::new(ShimFs::new())).unwrap();
+    for run in ["kept", "open"] {
+        let mut publication = store.begin().unwrap();
+        publication.create_run(run).unwrap();
+        publication.publish().unwrap();
+    }
+    let (kept, open) = (store.closer("kept"), store.closer("open"));
+    // Before its run is closed and kept, a closer lets nothing go.
+    kept.let_go();
+    assert!(store.made_here("kept"));
+    let mut publication = store.begin().unwrap();
+    publication.close_run("kept").unwrap();
+    publication.keep_until_let_go("kept");
+    publication.publish().unwrap();
+    assert!(store.made_here("kept"));
+    open.let_go();
+    kept.let_go();
+    assert!(!store.made_here("kept"));
+    assert!(store.made_here("open"));
+
+    // The writer is dropped while both closers live, and the store is opened to write
+    // again at once: no closer kept the lock. Letting go after that changes nothing.
+    drop(store);
+    let store = Store::open(&root(&dir), Arc::new(ShimFs::new())).unwrap();
+    open.let_go();
+    kept.let_go();
+    assert!(!store.made_here("open"));
+    assert!(store.snapshot().unwrap().run("open").is_some());
+}
+
+#[test]
 fn what_is_attached_to_a_run_is_had_while_the_writer_has_the_run_open_and_no_longer() {
     // The table of the runs a writer made and has open holds, for each, what its maker
     // attached: one table, so "made here" and "what is attached" never disagree.

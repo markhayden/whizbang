@@ -91,6 +91,9 @@ binary wired": a call that may cost nothing is admitted without the ledger (ADR
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
 that said something was still to come; no decision changed.
+Amended: 2026-11-15, after a test of task I4b failed twice on the Linux runner. Added
+under "One way to a writer, with recovery before it", "Limits": what of a started run
+holds the writer, and until when.
 
 ## Context
 
@@ -1339,6 +1342,25 @@ to `…_part_4_of_4`, in the group of crash sweeps).
   plan, "A run abandoned in a live process").
 - **A failed recovery is not tried again by the same opening.** Whoever wants to
   try again opens the store again.
+- **A second opening in the same process is refused while anything of the first
+  holds the writer, and a started run does until a wait for it answers.** The
+  thread of a started run holds a clone of its executor, which holds the writer and
+  with it the lock. So the executor lets all of that go before a wait for the run
+  can answer: the thread drops its clone first, and what then takes the run out of
+  the table of open runs holds the table and no writer (`store::Closer`). Whoever
+  waited may drop its executor and its opening and open the store again at once
+  (`started::a_wait_for_a_started_run_answers_only_when_its_thread_holds_nothing_of_the_store`;
+  among the core's unit tests,
+  `engine::tests::the_executors_hold_on_a_run_holds_nothing_of_the_store_when_a_wait_can_answer`).
+  Before this was added neither held, and such a caller was refused as held now and
+  then, twice on the Linux runner
+  (`interrupted::a_run_that_is_executing_in_this_process_and_one_this_process_abandoned_are_left_alone`):
+  it was told of its own process, or of nobody when the thread was dropping the
+  writer at that moment, since a writer takes its name out of the lock file before
+  its lock ends. Only a wait is that event. A status that says a run ended says what
+  the store says, and the run's thread may still hold the writer then; so may the
+  thread of a started run that nobody waited for. No command of the binary starts a
+  run on a thread of its own.
 - **A part's sentence is the part's.** A failure of the store that it passes on has
   no path; what it writes itself is cut and not otherwise changed, and a door
   escapes it when it prints it.
