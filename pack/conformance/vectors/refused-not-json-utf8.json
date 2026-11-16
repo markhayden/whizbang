@@ -1,0 +1,7 @@
+{
+  "frame": "0000001b7b2274797065223a2263616e63656c222c226964223a2272ff227d",
+  "name": "refused-not-json-utf8",
+  "open": [],
+  "refused": "not_json",
+  "says": "a text that is not UTF-8"
+}

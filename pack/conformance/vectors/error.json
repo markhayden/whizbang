@@ -1,0 +1,24 @@
+{
+  "frame": "000000557b2274797065223a226572726f72222c226964223a227231222c226661756c74223a22756e617661696c61626c65222c2273656e74656e6365223a22746865206d6f64656c206973206e6f74206c6f61646564227d",
+  "message": {
+    "fault": "unavailable",
+    "id": "r1",
+    "sentence": "the model is not loaded",
+    "type": "error"
+  },
+  "name": "error",
+  "open": [
+    {
+      "binding": "sha256:92b2fa58028958317e408bd84ecfa70f5ee35b121991dbc232c49d166353708b",
+      "events": 0,
+      "height": 6,
+      "id": "r1",
+      "kind": "segment",
+      "max_instances": 2,
+      "queries": 3,
+      "text": 0,
+      "width": 8
+    }
+  ],
+  "says": "an error that ends an open request"
+}

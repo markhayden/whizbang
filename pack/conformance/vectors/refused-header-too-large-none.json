@@ -1,0 +1,7 @@
+{
+  "frame": "00000000",
+  "name": "refused-header-too-large-none",
+  "open": [],
+  "refused": "header_too_large",
+  "says": "a header of no bytes"
+}

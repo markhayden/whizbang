@@ -1,0 +1,7 @@
+{
+  "frame": "000000207b2274797065223a2263616e63656c222c226964223a22725c7530303331227d",
+  "name": "refused-not-canonical-escape",
+  "open": [],
+  "refused": "not_canonical",
+  "says": "a cancel whose id spells a digit as an escape"
+}

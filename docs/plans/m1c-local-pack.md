@@ -746,10 +746,10 @@ ADR 0002 for a plane's layout; rascal `crates/rascal-mcp/src/client/mod.rs` (the
 bound on an answer) and `crates/rascal-mask/src/filler/mod.rs` (`answer_cap`); squint
 `crates/squint-tools/src/mcp/mod.rs`.
 
-- [ ] ADR 0020, the pack protocol: D2 in bytes. The hello; the frame; each message and
+- [x] ADR 0020, the pack protocol: D2 in bytes. The hello; the frame; each message and
       its fields; a payload's entry; every bound and how it is computed from a request;
       what a refusal says; the HTTP codec on paper; what `pack/2` would mean.
-- [ ] `whizbang_backends::pack::proto`: frames written and read, strictly. Segment's
+- [x] `whizbang_backends::pack::proto`: frames written and read, strictly. Segment's
       request and response in it: an image, the queries, the most instances; instances
       with a plane, a box and a score. The settings rascal's adapters took (a threshold,
       a padding, an outline rule, a least cover) are a model's settings in the config,
@@ -757,9 +757,9 @@ bound on an answer) and `crates/rascal-mask/src/filler/mod.rs` (`answer_cap`); s
       typed field of its entry, and its other diagnostics go in the result's
       diagnostics; the order of an answer is fixed here: best score first, ties
       by the query, then by the box's top left.
-- [ ] The amendment to ADR 0006 of D2: `SegmentRequest` carries its picture's binding,
+- [x] The amendment to ADR 0006 of D2: `SegmentRequest` carries its picture's binding,
       and the handle refuses an answer whose planes name another.
-- [ ] `pack/conformance/vectors/`: each message as bytes, and each refusal.
+- [x] `pack/conformance/vectors/`: each message as bytes, and each refusal.
 
 **Done when** these pass, in `crates/whizbang-backends/tests/it/pack/proto.rs`, and the
 last in the core's `tests/it/capability/segment.rs`:
@@ -781,6 +781,15 @@ last in the core's `tests/it/capability/segment.rs`:
 
 **Carry-over:** what a segmenter adapter took and gave (settings, diagnostics, order);
 the bound on what is read off a wire. **Size:** medium.
+**Built with the task:** C1a's test of the vectors folder, which held it to one file of
+one line, is now `pack::the_vectors_folder_holds_its_readme_and_one_file_for_each_vector_and_nothing_else`.
+The hello and each result carry the worker's device and its count of threads from the
+start, since `pack/1` is not edited later: "Rules" (the count in `hello` and after each
+call) and P7a (the device in `hello` and in each result) use those fields and add none.
+A setting's text may hold no `/` and no `\` on the wire, which the config allows, so
+P6a refuses such a setting where the config is read. Both carry-over rows keep a part:
+what a run keeps of a result's diagnostics and predicted IoU is P3b's, with the
+supervisor that first reads a worker through the codec.
 
 ### P2. The Python worker, with fake models
 

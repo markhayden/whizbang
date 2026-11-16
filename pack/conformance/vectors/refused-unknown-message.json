@@ -1,0 +1,7 @@
+{
+  "frame": "000000197b2274797065223a2270696e67222c226964223a227231227d",
+  "name": "refused-unknown-message",
+  "open": [],
+  "refused": "unknown_message",
+  "says": "a message of a type pack/1 has not"
+}

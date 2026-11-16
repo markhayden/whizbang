@@ -1,0 +1,7 @@
+{
+  "frame": "0000001b7b226964223a227231222c2274797065223a2263616e63656c227d",
+  "name": "refused-not-canonical-order",
+  "open": [],
+  "refused": "not_canonical",
+  "says": "a cancel with its id before its type"
+}

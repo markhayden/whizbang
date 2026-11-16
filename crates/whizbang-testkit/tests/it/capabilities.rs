@@ -204,6 +204,43 @@ fn the_fake_segmenter_finds_what_it_was_told_to_find() {
 }
 
 #[test]
+fn the_fake_segmenters_planes_name_the_binding_their_request_is_under() {
+    use whizbang_core::identity::{Binding, Digest, Direction, Mapping, PixelDigest, Space};
+    let segmenter = Arc::new(FakeSegmenter::new().finding("a dog", [1, 1, 3, 3]));
+    let handle = SegmentHandle::new(segmenter, now());
+    let queries = vec![
+        Query::phrase("a dog").unwrap(),
+        Query::point(2.5, 1.2).unwrap(),
+        Query::boxed(0.5, 1.0, 2.0, 2.5).unwrap(),
+    ];
+    // The picture's own binding, and the same pixels placed onto another image.
+    let own = SegmentRequest::new(picture(), queries, 8).unwrap();
+    let space = Space::flat(WIDTH, HEIGHT).unwrap();
+    let onto = PixelDigest(Digest::of_bytes(b"another image"));
+    let from = Direction::SourceToDestination;
+    let placed = Binding::new(
+        picture().digest(),
+        space,
+        onto,
+        space,
+        from,
+        Mapping::Identity,
+    )
+    .unwrap();
+    let under = own.clone().under(&placed).unwrap();
+    assert_ne!(own.binding(), under.binding());
+    for request in [own, under] {
+        // The handle takes the answer, which it would refuse were a plane to name
+        // another binding; and each kind of query's plane names the request's.
+        let response = handle.segment(&request).unwrap();
+        for answer in response.answers() {
+            assert_eq!(answer.len(), 1);
+            assert_eq!(answer[0].binding(), request.binding());
+        }
+    }
+}
+
+#[test]
 fn the_fake_segmenter_counts_requests_and_keeps_to_the_most_asked_for() {
     let segmenter = Arc::new(
         FakeSegmenter::new()

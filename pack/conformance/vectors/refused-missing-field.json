@@ -1,0 +1,19 @@
+{
+  "frame": "0000001a7b2274797065223a226576656e74222c226964223a227231227d",
+  "name": "refused-missing-field",
+  "open": [
+    {
+      "binding": "sha256:92b2fa58028958317e408bd84ecfa70f5ee35b121991dbc232c49d166353708b",
+      "events": 0,
+      "height": 6,
+      "id": "r1",
+      "kind": "segment",
+      "max_instances": 2,
+      "queries": 3,
+      "text": 0,
+      "width": 8
+    }
+  ],
+  "refused": "missing_field",
+  "says": "an event with no text"
+}
