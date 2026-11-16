@@ -1,7 +1,8 @@
 # Checkpoint 1B note
 
 Checkpoint 1B, "policy and controls", is complete: its build tasks were all merged by
-2026-11-15. Its plan is `m1b-policy-and-controls.md`; this note says what shipped, what the entry check
+2026-11-15 (dates in this note are the owner's local dates, as the commits record them;
+in UTC, pull requests #134 to #137 are 2026-11-16). Its plan is `m1b-policy-and-controls.md`; this note says what shipped, what the entry check
 changed in the plan, what the owner decided on the way and what each decision cost, the
 limits that were accepted, how long things take, what was spent, what moved to the
 carry-over list, a test that failed twice on one runner, and what a reader should not
@@ -223,9 +224,14 @@ from the record the orchestrator kept of the checkpoint. What the exit check rea
 itself, from the job logs of the last twenty-six finished runs before this note: 71 to
 149 seconds, on a tree that grew by a few tests between them. The
 limit of 180 seconds is the owner's to change and is unchanged; so is the limit of 30
-seconds for one test. Both budgets of `SPEC.md` section 13 are met on the runs
-measured here: under 3 minutes of test time, and under 10 minutes of pull-request CI
-on both runners, the macOS job with less than a minute to spare.
+seconds for one test. The budget of `SPEC.md` section 13 for test time, under 3 minutes
+on the owner's Mac, is met on every run measured here. Its budget for pull-request CI,
+under 10 minutes on both runners, is met on the Linux runner and is not reliably met on
+the macOS runner. The macOS job took 9 min 8 s on `main` at c9ecf9c; of the last 44
+finished runs of the checkpoint, up to the run of pull request #138 at commit 5c1cd05,
+22 took more than 10 minutes there, the longest 13 min 32 s, and that run itself took
+10 min 9 s. Section 13 says what follows when a budget is exceeded, and the budget is
+the owner's to change: the carry-over list has the row.
 
 Seconds by suite, summed over tests that run side by side, so the rows add up to more
 than the test time (the third local run, on the exit check's tree):
@@ -377,6 +383,7 @@ cut.
 | What | Owner |
 |---|---|
 | `whizbang models list`, `get` and `remove` with their guide, and how one who attaches is paced; `whizbang backends status`; the real network client and the shipped catalogue, and with them a command that names a models directory; what the worker's queue owes to removal; installs that share a file; a model's device and whether a cache answered; the rule that an adapter says `not_sent` only when nothing left; a backend made from a config sending with no credential; a recipient compared with its upstreams; the settings of the first real kind; a local backend loading the installation it was handed under; a removal that takes no cancellation; a mark left by a remover that died; `runs show` cutting an installation's identity; the lock of the models directory taken by trying, its links and its unread files | 1C |
+| Pull-request CI on the macOS runner over its budget of 10 minutes about every second run, and its test time near the limit of 180 seconds | 1C, at its entry check; the limits are the owner's |
 | What every publication costs, and the ledger's fold reading closed epochs; an admission that was visible and not confirmed, ended at once; image preparation and a quote from a request's shape; a provider's sending; repairs and the checklist in the run record; the bound on a ledger being asked again | 2 |
 | Recipe steps in the run record; the limit of 256 calls | 3 |
 | What the cut of the spend strand left unbuilt; the money in a recovery; an overrun taken whole from every run above it; a dispatch asked outside a wrapper and a record's kinds for a refused dispatch; a fuller record of what an interrupted run did | None; reopen on need |
@@ -437,7 +444,8 @@ module's own comment says the same.
 - **The record of an interrupted run says little on purpose,** and its reservation is
   not closed by anything but the owner's reset.
 - **The limits on time are close on one runner.** A pull request that fails the macOS
-  job on total test time alone may be a good one.
+  job on total test time alone may be a good one. And the macOS job as a whole is over
+  the 10 minutes of `SPEC.md` section 13 about every second run.
 
 ## What checkpoint 1C starts from
 
