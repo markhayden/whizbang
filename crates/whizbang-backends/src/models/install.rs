@@ -25,6 +25,7 @@ use whizbang_core::store::fs::{Fs, PIECE_MAX_BYTES};
 
 use super::directory::Read;
 use super::installation::INSTALLATION_MAX_BYTES;
+use super::remove::stops;
 use super::stage::{FileRefused, StageRefused, lock_model, stage_locked};
 use super::status::{self, State, Status};
 use super::{
@@ -222,9 +223,8 @@ pub fn install(
         // Before anything else: whoever looks while the lock is held is shown an
         // install that is running.
         say(State::Installing, 0)?;
-        // A mark that is there now was left by a remover that died, or is one
-        // whose remover does not have the model's lock: it is taken off, and a
-        // remover that is alive sets its own again.
+        // A mark that is there now and whose remover died is taken off. One whose
+        // remover is alive is left: this install stops for it where it next asks.
         model.unmark()?;
         // What a publication that died left of its new pointer.
         dir.remove(&model.folder.join("CURRENT.new"))?;
@@ -239,10 +239,17 @@ pub fn install(
             done = files;
             say(State::Installing, done)?;
         } else {
-            stage_locked(dir, entry, downloader, cancellation, &mut |staged| {
-                done = staged as u64;
-                say(State::Installing, done)
-            })?;
+            stage_locked(
+                dir,
+                entry,
+                downloader,
+                cancellation,
+                secrets,
+                &mut |staged| {
+                    done = staged as u64;
+                    say(State::Installing, done)
+                },
+            )?;
         }
         model.publish(&record, cancellation, adopted)
     })();
@@ -486,25 +493,32 @@ impl<'a> Model<'a> {
         self.point_to(id, true)
     }
 
-    /// Whether removal's mark is set, for one who holds the directory's lock. The
-    /// mark's content is removal's (task M5b): that it is there is enough to stop
-    /// a publication.
+    /// Whether removal's mark is set and its remover alive: the one question of a
+    /// mark ([`super::draining`]), asked by one who decides by it. The mark of a
+    /// remover that died stops no publication.
     fn draining(&self) -> io::Result<bool> {
-        self.fs().exists(&self.folder.join("DRAINING"))
+        stops(self.dir, self.name, self.secrets)
     }
 
-    /// Takes a draining mark off, under the directory's lock, for one who has just
-    /// taken the model's lock: whoever set the mark does not have that lock. With
-    /// no mark nothing is locked and nothing changed. It is given no sync of its
-    /// own: the install syncs the model's folder as its next step, before it
-    /// deletes anything, and a mark that a crash brings back is a stale mark again,
-    /// which the next to take the lock takes off.
+    /// Takes off the mark a remover that died left, under the directory's lock,
+    /// for one who has just taken the model's lock. The mark of a remover that is
+    /// alive is left: the install stops for it where it next asks. A mark is set
+    /// only under the directory's lock, by one who has the remover's lock, so a
+    /// mark found dead here is not a live remover's by the time it is removed.
+    /// With no mark nothing is locked and nothing changed. It is given no sync of
+    /// its own: the install syncs the model's folder as its next step, before it
+    /// deletes anything, and a mark that a crash brings back is a dead remover's
+    /// again, which stops nobody and which the next to take the lock takes off.
     fn unmark(&self) -> Result<(), InstallRefused> {
-        if !self.draining()? {
+        let mark = self.folder.join("DRAINING");
+        if !self.fs().exists(&mark)? {
             return Ok(());
         }
         let _directory = self.dir.lock()?.ok_or(InstallRefused::DirectoryBusy)?;
-        self.dir.remove(&self.folder.join("DRAINING"))?;
+        if self.draining()? {
+            return Ok(());
+        }
+        self.dir.remove(&mark)?;
         Ok(())
     }
 

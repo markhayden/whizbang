@@ -27,6 +27,7 @@ use whizbang_backends::models::{
 use whizbang_core::contract::Secrets;
 use whizbang_core::egress::{Address, Origin};
 use whizbang_core::identity::Digest;
+use whizbang_core::store::fs::{Fs, LockFile, RealFs};
 
 /// A value no test would write by accident, told to the readers as a secret. Every
 /// character of it may stand in a model's name and in a file's, so that a name is
@@ -94,6 +95,22 @@ pub fn parts(name: &str) -> EntryParts {
 
 pub fn entry(name: &str) -> Entry {
     Entry::new(parts(name), &none()).unwrap()
+}
+
+/// A remover of the model `tiny` that is alive, as a process of its own: it has the
+/// remover's lock (`models/tiny/REMOVER`) alone, until what this gives is dropped.
+/// The model's folder is there. It sets no mark: the test writes what it wants at
+/// the mark's name.
+pub fn live_remover(root: &std::path::Path) -> Box<dyn LockFile> {
+    RealFs
+        .hold_lock_file(&root.join("models/tiny/REMOVER"), true)
+        .unwrap()
+        .expect("no other remover is alive")
+}
+
+/// What a remover that died left: its lock file, which nobody holds.
+pub fn dead_remover(root: &std::path::Path) {
+    drop(live_remover(root));
 }
 
 /// What is printed of a refusal, both ways.

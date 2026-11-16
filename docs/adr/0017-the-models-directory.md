@@ -108,6 +108,18 @@ binary's wiring takes the inventory and puts the lease in its place.
 Spec: section 3, "Storage"; section 4, "Segmenters"; section 6, "Controls from table-manners"
 Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
 that said something was still to come; no decision changed.
+Amended: 2026-11-15, with task P5a of checkpoint 1C (`docs/plans/m1c-local-pack.md`,
+decisions D5 and D6). Added, in code (`remove.rs`, `hold.rs`, `install.rs`, `stage.rs`)
+and under "Removal": "A mark is live only while its remover is, and the count of
+removals": the remover's lock, `draining` as the one question everybody asks of a
+mark, the count of removals, and the count a hold returns. Changed, in code and here:
+a mark whose remover is gone stops no hold, no publication and no install, where it
+stopped all three until someone installed or removed the model; an install takes off
+only the mark of a remover that died, where it took off any; a mark is a removal's
+own when the removal has the remover's lock, where it was its own when the removal
+made it or had the model's lock; of two removals of a model the second waits for
+the remover's lock and sets no mark. "The directory", "Three kinds of lock", "Holds",
+"Removal" and "Limits" say so where they said otherwise.
 
 ## Context
 
@@ -182,6 +194,7 @@ installation record with its identity.
 | A folder of the layout that is a link | Code, with the tests named (task M5c, after its review) |
 | The inventory: readiness from what is installed | Code, with the tests named (task M6) |
 | The lease: a hold on the admitted installation, by the declared name, around each request to a local model | Code, with the tests named (task M6b) |
+| A mark is live only while its remover is; the count of removals | Code, with the tests named (task P5a of checkpoint 1C), under "Removal" |
 
 ### The directory
 
@@ -203,6 +216,9 @@ default place and no variable is read for it here. In it:
       STATUS                       what the installer last said (task M2b)
       STATUS.new                   the same of a status record
       DRAINING                     removal's mark (task M5b)
+      REMOVER                      the remover's lock (task P5a of 1C)
+      REMOVALS                     the count of removals (task P5a of 1C)
+      REMOVALS.new                 a count being written, until it is renamed over REMOVALS
       staging/                     the install in progress (task M2)
         incoming/
           RECORD                   the record, written just before the folder is renamed
@@ -234,7 +250,7 @@ default place and no variable is read for it here. In it:
   same file. A reader takes nothing in
   the directory on trust: a name that is not one this layout gives, a link, a folder
   where a file belongs, and a file longer than its bound are refused, never followed.
-- **The content of `DRAINING`** is under "Removal". The
+- **The content of `DRAINING`, and of `REMOVALS`,** is under "Removal". The
   content of `STATUS` is under "The status record", and the one staging folder under
   "Downloading into staging".
 
@@ -271,12 +287,19 @@ of `docs/carry-over.md` on those locks names the models directory too.
   caller's. Staging is written, and cleaned, only by its holder.
 - **A hold file** (`models/<model>/holds/<64 hex digits>`) is shared by each hold on
   that installation, and taken alone by whoever deletes the installation's folder.
+- **The remover's lock** (`models/<model>/REMOVER`; task P5a of checkpoint 1C, so
+  the kinds are four) is taken alone by a removal of that model, by a try, before
+  its mark is set, and kept until the mark is taken off. Whoever asks whether a mark
+  is live tries for a share of it and lets the share go at once ("Removal": "A mark
+  is live only while its remover is").
 
 **The order.** What a process may wait for depends on what it holds:
 
 | Holding | May wait for | Never |
 |---|---|---|
-| Nothing | The directory's lock | A lock taken alone is tried and never waited for: the model's lock by an install or a removal, a hold file by whoever deletes. A model's lock is shared by a try too, tried again by one who attaches |
+| Nothing | The directory's lock | A lock taken alone is tried and never waited for: the remover's lock by a removal, the model's lock by an install or a removal, a hold file by whoever deletes. A model's lock is shared by a try too, tried again by one who attaches |
+| The remover's lock, alone | The directory's lock; and what a holder of the model's lock may, once it has that too | Taken first of all, holding nothing. Waits for no other lock: the model's lock and the hold files are tried, as before |
+| Anything, or nothing | Nothing more | A share of the remover's lock is a try that does not wait, by one who holds nothing, the directory's lock, or the model's lock and the directory's; it is let go before anything else is done, so nothing is ever waited for under it |
 | The directory's lock | Nothing | Takes no model's lock. Takes a hold file only to share it, as below, which does not wait. Waits for no hold |
 | A model's lock, alone | The directory's lock | Waits for no hold file: it takes one alone by a try that does not wait, or not at all |
 | A model's lock, shared (attached) | Nothing | Takes no other lock: it reads the status record and the pointer, and lets its share go |
@@ -285,7 +308,7 @@ of `docs/carry-over.md` on those locks names the models directory too.
 | A hold | The directory's lock, to take another hold | Never waits for that model's lock, alone or shared: a run that holds a model neither installs it, removes it nor attaches to its install |
 
 - **A hold is taken only under the directory's lock,** after the pointer was read and
-  names that installation and no draining mark is set. Its share of the hold file is a
+  names that installation and no draining mark is set whose remover is alive. Its share of the hold file is a
   try that does not wait, and is not refused there: a hold file is held alone only while its installation's folder is
   being deleted, by a holder of the model's lock, after the pointer stopped naming
   that installation; and the pointer cannot name it again until that holder has let
@@ -299,7 +322,8 @@ of `docs/carry-over.md` on those locks names the models directory too.
   (`remove::a_removal_marks_under_the_directorys_lock_says_removing_and_clears_the_pointer_with_every_hold_file_its_own`).
 - So the directory's lock is last in every chain, and its holder waits for nothing;
   nobody waits for a hold; and a holder of a hold never waits for the model's lock.
-  There is no cycle.
+  The remover's lock is first in the one chain it is in, and is never waited for:
+  alone or shared, it is a try. There is no cycle.
 
 ### Names
 
@@ -1034,7 +1058,8 @@ attaches to whatever holds the lock, and ends as that ended
 Code (task M5: `hold.rs`; tests named `holds::…`). **A hold is a file lock, not a
 process id.** A hold on one installation is a shared lock on its hold file,
 `holds/<64 hex digits>`, taken under the directory's lock after the draining mark and
-the pointer were read there: it is given when no mark is set and the pointer names
+the pointer were read there: it is given when no mark is set whose remover is alive
+("Removal": "A mark is live only while its remover is") and the pointer names
 that installation, and it makes nothing on the disk but the directory's `LOCK`,
 which is made when it is taken and is not there: a hold asked of a directory where
 nothing was ever installed makes that one file, and is refused
@@ -1051,9 +1076,9 @@ path:
 
 | Refused as | When |
 |---|---|
-| `Draining` | The mark is set. It is read before the pointer, so a model whose pointer a removal has cleared is draining, not "not named" (`holds::a_hold_is_refused_while_the_mark_of_draining_is_set_whatever_the_count`) |
+| `Draining` | The mark is set, and its remover is alive (task P5a of 1C: until then, the mark alone). It is read before the pointer, so a model whose pointer a removal has cleared is draining, not "not named" (`holds::a_hold_is_refused_while_the_mark_of_draining_is_set_whatever_the_count`) |
 | `NotNamed` | The pointer names another installation, or there is none: an installation that was superseded, one never installed, a model never installed (`holds::a_hold_on_an_identity_the_pointer_no_longer_names_is_refused`) |
-| `Damaged` | The pointer is not a pointer as it is written, or the installation it names has no hold file. A hold never makes one (`holds::a_pointer_that_cannot_be_read_or_a_missing_hold_file_is_damage_and_a_hold_makes_none`) |
+| `Damaged` | The pointer is not a pointer as it is written, or the installation it names has no hold file. A hold never makes one (`holds::a_pointer_that_cannot_be_read_or_a_missing_hold_file_is_damage_and_a_hold_makes_none`). Or the model's count of removals is not a count as it is written (task P5a of 1C; `holds::a_hold_returns_the_count_of_removals_it_read_under_the_directorys_lock`) |
 | `Deleting` | The hold file is held alone. That is an install that deletes the installation's folder, which is only for an installation the pointer does not name; or a removal, the first to take a hold file alone while the pointer names its installation, whose mark refuses the hold as `Draining` before the hold file is tried (`remove::a_removal_marks_under_the_directorys_lock_says_removing_and_clears_the_pointer_with_every_hold_file_its_own`) |
 | `DirectoryBusy` | The directory's lock was not let go ("Three kinds of lock") |
 | `Disk` | The file system refused a step, the try among them: a file system that answers that it cannot try has not said "held alone" (`holds::a_hold_file_held_alone_is_a_hold_refused_at_once_and_a_try_that_fails_is_an_error`, which holds the two rows above too) |
@@ -1097,6 +1122,10 @@ a share in the first
 - **A hold does not read the installation.** It is given on what the pointer names,
   whether or not the folder is whole; that is the publication's and the inventory's
   to say (task M6).
+- **A hold has the model's count of removals as it read it** (`Hold::removals`;
+  task P5a of 1C), under the directory's lock, after the mark and the pointer and
+  before its share of the hold file: "Removal", "A mark is live only while its
+  remover is, and the count of removals".
 
 ### Removal
 
@@ -1104,15 +1133,19 @@ Code up to the decision, inside one process (task M5b: `remove.rs`, `remove`; te
 named `remove::…`), and against an install and across processes (task M5d, below).
 and the deleting (task M5c). In this order:
 
-1. **The draining mark comes first.** It is set under the directory's lock, before
-   the removal has the model's lock, when nothing is at its name: what is there
-   already is a mark to whoever decides by it, and is another's. From then no hold
-   on that model is given, and no install of it publishes. A model that
+1. **The remover's lock, and then the draining mark.** The removal takes the
+   remover's lock alone, by trying until its deadline; past it, another removal of
+   the model being alive, it answers busy and has set no mark (task P5a of 1C,
+   below: until then there was no such lock, and the mark came first). The mark
+   is set under the directory's lock, before the removal has the model's lock,
+   and under the same lock the model's count of removals is raised. What was at
+   the mark's name was left by a remover that died, and is replaced. From then no
+   hold on that model is given, and no install of it publishes. A model that
    has no folder was never installed: it is not marked, and nothing is made.
 2. The removal takes the model's lock alone, by trying until its deadline. Past it
-   the removal answers busy (`RemoveRefused::Busy`) and takes its mark off, if the
-   mark is its own (6). With the lock, the mark is its own: what is there and is
-   no mark as whizbang writes one is replaced.
+   the removal answers busy (`RemoveRefused::Busy`) and takes its mark off (6).
+   With the lock, what is at the mark's name and is no mark as whizbang writes
+   one is replaced.
 3. **It says `removing`** in the status record ("The status record"), and syncs the
    model's folder before it reads the pointer: nothing is decided on the word of a
    pointer that is not durable. **A model with no pointer is not installed,** and
@@ -1151,11 +1184,13 @@ and the deleting (task M5c). In this order:
    (`remove::a_removal_deletes_every_installation_of_the_model_under_its_hold_files_and_touches_nothing_outside`,
    which finds both hold files there and free after the removal).
 6. **Its own mark is taken off at the end, however the removal ended,** under the
-   directory's lock, and the model's folder synced. **A mark is a removal's own**
-   when the removal made it where none was, or has the model's lock. A removal
-   that found a mark and was never given the model's lock leaves it: it is the
-   mark of the removal that has the lock, or of a remover that died, and is not
-   this one's to take off
+   directory's lock, and the model's folder synced; then the remover's lock is
+   let go. **A mark is a removal's own** when the removal has the remover's lock
+   (task P5a of 1C; until then, when it made the mark where none was or had the
+   model's lock). A removal that is not given the remover's lock sets no mark and
+   takes none off: the mark that is there is the mark of the removal that has
+   that lock. The mark of a remover that died is nobody's, and the next removal
+   makes it its own
    (`remove::a_second_removal_that_is_busy_leaves_the_mark_of_the_one_that_has_the_lock_and_no_hold_is_given_meanwhile`,
    `remove::a_removal_that_made_the_mark_and_never_had_the_lock_takes_its_own_mark_off_and_no_other`,
    `remove::a_removal_that_made_its_mark_again_while_it_tried_for_the_lock_takes_it_off_when_it_ends_busy`). **Past the deadline the removal
@@ -1218,16 +1253,18 @@ in one form, 23 bytes:
 
 It says that a removal of the model has begun, and nothing else: it names no
 process and no time, and whether its remover is alive is not read from it (rascal's
-R3). It is at most 64 bytes (`DRAINING_MAX_BYTES`) and is read strictly, as every
+R3): that is asked of the remover's lock (task P5a of 1C, below). It is at most 64 bytes (`DRAINING_MAX_BYTES`) and is read strictly, as every
 record here is: refused over its bound before anything of it is looked at, with an
 unknown field, in another format, and in any bytes but the one form
-(`remove::the_mark_is_a_record_read_strictly_and_bounded`). **Who reads it and who
-decides by it are two.** `draining` is the reader for one who holds no lock (the
-inventory, task M6; a command that lists models, 1C): no mark, a mark, or a refusal
-of what is there and is none. A hold and a publication take anything at the mark's
-name for a mark, a link and a folder included, so that a mark that cannot be read
-still stops them; and a removal that has the model's lock replaces whatever is
-there with its own
+(`remove::the_mark_is_a_record_read_strictly_and_bounded`). **Everybody asks one
+question of it, `draining`** (task P5a of 1C, below; until then a reader and one
+who decides read it two ways, and neither asked whether its remover was alive):
+no mark, or one whose remover is gone, is no; a mark under a remover that is alive
+is yes; and what is at the mark's name under a live remover and is no mark is a
+refusal to one who holds no lock (a command that lists models, 1C), and stops a
+hold and a publication as a mark does, a link and a folder included, so that a
+live remover's mark that cannot be read still stops them; and a removal replaces
+whatever is there with its own
 (`remove::a_mark_on_the_disk_is_read_strictly_by_a_reader_and_as_there_by_whoever_decides_by_it`).
 The mark is given no sync when it is set: a crash that loses it leaves the model as
 its pointer says.
@@ -1269,17 +1306,19 @@ another process by the mark alone.
   there, and the install after it whole, or stopped for the mark, or busy
   (`remove::a_removal_and_an_install_let_go_together_end_in_one_of_the_two_orders`).
 - **A mark left by a process that died is taken off by the next to take the model's
-  lock.** An install, as its first change after it said `installing`, takes off a
-  mark it finds, under the directory's lock: whoever set it does not have the
-  model's lock. The sync of the model's folder that follows is the one every
-  install makes before it deletes anything; a mark that a crash brings back is
-  a stale mark again. It cannot tell a dead remover's mark from that of one
-  that is alive and trying for the lock, so **a removal sets its mark again**
-  when it is gone: each time it is not given the lock, once it has it, and each
-  time a hold file is not given it. With the lock it is not the only one who can
-  take the mark off: a second removal that made the mark first, before this one
-  began, and then ended busy takes off what it made; this one sets it again at
-  its next try
+  lock,** and stops nobody meanwhile (task P5a of 1C, below). An install, as its
+  first change after it said `installing`, takes off a mark it finds whose
+  remover is gone, under the directory's lock; the mark of a remover that is
+  alive it leaves, and stops for. The sync of the model's folder that follows is
+  the one every install makes before it deletes anything; a mark that a crash
+  brings back is a dead remover's again. Until task P5a an install could not
+  tell a dead remover's mark from that of one that is alive and trying for the
+  lock, and took off both. **A removal still sets its mark again** when it is
+  gone, with the count raised: each time it is not given the model's lock, once
+  it has it, and each time a hold file is not given it. Nothing in whizbang
+  takes a live remover's mark off any more; a person can. Of two removals the
+  second waits for the remover's lock: when the first ends busy it takes off
+  the mark it made, and the second sets its own at its next try
   (`remove::a_removal_that_waits_for_a_hold_sets_its_mark_again_when_it_is_gone`,
   `remove::of_two_removals_the_one_that_made_the_mark_and_ends_busy_takes_it_off_and_the_one_with_the_lock_sets_it_again`)
   (`remove::a_mark_left_by_a_process_that_died_is_taken_off_by_the_next_to_take_the_lock`,
@@ -1295,17 +1334,121 @@ another process by the mark alone.
   record, as one whose download broke does: a reader cannot tell the two apart,
   and one who attached to it is told failed. `status/2` was not given a state for
   it. *The mark is read by a call of the file system at every piece* of a
-  download, a megabyte at most: one look for a name, no lock. *After a remover
-  that died,* holds on the model are refused as draining until someone installs
-  or removes it; a run cannot take the mark off, since it takes no model's lock
-  (`docs/carry-over.md`; pinned in
-  `remove::a_crash_at_any_event_of_a_removal_leaves_the_model_installed_or_not_installed`).
+  download, a megabyte at most: one look for a name, no lock, and with a mark
+  there one try for a share of the remover's lock. *After a remover
+  that died,* its mark stays on the disk until someone installs or removes the
+  model, and stops nobody (task P5a of 1C; until then every hold was refused as
+  draining, which
+  `remove::a_crash_at_any_event_of_a_removal_leaves_the_model_installed_or_not_installed`
+  pinned as a limit and now holds the other way).
   *A removal is ended by its deadline and by nothing else:* it takes no
-  cancellation (`docs/carry-over.md`). An install that is reading back what it staged, or reading an identity it
+  cancellation, and needs none: the patience of `whizbang models remove --wait`
+  bounds it, and a remover that is interrupted or killed no longer strands the
+  model (the plan of 1C, decision D6). An install that is reading back what it staged, or reading an identity it
   found on the disk, asks neither its cancellation nor the mark until it is done:
   the mark stops it at the publication, under the directory's lock. And an
   install that stopped for a mark whose remover then died is not started again by
   anything here: it is asked for again.
+
+**A mark is live only while its remover is, and the count of removals** (task P5a
+of checkpoint 1C; the plan's decisions D6 and D5). Code: `remove.rs` (`draining`,
+`removals`, the remover's lock in `remove`), `hold.rs` (`Hold::removals`), and the
+three who decide by the mark (`hold.rs`, `install.rs`, `stage.rs`). Nothing here
+reads a process id, a time or a host name, and nothing is signalled.
+
+- **The remover's lock** is `models/<model>/REMOVER`, a lock file as the model's
+  `LOCK` is: made when it is first taken, empty, and never removed or replaced. A
+  removal takes it alone, by a try, as the first thing it does to a model that has
+  a folder, and keeps it until its mark is taken off, however the removal ends. Not
+  given it, the removal calls `pause` and tries again until its deadline, then
+  answers `RemoveRefused::Busy`: it has set no mark, raised no count and changed
+  nothing. The operating system lets the lock go when the remover's process ends,
+  however it ends. Its place in the order of locks is the first ("Three kinds of
+  lock"): a removal takes it holding nothing.
+- **`models::draining` is the one question,** and it answers yes only for a mark
+  whose remover has that lock. Nothing at the mark's name: no, and no lock is
+  tried. Something there: a try for a **share** of the remover's lock, which does
+  not wait and is let go at once. Given the share, or with no lock file at all,
+  no remover is alive and the answer is no, whatever is at the mark's name: a mark
+  as it is written, an empty file, a folder. Refused the share, a remover is
+  alive, and the mark is read strictly: a mark is yes, and anything else is a
+  refusal. **A share, and not the lock alone,** because the remover has it alone:
+  two that ask at the same moment are each given a share, and neither reads the
+  other as a remover that is alive
+  (`remove::two_that_ask_at_once_whether_a_dead_removers_mark_is_live_both_answer_no`,
+  in which the second asks while the first has its share, both ways round).
+- **Who asks it, and no other question:** a hold, under the directory's lock; a
+  publication, where it points and where a repair clears the pointer, under the
+  directory's lock; an install's own look at the mark where it asks its
+  cancellation, and the look by which it takes a dead remover's mark off; and one
+  who holds no lock and lists models (`models::draining` itself; the command is
+  task N3b's). The supervisor of the worker asks it too, when it is built (task
+  P5b). The three who decide go through one function (`remove::stops`): yes and a
+  refusal both stop them, so a live remover's mark that cannot be read stops
+  them as before; a file system that refused is an error and not a yes
+  (`remove::a_hold_that_meets_the_mark_of_a_remover_that_was_killed_is_given`, of a
+  real process that is killed with its mark set, and of a disk that loses power;
+  `remove::a_hold_that_meets_the_mark_of_a_live_remover_is_refused_as_draining`;
+  `remove::a_publication_an_installs_own_look_and_a_listing_take_the_mark_of_a_dead_remover_as_no_mark`).
+- **The count of removals** is `models/<model>/REMOVALS`, a record under the
+  format `removals/1` in one form, 64 bytes at most (`REMOVALS_MAX_BYTES`), read
+  strictly as every record here is:
+
+  ```json
+  {"format":"removals/1","count":3}
+  ```
+
+  **Where it is written.** Every time a removal writes its mark, under the same
+  holding of the directory's lock, it raises the count by one: the first time,
+  and each time it sets the mark again. The new count is written whole to
+  `REMOVALS.new` and renamed over `REMOVALS`. Nothing else writes it and nothing
+  lowers it: not the end of the removal, however it ended, not an install, and
+  not the removal of the model, whose folder and count stay. No file is no
+  removal yet: nothing. **How it is read.** By `models::removals`, by one who
+  holds no lock: the rename means a reader finds the old count or the new, never
+  part of one. What is at its name and is no count is refused, with no path
+  (`remove::each_removal_that_sets_its_mark_raises_the_count_and_a_removal_that_timed_out_leaves_it_raised`).
+- **A hold returns the count it read** (`Hold::removals`), under the directory's
+  lock, after the mark and the pointer and before its share of the hold file. A
+  hold is given only while no live mark is set, and a mark is set only with the
+  count raised under that lock: so a count that has moved from the one a hold has
+  says that a removal of the model set its mark after the hold was given, whether
+  or not the mark is still there. A removal that began and timed out between two
+  looks at the mark is seen by the count. Inside a process, where holds on one
+  installation are counted on one share, each hold has its own reading. A count
+  that cannot be read as one refuses the hold as `Damaged`: a hold with no count
+  could not be told from one that was never removed under
+  (`holds::a_hold_returns_the_count_of_removals_it_read_under_the_directorys_lock`).
+- **The crashes of a removal hold as they did**
+  (`remove::a_crash_at_any_event_of_a_removal_leaves_the_model_installed_or_not_installed`,
+  which now puts a crash at the taking of the remover's lock and at each event of
+  the count as well, and after each finds that a hold on a model that is still
+  installed is given). The count is given no sync of its own: the removal's sync
+  of the model's folder makes it durable with the rest, and a crash before that
+  can lose it or bring an older one back. That is a count lowered by a loss of
+  power, which ends every process that read the lost one, so no hold that is
+  still held has a count the crash made equal again.
+- **Limits.** *A removal with no patience that meets a share:* one who asks
+  whether a dead remover's mark is live has a share of the remover's lock for a
+  moment, and a removal that tries for the lock in that moment and has no
+  patience answers busy, though no other removal is alive. Asked again, it goes
+  on. *A count that cannot be read* is counted from nothing again by the next
+  removal that sets its mark: a hold given before the damage can then have a
+  count equal to a later one, and a removal is not seen by it; the removal
+  still waits for that hold, as for any other, and deletes nothing under it.
+  *A mark with no count raised* is not written by whizbang; one written by hand,
+  under a remover's lock held by hand, stops holds and moves no count.
+
+**For the tasks that follow.** *P5b:* the supervisor is told of a removal in its
+own process, and for a removal in another reads `models::removals` for each queued
+request and compares it with the count that request's hold returned; it asks
+`models::draining` and no other question of a mark. *P6b:* what carries a hold's
+count to the queue is not built here. `Hold::removals` is where it starts; the
+lease (`inventory.rs`, `Leased`) has the hold and hands nothing on yet. ADR 0015
+must be amended by that task, in "A wrapper around each request" and in "An
+inventory" where it describes the lease's place: what a wrapper's `before` gives
+back (`Open`) or what a backend is given for one request gains the count the
+lease's hold read, so that a request enters the queue with it.
 
 **On the disk** (task M5c).
 
@@ -1340,8 +1483,9 @@ another process by the mark alone.
   `remove::a_removal_that_finds_no_pointer_leaves_a_folder_a_run_still_holds_and_deletes_nothing_when_its_sync_is_refused`).
 - **The crashes.** A crash is put in place of each event of a removal of an
   installation that nothing holds: from the clearing of the pointer on under six
-  ways of losing names, and before it, where only the mark's and the status's
-  names are not durable, under the loss of every name and of none. After each, one
+  ways of losing names, and before it, where only the names of the remover's
+  lock, the mark, the count and the status are not durable, under the loss of
+  every name and of none. After each, one
   who holds no lock reads the model as installed, whole, with its hold file, or as
   not installed, never as damaged; and the next removal ends with no pointer, no
   mark and nothing under `installations/`
@@ -1700,10 +1844,11 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   (`attaching::known_a_request_that_met_only_anothers_share_of_the_lock_is_answered_from_the_last_installs_status`).
 - **A mark that is left.** A removal takes its mark off at its end, and the step
   can be refused: the removal answers as it ended, and the mark stays. So does the
-  mark of a remover that died. While it is there no hold on the model is given and
-  no install of it publishes, though its pointer may name an installation that is
-  whole. The next removal of the model takes it off, and so does the next install
-  (task M5d).
+  mark of a remover that died. Neither stops anybody once its remover's lock is
+  let go (task P5a of 1C: "Removal", "A mark is live only while its remover is";
+  until then no hold on the model was given and no install of it published while
+  the mark was there). The next removal of the model takes it off, and so does
+  the next install (task M5d).
 - **A reader that holds no lock does not read the files.** `current` answers from the
   pointer and the record; that the files are whole is held when they are published
   and when the same identity is published again.
@@ -1771,10 +1916,12 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   (`DRAINING` in the model's folder), under the directory's lock. A mark with content
   is read the same way. Built ("Removal"). A stale mark stops every publication of
   the model, and every hold on it, until a removal of the model or the task that
-  has the next to take the lock take one off (M5d).
+  has the next to take the lock take one off (M5d). *Changed by task P5a of 1C:*
+  a publication asks `draining`, and a stale mark stops nothing.
 - **M5d, from task M5b:** an install that takes a stale mark off takes a live one
   off with it, so a removal sets its mark again; an install reads the mark where
-  it asks its cancellation. Built ("Removal").
+  it asks its cancellation. Built ("Removal"). *Changed by task P5a of 1C:* an
+  install takes off only the mark of a remover that died.
 - **M5c, from task M5b:** the hold files a removal has alone when it clears the
   pointer are the ones it deletes under; it lets them go only after the deleting
   and its sync. A removal that finds no pointer still deletes what no pointer
@@ -1791,7 +1938,8 @@ from a key the file gave. It holds no path: the readers take bytes, or a source,
   installation whose hold file is missing is refused as damage; a hold never makes one.
   Built ("Holds").
 - **M5b, from task M5:** a hold is refused as draining by a file at `DRAINING`,
-  whatever it holds, read with the pointer under the directory's lock. A removal
+  whatever it holds, read with the pointer under the directory's lock (since task
+  P5a of 1C, only while its remover is alive). A removal
   that answers busy has changed no pointer (task M5b), so a hold that is given
   after it finds the pointer as it was. And a removal that waits for holds meets
   its own process's: `Holds` lets its share go only with the last hold.

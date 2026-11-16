@@ -907,11 +907,11 @@ with no sleep:
 **Depends on:** C1a. **Reads:** ADR 0017, "Removal", "Holds" and "Three kinds of lock";
 `models/remove.rs`, `models/hold.rs`.
 
-- [ ] D6 and the count of D5, by an amendment to ADR 0017: the remover's lock and its
+- [x] D6 and the count of D5, by an amendment to ADR 0017: the remover's lock and its
       place in the order of locks; `models::draining` as the one question, a try for a
       share; the count, where it is written and how it is read; a hold returns the
       count it read.
-- [ ] 1B's tests that plant a mark with no remover are rewritten: such a mark is now a
+- [x] 1B's tests that plant a mark with no remover are rewritten: such a mark is now a
       dead remover's. Each is named in the pull request with what it shows now.
 
 **Done when** these pass (`tests/it/models/remove.rs`):

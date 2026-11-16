@@ -9,7 +9,7 @@
 //! file that passed is left behind.
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use sha2::{Digest as _, Sha256};
 use whizbang_core::capability::FaultKind;
@@ -20,6 +20,7 @@ use whizbang_core::store::fs::{LockFile, NewFile, PIECE_MAX_BYTES};
 
 use super::directory::{LINKED, is_linked};
 use super::name::holds_secret;
+use super::remove::stops;
 use super::{CatalogueFile, Entry, InstalledFile, ModelName, ModelsDir};
 
 /// The most times one file may be answered with another address before it is refused.
@@ -181,7 +182,9 @@ pub fn stage(
     secrets: &Secrets,
 ) -> Result<Staged, StageRefused> {
     let lock = lock_model(dir, entry, cancellation, secrets)?;
-    let files = stage_locked(dir, entry, downloader, cancellation, &mut |_| Ok(()))?;
+    let files = stage_locked(dir, entry, downloader, cancellation, secrets, &mut |_| {
+        Ok(())
+    })?;
     Ok(Staged {
         model: entry.name().clone(),
         files,
@@ -221,12 +224,14 @@ pub(super) fn lock_model(
 
 /// What stops a staging between files and inside one: the cancellation of the
 /// request that started it, and the model's draining mark, which a removal sets
-/// from any process. The mark is read as there or not there, without the
-/// directory's lock: stopping is always safe, and what a publication decides from
-/// is read under that lock, later.
+/// from any process. The mark is asked after as everybody asks ([`super::draining`]:
+/// set, and its remover alive), without the directory's lock: stopping is always
+/// safe, and what a publication decides from is asked under that lock, later. The
+/// mark of a remover that died stops no staging.
 struct Stop<'a> {
     dir: &'a ModelsDir,
-    mark: PathBuf,
+    model: &'a ModelName,
+    secrets: &'a Secrets,
     cancellation: &'a Cancellation,
 }
 
@@ -237,9 +242,7 @@ impl Stop<'_> {
         if self.cancellation.is_cancelled() {
             return Some(StageRefused::Cancelled);
         }
-        self.dir
-            .fs()
-            .exists(&self.mark)
+        stops(self.dir, self.model, self.secrets)
             .unwrap_or(false)
             .then_some(StageRefused::Draining)
     }
@@ -252,6 +255,7 @@ pub(super) fn stage_locked(
     entry: &Entry,
     downloader: &dyn Downloader,
     cancellation: &Cancellation,
+    secrets: &Secrets,
     staged: &mut dyn FnMut(usize) -> io::Result<()>,
 ) -> Result<Vec<InstalledFile>, StageRefused> {
     let fs = dir.fs();
@@ -260,7 +264,8 @@ pub(super) fn stage_locked(
     let files = incoming.join("files");
     let stop = Stop {
         dir,
-        mark: dir.model(entry.name()).join("DRAINING"),
+        model: entry.name(),
+        secrets,
         cancellation,
     };
     let done = (|| {

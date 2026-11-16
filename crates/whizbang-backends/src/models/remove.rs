@@ -1,6 +1,10 @@
 //! Removal of a model (ADR 0017, "Removal"): the model drains, then it is removed.
 //!
-//! A removal marks the model as draining, under the directory's lock: from then no
+//! A removal takes the remover's lock of the model, alone, and keeps it for as long
+//! as its mark is set: a mark is live only while its remover is ([`draining`]), so
+//! the mark of a remover that died stops nobody. It marks the model as draining,
+//! under the directory's lock, and raises the model's count of removals under the
+//! same lock ([`removals`]): from then no
 //! hold on it is given and no install of it publishes. It takes the model's lock, by
 //! trying until its deadline, and says `removing` in the status record. It waits for
 //! the holds by trying each hold file alone, again and again until the same
@@ -68,22 +72,157 @@ impl Mark {
     }
 }
 
-/// Whether the model is marked as draining, read strictly by one who holds no lock:
-/// no when there is no mark, yes when there is one as whizbang writes it. Anything
-/// else at the mark's name is refused, never followed and never guessed at.
+/// Whether a remover of the model is alive: a try for a share of the remover's
+/// lock (`models/<model>/REMOVER`), which a remover holds alone for as long as its
+/// mark is set. The share is let go at once. Two that ask at the same moment are
+/// each given a share, so neither reads the other as a remover; a lock file that
+/// was never made is no remover's.
+fn remover_lives(dir: &ModelsDir, folder: &Path) -> io::Result<bool> {
+    match dir.fs().try_share(&folder.join("REMOVER")) {
+        Ok(Some(_share)) => Ok(false),
+        Ok(None) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether the model is draining: whether a mark is set **and its remover is
+/// alive**. This is the one question everybody asks of a mark: a hold, a
+/// publication, an install where it asks its cancellation, and whoever lists models
+/// (the plan of checkpoint 1C, decision D6).
 ///
-/// **Who decides by the mark does not ask this.** A hold and a publication take
-/// anything at the mark's name for a mark, so that a mark that cannot be read still
-/// stops them.
+/// - Nothing at the mark's name: no. The remover's lock is not tried for.
+/// - Something there, and no remover has the remover's lock: no, whatever is
+///   there. It is what a remover that died left, and it stops nobody.
+/// - Something there under a remover that is alive: yes when it is a mark as
+///   whizbang writes it. Anything else is refused, never followed and never
+///   guessed at; whoever decides by the mark stops for a refusal as for a mark
+///   ([`stops`]), so a live remover's mark that cannot be read still stops them.
 pub fn draining(dir: &ModelsDir, model: &ModelName, secrets: &Secrets) -> Result<bool, Refused> {
     let what = What::Mark;
-    let unreadable = |kind| Refused::Unreadable { what, kind };
-    match dir.read(&dir.model(model).join("DRAINING"), DRAINING_MAX_BYTES) {
-        Ok(Read::Bytes(bytes)) => Mark::parse(&bytes, secrets).map(|_| true),
-        Ok(Read::Missing) => Ok(false),
-        Ok(Read::NotAFile) => Err(unreadable(io::ErrorKind::InvalidData)),
-        Err(error) => Err(unreadable(error.kind())),
+    let unreadable = |error: io::Error| Refused::Unreadable {
+        what,
+        kind: error.kind(),
+    };
+    let folder = dir.model(model);
+    let mark = folder.join("DRAINING");
+    if !dir.fs().exists(&mark).map_err(unreadable)? {
+        return Ok(false);
     }
+    if !remover_lives(dir, &folder).map_err(unreadable)? {
+        return Ok(false);
+    }
+    match dir.read(&mark, DRAINING_MAX_BYTES) {
+        Ok(Read::Bytes(bytes)) => Mark::parse(&bytes, secrets).map(|_| true),
+        // Taken off since the look: its remover is ending.
+        Ok(Read::Missing) => Ok(false),
+        Ok(Read::NotAFile) => Err(unreadable(io::ErrorKind::InvalidData.into())),
+        Err(error) => Err(unreadable(error)),
+    }
+}
+
+/// [`draining`], for one who decides by the answer: a hold, a publication, an
+/// install's look where it asks its cancellation. What is at the mark's name under
+/// a live remover and cannot be read as a mark stops them as a mark does; a file
+/// system that refused is an error, and has not said "draining".
+pub(super) fn stops(dir: &ModelsDir, model: &ModelName, secrets: &Secrets) -> io::Result<bool> {
+    match draining(dir, model, secrets) {
+        Ok(answer) => Ok(answer),
+        Err(Refused::Unreadable { kind, .. }) if kind != io::ErrorKind::InvalidData => {
+            Err(kind.into())
+        }
+        Err(_) => Ok(true),
+    }
+}
+
+/// The format of a count of removals.
+pub const REMOVALS_FORMAT: &str = "removals/1";
+
+/// The most bytes a count of removals may be. The longest whizbang writes is 52.
+pub const REMOVALS_MAX_BYTES: u64 = 64;
+
+/// The count of removals as it is written, `models/<model>/REMOVALS`: compact JSON,
+/// the format and then the count, nothing after the brace.
+fn count_bytes(count: u64) -> Vec<u8> {
+    format!(r#"{{"format":"{REMOVALS_FORMAT}","count":{count}}}"#).into_bytes()
+}
+
+/// Reads these bytes as a count of removals, as every record here is read.
+fn parse_count(bytes: &[u8], secrets: &Secrets) -> Result<u64, Refused> {
+    let what = What::Removals;
+    let json = json::parse(what, bytes, REMOVALS_MAX_BYTES, secrets)?;
+    let mut top = Object::of(json, "")?;
+    if top.text("format")? != REMOVALS_FORMAT {
+        return Err(Refused::at("format", Rule::Format));
+    }
+    let count = top.whole("count")?;
+    top.done()?;
+    if count_bytes(count) != bytes {
+        return Err(Refused::OtherForm { what });
+    }
+    Ok(count)
+}
+
+/// How many removals of the model have set their mark: the model's count of
+/// removals, which each removal raises under the directory's lock when it sets its
+/// mark, and which nothing lowers (the plan of checkpoint 1C, decision D5). Nothing
+/// when no removal of the model ever did. It may be read by one who holds no lock:
+/// the count is replaced by a rename, so a reader finds the old one or the new.
+///
+/// What is at the count's name and is no count is refused, never followed and
+/// never guessed at.
+pub fn removals(dir: &ModelsDir, model: &ModelName, secrets: &Secrets) -> Result<u64, Refused> {
+    let what = What::Removals;
+    match dir.read(&dir.model(model).join("REMOVALS"), REMOVALS_MAX_BYTES) {
+        Ok(Read::Bytes(bytes)) => parse_count(&bytes, secrets),
+        Ok(Read::Missing) => Ok(0),
+        Ok(Read::NotAFile) => Err(Refused::Unreadable {
+            what,
+            kind: io::ErrorKind::InvalidData,
+        }),
+        Err(error) => Err(Refused::Unreadable {
+            what,
+            kind: error.kind(),
+        }),
+    }
+}
+
+/// [`removals`], for a hold, which reads it under the directory's lock: a count
+/// that cannot be read as one is `None`, and a file system that refused is an error.
+pub(super) fn removals_read(
+    dir: &ModelsDir,
+    model: &ModelName,
+    secrets: &Secrets,
+) -> io::Result<Option<u64>> {
+    match removals(dir, model, secrets) {
+        Ok(count) => Ok(Some(count)),
+        Err(Refused::Unreadable { kind, .. }) if kind != io::ErrorKind::InvalidData => {
+            Err(kind.into())
+        }
+        Err(_) => Ok(None),
+    }
+}
+
+/// Raises the model's count of removals by one, for a remover that holds the
+/// directory's lock and has just set its mark. The new count is written whole
+/// beside the old one and renamed over it. It is given no sync of its own: a
+/// crash that loses it has ended every process that held the old one. A count
+/// that cannot be read as one is counted from nothing again.
+fn raise(dir: &ModelsDir, model: &ModelName, secrets: &Secrets) -> io::Result<()> {
+    let folder = dir.model(model);
+    let (count, new) = (folder.join("REMOVALS"), folder.join("REMOVALS.new"));
+    let was = match removals_read(dir, model, secrets)? {
+        Some(was) => was,
+        None => {
+            // What is there may be no file at all, which a rename does not replace.
+            dir.remove(&count)?;
+            0
+        }
+    };
+    dir.remove(&new)?;
+    dir.fs()
+        .write_new(&new, &count_bytes(was.saturating_add(1)))?;
+    dir.fs().rename(&new, &count)
 }
 
 /// Why a model was not removed. Fixed words, and no path.
@@ -152,15 +291,22 @@ impl Removed {
 /// Removes a model: marks it as draining, waits for the holds on it until
 /// `patience` of this clock has passed, and clears its pointer.
 ///
+/// - **The remover's lock comes before the mark,** taken alone by trying until the
+///   deadline, with `pause` between two tries, and kept until the mark is taken
+///   off: while it is held the mark is live ([`draining`]), and when its process
+///   dies the mark stops nobody. Not given by the deadline, because another
+///   removal of the model is alive, the answer is [`RemoveRefused::Busy`], and no
+///   mark was set and no count raised.
 /// - **A folder of the model's layout that is a link is refused**
 ///   ([`RemoveRefused::Linked`]): looked for before the mark, again under the
 ///   model's lock before anything is listed, again when the holds have been
 ///   waited for and before the pointer is cleared, and once more just before
 ///   the deleting. Nothing is deleted through it.
-/// - **The mark comes first,** under the directory's lock, when none is there. A
-///   mark is the removal's own when it made it or has the model's lock, and only
-///   its own mark is taken off at the end. A model with no folder
-///   was never installed: it is not marked, and nothing is made.
+/// - **The mark comes next,** under the directory's lock, and under the same lock
+///   the model's count of removals is raised ([`removals`]). What was at the
+///   mark's name is a dead remover's, and is replaced: with the remover's lock
+///   the mark is the removal's own, and it is taken off at the end. A model with
+///   no folder was never installed: it is not marked, and nothing is made.
 /// - **The model's lock is tried for until the deadline;** `pause` is called once
 ///   between two tries, and nothing here sleeps. Not given by then, the answer is
 ///   [`RemoveRefused::Busy`].
@@ -200,16 +346,29 @@ pub fn remove(
     }
     // A wait too long for the clock to count is a wait with no end.
     let deadline = clock.now().checked_add(patience);
-    // Whether the mark is this removal's own: it made it where none was, or it has
-    // the model's lock. A mark it found is another's, of the removal that has the
-    // lock or of a remover that died, and is left when this one ends busy.
-    let mut own = mark_if_none(dir, &folder)?;
-    let ended = drain(dir, model, clock, deadline, secrets, pause, &mut own);
-    // However it ended. A mark that cannot be taken off now is taken off by the
-    // next to take the model's lock; it does not change what this one answers.
-    if own {
-        let _ = clear_mark(dir, &folder);
-    }
+    // The remover's lock, alone, from before the mark is set until it is taken
+    // off: a mark is live only while this is held. Another removal of the model
+    // has it, or one who asks whether a mark is live has a share of it for a
+    // moment: tried again until the deadline. It is never removed, as no lock
+    // file is.
+    let remover = folder.join("REMOVER");
+    let _remover = loop {
+        if let Some(lock) = dir.fs().hold_lock_file(&remover, true)? {
+            break lock;
+        }
+        if past(clock, deadline) {
+            return Err(RemoveRefused::Busy);
+        }
+        pause();
+    };
+    // With the remover's lock whatever is at the mark's name is this removal's
+    // own: a remover that died left it, and it is replaced.
+    let ended = set_mark(dir, model, secrets)
+        .and_then(|()| drain(dir, model, clock, deadline, secrets, pause));
+    // However it ended. A mark that cannot be taken off now is a dead remover's
+    // once this one's lock is let go, and stops nobody; it does not change what
+    // this one answers.
+    let _ = clear_mark(dir, &folder);
     ended
 }
 
@@ -218,21 +377,28 @@ fn past(clock: &dyn Clock, deadline: Option<Instant>) -> bool {
     deadline.is_some_and(|deadline| clock.now() >= deadline)
 }
 
-/// Sets the model's mark, under the directory's lock. Whatever was at its name is
-/// replaced: nobody decides by the mark but under that lock.
-fn set_mark(dir: &ModelsDir, folder: &Path) -> Result<(), RemoveRefused> {
-    let mark = folder.join("DRAINING");
+/// Sets the model's mark, under the directory's lock, and under the same lock
+/// raises the model's count of removals: no mark is written without the count
+/// moving. Whatever was at the mark's name is replaced.
+fn set_mark(dir: &ModelsDir, model: &ModelName, secrets: &Secrets) -> Result<(), RemoveRefused> {
+    let mark = dir.model(model).join("DRAINING");
     let _directory = dir.lock()?.ok_or(RemoveRefused::DirectoryBusy)?;
     dir.remove(&mark)?;
     dir.fs().write_new(&mark, &Mark.to_bytes())?;
+    raise(dir, model, secrets)?;
     Ok(())
 }
 
-/// Sets the model's mark when nothing is at its name, and says whether it did.
-/// Looked for again under the directory's lock: of two removals that begin
-/// together, one makes the mark and the other finds it.
-fn mark_if_none(dir: &ModelsDir, folder: &Path) -> Result<bool, RemoveRefused> {
-    let mark = folder.join("DRAINING");
+/// Sets the model's mark when nothing is at its name, with its count raised, and
+/// says whether it did. Looked for again under the directory's lock. For a
+/// removal whose mark was taken off under it: by a person, or by a version of
+/// whizbang that could not tell a live remover's mark from a dead one's.
+fn mark_if_none(
+    dir: &ModelsDir,
+    model: &ModelName,
+    secrets: &Secrets,
+) -> Result<bool, RemoveRefused> {
+    let mark = dir.model(model).join("DRAINING");
     if dir.fs().exists(&mark)? {
         return Ok(false);
     }
@@ -241,7 +407,14 @@ fn mark_if_none(dir: &ModelsDir, folder: &Path) -> Result<bool, RemoveRefused> {
         return Ok(false);
     }
     dir.fs().write_new(&mark, &Mark.to_bytes())?;
+    raise(dir, model, secrets)?;
     Ok(true)
+}
+
+/// Whether what is at the mark's name is the mark as whizbang writes it.
+fn mark_is_written(dir: &ModelsDir, model: &ModelName) -> bool {
+    let mark = dir.model(model).join("DRAINING");
+    matches!(dir.read(&mark, DRAINING_MAX_BYTES), Ok(Read::Bytes(bytes)) if bytes == Mark.to_bytes())
 }
 
 /// Takes the model's mark off, under the directory's lock, and makes that durable.
@@ -261,11 +434,9 @@ fn drain(
     deadline: Option<Instant>,
     secrets: &Secrets,
     pause: &mut dyn FnMut(),
-    own: &mut bool,
 ) -> Result<Removed, RemoveRefused> {
     let fs = dir.fs();
     let lock = dir.model(name).join("LOCK");
-    let folder = dir.model(name);
     let _lock = loop {
         if let Some(lock) = fs.hold_lock_file(&lock, true)? {
             break lock;
@@ -273,20 +444,18 @@ fn drain(
         if past(clock, deadline) {
             return Err(RemoveRefused::Busy);
         }
-        // Whoever has the lock may have taken the mark off as one a dead remover
-        // left: it is set again, so that an install that is running reads it.
-        *own |= mark_if_none(dir, &folder)?;
+        // A mark that is gone is set again, so that an install that is running
+        // reads it.
+        mark_if_none(dir, name, secrets)?;
         pause();
     };
     // Looked at again under the lock, which may have been waited for: nothing is
     // listed or deleted through a folder of the layout that is a link.
     dir.unlinked(name)?;
-    // And with the lock the mark is this removal's own, whoever made it: what is
-    // there and is no mark as it is written is replaced.
-    if !matches!(draining(dir, name, secrets), Ok(true)) {
-        set_mark(dir, &folder)?;
+    // What is there and is no mark as it is written is replaced.
+    if !mark_is_written(dir, name) {
+        set_mark(dir, name, secrets)?;
     }
-    *own = true;
     let model = Model::of(dir, name, secrets);
     // What the status said before: a removal that changes no pointer puts it back.
     let before = status::status(dir, name, secrets).ok().flatten();
@@ -329,8 +498,8 @@ fn drain(
         };
         names.extend(was.map(|id| OsString::from(id.hex())));
         let mut alone: Vec<Box<dyn Held>> = Vec::new();
-        for name in &names {
-            let file = model.holds().join(name);
+        for installation in &names {
+            let file = model.holds().join(installation);
             loop {
                 match fs.try_alone(&file) {
                     Ok(Some(held)) => {
@@ -339,9 +508,8 @@ fn drain(
                     }
                     Ok(None) if past(clock, deadline) => return Err(RemoveRefused::Held),
                     Ok(None) => {
-                        // A second removal that made the mark before this one began
-                        // takes it off when it ends busy: it is set again.
-                        mark_if_none(dir, &folder)?;
+                        // A mark that is gone is set again.
+                        mark_if_none(dir, name, secrets)?;
                         pause();
                     }
                     // No hold file: nothing was ever held there.

@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use whizbang_backends::models::{
     Current, Hold, HoldRefused, Holds, InstallRefused, InstallationRecord, ModelName, ModelsDir,
+    RemoveRefused,
 };
 use whizbang_core::store::fs::{Fs, Held, RealFs};
 use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
@@ -19,8 +20,9 @@ use super::publishing::{
     entry_at, first, flip, folder_of, hold_file_of, installations, installed, installing, is_whole,
     reading, record_of, second, tiny,
 };
+use super::remove::{Hand, SECOND, removing};
 use super::staging::{names_under, serving_both};
-use super::{MARKER, model, none, secrets};
+use super::{MARKER, live_remover, model, none, secrets};
 
 /// The holds of a process of its own over this directory, on the real file system.
 pub(super) fn holds_over(root: &Path) -> Holds {
@@ -240,7 +242,9 @@ fn a_hold_is_refused_while_the_mark_of_draining_is_set_whatever_the_count() {
     let record = installed(root, &second());
     let holds = holds_over(root);
     let kept = hold(&holds, &record).unwrap();
-    // The mark, as a removal sets it (task M5b): read as there or not there.
+    // The mark of a remover that is alive (it has the remover's lock): whatever is
+    // at the mark's name, read as there or not there.
+    let remover = live_remover(root);
     let mark = tiny(root).join("DRAINING");
     std::fs::write(&mark, b"").unwrap();
     assert_eq!(hold(&holds, &record).unwrap_err(), HoldRefused::Draining);
@@ -255,7 +259,7 @@ fn a_hold_is_refused_while_the_mark_of_draining_is_set_whatever_the_count() {
     std::fs::remove_file(&mark).unwrap();
     let next = hold(&holds, &record).unwrap();
     assert_eq!(count(&holds, &record), 2);
-    drop((kept, next));
+    drop((kept, next, remover));
 }
 
 #[test]
@@ -439,4 +443,85 @@ fn the_last_hold_let_go_and_a_new_one_taken_by_two_threads_never_leave_a_hold_wi
     }
     assert_eq!(count(&holds, &record), 0);
     assert!(alone(&root, &record).is_some());
+}
+
+// --- the count of removals (plan of 1C, decision D5; task P5a) -----------------------------------
+
+#[test]
+fn a_hold_returns_the_count_of_removals_it_read_under_the_directorys_lock() {
+    let scratch = Scratch::new("holds-removals");
+    let root = scratch.path().to_path_buf();
+    let record = installed(&root, &second());
+    let holds = holds_over(&root);
+    // No removal of the model ever set its mark: nothing.
+    let before = hold(&holds, &record).unwrap();
+    assert_eq!(before.removals(), 0);
+    // A removal sets its mark and times out, the hold kept: the hold has the
+    // count it read, and one given after the removal has the count as it is now.
+    let clock = Hand::new();
+    let refused = removing(Arc::new(RealFs), &root, &clock, SECOND, &mut || {
+        clock.advance(SECOND);
+    });
+    assert_eq!(refused, Err(RemoveRefused::Held));
+    let after = hold(&holds, &record).unwrap();
+    assert_eq!((before.removals(), after.removals()), (0, 1));
+    // It is the hold's own reading, not its process's: a second process reads the
+    // same, and a second removal moves it for the next hold alone.
+    let refused = removing(Arc::new(RealFs), &root, &clock, SECOND, &mut || {
+        clock.advance(SECOND);
+    });
+    assert_eq!(refused, Err(RemoveRefused::Held));
+    let other = hold(&holds_over(&root), &record).unwrap();
+    let third = hold(&holds, &record).unwrap();
+    assert_eq!(count(&holds, &record), 3);
+    assert_eq!(
+        (
+            before.removals(),
+            after.removals(),
+            third.removals(),
+            other.removals()
+        ),
+        (0, 1, 2, 2)
+    );
+    drop((before, after, third, other));
+    // The count is read under the directory's lock, after the mark and the pointer
+    // and before the share of the hold file is tried for.
+    let (pointer, counted) = (tiny(&root).join("CURRENT"), tiny(&root).join("REMOVALS"));
+    let fs = Arc::new(ShimFs::new());
+    let at = root.clone();
+    fs.pause_before(4, move || {
+        let directory = RealFs.hold_lock_file(&at.join("LOCK"), false).unwrap();
+        assert!(directory.is_none());
+    });
+    let over = Holds::over(ModelsDir::at(fs.clone(), &root));
+    let held = hold(&over, &record).unwrap();
+    assert_eq!(held.removals(), 2);
+    assert_eq!(
+        fs.events(),
+        [
+            Event::Lock(root.join("LOCK")),
+            Event::Open(pointer.clone()),
+            Event::Read(pointer),
+            Event::Open(counted.clone()),
+            Event::Read(counted.clone()),
+            Event::TryShare(hold_file_of(&root, &record)),
+        ]
+    );
+    drop(held);
+    // A count that cannot be read as one: no hold is given on a model whose
+    // removals cannot be told, nothing is made, and no refusal shows a path.
+    let names = names_under(&root);
+    std::fs::write(&counted, b"two").unwrap();
+    let refused = hold(&holds, &record).unwrap_err();
+    assert_eq!(refused, HoldRefused::Damaged);
+    assert_eq!(count(&holds, &record), 0);
+    assert_eq!(names_under(&root), names);
+    // The next removal that sets its mark writes a count again, and a hold is given.
+    let kept = RealFs.try_share(&hold_file_of(&root, &record)).unwrap();
+    let refused = removing(Arc::new(RealFs), &root, &clock, SECOND, &mut || {
+        clock.advance(SECOND);
+    });
+    assert_eq!(refused, Err(RemoveRefused::Held));
+    drop(kept);
+    assert_eq!(hold(&holds, &record).unwrap().removals(), 1);
 }
