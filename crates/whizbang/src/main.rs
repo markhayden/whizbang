@@ -1,14 +1,18 @@
 //! The `whizbang` binary: argument parsing and wiring only.
 
+mod backends;
 mod import;
+mod models;
 mod rascal;
 #[cfg(test)]
 mod recovering;
 mod runs;
+mod setup;
 mod spend;
 #[cfg(test)]
 mod spending;
 mod store;
+mod stub;
 
 use std::process::ExitCode;
 
@@ -59,6 +63,15 @@ enum Command {
         #[command(subcommand)]
         command: spend::Command,
     },
+    /// Models: what is installed, and getting and removing one. Not built yet: it says
+    /// so and exits 1, whatever it is asked.
+    Models(stub::Asked),
+    /// Backends: whether each configured one is ready. Not built yet: it says so and
+    /// exits 1, whatever it is asked.
+    Backends(stub::Asked),
+    /// Setup: installing the Python pack. Not built yet: it says so and exits 1,
+    /// whatever it is asked.
+    Setup(stub::Asked),
 }
 
 fn describe(json: bool, pretty: bool) -> Result<String, String> {
@@ -155,6 +168,18 @@ fn main() -> ExitCode {
             Err(complaint) => complain(&complaint),
         },
         Command::Spend { command } => match spend::run(&command) {
+            Ok(text) => emit(text.as_bytes()),
+            Err(complaint) => complain(&complaint),
+        },
+        Command::Models(_) => match models::run() {
+            Ok(text) => emit(text.as_bytes()),
+            Err(complaint) => complain(&complaint),
+        },
+        Command::Backends(_) => match backends::run() {
+            Ok(text) => emit(text.as_bytes()),
+            Err(complaint) => complain(&complaint),
+        },
+        Command::Setup(_) => match setup::run() {
             Ok(text) => emit(text.as_bytes()),
             Err(complaint) => complain(&complaint),
         },

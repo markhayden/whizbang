@@ -9,6 +9,7 @@ mod rascal;
 mod runs;
 mod spend;
 mod store;
+mod stubs;
 mod wired;
 mod writer;
 

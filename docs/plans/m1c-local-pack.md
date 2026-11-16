@@ -711,9 +711,9 @@ minutes this closes; its half on the fast tier's test time stays, for the owner.
 
 **Depends on:** C0. It contacts nothing and needs no approval.
 
-- [ ] The module roots `pack/` and `net/` in `whizbang-backends`, and the subcommands
+- [x] The module roots `pack/` and `net/` in `whizbang-backends`, and the subcommands
       `models`, `backends` and `setup` as stubs that say they are not built.
-- [ ] The folder `pack/conformance/vectors/`, empty but for a line saying what it holds.
+- [x] The folder `pack/conformance/vectors/`, empty but for a line saying what it holds.
 
 **Done when** `just check` passes; each stub says it is not built and exits with an
 error; `whizbang describe` and the generated reference are unchanged. **Size:** small.
