@@ -1,6 +1,6 @@
 # Plan: checkpoint 1C, the local pack
 
-Draft 1, 2026-11-15. From `SPEC.md` sections 4, 5, 10, 13, 16 and 17. This file is the
+Draft 2, 2026-11-15. From `SPEC.md` sections 4, 5, 10, 13, 16 and 17. This file is the
 task list. Written from `main` at the tag `m1b` (commit 75f7dd6): the code, ADRs 0001 to
 0019, `docs/plans/m1b-note.md` and the carry-over list as the exit check of 1B left it.
 
@@ -59,13 +59,16 @@ JSON-RPC. Both installed the pack from an offline bundle with `uv sync --frozen`
 
 ## Decisions this plan makes
 
-**D1. The protocol is whizbang's own, not MCP.** `SPEC.md` section 17 replaces the pack
-over MCP, so neither old client survives as a client: rascal's use of a library and
-squint's hand-written one are both dropped for the pack. What is kept from them is
-behaviour, ported as tests: an environment for the child that is cleared and then given
-a short allow-list; the worker's error output read line by line, bounded and redacted;
-stopping a child by closing its input, then killing it. The server side of the choice is
-milestone 2's.
+**D1. The protocol is whizbang's own, not MCP, and the client that survives is squint's
+kind.** `SPEC.md` section 17 replaces the pack over MCP and asks that one of the two old
+clients survive for the pack. Rascal's use of a library does not: the library speaks
+MCP. What survives is squint's hand-written, synchronous client: a thread that reads
+and routes answers by request id, a cancel sent at a deadline, the worker's error
+output read line by line, bounded and redacted, and a child stopped by closing its
+input and then killing it. It is ported to the new frames with the tests that guard
+those behaviours (task P3); its JSON-RPC and MCP parts are not. From rascal comes one
+behaviour, as a test: the child's environment is cleared and given a short allow-list.
+The server side of the choice is milestone 2's.
 
 **D2. What the protocol is,** within section 4's constraints; task P1's ADR fixes the
 bytes.
@@ -84,7 +87,10 @@ bytes.
   file path: the worker is told where the models directory is when it is started, and a
   `load` names a model and an installation's identity.
 - Every bound is computed from the request before a byte is read: a reader refuses a
-  frame over its bound without allocating for it.
+  frame over its bound without allocating for it. A request's bound alone is not
+  enough: 64 queries of 64 instances of a large picture is hundreds of gigabytes of
+  planes. So one result also has a ceiling of its own, 1 GiB of payload, and a result
+  over it ends its call as `too_large`.
 - The HTTP codec is decided on paper in the same ADR (the same frames as a request
   body and a streamed response body) and built at milestone 6. The behavioural half of
   the conformance suite is written against a transport, so milestone 6 runs it again.
@@ -99,20 +105,28 @@ and ignores cancel), `fake-exit` (the process ends inside a call), `fake-big` (a
 over its bound), `fake-bad` (a malformed payload). The shipped catalogue names none of
 them.
 
-**D4. The queue is on the Rust side.** "The worker" is a supervisor in
-`whizbang-backends` and the Python process it owns. The supervisor holds the bounded
+**D4. The queue is on the Rust side, and there is one supervisor in a process.** "The
+worker" is a supervisor in `whizbang-backends` and the Python process it owns. The
+binary's wiring makes the supervisor once; every backend the kind `pack` makes, under
+every snapshot of the config, shares it. So one whizbang process has at most one
+worker, as section 4 says. The supervisor holds the bounded
 queue (16 waiting requests; the 17th is refused), sends the process one model call at a
 time, owns the deadline and the restart, and is tested with the injected clock. The
 Python process holds one resident model, one call, and a flag that a `cancel` sets. One
 place for policy, and nothing in Python to bound but one call.
 
-**D5. Removal and the queue meet at the mark.** A request takes its lease before it
-enters the queue (ADR 0015). When the supervisor takes the next request off the queue it
-reads the model's draining mark (`models::draining`); a request for a draining model ends
-there as refused, its hold is let go, and the resident model is unloaded. So a removal,
-from this process or another, refuses new requests (the lease, 1B), cancels queued ones
-(here), waits for the current call (its hold), and answers busy at its deadline with the
-mark taken off (1B).
+**D5. Removal reaches the queue two ways.** A request takes its lease before it enters
+the queue (ADR 0015). A removal in the same process tells the supervisor, which at once
+ends every queued request for that model as refused, lets their holds go, and unloads
+the model if it is resident and idle. A removal in another process cannot tell it, so
+the supervisor also reads the model's draining mark (`models::draining`): for each
+queued request every 250 ms of the injected clock while it waits, and when a request is
+taken off the queue. Either way a removal refuses new requests (the lease, 1B), cancels
+queued ones within that interval even while another call holds the worker, waits for
+the current call (its hold), and answers busy at its deadline with the mark taken off
+(1B). One limit, stated: an idle worker in another process keeps a removed model in
+memory until its next request or its end; the lease refuses every request for it, so
+nothing is answered from it.
 
 **D6. A mark is live only while its remover is.** The remover holds a lock for as long
 as its mark is set; a hold that meets a mark whose lock is free takes the request as if
@@ -124,7 +138,11 @@ patience, and a remover that is interrupted no longer strands the model.
 for a local model; never at start-up, and never for a run that needs none. It stops the
 worker when the supervisor is dropped: it closes the worker's input, waits by the clock,
 then kills and waits. The worker itself exits when its input closes, so a whizbang
-process that dies takes its worker with it. Whizbang still handles no signal: the row on
+process that dies takes its worker with it. Every wait on a worker is finite, on the injected clock, whether or not a caller gave a
+deadline: 60 s to start and say hello, 120 s for a `load`, a call's own deadline or else
+the kind's limit for a call (a setting, 120 s by default), 5 s for a cancelled call to
+stop, 5 s to end after its input closes. Past any of them the worker is killed.
+Whizbang still handles no signal: the row on
 the store's lock and a child being started is closed by a test that the worker is handed
 no descriptor of the store, and by a line accepting the moment for Ctrl-C.
 
@@ -140,9 +158,10 @@ box requests and CUDA.
 | C. MLX port | Documented by its author | Boxes yes, points not stated | No | Fails the bar: it would need a second runtime on Linux |
 | D. Meta's own package | No: CUDA is a stated prerequisite | Yes | Yes | Fails the bar until the open pull request is merged |
 
-The recommendation is A, and the plan's later tasks are written for it. If A fails on
-the Mac, R1 tries B. If both fail, the task stops and the owner decides; a candidate not
-in this table is a change to this plan.
+The recommendation is A, and the tasks are written for A alone: N5 installs A's files
+and Y1 locks A's packages. If A fails on the Mac, R1 stops and says so. B is then a
+change to this plan, with its own tasks (an export, its files and their hosting, a
+lock) and the review rounds; so is any candidate not in this table.
 
 "On the Mac's GPU" is shown with the CPU fallback off (`PYTORCH_ENABLE_MPS_FALLBACK`
 unset) and the device the model reports. If A runs only with the fallback on, R1 records
@@ -209,17 +228,19 @@ are run one way). A resident worker and a GPU runtime add these.
 
 | What | Bound | Held by |
 |---|---|---|
-| Worker processes | One for each supervisor. A test file starts at most one at a time; the tests that start one are a group in `.config/nextest.toml`, `pack-workers`, two at a time | The supervisor; the group |
+| Worker processes | One in a whizbang process (D4). A test file starts at most one at a time; the tests that start one are a group in `.config/nextest.toml`, `pack-workers`, two at a time | The supervisor; the group |
 | A worker a test started | Killed and waited for on every path, a panic included | One guard type in the test kit (task P3), whose drop kills and waits; `just check` refuses a test that starts the pack another way |
 | A worker nobody waits for | Ends by itself: at the end of its input, and at `--max-lifetime-s`, which every test passes (120) | The worker; a test of each |
-| Threads in the worker | Three of the worker's own (reader, call, main). The runtime's pools are set by the supervisor's environment: 8 threads at most for each pool | The worker reports its count in `hello` and after each call; over 64 with a fake model fails the conformance suite |
-| Threads in the worker, real model | 200 at most | `scripts/model-evidence.sh` reads the process's count from the system once after each call and fails over 200 |
+| Threads in the worker | Three of the worker's own (reader, call, main). The runtime's pools are held to 8 threads each, before the runtime is imported: by the environment the supervisor sets (`OMP_NUM_THREADS`, `MKL_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS`, `TOKENIZERS_PARALLELISM=false`) and by the adapter's own calls to the runtime; R1 lists every pool the chosen runtime has, from its documentation | The worker reports its count in `hello` and after each call; over 64 with a fake model fails the conformance suite |
+| Threads in the worker, real model | 200 at most, enforced while it runs | R1's script and `just test-models` run under `scripts/thread-guard.sh` with its limit set to 200: it counts the command and everything it started, during the load and the call, and kills on the first count over. The evidence record holds the peak it saw |
 | Threads in whizbang | Two for each worker (its output, its error output), through the supervisor | The supervisor's tests count them |
 | GPU memory | The allocator's high watermark, set by the supervisor below 1.0 of the device's recommended maximum; the value is R1's | The environment the supervisor sets; the evidence record's peak |
+| Time, a worker | The limits of D7, each finite with no caller's deadline | The supervisor; a test of each |
+| Memory, one result | 1 GiB of payload (D2), refused before it is allocated; the adapter cuts candidates to the most instances asked before it makes a full-size plane | P1, R2 |
 | Time, fast tier | A call's deadline comes from the injected clock; one test 30 s, the suite 180 s, as now. The pack's Python tests: 10 s in all | `scripts/timing.sh` |
 | Time, model tier | Load 120 s, one request 60 s, the recipe 10 minutes | The supervisor's deadlines; the recipe |
 | Disk | One download of about 3.5 GB into a models directory outside the repo; one environment for the runtime, its size measured by R1 | Tasks N5 and Y1 only |
-| Network | No test of the fast tier leaves the machine. The client's tests use a listener on loopback, made through the test kit, that serves a fixed number of connections | Task N1 |
+| Network | No test of the fast tier leaves the machine. The client's tests use a listener on loopback, made through the test kit, that serves a fixed number of connections. The client has a limit to connect (10 s) and a limit between two reads (30 s); a test passes its own, under a second | Task N1 |
 
 What kills a worker, in full: the end of its input; the supervisor at a deadline or when
 it is dropped; its own lifetime limit in a test; and the test kit's guard. Nothing else
@@ -276,7 +297,7 @@ Two strands run side by side after C1 and join at P6.
 
 | Strand | Tasks | Owns |
 |---|---|---|
-| Base | C0, C0b, C1, then P6, P7, R1, R2, Z1 | Root files; `crates/whizbang/src/`; the record's schema; `.github/`; the justfile |
+| Base | C0, C0b, C1, then P6, P7a, P7b, R1, R2, Z1 | Root files; `crates/whizbang/src/`; the record's schema; `.github/`; the justfile |
 | Protocol and worker | P1 to P5 | `crates/whizbang-backends/src/pack/`; `pack/`; the test kit's guard |
 | Network and models | N1 to N5, Y1 | `crates/whizbang-backends/src/net/` and `models/`; the catalogue; `whizbang models`, `backends`, `setup` |
 
@@ -292,17 +313,19 @@ Two strands run side by side after C1 and join at P6.
 | P5 Removal against the queue; a mark is live only while its remover is | M | P4 |
 | N1 The network client behind the checked ways out | M | C1 |
 | N2 A models directory that is its owner's; a lock that waits | S | C1 |
-| N3 `whizbang models list`, `get`, `remove` | M | N1, N2 |
-| N4 A download's credential | S | N3 |
+| N3a The catalogue's second version, the fifth reason, where the directory is | S | N2 |
+| N3b `whizbang models list`, `get`, `remove` | M | N1, N3a |
+| N4 A download's credential | S | N3b |
 | N5 The shipped catalogue, and SAM 3 installed on the Mac | M | N4 |
 | Y1 `whizbang setup`, and the lock file | M | P3 |
-| P6 The kind `pack`: a local segmenter through the executor | M | P5, N3 |
-| P7 `run/4`: the device, and `backends status` | M | P6 |
+| P6 The kind `pack`: a local segmenter through the executor | M | P5, N3b |
+| P7a `run/4`: the device and the cache | S | P6 |
+| P7b `whizbang backends status` | S | P7a, N1 |
 | R1 The runtime, chosen | M | N5, Y1 |
-| R2 SAM 3 answers a phrase on the Mac's GPU | M | R1, P7 |
+| R2 SAM 3 answers a phrase on the Mac's GPU | M | R1, P7b |
 | Z1 Exit check | S | all |
 
-Nineteen tasks, one pull request each.
+Twenty-one tasks, one pull request each.
 
 ## Commit strategy
 
@@ -315,7 +338,7 @@ Nineteen tasks, one pull request each.
   Until N5 merges the shipped catalogue is empty, so `models get` installs nothing.
   Every state of `main` between tasks passes `just check`.
 - **Rollback checkpoints.** The tag `m1b` is the first. Two tags are added on the way,
-  each a state worth returning to: `m1c-fakes` on the merge of P7 (the protocol, the
+  each a state worth returning to: `m1c-fakes` on the merge of P7b (the protocol, the
   worker, the commands and the kind, all against fakes; nothing downloaded), and `m1c`
   at the exit check.
 - **If a task shows a decision here is wrong,** the decision is changed in this file
@@ -330,7 +353,7 @@ Nineteen tasks, one pull request each.
 | N1 to N4 | Revert the merge. A models directory a test wrote is in a temporary folder |
 | N5 | Revert the merge: the catalogue is empty again. The installed files stay in the owner's models directory until `whizbang models remove sam3`, or the folder is deleted by the owner |
 | Y1 | Revert the merge. The environment `whizbang setup` made is one folder, named in the task's hand-back |
-| P6, P7 | Revert the merge: the binary registers no kind. A store that holds a `run/4` record is discarded with P7; none is kept before the tag |
+| P6, P7a, P7b | Revert the merge: the binary registers no kind. A store that holds a `run/4` record is discarded with P7a; none is kept before the tag |
 | R1, R2 | Revert the merge; the ADR and the evidence record go with it |
 | Z1 | The note reverts; the tag stays and a corrected checkpoint is `m1c.1` |
 
@@ -376,10 +399,12 @@ and `just check` passes. **Size:** small. Documents only.
 
 - [ ] The option C0 chose, and nothing else.
 
-**Done when** ten runs of `check (macos-15)` in a row on the branch and on `main` after
-the merge take under 10 minutes, with the test time of each in the hand-back; or the
-owner's line on the budget is in `SPEC.md` section 13 and the carry-over row. No limit
-in `scripts/timing.sh` or `.config/nextest.toml` is raised by this task.
+**Done when**, before the merge, ten runs of `check (macos-15)` in a row on the branch's
+head (the same commit, run again) each take under 10 minutes, with the test time of
+each in the hand-back; or the owner's line on the budget is in `SPEC.md` section 13 and
+the carry-over row. What the job takes on `main` afterwards is Z1's, in the note's
+timing table. No limit in `scripts/timing.sh` or `.config/nextest.toml` is raised by
+this task.
 **Carry-over:** the row on pull-request CI on the macOS runner. **Size:** small.
 
 ### C1. Roots, and Python in the fast tier
@@ -389,7 +414,8 @@ in `scripts/timing.sh` or `.config/nextest.toml` is raised by this task.
 - [ ] `pack/`: a `pyproject.toml` with no dependency, the pinned Python version, an
       empty package `whizbang_pack` and one `unittest` test.
 - [ ] `uv` joins `scripts/tool-versions.txt`; `just setup` checks it. `just test-pack`
-      runs the pack's tests with the pinned Python, offline, and joins `just check`.
+      runs the pack's tests with the pinned Python, offline, and joins `just check`;
+      `AGENTS.md` and `SPEC.md` section 11 list it.
 - [ ] CI: one step installs `uv` at its pinned version, by an action pinned to a commit,
       with its cache. Its time on each runner is in the hand-back.
 - [ ] The module roots `pack/` and `net/` in `whizbang-backends`, and the subcommands
@@ -422,6 +448,7 @@ bound on an answer) and `crates/rascal-mask/src/filler/mod.rs` (`answer_cap`); s
 - `proto::every_vector_parses_to_what_it_states_and_is_written_back_byte_for_byte`
 - `proto::a_hello_of_another_version_is_refused_and_says_both_versions`
 - `proto::a_header_or_a_payload_over_its_bound_is_refused_before_it_is_read`
+- `proto::a_result_over_one_gibibyte_of_payload_is_refused_whatever_its_request_would_allow`
 - `proto::an_unknown_field_a_missing_field_and_an_unknown_message_are_each_refused`
 - `proto::a_payload_states_its_dimensions_layout_type_colour_alpha_and_binding_and_one_that_disagrees_with_its_length_is_refused`
 - `proto::no_message_has_a_field_that_holds_a_path`
@@ -462,8 +489,10 @@ for the two tests of how it ends. **Size:** medium.
 ### P3. The supervisor: start, hello, one call, stop
 
 **Depends on:** P2. **Reads:** `crates/whizbang-core/src/store/fs.rs`, "What these locks
-are, and are not"; the carry-over row on the store's locks; rascal
-`crates/rascal-mcp/src/client/env.rs` (the environment's allow-list).
+are, and are not"; the carry-over row on the store's locks; squint
+`crates/squint-tools/src/mcp/mod.rs` and its tests `minimal.rs` and `full.rs` (the
+client that survives, D1: what is ported and what is not is in the commit message);
+rascal `crates/rascal-mcp/src/client/env.rs` (the environment's allow-list).
 
 - [ ] `whizbang_backends::pack::Worker`: started from a command line it is given, with a
       cleared environment and an allow-list (no variable whose name ends in `_KEY`,
@@ -483,6 +512,7 @@ are, and are not"; the carry-over row on the store's locks; rascal
 - `conformance::a_result_over_the_bound_its_request_gives_is_refused_before_it_is_built_and_the_call_ends_as_too_large`
 - `conformance::a_malformed_payload_ends_the_call_as_malformed_and_the_worker_is_restarted`
 - `worker::a_worker_is_started_at_the_first_request_and_not_before`
+- `worker::a_worker_that_says_no_hello_within_its_limit_is_killed_and_the_request_ends_as_unavailable`
 - `worker::the_worker_is_handed_no_descriptor_but_its_three_and_none_of_the_store`
 - `worker::the_workers_environment_holds_the_allow_list_and_no_key`
 - `worker::a_dropped_supervisor_closes_the_input_and_the_worker_is_gone_when_the_drop_returns`
@@ -519,6 +549,8 @@ with no sleep:
 - `queue::a_cancelled_call_that_stops_ends_as_cancelled_and_the_worker_lives_on`
 - `queue::a_cancelled_call_that_has_not_stopped_at_its_deadline_has_its_worker_restarted`
 - `queue::a_call_past_its_deadline_ends_as_timed_out_and_its_worker_is_restarted`
+- `queue::a_call_with_no_deadline_is_cut_off_at_the_kinds_limit_and_a_cancelled_one_five_seconds_after_its_cancel`
+- `queue::a_load_that_does_not_end_within_its_limit_has_its_worker_killed`
 - `queue::a_restart_ends_the_current_call_and_every_queued_request_each_with_a_fault_that_says_the_worker_was_restarted`
 - `queue::a_worker_that_exits_inside_a_call_fails_what_was_in_flight_and_the_next_request_starts_another`
 - `queue::nothing_that_was_dispatched_is_sent_again_after_a_restart`
@@ -532,16 +564,18 @@ with no sleep:
 **Depends on:** P4. **Reads:** ADR 0017, "Removal", "Holds" and "Three kinds of lock";
 `models/remove.rs`, `models/hold.rs`.
 
-- [ ] D5: the supervisor reads the mark when it takes a request off the queue.
+- [ ] D5: the supervisor is told of a removal in its process, and reads the mark for
+      queued requests by the clock and when it takes one off the queue.
 - [ ] D6, by an amendment to ADR 0017: the remover's lock, its place in the order of
       locks, and what a hold does with a mark whose lock is free.
 
 **Done when** these pass (`tests/it/pack/removal.rs`, `tests/it/models/remove.rs`):
 
 - `removal::a_removal_refuses_new_requests_cancels_the_queued_ones_and_waits_for_the_current_call`
-- `removal::a_removal_from_a_second_process_does_the_same`
+- `removal::a_removal_from_a_second_process_cancels_the_queued_requests_within_the_interval_while_another_call_holds_the_worker`
+- `removal::a_queued_request_cancelled_by_a_removal_that_then_timed_out_is_not_run`
 - `removal::a_removal_whose_wait_times_out_answers_busy_and_the_model_takes_requests_again`
-- `removal::after_a_removal_the_resident_model_is_unloaded`
+- `removal::a_removal_in_this_process_unloads_the_model_that_was_resident_and_idle`
 - `remove::a_hold_that_meets_the_mark_of_a_remover_that_was_killed_is_given`
 - `remove::a_hold_that_meets_the_mark_of_a_live_remover_is_refused_as_draining`
 - `remove::a_crash_at_any_event_of_a_removal_leaves_the_model_installed_or_not_installed`
@@ -574,10 +608,11 @@ download and a probe", "For later tasks"; `egress/ways.rs`, `chains.rs`, `hops.r
 - `client::a_fault_holds_nothing_of_the_body_the_headers_or_the_address_that_answered`
 - `client::a_request_that_never_connected_is_not_sent_and_one_cut_after_it_was_written_is_unresolved`
 - `client::a_reply_over_its_bound_is_refused_and_a_cancellation_is_looked_at_between_pieces`
+- `client::a_peer_that_accepts_and_sends_nothing_ends_the_request_as_timed_out_at_the_limit_between_reads`
+- `client::a_cancellation_set_while_no_byte_arrives_ends_the_request_by_that_limit_at_the_latest`
 - `client::a_download_through_the_checked_downloader_that_is_moved_off_its_entrys_origins_is_refused`
 - `client::the_installer_installs_a_model_of_two_files_from_the_listener_through_the_checked_downloader`
 - `wired::the_binarys_sender_refuses_a_body_that_holds_the_stores_root_and_sends_one_that_does_not`
-- `wired::a_probe_reaches_a_recipient_only_when_the_config_approves_probing_it`
 
 **Carry-over:** the real network client; the sender's check in the binary; a fault's
 sentence and `not_sent`, for this adapter. **Size:** medium.
@@ -602,24 +637,42 @@ that is a link", "Limits"; `models/directory.rs`; `store/fs.rs`.
 **Carry-over:** the lock by 20,000 tries; the two rows on a look and then an act, each
 accepted in a line that names the first two tests. **Size:** small.
 
-### N3. `whizbang models list`, `get` and `remove`
+### N3a. The catalogue's second version, the fifth reason, where the directory is
 
-**Depends on:** N1, N2. **Reads:** the carry-over row on the commands (it names what
-they call); ADR 0017, "The inventory", "Attaching and cancelling"; ADR 0011.
+**Depends on:** N2. **Reads:** ADR 0017, "The catalogue", "The inventory"; ADR 0015, "An
+inventory"; ADR 0011 on the `models` table.
+
+- [ ] `catalogue/2`, by an amendment to ADR 0017: an entry gains a title and the
+      platforms it runs on. `catalogue/1` is no longer read: no catalogue was shipped.
+- [ ] `Unready` gains a fifth reason, by an amendment to ADR 0015: this build has no
+      adapter for the model. The inventory gives it where it said out of date.
+- [ ] Where the directory is: a flag, then the config's `[models] dir` (an amendment to
+      ADR 0011), then the platform's data folder.
+- [ ] The binary's wiring is given the inventory of the shipped catalogue, which is
+      empty until N5 (`Over::installed`), told the secrets the executor is told.
+
+**Done when** these pass (`tests/it/models/`, `crates/whizbang/tests/it/wired.rs`):
+
+- `catalogue::an_entry_of_the_second_version_holds_a_title_and_its_platforms_and_the_first_version_is_refused`
+- `inventory::a_model_whose_adapter_this_build_lacks_is_not_ready_for_that_reason_installed_or_not`
+- `wired::a_call_for_a_model_whose_adapter_this_build_lacks_is_refused_when_prepared_with_that_reason`
+- `wired::the_models_directory_is_the_flags_then_the_configs_then_the_platforms`
+- `wired::under_the_binarys_wiring_a_call_for_an_installed_model_is_prepared_under_its_identity_and_holds_a_lease`
+- `wired::a_secret_the_executor_is_told_of_is_refused_as_a_models_name_by_the_binarys_inventory`
+
+**Carry-over:** the adapter this build lacks (the reason); a model's title, platforms
+and where the directory is; one set of secrets for the inventory and the executor.
+**Size:** small.
+
+### N3b. `whizbang models list`, `get` and `remove`
+
+**Depends on:** N1, N3a. **Reads:** the carry-over row on the commands (it names what
+they call); ADR 0017, "Attaching and cancelling", "Removal".
 
 - [ ] The three commands over `whizbang_backends::models`, and `docs/guides/models.md`.
-      Where the directory is: `--models-dir`, then the config's `[models] dir` (an
-      amendment to ADR 0011), then the platform's data folder.
-- [ ] `list` prints, for each entry of the catalogue: its name, title, licence, size,
-      the platforms it runs on, and its state. A catalogue entry gains a title and its
-      platforms (`catalogue/2`, an amendment to ADR 0017). A model whose adapter this
-      build lacks has a reason of its own, in `list` and where a call is prepared
-      (`Unready` gains a fifth: an amendment to ADR 0015). A model whose layout has a
-      link is said to have one.
-- [ ] `get` installs or attaches, waits between tries by the clock, and prints what the
-      status record shows. `remove --wait <seconds>` drains.
-- [ ] The binary's wiring is given the inventory of the shipped catalogue
-      (`Over::installed`), told the secrets the executor is told.
+      `list` prints, for each entry: its name, title, licence, size, platforms and
+      state. `get` installs or attaches, waits between tries by the clock, and prints
+      what the status record shows. `remove --wait <seconds>` drains.
 
 **Done when** these pass (`crates/whizbang/tests/it/models.rs`, with a test's catalogue
 and the fake downloader through the binary's own function, and `list` as the real
@@ -629,21 +682,17 @@ binary):
 - `models::get_installs_a_model_and_list_then_says_it_is_installed`
 - `models::a_second_get_attaches_to_the_first_waits_by_the_clock_and_ends_with_the_same_installation`
 - `models::remove_drains_and_answers_busy_at_its_wait_with_the_model_still_installed`
-- `models::a_model_whose_adapter_this_build_lacks_is_listed_and_prepared_with_that_reason`
+- `models::a_model_whose_adapter_this_build_lacks_is_listed_with_that_reason`
 - `models::a_model_this_platform_cannot_run_is_listed_as_that_and_get_refuses_it`
 - `models::a_model_whose_layout_has_a_link_is_listed_as_having_one`
-- `models::the_directory_is_the_flags_then_the_configs_then_the_platforms`
 - `models::a_secret_the_config_names_is_in_nothing_the_commands_print`
-- `wired::under_the_binarys_wiring_a_call_for_an_installed_model_is_prepared_under_its_identity_and_holds_a_lease`
 
-**Carry-over:** the `models` commands; how one who attaches is paced; the adapter this
-build lacks; a model's title, platforms and where the directory is; one set of secrets
-for the inventory and the executor; what `models list` says of a link.
-**Size:** medium.
+**Carry-over:** the `models` commands; how one who attaches is paced; what `models
+list` says of a link. **Size:** medium.
 
 ### N4. A download's credential
 
-**Depends on:** N3. **Reads:** ADR 0012, "An address, and a credential"; ADR 0019, "A
+**Depends on:** N3b. **Reads:** ADR 0012, "An address, and a credential"; ADR 0019, "A
 download and a probe"; ADR 0011 on keys from the env file.
 
 - [ ] D12, by amendments to ADRs 0011, 0012 and 0017: the config's key for an origin's
@@ -670,8 +719,9 @@ model; the token in the env file. **Runs on:** the owner's Mac, for its last box
       licence as its maker names it, the features this build's adapter gives (`phrase`).
 - [ ] How the sizes and hashes were fixed, written in the entry's comment and the ADR:
       the large file's from the Hub's own listing, which states its SHA-256; the small
-      files' from the bytes fetched once through the checked downloader by a developer
-      command that prints sizes and hashes and installs nothing. The second is trust on
+      files' from the bytes fetched once through the checked downloader by
+      `whizbang models pin <draft entry>`, a developer's command that prints each file's
+      size and hash and installs nothing. The second is trust on
       first use, stated as a limit.
 - [ ] On the Mac: `whizbang models get sam3`, by the owner or with the owner's leave,
       into a models directory outside the repo. Nothing but whizbang downloads a file.
@@ -682,6 +732,7 @@ model; the token in the env file. **Runs on:** the owner's Mac, for its last box
 - `catalogue::the_shipped_catalogue_parses_names_sam3_and_no_fake_model`
 - `catalogue::every_file_of_the_shipped_entry_is_at_an_origin_the_entry_names_and_at_one_pinned_revision`
 - `catalogue::the_shipped_entry_names_no_pickle`
+- `models::pin_prints_the_size_and_hash_of_each_file_it_fetched_through_the_checked_downloader_and_installs_nothing`
 
 and, on the Mac, recorded in the pull request with the installation's identity:
 `whizbang models list` says `sam3` is installed; a second `get` installs nothing; the
@@ -716,7 +767,7 @@ line. **Size:** medium.
 
 ### P6. The kind `pack`: a local segmenter through the executor
 
-**Depends on:** P5, N3. **Reads:** ADR 0011, "Kinds"; ADR 0015, "An inventory", the
+**Depends on:** P5, N3b. **Reads:** ADR 0011, "Kinds"; ADR 0015, "An inventory", the
 lease; ADR 0006, "Segment"; the carry-over rows on the roster and the backends, and on
 the old configs.
 
@@ -734,6 +785,7 @@ models in a test's catalogue):
 
 - `pack::a_call_to_a_local_model_is_answered_by_the_worker_and_its_record_names_the_backend_the_model_and_the_installation`
 - `pack::two_actions_in_one_process_that_use_one_model_cause_one_load`
+- `pack::two_backends_of_the_kind_under_two_names_and_two_snapshots_of_the_config_share_one_worker`
 - `pack::a_run_that_needs_no_local_model_starts_no_worker`
 - `pack::after_a_reinstall_between_two_requests_of_a_run_the_first_is_answered_from_the_old_installations_files_and_the_second_is_refused_at_the_lease`
 - `pack::a_file_damaged_after_it_was_published_is_not_loaded_and_the_model_is_reported_as_damaged`
@@ -746,34 +798,43 @@ models in a test's catalogue):
 files of an installation; the roster and the backends from one thing; the settings of
 the first real kind. **Size:** medium.
 
-### P7. `run/4`: the device; and `backends status`
+### P7a. `run/4`: the device and the cache
 
 **Depends on:** P6. **Reads:** ADR 0005 and ADR 0013 on a record's versions;
-`contract/record.rs` (`Model`); `SPEC.md` section 6, "Readiness".
+`contract/record.rs` (`Model`).
 
 - [ ] A capability's response says which device answered and whether a cache did (an
       amendment to ADR 0006). The worker states its device in `hello` and in each
       result; the local kind has no cache and says so. `run/4`: its schema, its fixed
       vectors, and what a reader does with a `run/3` record.
 - [ ] `whizbang runs show` prints an installation's identity whole.
-- [ ] `whizbang backends status`: each configured backend with its kind, its model and
-      whether its model is ready, with no network and no worker. `--probe` starts the
-      worker of a local backend and prints its hello (the protocol version, the device),
-      and reaches a remote one only through `CheckedProber`.
-      `docs/guides/backends.md`.
 
-**Done when** these pass (`crates/whizbang/tests/it/`, `crates/whizbang-core/tests/it/`):
+**Done when** these pass (`crates/whizbang-core/tests/it/`, `crates/whizbang/tests/it/`):
 
 - `record::a_run_4_record_holds_the_device_and_whether_a_cache_answered_for_each_request`
 - `record::a_run_3_record_is_still_read_and_says_its_device_is_not_known`
 - `pack::the_record_of_a_local_call_names_the_device_the_worker_reported`
 - `runs::show_prints_an_installations_identity_whole_and_two_installations_are_told_apart`
+
+**Carry-over:** `device` and `cached`; the `runs show` cut. **Size:** small.
+
+### P7b. `whizbang backends status`
+
+**Depends on:** P7a, N1. **Reads:** `SPEC.md` section 6, "Readiness"; ADR 0019, "A
+download and a probe".
+
+- [ ] Each configured backend with its kind, its model and whether its model is ready,
+      with no network and no worker. `--probe` starts the worker of a local backend and
+      prints its hello (the protocol version, the device), and reaches a remote one
+      only through `CheckedProber`. `docs/guides/backends.md`.
+
+**Done when** these pass (`crates/whizbang/tests/it/backends.rs`):
+
 - `backends::status_lists_each_configured_backend_and_starts_no_worker`
-- `backends::status_with_probe_prints_the_hello_of_a_local_backends_worker`
+- `backends::status_with_probe_prints_the_hello_of_a_local_backends_worker_and_the_worker_is_gone_when_the_command_ends`
 - `backends::status_with_probe_reaches_a_remote_backend_only_when_the_config_approves_probing_it`
 
-Tag `m1c-fakes` on the merge. **Carry-over:** `device` and `cached`; the `runs show`
-cut; `backends status`. **Size:** medium.
+Tag `m1c-fakes` on the merge. **Carry-over:** `backends status`. **Size:** small.
 
 ### R1. The runtime, chosen
 
@@ -783,10 +844,11 @@ cut; `backends status`. **Size:** medium.
 - [ ] Candidate A, tried by one script in `pack/` that is run once by hand under
       `scripts/heavy.sh`, with the thread limits and the watermark of "Rules" and a
       10-minute limit: load from the installation's folder, one phrase on one picture,
-      twice. B only if A fails.
+      twice. If A fails the task stops (D8).
 - [ ] ADR 0022, the first runtime: each candidate against the bar, with the page that
       shows point, box and CUDA support; what was measured (the device, load time, the
-      first and second request, peak memory, threads, the environment's size); the
+      first and second request, peak memory, threads, the environment's size); every
+      thread pool the runtime has and what holds each; the
       licences of the runtime's packages from their metadata; what the choice rules out
       (nothing: a second runtime is another adapter); the watermark chosen.
 - [ ] `SPEC.md` section 17's rows on the runtime, the pack over MCP, the two clients and
@@ -799,7 +861,7 @@ lock: `setup::the_runtime_the_adr_names_is_the_one_the_lock_pins`.
 
 ### R2. SAM 3 answers a phrase on the Mac's GPU
 
-**Depends on:** R1, P7. **Runs on:** the owner's Mac, for the model tier.
+**Depends on:** R1, P7b. **Runs on:** the owner's Mac, for the model tier.
 
 - [ ] The adapter `sam3` in the pack, on the chosen runtime: image features computed
       once for a batch; a phrase for each query; the settings of P6; the answer in the
@@ -808,7 +870,9 @@ lock: `setup::the_runtime_the_adr_names_is_the_one_the_lock_pins`.
 - [ ] Its fast tests run in CI against a stand-in for the runtime that the tests give
       it: no runtime is imported.
 - [ ] `just test-models` and `scripts/model-evidence.sh` (D15), and the fixture picture
-      with a loose box drawn by hand around the thing its phrase names.
+      with a loose box drawn by hand around the thing its phrase names. The recipe is
+      heavy, runs under `scripts/thread-guard.sh`, refuses without a models directory
+      named in the local environment, and is listed in `AGENTS.md`.
 - [ ] `docs/reference/` is unchanged: no action is added in 1C.
 
 **Done when** these pass under `just test-pack`:
@@ -816,17 +880,20 @@ lock: `setup::the_runtime_the_adr_names_is_the_one_the_lock_pins`.
 - `test_sam3.Phrase.test_features_are_computed_once_for_a_batch_of_phrases`
 - `test_sam3.Phrase.test_instances_under_the_threshold_are_left_out_and_the_rest_are_in_the_fixed_order`
 - `test_sam3.Phrase.test_a_point_or_a_box_is_refused_as_unsupported`
+- `test_sam3.Phrase.test_candidates_are_cut_to_the_most_instances_asked_before_a_full_size_plane_is_made`
 - `test_sam3.Device.test_the_device_reported_is_the_one_the_runtime_gave`
+- `test_sam3.Device.test_with_no_gpu_the_adapter_runs_on_the_cpu_and_says_so`
 
 and this, under `just test-models` on the Mac, through the binary's wiring with the
 installed model:
 
 - `model_tier::sam3_answers_a_phrase_on_the_gpu_with_an_instance_inside_the_fixtures_box_and_the_record_names_the_device`
-- `model_tier::a_second_request_for_the_same_model_loads_nothing_and_is_faster_than_the_first`
+- `model_tier::a_second_request_for_the_same_model_loads_nothing`
 
 with `docs/results/m1c-local-pack.md` and its numbers file committed, and the reviewer's
-own run named in its review. The second test is the measurement the carry-over row on
-the speed of local models asks of 1C. **Size:** medium.
+own run named in its review. The evidence script times the load, the first request and the second, three
+runs each, and reports them without asserting an order: that is the measurement the
+carry-over row on the speed of local models asks of 1C. **Size:** medium.
 
 ### Z1. Exit check
 
@@ -863,7 +930,7 @@ Every row of `docs/carry-over.md` whose owner names 1C: thirty.
 | The store's locks: a child's copy while the worker is started | P3; the moment for Ctrl-C accepted in a line (D7) |
 | Pull-request CI on the macOS runner over its budget | C0, C0b |
 | A file opened by a look and then an opening; a lock file opened plainly | N2: accepted in a line (D13) |
-| The run record: `device` and `cached` | P7 (`run/4`) |
+| The run record: `device` and `cached` | P7a (`run/4`) |
 | What a segmenter adapter took and gave | P1 (the order, diagnostics), P6 (settings) |
 | What a filler was sent beside an image and one plane | **Milestone 3, with the first fill backend.** 1C has none |
 | An adapter's keeping of the rule for a fault's sentence | P3 (the worker), N1 (the client) |
@@ -871,16 +938,16 @@ Every row of `docs/carry-over.md` whose owner names 1C: thirty.
 | Whether a failed call may have been charged: `not_sent` | P3, N1 |
 | The roster and the backends given apart | P6 |
 | The models directory's lock by 20,000 tries | N2 |
-| A folder of the layout that is a link | N2 (accepted in a line), N3 (`list` says so) |
+| A folder of the layout that is a link | N2 (accepted in a line), N3b (`list` says so) |
 | Nothing reads an installation's files before they are loaded | P6 (D14) |
-| A model whose adapter this build lacks | N3 |
+| A model whose adapter this build lacks | N3a (the reason), N3b (the command) |
 | Parallel installs of models sharing a file | **1D, with the second catalogue entry.** 1C ships one entry, so nothing can share |
-| What a catalogue entry and a models directory held in rascal | N3 (title, platforms, where the directory is), N4 (the credential). The graph's external data: dropped in a line if the runtime is A, which loads no graph; with B, R2 |
-| `whizbang models list`, `get`, `remove` and their guide | N3 |
-| `runs show` cuts a model's version | P7 |
-| One who attaches is paced by its caller | N3 |
-| `whizbang backends status` | P7 (the probe's wiring: N1) |
-| The real network client and the shipped catalogue | N1, N3, N5 |
+| What a catalogue entry and a models directory held in rascal | N3a (title, platforms, where the directory is), N4 (the credential). The graph's external data: dropped in a line by R1 when the runtime is A, which loads no graph |
+| `whizbang models list`, `get`, `remove` and their guide | N3b |
+| `runs show` cuts a model's version | P7a |
+| One who attaches is paced by its caller | N3b |
+| `whizbang backends status` | P7b |
+| The real network client and the shipped catalogue | N1, N3a, N3b, N5 |
 | A local backend loads the installation it was handed under | P6 |
 | A backend made from a config sends with no credential | **Milestone 2, with the first provider's kind.** The kind `pack` sends nothing to a recipient |
 | A recipient is equal only with its upstreams | **Milestone 2,** for the same reason |
@@ -894,15 +961,17 @@ Every row of `docs/carry-over.md` whose owner names 1C: thirty.
 New rows C0 adds: the HTTP codec's code and its conformance run (milestone 6); a request
 from the worker to whizbang, for tools beside the model (milestone 2); holding several
 models and running calls side by side (none; reopen on need, as section 4 defers it); a
-second runtime (none; on a measured need, as section 17 says).
+second runtime (none; on a measured need, as section 17 says); a user's own weights
+and a user's own adapter with the conformance test they are given (1D, with the
+`add-adapter` skill).
 
 ## Risks
 
 | Risk | Effect | What we do |
 |---|---|---|
-| Candidate A does not run SAM 3 on the Apple GPU | The last clause of the row is not met | R1 runs before the adapter is written; B is the stated second; the tag `m1c-fakes` holds everything else. If both fail the owner decides |
+| Candidate A does not run SAM 3 on the Apple GPU | The last clause of the row is not met | R1 runs before the adapter is written and needs only N5 and Y1, so it is known early; the tag `m1c-fakes` holds everything else. B is then a change to this plan, and the owner is told |
 | It runs only with operations falling back to the CPU | "On the GPU" is arguable | D8: the fallback is off for the evidence; with it on, the operations are listed and the owner decides |
-| Access to the model is refused, or the token is not there | N5, R1 and R2 wait | Asked at C0, needed at N5; both strands up to P7 need neither |
+| Access to the model is refused, or the token is not there | N5, R1 and R2 wait | Asked at C0, needed at N5; both strands up to P7b need neither |
 | The Hub moves a download to a host nobody approved | The installer refuses, as built | Open question 2: the host is named to the owner before it is added |
 | A worker outlives its test or its parent | Processes pile up on the owner's machine | Four things end a worker ("Rules"), each with a test; a worker is started lazily and one at a time |
 | The runtime starts more threads than a machine should hold | The machine is slowed or worse | The pools are set before the runtime is imported; the count is read after each call and fails the run over 200 |
@@ -920,7 +989,8 @@ kind `pack`; SAM 3 installed by whizbang and answering phrases on the Mac throug
 chosen runtime, with `run/4` naming the device; the evidence record and its script. 1D
 adds point and box to the adapter (the library's second class over the same files, if
 the runtime is A), the `segment` action, Tiny as a second entry and adapter, parity
-fixtures with a tolerance, timings, and the `add-adapter` skill.
+fixtures with a tolerance, timings, the runtime on Linux (CUDA, or the CPU), and the
+`add-adapter` skill.
 
 ## Review rounds
 
@@ -934,5 +1004,7 @@ was also asked what it would cut.
 
 | Round | Date | Draft | Blockers | Majors | Minors |
 |---|---|---|---|---|---|
-| 1 | | 1 | | | |
+| 1 | 2026-11-15 | 1 | 1 | 8 | 2 |
 | 2 | | 2 | | | |
+
+Every finding of round 1 was fixed in draft 2.
