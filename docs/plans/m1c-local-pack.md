@@ -380,6 +380,14 @@ Each is settled by the task named, from documentation or by the owner; none bloc
    file's address still serves the whole file is the first thing N5 finds out; if it
    does not, N5 stops, since an installer that speaks another transfer is a change to
    this plan.
+   Read for C0b's pull request, 2026-11-15, on the Hub's page of environment variables
+   (`https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables`):
+   under a deprecated variable it says that "the Hugging Face Hub is fully powered by
+   the Xet storage backend" and that "all file transfers go through the `hf-xet` binary
+   package"; it also has `HF_HUB_DISABLE_XET`, which turns that package off in the Hub's
+   own library. All of that is about the Hub's own client. It says neither that a plain
+   request for a file's address is served whole nor that it is refused, so the question
+   is live, and it stays the first thing N5 finds out.
 3. Does candidate A run SAM 3 on the Apple GPU with the fallback off? (R1.)
 4. Which Python does the runtime's wheel support? The pack pins the newest that it
    does. (Y1; the pack's core runs on any since 3.12.)
@@ -405,6 +413,28 @@ Each is settled by the task named, from documentation or by the owner; none bloc
    the third by P3a, which sets the worker's environment. If the
    sign-in keeps its token somewhere a file read cannot reach (a system keychain), N4
    stops: the env-file key is then the only way, and the owner is told.
+   What that page says, read for C0b's pull request on 2026-11-15
+   (`https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables`;
+   the page only: no token file was looked at, and no place on a machine):
+   - The token is a plain file. `HF_HOME` is where the Hub's library keeps its data,
+     "in particular, your token and the cache", and defaults to the folder
+     `.cache/huggingface` in the user's home folder.
+     `HF_TOKEN_PATH` is where the token is stored and defaults to `$HF_HOME/token`.
+   - Three variables move that place: `HF_TOKEN_PATH`; `HF_HOME`; and `XDG_CACHE_HOME`,
+     "used only when `HF_HOME` is not set", which makes the home
+     `$XDG_CACHE_HOME/huggingface`.
+   - `HF_TOKEN`, if set, "will overwrite the token stored on the machine" for the Hub's
+     own tools; `HUGGING_FACE_HUB_TOKEN` is its deprecated name and still works. N4's
+     reader reads neither (N4, its second box).
+   - The page names no keychain. It says the variables are read when the library is
+     imported, so one set afterwards is not taken into account.
+   - For the third part the page names no variable that stops a library reading the
+     token. It has `HF_HUB_DISABLE_IMPLICIT_TOKEN`, under which a token is sent only for
+     "write-access" calls, and `HF_HUB_OFFLINE`, under which no call is made to the Hub;
+     and the place itself can be pointed at a folder that holds no token, by the
+     variables above.
+   Still N4's: which of the three variables its reader follows, in its amendment to
+   ADR 0011. Still P3a's: which variables the worker's environment sets.
 
 ## Strands and order
 
@@ -433,7 +463,8 @@ Two strands run side by side after C1a and join at P6a.
 | N2 A models directory that is its owner's; a lock asked for until a time | S | C1a |
 | N3a The catalogue's second version, the fifth reason, where the directory is | S | N2 |
 | N3b `whizbang models list`, `get`, `remove` | M | N1, N3a |
-| N4 A download's credential | M | N3b |
+| N3c One way for a test to start the real binary | S | N3b |
+| N4 A download's credential | M | N3c |
 | N5 The shipped catalogue, and SAM 3 installed on the Mac | M | N4 |
 | Y1 `whizbang setup`, and the lock file | M | P3a |
 | P6a The kind `pack`: a local segmenter through the executor | M | P5b, N3b |
@@ -445,10 +476,10 @@ Two strands run side by side after C1a and join at P6a.
 | R2b SAM 3 answers a phrase on the Mac's GPU | M | R2a, P7b |
 | Z1 Exit check | S | all |
 
-Twenty-six tasks, one pull request each.
+Twenty-seven tasks, one pull request each.
 
 **What can be built with no approval from the owner:** C0; C0b, since C0 chose an
-option that changes no coverage and no budget; C1a, P1, P5a, N1, N2, N3a, N3b and N4.
+option that changes no coverage and no budget; C1a, P1, P5a, N1, N2, N3a, N3b, N3c and N4.
 These contact nothing new. Everything from P2 on runs the pack's Python and waits for
 C1b's origins: P2, P3a, P3b, P4, P5b, P6a, P6b, P7a and P7b. Y1 waits for the package
 index as well; N5 for the Hub, the access and the sign-in; R1, R2a and R2b for all of
@@ -687,7 +718,7 @@ for the owner, and Z1's timing table says what the job and the tests take afterw
 
 **Depends on:** C0.
 
-- [ ] The option C0 chose, and nothing else: (e), the script tests in a job of their own
+- [x] The option C0 chose, and nothing else: (e), the script tests in a job of their own
       on the macOS runner ("The option chosen for C0b", under C0). Every script test
       and every recipe of `just ci` still runs on both runners for every commit; `just
       check` is unchanged; the aggregate `ci` needs the new job; `AGENTS.md` and the
@@ -703,9 +734,131 @@ afterwards is Z1's, in the note's timing table. No limit in `scripts/timing.sh` 
 of `check (macos-15)` in a row … each take under 10 minutes". The option chosen adds a
 job on that runner, and a budget met by one job while the other is over it would not be
 met, so the clause now holds both.
+**Reworded with the task** (by C0b): the clause reads "five runs of `check (macos-15)`
+in a row on the branch's head (the same commit, run again)". The five runs are of
+commit d7d3adb, which holds every change this task makes to CI, the justfile, the
+script tests and the skills. The head that merges is later, by documents and a merge:
+a commit that writes those runs down, here and in the carry-over row, since a commit
+cannot hold the times of its own runs; a merge of `main` at 4c2f6c2, which had moved by
+two tasks (C1a and N2) and brought eleven fast tests; and a line of N3c's sizing. The
+run on that head is in the pull request, a sixth sample and the only one with `main`'s
+new tests in it. The times of the five are under "What the runs showed", and in the
+hand-back.
 **Carry-over:** the row on pull-request CI on the macOS runner, whose half on the 10
 minutes this closes; its half on the fast tier's test time stays, for the owner.
 **Size:** small.
+
+#### What C0b built
+
+- `check (macos-15)` runs `just ci-without-scripts`: every recipe `just ci` runs, in
+  its order, but `test-scripts`. The search canary stays a step of that job.
+- A new job, `scripts (macos-15)`, runs `just ci-scripts`: `deny`, then `test-scripts`.
+  It runs on every pull request and every push to `main`, as `check` does, and no step
+  of it has a condition.
+- `check (ubuntu-22.04)` runs `just ci` whole, as before. `just check` and `just ci`
+  are as they were, so a developer's machine runs what it ran.
+- The aggregate `ci` needs both jobs and tests the result of each on a line of its own.
+- `scripts/tests/test-ci-jobs.sh` holds all of it, each rule shown to fail on a copy
+  with one thing changed: the two halves are `just ci`, recipe for recipe, so a recipe
+  added to `check` or to `ci` and not to the half that runs it on macOS fails `just
+  check`; the new job is set up line for line as `check` is; the aggregate needs
+  every job; nothing may continue on error; and `AGENTS.md` names the jobs.
+  `scripts/tests/test-skills.sh` holds the `kickoff` and `review-merge` skills to the
+  four jobs.
+
+**Linux stays one job.** The box says the macOS runner, and the measurements agree:
+over C0's twenty runs the Linux job took 3 min 27 s to 6 min 15 s with the script tests
+inside it at 53 to 118 seconds. A second job there would take a minute or two off a
+job already inside its budget, and cost a second set-up and a second cache.
+
+**The protection of `main` needs no change.** Read through the API on 2026-11-15,
+changing nothing: it requires one check, `ci`, and names neither `check` job. `ci`
+needs the new job, so a red script test on macOS still stops a merge. The repository
+has no rule set beside it.
+
+**The new job contacts nothing the other does not.** Its set-up is the other job's, line
+for line: the same checkout, the same toolchain step, the same cache action and the
+same pinned tools from the same action, each at the version `check` uses. `just deny`
+is the one step that may fetch, the workspace's crates from `crates.io` when the cache
+did not hold them, as it does in `check`.
+
+#### What the runs showed
+
+Run 43809732794 of `ci` on this task's pull request (#142), on commit d7d3adb, run five
+times: the first run and four reruns of it, one after another, between 05:21 and 05:55
+on 16 November in UTC. A job's time is from its start to its end; the script tests' is
+from the start of `scripts/tests/run.sh` to its last test; the test time is what
+nextest reports, in seconds, which is what the limit of 180 s is held against.
+
+| Attempt | `check (macos-15)` | Its test time | `scripts (macos-15)` | The script tests in it | `check (ubuntu-22.04)` | Its test time | The script tests in it | `ci` |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 4:18 | 80.3 | 5:42 | 304 s | 5:20 | 66.1 | 92 s | 0:04 |
+| 2 | 4:35 | 87.2 | 4:38 | 253 s | 6:12 | 86.8 | 118 s | 0:04 |
+| 3 | 5:12 | 106.3 | 5:01 | 276 s | 6:12 | 84.9 | 118 s | 0:02 |
+| 4 | 5:38 | 119.1 | 4:36 | 247 s | 3:35 | 39.2 | 58 s | 0:03 |
+| 5 | 4:50 | 90.3 | 4:04 | 223 s | 6:15 | 86.7 | 119 s | 0:03 |
+
+Every job was green in every attempt, and none was run again for a failure. All twenty
+script tests ran and passed on each runner each time: in `scripts (macos-15)` on
+macOS, inside `check (ubuntu-22.04)` on Linux. The fast tier ran its 1,998 tests on
+both, as a pull request merges them with `main` at e207510.
+
+Beside C0's tables:
+
+- **`check (macos-15)`** took 6 min 57 s to 13 min 32 s over C0's twenty runs on pull
+  requests, 9 min 38 s at the median, and eight of the twenty were over 10 minutes. In
+  these five it took 4 min 18 s to 5 min 38 s. C0 expected 8 minutes at most.
+- **`scripts (macos-15)`** took 4 min 4 s to 5 min 42 s; C0 expected about 6 at most.
+  The longest was the first, the only attempt with no cache of its own: the job was
+  new, so none had been saved. `deny` took 3 seconds there and `test-deny.sh` passed,
+  so the cache is a convenience, and `deny` before the tests is what that test needs.
+- **The script tests take what they took:** 223 to 304 seconds here, 181 to 334 in
+  C0's twenty. Nothing was made faster. They run beside the build and the fast tests
+  and no longer before them, so what a pull request waits for on that runner is the
+  longer of two jobs: 4 min 38 s to 5 min 42 s in these five.
+- **Linux is where it was:** 3 min 35 s to 6 min 15 s, with its script tests at 58 to
+  119 seconds; C0 had 3 min 27 s to 6 min 15 s, and 53 to 118.
+
+What this shows, and what it does not. Each of the two macOS jobs was under 10 minutes
+in each of five runs of one commit, with more than four minutes to spare every time.
+That is five samples, of one commit, in about half an hour of one evening, on hosted runners
+whose speed moved by half on unchanged code inside those five (the test time on macOS
+went from 80 to 119 seconds). It is not a measurement of `main`: what the jobs take
+there is Z1's to report, in the note's timing table, and the budget's row stays open
+until then on that half.
+
+**The test time on the macOS runner is as it was, and is the owner's.** It was 80.3 to
+119.1 seconds in these five, against the limit of 180. None was near the limit, which
+says little: C0 saw 71 to 149 on unchanged code, and two attempts that failed at 180.0
+and 194.9 with every test passing. This task moved no test, changed no limit, and did
+nothing to that time. Whether a job with fewer steps before the tests runs them
+steadier, as C0 wondered, five runs cannot say.
+
+#### What each script test needs
+
+C0 read that none of the script tests builds the workspace. That holds, and the job is
+still not a checkout alone. Read test by test, at e207510, twenty files with the new
+one:
+
+| Script test | What it needs beyond bash, git and the usual tools of a runner |
+|---|---|
+| `test-deny.sh` | `cargo-deny`; `just` (it runs `just deny` in a copy of the manifests); `rustup` and the pinned toolchain (`cargo metadata`, under `cargo deny`); and the workspace's crates already in cargo's home, because it runs with no way to the network. In `just check` the recipe `deny` runs before the script tests and puts them there. So `ci-scripts` is `deny`, then the tests, and the job has the cache |
+| `test-crate-graph.sh` | cargo of the pinned toolchain (`cargo metadata --no-deps`, which fetches nothing); `jq` |
+| `test-thread-lint.sh` | clippy of the pinned toolchain, on a fixture crate with no dependency, built into `target/script-tests`: the one thing a script test compiles |
+| `test-test-only.sh`, `test-rules.sh` | `just`: one dry run of `just test-only`, and `just scan-range` with planted arguments. Nothing is built or tested |
+| `test-baseline.sh`, `test-thread-guard.sh` | `python3`, 3.9 or later, the runner's own |
+| `test-docs.sh`, `test-timing.sh`, `test-compile-fail.sh` | `jq`, the runner's own. Where one needs cargo it brings a stand-in |
+| `test-scan.sh` | `perl`, the runner's own |
+| `test-setup.sh`, `test-hooks.sh` | Nothing more: each brings stand-ins for `just` and cargo |
+| `test-timeout.sh` | Nothing more in the script tests, where it reads the config. Its real run, with `cargo-nextest`, is `just test-timeout`, which stays a step of the Linux job |
+| `test-ci-jobs.sh`, `test-heavy.sh`, `test-notes.sh`, `test-skills.sh`, `test-syntax.sh`, `test-worktree.sh` | Nothing more |
+
+So the new job needs the toolchain (cargo, clippy, `rustup`), `just`, `cargo-deny` and
+the crates in cargo's home. Two things it is given and may not need, so that the two
+set-ups stay one text: the repository's whole history, which no script test was found
+to read (those that walk commits make a repository of their own), and `cargo-nextest`,
+which no script test runs outside an opt-in part and which comes with the one line of
+pinned tools.
 
 ### C1a. Rust roots
 
@@ -1060,9 +1213,36 @@ binary):
 **Carry-over:** the `models` commands; how one who attaches is paced; what `models
 list` says of a link. **Size:** medium.
 
+### N3c. One way for a test to start the real binary
+
+**Depends on:** N3b. **Reads:** D12, "A test cannot reach the owner's store"; the nine
+files of `crates/whizbang/tests/it/` that start the binary.
+
+- [ ] The test kit has the one function that starts the real binary, with a cleared
+      environment and a temporary home; `just check` refuses a test that starts it
+      another way, and the tests that start it today are moved to that function.
+      The function is given the binary's path, which only the binary's own tests have
+      (`CARGO_BIN_EXE_whizbang`), and hands back the command, for a test to add its
+      arguments, its variables and its input to.
+
+**Done when** these pass: in the test kit,
+`binary::the_command_has_a_cleared_environment_and_a_temporary_home`; in
+`scripts/tests/`, `just check` refuses the binary's path anywhere in a test but as that
+function's argument, shown on planted files; and every test that starts the binary
+today passes through the function.
+**Why a task of its own** (sized by C0b's pull request, from `main` at 4c2f6c2): the
+binary is started by `Command::new(env!("CARGO_BIN_EXE_whizbang"))` in nineteen places
+in nine files (`describe.rs`, `escape.rs`, `import.rs`, `rascal.rs`, `runs.rs`,
+`spend.rs`, `store.rs`, `stubs.rs`, `wired.rs`), most of them a helper many tests call,
+and one more hands the path to a shell script (`describe.rs`); N3b adds `models.rs`.
+None clears the environment today, so each is looked at for a variable it relied on
+without saying so. That is a small task, and it is not N4's: N4 is already medium,
+and its own files are the credential's.
+**Size:** small.
+
 ### N4. A download's credential
 
-**Depends on:** N3b. **Reads:** ADR 0012, "An address, and a credential"; ADR 0019, "A
+**Depends on:** N3c. **Reads:** ADR 0012, "An address, and a credential"; ADR 0019, "A
 download and a probe"; ADR 0011 on keys from the env file.
 
 - [ ] D12, by amendments to ADRs 0011, 0012 and 0017: the config's key for an origin's
@@ -1074,9 +1254,15 @@ download and a probe"; ADR 0011 on keys from the env file.
       check` holds; the wiring is given the place as a value. The token is read when a
       download from its origin is about to be asked and not before, told to redaction
       before the request is made, and kept nowhere after the install ends.
+      A variable `HF_TOKEN` in the binary's environment, or `HUGGING_FACE_HUB_TOKEN`,
+      its older name, is not read: the Hub's own tools let it take the place of the
+      stored file (open question 9), but the owner chose the sign-in, and whizbang's
+      own other way in is the env-file key. The binary's tests of this start it through
+      the test kit's one function, with a cleared environment and a temporary home,
+      which is N3c's.
 
 **Done when** these pass (`tests/it/models/credential.rs`, `tests/it/config/`, and the
-last in `crates/whizbang/tests/it/models.rs`), each with a made-up token in a temporary
+last two in `crates/whizbang/tests/it/models.rs`), each with a made-up token in a temporary
 folder:
 
 - `credential::a_download_from_an_origin_the_config_names_a_token_for_carries_it_and_one_from_another_origin_does_not`
@@ -1089,6 +1275,7 @@ folder:
 - `credential::a_sign_in_that_is_not_there_or_cannot_be_read_ends_the_install_before_anything_is_asked_and_its_refusal_holds_no_path`
 - `credential::a_token_of_the_sign_in_is_redacted_from_a_fault_made_after_it_was_read`
 - `models::the_real_binary_started_with_a_temporary_home_reads_the_sign_in_there_and_no_other`
+- `models::the_real_binary_started_with_hf_token_set_reads_the_sign_in_and_never_the_variable`
 
 and in `scripts/tests/`: `just check` refuses a call of the function that names the
 real place of the sign-in's store anywhere but `main`.
@@ -1098,6 +1285,10 @@ third test's name ended "…and_says_which_key_to_set"; a missing token is now a
 sign-in or a missing key, so its refusal says both. Five tests and the script test are
 added for the sign-in. What keeps the worker from the sign-in's store is P3a's, with
 the worker's environment.
+**Added with C0b's pull request** (two follow-ups of the review of C0's): what the
+reader does with `HF_TOKEN`, with the eleventh test; and that the binary's tests start
+it through the test kit's one function, which is a task of its own, N3c, since it
+moves tests N4 does not otherwise touch.
 **Carry-over:** a credential for a download that needs one. **Size:** small, now
 medium.
 
@@ -1289,7 +1480,10 @@ Tag `m1c-fakes` on the merge. **Carry-over:** `backends status`. **Size:** small
       the installation's folder, one phrase on one picture, twice. If A fails the task
       stops (D8). The script runs outside the supervisor, so it brings the
       supervisor's bounds itself: a cleared environment with P3a's allow-list; the
-      offline and no-telemetry variables of D11; the thread limits of "Rules"; the
+      offline and no-telemetry variables of D11; the variables that point the Hub's
+      libraries away from the sign-in's store, the same ones P3a's worker environment
+      sets (D12; open question 9), set before anything of the Hub's is imported, since
+      its libraries read them at import; the thread limits of "Rules"; the
       watermark, starting at 0.5; and its own end at 10 minutes, by
       `faulthandler.dump_traceback_later(600, exit=True)`. It runs under the watch on
       resident memory of "Rules", which this task writes as a script beside the
@@ -1398,7 +1592,7 @@ Every row of `docs/carry-over.md` whose owner names 1C: thirty.
 | Row | Task, or new owner |
 |---|---|
 | The store's locks: a child's copy while the worker is started | P3a; the moment for Ctrl-C accepted in a line (D7) |
-| Pull-request CI on the macOS runner over its budget | C0, C0b |
+| Pull-request CI on the macOS runner over its budget | C0 (measured); C0b (the job's 10 minutes, by five runs of one commit; Z1 reports `main`). The fast tier's test time there against its 180 s: **the owner** |
 | A file opened by a look and then an opening; a lock file opened plainly | N2: accepted in a line (D13) |
 | The run record: `device` and `cached` | P7a (`run/4`) |
 | What a segmenter adapter took and gave | P1 (the order, diagnostics, settings in `load`), P6a (settings in the config) |
@@ -1437,7 +1631,9 @@ and a user's own adapter with the conformance test they are given (1D, with the
 fourth were already rows under "Evaluations", which C0 brought up to date. And one
 more, from the owner's decision of 2026-11-15: hosting the model's files for customers
 (milestone 4, "The loop and a release", the first milestone at which someone who is not
-the owner installs whizbang; its "done when" starts with reading the licence).
+the owner installs whizbang; its "done when" starts with reading the licence). With
+C0b's pull request the row also says what changes on whizbang's side when it hosts the
+files: N4's refusals that say to sign in or to ask for access, and the models guide.
 
 ## Risks
 
@@ -1508,3 +1704,13 @@ review of C0's pull request. It holds three kinds of change:
   as the owner's statement; the token read from the Hub's command-line sign-in, "for
   now" (D12, N4, N5, P3a's environment, open question 9); and hosting the model for
   customers as the owner's intent, not built in 1C (D11, and its carry-over row).
+
+C0b's pull request added to draft 5, with no round of its own beyond its review: what
+C0b built and measured (under C0b); and four follow-ups of the review of C0's pull
+request, with two readings of the Hub's documentation. The follow-ups: one way for a
+test to start the real binary, as a task of its own (N3c, which N4 now needs); what
+N4's reader does with `HF_TOKEN`; R1's script setting the variables that point away
+from the sign-in, as P3a's worker environment does; and the hosting row saying what
+changes in N4's refusals and the models guide. The readings: open question 9 (where
+the token is and which variables move it) and open question 2 (transfers through the
+Hub's Xet client).

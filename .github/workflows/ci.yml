@@ -33,7 +33,13 @@ jobs:
         with:
           tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2
       - name: Fast tier, advisories, release smoke and secrets scan
+        if: matrix.os != 'macos-15'
         run: just ci
+      # The same without the script tests, which take this runner three to five minutes:
+      # the job `scripts` below runs them beside this one.
+      - name: Fast tier without the script tests, advisories, release smoke and secrets scan
+        if: matrix.os == 'macos-15'
+        run: just ci-without-scripts
       # Every commit, not only the final tree: a secret added and then deleted, or a commit
       # made where the hooks do not run, is still caught. On a pull request, base..head; on
       # main, the commits of the push. A pull request is checked by the base branch's copy
@@ -63,11 +69,33 @@ jobs:
         if: matrix.os == 'ubuntu-22.04'
         run: just test-timeout
 
+  # The script tests on the macOS runner, which `check` leaves out there: the other half of
+  # `just ci`. Set up as `check` is, because some of them run cargo, clippy and cargo-deny:
+  # the toolchain, the cache, and the same pinned tools.
+  scripts:
+    name: scripts (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just@1.59.0,cargo-nextest@0.9.148,cargo-deny@0.20.2
+      - name: The script tests, after the crates they read are in cargo's home
+        run: just ci-scripts
+
   ci:
     name: ci
     if: always()
-    needs: [check]
+    needs: [check, scripts]
     runs-on: ubuntu-22.04
     steps:
-      - name: Every platform passed
-        run: test "${{ needs.check.result }}" = "success"
+      - name: Every job passed
+        run: |
+          test "${{ needs.check.result }}" = "success"
+          test "${{ needs.scripts.result }}" = "success"

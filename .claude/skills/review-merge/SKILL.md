@@ -38,8 +38,8 @@ If the verdict names no commit, or a short one, ask the reviewer for the full co
       failure is a refusal: abort the merge if it stopped half-way, remove the scratch
       worktree, and hand back; the builder merges `main` into the branch, and the new head
       is reviewed again.
-- [ ] 5. CI is green for the head: the jobs `check (macos-15)` and `check (ubuntu-22.04)`
-      and the aggregate `ci`, in a run whose commit is the head. If a job was rerun, note
+- [ ] 5. CI is green for the head: the jobs `check (macos-15)`, `scripts (macos-15)` and
+      `check (ubuntu-22.04)`, and the aggregate `ci`, in a run whose commit is the head. If a job was rerun, note
       the job and the reason; a rerun with no stated reason is a refusal.
 - [ ] 6. With `WHIZBANG_WORDLIST` set, `just scan-range <base> <head>` passes: secrets,
       attribution and the clean-room scan, over every commit in the range and the tree of
@@ -181,7 +181,8 @@ Verified
 - Verdict: may merge at the reviewed head; no finding that blocks the merge is open
 - Head unmoved: GitHub and the fetched head both at the reviewed head
 - Merged result: <the head contains main | just check passed on the merge with main at <commit>>
-- CI on the head: check (macos-15) <result>, check (ubuntu-22.04) <result>, ci <result>
+- CI on the head: check (macos-15) <result>, scripts (macos-15) <result>,
+  check (ubuntu-22.04) <result>, ci <result>
   <any rerun: the job and the reason; otherwise "no rerun">
 - just scan-range <base> <head>: secrets <result>, attribution <result>, clean-room <result>
 - Title and body: scanned and read; <accurate | corrected by the orchestrator: what was
