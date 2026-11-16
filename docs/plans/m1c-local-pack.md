@@ -718,7 +718,7 @@ for the owner, and Z1's timing table says what the job and the tests take afterw
 
 **Depends on:** C0.
 
-- [ ] The option C0 chose, and nothing else: (e), the script tests in a job of their own
+- [x] The option C0 chose, and nothing else: (e), the script tests in a job of their own
       on the macOS runner ("The option chosen for C0b", under C0). Every script test
       and every recipe of `just ci` still runs on both runners for every commit; `just
       check` is unchanged; the aggregate `ci` needs the new job; `AGENTS.md` and the
@@ -734,6 +734,13 @@ afterwards is Z1's, in the note's timing table. No limit in `scripts/timing.sh` 
 of `check (macos-15)` in a row … each take under 10 minutes". The option chosen adds a
 job on that runner, and a budget met by one job while the other is over it would not be
 met, so the clause now holds both.
+**Reworded with the task** (by C0b): the clause reads "five runs of `check (macos-15)`
+in a row on the branch's head (the same commit, run again)". The five runs are of
+commit d7d3adb, which holds every change this task makes to CI, the justfile, the
+script tests and the skills. The head that merges is one commit later and changes
+documents only: it writes those runs down, here and in the carry-over row, and a commit
+cannot hold the times of its own runs. That head's own run is in the pull request, a
+sixth sample. The times are under "What the runs showed", and in the hand-back.
 **Carry-over:** the row on pull-request CI on the macOS runner, whose half on the 10
 minutes this closes; its half on the fast tier's test time stays, for the owner.
 **Size:** small.
@@ -771,6 +778,58 @@ for line: the same checkout, the same toolchain step, the same cache action and 
 same pinned tools from the same action, each at the version `check` uses. `just deny`
 is the one step that may fetch, the workspace's crates from `crates.io` when the cache
 did not hold them, as it does in `check`.
+
+#### What the runs showed
+
+Run 43809732794 of `ci` on this task's pull request (#142), on commit d7d3adb, run five
+times: the first run and four reruns of it, one after another, between 05:21 and 05:55
+on 16 November in UTC. A job's time is from its start to its end; the script tests' is
+from the start of `scripts/tests/run.sh` to its last test; the test time is what
+nextest reports, in seconds, which is what the limit of 180 s is held against.
+
+| Attempt | `check (macos-15)` | Its test time | `scripts (macos-15)` | The script tests in it | `check (ubuntu-22.04)` | Its test time | The script tests in it | `ci` |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 4:18 | 80.3 | 5:42 | 304 s | 5:20 | 66.1 | 92 s | 0:04 |
+| 2 | 4:35 | 87.2 | 4:38 | 253 s | 6:12 | 86.8 | 118 s | 0:04 |
+| 3 | 5:12 | 106.3 | 5:01 | 276 s | 6:12 | 84.9 | 118 s | 0:02 |
+| 4 | 5:38 | 119.1 | 4:36 | 247 s | 3:35 | 39.2 | 58 s | 0:03 |
+| 5 | 4:50 | 90.3 | 4:04 | 223 s | 6:15 | 86.7 | 119 s | 0:03 |
+
+Every job was green in every attempt, and none was run again for a failure. All twenty
+script tests ran and passed on each runner each time: in `scripts (macos-15)` on
+macOS, inside `check (ubuntu-22.04)` on Linux. The fast tier ran its 1,998 tests on
+both.
+
+Beside C0's tables:
+
+- **`check (macos-15)`** took 6 min 57 s to 13 min 32 s over C0's twenty runs on pull
+  requests, 9 min 38 s at the median, and eight of the twenty were over 10 minutes. In
+  these five it took 4 min 18 s to 5 min 38 s. C0 expected 8 minutes at most.
+- **`scripts (macos-15)`** took 4 min 4 s to 5 min 42 s; C0 expected about 6 at most.
+  The longest was the first, the only attempt with no cache of its own: the job was
+  new, so none had been saved. `deny` took 3 seconds there and `test-deny.sh` passed,
+  so the cache is a convenience, and `deny` before the tests is what that test needs.
+- **The script tests take what they took:** 223 to 304 seconds here, 181 to 334 in
+  C0's twenty. Nothing was made faster. They run beside the build and the fast tests
+  and no longer before them, so what a pull request waits for on that runner is the
+  longer of two jobs: 4 min 38 s to 5 min 42 s in these five.
+- **Linux is where it was:** 3 min 35 s to 6 min 15 s, with its script tests at 58 to
+  119 seconds; C0 had 3 min 27 s to 6 min 15 s, and 53 to 118.
+
+What this shows, and what it does not. Each of the two macOS jobs was under 10 minutes
+in each of five runs of one commit, with more than four minutes to spare every time.
+That is five samples, of one commit, in about half an hour of one evening, on hosted runners
+whose speed moved by half on unchanged code inside those five (the test time on macOS
+went from 80 to 119 seconds). It is not a measurement of `main`: what the jobs take
+there is Z1's to report, in the note's timing table, and the budget's row stays open
+until then on that half.
+
+**The test time on the macOS runner is as it was, and is the owner's.** It was 80.3 to
+119.1 seconds in these five, against the limit of 180. None was near the limit, which
+says little: C0 saw 71 to 149 on unchanged code, and two attempts that failed at 180.0
+and 194.9 with every test passing. This task moved no test, changed no limit, and did
+nothing to that time. Whether a job with fewer steps before the tests runs them
+steadier, as C0 wondered, five runs cannot say.
 
 #### What each script test needs
 
@@ -1530,7 +1589,7 @@ Every row of `docs/carry-over.md` whose owner names 1C: thirty.
 | Row | Task, or new owner |
 |---|---|
 | The store's locks: a child's copy while the worker is started | P3a; the moment for Ctrl-C accepted in a line (D7) |
-| Pull-request CI on the macOS runner over its budget | C0, C0b |
+| Pull-request CI on the macOS runner over its budget | C0 (measured); C0b (the job's 10 minutes, by five runs of one commit; Z1 reports `main`). The fast tier's test time there against its 180 s: **the owner** |
 | A file opened by a look and then an opening; a lock file opened plainly | N2: accepted in a line (D13) |
 | The run record: `device` and `cached` | P7a (`run/4`) |
 | What a segmenter adapter took and gave | P1 (the order, diagnostics, settings in `load`), P6a (settings in the config) |
