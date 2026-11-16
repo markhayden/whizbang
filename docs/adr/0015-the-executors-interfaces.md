@@ -85,6 +85,9 @@ Amended: 2026-11-15, after the review of task W1. Changed under "The binary wire
 need states its own number of requests (ADR 0010), where the binary gave every
 action 16. Taken out under "One snapshot of the config": what stood around a
 snapshot's backends (`Snapshot::offering_through`), which nothing uses now.
+Amended: 2026-11-15, after the review of task W1, a second change. Changed under "The
+binary wired": a call that may cost nothing is admitted without the ledger (ADR
+0016, "A call that may cost nothing"), so a free run has no name under `spend/`.
 Spec: section 3, "The execution contract"; section 6, "Spend"; section 10, "Egress"
 
 ## Context
@@ -1554,12 +1557,19 @@ else gives either executor a source, a secret or a part.
 
 - **The real ledger** (`spend::StoreLedger`) reserves what a call may cost at its
   admission, against the allowance the owner's reset set, and closes the reservation
-  when the run ends. A store no reset was made in allows nothing and takes calls of
-  nothing: with no config, a run is admitted as before and **has a reservation of
-  nothing**, where it had none: its record says `reserved_micros` 0, not null, and
-  the books name it
-  (`wired::with_no_config_a_run_has_a_reservation_of_nothing_in_a_store_that_allows_nothing`,
+  when the run ends. A store no reset was made in allows nothing. **A call that may
+  cost nothing is admitted without the ledger being asked** (ADR 0016, "A call that
+  may cost nothing"): with no config, a run is admitted as before, its record says
+  `reserved_micros` 0, not null, because it ran under a ledger with nothing to
+  spend, and the books name nothing of it. Its admission and its end make no name
+  under `spend/` and read the content of none, and it is admitted with no
+  allowance, with nothing left, and where the books need their owner
+  (`wired::with_no_config_a_free_run_is_admitted_in_a_store_that_allows_nothing_and_the_books_name_nothing`,
+  `wired::a_free_run_makes_no_name_under_spend_and_reads_none_of_the_books_and_a_paid_run_does_both`,
+  `wired::a_free_run_is_admitted_with_no_allowance_with_nothing_left_and_when_the_books_need_their_owner`,
   `rascal::grow_runs_under_the_config_its_flag_names_and_under_the_empty_config_with_none`).
+  As first built by this task, a free run had a reservation of nothing, six names
+  under `spend/`; the review of the task found what that cost every later run.
 - **The bound of a call is the sum of its needs, each for the requests it states**
   (`Requirement::requests`; ADR 0010): one, unless the action says more. Of the
   actions this build ships, `check` alone needs a backend, and states the 16 turns
@@ -1648,10 +1658,15 @@ in which the test installs a model with a fake of the download.
   called cost is in that run's record (ADR 0016, "The run's spend lines"), and
   nothing adds a tree up. `whizbang spend status --run` shows what the books hold
   of a run, an interrupted one among them.
-- **A free call writes names under `spend/` too:** its reservation of nothing, its
-  turn and its closing. Those names are never removed (ADR 0016), so every run of
-  the binary now adds to what the store's generation file holds
-  (`docs/carry-over.md`, the row on the store's limit).
+- **Where the books need their owner, every paid call is refused and every free
+  call runs.** The ledger declines an admission it is asked for until the owner's
+  reset (`Refusal::NeedsOwner`), and it is not asked for a call that may cost
+  nothing. A run that is already executing goes on within its own reservation (ADR
+  0016, "The strand cut down").
+- **A paid call writes names under `spend/` that are never removed** (ADR 0016), and
+  the ledger reads all of them at each admission: what a paid call costs to admit
+  grows with the paid calls a store has seen (`docs/carry-over.md`, the row on what
+  every publication writes, milestone 2). A free call writes none and reads none.
 - **Nothing holds an action to the number of requests its need states** but the
   meter, which refuses the request its run has nothing left for. An action that
   states too many reserves more than it spends, released at its run's end; one that

@@ -1433,6 +1433,39 @@ and not as the words above have them.
   catalogue in 1B). The test gives one over a scratch folder, and the row on the
   shipped catalogue in `docs/carry-over.md` has the command's flag.
 
+**Reworded with the task** (after the review of W1, 2026-11-15). Two clauses of "Done
+when" are no longer as they were worded, each by a change the review asked for.
+
+- "With no config, `grow` runs as at `m1a` and its run has a reservation of
+  nothing". It has none. As first built, every run through the binary's executor
+  wrote six names under `spend/`, a free one too, and the real ledger read every
+  such name at each admission: each run made every later run slower, for the life
+  of the store, and where the books needed their owner a free call was refused with
+  the paid ones. That is against what spend control is for ("Decisions", the last
+  item; the owner, 2026-11-15: cost control is "the least important part of all of
+  this"). So the clause holds as: **with no config, `grow` runs, the ledger is not
+  asked for it, and no name under `spend/` is made or read for it; its record says
+  that nothing was reserved, as `reserved_micros` 0.** It stays 0 and not null
+  because the run was counted, with nothing to spend (ADR 0013; ADR 0016, "A call
+  that may cost nothing"). Shown by
+  `rascal::grow_runs_under_the_config_its_flag_names_and_under_the_empty_config_with_none`
+  (the real binary), with
+  `wired::with_no_config_a_free_run_is_admitted_in_a_store_that_allows_nothing_and_the_books_name_nothing`,
+  which was `wired::with_no_config_a_run_has_a_reservation_of_nothing_in_a_store_that_allows_nothing`,
+  `wired::a_free_run_makes_no_name_under_spend_and_reads_none_of_the_books_and_a_paid_run_does_both`
+  and
+  `wired::a_free_run_is_admitted_with_no_allowance_with_nothing_left_and_when_the_books_need_their_owner`.
+- "The shipped description does not change". It held for the task's three pull
+  requests, and does not hold for the change that followed its review: a need
+  states how many requests it is for (S4, "Reworded with the task"), which is a
+  field of every need in the description, so the description's version went from 4
+  to 5 and `docs/reference/` was generated again (ADR 0003, "What changes the
+  version"). `describe::describe_json_pretty_prints_the_bytes_the_reference_holds`
+  holds the binary to the regenerated reference.
+
+The second note above, on `reserved_micros`, is read with the first of these: it is
+0 where it was null, and that is no longer a reservation of nothing in the books.
+
 ### S1b. The fold
 
 **Depends on:** I2. In `spend/` only. The real fold, held to I2's model.
@@ -1526,6 +1559,22 @@ allowance.
 Two things were added that the task did not name, each asked for by a review:
 a refusal of its own where the books need their owner
 (`Refusal::NeedsOwner`), and `Ledger::confirm` and `settle` without a default.
+**Reworded with the task** (after the review of W1, 2026-11-15). "A call with an
+estimate of zero is admitted in a store with no allowance" holds, and no longer by
+the ledger: as built, the ledger was asked and admitted it under a hold of nothing,
+which made six names under `spend/` for every free run and read every name there at
+each admission, and where the books needed their owner it was refused. The executor
+now admits a call that may cost nothing without asking the ledger, whatever the
+books say (ADR 0016, "A call that may cost nothing"; W1, "Reworded with the task",
+has the reason). The same test holds it,
+`a_store_with_no_allowance_admits_a_call_of_nothing_and_refuses_one_over_nothing`,
+restated: the ledger's three questions are counted and none is asked, and no name
+is made. Two more tests of this file were restated with it:
+`a_call_of_nothing_is_admitted_in_a_store_in_debt_and_the_ledger_is_not_asked`, which
+was `a_call_of_nothing_is_confirmed_in_a_store_in_debt`, and
+`an_epoch_whose_turns_are_not_its_publications_admits_no_paid_call_until_a_reset_and_a_free_one_all_the_same`,
+which was `…_admits_nothing_until_a_reset`: a call of nothing was refused there, and is
+now admitted.
 
 ### S3. The per-call cap, and a call's own
 

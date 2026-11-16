@@ -219,9 +219,10 @@ pub enum Declined {
     /// The books of this epoch, the newest, need their owner: its turns are not those
     /// its publications took, or a reservation is frozen and no name can be trusted
     /// for its amount, which stops every epoch (ADR 0016, "Epochs: what a reset
-    /// bounds"). Nothing is admitted there until the owner acts, a call of nothing
-    /// among them: no amount that is left can be stated. The call is refused
-    /// ([`super::Refusal::NeedsOwner`]).
+    /// bounds"). Nothing a ledger is asked for is admitted there until the owner
+    /// acts: no amount that is left can be stated. The call is refused
+    /// ([`super::Refusal::NeedsOwner`]). An executor does not ask for a call that may
+    /// cost nothing, so such a call is admitted there all the same.
     NeedsOwner { epoch: u64 },
     /// The ledger could not judge: the store failed, or a record it needed is not one
     /// this build reads, or the ledger itself failed ([`NotJudged`]). This is not a

@@ -287,25 +287,23 @@ fn a_store_with_no_allowance_admits_a_call_of_nothing_and_refuses_one_over_nothi
     assert_eq!(world.held(), before);
     assert_eq!((world.ran(), ledger.asked()), (0, 2));
 
-    // A call of nothing is admitted there, reserves nothing under a hold of nothing,
-    // and runs; its end closes its reservation, which takes its first place and the
-    // epoch's next turn.
+    // A call of nothing is admitted there and runs, and the ledger is not asked:
+    // not to reserve, not to confirm, and not to close at the run's end. No name
+    // is made under `spend/`. (Restated after the review of task W1, 2026-11-15: it
+    // was admitted under a hold of nothing, with six names.)
     let free = painting(&world, 0, ledger.clone());
     let finished = ran(free.request(&asked("order-1")));
-    let one = finished.run();
+    assert_eq!(spend_names(&world.store), Vec::<String>::new());
     assert_eq!(
-        spend_names(&world.store),
-        [
-            format!("spend/closed/{one}/released"),
-            format!("spend/held/0/{one}/0"),
-            format!("spend/place/{one}/1"),
-            format!("spend/reservations/{one}"),
-            "spend/turn/0/1".to_owned(),
-            "spend/turn/0/2".to_owned(),
-        ]
+        (ledger.asked(), ledger.confirmed(), ledger.settled()),
+        (2, 0, 0)
     );
     assert_eq!(world.ran(), 1);
     assert_eq!(balance(&world.store, 0), (0, exactly(0), 0));
+    // Its record says that nothing was reserved, as an amount: it ran under a
+    // ledger, with nothing to spend.
+    let record = world.record(finished.run());
+    assert_eq!(record.spend().reserved_micros, Some(0));
     assert_eq!(
         paid.request(&asked("order-2")).unwrap_err(),
         over(1, 0),
@@ -467,7 +465,8 @@ fn an_admission_under_a_run_id_the_books_already_name_is_not_made() {
 // --- where the books need their owner, and where they do not ------------------------------------
 
 #[test]
-fn an_epoch_whose_turns_are_not_its_publications_admits_nothing_until_a_reset() {
+fn an_epoch_whose_turns_are_not_its_publications_admits_no_paid_call_until_a_reset_and_a_free_one_all_the_same()
+ {
     let world = World::new("reserve-turns");
     let ledger = Counted::left_open();
     allow(&world.store, 1_000_000);
@@ -496,11 +495,19 @@ fn an_epoch_whose_turns_are_not_its_publications_admits_nothing_until_a_reset() 
         refused.refusal().unwrap().kind(),
         RefusalKind::OverAllowance
     );
-    // A call of nothing is refused as every other is.
-    let free = painting(&world, 0, ledger.clone());
-    assert_eq!(free.request(&asked("order-2")).unwrap_err(), needs_owner(1));
     assert_eq!(world.held(), before);
     assert_eq!(world.ran(), 1);
+    // A call of nothing is admitted all the same, whatever state the books are in:
+    // the ledger is not asked, and nothing is made under `spend/`. (Restated after
+    // the review of task W1, 2026-11-15: it was refused as every other call was.)
+    let names = spend_names(&world.store);
+    let asked_before = ledger.asked();
+    let free = painting(&world, 0, ledger.clone());
+    ran(free.request(&asked("order-free")));
+    assert_eq!(world.ran(), 2);
+    assert_eq!(spend_names(&world.store), names);
+    assert_eq!(ledger.asked(), asked_before);
+    let before = world.held();
     // The test kit's fake says the same of the same books.
     let fake = painting(&world, 250_000, Arc::new(FakeLedger::new()));
     assert_eq!(fake.request(&asked("order-2")).unwrap_err(), needs_owner(1));
@@ -922,17 +929,26 @@ fn an_admission_stands_only_as_the_record_and_one_hold_and_within_its_allowance(
 }
 
 #[test]
-fn a_call_of_nothing_is_confirmed_in_a_store_in_debt() {
+fn a_call_of_nothing_is_admitted_in_a_store_in_debt_and_the_ledger_is_not_asked() {
     // A reservation other hands made puts the epoch over its allowance. A call of
-    // nothing adds nothing to what is counted, and is not held to that debt, when it
-    // is judged and when it is confirmed.
+    // nothing adds nothing to what is counted, and is not held to that debt: the
+    // ledger is asked nothing of it. (Restated after the review of task W1,
+    // 2026-11-15. It was `a_call_of_nothing_is_confirmed_in_a_store_in_debt`: the
+    // ledger was asked, and confirmed it. What the fold says of a hold of nothing
+    // in an epoch in debt is still held, in `spend::fold::`.)
     let world = World::new("confirm-nothing");
     let ledger = Counted::new();
     allow(&world.store, 10);
     admitted_elsewhere(&world.store, "9-9", 11, 1);
     assert_eq!(balance(&world.store, 1), (10, exactly(11), 0));
+    let before = spend_names(&world.store);
     ran(painting(&world, 0, ledger.clone()).request(&asked("order-1")));
-    assert_eq!((world.ran(), ledger.confirmed()), (1, 1));
+    assert_eq!(world.ran(), 1);
+    assert_eq!(
+        (ledger.asked(), ledger.confirmed(), ledger.settled()),
+        (0, 0, 0)
+    );
+    assert_eq!(spend_names(&world.store), before);
     // A call over nothing is refused there.
     let paid = painting(&world, 1, ledger.clone());
     assert_eq!(paid.request(&asked("order-2")).unwrap_err(), over(1, 0));

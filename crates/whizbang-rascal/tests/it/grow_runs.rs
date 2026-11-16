@@ -516,22 +516,18 @@ fn the_records_of_grow_completed_failed_and_cancelled_hold_what_the_spec_lists()
         let (start, end) = (&record["time"]["start_ms"], &record["time"]["end_ms"]);
         assert!(start.as_u64().unwrap() > 0 && start.as_u64() <= end.as_u64());
         assert_eq!(record["time"]["durations"], json!([]), "{status}");
-        // Spend: the ledger took part, so an amount was reserved for the run: none,
-        // since `grow` asks nothing that costs. It is in the store under the run.
+        // Spend: the executor has a ledger, so the run is counted, and what was
+        // reserved for it is an amount: none, since `grow` asks nothing that costs.
+        // A call that may cost nothing is admitted without the ledger being asked,
+        // so the store holds no reservation of it.
         assert_eq!(
             record["spend"],
             json!({"reserved_micros": 0, "requests": []}),
             "{status}"
         );
         let reader = Reader::open(&world.root(), Arc::new(ShimFs::new())).unwrap();
-        let reserved = ledger.reservations(&reader).unwrap();
-        let [reservation] = reserved.as_slice() else {
-            panic!("{status}: {} reservations", reserved.len());
-        };
-        assert_eq!(
-            (reservation.run(), reservation.micros()),
-            (finished.run(), 0)
-        );
+        assert_eq!(ledger.reservations(&reader).unwrap(), [], "{status}");
+        assert_eq!(ledger.asked(), 0, "{status}");
         // Models, egress, steps and judge: there, and empty.
         for group in ["models", "egress", "steps", "judge"] {
             assert_eq!(record[group], json!([]), "{status}: {group}");

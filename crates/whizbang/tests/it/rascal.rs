@@ -455,10 +455,15 @@ fn grow_runs_under_the_config_its_flag_names_and_under_the_empty_config_with_non
     let text = shown(&printed(&out).0);
     assert!(text.contains(&format!("\nconfig: {empty}\n")), "{text}");
     assert!(text.contains("\nsettings: none\n"), "{text}");
-    // It costs nothing, and the ledger says so: a reservation of nothing, where a
-    // build before the ledger reserved none.
+    // It may cost nothing, so the ledger is not asked: its record says that nothing
+    // was reserved, as an amount, where a build before the ledger said nothing of
+    // it, and the store holds no name under `spend/`.
     let reserved = "\nspend: $0.00 reserved; paid requests: none; cost: $0.00\n";
     assert!(text.contains(reserved), "{text}");
+    let reader = Reader::open(&store, Arc::new(RealFs)).unwrap();
+    let generation = reader.snapshot().unwrap();
+    let mut names = generation.entries().keys();
+    assert!(!names.any(|name| name.starts_with("spend/")));
     // A config that caps one call: `grow` needs no backend and costs nothing, so it
     // runs, and its run records the cap among its settings.
     let config = dir.path().join("whizbang.toml");

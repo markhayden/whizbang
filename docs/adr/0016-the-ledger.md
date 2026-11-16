@@ -64,6 +64,9 @@ call and the meter.
 Amended: 2026-11-15, after the review of task W1. Changed where a section named the
 bound of a call as the wiring's: a need states its own number of requests (ADR
 0010).
+Amended: 2026-11-15, after the review of task W1. Added: "A call that may cost
+nothing", after "The strand cut down": the executor admits it without asking the
+ledger, whatever the books say. Changed with it: three rows of "The real ledger".
 Spec: section 6, "Spend"; section 3, "Storage"
 
 ## Context
@@ -1191,7 +1194,7 @@ and `src/contract/`), each with the test that shows it. Tests named `ledger::`,
   over the allowance, with nothing left. **Changed with task S2:** a ledger declines
   there with a reason of its own (`contract::Declined::NeedsOwner`, which the caller
   is handed as `Refusal::NeedsOwner` with the epoch), the fake as the real one
-  (`spend::reserve::an_epoch_whose_turns_are_not_its_publications_admits_nothing_until_a_reset`).
+  (`spend::reserve::an_epoch_whose_turns_are_not_its_publications_admits_no_paid_call_until_a_reset_and_a_free_one_all_the_same`).
 - **The fake's allowance is a number in memory,** standing for the epoch before any
   reset while the store names no reset, and a correction never stands for it. Its
   judgement is the model's fold over the names a store holds
@@ -1256,13 +1259,13 @@ task S9).
 | What | As built | Shown by |
 |---|---|---|
 | An admission | Judged on the newest epoch of the step's generation. Admitted, it makes the hold, which states the amount and the epoch, and the epoch's next turn, in the admission's publication; each record says what its name says and no more. Declined, nothing is published and the request's id stays free | `the_ledger_folds_the_steps_generation_declines_over_the_allowance_and_makes_its_names` |
-| A store with no allowance | The epoch before any reset allows nothing, and so does one whose reset says nothing: a call of nothing is admitted there, under a hold of nothing, and one over nothing is refused as over the allowance, with nothing left | `a_store_with_no_allowance_admits_a_call_of_nothing_and_refuses_one_over_nothing` |
+| A store with no allowance | The epoch before any reset allows nothing, and so does one whose reset says nothing: a call over nothing is refused as over the allowance, with nothing left. A call of nothing is admitted there, and the ledger is not asked ("A call that may cost nothing"; it was admitted under a hold of nothing, with six names) | `a_store_with_no_allowance_admits_a_call_of_nothing_and_refuses_one_over_nothing` |
 | A cost with no bound | Refused by the executor, and the ledger is not asked | `a_call_with_no_bound_is_refused_and_the_ledger_is_not_asked` |
 | A preparation | Makes no reservation and no record, and asks the ledger nothing | `prepare_makes_no_reservation_and_no_record` |
 | A call from inside an action | Asks the ledger nothing, and has no name under `spend/` | `a_nested_call_asks_the_ledger_nothing` |
-| An epoch that needs its owner | An admission is refused with a reason of its own, a call of nothing among them, and nothing is published; a reset opens an epoch that admits again. (As cut down with task S9: a frozen reservation whose amount is unknown counts against no allowance and stops no admission, before a reset or after it. It was: "unless a frozen reservation's amount is unknown, which no reset ends") | `an_epoch_whose_turns_are_not_its_publications_admits_nothing_until_a_reset`, `a_frozen_reservation_whose_amount_no_name_states_counts_nowhere_and_stops_no_admission` |
+| An epoch that needs its owner | An admission the ledger is asked for is refused with a reason of its own, and nothing is published; a reset opens an epoch that admits again. A call of nothing is admitted there all the same, and the ledger is not asked ("A call that may cost nothing"; it was refused as every other was). (As cut down with task S9: a frozen reservation whose amount is unknown counts against no allowance and stops no admission, before a reset or after it. It was: "unless a frozen reservation's amount is unknown, which no reset ends") | `an_epoch_whose_turns_are_not_its_publications_admits_no_paid_call_until_a_reset_and_a_free_one_all_the_same`, `a_frozen_reservation_whose_amount_no_name_states_counts_nowhere_and_stops_no_admission` |
 | A damaged record (invariant 4; history 81) | Its own reservation is frozen at the most its names can mean, 25 for one of 10, and a call the rest of the allowance covers is admitted, confirmed and runs beside it. A reset whose record cannot be read allows nothing | `one_record_that_cannot_be_read_freezes_its_own_reservation_and_stops_no_other_call`, `a_reset_whose_record_cannot_be_read_allows_nothing` |
-| The confirmation | `Folded::stands` on the reading made after the publication. Its third condition is of the epoch the reservation's hold names: with a reset between the publication and the reading, an admission whose own epoch is full stands though the newest allows nothing, and one whose own epoch is over its allowance does not though the newest has room. Nor does one whose epoch, or the newest, needs its owner; nor one with a name beside its record and its hold. A call of nothing is confirmed in a store in debt | `an_admission_is_held_to_the_epoch_it_fell_under_when_a_reset_came_before_its_reading`, `an_admission_does_not_stand_where_its_epoch_or_the_newest_needs_its_owner`, `an_admission_stands_only_as_the_record_and_one_hold_and_within_its_allowance`, `a_call_of_nothing_is_confirmed_in_a_store_in_debt` |
+| The confirmation | `Folded::stands` on the reading made after the publication. Its third condition is of the epoch the reservation's hold names: with a reset between the publication and the reading, an admission whose own epoch is full stands though the newest allows nothing, and one whose own epoch is over its allowance does not though the newest has room. Nor does one whose epoch, or the newest, needs its owner; nor one with a name beside its record and its hold. A call of nothing in a store in debt is admitted and the ledger is not asked, to reserve or to confirm ("A call that may cost nothing"; it was confirmed there) | `an_admission_is_held_to_the_epoch_it_fell_under_when_a_reset_came_before_its_reading`, `an_admission_does_not_stand_where_its_epoch_or_the_newest_needs_its_owner`, `an_admission_stands_only_as_the_record_and_one_hold_and_within_its_allowance`, `a_call_of_nothing_is_admitted_in_a_store_in_debt_and_the_ledger_is_not_asked` |
 | Two admissions at once (the plan's rule 1; history 1) | Two executors over one store are each told yes for the last of the allowance, and are held inside the ledger with their names staged, after the reading a wrong ledger would decide from. Let go together, one is admitted; the other's publication is refused for the turn, it is asked again on the books as they are then, and is declined for what is left. It leaves no name, and its id is free. Under an allowance that covers both, both are admitted, at the epoch's first and second turn. The next turn, the turns due and the epoch a publication takes its turn in (`Folded::next_turn`, `due`, `turn_epochs`) are read after each | `two_executors_each_told_yes_for_the_last_of_the_allowance_end_with_one_admitted`, `two_executors_that_judge_together_under_an_allowance_that_covers_both_are_both_admitted` |
 | An admission and the owner's reset at once (history 29) | The reset takes the next turn of the epoch it closes, which an admission that judged before it chose: the admission is refused by the store, judged again, and falls under the new epoch | `an_admission_that_judged_before_the_owners_reset_is_asked_again_under_the_new_epoch` |
 | A crash inside an admission (the plan's rule 2) | Power is lost before each of the 24 calls that change the disk, with every choice there is of which directories and which names lose what was not durable: some 2,500 crashes, in six tests that each go through every step and take a sixth of its ways. The call may cost a quarter of a dollar under an allowance the owner's reset made durable before; that store is made once and copied for each crash. The next writer finds the run, the id's record, the reservation, the hold and its turn together, each readable and saying what its name says, the reservation open and a set the ledger could have written, or it finds none of them; and after every one of the crashes the same request runs once, or is answered with the run that is there, which nothing ran. It took the place of the executor's sweep with a ledger of one name (ADR 0007, "Admission"), and holds what that held | `a_crash_at_any_event_of_an_admission_through_the_real_ledger_leaves_all_of_it_or_none_1_of_6` to `…_6_of_6` |
@@ -1999,6 +2002,73 @@ books with what a provider billed. A fault in the meter, a settlement or a closi
 that an ordinary test does not catch can count wrongly in either direction until it
 is seen in `spend status` or in a run's record. And the limits (a) to (h) stand as
 they were, with nothing built to narrow them.
+
+### A call that may cost nothing
+
+Decided after the review of task W1 (2026-11-15), on the owner's words of that day:
+cost control is "the least important part of all of this", and it errs toward letting
+work run ("The strand cut down").
+
+**The executor admits a call whose estimate is nothing without asking the ledger.**
+No reservation is made for it, no hold and no turn; its admission is not confirmed
+against the books; and its run's end closes nothing. So it makes no name under
+`spend/` and reads the content of none, and it is admitted whatever the books say:
+with no allowance, with nothing left, in debt, and where an epoch needs its owner. A
+call's estimate is nothing when no need of it is answered by a backend that states a
+price: an action that needs no backend, as `grow` and `view`, or one whose backends
+are local and free.
+
+**Why.** Once the binary's executor had the ledger (task W1), every run wrote six
+names, a free one too, and the real ledger folds every name under `spend/` and reads
+its content at each reservation and each confirmation. Those names are never removed,
+so each run of anything cost every later run a little more, for the life of the
+store. Measured on the owner's Mac with the release binary, `whizbang rascal grow` in
+a fresh store, one process a run, 150 runs, three times over on a machine that was
+building other things, the median of each 25 runs: about 120 ms a run at runs 1 to
+25 and 142 to 154 at runs 126 to 150, with a generation file of 299,808 bytes at
+the end. With this change: 77 to 91 ms at runs 1 to 25 and 81 to 97 at runs 126 to
+150, the same within what the machine varied by, with a generation file of 143,016
+bytes. And where the books needed their owner, the ledger declined every call, a
+free one included: a fault in the money stopped work that spends none.
+
+**Where it is decided: in the executor's admission, not in the ledger.** The
+executor publishes the reservation's record itself, and a ledger cannot return from
+`reserve` without a name it made in that step (ADR 0007, "The reservation"): a
+ledger that answered without names would need another interface. In the executor it
+is one condition, and it holds for every ledger.
+
+**What stays.**
+
+- **The run is counted, with nothing to spend.** Its record says `reserved_micros`
+  0, not null (ADR 0013), and its run has an allowance of nothing: a paid request
+  from it, or a paid call from inside it, is refused as over what it has left. So a
+  free run is no way round the ledger.
+- **A call that may cost something is as it was,** at its admission, its
+  confirmation and its end.
+- **A request of nothing inside a run that reserved something is as it was**
+  ("What a reservation counts for"): it is placed under that reservation.
+- **What the fold, the model and the ledger say of a call of nothing is as it was,**
+  where they are asked: histories 38, 72 and 85, and
+  `spend::fold::an_admission_stands_under_each_of_its_three_conditions_and_only_for_the_amount_its_hold_states`.
+  The executor no longer asks.
+- **A call from inside a run** asks the ledger nothing, as before.
+
+Shown by, in the core:
+`spend::reserve::a_store_with_no_allowance_admits_a_call_of_nothing_and_refuses_one_over_nothing`
+(the ledger's three questions are counted, and none is asked),
+`spend::reserve::a_call_of_nothing_is_admitted_in_a_store_in_debt_and_the_ledger_is_not_asked`,
+`spend::reserve::an_epoch_whose_turns_are_not_its_publications_admits_no_paid_call_until_a_reset_and_a_free_one_all_the_same`;
+and through the binary's wiring:
+`wired::a_free_run_makes_no_name_under_spend_and_reads_none_of_the_books_and_a_paid_run_does_both`
+(over a file system that keeps what it was asked to read),
+`wired::a_free_run_is_admitted_with_no_allowance_with_nothing_left_and_when_the_books_need_their_owner`,
+`wired::with_no_config_a_free_run_is_admitted_in_a_store_that_allows_nothing_and_the_books_name_nothing`.
+
+**What it does not change: a paid call still pays for the store's history.** The
+fold at each reservation and each confirmation reads every name under `spend/`, of
+closed epochs too, so the cost of admitting a paid call grows with the paid calls
+the store has seen. It is not rebuilt here: paid volume first appears in milestone
+2 (`docs/carry-over.md`, the same row, with the remedy).
 
 ## Review rounds
 

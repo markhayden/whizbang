@@ -1135,6 +1135,40 @@ fn runs_show_prints_the_settings_the_paid_requests_and_where_data_went() {
 }
 
 #[test]
+fn runs_show_says_how_much_of_what_a_run_cost_is_of_requests_that_no_answer_settled() {
+    // A second request, which timed out: no answer settled it, so it counts at its
+    // bound, and the cost says how much of the sum is such requests. A run whose
+    // requests were all settled by an answer says no such thing.
+    let settled = ordinary_record();
+    assert!(!shown_of(settled.as_bytes()).contains("of which"));
+    let both = settled
+        .replace(
+            r#""durations":[{"of":"request","index":0,"start_ms":1001,"ms":1}]"#,
+            r#""durations":[{"of":"request","index":0,"start_ms":1001,"ms":1},{"of":"request","index":1,"start_ms":1002,"ms":1}]"#,
+        )
+        .replace(
+            r#""device":null,"cached":null,"ended":"answered"}],"#,
+            r#""device":null,"cached":null,"ended":"answered"},{"capability":"fill","backend":"fake","model":"m","version":"1","device":null,"cached":null,"ended":"timed_out"}],"#,
+        )
+        .replace(
+            r#""stage":"answered","over_bound":true}]"#,
+            r#""stage":"answered","over_bound":true},{"request":1,"reserved_micros":500,"settled_micros":500,"unresolved_micros":500,"stage":"unresolved","over_bound":false}]"#,
+        )
+        .replace(r#""spend":{"reserved_micros":500,"#, r#""spend":{"reserved_micros":1000,"#);
+    assert_ne!(both, settled);
+    let text = shown_of(both.as_bytes());
+    has_line(
+        &text,
+        "spend: $0.001 reserved; paid requests: 2; cost: $0.0014, of which $0.0005 is of \
+         requests that no answer settled",
+    );
+    has_line(
+        &text,
+        "  request 1\tunresolved\theld $0.0005\tsettled $0.0005\tunresolved $0.0005",
+    );
+}
+
+#[test]
 fn runs_show_says_unknown_for_every_group_a_record_has_lost_and_never_none() {
     let run = RunId::parse("1000-1").unwrap();
     let request = RequestId::parse("req-7").unwrap();
