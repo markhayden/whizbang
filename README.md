@@ -10,6 +10,9 @@ in a store and commits the result. `check`, squint's judge loop, is described an
 command, and cannot run on this build, which holds no judge. `whizbang runs list|show`
 reads what a run recorded, `whizbang store list|delete|prune|import` looks after a store,
 and `whizbang describe` says what the build holds. Checkpoint 1B, policy and controls, is
+complete too: [docs/plans/m1b-note.md](docs/plans/m1b-note.md). At its tag, `m1b`,
+`whizbang spend status|reset` shows and sets what a store may spend, and every backend,
+download and recipient is still a fake in a test. Checkpoint 1C, the local pack, is
 next. The design is in [SPEC.md](SPEC.md); the plans are in [docs/plans/](docs/plans/). It replaces four earlier projects, which stay available as
 reference; their final commits are pinned in [docs/sources.toml](docs/sources.toml).
 

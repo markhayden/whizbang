@@ -2635,7 +2635,7 @@ and every script test passes on both runners.
       sweep's time alone.
 - [x] `docs/plans/m1b-note.md`: what shipped, what B0 changed in this plan, the timing
       table, what was spent (nothing), what moved to the carry-over list.
-- [ ] Tag `m1b`.
+- [x] Tag `m1b`. (Tagged at the merge of pull request #138.)
 
 **As built, 2026-11-15**, box by box. The note is `docs/plans/m1b-note.md`.
 
@@ -2664,13 +2664,14 @@ and every script test passes on both runners.
 - The fake ledger is kept: twelve test files use it, named in the comment at the top
   of `crates/whizbang-testkit/src/ledger.rs` and in the note.
 - The budget and the timing: the note, "Timing". The limits are unchanged.
-- The tag is the orchestrator's, after the pull request of this task is reviewed and
-  merged: the box stays open in this pull request, and is ticked by the one that
-  records the tag's commit in the note.
-  It also waits on one thing the exit check found and did not settle: a test of
-  the core that failed twice on the Linux runner on pushes to `main` and has passed
-  since (the note, "A test that failed twice on Linux and has passed since"; its row
-  in `docs/carry-over.md`).
+- The tag is the orchestrator's, on the merge of pull request #138, the last of the
+  checkpoint, which ticks the box and says so in the note. The box stayed open in
+  the pull request of the exit check, #136.
+  The tag waited on one thing the exit check found: a test of the core that failed
+  twice on the Linux runner on pushes to `main`. It was a fault of the code, and
+  pull request #137 settled it (the note, "A test that failed twice on Linux: a fault
+  of the code, found and fixed before the tag"; its row in `docs/carry-over.md`, which
+  keeps what is left for milestone 5).
 
 **Reworded with the task.** "Each crash sweep's time alone" is given for each sweep
 with every sweep running and nothing else beside them, two at a time as the test
