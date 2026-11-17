@@ -3,3 +3,4 @@
 //! So far this crate holds one thing: the comparison the baseline gate of milestone 2 uses.
 
 pub mod baseline;
+mod json;

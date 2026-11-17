@@ -1,0 +1,7 @@
+{
+  "frame": "000000257b2274797065223a2263616e63656c222c226964223a227231222c226964223a227231227d",
+  "name": "refused-not-json-twice",
+  "open": [],
+  "refused": "not_json",
+  "says": "a cancel that gives its id twice"
+}

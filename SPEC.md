@@ -114,7 +114,9 @@ not yet needed.
   and in no other way.
 
 The edges are listed in one file, `scripts/crate-graph.txt`, and checked by `just check`. A
-path dependency on a crate outside the workspace fails the check.
+path dependency on a crate outside the workspace fails the check. So does a feature of
+`serde_json` that the tests build with and the binary does not, or the reverse
+(`scripts/check-features.sh`, ADR 0023): no crate turns one on for itself.
 
 ### The execution contract
 
@@ -353,7 +355,7 @@ key_env = "FAL_KEY"
 Local and self-hosted backends for segment and fill run the same Python package.
 
 **Protocol.** One versioned logical protocol, decided at checkpoint 1C within these
-constraints:
+constraints (it is `pack/1`: ADR 0020, `docs/adr/0020-the-pack-protocol.md`):
 
 - A handshake that states the protocol version and refuses a mismatch.
 - Framed messages: request, result, event, cancel, error, each with a request id.
@@ -866,7 +868,8 @@ docs/
   sources.toml          the old repos' final commits, fixed before porting starts
 .claude/                skills, subagents and permission settings (versioned)
 scripts/                scan.sh, heavy.sh, timing.sh, setup.sh with tool-versions.txt,
-                        check-crate-graph.sh with crate-graph.txt, docs.sh,
+                        check-crate-graph.sh with crate-graph.txt,
+                        check-features.sh, docs.sh,
                         tool-record.sh (writes a tool record's examples and numbers
                         again), hooks/,
                         baseline/ (convert.py, audit.py and tables.py: Python 3.9 or

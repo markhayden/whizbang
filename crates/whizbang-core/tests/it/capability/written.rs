@@ -410,6 +410,48 @@ fn the_kind_of_a_document_is_read_first_and_by_itself() {
 }
 
 #[test]
+fn a_number_is_read_from_a_document_in_the_tests_as_the_shipped_binary_reads_it() {
+    // The tests and the binary build one `serde_json`, with one set of features
+    // (`scripts/check-features.sh`). Under `arbitrary_precision` a number would reach
+    // the look at the kind as a map, and `1e400` would be read in a call's arguments
+    // and kept as it was written.
+    let written = String::from_utf8(write_script(&[Ok(calling())])).unwrap();
+    let with = |n: &str| written.replace("\"n\":1000.0", &format!("\"n\":{n}"));
+    assert_ne!(with("1e3"), written);
+    // The same double, however it is written, is read as the same call; a whole number
+    // without a fraction or an exponent is read as another kind of number.
+    let read = read_script(written.as_bytes()).unwrap();
+    for same in ["1e3", "1E+3", "1000.00", "1e+03", "10000e-1"] {
+        assert_eq!(read_script(with(same).as_bytes()).unwrap(), read, "{same}");
+    }
+    assert_ne!(read_script(with("1000").as_bytes()).unwrap(), read);
+    for over in ["1e400", "-1e400"] {
+        assert!(
+            matches!(
+                read_script(with(over).as_bytes()),
+                Err(Unread::Malformed(_))
+            ),
+            "{over}"
+        );
+        let kind = format!(r#"{{"script":{over},"entries":[]}}"#);
+        assert!(
+            matches!(read_script(kind.as_bytes()), Err(Unread::Malformed(_))),
+            "{over}"
+        );
+    }
+    for number in ["-0", "1.5", "7"] {
+        let kind = format!(r#"{{"script":{number},"entries":[]}}"#);
+        assert_eq!(
+            read_script(kind.as_bytes()),
+            Err(Unread::OtherVersion {
+                found: "none".to_owned()
+            }),
+            "{number}"
+        );
+    }
+}
+
+#[test]
 fn an_exchange_whose_turn_was_not_written_is_not_read_back() {
     let written = write_exchange(0, &request(), &Ok(cut_off()), Keep::Whole);
     let mut document: Json = serde_json::from_slice(&written).unwrap();

@@ -1,0 +1,7 @@
+{
+  "frame": "0000001a7b2274797065223a2263616e63656c222c226964223a4e614e7d",
+  "name": "refused-not-json-nan",
+  "open": [],
+  "refused": "not_json",
+  "says": "a value that is no JSON value, which some readers take"
+}

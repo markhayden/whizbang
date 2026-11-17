@@ -7,7 +7,7 @@
 
 use std::fmt;
 
-use serde_json::Value;
+use crate::json::{Json, parse};
 
 /// The version of this comparison, written into the gate receipt (docs/baseline/README.md).
 /// It changes whenever what counts as a difference changes.
@@ -60,6 +60,8 @@ impl fmt::Display for Difference {
 /// Why a comparison could not be made at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
+    /// A transcript is not one JSON value.
+    NotJson { which: Side },
     /// A transcript is not of the version this comparison reads.
     Version { which: Side },
     /// A transcript is not an object with at least one turn and a terminal outcome of a
@@ -91,6 +93,7 @@ impl fmt::Display for Side {
 impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Refusal::NotJson { which } => write!(f, "the {which} transcript is not JSON"),
             Refusal::Version { which } => {
                 write!(
                     f,
@@ -121,42 +124,51 @@ impl fmt::Display for Refusal {
 
 impl std::error::Error for Refusal {}
 
-/// Compares what whizbang replayed with what was recorded. `Ok` holds every difference, in the
-/// order of the recorded transcript; an empty list is a match. Numbers are compared by the
-/// text they were written with, so `1` and `1.0` differ and no two large numbers are confused.
-/// One thing about that text is lost before the comparison sees it: the JSON reader writes
-/// an exponent's `E` as `e`, and a `+` where no sign was written, so `1E2`, `1e2` and `1e+2`
-/// are equal.
-pub fn compare(recorded: &Value, replayed: &Value) -> Result<Vec<Difference>, Refusal> {
-    for (which, t) in [(Side::Recorded, recorded), (Side::Replayed, replayed)] {
-        if t.get("transcript_version").and_then(Value::as_u64) != Some(TRANSCRIPT_VERSION) {
+/// Compares what whizbang replayed with what was recorded, each as the text of a transcript.
+/// `Ok` holds every difference, in the order of the recorded transcript; an empty list is a
+/// match. Numbers are compared by the text they were written with, so `1` and `1.0` differ
+/// and no two large numbers are confused. One thing about that text is lost before the
+/// comparison sees it: the reader writes an exponent's `E` as `e`, and a `+` where no sign
+/// was written, so `1E2`, `1e2` and `1e+2` are equal. Texts are compared as JSON decodes
+/// them, so `"\u00e9"` and `"é"` are equal.
+pub fn compare(recorded: &str, replayed: &str) -> Result<Vec<Difference>, Refusal> {
+    let recorded = parse(recorded).ok_or(Refusal::NotJson {
+        which: Side::Recorded,
+    })?;
+    let replayed = parse(replayed).ok_or(Refusal::NotJson {
+        which: Side::Replayed,
+    })?;
+    let version = Json::Number(TRANSCRIPT_VERSION.to_string());
+    for (which, t) in [(Side::Recorded, &recorded), (Side::Replayed, &replayed)] {
+        // Digits only (docs/baseline/transcript.md, "whole number").
+        if t.get("transcript_version") != Some(&version) {
             return Err(Refusal::Version { which });
         }
         // At least one turn, and an outcome that says what kind it is: an empty list or an
         // empty outcome on both sides would otherwise compare as equal.
         let turns = t
             .get("turns")
-            .and_then(Value::as_array)
+            .and_then(Json::as_list)
             .is_some_and(|turns| !turns.is_empty());
         let terminal = t
             .get("terminal")
             .and_then(|terminal| terminal.get("kind"))
-            .is_some_and(Value::is_string);
+            .is_some_and(|kind| kind.as_text().is_some());
         if !turns || !terminal {
             return Err(Refusal::Shape { which });
         }
     }
     let nothing_missing = recorded
         .get("incomplete")
-        .and_then(Value::as_array)
+        .and_then(Json::as_list)
         .is_some_and(Vec::is_empty);
-    if recorded.get("complete") != Some(&Value::Bool(true)) || !nothing_missing {
+    if recorded.get("complete") != Some(&Json::Bool(true)) || !nothing_missing {
         return Err(Refusal::RecordedIncomplete);
     }
     let declared: Option<Vec<&str>> = recorded
         .get("volatile")
-        .and_then(Value::as_array)
-        .and_then(|list| list.iter().map(Value::as_str).collect());
+        .and_then(Json::as_list)
+        .and_then(|list| list.iter().map(Json::as_text).collect());
     if declared.as_deref() != Some(VOLATILE) {
         return Err(Refusal::Volatile);
     }
@@ -167,8 +179,8 @@ pub fn compare(recorded: &Value, replayed: &Value) -> Result<Vec<Difference>, Re
     let mut differences = Vec::new();
     let mut path = Vec::new();
     walk(
-        Some(recorded),
-        Some(replayed),
+        Some(&recorded),
+        Some(&replayed),
         &mut path,
         &volatile,
         &mut differences,
@@ -193,8 +205,8 @@ fn render(path: &[String]) -> String {
 }
 
 fn walk(
-    recorded: Option<&Value>,
-    replayed: Option<&Value>,
+    recorded: Option<&Json>,
+    replayed: Option<&Json>,
     path: &mut Vec<String>,
     volatile: &[Vec<&str>],
     out: &mut Vec<Difference>,
@@ -212,8 +224,8 @@ fn walk(
         (None, None) => {}
         (Some(_), None) => note(Kind::Missing),
         (None, Some(_)) => note(Kind::Extra),
-        (Some(Value::Object(a)), Some(Value::Object(b))) => {
-            // serde_json keeps keys sorted, so the order is the same on every run.
+        (Some(Json::Object(a)), Some(Json::Object(b))) => {
+            // Keys are kept sorted, so the order is the same on every run.
             let mut keys: Vec<&String> = a.keys().chain(b.keys()).collect();
             keys.sort();
             keys.dedup();
@@ -223,7 +235,7 @@ fn walk(
                 path.pop();
             }
         }
-        (Some(Value::Array(a)), Some(Value::Array(b))) => {
+        (Some(Json::List(a)), Some(Json::List(b))) => {
             for index in 0..a.len().max(b.len()) {
                 path.push(index.to_string());
                 walk(a.get(index), b.get(index), path, volatile, out);

@@ -1,0 +1,19 @@
+{
+  "frame": "000000647b2274797065223a22726573756c74222c226964223a227231222c226b696e64223a226c6f6164222c22646576696365223a22637075222c2274687265616473223a332c22646961676e6f7374696373223a226c6f6164656420696e203132206d73227d",
+  "name": "refused-unexpected-kind",
+  "open": [
+    {
+      "binding": "sha256:92b2fa58028958317e408bd84ecfa70f5ee35b121991dbc232c49d166353708b",
+      "events": 0,
+      "height": 6,
+      "id": "r1",
+      "kind": "segment",
+      "max_instances": 2,
+      "queries": 3,
+      "text": 0,
+      "width": 8
+    }
+  ],
+  "refused": "unexpected",
+  "says": "the result of a load for a request that was a segment"
+}

@@ -1,0 +1,12 @@
+{
+  "frame": "0000003f7b2274797065223a2268656c6c6f222c226964223a226831222c2276657273696f6e223a227061636b2f31222c22726f6c65223a227768697a62616e67227d",
+  "message": {
+    "id": "h1",
+    "role": "whizbang",
+    "type": "hello",
+    "version": "pack/1"
+  },
+  "name": "hello-whizbang",
+  "open": [],
+  "says": "whizbang's hello, the first frame it writes"
+}

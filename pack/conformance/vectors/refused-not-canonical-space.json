@@ -1,0 +1,7 @@
+{
+  "frame": "0000001c7b2274797065223a2263616e63656c222c20226964223a227231227d",
+  "name": "refused-not-canonical-space",
+  "open": [],
+  "refused": "not_canonical",
+  "says": "a cancel with a space after a comma"
+}

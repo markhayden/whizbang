@@ -1,0 +1,7 @@
+{
+  "frame": "0000001c7b2274797065223a2263616e63656c222c226964223a227231227d0a",
+  "name": "refused-not-canonical-line",
+  "open": [],
+  "refused": "not_canonical",
+  "says": "a cancel with a line break after it"
+}

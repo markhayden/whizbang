@@ -1,0 +1,14 @@
+{
+  "frame": "0000002b7b2274797065223a226576656e74222c226964223a227231222c2274657874223a226c6f6164696e67227d",
+  "name": "refused-unexpected-event",
+  "open": [
+    {
+      "events": 0,
+      "id": "r2",
+      "kind": "load",
+      "text": 0
+    }
+  ],
+  "refused": "unexpected",
+  "says": "an event for a request that is not open"
+}

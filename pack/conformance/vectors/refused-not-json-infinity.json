@@ -1,0 +1,7 @@
+{
+  "frame": "0000001f7b2274797065223a2263616e63656c222c226964223a496e66696e6974797d",
+  "name": "refused-not-json-infinity",
+  "open": [],
+  "refused": "not_json",
+  "says": "an infinity, which is no JSON value and which some readers take"
+}

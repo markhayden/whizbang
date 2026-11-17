@@ -8,7 +8,8 @@ setup:
     scripts/setup.sh
 
 # The fast tier: format check, lint, the repo checks, the script tests, the generated
-# reference against a fresh copy, then the fast tests with their timing table.
+# reference against a fresh copy, the fast tests with their timing table, then the pack's
+# Python tests.
 check: fmt-check clippy graph deny test-scripts docs-check timing test-pack
 
 fmt-check:
@@ -40,9 +41,11 @@ timing:
 test-pack:
     scripts/thread-guard.sh scripts/test-pack.sh
 
-# The crate edges of SPEC.md section 3 (scripts/crate-graph.txt).
+# The crate edges of SPEC.md section 3 (scripts/crate-graph.txt), and the features of
+# serde_json, the same for the binary and for the tests (ADR 0023).
 graph:
     scripts/check-crate-graph.sh
+    scripts/check-features.sh
 
 # Licences, bans and sources. These work offline; advisories need the network.
 deny:

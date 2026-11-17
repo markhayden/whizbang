@@ -403,6 +403,34 @@ fn a_record_with_an_unknown_field_a_missing_one_or_one_given_twice_is_refused() 
 }
 
 #[test]
+fn a_number_is_refused_in_the_tests_as_the_shipped_binary_refuses_it() {
+    // The tests and the binary build one `serde_json`, with one set of features
+    // (`scripts/check-features.sh`). Were a crate to turn on `arbitrary_precision`, a
+    // number would reach this reader as a map in the tests and `1e400` would be read as
+    // one; the binary refuses it as no JSON.
+    let whole = written();
+    let not_json = Refused::NotJson {
+        what: What::Installation,
+        line: 1,
+    };
+    for (size, expected) in [
+        ("1e400", not_json.clone()),
+        ("-1e400", not_json),
+        ("1.5", value_refused("files[0].size", Rule::Kind)),
+        ("-0", value_refused("files[0].size", Rule::Kind)),
+        ("5e0", value_refused("files[0].size", Rule::Kind)),
+        (
+            "18446744073709551616",
+            value_refused("files[0].size", Rule::Kind),
+        ),
+    ] {
+        let text = whole.replacen("\"size\":5", &format!("\"size\":{size}"), 1);
+        assert_ne!(text, whole);
+        assert_eq!(read(&text).unwrap_err(), expected, "{size}");
+    }
+}
+
+#[test]
 fn a_record_of_another_format_is_refused() {
     for format in ["installation/2", "catalogue/1", ""] {
         assert_eq!(

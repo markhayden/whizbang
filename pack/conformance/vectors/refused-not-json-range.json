@@ -1,0 +1,7 @@
+{
+  "frame": "0000001c7b2274797065223a2263616e63656c222c226964223a31653430307d",
+  "name": "refused-not-json-range",
+  "open": [],
+  "refused": "not_json",
+  "says": "a number outside a double's range, which some readers take as infinite"
+}

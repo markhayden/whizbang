@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use crate::contract::Cancellation;
 use crate::egress::{Classes, DataClass};
+use crate::identity::{Binding, BindingId, Space};
 
 use super::{Bounds, Charge, Declaration, Fault, Picture, Unfit, feature, pixel_count};
 
@@ -128,10 +129,12 @@ impl Query {
     }
 }
 
-/// What a segmenter is sent: one image, and a batch of requests about it.
+/// What a segmenter is sent: one image, the binding it is under, and a batch of
+/// requests about it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SegmentRequest {
     image: Picture,
+    binding: BindingId,
     queries: Vec<Query>,
     max_instances: u32,
 }
@@ -190,11 +193,47 @@ impl SegmentRequest {
                 });
             }
         }
+        // Told nothing more, the picture is under its own binding: itself in its own
+        // space, flat, onto the root (ADR 0006, as ADR 0020 amends it).
+        let binding = Space::flat(image.width(), image.height())
+            .map(|space| Binding::root(image.digest(), space).id())
+            .map_err(|_| Unfit::Empty { what: "the image" })?;
         Ok(SegmentRequest {
             image,
+            binding,
             queries,
             max_instances,
         })
+    }
+
+    /// The same request, with its picture under this binding in place of its own: the
+    /// binding whose source is the picture, as a mask made on it would name (ADR 0002).
+    /// A request of the same pixels under another binding is another request, and its
+    /// answer's planes name that binding. Refused: a binding whose source is another
+    /// picture, by canonical pixel digest, or whose source space is of another size.
+    pub fn under(mut self, binding: &Binding) -> Result<SegmentRequest, Unfit> {
+        if binding.source() != self.image.digest() {
+            return Err(Unfit::NotAllowed {
+                what: "the binding of a request",
+                why: "does not place the request's picture",
+            });
+        }
+        let space = binding.source_space();
+        let expected = (self.image.width(), self.image.height());
+        if (space.width(), space.height()) != expected {
+            return Err(Unfit::WrongSize {
+                what: "the space of a request's binding",
+                expected,
+                found: (space.width(), space.height()),
+            });
+        }
+        self.binding = binding.id();
+        Ok(self)
+    }
+
+    /// The identity of the binding the picture is under (ADR 0001).
+    pub fn binding(&self) -> BindingId {
+        self.binding
     }
 
     /// The image: canonical pixels.
@@ -214,11 +253,12 @@ impl SegmentRequest {
 }
 
 /// One thing a segmenter found: its plane, the size of the image, one byte a pixel, 255
-/// on the thing and 0 off it; its box, in pixels of the image, which holds every pixel
-/// that is on; and its score. What `{:?}` prints of one is its size, how many pixels
+/// on the thing and 0 off it; the binding the plane belongs to, which is its request's;
+/// its box, in pixels of the image, which holds every pixel that is on; and its score. What `{:?}` prints of one is its size, how many pixels
 /// are on, its box and its score, never the plane.
 #[derive(Clone, PartialEq)]
 pub struct Instance {
+    binding: BindingId,
     width: u32,
     height: u32,
     plane: Vec<u8>,
@@ -227,13 +267,14 @@ pub struct Instance {
 }
 
 impl Instance {
-    /// An instance in an image of this size. Refused: a size of no pixels, or over
+    /// An instance in an image of this size, whose plane belongs to this binding. Refused: a size of no pixels, or over
     /// [`PIXEL_LIMIT`](super::PIXEL_LIMIT), before a byte is read; a plane of another
     /// count of bytes; a byte that is neither 0 nor 255; a plane with nothing on it; a
     /// box (left, top, right, bottom) that is not inside the image with area; a pixel
     /// that is on outside the box, which holds the whole pixels it touches; and a score
     /// that is not a number from 0 to 1.
     pub fn new(
+        binding: BindingId,
         width: u32,
         height: u32,
         plane: Vec<u8>,
@@ -291,12 +332,19 @@ impl Instance {
             });
         }
         Ok(Instance {
+            binding,
             width,
             height,
             plane,
             bounds,
             score,
         })
+    }
+
+    /// The identity of the binding the plane belongs to: the one its request's picture
+    /// is under, or the handle refuses the answer.
+    pub fn binding(&self) -> BindingId {
+        self.binding
     }
 
     pub fn width(&self) -> u32 {
@@ -447,7 +495,7 @@ impl SegmentHandle {
     /// cancelled or its deadline has passed, or when the batch holds a kind of request
     /// the segmenter does not declare. An answer is malformed unless it answers each
     /// request once, with no more instances than were asked for, each the size of the
-    /// image. The answer is checked after the backend built it: what a backend may
+    /// image and naming the binding the request's picture is under. The answer is checked after the backend built it: what a backend may
     /// build before that is its own to bound (`docs/carry-over.md`).
     pub fn segment(&self, request: &SegmentRequest) -> Result<SegmentResponse, Fault> {
         self.bounds.told(self.asked(request))
@@ -517,6 +565,16 @@ impl SegmentHandle {
                     what: "the plane of an instance",
                     expected,
                     found: (other.width, other.height),
+                }
+                .into());
+            }
+            if answer
+                .iter()
+                .any(|instance| instance.binding != request.binding)
+            {
+                return Err(Unfit::NotAllowed {
+                    what: "the plane of an instance",
+                    why: "names another binding than its request's picture is under",
                 }
                 .into());
             }
