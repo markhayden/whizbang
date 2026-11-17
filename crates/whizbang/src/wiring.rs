@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use whizbang_backends::models::{
-    Catalogue, Installations, Lease, ModelName, ModelsDir, OpenRefused, Revision,
+    Catalogue, Installations, Lease, ModelName, ModelsDir, OpenRefused, Platform as ModelPlatform,
+    Revision,
 };
 use whizbang_core::artifact::Contents;
 use whizbang_core::capability::{Inventory, NoInventory};
@@ -128,15 +129,21 @@ pub fn models_dir<'a>(
 /// about to be opened.
 pub type Platform = Arc<dyn Fn() -> Option<PathBuf> + Send + Sync>;
 
+/// What a command says of a relative `--models-dir`, before anything is read or made:
+/// a relative path is another folder from each place a command is run in, as the
+/// config's `[models] dir` is refused for (ADR 0011, "What the file holds").
+pub const RELATIVE_MODELS_DIR: &str = "--models-dir must be an absolute path: a relative one would be another folder from each place a command is run in; nothing was read or made";
+
 /// The models a command's executor is built over: a catalogue, the adapters of the
-/// build, and what the command line and the machine say of where the models
-/// directory is. What `{:?}` prints is counts and whether each place is named: no
-/// path and no name.
+/// build, the platform its models are to run on, and what the command line and the
+/// machine say of where the models directory is. What `{:?}` prints is counts and
+/// whether each place is named: no path and no name.
 #[derive(Clone)]
 pub struct Models {
-    catalogue: Catalogue,
-    adapters: Vec<(ModelName, Revision)>,
-    flag: Option<PathBuf>,
+    pub(crate) catalogue: Catalogue,
+    pub(crate) adapters: Vec<(ModelName, Revision)>,
+    pub(crate) runs_on: Option<ModelPlatform>,
+    pub(crate) flag: Option<PathBuf>,
     platform: Option<Platform>,
 }
 
@@ -147,14 +154,24 @@ impl Models {
         Ok(Models::of(catalogue()?, adapters()))
     }
 
-    /// The models of this catalogue under these adapters: what a test gives.
+    /// The models of this catalogue under these adapters, to run on the platform
+    /// this build is for (`Platform::this` of the models directory's types): what a
+    /// test gives.
     pub fn of(catalogue: Catalogue, adapters: Vec<(ModelName, Revision)>) -> Models {
         Models {
             catalogue,
             adapters,
+            runs_on: ModelPlatform::this(),
             flag: None,
             platform: None,
         }
+    }
+
+    /// The same, for models that are to run on this platform, or on none: what a
+    /// test gives to show a model its platform cannot run.
+    pub fn runs_on(mut self, platform: Option<ModelPlatform>) -> Models {
+        self.runs_on = platform;
+        self
     }
 
     /// The same, with the directory the command's flag names (`--models-dir`), or
@@ -180,10 +197,68 @@ impl std::fmt::Debug for Models {
         f.debug_struct("Models")
             .field("models", &self.catalogue.entries().len())
             .field("adapters", &self.adapters.len())
+            .field("runs_on", &self.runs_on.map(ModelPlatform::name))
             .field("flag", &self.flag.is_some())
             .field("platform", &self.platform.is_some())
             .finish()
     }
+}
+
+impl Models {
+    /// A relative `--models-dir` is refused, whatever else is asked, before anything
+    /// is read or made ([`RELATIVE_MODELS_DIR`]).
+    pub(crate) fn flag_is_absolute(&self) -> Result<(), String> {
+        match &self.flag {
+            Some(dir) if !dir.is_absolute() => Err(RELATIVE_MODELS_DIR.to_owned()),
+            _ => Ok(()),
+        }
+    }
+
+    /// Where the models directory is, and which of the three said so: the flag,
+    /// then `config` (the config's `[models] dir`), then the platform's, which is
+    /// asked for only when the other two are silent. With none of the three, why
+    /// there is none, and how to name one.
+    pub(crate) fn chosen(&self, config: Option<&Path>) -> Result<(Said, PathBuf), String> {
+        let named = models_dir(self.flag.as_deref(), config, None);
+        let platform = match (named, &self.platform) {
+            (None, Some(says)) => says(),
+            _ => None,
+        };
+        match named.or(models_dir(None, None, platform.as_deref())) {
+            Some((said, root)) => Ok((said, root.to_owned())),
+            None => Err(
+                "no models directory is named, and this machine's data folder is not known: \
+                 name one with --models-dir, or as `dir` in the config's table `models`"
+                    .to_owned(),
+            ),
+        }
+    }
+}
+
+/// Opens the models directory a command chose ([`Models::chosen`]), by the opening
+/// that asks whose it is (`ModelsDir::open`) and by no other way, with this clock for
+/// its lock. That opening makes the directory's own folder where nothing has the
+/// name; the folders above the platform's are made here first, each for its owner
+/// only, since nobody made a data folder for whizbang before its first use. The
+/// folders above one a person named are not made: a path written wrong is said, not
+/// made. What comes back otherwise is why the directory is not used, in fixed words
+/// that say how to mend it and hold no path.
+pub(crate) fn open_models_dir(
+    said: Said,
+    root: &Path,
+    clock: Arc<dyn whizbang_core::contract::Clock>,
+) -> Result<ModelsDir, String> {
+    if said == Said::Platform
+        && let Some(above) = root.parent()
+    {
+        made_for_its_owner(above).map_err(|_| {
+            "the data folder that is to hold the models directory could not be made; \
+             name a models directory with --models-dir, or as `dir` in the config's \
+             table `models`"
+                .to_owned()
+        })?;
+    }
+    ModelsDir::open(Arc::new(RealFs), root, clock).map_err(|refused| not_used(refused, said))
 }
 
 /// A models directory that was opened, and the inventory over it.
@@ -192,6 +267,7 @@ struct Opened {
     dir: ModelsDir,
     catalogue: Catalogue,
     adapters: Vec<(ModelName, Revision)>,
+    runs_on: Option<ModelPlatform>,
     installations: Arc<Installations>,
 }
 
@@ -201,21 +277,37 @@ impl Opened {
         dir: ModelsDir,
         catalogue: Catalogue,
         adapters: Vec<(ModelName, Revision)>,
+        runs_on: Option<ModelPlatform>,
         secrets: &Secrets,
     ) -> Opened {
-        let installations = Installations::of(
-            dir.clone(),
-            catalogue.clone(),
-            adapters.clone(),
-            secrets.clone(),
-        );
+        let installations = inventory_of(&dir, &catalogue, &adapters, runs_on, secrets);
         Opened {
             dir,
             catalogue,
             adapters,
+            runs_on,
             installations: Arc::new(installations),
         }
     }
+}
+
+/// The inventory of this directory, for the models of this catalogue under these
+/// adapters, to run on this platform, told these secrets: the one way this crate
+/// makes one.
+pub(crate) fn inventory_of(
+    dir: &ModelsDir,
+    catalogue: &Catalogue,
+    adapters: &[(ModelName, Revision)],
+    runs_on: Option<ModelPlatform>,
+    secrets: &Secrets,
+) -> Installations {
+    Installations::of(
+        dir.clone(),
+        catalogue.clone(),
+        adapters.to_vec(),
+        secrets.clone(),
+    )
+    .on(runs_on)
 }
 
 /// What this build's executor is built over, beside its actions and its store: the
@@ -278,9 +370,16 @@ impl Over {
                 dir,
                 catalogue,
                 adapters,
+                runs_on,
                 ..
             } = opened;
-            self.installed = Some(Opened::knowing(dir, catalogue, adapters, &self.secrets));
+            self.installed = Some(Opened::knowing(
+                dir,
+                catalogue,
+                adapters,
+                runs_on,
+                &self.secrets,
+            ));
         }
         self
     }
@@ -312,9 +411,13 @@ impl Over {
     ///   executor has no backend. Such an executor is over the inventory that knows
     ///   no model.
     ///
+    /// - **A relative `--models-dir` is refused first,** whatever else is asked and
+    ///   before anything is read or made ([`RELATIVE_MODELS_DIR`]).
+    ///
     /// What comes back otherwise is why the directory is not used, in fixed words
     /// that say how to mend it and hold no path.
     pub fn installed(mut self, models: Models) -> Result<Over, String> {
+        models.flag_is_absolute()?;
         if models.catalogue.entries().is_empty() {
             return Ok(self);
         }
@@ -331,37 +434,14 @@ impl Over {
             ),
             None => None,
         };
-        let config = config.as_ref().and_then(Config::models_dir);
         // The platform's is asked for last, and only when the other two are silent.
-        let named = models_dir(models.flag.as_deref(), config, None);
-        let platform = match (named, &models.platform) {
-            (None, Some(says)) => says(),
-            _ => None,
-        };
-        let chosen = named.or(models_dir(None, None, platform.as_deref()));
-        let Some((said, root)) = chosen else {
-            return Err(
-                "no models directory is named, and this machine's data folder is not known: \
-                 name one with --models-dir, or as `dir` in the config's table `models`"
-                    .to_owned(),
-            );
-        };
-        if said == Said::Platform
-            && let Some(above) = root.parent()
-        {
-            made_for_its_owner(above).map_err(|_| {
-                "the data folder that is to hold the models directory could not be made; \
-                 name a models directory with --models-dir, or as `dir` in the config's \
-                 table `models`"
-                    .to_owned()
-            })?;
-        }
-        let dir = ModelsDir::open(Arc::new(RealFs), root, Arc::new(SystemClock))
-            .map_err(|refused| not_used(refused, said))?;
+        let (said, root) = models.chosen(config.as_ref().and_then(Config::models_dir))?;
+        let dir = open_models_dir(said, &root, Arc::new(SystemClock))?;
         self.installed = Some(Opened::knowing(
             dir,
             models.catalogue,
             models.adapters,
+            models.runs_on,
             &self.secrets,
         ));
         Ok(self)

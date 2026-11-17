@@ -31,14 +31,28 @@ pub struct Under {
     /// credentials. A config that names a variable is not used without it.
     #[arg(long, value_name = "FILE", requires = "config")]
     env_file: Option<PathBuf>,
-    /// The models directory: where installed models are kept. With none it is the
-    /// one the config names (`dir` in its table `models`), and then the one in this
-    /// machine's data folder for whizbang. It must be yours alone to write.
+    /// The models directory: where installed models are kept, an absolute path. With
+    /// none it is the one the config names (`dir` in its table `models`), and then
+    /// the one in this machine's data folder for whizbang. It must be yours alone to
+    /// write.
     #[arg(long, value_name = "DIR")]
     models_dir: Option<PathBuf>,
 }
 
 impl Under {
+    /// The config and the env file, as the models commands take them.
+    pub fn asked(&self) -> whizbang::model_commands::Under<'_> {
+        whizbang::model_commands::Under {
+            config: self.config.as_deref(),
+            env_file: self.env_file.as_deref(),
+        }
+    }
+
+    /// The directory `--models-dir` names, or none.
+    pub fn models_dir(&self) -> Option<&std::path::Path> {
+        self.models_dir.as_deref()
+    }
+
     /// What an executor of this build is built over for a command given these: the
     /// two files, the kinds of this build, no secret beside those the env file
     /// holds, and the models this build ships, in the models directory the flag

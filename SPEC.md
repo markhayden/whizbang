@@ -798,7 +798,10 @@ whizbang squint check <use-case> …
 whizbang try <tool> …                  # one tool on one image or pair, no judge
 whizbang eval tool <tool> --set <set>  # rung 2
 whizbang eval run --gate <file>        # rungs 3 and 4
-whizbang models list|get|remove
+whizbang models list|get <model>|remove <model> [--wait <seconds>]
+                    [--config <file> [--env-file <file>]] [--models-dir <dir>]
+                                       # the catalogue's models, installing one, removing
+                                       # one (docs/guides/models.md)
 whizbang backends status [--probe]
 whizbang store list|delete|prune
 whizbang store import <file> --store <dir> [--create]

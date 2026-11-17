@@ -202,9 +202,17 @@ control character; a ~ is not read as a home folder; what is written there is no
 shown
 ```
 
+So is a command's `--models-dir`: a relative one is refused before anything is read or
+made.
+
 `download_least_kib_per_second` is the least rate a download of a model must keep up
 over any whole minute, in kibibytes a second, from 1 to 1048576; a slower one is ended
-as timed out. It is 256 when you do not say.
+as timed out. It is 256 when you do not say. `whizbang models get` is what downloads
+(the guide `models.md`).
+
+Neither key is in the config's digest: where models are kept, and how slow a download
+may be, are not part of what a run means, so moving the directory makes no run of
+yours another.
 
 ## What is refused
 

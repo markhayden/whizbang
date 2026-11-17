@@ -99,6 +99,10 @@ Changed under "An inventory": `Unready` has a fifth reason, that this build has 
 adapter for the model. Changed under "The binary wired": a command names a models
 directory, the binary's wiring opens it and makes the inventory, and the inventory
 is told the secrets the executor is told (ADR 0017, "Where the directory is").
+Amended: 2026-11-16, with task N3b of checkpoint 1C. Changed under "An inventory":
+`Unready` has a sixth reason, that the model does not run on this platform: its
+catalogue entry does not name the platform the build is for. Until then a model
+installed on a platform its entry does not name was called ready.
 
 ## Context
 
@@ -832,7 +836,11 @@ for its model, and two answers (`Installed`):
   it". Until it was there such a model was called out of date when installed and not
   installed when not, and each of those tells a person to install, which would mend
   nothing; an inventory says the fifth whether or not the model is installed (ADR
-  0017, "The inventory"). **There is no sixth:** an inventory
+  0017, "The inventory"). **The sixth,** since task N3b, is for a model whose
+  catalogue entry does not name the platform the build is for: "it does not run on
+  this platform", said as the fifth is, installed or not, and before it. Until it was
+  there such a model, installed, was called ready on a platform it does not run on.
+  **There is no seventh:** an inventory
   that cannot tell, or cannot read what it found, has `Damaged` to say and no way to say
   ready without an identity. What is half installed is not installed or is damaged; which
   of the two is the inventory's own (task M6, ADR 0017).

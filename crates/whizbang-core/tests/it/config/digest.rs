@@ -187,35 +187,37 @@ fn a_table_with_nothing_in_it_is_as_no_table() {
 }
 
 #[test]
-fn the_models_table_is_in_the_digest_only_when_it_gives_a_key() {
-    // A file that gives neither key hashes as it did before the table had keys: the
-    // digests fixed above did not move. With a key, the table is one more field at
-    // the end. This digest was worked out from the record's words alone, as those
-    // were.
-    assert_eq!(
-        digest("[models]\ndir = \"/srv/models\"\ndownload_least_kib_per_second = 512\n")
-            .to_string(),
+fn the_models_table_is_in_no_digest() {
+    // Where the models directory is, and how slow a download may be, are not part
+    // of what a run means (task N3b of checkpoint 1C): a model is the identity of
+    // its installation, wherever its folder is. So neither key is hashed, and a
+    // config that moves the directory is the config it was. The three digests
+    // fixed above are of files with no `models` table, and did not move.
+    let empty = digest("");
+    for text in [
+        "[models]\ndir = \"/srv/models\"\ndownload_least_kib_per_second = 512\n",
+        "[models]\ndir = \"/srv/models\"\n",
+        "[models]\ndir = \"/srv/model\"\n",
+        "[models]\ndownload_least_kib_per_second = 512\n",
+        "[models]\ndownload_least_kib_per_second = 256\n",
+    ] {
+        assert_eq!(digest(text), empty, "{text}");
+    }
+    // The digest of the table alone, as task N3a fixed it, is that digest no more.
+    assert_ne!(
+        empty.to_string(),
         "sha256:ee9df2aebf87f7a9e248dae8aeedd73d37169b59269afef6faec153fa6ec9ab0"
     );
-    // Each key changes it, by being there and by what it says; and one is never
-    // taken for the other.
-    let texts = [
-        String::new(),
-        "[models]\ndir = \"/srv/models\"\n".to_owned(),
-        "[models]\ndir = \"/srv/model\"\n".to_owned(),
-        "[models]\ndownload_least_kib_per_second = 512\n".to_owned(),
-        "[models]\ndownload_least_kib_per_second = 256\n".to_owned(),
-        "[models]\ndir = \"/srv/models\"\ndownload_least_kib_per_second = 256\n".to_owned(),
-        format!("{FULL}\n[models]\ndir = \"/srv/models\"\n"),
-        FULL.to_owned(),
-    ];
-    let digests: BTreeMap<Digest, &String> =
-        texts.iter().map(|text| (digest(text), text)).collect();
-    assert_eq!(digests.len(), texts.len());
-    // The least rate written as its default is a key that is given: it is hashed.
-    assert_ne!(
-        digest("[models]\ndownload_least_kib_per_second = 256\n"),
-        digest("")
+    // Beside everything else a file can say, the table changes nothing either.
+    assert_eq!(
+        digest(&format!(
+            "{FULL}\n[models]\ndir = \"/srv/models\"\ndownload_least_kib_per_second = 9\n"
+        )),
+        digest(FULL)
+    );
+    assert_eq!(
+        digest(FULL).to_string(),
+        "sha256:c151bf69e75bfec361a2018365535e49731847d0dbf6d13f4bb71b06356d6399"
     );
 }
 
