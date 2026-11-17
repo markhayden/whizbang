@@ -1,0 +1,7 @@
+{
+  "frame": "000000025b5d",
+  "name": "refused-not-json-list",
+  "open": [],
+  "refused": "not_json",
+  "says": "a header that is a list"
+}

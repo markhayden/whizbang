@@ -1,0 +1,7 @@
+{
+  "frame": "0000002b7b2274797065223a2263616e63656c222c226964223a227231222c22726561736f6e223a226c617465227d",
+  "name": "refused-unknown-field",
+  "open": [],
+  "refused": "unknown_field",
+  "says": "a cancel with a field that is not its own"
+}

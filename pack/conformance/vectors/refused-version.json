@@ -1,0 +1,7 @@
+{
+  "frame": "000000507b2274797065223a2268656c6c6f222c226964223a226831222c2276657273696f6e223a227061636b2f32222c22726f6c65223a227768697a62616e67222c226665617475726573223a5b2278225d7d",
+  "name": "refused-version",
+  "open": [],
+  "refused": "version",
+  "says": "a hello of another version, with fields pack/1 has not: the version is looked at first"
+}

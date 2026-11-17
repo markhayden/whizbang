@@ -7,7 +7,10 @@ of a handle's own refusal alone: a fault of any kind that states no stage reads 
 unresolved. Changed by ADR 0012: a declaration may name who receives
 its backend's requests. Changed by ADR 0015 ("A wrapper around each request"): between
 a handle's tally and its backend stand three places, the gate, the lease and the
-meter, and a request is accounted for only once the last of them has returned
+meter, and a request is accounted for only once the last of them has returned.
+Changed by ADR 0020 ("The amendment to ADR 0006"): a segment request carries the
+identity of the binding its picture is under, an instance names the binding its plane
+belongs to, and the handle refuses an answer whose planes name another
 Date: 2026-11-12
 Amended: 2026-11-12, after the review of the first part, before it merged. Changed: what
 a fault's cleaning guarantees and what it does not find, with a rule for adapters; a
@@ -52,6 +55,9 @@ Spec: section 3, "Crates and their edges", "Identities" and "Storage"; section 4
 "Backends"
 Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
 that said something was still to come; no decision changed.
+Amended: 2026-11-15, with ADR 0020 (task P1 of checkpoint 1C). Notes under "Segment":
+the binding a request carries and an instance names, which ADR 0020 decides; and where
+the settings, the diagnostics and the order of rascal's adapters went.
 
 ## Context
 
@@ -556,7 +562,9 @@ names, and a mask is the statement of whoever made it.
 ### Segment
 
 **The request** is one image, a batch of 1 to 64 requests (`QUERY_LIMIT`), and the most
-instances wanted for each, from 1 to 64 (`INSTANCE_LIMIT`). A request of the batch is one
+instances wanted for each, from 1 to 64 (`INSTANCE_LIMIT`). (Since ADR 0020 it also
+carries the identity of the binding its picture is under: the picture's own, unless
+`SegmentRequest::under` names another of that picture.) A request of the batch is one
 of:
 
 | Kind | Holds | Rule |
@@ -584,6 +592,10 @@ instances, in the order the backend gives them. An `Instance` is:
   larger than its thing, as rascal's padded boxes were, is not;
 - **a score:** a number from 0 to 1. One that is not a number is refused.
 
+(Since ADR 0020 an instance also names the binding its plane belongs to, and the handle
+refuses an answer in which a plane names another binding than its request's:
+`segment::an_answer_whose_planes_name_another_binding_is_refused_as_malformed`.)
+
 The handle refuses, as `malformed`, an answer that does not answer each request once, one
 that holds more instances for a request than were asked for, and an instance whose plane
 is of another size than the image. So what a response that is accepted can hold is
@@ -597,7 +609,10 @@ Not in the request: rascal's threshold, padding, outline rule and least cover. T
 settings of an adapter, not of a call, and come with the adapters and the config. Nor an
 order among instances: rascal sorted every adapter's answer, best score first; here the
 order is the backend's, and an action that needs one sorts. Both are on
-`docs/carry-over.md`.
+`docs/carry-over.md`. (Since ADR 0020, for the pack: the settings are a model's, sent
+once when it is loaded; an instance's predicted IoU and its other diagnostics travel
+with a result; and an answer from the pack is in one fixed order. The interface here
+still asks no order of a backend.)
 
 ### Judge
 

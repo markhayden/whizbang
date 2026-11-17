@@ -1,0 +1,7 @@
+{
+  "frame": "0000004c7b2274797065223a2268656c6c6f222c226964223a226831222c2276657273696f6e223a227061636b2f31222c22726f6c65223a22776f726b6572222c22646576696365223a22637075227d",
+  "name": "refused-missing-field-hello",
+  "open": [],
+  "refused": "missing_field",
+  "says": "a worker's hello that does not say its threads"
+}

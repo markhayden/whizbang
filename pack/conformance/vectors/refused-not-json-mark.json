@@ -1,0 +1,7 @@
+{
+  "frame": "0000001eefbbbf7b2274797065223a2263616e63656c222c226964223a227231227d",
+  "name": "refused-not-json-mark",
+  "open": [],
+  "refused": "not_json",
+  "says": "a byte order mark before the object"
+}
