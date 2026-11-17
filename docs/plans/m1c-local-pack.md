@@ -463,7 +463,7 @@ Two strands run side by side after C1a and join at P6a.
 | N2 A models directory that is its owner's; a lock asked for until a time | S | C1a |
 | N3a The catalogue's second version, the fifth reason, where the directory is | S | N2 |
 | N3b `whizbang models list`, `get`, `remove` | M | N1, N3a |
-| N3c One way for a test to start the real binary | S | N3b |
+| N3c One way for a test to start the real binary | S | C1a |
 | N4 A download's credential | M | N3c |
 | N5 The shipped catalogue, and SAM 3 installed on the Mac | M | N4 |
 | Y1 `whizbang setup`, and the lock file | M | P3a |
@@ -1242,10 +1242,10 @@ list` says of a link. **Size:** medium.
 
 ### N3c. One way for a test to start the real binary
 
-**Depends on:** N3b. **Reads:** D12, "A test cannot reach the owner's store"; the nine
+**Depends on:** C1a. **Reads:** D12, "A test cannot reach the owner's store"; the nine
 files of `crates/whizbang/tests/it/` that start the binary.
 
-- [ ] The test kit has the one function that starts the real binary, with a cleared
+- [x] The test kit has the one function that starts the real binary, with a cleared
       environment and a temporary home; `just check` refuses a test that starts it
       another way, and the tests that start it today are moved to that function.
       The function is given the binary's path, which only the binary's own tests have
@@ -1265,6 +1265,44 @@ and one more hands the path to a shell script (`describe.rs`); N3b adds `models.
 None clears the environment today, so each is looked at for a variable it relied on
 without saying so. That is a small task, and it is not N4's: N4 is already medium,
 and its own files are the credential's.
+**Reworded with the task** (by N3c): "**Depends on:** N3b", and "N3b" in the task
+table, are now C1a. A review found that the first path worked out from a home folder
+comes with N3a (where the models directory is when nobody says), so the guard has to
+be there before N3a's tests start the binary, not after N3b's; N3c was built before
+both and needs neither. "N3b adds `models.rs`" above then reads: the tests N3a and N3b
+add start the binary through the function from the first.
+**What was built** (the task's choices; `crates/whizbang-testkit/src/binary.rs`,
+`scripts/check-binary-start.sh`):
+
+- The function is `whizbang_testkit::binary::command`. The started program is given
+  six variables and no other: `HOME`; `XDG_DATA_HOME`, `XDG_CONFIG_HOME`,
+  `XDG_CACHE_HOME` and `XDG_STATE_HOME` inside that home; and `TMPDIR` beside it. All
+  are in one folder made for the call, readable and writable by its owner alone, under
+  a name that is refused when anything is already there, and removed with the command.
+  No `PATH`: every test that starts the binary passes without one.
+- The test that hands the binary's path to a shell script
+  (`describe::a_write_that_fails_is_exit_3_with_the_reason`) runs the script through
+  the function's command (`under_shell`): the same environment, the path in
+  `WHIZBANG`. The check has no exception.
+- The check is `scripts/check-binary-start.sh`, run by its script test
+  (`scripts/tests/test-binary-start.sh`), which is part of `just check`. It reads text.
+  Its top says what it refuses and what it does not catch.
+- No test had relied on the environment it ran in: all passed unchanged in meaning.
+- A test file of a crate that starts the binary may not clear the environment again
+  or take a variable from it (`.env_clear(`, `.env_remove(`). N3a's test that started
+  the binary with its own cleared environment and home
+  (`wired::with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory`)
+  starts it through the function, and looks for nothing made in the function's home.
+  The texts `wired::only_main_reads_where_the_platforms_data_folder_is` searches the
+  binary's source for are in a data file, `environment-reads.txt`, which the check
+  does not read; the test requires all five.
+
+**Shown by:** `binary::the_command_has_a_cleared_environment_and_a_temporary_home`
+(the test kit: a process with a planted variable calls the function, and the program
+it starts lists its whole environment); `scripts/tests/test-binary-start.sh` (the
+workspace passes, with twenty-one places counted: the twenty above and the one N3a
+added in `wired.rs`; each other way is refused on planted files); and the tests of `crates/whizbang/tests/it/` that start the binary, each
+through the function, which the check counts.
 **Size:** small.
 
 ### N4. A download's credential

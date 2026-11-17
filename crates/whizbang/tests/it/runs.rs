@@ -2,7 +2,6 @@
 //! what it left: the real binary, on a real store.
 
 use std::path::Path;
-use std::process::Command;
 use std::sync::Arc;
 
 use whizbang_core::artifact::{ArtifactType, Location, Origin, Shape, Step};
@@ -37,7 +36,7 @@ impl Ran {
 }
 
 fn whizbang(args: &[&str], root: &Path) -> Ran {
-    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .arg("runs")
         .args(args)
         .arg("--store")
@@ -230,7 +229,7 @@ fn a_failed_runs_record_and_diagnostics_are_kept_and_readable() {
     assert_eq!(record.out, json.out);
     // `store list` counts what the run holds: no output, and four diagnostic
     // references: the admission, what the action wrote, the journal and the record.
-    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args(["store", "list", "--store"])
         .arg(&root)
         .output()
@@ -295,7 +294,7 @@ fn a_run_that_committed_an_output_is_shown_and_listed_with_it() {
     );
     // `store list` counts what the run holds: one output, and its admission, its
     // journal and its record.
-    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args(["store", "list", "--store"])
         .arg(&root)
         .output()
@@ -698,7 +697,7 @@ fn a_reader_that_stops_reading_is_not_an_error() {
     ] {
         let (reader, writer) = std::io::pipe().unwrap();
         drop(reader);
-        let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+        let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
             .args(&args)
             .stdout(writer)
             .output()
@@ -844,7 +843,7 @@ fn a_run_a_killed_process_left_is_ended_by_the_next_writing_command_and_then_sho
         .to_owned();
     // The next command that opens the store to write recovers it first: here, a
     // prune, by the real binary, with the recovery the binary is wired with.
-    let pruned = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let pruned = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args(["store", "prune", "--store"])
         .arg(&root)
         .output()
@@ -903,7 +902,7 @@ fn a_run_a_killed_process_left_is_ended_by_the_next_writing_command_and_then_sho
     assert_eq!(stored.out, made.unwrap().to_bytes());
     // A second writing command finds it ended, and ends nothing twice.
     let before = whizbang(&["show", &run, "--json"], &root).out;
-    let again = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let again = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args(["store", "prune", "--store"])
         .arg(&root)
         .output()

@@ -2,7 +2,6 @@
 //! typed, and a name found in a folder, reach the terminal escaped.
 
 use std::path::Path;
-use std::process::Command;
 
 use whizbang_testkit::scratch::Scratch;
 
@@ -10,7 +9,7 @@ const ID: &str = "sha256:1e7a8cc2abf001a24383094ae2ec93aee7cb27c87850972f6ca42c7
 
 /// Runs `whizbang`, which must fail with exit 1, and gives what it complained of.
 fn complaint(args: &[&str], store: &Path) -> String {
-    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args(args)
         .arg("--store")
         .arg(store)
@@ -134,7 +133,7 @@ fn store_import_escapes_the_path_of_the_store_it_made() {
     let file = dir.path().join("seam.mask");
     std::fs::write(&file, super::rascal::fixture().to_bytes()).unwrap();
     let store = dir.path().join("a\r\u{1b}[2Jstore");
-    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args(["store", "import", file.to_str().unwrap(), "--create"])
         .arg("--store")
         .arg(&store)
@@ -155,7 +154,7 @@ fn store_import_escapes_the_path_of_the_store_it_made() {
 
 /// Runs `whizbang` with these arguments and gives its exit code and its two outputs.
 fn ran(args: &[&str]) -> (Option<i32>, String, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args(args)
         .output()
         .expect("the binary runs");

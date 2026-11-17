@@ -3,13 +3,13 @@
 //! asked. What each will do arrives with its own task; none reads, writes, starts or
 //! reaches anything until then.
 
-use std::process::{Command, Output};
+use std::process::Output;
 
 /// The three stubs, by the name each has on the command line.
 const STUBS: [&str; 3] = ["models", "backends", "setup"];
 
 fn whizbang(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args(args)
         .output()
         .expect("the binary runs")
