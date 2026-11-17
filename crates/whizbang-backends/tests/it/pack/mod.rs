@@ -1,10 +1,12 @@
 //! The pack (`SPEC.md` section 4; plan 1C, the protocol and worker strand): the
 //! protocol's codec, the conformance suite and the worker's supervisor. So far the
-//! codec ([`proto`]), the folder of the fixed vectors, and the supervisor's process
-//! ([`worker`]): each task adds its module here.
+//! codec ([`proto`]), the folder of the fixed vectors, the supervisor's process and one
+//! call through it ([`worker`]), and the behavioural half of the conformance suite
+//! ([`conformance`]): each task adds its module here.
 
 use std::path::Path;
 
+mod conformance;
 mod proto;
 mod worker;
 

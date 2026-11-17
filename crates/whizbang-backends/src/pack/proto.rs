@@ -153,6 +153,8 @@ impl Reason {
 pub struct Refused {
     reason: Reason,
     sentence: String,
+    /// Whether the bound that was broken is a count of a result's instances.
+    instances: bool,
 }
 
 impl Refused {
@@ -160,11 +162,20 @@ impl Refused {
         Refused {
             reason,
             sentence: sentence.into(),
+            instances: false,
         }
     }
 
     pub fn reason(&self) -> Reason {
         self.reason
+    }
+
+    /// Whether the bound that was broken is a count of a result's instances: more for one
+    /// query than its request allows, or more than any request allows. Such an
+    /// `over_bound` ends its call as `too_large`, and every other as `malformed` (ADR
+    /// 0020, "What a refusal says").
+    pub fn counts_instances(&self) -> bool {
+        self.instances
     }
 
     pub fn sentence(&self) -> &str {
@@ -189,6 +200,14 @@ fn over(what: &str, size: u64, limit: u64) -> Refused {
         Reason::OverBound,
         format!("{what} is {size}, over the bound of {limit}"),
     )
+}
+
+/// An `over_bound` of a count of a result's instances.
+fn over_instances(what: &str, size: u64, limit: u64) -> Refused {
+    Refused {
+        instances: true,
+        ..over(what, size, limit)
+    }
 }
 
 /// Why a message was not written.
@@ -806,7 +825,7 @@ fn check(message: &Message) -> Result<(), Refused> {
                 return Ok(());
             };
             if found.len() as u64 > INSTANCES_MOST {
-                return Err(over(
+                return Err(over_instances(
                     "the count of instances",
                     found.len() as u64,
                     INSTANCES_MOST,
@@ -1114,6 +1133,33 @@ fn write_instances(out: &mut String, found: &[&Found]) {
 /// [`RESULT_PAYLOAD_LIMIT`]. The instances of a result are
 /// written in the fixed order, whatever order they are in.
 pub fn write(message: &Message, out: &mut impl Write) -> Result<(), Unwritten> {
+    let (header, payloads) = framed(message)?;
+    let failed = |error: std::io::Error| Unwritten::Output(error.kind());
+    out.write_all(&(header.len() as u32).to_be_bytes())
+        .map_err(failed)?;
+    out.write_all(header.as_bytes()).map_err(failed)?;
+    for (_, raster) in payloads {
+        out.write_all(&(raster.samples.len() as u64).to_be_bytes())
+            .map_err(failed)?;
+        out.write_all(&raster.samples).map_err(failed)?;
+    }
+    out.flush().map_err(failed)
+}
+
+/// Whether [`write`] would write this message: the refusal it would give, or nothing.
+/// Nothing is written, so a side that must know before it sends (the supervisor, which
+/// notes a request as open before it writes it) asks this first.
+pub fn writable(message: &Message) -> Result<(), Refused> {
+    framed(message).map(|_| ())
+}
+
+/// A message as a frame is written: its header in its canonical writing, and its
+/// payloads, each with its layout, in the order they follow the header.
+type Framed<'a> = (String, Vec<(Layout, &'a Raster)>);
+
+/// The header of a message in its canonical writing, and its payloads, once every rule
+/// [`write`] holds a message to is kept.
+fn framed(message: &Message) -> Result<Framed<'_>, Refused> {
     check(message)?;
     let payloads = payloads(message);
     let is_result = matches!(message, Message::Result { .. });
@@ -1122,12 +1168,12 @@ pub fn write(message: &Message, out: &mut impl Write) -> Result<(), Unwritten> {
         .map(|(layout, raster)| layout.bytes(raster))
         .sum();
     if is_result && together > RESULT_PAYLOAD_LIMIT {
-        return Err(too_large(together).into());
+        return Err(too_large(together));
     }
     for (layout, raster) in &payloads {
         let (stated, expected) = (raster.samples.len() as u64, layout.bytes(raster));
         if stated != expected {
-            return Err(wrong_length(stated, expected).into());
+            return Err(wrong_length(stated, expected));
         }
     }
     let header = header_of(message);
@@ -1139,18 +1185,9 @@ pub fn write(message: &Message, out: &mut impl Write) -> Result<(), Unwritten> {
         _ => HEADER_LIMIT,
     };
     if header.len() as u64 > bound {
-        return Err(header_too_large(header.len() as u64, bound).into());
+        return Err(header_too_large(header.len() as u64, bound));
     }
-    let failed = |error: std::io::Error| Unwritten::Output(error.kind());
-    out.write_all(&(header.len() as u32).to_be_bytes())
-        .map_err(failed)?;
-    out.write_all(header.as_bytes()).map_err(failed)?;
-    for (_, raster) in payloads {
-        out.write_all(&(raster.samples.len() as u64).to_be_bytes())
-            .map_err(failed)?;
-        out.write_all(&raster.samples).map_err(failed)?;
-    }
-    out.flush().map_err(failed)
+    Ok((header, payloads))
 }
 
 fn wrong_length(stated: u64, expected: u64) -> Refused {
@@ -1894,6 +1931,20 @@ fn exactly(input: &mut impl Read, count: u64) -> Result<Vec<u8>, Refused> {
 /// held to the request they name there, an event and a result's diagnostics are
 /// counted there, and a result or an error that is read closes its request.
 pub fn read(input: &mut impl Read, open: &mut Open) -> Result<Option<Message>, Refused> {
+    match read_frame(input, open, false)? {
+        Some(Heard::Message(message)) => Ok(Some(message)),
+        // Only a side that is asked nothing hears a request by its id alone.
+        Some(Heard::Asked { .. }) | None => Ok(None),
+    }
+}
+
+/// Reads one frame, as [`read`] and [`hear`] say: a request is handed back by its id,
+/// its payloads unread, when this side is asked nothing.
+fn read_frame(
+    input: &mut impl Read,
+    open: &mut Open,
+    asked_nothing: bool,
+) -> Result<Option<Heard>, Refused> {
     let Some(stated) = first(input)? else {
         return Ok(None);
     };
@@ -1910,6 +1961,9 @@ pub fn read(input: &mut impl Read, open: &mut Open) -> Result<Option<Message>, R
         ));
     }
     held(&message, stated, open)?;
+    if let (true, Message::Request { id, .. }) = (asked_nothing, &message) {
+        return Ok(Some(Heard::Asked { id: id.clone() }));
+    }
     let rasters: Vec<(Layout, &mut Raster)> = match &mut message {
         Message::Request {
             ask: Ask::Segment { image, .. },
@@ -1948,7 +2002,52 @@ pub fn read(input: &mut impl Read, open: &mut Open) -> Result<Option<Message>, R
         }
     }
     settle(&message, open);
-    Ok(Some(message))
+    Ok(Some(Heard::Message(message)))
+}
+
+/// What a side that is asked nothing reads (whizbang, of a worker, at `pack/1`): a
+/// message, or a request handed back by its id alone.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Heard {
+    /// A message, read whole, as [`read`] reads one.
+    Message(Message),
+    /// A request: its header was read and held to every rule a header keeps, and none of
+    /// its payloads was read. The input is no longer at the start of a frame, so it is
+    /// not read again.
+    Asked { id: String },
+}
+
+/// Reads one frame as [`read`] does, but for a request, which is refused by this side
+/// before a byte of its payloads is read: it is handed back by its id, and the input
+/// is not read again (ADR 0020, "The messages": a worker asks nothing of whizbang at
+/// `pack/1`).
+pub fn hear(input: &mut impl Read, open: &mut Open) -> Result<Option<Heard>, Refused> {
+    read_frame(input, open, true)
+}
+
+/// A text of the protocol made of the words given (ADR 0020, "A text of the
+/// protocol"): white space at the ends dropped, every character a text of the protocol
+/// may not hold made a space, never a `?`, white space at the ends dropped again, and
+/// the first `most` characters kept. It may be empty. Never the core's cleaning of a
+/// fault's sentence, which puts a `?`, a character such a text may not hold.
+pub fn clean(text: &str, most: usize) -> String {
+    let kept = |c: char| c.is_ascii_alphanumeric() || " .,;:'()%+-_".contains(c);
+    let spaced: String = text
+        .trim()
+        .chars()
+        .map(|c| if kept(c) { c } else { ' ' })
+        .collect();
+    spaced.trim().chars().take(most).collect()
+}
+
+/// An error's sentence made of the words given: [`clean`] to [`FAULT_LIMIT`]
+/// characters, and `no reason was given` when nothing is left.
+pub fn sentence(text: &str) -> String {
+    let cleaned = clean(text, FAULT_LIMIT);
+    match cleaned.is_empty() {
+        true => "no reason was given".to_owned(),
+        false => cleaned,
+    }
 }
 
 /// The length the next frame's header states; none when the input has ended.
@@ -2009,7 +2108,11 @@ fn held(message: &Message, header: u64, open: &Open) -> Result<(), Refused> {
                 *count += 1;
                 if *count > allowed.max_instances {
                     let (count, limit) = (u64::from(*count), u64::from(allowed.max_instances));
-                    return Err(over("the count of instances for a query", count, limit));
+                    return Err(over_instances(
+                        "the count of instances for a query",
+                        count,
+                        limit,
+                    ));
                 }
                 let plane = &found.plane;
                 if (plane.width, plane.height) != (allowed.width, allowed.height) {

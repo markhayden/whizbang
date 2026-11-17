@@ -1252,9 +1252,18 @@ taken from the installation `setup` made, never from a path compiled into the bi
 
 **Depends on:** P3a.
 
-- [ ] One request and its result through the supervisor; a worker's failure made into a
-      fault; the error output handed to a run's diagnostics.
-- [ ] The behavioural half of the conformance suite, as a table of cases over a
+- [x] One request and its result through the supervisor; a worker's failure made into a
+      fault; the error output handed on with the failure, for a run's diagnostics.
+      **Reworded with the task:** "the error output handed to a run's diagnostics" is
+      now "the error output handed on with the failure, for a run's diagnostics". No
+      backend can reach its run's diagnostics: a `Segmenter` is handed a request and
+      its bounds, and answers a `SegmentResponse`, which holds instances and a charge
+      (ADR 0006); only an action writes a run's diagnostics. So the supervisor hands
+      the error output, redacted and whole, to its caller with each failure
+      (`Failed::error_output`), with the worker's own sentence and a result's
+      diagnostics and events beside it, and the way from a backend to its run's
+      diagnostics is a row of `docs/carry-over.md` (1D, with the `segment` action).
+- [x] The behavioural half of the conformance suite, as a table of cases over a
       transport, with the cases this task can show.
 
 **Done when** these pass, in `crates/whizbang-backends/tests/it/pack/`:
@@ -1273,6 +1282,95 @@ taken from the installation `setup` made, never from a path compiled into the bi
   one whole (up to 200 MB of pixels) before the supervisor answers it `unsupported`.
 - A request the codec refuses to write (`header_too_large`, a batch of phrases full of
   characters written as two or six) is a fault before anything is sent.
+
+**Built with the task:**
+
+- **One call.** `Worker::call` takes a request (`proto::Ask`) and hands back its result
+  (`Called`: the device, the threads, the result's diagnostics, the text of each event,
+  and the answer as the wire held it, each instance's predicted IoU in it) or its
+  failure (`Failed`: the fault; the worker's own sentence when it ended the request
+  with an `error`; how the worker ended, when the failure ended it; the error output as
+  kept). Ids are `r` and a count. Each kind has a limit on the clock, past which the
+  worker is killed and the call is `timed_out`: 120 s for a `load`, 30 s for an
+  `unload`, 120 s for a `segment` (the kind's limit; a call's own deadline and
+  cancellation are P4's, which tests these limits). The worker is started at the first
+  call; a failure that ends it leaves the next call to start another.
+- **How far a request got** (the carry-over row on `not_sent`): a request the codec
+  would refuse is a fault before a worker is started or told anything, `not_sent`,
+  `too_large` for `header_too_large`, `over_bound` or `too_large` and `rejected`
+  otherwise (`proto::writable`, the writer's checks without a byte written). A request
+  is written through a count of the bytes the pipe took: none taken is `not_sent`, any
+  is `unresolved` unless an answer settles it. A worker's `error` for the request is
+  `answered`. Every fault whose request was written and not answered (a refused frame,
+  the end of the worker, a time limit) is `unresolved`.
+- **A fault's sentence** (the carry-over row on an adapter's keeping of the rule): fixed
+  words and typed fields (a fault's name, a refusal's reason, an exit code, a limit in
+  seconds), never a word the worker wrote. The worker's own sentence is handed on as
+  `Failed::said`, a text of the protocol, never as the fault's
+  (`worker::a_fault_made_from_a_workers_failure_holds_none_of_the_marker_the_host_and_the_token_its_error_output_held`).
+- **What a refusal becomes** (ADR 0020, "What a refusal says", amended): `too_large`
+  for `header_too_large`, `too_large`, and an `over_bound` of a count of a result's
+  instances, for one query or in all (`Refused::counts_instances`); `malformed` for
+  every other reason, an `over_bound` of events or text among them. A worker whose
+  frame was refused is sent an `error` with the conversation's id, its sentence the
+  refusal's cleaned as a text of the protocol, and is given 5 s to end before it is
+  killed; so is one that answered its hello with something else, or with another
+  version (P3a's hello now tells it so).
+- **The protocol's cleaner** (P2's note): `proto::clean` and `proto::sentence` put a
+  space for a character a text of the protocol may not hold, drop white space at the
+  ends, cut, and never put a `?`; an empty sentence is `no reason was given`. Every
+  text whizbang writes to a worker goes through it
+  (`proto::the_protocols_cleaner_puts_a_space_for_what_a_text_may_not_hold_and_never_a_question_mark`,
+  and through the real pack
+  `worker::a_text_whizbang_sends_is_cleaned_as_a_text_of_the_protocol_and_the_worker_takes_it`,
+  whose worker reads the refusal of its hello as a frame of `pack/1` and ends at it).
+- **A request from a worker** (P1's note) is refused before a byte of its payload is
+  read: `proto::hear` reads as `proto::read` does, but hands a request back by its id
+  once its header is held to every rule, and reads nothing more
+  (`proto::a_request_heard_by_a_side_asked_nothing_is_handed_back_by_its_id_before_its_payload_is_read`).
+  The supervisor answers it `unsupported`, as ADR 0020 says, and, since the input is no
+  longer at a frame's start, ends the conversation; the call is `malformed`
+  (`worker::a_request_from_the_worker_is_refused_before_its_payload_is_read_and_answered_as_unsupported`,
+  with a new fault of the fakes, `asks`, which sends a request's header and its
+  payload's length and never its samples, so that a reader that went on would wait).
+- **The frames' channel is bounded** (P3a's note), decided here: a channel of 16 places
+  (`FRAMES_WAITING`); the reader waits while it is full and reads nothing more. So a
+  worker that writes frames faster than they are taken holds this process to 16 frames,
+  each a header of 64 KiB at most but for the one result of the one call, which its
+  request bounds. When the worker is killed the channel is let go, so a reader waiting
+  on it ends. The requests whizbang writes reach the reader as notes, sent before each
+  request is written and taken once the first byte of the next frame is there
+  (`pack::worker::tests::the_reader_of_the_output_reads_no_further_ahead_than_the_frames_that_may_wait`).
+- **The error output handed on is whole** (P3a's note): a failure that ends the worker
+  takes the error output after the worker's end, which waits for its reader within 5 s;
+  the fault `error-output` now writes its marker, host and token again at the start of
+  each call, just before `fake-exit` ends the process, and the failure holds them, the
+  token redacted. No fault's sentence is made from the error output.
+- **What a run keeps of a result's predicted IoU and diagnostics** (the carry-over row
+  P1 gave this task), decided: the core's `Instance` and `SegmentResponse` stay as they
+  are, so what an action is answered with does not depend on which backend answered.
+  Both are diagnostics, and the supervisor hands them on with each call (`Called`);
+  a run keeps them, and the error output, once a backend can hand diagnostics to its
+  run, which no backend can today. That way, one for every kind, is the `segment`
+  action's at 1D: `docs/carry-over.md` keeps the row, re-owned.
+- **The table** (`conformance::TABLE`) names each case, what produces it (a fake model,
+  a fake fault, or both), the task that shows it and its test. Every fake model and
+  every fake fault of the pack produces a case of it, the names read from the pack's
+  own source; every test it names is named in this plan, and the tests of P3a and P3b
+  are there. P4's cases name P4's tests. The transport is a trait of the test
+  (`Transport`), carried by the supervisor here and by the HTTP codec at milestone 6.
+  The tests of `pack::conformance::` start workers, and join the group `pack-workers`
+  (`.config/nextest.toml`).
+- Six tests more than "Done when" names, each named above: two of the cleaner, two of
+  a request from a worker, the unit test of the reader, and
+  `proto::a_refusal_of_a_count_of_a_results_instances_says_so_and_no_other_does`.
+
+**Notes for P4:** `Worker::call` waits on one call with `until`, at the limits above;
+the deadline of a call, `cancel`, the queue and a restart's fault are P4's to add
+around it. A refusal of a flood of events already ends the call as `malformed` and the
+worker with it (an `over_bound` that counts no instances). The case table names P4's
+tests for `fake-wait`, `fake-deaf`, `flood`, `slow-load`, `slow-unload` and the exit
+inside a call; each joins `TABLE` as shown once P4 builds it.
 
 ### P4. Queue, cancellation, deadline, restart
 

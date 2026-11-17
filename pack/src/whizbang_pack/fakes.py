@@ -8,13 +8,15 @@ worker's own (`whizbang_pack.worker`) refuses `--fake-fault`.
 | Fault | What the worker does |
 |---|---|
 | `no-hello` | Reads whizbang's hello and never answers it |
-| `other-version` | Answers the hello with one that states `pack/2` |
+| `other-version` | Answers the hello with one that states `pack/2`; writes a line to its error output for each `error` it takes, with its fault and its sentence |
 | `deaf-to-end-of-input` | Does not end at the end of its input; only its lifetime ends it, so it is refused without `--max-lifetime-s` |
-| `error-output` | Writes 300 lines to its error output before its hello, every tenth over 5,000 bytes; then a line for each variable of its environment and for each descriptor it holds, and a marker, a host and a made-up token, a line each, for the redaction tests of whizbang's supervisor |
+| `error-output` | Writes 300 lines to its error output before its hello, every tenth over 5,000 bytes; then a line for each variable of its environment and for each descriptor it holds, and a marker, a host and a made-up token, a line each, for the redaction tests of whizbang's supervisor. At the start of each call it writes a line that names the call, and the marker, the host and the token again |
 | `flood` | Sends 300 events before each call, more than a request may send |
 | `slow-load` | Says a `load` began, then waits, deaf to a cancel, until the worker ends |
 | `slow-unload` | The same of an `unload` |
 | `grandchild` | Before its hello, starts a process of its own that holds the worker's standard input, its frames and its error output open, writes `grandchild <pid>` to its error output, and says hello. The process ends by itself after `GRANDCHILD_SECONDS`, whatever happens to the worker, so that nothing it starts outlives a test by more than that |
+
+| `asks` | At the start of each call, sends a request of its own (a `segment` of `ASKED_ID`), its header and its payload's length and none of its samples, then waits, deaf to a cancel, until the worker ends: whizbang refuses a request from a worker before a byte of its payload is read. Writes a line to its error output when an `error` answers that request |
 
 Without `--fake-fault` it is the worker itself, with the same fake models.
 """
@@ -45,6 +47,10 @@ DESCRIPTORS_LOOKED_AT = 1024
 GRANDCHILD_SECONDS = 2
 GRANDCHILD_WORD = "whizbang-fake-grandchild"
 
+# The id of the request `asks` sends, and the binding its image is under.
+ASKED_ID = "w1"
+ASKED_BINDING = "sha256:" + "0" * 64
+
 
 class NoHello(Worker):
     def _say_hello(self):
@@ -65,6 +71,14 @@ class OtherVersion(Worker):
         # The same number of bytes, so the frame's length still holds.
         chunks[0] = chunks[0].replace(b'"version":"pack/1"', b'"version":"pack/2"')
         self._write(chunks)
+
+    def _take(self, message):
+        # What whizbang answers the hello with, which this reader took as a frame of
+        # pack/1: a line of the error output, for the test of the text whizbang sends.
+        if message["type"] == "error":
+            self.stderr.write("took an error %s: %s\n" % (message["fault"], message["sentence"]))
+            self.stderr.flush()
+        super()._take(message)
 
 
 class DeafToEndOfInput(Worker):
@@ -90,6 +104,16 @@ class ErrorOutput(Worker):
         self.stderr.flush()
         super()._say_hello()
 
+    def _before_call(self, call):
+        # The same three lines again, inside the call, just before it does anything: a
+        # supervisor that hands on this error output with a failure of the call holds them
+        # only if it waited for the error output's end.
+        self.stderr.write("in the call %s\n" % call.id)
+        self.stderr.write("marker %s\n" % MARKER)
+        self.stderr.write("connecting to host %s\n" % HOST)
+        self.stderr.write("token %s\n" % TOKEN)
+        self.stderr.flush()
+
 
 def descriptors():
     """A line for each descriptor the process holds below `DESCRIPTORS_LOOKED_AT`: its
@@ -109,6 +133,32 @@ def descriptors():
             kind = "other"
         lines.append("descriptor %d %s %d %d" % (number, kind, status.st_dev, status.st_ino))
     return lines
+
+
+class Asks(Worker):
+    def _before_call(self, call):
+        # A request of the worker's own, as a request at pack/1 is asked of a worker: its
+        # header and the eight bytes of its payload's length are written, and none of the
+        # payload's samples. Then the call waits, deaf to a cancel, until the worker ends.
+        asked = {
+            "type": "request",
+            "id": ASKED_ID,
+            "kind": "segment",
+            "model": call.request["model"],
+            "installation": call.request["installation"],
+            "image": proto.Payload(1, 1, ASKED_BINDING, bytes(4)),
+            "queries": [{"phrase": "anything"}],
+            "max_instances": 1,
+        }
+        self._write(proto.chunks(asked)[:-1])
+        call.wait_for_stop()
+
+    def _take(self, message):
+        # What whizbang answers that request with: a line of the error output.
+        if message["type"] == "error" and message["id"] == ASKED_ID:
+            self.stderr.write("asked %s and was answered %s\n" % (ASKED_ID, message["fault"]))
+            self.stderr.flush()
+        super()._take(message)
 
 
 class Flood(Worker):
@@ -160,6 +210,7 @@ FAULTS = {
     "slow-load": SlowLoad,
     "slow-unload": SlowUnload,
     "grandchild": Grandchild,
+    "asks": Asks,
 }
 
 

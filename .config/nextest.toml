@@ -37,9 +37,9 @@ test-group = 'crash-sweeps'
 # The tests that start the pack's worker, a Python process each, through the test kit's
 # guard (docs/plans/m1c-local-pack.md, "Rules", "Worker processes"): two at a time, so
 # that at most two workers live at once. A test file of the pack's supervisor joins by
-# its module (task P3a: `pack::worker::`). The filter names no package: this file is also
-# read in a workspace of another crate (scripts/tests/test-timeout.sh), where a package
-# that is not there is an error.
+# its module (task P3a: `pack::worker::`; task P3b: `pack::conformance::`). The filter
+# names no package: this file is also read in a workspace of another crate
+# (scripts/tests/test-timeout.sh), where a package that is not there is an error.
 [[profile.default.overrides]]
-filter = 'test(/^pack::worker::/)'
+filter = 'test(/^pack::(worker|conformance)::/)'
 test-group = 'pack-workers'
