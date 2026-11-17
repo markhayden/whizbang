@@ -76,8 +76,19 @@
 //! thread of its own, the writer of the worker's input, and the supervisor waits for it
 //! on the clock: a request within its call's limit, every other frame within
 //! [`END_LIMIT`]. A worker that reads nothing is killed past them, which ends the write
-//! and the writer with it; such a call is `timed_out`. A worker that ended between two calls is noticed by the next; a call's own deadline,
-//! cancellation, the queue and the restart's fault are task P4's.
+//! and the writer with it; such a call is `timed_out`. A worker that ended between two calls is noticed by the next.
+//!
+//! **A call's own limits** (task P4, [`Worker::call_within`]): a call may come with a
+//! cancellation signal and a deadline ([`Limits`]). One that is cancelled, or whose
+//! deadline has passed, before a byte of it is written is not sent. Once it is written,
+//! the call waits until the earliest of its kind's limit and its deadline; a cancel sets
+//! no flag here but is sent to the worker as `cancel`, and the call then waits at most
+//! [`CANCEL_LIMIT`] more. Past the end of its wait the worker is killed and waited for.
+//! A worker that ends before it answered anything, [`STARTS_FAILED_MOST`] times in a row
+//! and not at a caller's deadline or cancel, is not started again until
+//! [`RESTART_PAUSE`] of the clock has passed since the last: a request meanwhile is
+//! refused at once, so that nothing starts a worker in a loop. The queue in front of the
+//! one worker is [`super::queue`].
 
 use std::collections::VecDeque;
 use std::ffi::OsString;
@@ -88,10 +99,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use whizbang_core::capability::{Fault, FaultKind};
-use whizbang_core::contract::{Clock, Secrets};
+use whizbang_core::capability::{Fault, FaultKind, Stage};
+use whizbang_core::contract::{Cancellation, Clock, Secrets};
 
 use super::proto::{self, Answer, Ask, Message, Reason, Refused, Role};
 use super::threads::{self, Spawn};
@@ -105,8 +116,15 @@ pub const LOAD_LIMIT: Duration = Duration::from_secs(120);
 /// How long an `unload` has to end (D7).
 pub const UNLOAD_LIMIT: Duration = Duration::from_secs(30);
 /// How long a `segment` has to end: the kind's limit for a call, 120 seconds by default
-/// (D7). A call's own deadline, which may be shorter, is task P4's.
+/// (D7). A call's own deadline, when it is earlier, ends it first ([`Limits`]).
 pub const CALL_LIMIT: Duration = Duration::from_secs(120);
+/// How long a cancelled call has to stop once its `cancel` is handed to the writer (D7).
+pub const CANCEL_LIMIT: Duration = Duration::from_secs(5);
+/// How many workers in a row may end before they answered anything, at no caller's
+/// deadline or cancel, before the next start waits for [`RESTART_PAUSE`].
+pub const STARTS_FAILED_MOST: u32 = 3;
+/// How long after the last of [`STARTS_FAILED_MOST`] such workers no worker is started.
+pub const RESTART_PAUSE: Duration = Duration::from_secs(60);
 /// How many frames the reader of the worker's output may have handed on that the
 /// supervisor has not taken: past them the reader waits, and reads nothing more, until
 /// one is taken. So what a worker that writes frames faster than they are taken can make
@@ -308,6 +326,55 @@ pub struct Said {
     pub threads: u32,
 }
 
+/// What a caller bounds one call by, beyond its kind's limit (task P4): its cancellation
+/// signal, and its deadline on the supervisor's clock when it has one.
+#[derive(Debug, Clone, Default)]
+pub struct Limits {
+    /// Set by the caller to cancel the call.
+    pub cancellation: Cancellation,
+    /// When the call must be over, on the supervisor's clock.
+    pub deadline: Option<Instant>,
+}
+
+impl Limits {
+    /// No deadline, and a signal nobody else holds.
+    pub fn none() -> Limits {
+        Limits::default()
+    }
+
+    /// The fault of a request these limits end before a byte of it is sent, if they do
+    /// at `now`: its cancel, or its deadline.
+    pub fn ended_before_sending(&self, now: Instant, place: &str) -> Option<Fault> {
+        if self.cancellation.is_cancelled() {
+            let words = format!("the request was cancelled {place}; it was not sent");
+            return Some(Fault::new(FaultKind::Cancelled, &words).not_sent());
+        }
+        if self.deadline.is_some_and(|deadline| now >= deadline) {
+            let words = format!("the request's deadline passed {place}; it was not sent");
+            return Some(Fault::new(FaultKind::TimedOut, &words).not_sent());
+        }
+        None
+    }
+}
+
+/// What a call tells whoever watches it, as it goes (task P4): its request was written
+/// whole, to the worker with this process id; an event came; its `cancel` was handed to
+/// the writer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Progress {
+    Written { worker: u32 },
+    Event,
+    CancelSent,
+}
+
+/// Which end of a call's wait came first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WaitEnd {
+    Limit,
+    Deadline,
+    Cancel,
+}
+
 /// What the thread that reads the worker's output hands on: each message, a request of
 /// the worker's own by its id alone (its payload unread), the end of the output, or a
 /// refusal. Only a message is followed by more.
@@ -466,6 +533,13 @@ pub struct Worker {
     /// The readers of a worker that ended while something held its streams open: let
     /// go at [`END_LIMIT`], and no worker is started while one of them lives.
     lingering: Vec<JoinHandle<()>>,
+    /// Whether the worker started last has answered a request, by a result or an
+    /// `error` for it.
+    answered: bool,
+    /// How many workers in a row ended before they answered anything, at no caller's
+    /// deadline or cancel; and when the last of them ended.
+    failed_in_a_row: u32,
+    last_failed: Option<Instant>,
 }
 
 impl std::fmt::Debug for Worker {
@@ -497,7 +571,15 @@ impl Worker {
             conversations: 0,
             requests: 0,
             lingering: Vec::new(),
+            answered: false,
+            failed_in_a_row: 0,
+            last_failed: None,
         }
+    }
+
+    /// The clock the supervisor goes by.
+    pub fn clock(&self) -> Arc<dyn Clock> {
+        self.clock.clone()
     }
 
     /// The same, where the config names these variables as keys: none of them is
@@ -552,8 +634,33 @@ impl Worker {
                 "the pack's Python is not installed; run whizbang setup",
             ));
         }
-        let running = self.start()?;
-        self.hear_hello(running)
+        let paused = self.last_failed.is_some_and(|last| {
+            self.failed_in_a_row >= STARTS_FAILED_MOST
+                && last
+                    .checked_add(RESTART_PAUSE)
+                    .is_none_or(|until| self.clock.now() < until)
+        });
+        if paused {
+            return Err(refusal(
+                FaultKind::Unavailable,
+                &format!(
+                    "the pack's worker ended before it answered anything {STARTS_FAILED_MOST} times in a row; no worker is started until {} seconds after the last",
+                    RESTART_PAUSE.as_secs()
+                ),
+            ));
+        }
+        let started = self.conversations;
+        let heard = self.start().and_then(|running| self.hear_hello(running));
+        if heard.is_err() && self.conversations != started {
+            self.failed_unanswered();
+        }
+        heard
+    }
+
+    /// One more worker ended before it answered anything.
+    fn failed_unanswered(&mut self) {
+        self.failed_in_a_row = self.failed_in_a_row.saturating_add(1);
+        self.last_failed = Some(self.clock.now());
     }
 
     /// The process id of the worker that is running, if one is.
@@ -619,6 +726,55 @@ impl Worker {
     /// next call starts another. A request any byte of which was written and that no
     /// answer settled is `unresolved`; one of which no byte was written is `not_sent`.
     pub fn call(&mut self, ask: Ask) -> Result<Called, Box<Failed>> {
+        self.call_within(ask, &Limits::none(), &mut |_| {})
+    }
+
+    /// One request, as [`Worker::call`] makes it, within the caller's limits too (task
+    /// P4), telling `watch` how it goes.
+    ///
+    /// Cancelled, or past its deadline, before a byte of it is written (before the
+    /// worker is started, and again after its hello), it is not sent: `cancelled` or
+    /// `timed_out`, `not_sent`, and the worker lives on. Written, it waits until the
+    /// earliest of its kind's limit and its deadline. A cancel is sent to the worker as
+    /// `cancel` once, through the writer, waiting for nothing, and the call then waits at
+    /// most [`CANCEL_LIMIT`] more: the worker's `error` for it (`cancelled`, answered,
+    /// and the worker lives on), or its result if it had finished. Past the end of its
+    /// wait the worker is killed and waited for: `timed_out` at its kind's limit or its
+    /// deadline, `cancelled` once a cancel was sent; `unresolved` once a byte left, and
+    /// `not_sent` when none did.
+    pub fn call_within(
+        &mut self,
+        ask: Ask,
+        limits: &Limits,
+        watch: &mut dyn FnMut(Progress),
+    ) -> Result<Called, Box<Failed>> {
+        let (result, counts) = match self.exchange(ask, limits, watch) {
+            Ok(called) => (Ok(called), false),
+            Err((failed, counts)) => (Err(failed), counts),
+        };
+        match &result {
+            Ok(_) => self.answered = true,
+            Err(failed) if failed.fault.stage() == Stage::Answered => self.answered = true,
+            Err(failed) if counts && failed.ended.is_some() && !self.answered => {
+                self.failed_unanswered();
+            }
+            Err(_) => {}
+        }
+        if self.answered {
+            self.failed_in_a_row = 0;
+        }
+        result
+    }
+
+    /// One request and its end, and whether a failure that ended the worker counts
+    /// toward [`STARTS_FAILED_MOST`]: not one at the worker's start, which
+    /// [`Worker::ready`] counts, and not one at a caller's deadline or cancel.
+    fn exchange(
+        &mut self,
+        ask: Ask,
+        limits: &Limits,
+        watch: &mut dyn FnMut(Progress),
+    ) -> Result<Called, (Box<Failed>, bool)> {
         let limit = match &ask {
             Ask::Load { .. } => LOAD_LIMIT,
             Ask::Unload { .. } => UNLOAD_LIMIT,
@@ -642,18 +798,29 @@ impl Worker {
                 "the request breaks a rule of the protocol ({}) and was not sent to the pack's worker",
                 refused.reason().name()
             );
-            return Err(self.failed(refusal(kind, &sentence), None, None));
+            return Err((self.failed(refusal(kind, &sentence), None, None), false));
+        }
+        if let Some(fault) =
+            limits.ended_before_sending(self.clock.now(), "before the pack's worker was asked")
+        {
+            return Err((self.failed(fault, None, None), false));
         }
         let started = self.conversations;
         if let Err(fault) = self.ready() {
             let ended = (self.conversations != started)
                 .then_some(self.ended)
                 .flatten();
-            return Err(self.failed(fault, None, ended));
+            return Err((self.failed(fault, None, ended), false));
+        }
+        // The hello may have taken long: the limits are looked at again, and a request
+        // they end now is still not sent, and the worker lives on.
+        let place = "while the pack's worker was started";
+        if let Some(fault) = limits.ended_before_sending(self.clock.now(), place) {
+            return Err((self.failed(fault, None, None), false));
         }
         let Some(running) = self.running.take() else {
             let fault = refusal(FaultKind::Unavailable, "the pack's worker is not running");
-            return Err(self.failed(fault, None, None));
+            return Err((self.failed(fault, None, None), false));
         };
         // Noted before a byte is written, so that the reader holds the answer to it. The
         // writer writes it; the call waits for that, and then for the answer, within its
@@ -668,19 +835,41 @@ impl Worker {
             let ended = self.close(running);
             let words = "the request could not be handed to the writer of the pack's worker, which was ended";
             let fault = stage(Fault::new(FaultKind::Unavailable, words), &taken);
-            return Err(self.failed(fault, None, Some(ended)));
+            return Err((self.failed(fault, None, Some(ended)), true));
         };
+        let pid = running.child.id();
         let mut wrote = None;
         let mut events = Vec::new();
-        let waited = self.until(limit, || {
+        // The end of the wait: the kind's limit, or the deadline when it is earlier, or,
+        // once a cancel is sent, its own limit when that is earlier still. Each look
+        // reads what the worker said, whether the request was written, and the signal.
+        let begun = self.clock.now();
+        let mut end = begun.checked_add(limit);
+        let mut why = WaitEnd::Limit;
+        if let Some(deadline) = limits.deadline
+            && end.is_none_or(|end| deadline < end)
+        {
+            (end, why) = (Some(deadline), WaitEnd::Deadline);
+        }
+        let mut cancel_sent = false;
+        let most = 2 * ((limit + CANCEL_LIMIT).as_millis() / PACE.as_millis()).max(1);
+        let mut waited = None;
+        for look in 0..=most {
             loop {
                 match running.next() {
                     Some(Some(Heard::Said(Message::Event { id: of, text }))) if of == id => {
                         events.push(text);
+                        watch(Progress::Event);
                     }
-                    Some(heard) => return Some(Waited::Heard(heard)),
+                    Some(heard) => {
+                        waited = Some(Waited::Heard(heard));
+                        break;
+                    }
                     None => break,
                 }
+            }
+            if waited.is_some() {
+                break;
             }
             if wrote.is_none() {
                 wrote = match written.try_recv() {
@@ -688,9 +877,46 @@ impl Worker {
                     Err(TryRecvError::Empty) => None,
                     Err(TryRecvError::Disconnected) => Some(false),
                 };
+                if wrote == Some(true) {
+                    watch(Progress::Written { worker: pid });
+                }
             }
-            (wrote == Some(false)).then_some(Waited::Unwritten)
-        });
+            if wrote == Some(false) {
+                waited = Some(Waited::Unwritten);
+                break;
+            }
+            if !cancel_sent && limits.cancellation.is_cancelled() {
+                // Handed to the writer behind the request, waiting for nothing: a worker
+                // that does not take it is killed at the end of the wait all the same.
+                let cancel = Message::Cancel { id: id.clone() };
+                let _ = running.queue(cancel, &Arc::new(AtomicU64::new(0)));
+                cancel_sent = true;
+                let stop_by = self.clock.now().checked_add(CANCEL_LIMIT);
+                if let Some(stop_by) = stop_by
+                    && end.is_none_or(|end| stop_by < end)
+                {
+                    (end, why) = (Some(stop_by), WaitEnd::Cancel);
+                }
+                watch(Progress::CancelSent);
+            }
+            if look == most || end.is_none_or(|end| self.clock.now() >= end) {
+                break;
+            }
+            self.clock.pause(PACE);
+        }
+        if wrote.is_none() {
+            // An answer to the request can come before the writer says it wrote it: the
+            // worker answers only what it read whole.
+            let answered = matches!(
+                &waited,
+                Some(Waited::Heard(Some(Heard::Said(
+                    Message::Result { id: of, .. } | Message::Error { id: of, .. }
+                )))) if *of == id
+            );
+            if answered || written.try_recv() == Ok(true) {
+                watch(Progress::Written { worker: pid });
+            }
+        }
         let heard = match waited {
             Some(Waited::Heard(heard)) => Some(heard),
             Some(Waited::Unwritten) => {
@@ -698,7 +924,7 @@ impl Worker {
                 let words =
                     "the request could not be written to the pack's worker, which was ended";
                 let fault = stage(Fault::new(FaultKind::Unavailable, words), &taken);
-                return Err(self.failed(fault, None, Some(ended)));
+                return Err((self.failed(fault, None, Some(ended)), true));
             }
             None => None,
         };
@@ -731,17 +957,40 @@ impl Worker {
                     fault.name()
                 );
                 let fault = Fault::new(fault, &words).answered(None);
-                return Err(self.failed(fault, Some(sentence), None));
+                return Err((self.failed(fault, Some(sentence), None), false));
             }
             None => {
                 // The kill ends a write the worker did not take, and the writer with it.
                 let ended = self.finish(running);
-                let words = format!(
-                    "the pack's worker did not end the request within {} seconds and was killed",
-                    limit.as_secs()
-                );
-                let fault = stage(Fault::new(FaultKind::TimedOut, &words), &taken);
-                return Err(self.failed(fault, None, Some(ended)));
+                let (kind, words) = match (cancel_sent, why) {
+                    (false, WaitEnd::Deadline) => (
+                        FaultKind::TimedOut,
+                        "the request's deadline passed before the pack's worker ended it, and the worker was killed".to_owned(),
+                    ),
+                    (false, _) => (
+                        FaultKind::TimedOut,
+                        format!(
+                            "the pack's worker did not end the request within {} seconds and was killed",
+                            limit.as_secs()
+                        ),
+                    ),
+                    (true, WaitEnd::Cancel) => (
+                        FaultKind::Cancelled,
+                        format!(
+                            "the pack's worker did not stop the cancelled request within {} seconds of its cancel and was killed",
+                            CANCEL_LIMIT.as_secs()
+                        ),
+                    ),
+                    (true, _) => (
+                        FaultKind::Cancelled,
+                        "the pack's worker had not stopped the cancelled request by the end of its wait and was killed".to_owned(),
+                    ),
+                };
+                let fault = stage(Fault::new(kind, &words), &taken);
+                // Ended at the caller's deadline or cancel, the worker is not counted as
+                // one that fails at its start.
+                let counts = !cancel_sent && why == WaitEnd::Limit;
+                return Err((self.failed(fault, None, Some(ended)), counts));
             }
             Some(Some(Heard::Said(Message::Error { id: of, .. }))) if of == conversation => {
                 let ended = self.close(running);
@@ -750,7 +999,7 @@ impl Worker {
                     ended.meaning()
                 );
                 let fault = Fault::new(FaultKind::Unavailable, &words).unresolved();
-                return Err(self.failed(fault, None, Some(ended)));
+                return Err((self.failed(fault, None, Some(ended)), true));
             }
             Some(Some(Heard::Ended) | None) => {
                 let ended = self.close(running);
@@ -759,7 +1008,7 @@ impl Worker {
                     ended.meaning()
                 );
                 let fault = Fault::new(FaultKind::Unavailable, &words).unresolved();
-                return Err(self.failed(fault, None, Some(ended)));
+                return Err((self.failed(fault, None, Some(ended)), true));
             }
             Some(Some(Heard::Refused(refused))) => {
                 let kind = fault_of(&refused);
@@ -798,7 +1047,7 @@ impl Worker {
         };
         let ended = self.close(running);
         let fault = Fault::new(kind, &sentence).unresolved();
-        Err(self.failed(fault, None, Some(ended)))
+        Err((self.failed(fault, None, Some(ended)), true))
     }
 
     /// Writes a frame on the worker's input through its writer, and waits for it within
@@ -890,6 +1139,7 @@ impl Worker {
         self.kept = Arc::default();
         self.said = None;
         self.conversations += 1;
+        self.answered = false;
         let (tell, heard) = frames();
         let (notes, noted) = mpsc::channel();
         let (jobs, queued) = mpsc::sync_channel(JOBS_WAITING);
