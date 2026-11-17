@@ -8,6 +8,7 @@ variables `scripts/test-pack.sh` hands on.
 """
 
 import ast
+import json
 import os
 import subprocess
 import sys
@@ -443,6 +444,9 @@ class Fakes(unittest.TestCase):
                     "slow-load",
                     "slow-unload",
                     "grandchild",
+                    "asks",
+                    "deaf-after-hello",
+                    "garbage-after-hello",
                 )
             ),
         )
@@ -460,12 +464,16 @@ class Fakes(unittest.TestCase):
         self.assertEqual(running.ended(), [0])
         self.assertIsNone(running.rest(), "nothing was written")
 
-        # other-version: the hello states pack/2.
+        # other-version: the hello states pack/2; an error it takes is a line of its error
+        # output, and it ends the conversation.
         running = faulty("other-version")
         running.send(hello())
         with self.assertRaises(proto.Refused) as caught:
             running.read()
         self.assertEqual(caught.exception.reason, "version")
+        running.send(proto.encode({"type": "error", "id": "h1", "fault": "unavailable", "sentence": "another version"}))
+        self.assertEqual(running.ended(), [0])
+        self.assertIn("took an error unavailable: another version", running.error_output.lines())
 
         # deaf-to-end-of-input: the reader ends at the end of the input and the worker
         # does not; its lifetime ends it.
@@ -494,6 +502,54 @@ class Fakes(unittest.TestCase):
             lines[-3:],
             ["marker " + fakes.MARKER, "connecting to host " + fakes.HOST, "token " + fakes.TOKEN],
         )
+        # At the start of a call, the same three lines again, after one that names it.
+        running.ask(load("r1"))
+        self.assertEqual(running.read()["type"], "result")
+        self.assertEqual(
+            running.error_output.lines()[-4:],
+            ["in the call r1", "marker " + fakes.MARKER, "connecting to host " + fakes.HOST, "token " + fakes.TOKEN],
+        )
+
+        # asks: at the start of a call, a request of its own, of which the header and the
+        # payload's length are written and none of the samples.
+        running = faulty("asks")
+        running.hello()
+        running.ask(load("r1"))
+        stream = kit.FdStream(running.from_worker)
+        written = b""
+        while len(written) < 4 or len(written) < 4 + int.from_bytes(written[:4], "big") + 8:
+            chunk = stream.read(65536)
+            self.assertTrue(chunk, "the output ended inside the request")
+            written += chunk
+        length = int.from_bytes(written[:4], "big")
+        asked = json.loads(written[4 : 4 + length])
+        self.assertEqual((asked["type"], asked["id"], asked["kind"]), ("request", fakes.ASKED_ID, "segment"))
+        self.assertEqual(written[4 + length :], (4).to_bytes(8, "big"), "the length, and no sample")
+        # The error that answers it is a line of the error output.
+        running.send(proto.encode({"type": "error", "id": fakes.ASKED_ID, "fault": "unsupported", "sentence": "no"}))
+        running.end_input()
+        self.assertEqual(running.ended(), [0])
+        self.assertIn("asked w1 and was answered unsupported", running.error_output.lines())
+
+        # deaf-after-hello and garbage-after-hello: the hello is answered, and then
+        # nothing is read: a request is never answered, and the end of the input does not
+        # end the worker. garbage-after-hello writes its frame right after its hello.
+        for name, after in (("deaf-after-hello", b""), ("garbage-after-hello", fakes.GARBAGE)):
+            running = faulty(name)
+            self.assertEqual(running.hello()["type"], "hello", name)
+            stream = kit.FdStream(running.from_worker)
+            written = b""
+            while len(written) < len(after):
+                chunk = stream.read(65536)
+                self.assertTrue(chunk, name)
+                written += chunk
+            self.assertEqual(written, after, name)
+            running.ask(load("r1"))
+            running.end_input()
+            self.assertEqual(running.exits, [], "%s ended at its input's end" % name)
+            # Its lifetime would end it; the test ends it as that would.
+            running.made.stop(worker.LIFETIME_CODE)
+            self.assertEqual(running.ended(), [worker.LIFETIME_CODE], name)
 
         # flood: more events than a request may send.
         running = faulty("flood")

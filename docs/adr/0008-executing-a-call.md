@@ -71,6 +71,9 @@ that said something was still to come; no decision changed.
 Amended: 2026-11-17, with task P3a of checkpoint 1C. Changed under "What keeps a test
 from making threads without end": the lint is allowed in a third place, the spawner of
 the pack's supervisor.
+Amended: 2026-11-17, with task P3b of checkpoint 1C. Changed, in the same place: that
+spawner holds a process to one worker's three threads, not two; the third writes the
+worker's input, so that no write to the worker waits outside the supervisor's clock.
 
 ## Context
 
@@ -603,7 +606,8 @@ part parked threads until the system refused one, and the machine went down.
   workspace, tests included, and is allowed in three places: that helper; the
   executor's own spawner (`spawn_thread`), which the bound above holds; and the spawner
   of the pack's supervisor (`whizbang_backends::pack::threads`), which holds a process to
-  one worker's two threads, and which a test replaces with that helper. `just check`
+  one worker's three threads (two readers and a writer), and which a test replaces with
+  that helper. `just check`
   lints every target, so a test that makes a thread another way fails it
   (`scripts/tests/test-thread-lint.sh`, on a fixture). This is the stop that works
   against a loop: a loop of raw spawns makes tens of thousands of threads a second.

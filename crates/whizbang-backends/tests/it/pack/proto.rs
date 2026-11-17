@@ -2477,3 +2477,140 @@ fn an_answer_is_in_the_fixed_order_whatever_order_it_was_built_in() {
     grey.plane.samples[0] = 127;
     assert!(proto::answers(vec![grey], 3).is_err());
 }
+
+// --- what the supervisor needs of the codec (task P3b) ----------------------------------------
+
+fn error(sentence: &str) -> Message {
+    Message::Error {
+        id: "c1".to_owned(),
+        fault: FaultKind::Malformed,
+        sentence: sentence.to_owned(),
+    }
+}
+
+#[test]
+fn the_protocols_cleaner_puts_a_space_for_what_a_text_may_not_hold_and_never_a_question_mark() {
+    // A space for each character a text of the protocol may not hold, white space at the
+    // ends dropped, the first characters kept.
+    let cases = [
+        (
+            "this side speaks pack/1 and the other said pack/2",
+            240,
+            "this side speaks pack 1 and the other said pack 2",
+        ),
+        ("a\\b\"c?d\ne\tf@g", 240, "a b c d e f g"),
+        ("  /kept/  ", 240, "kept"),
+        ("caf\u{e9} au lait", 240, "caf  au lait"),
+        ("one two three", 7, "one two"),
+        ("", 240, ""),
+        ("/?\\", 240, ""),
+        (
+            "letters, digits 0-9; and . , ; : ' ( ) % + - _",
+            240,
+            "letters, digits 0-9; and . , ; : ' ( ) % + - _",
+        ),
+    ];
+    for (text, most, cleaned) in cases {
+        let made = proto::clean(text, most);
+        assert_eq!(made, cleaned, "{text:?}");
+        assert!(!made.contains('?'));
+    }
+    // An error's sentence: of 240 characters at most, and never empty.
+    assert_eq!(proto::sentence("/?/"), "no reason was given");
+    assert_eq!(proto::sentence(&"x".repeat(300)).len(), 240);
+    // What it makes is written and read as a frame of pack/1. The core's cleaning of a
+    // fault's sentence puts a `?`, which no text of the protocol holds: refused.
+    let refused = "this side speaks pack/1 and the other said pack/2";
+    let sentence = proto::sentence(refused);
+    let mut open = Open::new();
+    let read = proto::read(&mut Cursor::new(written(&error(&sentence))), &mut open);
+    assert_eq!(read, Ok(Some(error(&sentence))));
+    let core = Fault::new(FaultKind::Malformed, refused);
+    assert!(core.sentence().contains('?'));
+    let unwritten = proto::writable(&error(core.sentence())).unwrap_err();
+    assert_eq!(unwritten.reason(), Reason::BadValue);
+}
+
+#[test]
+fn a_request_heard_by_a_side_asked_nothing_is_handed_back_by_its_id_before_its_payload_is_read() {
+    // A worker's request, as the supervisor's reader hears it: its header is read and
+    // held to every rule, and not one byte of its payload. The input past its header and
+    // its payload's length is not even there.
+    let under = binding("a picture");
+    let bytes = written(&segment("w1", under));
+    let header = 4 + u64::from(u32::from_be_bytes(bytes[..4].try_into().unwrap()));
+    let mut input = Cursor::new(bytes[..header as usize].to_vec());
+    let mut open = Open::new();
+    let heard = proto::hear(&mut input, &mut open);
+    assert_eq!(
+        heard,
+        Ok(Some(proto::Heard::Asked {
+            id: "w1".to_owned()
+        }))
+    );
+    assert_eq!(input.position(), header);
+    // A header that breaks a rule is refused as it would be by `read`.
+    let mut bad = written(&segment("w1", under));
+    bad[4] = b' ';
+    let refused = proto::hear(&mut Cursor::new(bad), &mut Open::new()).unwrap_err();
+    assert_eq!(refused.reason(), Reason::NotJson);
+    // Every other message is read whole, as `read` reads it: a result under what is open.
+    let mut open = awaiting("r1", under);
+    let answer = result("r1", vec![found(under, 0, 0.5, [0, 0, 2, 2])]);
+    let heard = proto::hear(&mut Cursor::new(written(&answer)), &mut open);
+    assert_eq!(heard, Ok(Some(proto::Heard::Message(answer))));
+    assert!(
+        open.awaited("r1").is_none(),
+        "the result closed its request"
+    );
+}
+
+#[test]
+fn a_refusal_of_a_count_of_a_results_instances_says_so_and_no_other_does() {
+    // One instance more than its request allows for a query.
+    let under = binding("a picture");
+    let mut open = Open::new();
+    open.expect("r1", Awaited::segment(WIDTH, HEIGHT, under, 1, 1))
+        .unwrap();
+    let two = result(
+        "r1",
+        vec![
+            found(under, 0, 0.5, [0, 0, 2, 2]),
+            found(under, 0, 0.25, [0, 0, 2, 2]),
+        ],
+    );
+    let refused = proto::read(&mut Cursor::new(written(&two)), &mut open).unwrap_err();
+    assert_eq!(refused.reason(), Reason::OverBound);
+    assert!(refused.counts_instances());
+    // More instances than any request allows, 4,097, refused by what a header alone
+    // shows, before any request is looked at: the writer holds a result to it too.
+    let tiny = binding("a tiny picture");
+    let one = |at: usize| Found {
+        query: (at % QUERY_LIMIT) as u32,
+        score: 0.5,
+        iou: None,
+        bounds: [0.0, 0.0, 1.0, 1.0],
+        plane: Raster {
+            binding: tiny,
+            width: 1,
+            height: 1,
+            samples: vec![255],
+        },
+    };
+    let most = QUERY_LIMIT * INSTANCE_LIMIT as usize + 1;
+    let past = result("r1", (0..most).map(one).collect());
+    let refused = proto::writable(&past).unwrap_err();
+    assert_eq!(refused.reason(), Reason::OverBound, "{refused:?}");
+    assert!(refused.counts_instances());
+    // Other bounds that are counted are not of instances: the events of a request.
+    let mut open = Open::new();
+    let awaited = Awaited::segment(WIDTH, HEIGHT, under, 3, 2).after(EVENT_LIMIT, 0);
+    open.expect("r1", awaited).unwrap();
+    let refused = proto::read(
+        &mut Cursor::new(written(&event("r1", "one more"))),
+        &mut open,
+    )
+    .unwrap_err();
+    assert_eq!(refused.reason(), Reason::OverBound);
+    assert!(!refused.counts_instances());
+}

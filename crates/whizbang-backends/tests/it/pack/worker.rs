@@ -7,6 +7,10 @@
 //! fakes, with a lifetime of 120 seconds, held by a guard whose drop kills and waits for
 //! the worker and fails the test if a child of the test's process still runs the pack.
 //! They are the group `pack-workers` (`.config/nextest.toml`), two at a time.
+//!
+//! Task P3b adds one call through the supervisor: how far a request got when it fails,
+//! what a fault made from a worker's failure says and what it does not, a request from a
+//! worker, and the text whizbang sends a worker.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -16,17 +20,21 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use whizbang_backends::pack::proto::{Ask, Raster};
 use whizbang_backends::pack::worker::{
-    END_LIMIT, HELLO_LIMIT, LINE_BYTES, LINES_KEPT, LINGERING, PASSED,
+    CALL_LIMIT, END_LIMIT, HELLO_LIMIT, LINE_BYTES, LINES_KEPT, LINGERING, PASSED,
 };
 use whizbang_backends::pack::{Ended, Launch, Worker};
-use whizbang_core::capability::FaultKind;
+use whizbang_core::capability::{FaultKind, Query, Stage};
 use whizbang_core::contract::{Clock, Secrets, SystemClock};
+use whizbang_core::identity::{BindingId, Digest};
 use whizbang_core::store::Store;
 use whizbang_core::store::fs::RealFs;
 use whizbang_testkit::scratch::Scratch;
 use whizbang_testkit::threads;
 use whizbang_testkit::worker::{self as kit, Fixture, Guard};
+
+use super::conformance::{load, segment, three_queries};
 
 /// What the fault `error-output` writes last (the pack's `fakes.py`): a marker, a host and
 /// a made-up token.
@@ -48,7 +56,7 @@ fn launch(fixture: &Fixture) -> Launch {
 
 /// The supervisor of the pack's fakes with this fault, on this clock, held by the test
 /// kit's guard, which kills its worker and waits for it.
-fn supervised(fault: Option<&str>, clock: Arc<dyn Clock>) -> Guard<Worker> {
+pub(super) fn supervised(fault: Option<&str>, clock: Arc<dyn Clock>) -> Guard<Worker> {
     made(fault, |fixture| {
         Worker::new(launch(fixture), clock, Secrets::none())
     })
@@ -64,21 +72,32 @@ fn made(fault: Option<&str>, make: impl FnOnce(&Fixture) -> Worker) -> Guard<Wor
     )
 }
 
-fn system() -> Arc<dyn Clock> {
+pub(super) fn system() -> Arc<dyn Clock> {
     Arc::new(SystemClock)
 }
 
 /// The machine's clock, moved on by the test: while it rushes, each pause moves it a
 /// second and waits for nothing, so a wait of the supervisor's comes to its end at once.
+/// Given a budget, it rushes only until it has moved that far, and then waits as the
+/// machine's clock does.
 #[derive(Default)]
 struct Rushed {
     moved_ms: AtomicU64,
     rushing: AtomicBool,
+    budget_ms: AtomicU64,
 }
 
 impl Rushed {
     fn moved(&self) -> Duration {
         Duration::from_millis(self.moved_ms.load(Ordering::SeqCst))
+    }
+
+    /// Rushes from now, through this much of the clock and no more.
+    fn rush_through(&self, budget: Duration) {
+        let budget = self.moved() + budget;
+        self.budget_ms
+            .store(budget.as_millis() as u64, Ordering::SeqCst);
+        self.rushing.store(true, Ordering::SeqCst);
     }
 }
 
@@ -92,7 +111,9 @@ impl Clock for Rushed {
     }
 
     fn pause(&self, span: Duration) {
-        if self.rushing.load(Ordering::SeqCst) {
+        let budget = self.budget_ms.load(Ordering::SeqCst);
+        let within = budget == 0 || self.moved_ms.load(Ordering::SeqCst) < budget;
+        if self.rushing.load(Ordering::SeqCst) && within {
             self.moved_ms.fetch_add(1_000, Ordering::SeqCst);
             std::thread::yield_now();
         } else {
@@ -443,12 +464,13 @@ fn a_dropped_supervisor_closes_the_input_and_the_worker_is_gone_when_the_drop_re
     let before = threads::live();
 
     // Its input closed, as the end of whizbang's process closes it, the worker ends by
-    // itself: exit code 0, the end of its input. Its two threads, counted with the
-    // test's, are joined.
+    // itself: exit code 0, the end of its input. Its three threads (its output's reader,
+    // its error output's, and the writer of its input), counted with the test's, are
+    // joined.
     let mut worker = supervised(None, system());
     worker.ready().unwrap();
     let pid = worker.pid().unwrap();
-    assert_eq!(threads::live(), before + 2, "two threads for each worker");
+    assert_eq!(threads::live(), before + 3, "three threads for each worker");
     assert_eq!(worker.stop(), Some(Ended::Exited(0)));
     assert_eq!(threads::live(), before);
     assert!(!kit::runs_the_pack(pid));
@@ -815,4 +837,248 @@ fn no_test_starts_the_pack_but_through_the_test_kits_guard() {
     assert_eq!(making, ["whizbang-backends/tests/it/pack/worker.rs"]);
     let this = std::fs::read_to_string(crates.join(making[0])).unwrap();
     assert!(this.contains("kit::fakes(fault).guard("));
+}
+
+// --- one call (task P3b) ------------------------------------------------------------------------
+
+/// Whether a text holds any of what the fault `error-output` writes: the marker, the host
+/// and the token, or a part of the host.
+fn holds_any_of_the_error_output(text: &str) -> bool {
+    [MARKER, HOST, TOKEN, "example.invalid", "marker", "made-up"]
+        .iter()
+        .any(|word| text.contains(word))
+}
+
+#[test]
+fn a_fault_made_from_a_workers_failure_holds_none_of_the_marker_the_host_and_the_token_its_error_output_held()
+ {
+    let secrets = Secrets::new([TOKEN.to_owned()]).unwrap();
+    let mut worker = made(Some("error-output"), |fixture| {
+        Worker::new(launch(fixture), system(), secrets)
+    });
+
+    // The worker ends a request with an error of its own: a segment of a model it has
+    // not loaded. Its sentence is handed on as the worker's, and is not the fault's.
+    let (_, ask) = segment("fake-ok", three_queries(), 2);
+    let answered = worker.call(ask).unwrap_err();
+    assert_eq!(
+        answered.fault.kind(),
+        FaultKind::Unavailable,
+        "{answered:?}"
+    );
+    assert_eq!(answered.fault.stage(), Stage::Answered);
+    assert_eq!(
+        answered.fault.sentence(),
+        "the pack's worker ended the request with the fault unavailable"
+    );
+    assert_eq!(answered.said.as_deref(), Some("the model is not loaded"));
+    assert_eq!(answered.ended, None, "the worker lives on");
+    assert!(worker.pid().is_some());
+
+    // The worker ends inside a call. Just before, it writes the marker, the host and the
+    // token to its error output once more.
+    worker.call(load("fake-exit")).unwrap();
+    let (_, ask) = segment("fake-exit", three_queries(), 2);
+    let failed = worker.call(ask).unwrap_err();
+    assert_eq!(failed.fault.kind(), FaultKind::Unavailable, "{failed:?}");
+    assert_eq!(failed.fault.stage(), Stage::Unresolved);
+    assert_eq!(
+        failed.fault.sentence(),
+        "the pack's worker ended inside the call: it ended inside a call (exit code 4)"
+    );
+    assert_eq!(failed.ended, Some(Ended::Exited(4)));
+
+    // Its error output is handed on whole, redacted: it was taken once the worker had
+    // ended and its reader had read to the end, so it holds what the worker wrote last.
+    let last: Vec<&str> = failed.error_output[failed.error_output.len() - 4..]
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let marker = format!("marker {MARKER}");
+    let host = format!("connecting to host {HOST}");
+    assert_eq!(
+        last,
+        ["in the call r3", &marker, &host, "token [redacted]"],
+        "{:?}",
+        failed.error_output
+    );
+    assert!(failed.error_output.iter().all(|line| !line.contains(TOKEN)));
+
+    // Neither fault holds anything of it, in its sentence or in what it prints.
+    for fault in [&answered.fault, &failed.fault] {
+        for text in [fault.to_string(), format!("{fault:?}")] {
+            assert!(!holds_any_of_the_error_output(&text), "{text}");
+        }
+    }
+    // Nor does what a failure prints: neither the error output nor the worker's own
+    // sentence is in it, so a careless `{:?}` carries no word of the worker's anywhere.
+    for failure in [&answered, &failed] {
+        let printed = format!("{failure:?}");
+        assert!(!holds_any_of_the_error_output(&printed), "{printed}");
+        assert!(!printed.contains("not loaded"), "{printed}");
+    }
+}
+
+/// A `segment` of a picture of 1,000 by 1,000, four megabytes: more than a pipe holds.
+fn larger_than_a_pipe() -> Ask {
+    let side = 1_000;
+    Ask::Segment {
+        model: super::conformance::model("fake-ok"),
+        installation: super::conformance::installation(),
+        image: Raster {
+            binding: BindingId(Digest::of_bytes(b"a large picture")),
+            width: side,
+            height: side,
+            samples: vec![128; (4 * side * side) as usize],
+        },
+        queries: vec![Query::phrase("a thing").unwrap()],
+        max_instances: 1,
+    }
+}
+
+#[test]
+fn a_request_the_worker_does_not_read_ends_at_the_calls_limit_as_timed_out_and_leaves_nothing_behind()
+ {
+    // The worker answers its hello and then reads nothing: a request larger than the pipe
+    // is never taken whole. The write waits within the call's limit, on the clock.
+    let clock = Arc::new(Rushed::default());
+    let mut worker = supervised(Some("deaf-after-hello"), clock.clone());
+    worker.ready().unwrap();
+    let pid = worker.pid().unwrap();
+    clock.rush_through(CALL_LIMIT);
+    let asked = Instant::now();
+    let failed = worker.call(larger_than_a_pipe()).unwrap_err();
+    assert!(
+        asked.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        asked.elapsed()
+    );
+    assert!(clock.moved() >= CALL_LIMIT, "{:?}", clock.moved());
+    assert_eq!(failed.fault.kind(), FaultKind::TimedOut, "{failed:?}");
+    assert_eq!(
+        failed.fault.sentence(),
+        "the pack's worker did not end the request within 120 seconds and was killed"
+    );
+    // Part of it was taken by the pipe: it may have been read.
+    assert_eq!(failed.fault.stage(), Stage::Unresolved);
+    assert_eq!(failed.ended, Some(Ended::Killed));
+    // No process, and no thread of the supervisor's: its readers and its writer ended.
+    assert!(!kit::runs_the_pack(pid));
+    assert_eq!(kit::pack_children(), Vec::<u32>::new());
+    assert!(kit::readers_ended(Duration::from_secs(10)));
+}
+
+#[test]
+fn a_word_to_a_worker_whose_input_is_full_waits_no_longer_than_its_limit() {
+    // The worker reads nothing after its hello, and right after it writes a frame
+    // whizbang refuses. The request fills the pipe; whizbang then has to tell the worker
+    // why the conversation is over, behind it. That word waits five seconds on the
+    // clock, the worker's end five more, and then it is killed.
+    let clock = Arc::new(Rushed::default());
+    let mut worker = supervised(Some("garbage-after-hello"), clock.clone());
+    worker.ready().unwrap();
+    let pid = worker.pid().unwrap();
+    clock.rush_through(END_LIMIT * 2);
+    let asked = Instant::now();
+    let failed = worker.call(larger_than_a_pipe()).unwrap_err();
+    assert!(
+        asked.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        asked.elapsed()
+    );
+    assert_eq!(failed.fault.kind(), FaultKind::Malformed, "{failed:?}");
+    assert_eq!(failed.fault.stage(), Stage::Unresolved);
+    assert_eq!(failed.ended, Some(Ended::Killed));
+    assert!(!kit::runs_the_pack(pid));
+    assert_eq!(kit::pack_children(), Vec::<u32>::new());
+    assert!(kit::readers_ended(Duration::from_secs(10)));
+}
+
+#[test]
+fn a_request_that_could_not_be_written_is_not_sent_and_one_written_and_unanswered_is_unresolved() {
+    let mut worker = supervised(None, system());
+
+    // 64 phrases of 512 double quotes, each written as two bytes: the request's header is
+    // over 64 KiB, which the core's own bounds allow. It is refused where it would be
+    // written, before a worker is started.
+    let quotes = "\"".repeat(512);
+    let phrases: Vec<Query> = (0..64).map(|_| Query::phrase(&quotes).unwrap()).collect();
+    let (_, ask) = segment("fake-ok", phrases.clone(), 1);
+    let refused = worker.call(ask).unwrap_err();
+    assert_eq!(refused.fault.kind(), FaultKind::TooLarge, "{refused:?}");
+    assert_eq!(refused.fault.stage(), Stage::NotSent);
+    assert_eq!(refused.ended, None);
+    assert_eq!(worker.pid(), None, "no worker was started for it");
+    assert_eq!(kit::pack_children(), Vec::<u32>::new());
+
+    // With a worker running, the same: nothing of it reaches the worker, which answers
+    // the next request as if it had never been asked.
+    worker.call(load("fake-ok")).unwrap();
+    let pid = worker.pid();
+    let (_, ask) = segment("fake-ok", phrases, 1);
+    let refused = worker.call(ask).unwrap_err();
+    assert_eq!(refused.fault.kind(), FaultKind::TooLarge);
+    assert_eq!(refused.fault.stage(), Stage::NotSent);
+    let (_, ask) = segment("fake-ok", three_queries(), 2);
+    assert!(worker.call(ask).is_ok());
+    assert_eq!(worker.pid(), pid, "the same worker answered");
+
+    // Written, and never answered: the worker ends inside the call. The request left
+    // whizbang, so how far it got is not known.
+    worker.call(load("fake-exit")).unwrap();
+    let (_, ask) = segment("fake-exit", three_queries(), 2);
+    let failed = worker.call(ask).unwrap_err();
+    assert_eq!(failed.fault.kind(), FaultKind::Unavailable, "{failed:?}");
+    assert_eq!(failed.fault.stage(), Stage::Unresolved);
+    assert_eq!(failed.ended, Some(Ended::Exited(4)));
+    assert_eq!(worker.pid(), None);
+}
+
+#[test]
+fn a_request_from_the_worker_is_refused_before_its_payload_is_read_and_answered_as_unsupported() {
+    // The fault `asks` sends a request of its own at the start of each call: its header
+    // and its payload's length, and never the payload. A reader that went on to read the
+    // payload would wait for the call's limit, two minutes, past this test's own.
+    let mut worker = supervised(Some("asks"), system());
+    let asked = Instant::now();
+    let failed = worker.call(load("fake-ok")).unwrap_err();
+    assert!(
+        asked.elapsed() < Duration::from_secs(20),
+        "{:?}",
+        asked.elapsed()
+    );
+    assert_eq!(failed.fault.kind(), FaultKind::Malformed, "{failed:?}");
+    assert_eq!(failed.fault.stage(), Stage::Unresolved);
+    assert_eq!(
+        failed.fault.sentence(),
+        "the pack's worker sent a request of its own, which this version does not take; it was ended"
+    );
+    // The worker was answered `unsupported`, and then told the conversation was over,
+    // at which it ended by itself.
+    assert_eq!(failed.ended, Some(Ended::Exited(0)));
+    assert!(
+        failed
+            .error_output
+            .contains(&"asked w1 and was answered unsupported".to_owned()),
+        "{:?}",
+        failed.error_output
+    );
+    assert_eq!(worker.pid(), None);
+}
+
+#[test]
+fn a_text_whizbang_sends_is_cleaned_as_a_text_of_the_protocol_and_the_worker_takes_it() {
+    // Whizbang refuses the hello of another version, and tells the worker why with an
+    // error whose sentence is the refusal's: "this side speaks pack/1 and the other said
+    // pack/2". A `/` is no character of a text of the protocol, and the core's cleaning
+    // would put a `?`, which is not one either; the worker's reader would refuse both.
+    let mut worker = supervised(Some("other-version"), system());
+    let fault = worker.ready().unwrap_err();
+    assert_eq!(fault.kind(), FaultKind::Unavailable);
+    // The worker took the error as a frame of pack/1, said so, and ended at it.
+    assert_eq!(worker.ended(), Some(Ended::Exited(0)));
+    assert_eq!(
+        lines_after(&worker, "took an error "),
+        ["unavailable: this side speaks pack 1 and the other said pack 2"]
+    );
 }

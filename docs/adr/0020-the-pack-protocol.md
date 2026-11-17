@@ -13,6 +13,11 @@ says when a header that is no result's is held to 64 KiB and that the 1 GiB of a
 payloads is looked at last among what is open; `over_bound` is of a count or size within
 the 32 bits its field holds. Added: "The steps in full", under "What a refusal says". Ten
 refusal vectors were added, each reason given by whizbang's reader.
+Amended: 2026-11-17, by task P3b (one call through the supervisor). No byte and no reason
+changed. Added, under "What a refusal says": which `over_bound` ends a call as
+`too_large`, what a request whizbang would refuse to write is, how a request from a
+worker is refused, and the text of the `error` whizbang sends after a refusal. And under
+"Consequences", what a run keeps of a result's predicted IoU and diagnostics.
 
 ## Context
 
@@ -347,6 +352,27 @@ of range), breaks it at an earlier step than the other. The ten added on 2026-11
 break rules of two steps on purpose, and state the earlier step's reason, as "The steps
 in full" orders them.
 
+*Added 2026-11-17, by task P3b (the supervisor), changing no byte and no reason:*
+
+- **`over_bound` of a query's instances** is any `over_bound` of a count of a result's
+  instances, for one query (step 7) or in all, past 4,096 (step 5); a refusal says
+  whether it is one (`Refused::counts_instances`). Every other `over_bound` (events,
+  text, settings, queries, pixels) ends a call as `malformed`.
+- **A request whizbang would refuse to write** is no frame and ends no conversation: it
+  is a fault of its call before anything is sent, `too_large` for
+  `header_too_large`, `over_bound` and `too_large`, and `rejected` for every other
+  reason (`proto::writable`).
+- **A request from a worker** is refused before a byte of its payloads is read
+  (`proto::hear`), so that a worker cannot make whizbang read 200 MB of pixels it will
+  not use. It is answered with an `error` of its id whose fault is `unsupported`, as
+  "The messages" says; the input is then no longer at the start of a frame, so the
+  conversation ends too, and the call that was open is `malformed`.
+- **The `error` whizbang sends** after a refusal carries the conversation's id and the
+  fault the refusal ends the call as; its sentence is the refusal's, cleaned as a text
+  of the protocol ("A text of the protocol": a space for each character it may not
+  hold, never a `?`; `proto::clean`, `proto::sentence`), since the refusal of another
+  version names both, with their `/`.
+
 #### The steps in full
 
 *Added 2026-11-17. This is what whizbang's reader does, and both readers do it; no byte
@@ -499,7 +525,10 @@ does around the frames ("The worker", task P4), since they change no byte.
   the backend (ADR 0006): the pack is one backend, and its order is this one.
 - An instance's predicted IoU travels with it and its other diagnostics travel as text.
   What a run keeps of either is the supervisor's (task P3b); the core's `Instance` holds
-  neither.
+  neither. (Decided by task P3b: the core's `Instance` and response stay as they are;
+  the supervisor hands both on with each call, and the worker's error output with each
+  failure; a run keeps them once a backend can hand diagnostics to its run, which none
+  can yet: `docs/carry-over.md`, with the `segment` action at 1D.)
 - A header's numbers with a fraction cannot be read by eye. The vectors state each
   message a second time in plain numbers.
 - Reversing this costs both codecs, the vectors and every later task of the strand. It
