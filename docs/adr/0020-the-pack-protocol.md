@@ -5,6 +5,14 @@ binding its picture is under, an instance names the binding its plane belongs to
 the handle refuses an answer whose planes name another
 Date: 2026-11-15
 Spec: section 4, "The Python pack"; section 10, "Two HTTP surfaces"; section 13
+Amended: 2026-11-17, from the review of task P2 (the pack's own codec). No byte and no
+reason of `pack/1` changed: whizbang's reader is as it was, and these words state what it
+does where the record was silent or said otherwise. Changed: "A text of the protocol"
+names its characters and not the cleaning of ADR 0006, which puts `?`; the bounds table
+says when a header that is no result's is held to 64 KiB and that the 1 GiB of a result's
+payloads is looked at last among what is open; `over_bound` is of a count or size within
+the 32 bits its field holds. Added: "The steps in full", under "What a refusal says". Ten
+refusal vectors were added, each reason given by whizbang's reader.
 
 ## Context
 
@@ -229,10 +237,13 @@ ADR 0006's eight names (`cancelled`, `unsupported`, `credential`, `rejected`,
 protocol of 1 to 240 characters.
 
 **A text of the protocol** (a result's `diagnostics`, an event's `text`, an error's
-`sentence`) holds only what a fault's sentence may hold after cleaning (ADR 0006,
-"Faults"): ASCII letters, digits, spaces and `. , ; : ' ( ) % + - _`. A reader refuses
-any other character; nothing is replaced. So such a text has no `/` and no `\`, no line
-break and no double quote.
+`sentence`) holds only ASCII letters, digits, spaces and `. , ; : ' ( ) % + - _`: the
+characters ADR 0006 ("Faults") keeps when it cleans a fault's sentence, without the `?`
+that cleaning puts for every other. A reader refuses any other character; nothing is
+replaced. So such a text has no `/` and no `\`, no line break, no double quote and no
+`?`. A writer that cleans a text before it writes it puts a space for a character the
+text may not hold, never a `?`. (Amended 2026-11-17: this said "what a fault's sentence
+may hold after cleaning", which holds `?`.)
 
 ### A payload's entry
 
@@ -264,11 +275,11 @@ aside for a frame it refuses.
 
 | What | Bound | Looked at |
 |---|---|---|
-| A header | 65,536 bytes (64 KiB) | The 4 bytes of its length, before the header is read |
+| A header | 65,536 bytes (64 KiB) | The 4 bytes of its length, before the header is read, against the largest bound among the requests the reader has open. A header over 64 KiB that is no result's, read while a request allows more, is held to 64 KiB with what is open: after its values and its canonical writing, and for an event once its request is known to be open (amended 2026-11-17) |
 | A result's header | 65,536 bytes and 512 for each instance its request allows: `queries` × `max_instances`, so 2,162,688 at ADR 0006's most (4,096 instances). A `load`'s and an `unload`'s allow none: 65,536 | The same 4 bytes, against the largest bound among the requests the reader has open, which is the call's own while one call is in the worker at a time; then against its own request's, once its `id` is read |
 | A request's payload | One picture: 4 × width × height, at most 200,000,000 bytes | The header, before the payload |
 | A result's instances | For each query, `max_instances` of its request; each plane the size of the request's image | The header, before any payload |
-| A result's payloads together | 1,073,741,824 bytes (1 GiB), whatever its request would allow | The header, before any payload |
+| A result's payloads together | 1,073,741,824 bytes (1 GiB), whatever its request would allow | The header, before any payload: with what is open, after every instance is held to its request (amended 2026-11-17) |
 | Settings in a `load` | 32 | The header |
 | Events of one request | 256 | Counted by the reader for each open request |
 | Diagnostics of one request | 65,536 bytes: the text of every event and the result's `diagnostics`, together | Counted by the reader for each open request |
@@ -311,7 +322,7 @@ the name of another version, and that only when it is a plain name.
 | `unknown_field` | An object holds a field that is not its own |
 | `missing_field` | An object lacks a field of its own |
 | `bad_value` | A value is of the wrong type, breaks its field's rule, or is not finite |
-| `over_bound` | A count or a size is over its bound: settings, queries, the most instances, a phrase, pixels, a query's instances, events, diagnostics |
+| `over_bound` | A count or a size is over its bound: settings, queries, the most instances, a phrase, pixels, a query's instances, events, diagnostics. A whole number in a field of a count or a size (a width, a height, a count of threads, a query's place, the most instances) is held first to the 32 bits the field holds, and past them is `bad_value` (amended 2026-11-17) |
 | `out_of_order` | Settings are not in the order of their names, or a name is given twice; instances are not in the fixed order |
 | `not_canonical` | The header is not the canonical writing of what it holds |
 | `unexpected` | A result or an event names a request the reader has not open, or a result is of another kind than its request |
@@ -332,7 +343,64 @@ hello with such a role and a field that is no hello's is refused for its role. A
 that breaks rules of two of these steps is refused for the earlier step's; among the
 values of one header, which is named is the reader's own. Each refusal vector breaks one
 rule, or, where no frame can break that rule alone (JSON nested too deep, a number out
-of range), breaks it at an earlier step than the other.
+of range), breaks it at an earlier step than the other. The ten added on 2026-11-17 each
+break rules of two steps on purpose, and state the earlier step's reason, as "The steps
+in full" orders them.
+
+#### The steps in full
+
+*Added 2026-11-17. This is what whizbang's reader does, and both readers do it; no byte
+or reason changed.* "The values" above is two passes, and "what the reader has open" is
+looked at in a fixed order. Among several faults of one pass the reader names the first
+it meets in this order; which of two faults in one field's rules is named stays the
+reader's own.
+
+1. The header's length, against the largest bound among the requests open (a header of
+   no result's is held to 64 KiB at step 6).
+2. That it is JSON.
+3. `type`; a hello's `version` and `role`, or a request's or a result's `kind`.
+4. **Each object taken apart.** In each object a field that is not its own, then one that
+   is missing; then its fields, one by one, each of its type, with the rules that are held
+   where the field is read:
+   - a hello: `id` (a text), `device` (a text or null), `threads`;
+   - a request: `id` (a text), `model` and `installation` with their rules, then a load's
+     `settings`, or a segment's `image`, `queries` and `max_instances`. Each setting in
+     turn: a field that is not its own, one that is missing, its `name` as a text, its
+     `value` as a scalar, the rules of the name and of a text, and then its order after
+     the setting before it (`out_of_order`). Each query in turn: a field that is no
+     query's is `unknown_field`; two of a query's own fields is `bad_value`; none is
+     `missing_field`; then a phrase of 1 byte at least (`bad_value`) and 512 at most
+     (`over_bound`), or a point's or a box's numbers and their rules (`bad_value`). An
+     entry: its fields, its width and height, its four words, its binding;
+   - a result: its `instances` first, each with its `query`, `score`, `iou`, `box` and
+     `plane` entry; then `id`, `device`, `threads` and `diagnostics`, each as a text or
+     a whole number;
+   - an event: `id`, `text`; a cancel: `id`; an error: `id`, `fault` (one of the eight),
+     `sentence`.
+
+   A whole number in a field of a count or a size is held here to 32 bits (`bad_value`
+   past them); a number with a fraction to its 16 hex digits, whatever double they name.
+5. **The rules of the values and counts.** The id's rule; a hello's device and threads;
+   a load's count of settings (`over_bound` past 32); a segment's image (no pixel is
+   `bad_value`, over 50,000,000 is `over_bound`), its count of queries (none is
+   `bad_value`, over 64 is `over_bound`) and its most instances (0 is `bad_value`, over
+   64 is `over_bound`); a result's device, threads, diagnostics (`over_bound` past
+   65,536 bytes) and count of instances (`over_bound` past 4,096), then each instance's
+   score and predicted IoU (from 0 to 1, so finite), box (finite) and plane's pixels; an
+   event's text (`over_bound` past 65,536 bytes); an error's sentence (`bad_value` past
+   240). Then the fixed order of a result's instances, by what the header shows.
+6. The canonical writing.
+7. **What the reader has open.** A result: that its request is open and of its kind
+   (`unexpected`), its header within its request's bound (`header_too_large`), its
+   diagnostics within the text left to the request (`over_bound`); then instance by
+   instance, its query's place among the request's queries (`bad_value`), the count of
+   instances for that query (`over_bound`), its plane's width and height (`wrong_size`)
+   and binding (`wrong_binding`); and last, its planes together within 1 GiB
+   (`too_large`). An event: that its request is open (`unexpected`), its header within
+   64 KiB (`header_too_large`), the count of events and the text (`over_bound`). Any
+   other message: its header within 64 KiB (`header_too_large`).
+8. Each payload's length, before its samples are read (`wrong_length`).
+9. The order of instances the header showed tied, by their planes (`out_of_order`).
 
 After a refusal the reader cannot know where the next frame starts, so the conversation
 is over: the side that refused sends an `error` with the conversation's id, when it can
