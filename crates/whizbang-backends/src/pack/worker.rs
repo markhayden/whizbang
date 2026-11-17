@@ -457,11 +457,15 @@ impl Running {
     /// lets go of the frames its reader hands on, so that a reader waiting to hand one
     /// on ends.
     fn kill(&mut self) -> Ended {
-        drop(self.input.take());
+        // The kill comes before the input is closed: a worker that ends at the end of its
+        // input would otherwise be reaped, now and then, as one that exited by itself (task
+        // P5b, after the Linux runner showed it). The kill ends a write the worker does not
+        // take, and the writer with it, all the same.
         let ended = match self.reaped {
             Some(ended) => ended,
             None => kill(&mut self.child),
         };
+        drop(self.input.take());
         self.reaped = Some(ended);
         drop(self.heard.take());
         ended

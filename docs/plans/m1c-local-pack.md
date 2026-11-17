@@ -1623,7 +1623,14 @@ the model). **Size:** medium.
   written to, since an event can be read before the writer says it wrote the request;
   P4's test of a slow load read the worker then, and failed once here. A call is now told
   as written at its first event. P4's test of a queued request that keeps its count now
-  writes that count in the model's folder, since the count is read now.
+  writes that count in the model's folder, since the count is read now. On the Linux
+  runner a worker killed at a limit was reaped now and then as exited (0), because the
+  kill closed its input before it signalled it (seen on `main` too, in
+  `queue::a_cancelled_call_that_has_not_stopped_at_its_deadline_has_its_worker_restarted`):
+  the kill now comes first. And P3b's
+  `conformance::a_malformed_payload_ends_the_call_as_malformed_and_the_worker_is_restarted`
+  takes exit code 2 beside 0: the reader stops at the refused frame and lets the pipe go,
+  and a worker still writing the rest of it ends at that write, by itself.
 - Four tests more than "Done when" names: the four above.
 
 ### N1. The download client behind the checked downloader

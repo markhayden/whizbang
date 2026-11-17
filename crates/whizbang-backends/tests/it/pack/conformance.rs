@@ -496,9 +496,15 @@ fn a_malformed_payload_ends_the_call_as_malformed_and_the_worker_is_restarted() 
     assert_eq!(transport.answering(), None, "the worker was ended");
     assert_eq!(failed.fault.kind(), FaultKind::Malformed, "{failed:?}");
     assert_eq!(failed.fault.stage(), Stage::Unresolved);
-    // It was told why, and took it: it ended at the error that named the conversation,
-    // or at the end of its input, either way by itself.
-    assert_eq!(failed.ended, Some(Ended::Exited(0)), "{failed:?}");
+    // It ended by itself, and was not killed: at the error that named the conversation,
+    // or at the end of its input (exit code 0); or, when the reader of its output had
+    // already stopped at the refused frame and let the pipe go while the worker still
+    // wrote the rest of it, at that write (exit code 2), which the Linux runner showed
+    // (task P5b).
+    assert!(
+        matches!(failed.ended, Some(Ended::Exited(0) | Ended::Exited(2))),
+        "{failed:?}"
+    );
 
     // The next call starts another worker, which answers.
     let (_, answered) = loaded_then(transport, "fake-ok", phrase, 1);
