@@ -1,0 +1,7 @@
+{
+  "frame": "0000",
+  "name": "refused-truncated-length",
+  "open": [],
+  "refused": "truncated",
+  "says": "two of the four bytes of a header's length"
+}

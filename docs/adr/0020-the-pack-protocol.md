@@ -1,0 +1,468 @@
+# 0020. The pack protocol: `pack/1`, frames of a JSON header and raw payloads, every bound read before the bytes
+
+Status: accepted. Changes ADR 0006: a segment request carries the identity of the
+binding its picture is under, an instance names the binding its plane belongs to, and
+the handle refuses an answer whose planes name another
+Date: 2026-11-15
+Spec: section 4, "The Python pack"; section 10, "Two HTTP surfaces"; section 13
+
+## Context
+
+`SPEC.md` section 4 leaves the protocol between whizbang and the Python pack to
+checkpoint 1C, within these constraints: a handshake that states the version and refuses
+a mismatch; framed messages (request, result, event, cancel, error), each with a request
+id; payloads that state dimensions, layout, data type, colour and alpha rules and the
+binding they belong to; a byte bound on every message and payload; nothing in it a file
+path; one codec for the local worker and one for HTTP, each the simplest that meets the
+bounds.
+
+The plan of checkpoint 1C (`docs/plans/m1c-local-pack.md`, decision D2) fixes what the
+protocol is, and leaves the bytes to this record. Two rows of `docs/carry-over.md` are
+answered here: what a segmenter adapter took and gave beside the segment interface (its
+settings, its diagnostics, the order of its answer), and that nothing bounded what is
+read off a wire before something is built from it.
+
+What was read, at the commits `docs/sources.toml` pins:
+
+- Rascal's pack client (`crates/rascal-mcp/src/client/mod.rs`) held one answer to a
+  ceiling, 256 MiB (`MAX_ANSWER_BYTES`, `crates/rascal-core/src/pack.rs`), by the line
+  length of its transport; a picture travelled as base64 inside JSON.
+- Rascal's filler (`crates/rascal-mask/src/filler/mod.rs`, `answer_cap`) worked the most
+  bytes of an answer out from its request: eight bytes a pixel and a mebibyte.
+- Rascal's segmenter adapters (`tools/python/src/rascal_tools/models/adapters.py`) took
+  a threshold, a padding, an outline rule and a least cover, gave each instance
+  diagnostics and a predicted IoU, and sorted every answer one way (`order`).
+- Squint's pack client (`crates/squint-tools/src/mcp/mod.rs`) spoke JSON-RPC, one JSON
+  document a line, and routed answers by request id.
+
+Neither old protocol is kept (plan, D1): both were MCP. What is kept is the idea of a
+bound worked out from the request, and the one order.
+
+## Decision
+
+The code is `crates/whizbang-backends/src/pack/proto.rs`; the tests that hold it to this
+record are in `crates/whizbang-backends/tests/it/pack/proto.rs`; the fixed vectors are in
+`pack/conformance/vectors/`. The Python codec (task P2) reads the same vectors.
+
+### The version
+
+One name: `pack/1`. The first frame each way is a `hello` that states it. A side speaks
+one version. A hello that states any other is refused, and the refusal says both
+versions; there are no ranges and nothing is negotiated.
+
+### A frame
+
+```
+frame          = header-length header payload*
+header-length  = 4 bytes: an unsigned whole number, most significant byte first
+header         = that many bytes: one JSON object, in the canonical writing below
+payload        = payload-length samples
+payload-length = 8 bytes: an unsigned whole number, most significant byte first
+samples        = that many bytes
+```
+
+A header describes each payload that follows it by an entry, and the payloads follow in
+the order their entries are written in the header. Frames follow each other with nothing
+between them. The local codec writes frames on the worker's standard input and reads
+them from its standard output; the worker's error output is diagnostics only and is
+never read as frames.
+
+Input that ends before a frame's first byte is the end of the conversation. Input that
+ends anywhere inside a frame is a refusal (`truncated`), never a shorter message.
+
+### The canonical writing of a header
+
+A header has exactly one writing, so a frame that is read can be written back byte for
+byte, and two codecs cannot differ in bytes while they agree in meaning.
+
+- No white space. A field is `"name":value`; fields and items are separated by `,`.
+- An object's fields are written in the order this record lists them, each once.
+- A text is written between `"`. Inside it `"` is `\"`, `\` is `\\`, and the characters
+  U+0008, U+0009, U+000A, U+000C and U+000D are `\b`, `\t`, `\n`, `\f` and `\r`; any
+  other character under U+0020 is `\u00` and two lower-case hex digits; every other
+  character is itself, in UTF-8.
+- A whole number is its decimal digits, with no sign, no leading zero, no fraction and
+  no exponent. Only a setting's value may be under zero, and is then written with `-`.
+- **A number with a fraction is never a JSON number.** It is written as a text of 16
+  lower-case hex digits: the 64 bits of its IEEE 754 double, most significant first. So
+  `0.5` is `"3fe0000000000000"`. Two JSON libraries print one double two ways, and the
+  vectors could not then be held byte for byte. A value that is not finite is refused.
+- `true`, `false` and `null` are written so.
+
+A reader checks this by writing what it read and comparing the bytes: a header that
+parses and is not its own canonical writing is refused (`not_canonical`).
+
+### What a reader takes as JSON
+
+A header is decoded as strict UTF-8 and then parsed as JSON (RFC 8259), strictly. Each
+of these is refused as `not_json`, before any field is looked at, though a lenient
+reader would take it and refuse it later for another reason, or not at all:
+
+- A byte-order mark (`EF BB BF`) before the object.
+- Bytes that strict UTF-8 does not allow, among them a surrogate encoded as bytes
+  (`ED A0 80` to `ED BF BF`).
+- A `\u` escape of a surrogate that is not one half of a pair (`\ud800` alone, or
+  followed by anything but a `\udc00` to `\udfff`, and `\udc00` to `\udfff` alone): it
+  names no character. A pair is JSON and names one character, which the canonical
+  writing writes as itself, so a header that escapes one is not its canonical writing.
+- A number outside a double's range, such as `1e400` or `-1e400`.
+- Objects and lists nested 128 deep, counting the header's own object as the first. A
+  reader takes 127; no message of `pack/1` is deeper than 4.
+- A field given twice in one object.
+- `NaN`, `Infinity`, `-Infinity`, and anything else that is not a JSON value: a number
+  JSON's grammar does not write (`01`, `1.`, `.5`, `+1`, `1e`), an escape it has not
+  (`\x`), a comma with nothing after it, a key that is no text.
+- A control character (under U+0020) written as itself inside a text.
+
+And among the values JSON has:
+
+- `-0` is not a whole number. Where a whole number is asked (an entry's width, a
+  query's place, a setting's value, any count) it is `bad_value`, as `1.0` and `1e2`
+  are; it is not taken as 0 and then refused as `not_canonical`. Nor are `true` and
+  `false` whole numbers.
+- A number with a fraction may be -0 (`"8000000000000000"`) wherever its field takes 0:
+  a score, a predicted IoU, an edge of a box, a coordinate of a point. It is read as -0
+  and written back with its own bits; 0 and -0 are two writings of two numbers.
+
+### The messages
+
+Six, told apart by `type`. Every message has an `id`: 1 to 64 characters, a lower-case
+letter or a digit and then lower-case letters, digits, `.`, `_` and `-`.
+
+**`hello`.** Fields: `type`, `id`, `version`, `role`, and for a worker `device` and
+`threads`.
+
+| Field | Value |
+|---|---|
+| `version` | `pack/1` |
+| `role` | `whizbang` or `worker` |
+| `device` | Worker only. The device a model's work runs on, as the runtime names it (`cpu`, `mps`, `cuda:0`): a lower-case letter, then lower-case letters, digits, `.`, `_`, `-` and `:`, 32 characters at most. `null` while the worker has not asked its runtime |
+| `threads` | Worker only. How many threads the worker's process holds now: 1 to 65,535 |
+
+Whizbang says hello first; the worker answers with a hello of the same `id`. That id
+names the conversation: an `error` that carries it is about the conversation and ends it.
+
+**`request`.** Fields: `type`, `id`, `kind`, then the kind's own. The id is one its
+sender has not open. Three kinds at `pack/1`, each asked of a worker:
+
+| Kind | Fields after `kind` |
+|---|---|
+| `load` | `model`, `installation`, `settings` |
+| `unload` | `model`, `installation` |
+| `segment` | `model`, `installation`, `image`, `queries`, `max_instances` |
+
+- `model` is a model's name as ADR 0017 has one. `installation` is an installation's
+  identity: `sha256:` and 64 lower-case hex digits. The worker is told where the models
+  directory is when it is started, and finds an installation by those two; a `segment`
+  names them too, and is answered only by the model that is resident.
+- `settings` is the model's settings, as the config gives them (ADR 0011, "What the file
+  holds"): a list of at most 32 `{"name":…,"value":…}`, in the order of the names' bytes,
+  no name twice. A name is a lower-case letter, then lower-case letters, digits and `_`,
+  64 characters at most. A value is `true`, `false`, a whole number that fits in 64 bits
+  with a sign, or a text of 1 to 1,024 printable ASCII characters with no space at
+  either end and neither `/` nor `\` in it. What rascal's adapters took for each call (a
+  threshold, a padding, an outline rule, a least cover) are settings here: they arrive
+  once, in `load`, and are no field of a `segment`.
+- `image` is a payload's entry (below) for the picture: the canonical pixels of ADR
+  0001, under the binding the request names (ADR 0006, as amended).
+- `queries` is 1 to 64 of `{"phrase":text}` (1 to 512 bytes), `{"point":[x,y]}` and
+  `{"box":[left,top,right,bottom]}`, each number written as a number with a fraction is.
+  A point's numbers are finite and not under zero; a box's too, with its left under its
+  right and its top under its bottom. Whether a point or a box is inside its image is
+  the capability's rule (ADR 0006), held where a request is made, and is not looked at
+  again by the frame's reader.
+- `max_instances` is 1 to 64.
+
+A request may be sent in either direction, so that a tool in the worker can ask
+whizbang for a capability at milestone 2. At `pack/1` every kind is asked of a worker:
+a worker sends none, and a request from one is answered with an `error` whose fault is
+`unsupported` (`docs/carry-over.md`).
+
+**`result`.** Fields: `type`, `id`, `kind`, `device`, `threads`, `diagnostics`, and for
+a `segment` `instances`. It ends its request, and its `kind` is the request's.
+
+| Field | Value |
+|---|---|
+| `device` | The device that answered, as in a hello, never `null` |
+| `threads` | As in a hello, counted after the call |
+| `diagnostics` | A text of the protocol (below), which may be empty |
+| `instances` | For `segment`: the instances found, in the fixed order below |
+
+An instance is `{"query":…,"score":…,"iou":…,"box":[…],"plane":…}`:
+
+- `query` is the place in the request's `queries` of the query it answers, from 0.
+- `score` is a number with a fraction from 0 to 1. `iou` is the model's predicted IoU,
+  0 to 1, or `null` when the model gives none. Whatever else an adapter measured of an
+  instance goes into the result's `diagnostics`, in the adapter's words.
+- `box` is left, top, right and bottom, four finite numbers with a fraction.
+- `plane` is a payload's entry for the instance's plane.
+
+**The fixed order of an answer.** Best score first; among equal scores, by `query`; then
+by the box's top, then its left, then its right, then its bottom; then by the predicted
+IoU, `null` first and then the lesser first; then by the plane's bytes, the lesser
+first. Numbers with a fraction are compared by IEEE 754's total order, which on the
+finite numbers a header holds is their value, with -0 less than 0: so among scores,
+which go best first, 0 comes before -0, and among edges and predicted IoUs -0 comes
+before 0. (It is the order of the 64 bits read as a whole number with a sign, once the
+63 lower bits of one under zero are flipped.) The order is total: two instances equal
+in every key are equal in every byte a result holds of them, so the order the writer
+gives is the only one a reader takes. The predicted IoU comes before the plane's bytes
+so that every key but the last is in the header: the reader holds those before a plane
+is read, and the header it writes again to check its canonical writing, which has no
+planes yet, is in the same order. The writer sorts, whatever order the answer was built
+in, and the reader refuses a result whose instances are in another order
+(`out_of_order`): by what the header shows before a plane is read, and by the planes
+once they are. This is rascal's one order (`order`: score, query, top, left), made
+total. Among the instances of one query it is best score first.
+
+**`event`.** Fields: `type`, `id`, `text`. Something a call says before it ends: `id` is
+an open request's, and `text` is a text of the protocol, not empty.
+
+**`cancel`.** Fields: `type`, `id`. Asks that the request with this id stop. It is
+answered by that request's own end: its result, if it had finished, or an `error`
+whose fault is `cancelled`.
+
+**`error`.** Fields: `type`, `id`, `fault`, `sentence`. It ends the request with that
+id in place of a result; with the hello's id it ends the conversation. `fault` is one of
+ADR 0006's eight names (`cancelled`, `unsupported`, `credential`, `rejected`,
+`unavailable`, `timed_out`, `malformed`, `too_large`). `sentence` is a text of the
+protocol of 1 to 240 characters.
+
+**A text of the protocol** (a result's `diagnostics`, an event's `text`, an error's
+`sentence`) holds only what a fault's sentence may hold after cleaning (ADR 0006,
+"Faults"): ASCII letters, digits, spaces and `. , ; : ' ( ) % + - _`. A reader refuses
+any other character; nothing is replaced. So such a text has no `/` and no `\`, no line
+break and no double quote.
+
+### A payload's entry
+
+Raw samples, described by an entry of seven fields: `width`, `height`, `layout`,
+`data`, `colour`, `alpha`, `binding`.
+
+| Entry | `layout` | `data` | `colour` | `alpha` | Bytes |
+|---|---|---|---|---|---|
+| A request's `image` | `rgba`: four samples a pixel, red, green, blue, alpha, row by row from the top left | `u8` | `srgb` | `straight` | 4 × width × height |
+| An instance's `plane` | `plane`: one sample a pixel, row by row from the top left; 255 on the thing, 0 off it | `u8` | `none` | `none` | width × height |
+
+- `width` and `height` are at least 1, and their product at most 50,000,000 (ADR 0006's
+  `PIXEL_LIMIT`).
+- `binding` is the identity of the binding the samples belong to (ADR 0001): `sha256:`
+  and 64 lower-case hex digits, 71 characters. A plane's entry states the width, the
+  height and the binding of its request's image, or its result is refused.
+- No other layout, data type, colour rule or alpha rule exists at `pack/1`, and an entry
+  with another, or with the picture's rules on a plane, is refused.
+- The payload's own length, in the 8 bytes before it, is the entry's count of bytes, or
+  the frame is refused before a sample is read.
+
+What the samples of a plane must be (0 or 255, something on, inside its box) is the
+capability's rule, held when an instance is made of them (ADR 0006, "Segment").
+
+### Bounds
+
+Every bound is known before the bytes it bounds are read, and a reader sets nothing
+aside for a frame it refuses.
+
+| What | Bound | Looked at |
+|---|---|---|
+| A header | 65,536 bytes (64 KiB) | The 4 bytes of its length, before the header is read |
+| A result's header | 65,536 bytes and 512 for each instance its request allows: `queries` × `max_instances`, so 2,162,688 at ADR 0006's most (4,096 instances). A `load`'s and an `unload`'s allow none: 65,536 | The same 4 bytes, against the largest bound among the requests the reader has open, which is the call's own while one call is in the worker at a time; then against its own request's, once its `id` is read |
+| A request's payload | One picture: 4 × width × height, at most 200,000,000 bytes | The header, before the payload |
+| A result's instances | For each query, `max_instances` of its request; each plane the size of the request's image | The header, before any payload |
+| A result's payloads together | 1,073,741,824 bytes (1 GiB), whatever its request would allow | The header, before any payload |
+| Settings in a `load` | 32 | The header |
+| Events of one request | 256 | Counted by the reader for each open request |
+| Diagnostics of one request | 65,536 bytes: the text of every event and the result's `diagnostics`, together | Counted by the reader for each open request |
+
+An instance's entry is at most 330 bytes as written, so the instances a request allows
+always fit in the 512 bytes each of them brings. The 64 KiB hold the result's other
+fields and its diagnostics, with what the instances leave over. So the header's bound
+is a bound of its own: a result whose diagnostics are within about 200 bytes of their
+64 KiB, with the longest id and device there can be, is over its header's bound, and
+is refused for that.
+
+A writer of a `segment`'s result does not know its request, so it holds the header to
+the most any request allows; the reader holds it to the request's.
+
+A reader that asks keeps, for each request it has open, what its answer is held to: the
+kind, and for a `segment` the image's width, height and binding, the count of queries
+and the most instances; and two counts, of events and of bytes of text. It notes a
+request as open before it writes the request's frame. A result or an error closes the
+request. The 257th event of a request, and text past the bound, are refused and not
+kept; the supervisor then ends the call as malformed and restarts the worker (task P4).
+
+Not counted toward the 64 KiB of diagnostics, because each has a bound of its own: an
+instance's score and predicted IoU, typed fields of its entry; the payloads; and the
+worker's error output, which the supervisor bounds by lines (task P3a).
+
+### What a refusal says
+
+A frame is refused for one reason of a closed list. A refusal is the reason's name and
+a sentence of fixed words and numbers: it quotes nothing the other side sent, but for
+the name of another version, and that only when it is a plain name.
+
+| Reason | When |
+|---|---|
+| `truncated` | The input ended, or failed, inside a frame |
+| `header_too_large` | A header's stated length is 0 or over its bound |
+| `not_json` | The header is not strict UTF-8, is not one JSON object, or gives a field twice: each case of "What a reader takes as JSON" |
+| `unknown_message` | `type` is none of the six |
+| `version` | A hello states another version. The sentence names both |
+| `unknown_kind` | A request or a result is of a kind `pack/1` has not |
+| `unknown_field` | An object holds a field that is not its own |
+| `missing_field` | An object lacks a field of its own |
+| `bad_value` | A value is of the wrong type, breaks its field's rule, or is not finite |
+| `over_bound` | A count or a size is over its bound: settings, queries, the most instances, a phrase, pixels, a query's instances, events, diagnostics |
+| `out_of_order` | Settings are not in the order of their names, or a name is given twice; instances are not in the fixed order |
+| `not_canonical` | The header is not the canonical writing of what it holds |
+| `unexpected` | A result or an event names a request the reader has not open, or a result is of another kind than its request |
+| `wrong_size` | A plane's width and height are not its request's image's |
+| `wrong_binding` | A plane names another binding than its request's image is under |
+| `too_large` | A result's payloads together are over 1 GiB |
+| `wrong_length` | A payload's stated length is not what its entry gives |
+
+The rules are looked at in this order: the header's length; that it is JSON; `type`;
+for a hello, `version`, before any other field, since another version may have other
+fields, and then `role`, which says which fields the hello has; for a request or a
+result, `kind`, which says the same of it; in each object, a field that is not its own,
+then one that is missing; the values, and with them the counts and the orders a header
+shows; the canonical writing; what the reader has open; and then each payload's length.
+`type`, `version`, `role` and `kind` are each `missing_field` when absent and
+`bad_value` when they are no text; a `role` that is neither name is `bad_value`, so a
+hello with such a role and a field that is no hello's is refused for its role. A frame
+that breaks rules of two of these steps is refused for the earlier step's; among the
+values of one header, which is named is the reader's own. Each refusal vector breaks one
+rule, or, where no frame can break that rule alone (JSON nested too deep, a number out
+of range), breaks it at an earlier step than the other.
+
+After a refusal the reader cannot know where the next frame starts, so the conversation
+is over: the side that refused sends an `error` with the conversation's id, when it can
+still write, and closes. What each refusal becomes for the call that was open is the
+supervisor's (tasks P3b and P4): `header_too_large`, `over_bound` of a query's
+instances and `too_large` end it as the fault `too_large`; every other reason as
+`malformed`.
+
+### The amendment to ADR 0006
+
+A payload states the binding it belongs to, and ADR 0006's segment request named none.
+So, in the core (`capability/segment.rs`; the tests are in
+`tests/it/capability/segment.rs`):
+
+- **A `SegmentRequest` carries the identity of the binding its picture is under.** Told
+  nothing, that is the picture's own binding: itself in its own space, flat, onto the
+  root (`Binding::root`), which is the binding a mask made on the picture names.
+  `SegmentRequest::under` replaces it with a binding the caller gives, for a picture
+  that is placed onto another image or whose space is not flat. That binding's source is
+  the picture, by canonical pixel digest, and its source space is the picture's size, or
+  it is refused: the same rule by which a mask belongs to an image (ADR 0002).
+- **Two requests of the same pixels under two bindings are two requests,** and are not
+  equal.
+- **An `Instance` names the binding its plane belongs to** (`Instance::binding`), and is
+  not made without one.
+- **The handle refuses, as `malformed`, an answer in which any plane names another
+  binding than its request's.** So an answer cannot be taken for the answer to another
+  request of the same pixels.
+
+The codec writes the request's binding into the entry of its image, and holds each
+plane of the result to it (`wrong_binding`) before a plane is read; the handle's check
+is the same rule for every backend, the pack or not.
+
+Not changed: what a run records of a request, and the fingerprint of a prepared call.
+A segment request is in neither yet.
+
+### Nothing is a path
+
+No message has a field for a path, a folder or an address. The worker is told where the
+models directory is when it is started, and a `load` names a model and an installation's
+identity, each of which is one plain name or a digest. Every text a peer fills in and
+the other side acts on (an id, a model's name, an identity, a device, a setting's name
+and its text, a text of the protocol) is held to a rule that leaves no `/` and no `\`
+in it. One text may hold any character: a phrase, which is words for the model and is
+never opened, joined to a folder or run.
+
+### The HTTP codec, on paper
+
+Decided here and built at milestone 6 (`docs/carry-over.md`). The frames are the same
+bytes.
+
+- One request is one HTTP request: a `POST` whose body is whizbang's hello and then the
+  `request` frame, with a stated length. The address is the worker's and the path is
+  fixed by the version; nothing of a message is in the address or in a header field.
+- The response's body is streamed: the worker's hello, then the request's events as
+  they happen, then its result or its error, and the body ends. A response that ends
+  before a result or an error is `truncated`.
+- A `cancel` is a second `POST`, of a hello and the `cancel` frame; closing the first
+  connection asks the same.
+- Every bound above holds as it does locally, on the bytes of the two bodies. The
+  credential, the origin's approval and redirects are the checked sender's (ADRs 0012
+  and 0019), not the protocol's.
+
+The behavioural half of the conformance suite (task P3b) is written against a transport,
+so that milestone 6 runs it again over this one.
+
+### What `pack/2` would mean
+
+`pack/1` is these bytes. A new field, a new kind of request, a new layout, a changed
+bound or a changed meaning is another version with another name, decided by another
+record. A side speaks exactly one: whizbang and the pack it installs are built from one
+commit, so they agree, and a worker of another version is refused at its hello and is
+not left running (task P3a). Nothing reads two versions, and no field says which parts
+of a version a side supports.
+
+What may be added to this record without a new version: sections on what the supervisor
+does around the frames ("The worker", task P4), since they change no byte.
+
+## Consequences
+
+- What is read from a worker is bounded before it is built: a header by its four bytes,
+  a result by its request, and one result by 1 GiB. The row of the carry-over list on
+  what is read off a wire is closed for the codec; the supervisor uses it from task P3b.
+- The settings rascal's adapters took are a model's, sent once in `load`. An adapter
+  reads them from what `load` gave it. A setting with a fraction is written in the
+  config as a text, as ADR 0011 already asks, and the adapter reads the number.
+- A request's header is held to 64 KiB like every header but a result's. The most
+  phrases of the most bytes, 64 of 512, fit in about half of it. A batch whose phrases
+  are full of characters that are written as two or as six (a double quote, a control
+  character) can be over, and is refused where it is written (`header_too_large`); the
+  core's own bounds allow it.
+- A setting's text cannot hold `/` or `\`, which the config allows. The kind `pack`
+  (task P6a) refuses such a setting where the config is read, or its `load` would be
+  refused when it is written.
+- An answer from the pack has one order. The core's interface still leaves the order to
+  the backend (ADR 0006): the pack is one backend, and its order is this one.
+- An instance's predicted IoU travels with it and its other diagnostics travel as text.
+  What a run keeps of either is the supervisor's (task P3b); the core's `Instance` holds
+  neither.
+- A header's numbers with a fraction cannot be read by eye. The vectors state each
+  message a second time in plain numbers.
+- Reversing this costs both codecs, the vectors and every later task of the strand. It
+  is cheap now: nothing but this codec speaks it.
+
+## Alternatives
+
+- **MCP, or JSON-RPC a line at a time,** as the old tools spoke. Turned down by
+  `SPEC.md` section 17 and the plan's D1. A line cannot be bounded before it is read
+  without a ceiling for every message, and a plane inside JSON is base64: a third more
+  bytes, and a second copy to decode.
+- **A binary header.** Turned down: a JSON header is read by the standard library of
+  both sides and by a person; its cost is the canonical writing, which the vectors hold.
+- **JSON numbers for scores and coordinates.** Turned down: the same double is printed
+  as `1e-07` by one library and `1e-7` by another, so no vector could be written back
+  byte for byte by both, and a reader that accepts every spelling has no canonical
+  writing to hold a header to.
+- **One length for all payloads, or none** (the entry's dimensions alone). Turned down:
+  the plan asks that each payload carry its length, and a length that must agree with
+  its entry catches a writer whose two halves disagree before a byte is taken for
+  samples.
+- **A result's header bounded at 64 KiB like every other,** with instances in a payload
+  of their own. Turned down by the plan: the header names every instance, and its bound
+  is worked out from the request.
+- **Settings in each `segment`,** as rascal's adapters took them. Turned down by the
+  plan and by ADR 0006: they are an adapter's, not a call's.
+- **Leave the order to each adapter.** Turned down: rascal sorted every adapter's answer
+  one way, and a test of a real model would otherwise depend on the order its runtime
+  happens to give.
+- **Negotiate a version, or a list of features.** Turned down by the plan: both sides
+  are built from one commit.
+- **Clean a text of the protocol in place of refusing it.** Turned down: a reader that
+  repairs what it reads cannot write it back byte for byte, and a worker that sends a
+  path in an event is wrong, not untidy.

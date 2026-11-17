@@ -506,7 +506,8 @@ impl Default for FakeSegmenter {
 }
 
 /// The instance that is the whole pixels of a box, in an image of this size.
-fn boxed(width: u32, height: u32, bounds: [u32; 4], score: f64) -> Result<Instance, Fault> {
+fn boxed(request: &SegmentRequest, bounds: [u32; 4], score: f64) -> Result<Instance, Fault> {
+    let (width, height) = (request.image().width(), request.image().height());
     let [left, top, right, bottom] = bounds;
     let mut plane = vec![0; width as usize * height as usize];
     for y in top..bottom.min(height) {
@@ -515,6 +516,7 @@ fn boxed(width: u32, height: u32, bounds: [u32; 4], score: f64) -> Result<Instan
         }
     }
     Ok(Instance::new(
+        request.binding(),
         width,
         height,
         plane,
@@ -547,12 +549,12 @@ impl Segmenter for FakeSegmenter {
                     .take(most)
                     .enumerate()
                     .map(|(at, (_, bounds))| {
-                        boxed(width, height, *bounds, (0.9 - 0.1 * at as f64).max(0.0))
+                        boxed(request, *bounds, (0.9 - 0.1 * at as f64).max(0.0))
                     })
                     .collect::<Result<Vec<_>, _>>()?,
                 Asked::Point { x, y } => {
                     let (x, y) = ((x as u32).min(width - 1), (y as u32).min(height - 1));
-                    vec![boxed(width, height, [x, y, x + 1, y + 1], 1.0)?]
+                    vec![boxed(request, [x, y, x + 1, y + 1], 1.0)?]
                 }
                 Asked::Box {
                     left,
@@ -566,7 +568,7 @@ impl Segmenter for FakeSegmenter {
                         right.ceil() as u32,
                         bottom.ceil() as u32,
                     ];
-                    vec![boxed(width, height, touched, 1.0)?]
+                    vec![boxed(request, touched, 1.0)?]
                 }
             };
             answers.push(found);

@@ -1,0 +1,19 @@
+{
+  "frame": "0000002b7b2274797065223a226576656e74222c226964223a227231222c2274657874223a226c6f6164696e67227d",
+  "name": "refused-over-bound-text",
+  "open": [
+    {
+      "binding": "sha256:92b2fa58028958317e408bd84ecfa70f5ee35b121991dbc232c49d166353708b",
+      "events": 9,
+      "height": 6,
+      "id": "r1",
+      "kind": "segment",
+      "max_instances": 2,
+      "queries": 3,
+      "text": 65530,
+      "width": 8
+    }
+  ],
+  "refused": "over_bound",
+  "says": "an event that takes the text sent for its request past 65,536 bytes"
+}

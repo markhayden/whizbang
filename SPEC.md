@@ -355,7 +355,7 @@ key_env = "FAL_KEY"
 Local and self-hosted backends for segment and fill run the same Python package.
 
 **Protocol.** One versioned logical protocol, decided at checkpoint 1C within these
-constraints:
+constraints (it is `pack/1`: ADR 0020, `docs/adr/0020-the-pack-protocol.md`):
 
 - A handshake that states the protocol version and refuses a mismatch.
 - Framed messages: request, result, event, cancel, error, each with a request id.

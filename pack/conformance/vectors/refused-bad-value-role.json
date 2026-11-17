@@ -1,0 +1,7 @@
+{
+  "frame": "000000477b2274797065223a2268656c6c6f222c226964223a226831222c2276657273696f6e223a227061636b2f31222c22726f6c65223a22736572766572222c226578747261223a317d",
+  "name": "refused-bad-value-role",
+  "open": [],
+  "refused": "bad_value",
+  "says": "a hello whose role is neither name and that holds a field no hello has: the role says which fields a hello has, and is looked at before them"
+}

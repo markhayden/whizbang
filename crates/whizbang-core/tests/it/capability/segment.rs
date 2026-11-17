@@ -11,6 +11,7 @@ use whizbang_core::capability::{
     feature,
 };
 use whizbang_core::contract::{Cancellation, ModelIdentity};
+use whizbang_core::identity::{Binding, BindingId, Digest, Direction, Mapping, PixelDigest, Space};
 
 use super::fill::picture;
 use crate::artifact::support::{HEIGHT, WIDTH, rect};
@@ -147,20 +148,32 @@ fn a_request_is_one_image_and_a_bounded_batch_inside_it() {
 
 // --- what comes back ----------------------------------------------------------------------------
 
+/// The binding a request of [`picture`] is under when it names none: the picture in
+/// its own space.
+fn own() -> BindingId {
+    Binding::root(picture().digest(), Space::flat(WIDTH, HEIGHT).unwrap()).id()
+}
+
 fn instance() -> Instance {
-    Instance::new(WIDTH, HEIGHT, rect(2, 1, 5, 4), [2.0, 1.0, 5.0, 4.0], 0.9).unwrap()
+    instance_under(own())
+}
+
+fn instance_under(binding: BindingId) -> Instance {
+    let plane = rect(2, 1, 5, 4);
+    Instance::new(binding, WIDTH, HEIGHT, plane, [2.0, 1.0, 5.0, 4.0], 0.9).unwrap()
 }
 
 #[test]
 fn an_instance_is_a_binary_plane_a_box_and_a_score() {
     let instance = instance();
     assert_eq!((instance.width(), instance.height()), (WIDTH, HEIGHT));
+    assert_eq!(instance.binding(), own());
     assert_eq!(instance.plane(), rect(2, 1, 5, 4));
     assert_eq!(instance.bounds(), [2.0, 1.0, 5.0, 4.0]);
     assert_eq!(instance.score(), 0.9);
 
     let with = |plane: Vec<u8>, bounds: [f64; 4], score: f64| {
-        Instance::new(WIDTH, HEIGHT, plane, bounds, score).unwrap_err()
+        Instance::new(own(), WIDTH, HEIGHT, plane, bounds, score).unwrap_err()
     };
     let (plane, bounds) = (rect(2, 1, 5, 4), [2.0, 1.0, 5.0, 4.0]);
     // The plane: its length, its range, and something in it.
@@ -196,7 +209,7 @@ fn an_instance_is_a_binary_plane_a_box_and_a_score() {
         );
     }
     for score in [0.0, 1.0] {
-        Instance::new(WIDTH, HEIGHT, plane.clone(), bounds, score).unwrap();
+        Instance::new(own(), WIDTH, HEIGHT, plane.clone(), bounds, score).unwrap();
     }
     // The box: inside the image, with area.
     // The height is 6 and the width 8: a bottom of 7 is outside, though it is under the
@@ -230,9 +243,17 @@ fn an_instance_is_a_binary_plane_a_box_and_a_score() {
             "{short:?}"
         );
     }
-    Instance::new(WIDTH, HEIGHT, plane.clone(), [0.0, 0.0, W, H], 0.9).unwrap();
+    Instance::new(own(), WIDTH, HEIGHT, plane.clone(), [0.0, 0.0, W, H], 0.9).unwrap();
     // A box between pixels holds the whole pixels it touches.
-    Instance::new(WIDTH, HEIGHT, plane.clone(), [2.5, 1.5, 4.5, 3.5], 0.9).unwrap();
+    Instance::new(
+        own(),
+        WIDTH,
+        HEIGHT,
+        plane.clone(),
+        [2.5, 1.5, 4.5, 3.5],
+        0.9,
+    )
+    .unwrap();
     // What is printed of an instance is its size, its box and its score, not its plane.
     let printed = format!("{:?}", self::instance());
     assert_eq!(
@@ -241,11 +262,11 @@ fn an_instance_is_a_binary_plane_a_box_and_a_score() {
     );
     // The size is refused before the plane is looked at.
     assert!(matches!(
-        Instance::new(50_000, 1_001, Vec::new(), bounds, 0.9),
+        Instance::new(own(), 50_000, 1_001, Vec::new(), bounds, 0.9),
         Err(Unfit::TooLarge { .. })
     ));
     assert!(matches!(
-        Instance::new(0, 1, Vec::new(), bounds, 0.9),
+        Instance::new(own(), 0, 1, Vec::new(), bounds, 0.9),
         Err(Unfit::Empty { .. })
     ));
 }
@@ -329,6 +350,7 @@ fn an_answer_that_does_not_fit_its_request_is_malformed() {
     // row more, and of the same height and one column more.
     for (width, height) in [(HEIGHT, WIDTH), (WIDTH, HEIGHT + 1), (WIDTH + 1, HEIGHT)] {
         let other = Instance::new(
+            own(),
             width,
             height,
             vec![255; (width * height) as usize],
@@ -420,6 +442,100 @@ fn the_segmenter_is_handed_the_handles_own_bounds_and_a_deadline_is_only_narrowe
         assert_eq!(fault.kind(), FaultKind::TimedOut);
     }
     assert_eq!(stub.sent.load(Ordering::SeqCst), 3);
+}
+
+// --- the binding a picture is under (ADR 0006, as ADR 0020 amends it) -------------------------
+
+/// A binding that places [`picture`] onto another image: the same pixels, under
+/// another binding than their own.
+fn placed() -> Binding {
+    let space = Space::flat(WIDTH, HEIGHT).unwrap();
+    let onto = PixelDigest(Digest::of_bytes(b"another image"));
+    let from = Direction::SourceToDestination;
+    Binding::new(
+        picture().digest(),
+        space,
+        onto,
+        space,
+        from,
+        Mapping::Identity,
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_request_carries_the_identity_of_the_binding_its_picture_is_under() {
+    // Told nothing, a request is under its picture's own binding: the picture in its
+    // own space, flat, onto the root.
+    let request = SegmentRequest::new(picture(), dog(), 8).unwrap();
+    assert_eq!(request.binding(), own());
+    // Told a binding of its picture, it carries that one, and is another request.
+    let placed = placed();
+    assert_ne!(placed.id(), own());
+    let under = request.clone().under(&placed).unwrap();
+    assert_eq!(under.binding(), placed.id());
+    assert_eq!(under.image(), request.image());
+    assert_ne!(under, request);
+    // A binding whose source is another picture is not this picture's.
+    let space = Space::flat(WIDTH, HEIGHT).unwrap();
+    let other = Binding::root(PixelDigest(Digest::of_bytes(b"another image")), space);
+    assert_eq!(
+        request.clone().under(&other).unwrap_err(),
+        Unfit::NotAllowed {
+            what: "the binding of a request",
+            why: "does not place the request's picture",
+        }
+    );
+    // Nor is one that places a picture of these pixels' digest in a space of another
+    // size.
+    let wide = Binding::root(picture().digest(), Space::flat(WIDTH + 1, HEIGHT).unwrap());
+    assert_eq!(
+        request.under(&wide).unwrap_err(),
+        Unfit::WrongSize {
+            what: "the space of a request's binding",
+            expected: (WIDTH, HEIGHT),
+            found: (WIDTH + 1, HEIGHT),
+        }
+    );
+}
+
+#[test]
+fn an_answer_whose_planes_name_another_binding_is_refused_as_malformed() {
+    let placed = placed();
+    let own_request = SegmentRequest::new(picture(), dog(), 8).unwrap();
+    let placed_request = own_request.clone().under(&placed).unwrap();
+    let ask = |answers: Vec<Vec<Instance>>, request: &SegmentRequest| {
+        let stub = Stub::new(&ALL, answers);
+        let answer = SegmentHandle::new(stub.clone(), Cancellation::new()).segment(request);
+        assert_eq!(stub.sent.load(Ordering::SeqCst), 1);
+        answer
+    };
+    // Each request takes the planes that name its own binding.
+    let taken = ask(vec![vec![instance_under(own())]], &own_request).unwrap();
+    assert_eq!(taken.answers()[0][0].binding(), own());
+    let taken = ask(vec![vec![instance_under(placed.id())]], &placed_request).unwrap();
+    assert_eq!(taken.answers()[0][0].binding(), placed.id());
+    // And refuses the other's, though the pixels, the size and the plane are the same:
+    // one wrong plane among right ones is enough.
+    let wrong = [
+        (vec![instance_under(placed.id())], &own_request),
+        (vec![instance_under(own())], &placed_request),
+        (
+            vec![instance_under(own()), instance_under(placed.id())],
+            &own_request,
+        ),
+    ];
+    for (answer, request) in wrong {
+        let fault = ask(vec![answer], request).unwrap_err();
+        assert_eq!(
+            (fault.kind(), fault.stage()),
+            (FaultKind::Malformed, Stage::Answered)
+        );
+        assert_eq!(
+            fault.sentence(),
+            "the plane of an instance names another binding than its request's picture is under"
+        );
+    }
 }
 
 // --- how far a request got, and what it cost (ADR 0010) --------------------------------------

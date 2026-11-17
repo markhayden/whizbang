@@ -1,0 +1,7 @@
+{
+  "frame": "00010001",
+  "name": "refused-header-too-large",
+  "open": [],
+  "refused": "header_too_large",
+  "says": "the four bytes of a header's length state 65,537, and nothing follows: it is refused before a header is read"
+}
