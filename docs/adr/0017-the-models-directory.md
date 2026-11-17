@@ -445,6 +445,17 @@ opens it. This is what the binary gives.
   for a command that names neither a config nor a directory, whose executor has no
   backend to ask for one. Such an executor is over the inventory that knows no
   model, as every executor was before this task.
+  **Amended by task N5 of plan 1C:** and under a build that has no kind of backend
+  (`wiring::kinds`, none until the kind `pack`, task P6a), since no config of it can
+  offer a backend, and so none can ask for a model. With the shipped catalogue's
+  first entry, `whizbang rascal grow` given a config or `--models-dir` would
+  otherwise have made a models directory, in the platform's place when nothing named
+  one, to be told of every model what the inventory says already. So until a kind
+  is in the build, `rascal grow` opens and makes no models directory and asks
+  nothing of where the platform's is
+  (`wired::with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory`,
+  which fails on the day the build is given a kind), and only the `models` commands
+  look at one. The bullet below on which commands open a directory is read with this.
 - **The platform's is not even worked out unless it is the one.** The wiring is
   given what says where it is (`Models::platform`), and asks it only when a
   directory is about to be opened and neither the flag nor the config named one:
@@ -462,7 +473,7 @@ opens it. This is what the binary gives.
   `--models-dir`. The `models` commands work out where it is only when the
   catalogue gives them a reason, and each asks for the platform's only when
   neither the flag nor the config named one
-  (`models::under_the_catalogue_it_ships_no_models_command_resolves_or_makes_a_models_directory`):
+  (`models::under_the_catalogue_it_ships_no_models_command_makes_a_models_directory_or_asks_anything_of_any_address`):
   `list` when the catalogue holds a model, and it opens the directory only when
   something is at its place, so it makes nothing; `get` of a model the catalogue
   holds, that runs on this platform and whose adapter the build has, and it makes
@@ -746,6 +757,51 @@ A part that holds a secret is refused where the part is made, a file's address a
 feature among them, and a secret that only the lowering of a host makes (ADR 0012) is
 refused as a secret
 (`catalogue::a_part_that_holds_a_secret_is_refused_where_the_part_is_made`).
+
+### The shipped catalogue
+
+Added by task N5 of plan 1C. The catalogue the binary ships is the file
+`crates/whizbang/src/catalogue.json`, compiled in and read by `wiring::catalogue` as any
+catalogue is. It holds one model, `sam3`:
+
+- **Its files** are those of D11 of plan 1C at one pinned commit of `facebook/sam3` on
+  the Hub (`3c879f39826c281e95690f02c7821c4de09afae7`, the head of `main` when it was
+  pinned): `model.safetensors` and the small text files the runtime reads beside it
+  (`config.json`, `processor_config.json`, the four tokenizer files) and `LICENSE`.
+  `sam3.pt`, a pickle, is not listed, nor the card and `.gitattributes`. Each file is
+  first asked for at `https://huggingface.co/facebook/sam3/resolve/<commit>/<name>`.
+- **Its origins** are `https://huggingface.co` and `https://us.aws.cdn.hf.co`, the
+  host the Hub moved the large file's download to when it was pinned (open question 2
+  of plan 1C), named to the owner and approved with the Hub's storage. The token goes
+  to the first alone (ADR 0012).
+- **`needs_token`** is `https://huggingface.co`; the licence is `SAM License`, as its
+  maker names it; the platform is `macos-arm64` alone, the one platform 1C installs
+  and runs on; the feature is `phrase`, which the adapter of 1C gives.
+- **How the sizes and hashes were fixed.** Every file's size is the one the Hub's
+  public listing of the pinned commit states
+  (`https://huggingface.co/api/models/facebook/sam3/tree/<commit>`, read once without
+  a token). Every file's SHA-256, the large file's included, is what
+  `whizbang models pin` worked out from the bytes it fetched once, through the checked
+  downloader with the owner's token: trust on first use. The plan had the large file's
+  hash from that listing, which states the SHA-256 of a large file as `lfs.oid`; for
+  this gated repository the Hub masks it, and its Xet hash, to a reader without a
+  token, so the listing could not give it. The first `get` on the owner's Mac then
+  downloaded the files again and held each to its size and hash, which they kept.
+- **The table of adapters** (`wiring::adapters`) states, for each adapter, the
+  revision it is installed under and whether this build's pack ships it. `sam3` is at
+  revision `1`, not yet shipped: `get` installs the model under that revision, and the
+  inventory is told only of shipped adapters, so it calls `sam3` not ready, for want
+  of an adapter (ADR 0015's fifth reason), installed or not, until the pack ships the
+  adapter (task R2a) and the table says so. The revision is part of the
+  installation's identity; changing whether the adapter is shipped changes nothing of
+  it, so nothing is downloaded again then
+  (`inventory::a_model_whose_adapter_the_binarys_table_names_as_not_yet_shipped_is_not_ready_for_want_of_an_adapter_installed_or_not`).
+  A table that names an adapter as shipped which the pack does not have, or as not
+  shipped which it has, fails
+  `catalogue::every_adapter_the_binarys_table_names_as_shipped_is_an_adapter_the_pack_has`.
+- **Any change to the entry is a new revision** (below, "An installation and its
+  record"), and so a second download of 3.44 GB. Linux is added with the runtime on
+  Linux (1D) under a new revision.
 
 ### How a record is read
 

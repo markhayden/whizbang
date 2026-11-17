@@ -5,14 +5,15 @@
 //! own ([`Tools::of`]).
 //!
 //! **Which of them works out where the models directory is, and when.** None does
-//! unless the catalogue gives it a reason, and the catalogue this build ships holds no
-//! model until its first entry (task N5):
+//! unless the catalogue gives it a reason (the catalogue this build ships holds one
+//! model, `sam3`, task N5); `pin` never does:
 //!
 //! - `list` with a catalogue that holds at least one model. It opens the directory
 //!   only when something is there: where nothing is, every model is not installed,
 //!   and nothing is made.
 //! - `get` of a model the catalogue holds, that runs on this platform and whose
-//!   adapter this build has. It opens the directory, and makes it where it is not.
+//!   adapter is in this build's table, shipped or not yet (task N5). It opens the
+//!   directory, and makes it where it is not.
 //! - `remove` of a model the catalogue holds. It opens the directory only when
 //!   something is there: where nothing is, the model is not installed.
 //!
@@ -35,9 +36,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use whizbang_backends::models::{
-    Carrying, Current, Entry, FileRefused, InstallRefused, ModelsDir, RemoveRefused, Revision,
-    State, Status, current, draining, install_or_attach_carrying, remove as remove_model,
-    unrunnable,
+    Carrying, Current, Entry, FileRefused, InstallRefused, ModelsDir, PinRefused, Pinned,
+    RemoveRefused, Revision, State, Status, current, draining, install_or_attach_carrying,
+    pin_file, remove as remove_model, unrunnable,
 };
 use whizbang_core::capability::{FaultKind, Unready};
 use whizbang_core::config::{
@@ -201,13 +202,28 @@ fn holds_secret(text: &str, secrets: &Secrets) -> bool {
     secrets.redact(text) != text
 }
 
-/// The revision this build's adapter of the entry states, when the build has it.
+/// The revision this build's pack ships the entry's adapter under, when it ships it.
 fn adapter_of<'a>(tools: &'a Tools, entry: &Entry) -> Option<&'a Revision> {
     let adapters = &tools.models.adapters;
     adapters
         .iter()
         .find(|(name, _)| name == entry.adapter())
         .map(|(_, revision)| revision)
+}
+
+/// The revision this build's table fixes for the entry's adapter, shipped or not yet:
+/// what `get` installs under (plan 1C, task N5). A model whose adapter is in the
+/// table but not shipped yet is installed under the revision it will be loaded under,
+/// so nothing is downloaded again when the adapter ships.
+fn revision_of<'a>(tools: &'a Tools, entry: &Entry) -> Option<&'a Revision> {
+    let models = &tools.models;
+    adapter_of(tools, entry).or_else(|| {
+        models
+            .not_yet_shipped
+            .iter()
+            .find(|(name, _)| name == entry.adapter())
+            .map(|(_, revision)| revision)
+    })
 }
 
 /// Whether anything is at the directory's place, a link followed. What cannot be
@@ -408,7 +424,7 @@ pub fn get(
                 platforms(entry, ", ")
             ));
         }
-        let Some(adapter) = adapter_of(tools, entry) else {
+        let Some(adapter) = revision_of(tools, entry) else {
             return Err(
                 "this build has no adapter for the model, so it was not installed and \
                         nothing was downloaded"
@@ -582,6 +598,107 @@ fn not_installed(refused: &InstallRefused, carried: bool) -> String {
         );
     }
     format!("the model was not installed: {refused}")
+}
+
+// --- pin -----------------------------------------------------------------------------------------
+
+/// `whizbang models pin <draft>`: a developer's command (plan 1C, task N5). The draft is
+/// a catalogue (`catalogue/2`) of one entry whose sizes and hashes are not known yet:
+/// each file's `size` is the most bytes wanted of it, and its `sha256` any hash. Each
+/// file is fetched once, through the checked downloader held to the draft's origins,
+/// with the draft's token as `get` would carry it, and a line of its name, size and
+/// SHA-256 is printed. **Nothing is installed or written:** no models directory is
+/// opened, and the bytes are hashed as they come and dropped.
+///
+/// A file moved to an origin the draft does not name is not fetched there, and its
+/// line names that origin, and only the origin: so the host a download is moved to
+/// is named before an entry lists it (open question 2). A file that does not end
+/// within its bound, or whose download failed, says so in its line, with the fault's
+/// kind and fixed words. Every line has the config's secrets and the token taken
+/// out. What is pinned is what the origin served that once: trust on first use.
+pub fn pin(under: Under<'_>, draft: &Path, tools: &Tools) -> Result<String, String> {
+    run(under, tools, |read| {
+        // A draft is a file: anything else is refused before it is opened, so a
+        // pipe in its place cannot hold the command.
+        let unreadable = "the draft cannot be read: name a catalogue file of one entry";
+        if !std::fs::metadata(draft).is_ok_and(|meta| meta.is_file()) {
+            return Err(unreadable.to_owned());
+        }
+        let file = std::fs::File::open(draft).map_err(|_| unreadable.to_owned())?;
+        let catalogue = whizbang_backends::models::Catalogue::read_from(file, &read.secrets)
+            .map_err(|refused| format!("the draft cannot be used: {refused}"))?;
+        let [entry] = catalogue.entries() else {
+            return Err(format!(
+                "the draft holds {} models, and pin takes one",
+                catalogue.entries().len()
+            ));
+        };
+        let credential = credential_of(entry, read, tools)?;
+        let secrets = match &credential {
+            Some((_, joined)) => joined.clone(),
+            None => read.secrets.clone(),
+        };
+        let carried = credential.as_ref().map(|(credential, _)| credential);
+        let refused = Arc::new(std::sync::Mutex::new(Vec::<Origin>::new()));
+        let noted = refused.clone();
+        let downloader = (tools.downloads)(read.least, entry.origins(), &secrets)
+            .map_err(|refused| format!("the download client could not be made: {refused}"))?
+            .noting_refused(Arc::new(move |origin: &Origin| {
+                if let Ok(mut noted) = noted.lock() {
+                    noted.push(origin.clone());
+                }
+            }));
+        let carrying = Carrying {
+            downloader: &downloader,
+            credential: carried,
+        };
+        let mut text = format!(
+            "pinned {}: nothing was installed or written\n",
+            entry.name().as_str()
+        );
+        let mut whole = true;
+        for file in entry.files() {
+            if let Ok(mut noted) = refused.lock() {
+                noted.clear();
+            }
+            let pinned = pin_file(entry, file, &carrying, &Cancellation::new());
+            let name = file.name().as_str();
+            let line = match pinned {
+                Ok(Pinned { size, sha256 }) => format!("{name}\t{size}\t{sha256}"),
+                Err(why) => {
+                    whole = false;
+                    let said = match why {
+                        PinRefused::OverBound => {
+                            format!("more than its bound of {} bytes came", file.size())
+                        }
+                        PinRefused::Elsewhere => {
+                            "it moved to an origin the draft does not name".to_owned()
+                        }
+                        PinRefused::TooManyMoves => "it moved too many times".to_owned(),
+                        PinRefused::Cancelled => "it was cancelled".to_owned(),
+                        PinRefused::Download(fault) => {
+                            format!("{}: {}", fault.kind().name(), fault.sentence())
+                        }
+                    };
+                    let elsewhere = refused
+                        .lock()
+                        .map(|noted| noted.clone())
+                        .unwrap_or_default();
+                    match elsewhere.first() {
+                        Some(origin) => format!(
+                            "{name}\tnot pinned: {said}; it was moved to {origin}, which the \
+                             draft does not name, and nothing was asked there"
+                        ),
+                        None => format!("{name}\tnot pinned: {said}"),
+                    }
+                }
+            };
+            text.push_str(&secrets.redact(&line));
+            text.push('\n');
+        }
+        drop(credential);
+        if whole { Ok(text) } else { Err(text) }
+    })
 }
 
 // --- remove --------------------------------------------------------------------------------------

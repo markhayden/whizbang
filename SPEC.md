@@ -802,6 +802,10 @@ whizbang models list|get <model>|remove <model> [--wait <seconds>]
                     [--config <file> [--env-file <file>]] [--models-dir <dir>]
                                        # the catalogue's models, installing one, removing
                                        # one (docs/guides/models.md)
+whizbang models pin <draft> [--config <file> [--env-file <file>]]
+                                       # for whoever writes a catalogue entry: fetch each
+                                       # file of a draft entry once and print its size and
+                                       # SHA-256; installs and writes nothing
 whizbang backends status [--probe]
 whizbang store list|delete|prune
 whizbang store import <file> --store <dir> [--create]

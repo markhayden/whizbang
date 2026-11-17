@@ -5,21 +5,29 @@ own, the models directory. `whizbang models` lists the models this build knows, 
 one, and removes one. Why it is built this way is in
 `docs/adr/0017-the-models-directory.md`.
 
-**Today the catalogue is empty.** The catalogue is the list of models a build can
-install, and it is built into the binary. The first entry, SAM 3, arrives with task
-N5 of checkpoint 1C (`docs/plans/m1c-local-pack.md`). Until then `list` says the
-catalogue holds no model, and `get` and `remove` refuse every name:
+**Today the catalogue holds one model, SAM 3** (`sam3`). The catalogue is the list of
+models a build can install, and it is built into the binary
+(`crates/whizbang/src/catalogue.json`; task N5 of checkpoint 1C,
+`docs/plans/m1c-local-pack.md`). On a Mac with nothing installed yet:
 
 ```text
 $ whizbang models list
-models: 0: the catalogue holds no model yet
-$ whizbang models get sam3
-whizbang: the catalogue holds no model of that name; `whizbang models list` names those it holds
+models: 1
+directory: the one in this machine's data folder for whizbang, not made yet
+sam3	SAM 3	SAM License	3.4 GB	macos-arm64	not installed; not ready: this build has no adapter for it
 ```
 
-Everything below is what the commands do with a catalogue that holds models. The fast
-tests show each of it with a catalogue of their own and a stand-in for the download
-(`crates/whizbang/tests/it/models.rs`); nothing in them leaves the machine.
+**SAM 3 installs, and is not ready yet.** `get` installs its files, but the pack has no
+adapter for it until task R2a of the same checkpoint, so until then `list` says
+`installed, not ready: this build has no adapter for it`, and a call that asks for it is
+refused before any model is loaded. The adapter's revision is fixed already: when the
+adapter ships, the installation is ready as it is, and nothing is downloaded again.
+SAM 3's files are behind Hugging Face's sign-in: see "A model whose files need a
+token" below. Its entry names `macos-arm64` alone; on Linux it is listed as not
+running on this platform, and `get` refuses it.
+
+The fast tests show every command with a catalogue of their own and a stand-in for the
+download (`crates/whizbang/tests/it/models.rs`); nothing in them leaves the machine.
 
 ## The three commands
 
@@ -93,7 +101,10 @@ ends the one that waits without stopping the install.
 - a name the catalogue does not hold;
 - a model whose entry does not name the platform this build is for, and says which
   platforms it names;
-- a model whose adapter this build does not have, since it could not run here.
+- a model whose adapter is not in this build's table of adapters, since it could not
+  run here. An adapter the table names but the pack does not ship yet, as SAM 3's
+  today, does not stop `get`: the model is installed under the revision the adapter
+  will ship under.
 
 A download that is slower than the config's `download_least_kib_per_second` over a
 whole minute, 256 kibibytes a second unless the config says, is ended as timed out
@@ -103,7 +114,7 @@ whole minute, 256 kibibytes a second unless the config says, is ended as timed o
 
 Some models' files are behind a sign-in: SAM 3's are on Hugging Face, which gives them
 only to an account that was granted access. A catalogue entry says when a download from
-one of its origins needs a token. No model in the catalogue needs one today.
+one of its origins needs a token. SAM 3's entry says so of `https://huggingface.co`.
 
 **Where `get` takes the token from is what the config says for that origin,** and
 nowhere else (the config guide, "A download's token"). There are two ways, and an
@@ -201,21 +212,49 @@ is not there, and the folders above it only when it is the one in the data folde
 **When a command looks for it at all.** Only when the catalogue gives it a reason:
 `list` when the catalogue holds a model; `get` of a model the catalogue holds, that runs
 on this platform and whose adapter this build has; `remove` of a model the catalogue
-holds. So with the catalogue this build ships, which is empty, none of the three works
-out where the directory is or looks at it.
+holds. With the catalogue this build ships, `list` and `remove` of `sam3` look for it
+and make nothing; `get sam3` makes it. No other command looks at it: this build has no
+kind of backend that runs a local model yet (task P6a), so nothing a config offers can
+ask for a model.
 
 Where the directory is, and the least rate of a download, are not part of what a run
 means: moving the directory changes no config's digest, so a run sent again under its
 request id is the same run.
 
+## Writing a catalogue entry: `pin`
+
+For whoever writes or changes an entry of the catalogue, not for using a model:
+
+```text
+whizbang models pin <draft> [--config <file> [--env-file <file>]]
+```
+
+The draft is a catalogue file (`catalogue/2`) of one entry whose sizes and hashes are
+not known yet: each file's `size` is the most bytes wanted of it, and its `sha256` may
+be anything of the right form. `pin` fetches each file once, through the same checked
+download as `get`, held to the draft's origins and carrying the draft's token as `get`
+would, and prints a line of each file's name, size and SHA-256. It installs nothing and
+writes nothing: the bytes are hashed as they come.
+
+A file that is moved to an origin the draft does not name is not fetched there; its
+line names that origin, and only the origin, so the host can be looked at before an
+entry lists it. A file that does not end within its bound, or whose download fails,
+says so in its line, and `pin` then exits 1.
+
+What `pin` prints is what the origin served that once: trust on first use. The shipped
+entry's hashes were fixed this way, as its documentation (`wiring::catalogue`) and ADR
+0017, "The shipped catalogue", say.
+
 ## Limits
 
-- **A host's name is resolved with no limit of whizbang's own.** The download client
-  asks the system to resolve the address's host, and that one wait is bounded only by
-  the system's resolver (ADR 0024; `docs/carry-over.md` has the row). Every wait after
-  it has a limit: 10 seconds to
-  connect, 30 between two reads, and the least rate. If `get` hangs before the first
-  byte, Ctrl-C ends it; nothing is left half installed.
+- **A host's name is resolved by the system's resolver, with no limit of whizbang's
+  own.** The download client asks the system to resolve the address's host (ADR 0024),
+  and that one wait is bounded by the resolver's own settings: by default 5 seconds
+  for a name server before the next is tried, with back-off, and 2 tries of each, of at
+  most 3 name servers (`resolver(5)` and `<resolv.h>` on macOS, `resolv.conf(5)` on
+  Linux). A machine's configuration can lengthen it. Every wait after it has a limit
+  of whizbang's: 10 seconds to connect, 30 between two reads, and the least rate. If
+  `get` hangs before the first byte, Ctrl-C ends it; nothing is left half installed.
 - **A model dropped from the catalogue** is not removed by `remove`, which takes a name
   the catalogue holds. Its folder, `models/<name>` in the models directory, can be
   deleted by hand when no run is using it.

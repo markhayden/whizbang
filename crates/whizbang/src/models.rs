@@ -47,6 +47,16 @@ pub enum Command {
         #[command(flatten)]
         under: Under,
     },
+    /// For whoever writes a catalogue entry: fetch each file of a draft entry once and
+    /// print its size and SHA-256. Each file's size in the draft is the most bytes
+    /// wanted of it. Nothing is installed or written.
+    #[command(after_help = EXIT_CODES)]
+    Pin {
+        /// The draft: a catalogue file (format catalogue/2) of one entry.
+        draft: std::path::PathBuf,
+        #[command(flatten)]
+        under: Under,
+    },
 }
 
 /// Runs a models command: what to print on success, or the complaint. `platform` says
@@ -72,6 +82,10 @@ pub fn run(command: &Command, platform: Platform, sign_in: SignIn) -> Result<Str
             let tools = Tools::shipped(under.models_dir(), platform, sign_in)?;
             let wait = Duration::from_secs(*wait);
             model_commands::remove(under.asked(), model, wait, &tools)
+        }
+        Command::Pin { draft, under } => {
+            let tools = Tools::shipped(under.models_dir(), platform, sign_in)?;
+            model_commands::pin(under.asked(), draft, &tools)
         }
     }
 }

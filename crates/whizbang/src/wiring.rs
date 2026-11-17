@@ -54,18 +54,59 @@ pub fn kinds() -> Kinds {
     Kinds::new()
 }
 
-/// The catalogue this build ships (ADR 0017, "The catalogue"): the models it can
-/// install. It holds none until the first model's entry is written (plan 1C, task
-/// N5), so the inventory of it reads no directory, and none is opened or made.
+/// The catalogue this build ships (ADR 0017, "The catalogue", "The shipped catalogue";
+/// plan 1C, task N5): the models it can install, read from `catalogue.json` beside
+/// this file, which is compiled into the binary. A catalogue is strict JSON, so the
+/// entry's comment is here.
+///
+/// One model, `sam3`: the files of `facebook/sam3` on the Hub at the commit
+/// `3c879f39826c281e95690f02c7821c4de09afae7`, `model.safetensors` and the small text
+/// files beside it, never `sam3.pt`, which is a pickle. **How the sizes and hashes
+/// were fixed:** each size is the one the Hub's public listing of that commit states
+/// (`https://huggingface.co/api/models/facebook/sam3/tree/<commit>`, read once with no
+/// token); each SHA-256 is what `whizbang models pin` worked out from the bytes it
+/// fetched once through the checked downloader, with the token. That is trust on
+/// first use: what the Hub served that once. The listing states a large file's
+/// SHA-256 too, but masks it for this gated repository to a reader without a token.
+/// The origins are the Hub and `us.aws.cdn.hf.co`, where the Hub moves the large
+/// file's download, as `pin` found and the owner approved.
 pub fn catalogue() -> Result<Catalogue, String> {
-    Catalogue::new(Vec::new(), &Secrets::none()).map_err(|refused| refused.to_string())
+    Catalogue::parse(SHIPPED_CATALOGUE.as_bytes(), &Secrets::none())
+        .map_err(|refused| format!("the catalogue this build ships cannot be read: {refused}"))
 }
 
-/// The adapters this build has, each with the revision it states of itself: none.
-/// A model whose adapter is not here is not ready, and says so (ADR 0017, "The
-/// inventory").
-pub fn adapters() -> Vec<(ModelName, Revision)> {
-    Vec::new()
+/// The text of the shipped catalogue ([`catalogue`]).
+pub const SHIPPED_CATALOGUE: &str = include_str!("catalogue.json");
+
+/// One adapter of this build's table: its name, the revision it states of itself,
+/// which is part of an installation's identity (ADR 0017), and whether this build's
+/// pack ships it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Adapter {
+    pub name: ModelName,
+    pub revision: Revision,
+    /// Whether the pack of this build has the adapter. One that is not shipped yet
+    /// has its revision fixed all the same, so that `get` installs its model under
+    /// the identity it will be loaded under, and nothing is downloaded again when
+    /// the adapter ships; until then the inventory calls the model not ready, for
+    /// want of an adapter.
+    pub shipped: bool,
+}
+
+/// The table of adapters of this build (plan 1C, task N5): `sam3` at revision `1`,
+/// not shipped yet. The pack has no adapter `sam3` until task R2a, which ships it
+/// under this revision and turns `shipped` on. Until then a model whose adapter is
+/// not shipped is not ready, and says so (ADR 0017, "The inventory").
+pub fn adapters() -> Vec<Adapter> {
+    let none = Secrets::none();
+    let named = |name: &str, revision: &str, shipped: bool| {
+        Some(Adapter {
+            name: ModelName::new(name, &none).ok()?,
+            revision: Revision::new(revision, &none).ok()?,
+            shipped,
+        })
+    };
+    [named("sam3", "1", false)].into_iter().flatten().collect()
 }
 
 /// The models directory in the platform's data folder for whizbang (ADR 0017, "Where
@@ -148,7 +189,11 @@ pub const RELATIVE_MODELS_DIR: &str = "--models-dir must be an absolute path: a 
 #[derive(Clone)]
 pub struct Models {
     pub(crate) catalogue: Catalogue,
+    /// The adapters this build's pack ships: what the inventory is told of.
     pub(crate) adapters: Vec<(ModelName, Revision)>,
+    /// The adapters whose revision is fixed and which the pack does not ship yet:
+    /// `get` installs under them, and the inventory is not told of them.
+    pub(crate) not_yet_shipped: Vec<(ModelName, Revision)>,
     pub(crate) runs_on: Option<ModelPlatform>,
     pub(crate) flag: Option<PathBuf>,
     platform: Option<Platform>,
@@ -156,22 +201,40 @@ pub struct Models {
 
 impl Models {
     /// The models of this build: the catalogue it ships ([`catalogue`]) under the
-    /// adapters it has ([`adapters`]). What the binary gives.
+    /// table of adapters ([`adapters`]), those it ships and those not yet. What the
+    /// binary gives.
     pub fn shipped() -> Result<Models, String> {
-        Ok(Models::of(catalogue()?, adapters()))
+        let (shipped, not_yet): (Vec<Adapter>, Vec<Adapter>) =
+            adapters().into_iter().partition(|adapter| adapter.shipped);
+        let pairs = |table: Vec<Adapter>| -> Vec<(ModelName, Revision)> {
+            table
+                .into_iter()
+                .map(|adapter| (adapter.name, adapter.revision))
+                .collect()
+        };
+        Ok(Models::of(catalogue()?, pairs(shipped)).not_yet_shipped(pairs(not_yet)))
     }
 
-    /// The models of this catalogue under these adapters, to run on the platform
-    /// this build is for (`Platform::this` of the models directory's types): what a
-    /// test gives.
+    /// The models of this catalogue under these adapters, each shipped, to run on
+    /// the platform this build is for (`Platform::this` of the models directory's
+    /// types): what a test gives.
     pub fn of(catalogue: Catalogue, adapters: Vec<(ModelName, Revision)>) -> Models {
         Models {
             catalogue,
             adapters,
+            not_yet_shipped: Vec::new(),
             runs_on: ModelPlatform::this(),
             flag: None,
             platform: None,
         }
+    }
+
+    /// The same, with these adapters too, whose revisions are fixed and which the
+    /// pack does not ship yet: `get` installs a model of one under its revision, and
+    /// the inventory calls the model not ready, for want of an adapter.
+    pub fn not_yet_shipped(mut self, adapters: Vec<(ModelName, Revision)>) -> Models {
+        self.not_yet_shipped = adapters;
+        self
     }
 
     /// The same, for models that are to run on this platform, or on none: what a
@@ -204,6 +267,7 @@ impl std::fmt::Debug for Models {
         f.debug_struct("Models")
             .field("models", &self.catalogue.entries().len())
             .field("adapters", &self.adapters.len())
+            .field("not_yet_shipped", &self.not_yet_shipped.len())
             .field("runs_on", &self.runs_on.map(ModelPlatform::name))
             .field("flag", &self.flag.is_some())
             .field("platform", &self.platform.is_some())
@@ -413,10 +477,13 @@ impl Over {
     ///   where it is ([`Models::platform`]) is asked only when a directory is about
     ///   to be opened and neither the flag nor the config named one.
     /// - **Where no model could be asked for, no directory is opened or made:** with
-    ///   a catalogue that holds no model, as the shipped one does until its first
-    ///   entry; and for a command that names neither a config nor a directory, whose
-    ///   executor has no backend. Such an executor is over the inventory that knows
-    ///   no model.
+    ///   a catalogue that holds no model; under a build that has no kind of backend,
+    ///   whose config can offer no backend, local or not, as this build until the kind
+    ///   `pack` (plan 1C, task P6a); and for a command that names neither a config nor
+    ///   a directory, whose executor has no backend. Such an executor is over the
+    ///   inventory that knows no model. So with the shipped catalogue's one model
+    ///   (task N5) no command but `whizbang models` opens or makes a models
+    ///   directory, until this build has a kind.
     ///
     /// - **A relative `--models-dir` is refused first,** whatever else is asked and
     ///   before anything is read or made ([`RELATIVE_MODELS_DIR`]).
@@ -425,7 +492,7 @@ impl Over {
     /// that say how to mend it and hold no path.
     pub fn installed(mut self, models: Models) -> Result<Over, String> {
         models.flag_is_absolute()?;
-        if models.catalogue.entries().is_empty() {
+        if models.catalogue.entries().is_empty() || self.kinds.is_empty() {
             return Ok(self);
         }
         if self.config.is_none() && models.flag.is_none() {

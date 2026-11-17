@@ -375,6 +375,16 @@ Limits of it, each stated:
   the snapshot of the config a call is made under.
 - **A probe and a download are in no run's record.**
 
+**Amended by task N5 of plan 1C: a checked download may be told what it refused.**
+`CheckedDownloader::noting_refused` hands a note the origin, and the origin alone, of
+each address the download refused as off its origins, after the refusal and before it
+is answered; the refusal is the same fault in the same fixed words, and nothing is asked
+of that address
+(`chains::a_checked_download_that_notes_refusals_is_told_the_origin_alone_of_each_address_it_refused`).
+One command uses it: `whizbang models pin`, a developer's command, which prints that
+origin so that a host the Hub moves a file to can be named to the owner before a
+catalogue entry lists it. `get` gives no note.
+
 ### The run's recipients
 
 Task E4. The code is one question of the policy (`DispatchPolicy::why_not` and
