@@ -15,7 +15,8 @@ worker's own (`whizbang_pack.worker`) refuses `--fake-fault`.
 | `slow-load` | Says a `load` began, then waits, deaf to a cancel, until the worker ends |
 | `slow-unload` | The same of an `unload` |
 | `grandchild` | Before its hello, starts a process of its own that holds the worker's standard input, its frames and its error output open, writes `grandchild <pid>` to its error output, and says hello. The process ends by itself after `GRANDCHILD_SECONDS`, whatever happens to the worker, so that nothing it starts outlives a test by more than that |
-
+| `deaf-after-hello` | Answers the hello, and then reads nothing more: its reader waits until the worker ends, so a frame whizbang writes past what the pipe holds is never taken |
+| `garbage-after-hello` | The same, and right after its hello writes a frame whizbang refuses (a header that is no JSON), so that whizbang has something to say back while the pipe is full |
 | `asks` | At the start of each call, sends a request of its own (a `segment` of `ASKED_ID`), its header and its payload's length and none of its samples, then waits, deaf to a cancel, until the worker ends: whizbang refuses a request from a worker before a byte of its payload is read. Writes a line to its error output when an `error` answers that request |
 
 Without `--fake-fault` it is the worker itself, with the same fake models.
@@ -51,6 +52,9 @@ GRANDCHILD_WORD = "whizbang-fake-grandchild"
 # How long `error-output` waits, before a segment of `fake-exit`, between closing its
 # frames' output and writing its last lines.
 LATE_SECONDS = 0.5
+
+# The frame `garbage-after-hello` writes: a header of two bytes that is no JSON object.
+GARBAGE = (2).to_bytes(4, "big") + b"{]"
 
 # The id of the request `asks` sends, and the binding its image is under.
 ASKED_ID = "w1"
@@ -156,6 +160,24 @@ def descriptors():
     return lines
 
 
+class DeafAfterHello(Worker):
+    def _say_hello(self):
+        super()._say_hello()
+        self._after_hello()
+        # The reader, which said hello, reads nothing more: it waits here until the worker
+        # ends, by its lifetime, its end of input never being read, or a kill.
+        self._stopping.wait()
+
+    def _after_hello(self):
+        """Nothing; `garbage-after-hello` writes its frame here."""
+
+
+class GarbageAfterHello(DeafAfterHello):
+    def _after_hello(self):
+        # A header of two bytes that is no JSON object.
+        self._write([GARBAGE])
+
+
 class Asks(Worker):
     def _before_call(self, call):
         # A request of the worker's own, as a request at pack/1 is asked of a worker: its
@@ -232,6 +254,8 @@ FAULTS = {
     "slow-unload": SlowUnload,
     "grandchild": Grandchild,
     "asks": Asks,
+    "deaf-after-hello": DeafAfterHello,
+    "garbage-after-hello": GarbageAfterHello,
 }
 
 

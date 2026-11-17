@@ -445,6 +445,8 @@ class Fakes(unittest.TestCase):
                     "slow-unload",
                     "grandchild",
                     "asks",
+                    "deaf-after-hello",
+                    "garbage-after-hello",
                 )
             ),
         )
@@ -528,6 +530,26 @@ class Fakes(unittest.TestCase):
         running.end_input()
         self.assertEqual(running.ended(), [0])
         self.assertIn("asked w1 and was answered unsupported", running.error_output.lines())
+
+        # deaf-after-hello and garbage-after-hello: the hello is answered, and then
+        # nothing is read: a request is never answered, and the end of the input does not
+        # end the worker. garbage-after-hello writes its frame right after its hello.
+        for name, after in (("deaf-after-hello", b""), ("garbage-after-hello", fakes.GARBAGE)):
+            running = faulty(name)
+            self.assertEqual(running.hello()["type"], "hello", name)
+            stream = kit.FdStream(running.from_worker)
+            written = b""
+            while len(written) < len(after):
+                chunk = stream.read(65536)
+                self.assertTrue(chunk, name)
+                written += chunk
+            self.assertEqual(written, after, name)
+            running.ask(load("r1"))
+            running.end_input()
+            self.assertEqual(running.exits, [], "%s ended at its input's end" % name)
+            # Its lifetime would end it; the test ends it as that would.
+            running.made.stop(worker.LIFETIME_CODE)
+            self.assertEqual(running.ended(), [worker.LIFETIME_CODE], name)
 
         # flood: more events than a request may send.
         running = faulty("flood")

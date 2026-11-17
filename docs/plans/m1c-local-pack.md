@@ -293,7 +293,7 @@ are run one way). A resident worker and a GPU runtime add these.
 | The pack's Python tests | Run under `scripts/thread-guard.sh`. The runner ends itself at a stated limit, 60 s, by the standard library's `faulthandler.dump_traceback_later(…, exit=True)`. A thread a test starts is a daemon thread, so no test's thread keeps the runner alive | C1b |
 | Threads in the worker | Three of the worker's own (reader, call, main). The runtime's pools are held to 8 threads each, before the runtime is imported: by the environment the supervisor sets (`OMP_NUM_THREADS`, `MKL_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS`, `TOKENIZERS_PARALLELISM=false`) and by the adapter's own calls to the runtime; R1 lists every pool the chosen runtime has, from its documentation | The worker reports its count in `hello` and after each call; over 64 with a fake model fails the conformance suite |
 | Threads in the worker, real model | 200 at most, enforced while it runs | R1's script and `just test-models` run under `scripts/thread-guard.sh` with its limit set to 200: it counts the command and everything it started, during the load and the call, and kills on the first count over. Both also run under the watch on resident memory of the row below. The evidence record holds the peak it saw |
-| Threads in whizbang | Two for each worker (its output, its error output), through the supervisor | The supervisor's tests count them |
+| Threads in whizbang | Three for each worker (its output, its error output, its input), through the supervisor. **Reworded with the task** (by P3b): this cell read "Two for each worker (its output, its error output)". A write to a worker that stops reading waits until the worker reads or ends, and its lifetime may be a year; the workspace forbids the `unsafe` a write with a time limit would need, so a third thread writes the input and the supervisor waits for it on the clock (D7) | The supervisor's tests count them; `pack::threads` holds a process to three |
 | GPU memory | The allocator's high watermark, set by the supervisor below 1.0 of the device's recommended maximum; R1 starts at 0.5 and writes the value it ends with | The environment the supervisor sets; the evidence record's peak |
 | The worker's resident memory, on the CPU path too | Measured, and capped only in the model tier, by one watch that three things run under: R1's script, `just test-models` and `scripts/model-evidence.sh`. It reads the resident size of the command and of everything it started, beside their threads, and kills them over 24 GiB. R1 writes the watch, since R1 is the first to load the model, and R2b's recipe and script use the same one. In ordinary use it is not capped, because nothing in the standard library caps a process's memory in a way macOS is documented to hold to; what bounds it is one resident model, one call, and the ceilings on a picture and a result. If R1 finds a cap that holds, the supervisor sets it | R1 (the search, the peak), R2b |
 | Time, a worker | The limits of D7, each finite with no caller's deadline | The supervisor; a test of each |
@@ -1364,9 +1364,32 @@ taken from the installation `setup` made, never from a path compiled into the bi
   (`Transport`), carried by the supervisor here and by the HTTP codec at milestone 6.
   The tests of `pack::conformance::` start workers, and join the group `pack-workers`
   (`.config/nextest.toml`).
-- Six tests more than "Done when" names, each named above: two of the cleaner, two of
-  a request from a worker, the unit test of the reader, and
-  `proto::a_refusal_of_a_count_of_a_results_instances_says_so_and_no_other_does`.
+- **Every write to the worker is on the clock** (from the review of this pull request,
+  which found a request written on the caller's thread waiting for a worker that stopped
+  reading until that worker's lifetime ended, never `timed_out`). A third thread of each
+  worker writes its input (`write_input`, made through `Spawn`; `pack::threads` now
+  holds a process to three, and "Rules", "Threads in whizbang" is reworded). The
+  supervisor hands it each frame on a channel of 4 places and waits on the clock: for a
+  request within the call's limit, after which the worker is killed, the write fails and
+  the writer ends, the call `timed_out` (`unresolved` when the pipe took a byte,
+  `not_sent` when it took none); for every other frame (the hello, the `error` that ends
+  a conversation, the answer to a worker's request) within 5 s, after which the
+  worker's end follows as it would. Closing the input is letting go of that channel: the
+  writer writes what waits and ends, and its end closes the pipe. Two new faults of the
+  fakes, `deaf-after-hello` (reads nothing after its hello) and `garbage-after-hello`
+  (the same, and writes a frame whizbang refuses):
+  `worker::a_request_the_worker_does_not_read_ends_at_the_calls_limit_as_timed_out_and_leaves_nothing_behind`
+  and `worker::a_word_to_a_worker_whose_input_is_full_waits_no_longer_than_its_limit`,
+  each with a request of 4 MB, on a clock that rushes through the limits, ending within
+  10 s of the machine's time with no process, reader or writer left.
+- **What `{:?}` prints** of `Called` and `Failed` is no word the worker wrote: counts,
+  the fault, how the worker ended, and whether the worker gave a sentence (held in the
+  fault test above).
+- Eight tests more than "Done when" names, each named above: two of the cleaner, two of
+  a request from a worker, two of a write the worker does not take, the unit test of the
+  reader, and
+  `proto::a_refusal_of_a_count_of_a_results_instances_says_so_and_no_other_does`, which
+  also holds the count of 4,097 instances in all to `too_large`.
 
 **Notes for P4:** `Worker::call` waits on one call with `until`, at the limits above;
 the deadline of a call, `cancel`, the queue and a restart's fault are P4's to add

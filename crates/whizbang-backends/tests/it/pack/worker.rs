@@ -20,12 +20,14 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use whizbang_backends::pack::proto::{Ask, Raster};
 use whizbang_backends::pack::worker::{
-    END_LIMIT, HELLO_LIMIT, LINE_BYTES, LINES_KEPT, LINGERING, PASSED,
+    CALL_LIMIT, END_LIMIT, HELLO_LIMIT, LINE_BYTES, LINES_KEPT, LINGERING, PASSED,
 };
 use whizbang_backends::pack::{Ended, Launch, Worker};
 use whizbang_core::capability::{FaultKind, Query, Stage};
 use whizbang_core::contract::{Clock, Secrets, SystemClock};
+use whizbang_core::identity::{BindingId, Digest};
 use whizbang_core::store::Store;
 use whizbang_core::store::fs::RealFs;
 use whizbang_testkit::scratch::Scratch;
@@ -76,15 +78,26 @@ pub(super) fn system() -> Arc<dyn Clock> {
 
 /// The machine's clock, moved on by the test: while it rushes, each pause moves it a
 /// second and waits for nothing, so a wait of the supervisor's comes to its end at once.
+/// Given a budget, it rushes only until it has moved that far, and then waits as the
+/// machine's clock does.
 #[derive(Default)]
 struct Rushed {
     moved_ms: AtomicU64,
     rushing: AtomicBool,
+    budget_ms: AtomicU64,
 }
 
 impl Rushed {
     fn moved(&self) -> Duration {
         Duration::from_millis(self.moved_ms.load(Ordering::SeqCst))
+    }
+
+    /// Rushes from now, through this much of the clock and no more.
+    fn rush_through(&self, budget: Duration) {
+        let budget = self.moved() + budget;
+        self.budget_ms
+            .store(budget.as_millis() as u64, Ordering::SeqCst);
+        self.rushing.store(true, Ordering::SeqCst);
     }
 }
 
@@ -98,7 +111,9 @@ impl Clock for Rushed {
     }
 
     fn pause(&self, span: Duration) {
-        if self.rushing.load(Ordering::SeqCst) {
+        let budget = self.budget_ms.load(Ordering::SeqCst);
+        let within = budget == 0 || self.moved_ms.load(Ordering::SeqCst) < budget;
+        if self.rushing.load(Ordering::SeqCst) && within {
             self.moved_ms.fetch_add(1_000, Ordering::SeqCst);
             std::thread::yield_now();
         } else {
@@ -449,12 +464,13 @@ fn a_dropped_supervisor_closes_the_input_and_the_worker_is_gone_when_the_drop_re
     let before = threads::live();
 
     // Its input closed, as the end of whizbang's process closes it, the worker ends by
-    // itself: exit code 0, the end of its input. Its two threads, counted with the
-    // test's, are joined.
+    // itself: exit code 0, the end of its input. Its three threads (its output's reader,
+    // its error output's, and the writer of its input), counted with the test's, are
+    // joined.
     let mut worker = supervised(None, system());
     worker.ready().unwrap();
     let pid = worker.pid().unwrap();
-    assert_eq!(threads::live(), before + 2, "two threads for each worker");
+    assert_eq!(threads::live(), before + 3, "three threads for each worker");
     assert_eq!(worker.stop(), Some(Ended::Exited(0)));
     assert_eq!(threads::live(), before);
     assert!(!kit::runs_the_pack(pid));
@@ -894,6 +910,88 @@ fn a_fault_made_from_a_workers_failure_holds_none_of_the_marker_the_host_and_the
             assert!(!holds_any_of_the_error_output(&text), "{text}");
         }
     }
+    // Nor does what a failure prints: neither the error output nor the worker's own
+    // sentence is in it, so a careless `{:?}` carries no word of the worker's anywhere.
+    for failure in [&answered, &failed] {
+        let printed = format!("{failure:?}");
+        assert!(!holds_any_of_the_error_output(&printed), "{printed}");
+        assert!(!printed.contains("not loaded"), "{printed}");
+    }
+}
+
+/// A `segment` of a picture of 1,000 by 1,000, four megabytes: more than a pipe holds.
+fn larger_than_a_pipe() -> Ask {
+    let side = 1_000;
+    Ask::Segment {
+        model: super::conformance::model("fake-ok"),
+        installation: super::conformance::installation(),
+        image: Raster {
+            binding: BindingId(Digest::of_bytes(b"a large picture")),
+            width: side,
+            height: side,
+            samples: vec![128; (4 * side * side) as usize],
+        },
+        queries: vec![Query::phrase("a thing").unwrap()],
+        max_instances: 1,
+    }
+}
+
+#[test]
+fn a_request_the_worker_does_not_read_ends_at_the_calls_limit_as_timed_out_and_leaves_nothing_behind()
+ {
+    // The worker answers its hello and then reads nothing: a request larger than the pipe
+    // is never taken whole. The write waits within the call's limit, on the clock.
+    let clock = Arc::new(Rushed::default());
+    let mut worker = supervised(Some("deaf-after-hello"), clock.clone());
+    worker.ready().unwrap();
+    let pid = worker.pid().unwrap();
+    clock.rush_through(CALL_LIMIT);
+    let asked = Instant::now();
+    let failed = worker.call(larger_than_a_pipe()).unwrap_err();
+    assert!(
+        asked.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        asked.elapsed()
+    );
+    assert!(clock.moved() >= CALL_LIMIT, "{:?}", clock.moved());
+    assert_eq!(failed.fault.kind(), FaultKind::TimedOut, "{failed:?}");
+    assert_eq!(
+        failed.fault.sentence(),
+        "the pack's worker did not end the request within 120 seconds and was killed"
+    );
+    // Part of it was taken by the pipe: it may have been read.
+    assert_eq!(failed.fault.stage(), Stage::Unresolved);
+    assert_eq!(failed.ended, Some(Ended::Killed));
+    // No process, and no thread of the supervisor's: its readers and its writer ended.
+    assert!(!kit::runs_the_pack(pid));
+    assert_eq!(kit::pack_children(), Vec::<u32>::new());
+    assert!(kit::readers_ended(Duration::from_secs(10)));
+}
+
+#[test]
+fn a_word_to_a_worker_whose_input_is_full_waits_no_longer_than_its_limit() {
+    // The worker reads nothing after its hello, and right after it writes a frame
+    // whizbang refuses. The request fills the pipe; whizbang then has to tell the worker
+    // why the conversation is over, behind it. That word waits five seconds on the
+    // clock, the worker's end five more, and then it is killed.
+    let clock = Arc::new(Rushed::default());
+    let mut worker = supervised(Some("garbage-after-hello"), clock.clone());
+    worker.ready().unwrap();
+    let pid = worker.pid().unwrap();
+    clock.rush_through(END_LIMIT * 2);
+    let asked = Instant::now();
+    let failed = worker.call(larger_than_a_pipe()).unwrap_err();
+    assert!(
+        asked.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        asked.elapsed()
+    );
+    assert_eq!(failed.fault.kind(), FaultKind::Malformed, "{failed:?}");
+    assert_eq!(failed.fault.stage(), Stage::Unresolved);
+    assert_eq!(failed.ended, Some(Ended::Killed));
+    assert!(!kit::runs_the_pack(pid));
+    assert_eq!(kit::pack_children(), Vec::<u32>::new());
+    assert!(kit::readers_ended(Duration::from_secs(10)));
 }
 
 #[test]

@@ -3,7 +3,7 @@ allow-expect-in-tests = true
 
 # A thread is made in three places only: the executor's spawner, which is bounded (ADR 0008,
 # "How many runs are started at once"); the spawner of the pack's supervisor, which refuses
-# the third live thread of a process, one worker's two being the most
+# the fourth live thread of a process, one worker's three being the most
 # (`whizbang_backends::pack::threads`); and `whizbang_testkit::threads`, which refuses the
 # 65th live thread of a process before it is made. A test that made threads until the system
 # refused one took a machine down. Each of the three has an `#[allow]` with its reason;

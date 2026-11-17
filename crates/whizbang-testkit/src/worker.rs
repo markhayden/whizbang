@@ -365,7 +365,7 @@ pub fn worker_folders() -> Vec<PathBuf> {
 /// thread's work is over, by a return or a panic.
 static READERS: Mutex<Vec<mpsc::Receiver<()>>> = Mutex::new(Vec::new());
 
-/// What the supervisor makes its two threads with in a test: [`crate::threads::spawn`],
+/// What the supervisor makes its three threads with in a test: [`crate::threads::spawn`],
 /// so that they are counted with the test's other threads, and the one over the
 /// process's limit is not made. Each is noted, so that a test can wait for them to end
 /// ([`readers_ended`]).

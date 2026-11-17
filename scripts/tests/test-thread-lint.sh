@@ -28,7 +28,7 @@ expect_pass "the fixture's library alone" lint --lib
 
 # The lint is allowed in three files, and nothing else in the workspace mentions it: the
 # executor's spawner, once; the spawner of the pack's supervisor, once, which holds a
-# process to one worker's two threads; and the test kit's helper, for a thread, a scope
+# process to one worker's three threads; and the test kit's helper, for a thread, a scope
 # and a thread of a scope.
 allowed=$(grep -r -l -F 'disallowed_methods' crates --include='*.rs' | sort | tr '\n' ' ')
 [ "$allowed" = "crates/whizbang-backends/src/pack/threads.rs crates/whizbang-core/src/contract/engine.rs crates/whizbang-testkit/src/threads.rs " ] ||
@@ -39,8 +39,8 @@ allowed=$(grep -r -l -F 'disallowed_methods' crates --include='*.rs' | sort | tr
   fail "the pack's supervisor allows the lint once, on its spawner"
 grep -B1 -x -F 'pub(crate) fn spawn(' crates/whizbang-backends/src/pack/threads.rs | grep -F 'allow(clippy::disallowed_methods)' >/dev/null ||
   fail "the pack supervisor's allow is on its spawn, which only the crate can call"
-grep -F 'pub const THREADS_LIMIT: usize = 2;' crates/whizbang-backends/src/pack/threads.rs >/dev/null ||
-  fail "the pack's supervisor holds a process to one worker's two threads"
+grep -F 'pub const THREADS_LIMIT: usize = 3;' crates/whizbang-backends/src/pack/threads.rs >/dev/null ||
+  fail "the pack's supervisor holds a process to one worker's three threads"
 [ "$(grep -c -F 'allow(clippy::disallowed_methods)' crates/whizbang-testkit/src/threads.rs)" = 3 ] ||
   fail "the test kit's helper allows the lint three times: a thread, a scope, a thread of a scope"
 grep -B1 -F 'fn spawn_thread(' crates/whizbang-core/src/contract/engine.rs | grep -F 'allow(clippy::disallowed_methods)' >/dev/null ||

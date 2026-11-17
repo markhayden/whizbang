@@ -192,6 +192,18 @@ const TABLE: &[Case] = &[
         test: "worker::a_text_whizbang_sends_is_cleaned_as_a_text_of_the_protocol_and_the_worker_takes_it",
     },
     Case {
+        shows: "a request the worker does not read ends at the call's limit as timed_out",
+        by: &[By::Fault("deaf-after-hello")],
+        task: "P3b",
+        test: "worker::a_request_the_worker_does_not_read_ends_at_the_calls_limit_as_timed_out_and_leaves_nothing_behind",
+    },
+    Case {
+        shows: "a word whizbang writes behind a full input waits no longer than its limit",
+        by: &[By::Fault("garbage-after-hello")],
+        task: "P3b",
+        test: "worker::a_word_to_a_worker_whose_input_is_full_waits_no_longer_than_its_limit",
+    },
+    Case {
         shows: "a worker of another version is refused at its hello",
         by: &[By::Fault("other-version")],
         task: "P3a",

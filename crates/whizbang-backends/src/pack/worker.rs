@@ -49,8 +49,8 @@
 //! **Every wait is finite, on the clock it is given** (D7): 60 seconds for the hello, 5
 //! for the worker to end once its input is closed; past either it is killed and waited
 //! for. Each wait is also a bounded count of looks, so a clock that stands still ends it
-//! too. The two threads are joined once the worker has been waited for: each ends at the
-//! end of its pipe, which the end of the process closes. A process the worker started
+//! too. The three threads are joined once the worker has been waited for: each ends at
+//! the end of its pipe, which the end of the process closes. A process the worker started
 //! that outlives it holds the pipes open: the readers are then given [`END_LIMIT`] and
 //! let go past it, no worker is started until they end, and the kept error output ends
 //! with [`LINGERING`]. Such a process is not killed: ending a worker's group of
@@ -70,9 +70,11 @@
 //! worker wrote, on its output or its error output, is in it. The reader holds what it
 //! reads to what whizbang asked, hands a request of the worker's own on by its id
 //! without reading its payload, and hands frames on through a channel of
-//! [`FRAMES_WAITING`] places, waiting while it is full. A write to a worker that reads
-//! nothing waits until the worker reads or ends, as every worker does at its lifetime.
-//! A worker that ended between two calls is noticed by the next; a call's own deadline,
+//! [`FRAMES_WAITING`] places, waiting while it is full. Every frame is written by a
+//! thread of its own, the writer of the worker's input, and the supervisor waits for it
+//! on the clock: a request within its call's limit, every other frame within
+//! [`END_LIMIT`]. A worker that reads nothing is killed past them, which ends the write
+//! and the writer with it; such a call is `timed_out`. A worker that ended between two calls is noticed by the next; a call's own deadline,
 //! cancellation, the queue and the restart's fault are task P4's.
 
 use std::collections::VecDeque;
@@ -226,7 +228,10 @@ impl Ended {
 /// the protocol, in the adapter's words. None of these is a fault's sentence, and the
 /// core's response holds none of them: they are its caller's to keep as a run's
 /// diagnostics (`docs/carry-over.md`).
-#[derive(Debug, Clone, PartialEq)]
+/// What `{:?}` prints of it is the device, the threads, how many bytes of diagnostics,
+/// how many events and the answer's instances by their numbers: no word the worker
+/// wrote.
+#[derive(Clone, PartialEq)]
 pub struct Called {
     /// The device that answered.
     pub device: String,
@@ -242,8 +247,11 @@ pub struct Called {
 
 /// What a call that failed hands back (task P3b): its fault, whose sentence is fixed
 /// words and typed fields and quotes nothing the worker wrote; the worker's own
-/// sentence, when it answered with an `error`; and its error output, as kept.
-#[derive(Debug, Clone, PartialEq)]
+/// sentence, when it answered with an `error`; and its error output, as kept. What
+/// `{:?}` prints of it is the fault, how the worker ended, and only whether the worker
+/// gave a sentence and how many lines of error output were kept: no word the worker
+/// wrote, so a careless `{:?}` cannot carry one into a sentence.
+#[derive(Clone, PartialEq)]
 pub struct Failed {
     /// The fault the call ends in, with how far its request got.
     pub fault: Fault,
@@ -256,6 +264,34 @@ pub struct Failed {
     /// once the worker has ended and its reader with it, when the failure ended it, and
     /// otherwise what was read so far.
     pub error_output: Vec<String>,
+}
+
+impl std::fmt::Debug for Called {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let answer = match &self.answer {
+            Answer::Load => "load".to_owned(),
+            Answer::Unload => "unload".to_owned(),
+            Answer::Segment(found) => format!("segment of {} instances", found.len()),
+        };
+        f.debug_struct("Called")
+            .field("device", &self.device)
+            .field("threads", &self.threads)
+            .field("diagnostics_bytes", &self.diagnostics.len())
+            .field("events", &self.events.len())
+            .field("answer", &answer)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for Failed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Failed")
+            .field("fault", &self.fault)
+            .field("said", &self.said.is_some())
+            .field("ended", &self.ended)
+            .field("error_output_lines", &self.error_output.len())
+            .finish()
+    }
 }
 
 /// What a worker said of itself in its hello.
@@ -286,6 +322,19 @@ type Note = (String, proto::Awaited);
 /// The lines of the error output that are kept.
 type Kept = Arc<Mutex<VecDeque<String>>>;
 
+/// One frame for the writer of the worker's input: the message, where the count of its
+/// bytes the pipe took is kept, and where the writer says whether it was written whole.
+struct Job {
+    message: Message,
+    taken: Arc<AtomicU64>,
+    done: mpsc::Sender<bool>,
+}
+
+/// How many frames may wait for the writer of the worker's input. One call at a time
+/// writes one request, and a word or two after it; a frame that finds no place is not
+/// written.
+const JOBS_WAITING: usize = 4;
+
 /// The channel the reader of the worker's output hands frames on: of [`FRAMES_WAITING`]
 /// places, so that the reader waits once they are full.
 fn frames() -> (SyncSender<Heard>, Receiver<Heard>) {
@@ -300,7 +349,10 @@ struct Running {
     child: Child,
     /// How the process ended, once it was waited for.
     reaped: Option<Ended>,
-    input: Option<ChildStdin>,
+    /// The frames for the writer of its input, until its input is closed: then the
+    /// writer writes what is queued and ends, which closes the input. A write the worker
+    /// does not take is ended by the worker's end, which the kill makes sure of.
+    input: Option<SyncSender<Job>>,
     /// The frames the reader of its output hands on, until the worker is killed: then
     /// the channel is let go, so that a reader that waits to hand one on ends.
     heard: Option<Receiver<Heard>>,
@@ -346,23 +398,19 @@ impl Running {
         }
     }
 
-    /// Writes a frame on the worker's input, if it can still be written to; what fails
-    /// is not looked at, since the worker is ended next.
-    fn tell(&mut self, message: &Message) {
-        if let Some(input) = self.input.as_mut() {
-            let _ = proto::write(message, input);
-        }
-    }
-
-    /// Writes an `error` that ends the conversation, with a text of the protocol made of
-    /// these words.
-    fn end_conversation(&mut self, fault: FaultKind, words: &str) {
-        let error = Message::Error {
-            id: self.conversation.clone(),
-            fault,
-            sentence: proto::sentence(words),
+    /// Hands a frame to the writer of the worker's input, waiting for nothing: where the
+    /// writer will say whether it was written whole, or nothing when it could not be
+    /// queued (the input is closed, the writer has ended, or [`JOBS_WAITING`] frames
+    /// wait already).
+    fn queue(&self, message: Message, taken: &Arc<AtomicU64>) -> Option<Receiver<bool>> {
+        let (done, written) = mpsc::channel();
+        let job = Job {
+            message,
+            taken: taken.clone(),
+            done,
         };
-        self.tell(&error);
+        self.input.as_ref()?.try_send(job).ok()?;
+        Some(written)
     }
 
     /// Removes the worker's folder, once.
@@ -465,7 +513,7 @@ impl Worker {
         self
     }
 
-    /// The same, making its two threads with this: a test's, counted with the test's
+    /// The same, making its three threads with this: a test's, counted with the test's
     /// other threads.
     pub fn with_spawn(mut self, spawn: Spawn) -> Worker {
         self.spawn = spawn;
@@ -599,48 +647,57 @@ impl Worker {
                 .flatten();
             return Err(self.failed(fault, None, ended));
         }
-        let Some(mut running) = self.running.take() else {
+        let Some(running) = self.running.take() else {
             let fault = refusal(FaultKind::Unavailable, "the pack's worker is not running");
             return Err(self.failed(fault, None, None));
         };
-        // Noted before a byte is written, so that the reader holds the answer to it.
+        // Noted before a byte is written, so that the reader holds the answer to it. The
+        // writer writes it; the call waits for that, and then for the answer, within its
+        // limit on the clock.
         let _ = running.notes.send((id.clone(), awaited));
-        let mut written = 0_u64;
-        let wrote = match running.input.as_mut() {
-            Some(input) => proto::write(
-                &request,
-                &mut Counted {
-                    out: input,
-                    count: &mut written,
-                },
-            )
-            .is_ok(),
-            None => false,
+        let taken = Arc::new(AtomicU64::new(0));
+        let stage = |fault: Fault, taken: &AtomicU64| match taken.load(Ordering::SeqCst) {
+            0 => fault.not_sent(),
+            _ => fault.unresolved(),
         };
-        drop(request);
-        if !wrote {
+        let Some(written) = running.queue(request, &taken) else {
             let ended = self.close(running);
-            let fault = Fault::new(
-                FaultKind::Unavailable,
-                "the request could not be written to the pack's worker, which was ended",
-            );
-            let fault = match written {
-                0 => fault.not_sent(),
-                _ => fault.unresolved(),
-            };
+            let words = "the request could not be handed to the writer of the pack's worker, which was ended";
+            let fault = stage(Fault::new(FaultKind::Unavailable, words), &taken);
             return Err(self.failed(fault, None, Some(ended)));
-        }
+        };
+        let mut wrote = None;
         let mut events = Vec::new();
-        let heard = self.until(limit, || {
+        let waited = self.until(limit, || {
             loop {
                 match running.next() {
                     Some(Some(Heard::Said(Message::Event { id: of, text }))) if of == id => {
                         events.push(text);
                     }
-                    other => break other,
+                    Some(heard) => return Some(Waited::Heard(heard)),
+                    None => break,
                 }
             }
+            if wrote.is_none() {
+                wrote = match written.try_recv() {
+                    Ok(whole) => Some(whole),
+                    Err(TryRecvError::Empty) => None,
+                    Err(TryRecvError::Disconnected) => Some(false),
+                };
+            }
+            (wrote == Some(false)).then_some(Waited::Unwritten)
         });
+        let heard = match waited {
+            Some(Waited::Heard(heard)) => Some(heard),
+            Some(Waited::Unwritten) => {
+                let ended = self.close(running);
+                let words =
+                    "the request could not be written to the pack's worker, which was ended";
+                let fault = stage(Fault::new(FaultKind::Unavailable, words), &taken);
+                return Err(self.failed(fault, None, Some(ended)));
+            }
+            None => None,
+        };
         let conversation = running.conversation.clone();
         let (kind, sentence) = match heard {
             Some(Some(Heard::Said(Message::Result {
@@ -673,12 +730,13 @@ impl Worker {
                 return Err(self.failed(fault, Some(sentence), None));
             }
             None => {
+                // The kill ends a write the worker did not take, and the writer with it.
                 let ended = self.finish(running);
                 let words = format!(
                     "the pack's worker did not end the request within {} seconds and was killed",
                     limit.as_secs()
                 );
-                let fault = Fault::new(FaultKind::TimedOut, &words).unresolved();
+                let fault = stage(Fault::new(FaultKind::TimedOut, &words), &taken);
                 return Err(self.failed(fault, None, Some(ended)));
             }
             Some(Some(Heard::Said(Message::Error { id: of, .. }))) if of == conversation => {
@@ -701,7 +759,7 @@ impl Worker {
             }
             Some(Some(Heard::Refused(refused))) => {
                 let kind = fault_of(&refused);
-                running.end_conversation(kind, refused.sentence());
+                self.end_conversation(&running, kind, refused.sentence());
                 let sentence = format!(
                     "the pack's worker answered with a frame that was refused ({}); it was ended",
                     refused.reason().name()
@@ -709,12 +767,14 @@ impl Worker {
                 (kind, sentence)
             }
             Some(Some(Heard::Asked(asked))) => {
-                running.tell(&Message::Error {
+                let answer = Message::Error {
                     id: asked,
                     fault: FaultKind::Unsupported,
                     sentence: proto::sentence("a worker asks nothing of whizbang at this version"),
-                });
-                running.end_conversation(
+                };
+                self.tell(&running, answer);
+                self.end_conversation(
+                    &running,
                     FaultKind::Malformed,
                     "a worker asks nothing of whizbang at this version, and its request was not read",
                 );
@@ -722,8 +782,11 @@ impl Worker {
                 (FaultKind::Malformed, sentence.to_owned())
             }
             Some(Some(Heard::Said(_))) => {
-                running
-                    .end_conversation(FaultKind::Malformed, "a frame that has no place in a call");
+                self.end_conversation(
+                    &running,
+                    FaultKind::Malformed,
+                    "a frame that has no place in a call",
+                );
                 let sentence =
                     "the pack's worker sent a frame that has no place in a call; it was ended";
                 (FaultKind::Malformed, sentence.to_owned())
@@ -732,6 +795,33 @@ impl Worker {
         let ended = self.close(running);
         let fault = Fault::new(kind, &sentence).unresolved();
         Err(self.failed(fault, None, Some(ended)))
+    }
+
+    /// Writes a frame on the worker's input through its writer, and waits for it within
+    /// [`END_LIMIT`] on the clock: whether it was written whole by then. A frame the
+    /// worker does not take is left to the worker's end, which follows every word told.
+    fn tell(&self, running: &Running, message: Message) -> bool {
+        let taken = Arc::new(AtomicU64::new(0));
+        let Some(written) = running.queue(message, &taken) else {
+            return false;
+        };
+        let whole = self.until(END_LIMIT, || match written.try_recv() {
+            Ok(whole) => Some(whole),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => Some(false),
+        });
+        whole == Some(true)
+    }
+
+    /// Tells the worker the conversation is over, in an `error` of the conversation's
+    /// id whose sentence is a text of the protocol made of these words.
+    fn end_conversation(&self, running: &Running, fault: FaultKind, words: &str) {
+        let error = Message::Error {
+            id: running.conversation.clone(),
+            fault,
+            sentence: proto::sentence(words),
+        };
+        self.tell(running, error);
     }
 
     /// A failed call: its fault, the worker's own sentence when it gave one, how the
@@ -757,7 +847,7 @@ impl Worker {
         self.finish(running)
     }
 
-    /// Starts the process and its two threads.
+    /// Starts the process and its three threads.
     fn start(&mut self) -> Result<Running, Fault> {
         let home = make_home().map_err(|_| {
             refusal(
@@ -798,20 +888,21 @@ impl Worker {
         self.conversations += 1;
         let (tell, heard) = frames();
         let (notes, noted) = mpsc::channel();
+        let (jobs, queued) = mpsc::sync_channel(JOBS_WAITING);
         // From here on the worker is ended on every path, a panic among them, by
         // `finish` or by the drop of `running`.
         let mut running = Running {
             child,
             reaped: None,
-            input,
+            input: Some(jobs),
             heard: Some(heard),
             notes,
             conversation: format!("c{}", self.conversations),
             readers: Vec::new(),
             home: Some(home),
         };
-        let made = match (output, errors) {
-            (Some(output), Some(errors)) => {
+        let made = match (input, output, errors) {
+            (Some(input), Some(output), Some(errors)) => {
                 let kept = (self.kept.clone(), self.secrets.clone());
                 (self.spawn)(
                     "whizbang-pack-output".to_owned(),
@@ -824,7 +915,14 @@ impl Worker {
                         Box::new(move || read_error_output(errors, &kept.0, &kept.1)),
                     )
                 })
-                .map(|reader| running.readers.push(reader))
+                .and_then(|reader| {
+                    running.readers.push(reader);
+                    (self.spawn)(
+                        "whizbang-pack-input".to_owned(),
+                        Box::new(move || write_input(input, &queued)),
+                    )
+                })
+                .map(|writer| running.readers.push(writer))
             }
             _ => Err(io::Error::other("a stream of the worker was not piped")),
         };
@@ -842,14 +940,15 @@ impl Worker {
     /// no hello, is told why in an `error` that ends the conversation, and is given
     /// [`END_LIMIT`] to end before it is killed; one that says nothing within
     /// [`HELLO_LIMIT`] is killed.
-    fn hear_hello(&mut self, mut running: Running) -> Result<(), Fault> {
+    fn hear_hello(&mut self, running: Running) -> Result<(), Fault> {
         let conversation = running.conversation.clone();
         // A worker that cannot be written to has ended, or will: what its output says
         // next tells how.
-        running.tell(&Message::Hello {
+        let hello = Message::Hello {
             id: conversation.clone(),
             role: Role::Whizbang,
-        });
+        };
+        self.tell(&running, hello);
         let heard = self.until(HELLO_LIMIT, || running.next());
         let (kind, sentence, told) = match heard {
             Some(Some(Heard::Said(Message::Hello {
@@ -903,7 +1002,7 @@ impl Worker {
             }
         };
         if let Some(words) = told {
-            running.end_conversation(kind, &words);
+            self.end_conversation(&running, kind, &words);
         }
         self.close(running);
         Err(refusal(kind, sentence))
@@ -1086,18 +1185,50 @@ fn fault_of(refused: &Refused) -> FaultKind {
 /// left whizbang.
 struct Counted<'a, W> {
     out: &'a mut W,
-    count: &'a mut u64,
+    count: &'a AtomicU64,
 }
 
 impl<W: Write> Write for Counted<'_, W> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         let taken = self.out.write(bytes)?;
-        *self.count += taken as u64;
+        self.count.fetch_add(taken as u64, Ordering::SeqCst);
         Ok(taken)
     }
 
     fn flush(&mut self) -> io::Result<()> {
         self.out.flush()
+    }
+}
+
+/// What a call waited for: the end its request was given, or that its request could not
+/// be written.
+enum Waited {
+    Heard(Option<Heard>),
+    Unwritten,
+}
+
+/// The thread that writes the worker's input: each frame it is handed, in order,
+/// counting the bytes the pipe takes, and saying whether it was written whole. It ends
+/// when the frames stop (the input is closed, or the worker killed), or at the first
+/// write that fails, and its end closes the input. A write the worker does not take waits
+/// here, not in the supervisor, until the worker ends: the supervisor's wait for it is
+/// on the clock, and past it the worker is killed, which fails the write.
+fn write_input(input: ChildStdin, jobs: &Receiver<Job>) {
+    let mut input = input;
+    for job in jobs.iter() {
+        let whole = proto::write(
+            &job.message,
+            &mut Counted {
+                out: &mut input,
+                count: &job.taken,
+            },
+        )
+        .is_ok();
+        drop(job.message);
+        let _ = job.done.send(whole);
+        if !whole {
+            return;
+        }
     }
 }
 

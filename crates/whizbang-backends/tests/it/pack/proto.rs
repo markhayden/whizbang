@@ -2582,6 +2582,26 @@ fn a_refusal_of_a_count_of_a_results_instances_says_so_and_no_other_does() {
     let refused = proto::read(&mut Cursor::new(written(&two)), &mut open).unwrap_err();
     assert_eq!(refused.reason(), Reason::OverBound);
     assert!(refused.counts_instances());
+    // More instances than any request allows, 4,097, refused by what a header alone
+    // shows, before any request is looked at: the writer holds a result to it too.
+    let tiny = binding("a tiny picture");
+    let one = |at: usize| Found {
+        query: (at % QUERY_LIMIT) as u32,
+        score: 0.5,
+        iou: None,
+        bounds: [0.0, 0.0, 1.0, 1.0],
+        plane: Raster {
+            binding: tiny,
+            width: 1,
+            height: 1,
+            samples: vec![255],
+        },
+    };
+    let most = QUERY_LIMIT * INSTANCE_LIMIT as usize + 1;
+    let past = result("r1", (0..most).map(one).collect());
+    let refused = proto::writable(&past).unwrap_err();
+    assert_eq!(refused.reason(), Reason::OverBound, "{refused:?}");
+    assert!(refused.counts_instances());
     // Other bounds that are counted are not of instances: the events of a request.
     let mut open = Open::new();
     let awaited = Awaited::segment(WIDTH, HEIGHT, under, 3, 2).after(EVENT_LIMIT, 0);
