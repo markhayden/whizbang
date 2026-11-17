@@ -1,10 +1,27 @@
 //! The comparison the baseline gate uses, on synthetic transcripts
 //! (docs/baseline/transcript.md). Each test changes one thing in an otherwise equal pair.
+//! The comparison reads text; most tests build a transcript as a value and write it.
 
 use serde_json::{Value, json};
 use whizbang_eval::baseline::{
-    COMPARISON_VERSION, Difference, Kind, Refusal, Side, VOLATILE, compare,
+    self, COMPARISON_VERSION, Difference, Kind, Refusal, Side, VOLATILE,
 };
+
+/// The comparison of two transcripts built as values, written as `serde_json` writes them.
+fn compare(recorded: &Value, replayed: &Value) -> Result<Vec<Difference>, Refusal> {
+    baseline::compare(&recorded.to_string(), &replayed.to_string())
+}
+
+/// The transcript written, with `"max_output_tokens":512` (one in each turn's request)
+/// replaced by a number written as `number`.
+fn with_limit(number: &str) -> String {
+    let text = transcript().to_string().replace(
+        "\"max_output_tokens\":512",
+        &format!("\"max_output_tokens\":{number}"),
+    );
+    assert!(text.contains(number), "{number} was not put in");
+    text
+}
 
 fn request(history: Value) -> Value {
     json!({
@@ -591,12 +608,6 @@ fn a_pair_without_turns_or_a_terminal_outcome_is_refused() {
 
 #[test]
 fn numbers_are_compared_by_the_text_they_were_written_with() {
-    let parse = |number: &str| -> Value {
-        let mut t = transcript();
-        t["turns"][1]["calls"][0]["arguments"]["scale"] = serde_json::from_str(number).unwrap();
-        // Through text, as a transcript read from a file is.
-        serde_json::from_str(&serde_json::to_string(&t).unwrap()).unwrap()
-    };
     for (a, b) in [
         ("12345678901234567890123", "12345678901234567890124"),
         ("9007199254740993", "9007199254740992"),
@@ -605,34 +616,41 @@ fn numbers_are_compared_by_the_text_they_were_written_with() {
         ("0.1", "0.10"),
         ("0.30000000000000004", "0.3"),
         ("-0.0", "0.0"),
+        ("-0", "0"),
+        ("-0", "-0.0"),
+        // No double holds these, and they are read and compared all the same.
+        ("1e400", "1e401"),
+        ("1e400", "2e400"),
+        ("-1e400", "1e400"),
     ] {
-        let differences = compare(&parse(a), &parse(b)).unwrap();
+        // One difference per request: every turn's request holds the limit.
+        let differences = baseline::compare(&with_limit(a), &with_limit(b)).unwrap();
         assert_eq!(
             paths(&differences),
-            vec!["/turns/1/calls/0/arguments/scale"],
+            vec![
+                "/turns/0/request/max_output_tokens",
+                "/turns/1/request/max_output_tokens",
+                "/turns/2/request/max_output_tokens",
+                "/turns/3/request/max_output_tokens",
+            ],
             "{a} and {b}"
         );
-        assert_eq!(compare(&parse(a), &parse(a)).unwrap(), vec![], "{a}");
+        for same in [a, b] {
+            let text = with_limit(same);
+            assert_eq!(baseline::compare(&text, &text), Ok(vec![]), "{same}");
+        }
     }
 }
 
 #[test]
 fn how_an_exponent_is_marked_is_the_one_thing_about_a_number_that_is_not_compared() {
-    // The JSON reader writes an exponent's `E` as `e`, and a `+` where no sign was written,
-    // before the comparison sees the number (docs/baseline/transcript.md, "Numbers keep
+    // The comparison's reader writes an exponent's `E` as `e`, and a `+` where no sign was
+    // written, before the number is compared (docs/baseline/transcript.md, "Numbers keep
     // their text"). Everything else about the text differs.
-    let parse = |number: &str| -> Value {
-        let text = serde_json::to_string(&transcript()).unwrap().replace(
-            "\"max_output_tokens\":512",
-            &format!("\"max_output_tokens\":{number}"),
-        );
-        assert!(text.contains(number), "{number} was not put in");
-        serde_json::from_str(&text).unwrap()
-    };
     for same in ["1e2", "1E+2", "1e+2"] {
         assert_eq!(
-            compare(&parse("1E2"), &parse(same)).unwrap(),
-            vec![],
+            baseline::compare(&with_limit("1E2"), &with_limit(same)),
+            Ok(vec![]),
             "{same}"
         );
     }
@@ -643,13 +661,118 @@ fn how_an_exponent_is_marked_is_the_one_thing_about_a_number_that_is_not_compare
         ("1E2", "1.0E2"),
         ("1e-2", "1e-02"),
     ] {
-        // One difference per request: every turn's request holds the limit.
         assert_eq!(
-            compare(&parse(a), &parse(b)).unwrap().len(),
+            baseline::compare(&with_limit(a), &with_limit(b))
+                .unwrap()
+                .len(),
             4,
             "{a} and {b}"
         );
     }
+}
+
+#[test]
+fn text_that_is_not_json_is_refused_and_says_which_side() {
+    let good = transcript().to_string();
+    let deep = |levels: usize| {
+        good.replace(
+            "\"max_output_tokens\":512",
+            &format!(
+                "\"max_output_tokens\":{}{}",
+                "[".repeat(levels),
+                "]".repeat(levels)
+            ),
+        )
+    };
+    for bad in [
+        String::new(),
+        "{".to_owned(),
+        format!("{good} {{}}"),
+        format!("{good},"),
+        with_limit("01"),
+        with_limit("1."),
+        with_limit(".5"),
+        with_limit("1e"),
+        with_limit("+1"),
+        with_limit("--1"),
+        with_limit("0x10"),
+        with_limit("NaN"),
+        with_limit("Infinity"),
+        with_limit("nul"),
+        with_limit("truee"),
+        with_limit("[1,]"),
+        with_limit("{\"a\":1,}"),
+        with_limit("{\"a\" 1}"),
+        with_limit("{1:1}"),
+        with_limit("\"\\x\""),
+        with_limit("\"\\ud800\""),
+        with_limit("\"a\u{1}b\""),
+        with_limit("'a'"),
+        format!("\u{feff}{good}"),
+        deep(100_000),
+    ] {
+        assert_eq!(
+            baseline::compare(&bad, &good),
+            Err(Refusal::NotJson {
+                which: Side::Recorded
+            }),
+            "{bad}"
+        );
+        assert_eq!(
+            baseline::compare(&good, &bad),
+            Err(Refusal::NotJson {
+                which: Side::Replayed
+            }),
+            "{bad}"
+        );
+    }
+    // What `serde_json` reads is read: spaces of the four kinds JSON allows, escapes, and
+    // nesting to its depth, and no deeper.
+    let read = |text: &str| serde_json::from_str::<Value>(text).is_ok();
+    let mut deepest = 0;
+    for levels in 100..140 {
+        let text = deep(levels);
+        let compared = baseline::compare(&text, &text);
+        assert_eq!(compared.is_ok(), read(&text), "{levels}");
+        if read(&text) {
+            deepest = levels;
+        }
+    }
+    assert!((100..139).contains(&deepest), "{deepest}");
+    for fine in [
+        format!(" \t\r\n{good} \t\r\n"),
+        with_limit(
+            "[ 1 , { \"a\" : [ ] , \"b\" : { } } , \"\\u00e9\\n\\\"\\\\\\/\" , true , false , null ]",
+        ),
+        with_limit("\"\\ud83d\\ude00 caf\u{e9}\""),
+    ] {
+        assert!(read(&fine), "{fine}");
+        assert_eq!(baseline::compare(&fine, &fine), Ok(vec![]), "{fine}");
+    }
+}
+
+#[test]
+fn a_text_is_compared_as_it_reads_and_not_as_it_was_escaped() {
+    assert_eq!(
+        baseline::compare(&with_limit("\"A\\u00e9\""), &with_limit("\"A\u{e9}\"")),
+        Ok(vec![])
+    );
+    assert_eq!(
+        baseline::compare(&with_limit("\"a\""), &with_limit("\"A\""))
+            .unwrap()
+            .len(),
+        4
+    );
+}
+
+#[test]
+fn this_crates_tests_build_the_serde_json_the_binary_ships() {
+    // The binary's `serde_json` has no `arbitrary_precision` (`scripts/check-features.sh`):
+    // a number no double holds is not read, and a number is written as the double it is.
+    // The comparison reads its own way, and needs neither.
+    assert!(serde_json::from_str::<Value>("1e400").is_err());
+    let read: Value = serde_json::from_str("[-0,1e2,1.50]").unwrap();
+    assert_eq!(read.to_string(), "[-0.0,100.0,1.5]");
 }
 
 #[test]
@@ -848,11 +971,11 @@ fn every_top_level_field_and_every_field_of_a_turn_and_a_call_is_covered_by_the_
 
 #[test]
 fn the_example_on_the_formats_page_compares_with_itself_and_not_with_a_changed_copy() {
-    let example: Value = serde_json::from_str(include_str!(
-        "../../../../docs/baseline/example-transcript.json"
-    ))
-    .unwrap();
+    let text = include_str!("../../../../docs/baseline/example-transcript.json");
+    let example: Value = serde_json::from_str(text).unwrap();
     assert_eq!(example["volatile"], json!(VOLATILE));
+    // As the file is written, and as `serde_json` writes it again.
+    assert_eq!(baseline::compare(text, text), Ok(vec![]));
     assert_eq!(compare(&example, &example), Ok(vec![]));
     // The example has the same fields as the transcript these tests are written against.
     let keys = |v: &Value| -> Vec<String> { v.as_object().unwrap().keys().cloned().collect() };

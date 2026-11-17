@@ -35,9 +35,11 @@ test-only +args:
 timing:
     scripts/timing.sh
 
-# The crate edges of SPEC.md section 3 (scripts/crate-graph.txt).
+# The crate edges of SPEC.md section 3 (scripts/crate-graph.txt), and the features of
+# serde_json, the same for the binary and for the tests (ADR 0021).
 graph:
     scripts/check-crate-graph.sh
+    scripts/check-features.sh
 
 # Licences, bans and sources. These work offline; advisories need the network.
 deny:

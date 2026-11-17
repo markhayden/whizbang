@@ -112,6 +112,54 @@ fn a_tool_call_is_an_id_a_name_and_arguments() {
 }
 
 #[test]
+fn a_number_in_arguments_or_a_schema_is_held_in_the_tests_as_the_shipped_binary_holds_it() {
+    // The tests and the binary build one `serde_json`, with one set of features
+    // (`scripts/check-features.sh`). A number is read as a number and not as its text:
+    // written again, `1e2` is `100.0` and `-0` is `-0.0`; the size of arguments is that
+    // of what is written, and two that hold the same number are equal. A number no
+    // double holds is not read. Under `arbitrary_precision` each of these would differ.
+    let read = |text: &str| -> serde_json::Value { serde_json::from_str(text).unwrap() };
+    for (text, written) in [
+        ("1e2", "100.0"),
+        ("1E+2", "100.0"),
+        ("-0", "-0.0"),
+        ("1.50", "1.5"),
+        ("1.5", "1.5"),
+        ("7", "7"),
+        ("-7", "-7"),
+    ] {
+        let arguments = read(&format!("{{\"n\":{text}}}"));
+        assert_eq!(
+            serde_json::to_string(&arguments).unwrap(),
+            format!("{{\"n\":{written}}}")
+        );
+        let call = ToolCall::new("call_1", "view", arguments).unwrap();
+        assert_eq!(
+            format!("{call:?}"),
+            format!(
+                "ToolCall(call_1, view, arguments of {} bytes)",
+                "{\"n\":}".len() + written.len()
+            ),
+            "{text}"
+        );
+        let same = ToolCall::new("call_1", "view", read(&format!("{{\"n\":{written}}}")));
+        assert_eq!(call, same.unwrap(), "{text}");
+        let schema = |n: &str| read(&format!("{{\"type\":\"object\",\"maximum\":{n}}}"));
+        assert_eq!(
+            ToolDefinition::new("view", "Look.", schema(text)).unwrap(),
+            ToolDefinition::new("view", "Look.", schema(written)).unwrap(),
+            "{text}"
+        );
+    }
+    for text in ["1e400", "-1e400", "{\"n\":1e400}"] {
+        assert!(
+            serde_json::from_str::<serde_json::Value>(text).is_err(),
+            "{text}"
+        );
+    }
+}
+
+#[test]
 fn a_tool_result_answers_a_call_with_text_images_or_both() {
     let result = ToolResult::new("call_1", "a crop", false, vec![picture()]).unwrap();
     assert_eq!(result.call(), "call_1");
