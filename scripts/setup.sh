@@ -10,7 +10,8 @@
 #
 # A tool that is missing, or at another version than scripts/tool-versions.txt pins, is
 # named with the command that installs the pinned version (for uv, which cargo does not
-# install, the command or the page), and the script fails. jq and
+# install, its release and that downloading it needs the owner's approval), and the
+# script fails. jq and
 # python3 (3.9 or later, for scripts/baseline) are checked without a pin. The hooks
 # are installed either way. `just check` does not run this: only setup is strict about
 # versions.
@@ -135,10 +136,12 @@ while read -r tool want; do
     echo "tool ok: $tool $want"
   elif [ "$tool" = uv ]; then
     # uv is not installed by cargo. It runs the pack's tests and, later, installs the pack.
+    # No command is named: uv's own update and its maker's install script each try a
+    # host the owner has not approved (scripts/tests/test-pack.sh, the rules on uv).
     if [ -z "$have" ]; then
-      echo "tool problem: uv is missing; install version $want as https://docs.astral.sh/uv/getting-started/installation/ says" >&2
+      echo "tool problem: uv is missing; uv $want is needed; its release is https://github.com/astral-sh/uv/releases/tag/$want; downloading it on this machine needs the owner's approval" >&2
     else
-      echo "tool problem: uv is at another version: found $have, pinned $want; install the pinned one with: uv self update $want" >&2
+      echo "tool problem: uv is at another version: found $have, pinned $want; uv $want is needed; its release is https://github.com/astral-sh/uv/releases/tag/$want; downloading it on this machine needs the owner's approval" >&2
     fi
     status=1
   elif [ -z "$have" ]; then

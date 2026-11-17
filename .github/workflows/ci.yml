@@ -29,11 +29,11 @@ jobs:
       - name: Rust toolchain
         run: rustup show
       # The cache holds the pack's pinned Python too (the folder uv installs it in, set by
-      # the step that installs it), keyed by the pin, so that it is downloaded once for
-      # each pin and runner and not on every run.
+      # the step that installs it), keyed by the pin and by the pinned tools (uv among
+      # them), so that it is downloaded once for each pin and runner and not on every run.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: python-${{ hashFiles('pack/.python-version') }}
+          key: python-${{ hashFiles('pack/.python-version', 'scripts/tool-versions.txt') }}
           cache-directories: ${{ runner.temp }}/uv-python
       # Pinned to a commit (v2.90.5). Each tool is downloaded from its maker's GitHub
       # releases and checked against the hash the action holds; with no fallback, a tool the
@@ -104,11 +104,11 @@ jobs:
       - name: Rust toolchain
         run: rustup show
       # The cache holds the pack's pinned Python too (the folder uv installs it in, set by
-      # the step that installs it), keyed by the pin, so that it is downloaded once for
-      # each pin and runner and not on every run.
+      # the step that installs it), keyed by the pin and by the pinned tools (uv among
+      # them), so that it is downloaded once for each pin and runner and not on every run.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: python-${{ hashFiles('pack/.python-version') }}
+          key: python-${{ hashFiles('pack/.python-version', 'scripts/tool-versions.txt') }}
           cache-directories: ${{ runner.temp }}/uv-python
       # Pinned to a commit (v2.90.5). Each tool is downloaded from its maker's GitHub
       # releases and checked against the hash the action holds; with no fallback, a tool the

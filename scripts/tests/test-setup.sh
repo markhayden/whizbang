@@ -60,15 +60,16 @@ expect_fail "a missing tool" \
   with_tools "$(pin just)" "$(pin cargo-nextest)" ""
 grep -q -F "another version" "$tmp/out" && { cat "$tmp/out"; fail "a missing tool is not called another version"; }
 
-# uv is checked as the others are, and named with how to get the pinned one: not by cargo.
+# uv is checked as the others are, and named with its release: not by cargo, and with no
+# command, since uv's own update and its maker's install script try an unapproved host.
 [ -n "$(pin uv)" ] || fail "uv is pinned in scripts/tool-versions.txt"
 expect_pass "uv at its pin" with_tools "$(pin just)" "$(pin cargo-nextest)" "$(pin cargo-deny)"
 grep -q -F "tool ok: uv $(pin uv)" "$tmp/out" || { cat "$tmp/out"; fail "uv at its pin is reported as ok"; }
 FAKE_UV=0.0.1 expect_fail "uv at another version" \
-  "uv is at another version: found 0.0.1, pinned $(pin uv); install the pinned one with: uv self update $(pin uv)" \
+  "uv is at another version: found 0.0.1, pinned $(pin uv); uv $(pin uv) is needed; its release is https://github.com/astral-sh/uv/releases/tag/$(pin uv); downloading it on this machine needs the owner's approval" \
   with_tools "$(pin just)" "$(pin cargo-nextest)" "$(pin cargo-deny)"
 FAKE_UV="" expect_fail "no uv" \
-  "uv is missing; install version $(pin uv) as https://docs.astral.sh/uv/getting-started/installation/ says" \
+  "uv is missing; uv $(pin uv) is needed; its release is https://github.com/astral-sh/uv/releases/tag/$(pin uv); downloading it on this machine needs the owner's approval" \
   with_tools "$(pin just)" "$(pin cargo-nextest)" "$(pin cargo-deny)"
 
 # Every problem is reported, not only the first.

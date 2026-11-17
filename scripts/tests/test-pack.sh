@@ -189,50 +189,96 @@ grep -E '^      - uses: taiki-e/install-action@[0-9a-f]{40}$' "$workflow" >/dev/
 grep -E '^          tool: .*(^|,| )uv@[0-9.]+($|,)' "$workflow" >/dev/null || fail "CI installs uv"
 grep -x -F "          uv python install --no-config --no-bin --mirror $mirror \"\$(cat pack/.python-version)\"" "$workflow" >/dev/null ||
   fail "CI installs the Python the pack pins, with no configuration, from GitHub's releases only"
-grep -x -F "          key: python-\${{ hashFiles('pack/.python-version') }}" "$workflow" >/dev/null ||
-  fail "CI's cache is keyed by the pinned Python"
+grep -x -F "          key: python-\${{ hashFiles('pack/.python-version', 'scripts/tool-versions.txt') }}" "$workflow" >/dev/null ||
+  fail "CI's cache is keyed by the pinned Python and the pinned tools"
 grep -x -F "          cache-directories: \${{ runner.temp }}/uv-python" "$workflow" >/dev/null &&
   grep -x -F "          UV_PYTHON_INSTALL_DIR: \${{ runner.temp }}/uv-python" "$workflow" >/dev/null ||
   fail "CI installs the Python into the folder it caches"
 
-# Every install of a Python names GitHub's releases as the only place to download from.
-# Without the mirror, uv tries its maker's own host first (releases.astral.sh), which the
-# owner has not approved (docs/plans/m1c-local-pack.md, "Origins"). So a line of a tracked
-# file that installs a Python with uv (the workflow, a script, the justfile, a document
-# that gives the command) must, on the same line, pass `--mirror` or set
-# UV_PYTHON_INSTALL_MIRROR to exactly that address. The script tests are left out: they
-# plant such lines on purpose. Not found: a command split over two lines, or written
-# another way than `uv python install` with spaces between.
-# unmirrored <folder>: prints each tracked line that breaks the rule, as <file>:<line>.
-unmirrored() {
+# What uv may be told to do in this repo, so that it contacts no host the owner has not
+# approved (docs/plans/m1c-local-pack.md, "Origins"). Three rules, over the lines of tracked
+# files. The script tests are left out: they plant such lines on purpose.
+#
+# 1. Every line that installs a Python with uv names GitHub's releases as the only place to
+#    download from: `--mirror <address>` or `UV_PYTHON_INSTALL_MIRROR=<address>`, the
+#    address exactly, on the same line, before any comment the line ends with. Without
+#    it, uv tries its maker's own host first. Over every tracked file, documents included.
+# 2. No line runs uv's update of itself or names its maker's install script or download
+#    host: each tries that host. Over every tracked file but those under `docs/`, which
+#    may name the host to say that it is switched off.
+# 3. Every line that runs `uv run`, `uv sync` or `uv python find` turns the download of a
+#    Python off on that line (`--no-python-downloads` or `UV_PYTHON_DOWNLOADS=never`),
+#    so that no other command fetches one. Over every tracked file but those under
+#    `docs/`, where the plan names commands that later tasks write with their own flags.
+#
+# Not found: a command split over two lines or written another way (an alias, a variable
+# for `uv`, quotes between its words); a line under `docs/` for rules 2 and 3.
+# uv_rules <folder>: prints each tracked line that breaks a rule, as <file>:<line>.
+uv_rules() {
+  local install='uv[[:space:]]+python[[:space:]]+install'
+  local maker='uv[[:space:]]+self[[:space:]]+update|astral\.sh/uv/install|releases\.astral\.sh'
+  local fetches='(^|[^A-Za-z0-9_./-])uv([[:space:]]+-[^[:space:]]*)*[[:space:]]+(run|sync|python[[:space:]]+find)([[:space:]"]|$)'
   local found
-  found=$(git -C "$1" -c grep.threads=1 grep -n -I -E -e 'uv[[:space:]]+python[[:space:]]+install' -- \
-    ':!scripts/tests' 2>/dev/null || true)
-  found=$(printf '%s\n' "$found" | grep -v -F -e "--mirror $mirror " -e "UV_PYTHON_INSTALL_MIRROR=$mirror " |
-    grep -v '^$' || true)
-  [ -z "$found" ] || { printf '%s\n' "$found" | cut -d: -f1,2; return 1; }
+  found=$(
+    {
+      git -C "$1" -c grep.threads=1 grep -n -I -E -e "$install" -- ':!scripts/tests' 2>/dev/null |
+        awk -v need="(--mirror |UV_PYTHON_INSTALL_MIRROR=)$mirror"'([[:space:]"]|$)' -v cmd="$install" '
+          { i = index($0, ":"); j = i + index(substr($0, i + 1), ":"); code = substr($0, j + 1)
+            bare = code; sub(/[[:space:]]#.*$/, "", bare); if (bare ~ cmd) code = bare
+            if (code !~ need) print substr($0, 1, j - 1) }' || true
+      git -C "$1" -c grep.threads=1 grep -n -I -E -e "$maker" -- ':!scripts/tests' ':!docs' 2>/dev/null |
+        awk '{ i = index($0, ":"); j = i + index(substr($0, i + 1), ":"); print substr($0, 1, j - 1) }' || true
+      git -C "$1" -c grep.threads=1 grep -n -I -E -e "$fetches" -- ':!scripts/tests' ':!docs' 2>/dev/null |
+        awk -v cmd="$fetches" '
+          { i = index($0, ":"); j = i + index(substr($0, i + 1), ":"); code = substr($0, j + 1)
+            bare = code; sub(/[[:space:]]#.*$/, "", bare); if (bare ~ cmd) code = bare
+            if (code !~ /--no-python-downloads|UV_PYTHON_DOWNLOADS=never/) print substr($0, 1, j - 1) }' || true
+    } | grep -v '^$' || true
+  )
+  [ -z "$found" ] || { printf '%s\n' "$found"; return 1; }
 }
-expect_pass "every Python installed in this repo comes from GitHub's releases" unmirrored .
+expect_pass "uv in this repo contacts no host the owner has not approved" uv_rules .
 grep -F "$mirror" scripts/test-pack.sh >/dev/null || fail "test-pack names the mirror in its refusal"
+# plant <folder> <file> <line>: a repository whose one tracked file holds the line second.
+plant() {
+  git init -q "$1"
+  mkdir -p "$1/$(dirname "$2")"
+  printf 'first line\n%s\n' "$3" >"$1/$2"
+  git -C "$1" add "$2"
+}
 n=0
 for planted in 'uv python install 3.12.15' 'run: uv  python install --no-bin "$v"' \
-  'UV_PYTHON_INSTALL_MIRROR=https://releases.astral.sh/x uv python install 3.12' \
-  "uv python install --mirror ${mirror}x 3.12" 'uv python install 3.12  # see --mirror'; do
+  'UV_PYTHON_INSTALL_MIRROR=https://releases.example/x uv python install 3.12' \
+  "uv python install --mirror ${mirror}x 3.12" 'uv python install 3.12  # see --mirror' \
+  "uv python install 3.12  # --mirror $mirror"; do
   for name in .github/workflows/ci.yml justfile scripts/a.sh docs/notes.md; do
     n=$((n + 1))
-    git init -q "$tmp/m$n"
-    mkdir -p "$tmp/m$n/$(dirname "$name")"
-    printf 'first line\n%s\n' "$planted" >"$tmp/m$n/$name"
-    git -C "$tmp/m$n" add "$name"
-    expect_fail "'$planted' in $name" "$name:2" unmirrored "$tmp/m$n"
+    plant "$tmp/m$n" "$name" "$planted"
+    expect_fail "'$planted' in $name" "$name:2" uv_rules "$tmp/m$n"
   done
 done
-for allowed in "uv python install --mirror $mirror 3.12" "UV_PYTHON_INSTALL_MIRROR=$mirror uv python install 3.12"; do
+for planted in 'uv self update 0.12.23' 'curl -LsSf https://astral.sh/uv/install.sh | sh' \
+  'see https://releases.astral.sh/github/uv' \
+  'uv run python x.py' 'uv sync --locked' 'uv --no-config python find 3.12' \
+  'cd pack && uv --offline sync' 'uv sync --locked  # --no-python-downloads'; do
+  for name in .github/workflows/ci.yml justfile scripts/a.sh AGENTS.md; do
+    n=$((n + 1))
+    plant "$tmp/m$n" "$name" "$planted"
+    expect_fail "'$planted' in $name" "$name:2" uv_rules "$tmp/m$n"
+  done
+  # Rules 2 and 3 leave documents under docs/ alone.
   n=$((n + 1))
-  git init -q "$tmp/m$n"
-  printf '%s\n' "$allowed" >"$tmp/m$n/justfile"
-  git -C "$tmp/m$n" add justfile
-  expect_pass "'$allowed'" unmirrored "$tmp/m$n"
+  plant "$tmp/m$n" docs/notes.md "$planted"
+  expect_pass "'$planted' in docs/notes.md" uv_rules "$tmp/m$n"
+done
+for allowed in "uv python install --mirror $mirror 3.12" "UV_PYTHON_INSTALL_MIRROR=$mirror uv python install 3.12" \
+  "uv python install --mirror $mirror \"\$v\"  # from GitHub" \
+  'UV_PYTHON_DOWNLOADS=never uv sync --locked' 'uv --no-python-downloads run x' \
+  'uv --no-config --offline --no-python-downloads --managed-python python find "$pinned") >"$answer" &' \
+  '# uv runs in the background' 'the uv runner, sync it'; do
+  n=$((n + 1))
+  plant "$tmp/m$n" justfile "$allowed"
+  expect_pass "'$allowed'" uv_rules "$tmp/m$n"
 done
 
 finished
