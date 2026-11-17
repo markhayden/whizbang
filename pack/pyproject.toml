@@ -1,11 +1,14 @@
 # The Python pack: the worker whizbang starts for a local model (docs/plans/m1c-local-pack.md,
-# D9 and D10). Its core takes no third-party package, so this file names no dependency and
-# no build backend: `tool.uv.package = false` means the project itself is neither built nor
-# installed, and nothing is fetched from a package index for it. The runtime a model needs
-# comes later, as an extra, installed only where a model runs.
+# D9 and D10; docs/adr/0021-installing-the-pack.md). Its core takes no third-party package, so
+# `dependencies` is empty and no build backend is named: `tool.uv.package = false` means the
+# project itself is neither built nor installed, and nothing is fetched from a package index
+# for it. The runtime a model needs is an extra, installed only where a model runs, by
+# `whizbang setup --extra torch`.
 #
 # The Python is pinned in `.python-version` beside this file; `just test-pack` runs the
-# tests with that Python and no other (scripts/test-pack.sh).
+# tests with that Python and no other (scripts/test-pack.sh). Every package of every extra
+# is pinned by version and hash in `uv.lock` beside this file, made on the owner's Mac
+# (task Y1) and checked by `whizbang setup` before it installs anything.
 [project]
 name = "whizbang-pack"
 version = "0.0.0"
@@ -13,5 +16,15 @@ description = "The worker whizbang starts for a local model."
 requires-python = "==3.12.*"
 dependencies = []
 
+[project.optional-dependencies]
+# Candidate A of the plan's D8: PyTorch, and SAM 3 through the `transformers` library,
+# whose image processor for SAM 3 imports `torchvision`.
+torch = ["torch==2.15.0", "torchvision==0.29.2", "transformers==5.23.0"]
+
 [tool.uv]
 package = false
+# The platforms the lock is made for: the Mac (Apple silicon) and Linux on x86-64.
+environments = [
+  "sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]

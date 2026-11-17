@@ -1,7 +1,7 @@
-//! What the stubs of the binary share (plan 1C, task C1a): `whizbang backends` and
-//! `setup` are there so that their places in the binary are, and each is built by its
-//! own task, in its own file. This file goes with the last of them. (`models` was the
-//! third, until task N3b built it.)
+//! What the stubs of the binary share (plan 1C, task C1a): `whizbang backends` is there
+//! so that its place in the binary is, and is built by its own task, in its own file.
+//! This file goes with it. (`models` was a stub until task N3b built it, and `setup`
+//! until task Y1 did.)
 
 use std::ffi::OsString;
 

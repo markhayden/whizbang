@@ -10,6 +10,7 @@ mod import;
 mod models;
 mod rascal;
 mod runs;
+mod setup;
 mod spend;
 mod store;
 mod stubs;
