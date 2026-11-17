@@ -89,13 +89,19 @@
 //! [`RESTART_PAUSE`] of the clock has passed since the last: a request meanwhile is
 //! refused at once, so that nothing starts a worker in a loop. The queue in front of the
 //! one worker is [`super::queue`].
+//!
+//! **Its end from another thread** (task P5b): the queue's end sets the worker's halt
+//! ([`Worker::halt`]), which needs no lock of the worker. The call in the worker ends at
+//! its next look, `unavailable`, and the worker is killed and waited for; a worker being
+//! started is ended at its next look; no worker is started after. So whoever ends the
+//! supervisor never waits for a call that would not end.
 
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdin, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
@@ -373,6 +379,8 @@ enum WaitEnd {
     Limit,
     Deadline,
     Cancel,
+    /// The supervisor was ended ([`Worker::halt`]).
+    Halted,
 }
 
 /// What the thread that reads the worker's output hands on: each message, a request of
@@ -540,6 +548,9 @@ pub struct Worker {
     /// deadline or cancel; and when the last of them ended.
     failed_in_a_row: u32,
     last_failed: Option<Instant>,
+    /// Set by whoever ends the supervisor (task P5b, [`Worker::halt`]): a call in the
+    /// worker is ended at its next look, the worker killed, and no worker is started.
+    halt: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for Worker {
@@ -574,12 +585,48 @@ impl Worker {
             answered: false,
             failed_in_a_row: 0,
             last_failed: None,
+            halt: Arc::default(),
         }
+    }
+
+    /// What ends this supervisor from another thread, without waiting for the call in
+    /// the worker (task P5b): once it is set, the call in the worker ends at its next
+    /// look (the looks are a pause of [`PACE`] apart), `unavailable`, and the worker is
+    /// killed and waited for; a worker being started is ended at its next look too; and
+    /// no worker is started again. It is never taken back.
+    pub(super) fn halt(&self) -> Arc<AtomicBool> {
+        self.halt.clone()
+    }
+
+    fn halted(&self) -> bool {
+        self.halt.load(Ordering::SeqCst)
+    }
+
+    /// Whether the next start waits for [`RESTART_PAUSE`]: [`STARTS_FAILED_MOST`]
+    /// workers in a row ended before they answered anything, and the pause after the
+    /// last has not passed on the clock.
+    pub(super) fn paused(&self) -> bool {
+        self.last_failed.is_some_and(|last| {
+            self.failed_in_a_row >= STARTS_FAILED_MOST
+                && last
+                    .checked_add(RESTART_PAUSE)
+                    .is_none_or(|until| self.clock.now() < until)
+        })
+    }
+
+    /// Whether the worker started last said its hello.
+    pub(super) fn said_hello(&self) -> bool {
+        self.said.is_some()
     }
 
     /// The clock the supervisor goes by.
     pub fn clock(&self) -> Arc<dyn Clock> {
         self.clock.clone()
+    }
+
+    /// The secrets it was told of.
+    pub(super) fn secrets(&self) -> Secrets {
+        self.secrets.clone()
     }
 
     /// The same, where the config names these variables as keys: none of them is
@@ -634,13 +681,13 @@ impl Worker {
                 "the pack's Python is not installed; run whizbang setup",
             ));
         }
-        let paused = self.last_failed.is_some_and(|last| {
-            self.failed_in_a_row >= STARTS_FAILED_MOST
-                && last
-                    .checked_add(RESTART_PAUSE)
-                    .is_none_or(|until| self.clock.now() < until)
-        });
-        if paused {
+        if self.halted() {
+            return Err(refusal(
+                FaultKind::Unavailable,
+                "the supervisor of the pack's worker was ended; no worker is started",
+            ));
+        }
+        if self.paused() {
             return Err(refusal(
                 FaultKind::Unavailable,
                 &format!(
@@ -858,6 +905,13 @@ impl Worker {
             loop {
                 match running.next() {
                     Some(Some(Heard::Said(Message::Event { id: of, text }))) if of == id => {
+                        // The worker speaks of a request only once it has read it whole,
+                        // which can come before the writer says it wrote it: it is told
+                        // as written first.
+                        if wrote.is_none() {
+                            wrote = Some(true);
+                            watch(Progress::Written { worker: pid });
+                        }
                         events.push(text);
                         watch(Progress::Event);
                     }
@@ -898,6 +952,10 @@ impl Worker {
                     (end, why) = (Some(stop_by), WaitEnd::Cancel);
                 }
                 watch(Progress::CancelSent);
+            }
+            if self.halted() {
+                why = WaitEnd::Halted;
+                break;
             }
             if look == most || end.is_none_or(|end| self.clock.now() >= end) {
                 break;
@@ -963,6 +1021,10 @@ impl Worker {
                 // The kill ends a write the worker did not take, and the writer with it.
                 let ended = self.finish(running);
                 let (kind, words) = match (cancel_sent, why) {
+                    (_, WaitEnd::Halted) => (
+                        FaultKind::Unavailable,
+                        "the pack's worker was killed when its supervisor was ended".to_owned(),
+                    ),
                     (false, WaitEnd::Deadline) => (
                         FaultKind::TimedOut,
                         "the request's deadline passed before the pack's worker ended it, and the worker was killed".to_owned(),
@@ -987,8 +1049,8 @@ impl Worker {
                     ),
                 };
                 let fault = stage(Fault::new(kind, &words), &taken);
-                // Ended at the caller's deadline or cancel, the worker is not counted as
-                // one that fails at its start.
+                // Ended at the caller's deadline or cancel, or with its supervisor, the
+                // worker is not counted as one that fails at its start.
                 let counts = !cancel_sent && why == WaitEnd::Limit;
                 return Err((self.failed(fault, None, Some(ended)), counts));
             }
@@ -1203,7 +1265,20 @@ impl Worker {
             role: Role::Whizbang,
         };
         self.tell(&running, hello);
-        let heard = self.until(HELLO_LIMIT, || running.next());
+        // A supervisor that is ended stops the wait at once: the worker is killed.
+        let heard = self.until(HELLO_LIMIT, || {
+            if self.halted() {
+                return Some(None);
+            }
+            running.next()
+        });
+        if self.halted() {
+            self.finish(running);
+            return Err(refusal(
+                FaultKind::Unavailable,
+                "the pack's worker was killed while it was started, when its supervisor was ended",
+            ));
+        }
         let (kind, sentence, told) = match heard {
             Some(Some(Heard::Said(Message::Hello {
                 id,

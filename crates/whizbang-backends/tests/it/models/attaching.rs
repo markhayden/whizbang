@@ -654,19 +654,19 @@ fn an_install_says_installing_before_anything_else_whether_it_downloads_or_finds
 /// own.
 const ROOT_FOR_CHILD: &str = "WHIZBANG_TEST_MODELS_ROOT";
 
-pub(super) fn root_from_parent() -> PathBuf {
+pub(crate) fn root_from_parent() -> PathBuf {
     PathBuf::from(std::env::var_os(ROOT_FOR_CHILD).unwrap())
 }
 
 /// Says one line to the process that started this one.
-pub(super) fn say(line: &str) {
+pub(crate) fn say(line: &str) {
     let mut out = std::io::stdout().lock();
     writeln!(out, "\n{line}").unwrap();
     out.flush().unwrap();
 }
 
 /// Waits for one line from the process that started this one.
-pub(super) fn told() -> String {
+pub(crate) fn told() -> String {
     let mut line = String::new();
     std::io::stdin().lock().read_line(&mut line).unwrap();
     line
@@ -682,7 +682,7 @@ pub(super) fn told() -> String {
 /// (`--test-threads=1`), and that test makes no process; and it does not outlive the
 /// test that started it: when this is dropped, by the test's end or by a failed
 /// assertion, the process is killed if it is still there, and waited for.
-pub(super) struct Other {
+pub(crate) struct Other {
     child: Child,
     lines: Lines<BufReader<ChildStdout>>,
 }
@@ -697,7 +697,7 @@ impl Drop for Other {
 impl Other {
     /// Runs the test of this whole name, as `models::attaching::…`, in a process of
     /// its own, told of this models directory.
-    pub(super) fn running(test: &str, root: &Path) -> Other {
+    pub(crate) fn running(test: &str, root: &Path) -> Other {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -718,7 +718,7 @@ impl Other {
 
     /// Waits for the line the other process says that starts with this word, and
     /// gives what follows the word.
-    pub(super) fn says(&mut self, word: &str) -> String {
+    pub(crate) fn says(&mut self, word: &str) -> String {
         let prefix = format!("{word} ");
         let line = self
             .lines
@@ -737,7 +737,7 @@ impl Other {
     }
 
     /// Kills the other process, and waits until it is gone: its locks are let go.
-    pub(super) fn killed(&mut self) {
+    pub(crate) fn killed(&mut self) {
         self.child.kill().unwrap();
         self.child.wait().unwrap();
     }

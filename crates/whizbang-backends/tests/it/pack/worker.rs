@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use whizbang_backends::models::ModelsDir;
 use whizbang_backends::pack::proto::{Ask, Raster};
 use whizbang_backends::pack::queue::Supervisor;
 use whizbang_backends::pack::worker::{
@@ -71,17 +72,31 @@ pub(super) fn queued<C: Clock + 'static>(
     clock: Arc<C>,
     change: impl FnOnce(&mut Launch),
 ) -> Guard<Arc<Supervisor>> {
-    kit::fakes(fault).guard(
+    queued_over(fault, clock, change).0
+}
+
+/// The same, and the fixture's models directory, where the supervisor reads the counts
+/// of removals (task P5b) and which the worker is told of. It lives as long as the guard.
+pub(super) fn queued_over<C: Clock + 'static>(
+    fault: Option<&str>,
+    clock: Arc<C>,
+    change: impl FnOnce(&mut Launch),
+) -> (Guard<Arc<Supervisor>>, PathBuf) {
+    let mut root = PathBuf::new();
+    let guard = kit::fakes(fault).guard(
         |fixture| {
             let mut launch = launch(fixture);
             change(&mut launch);
+            root = fixture.models_dir.clone();
+            let models = ModelsDir::at(Arc::new(RealFs), &fixture.models_dir);
             let worker = Worker::new(launch, clock, Secrets::none()).with_spawn(kit::spawn);
-            Arc::new(Supervisor::new(worker))
+            Arc::new(Supervisor::new(worker, models))
         },
         |supervisor| {
             supervisor.kill();
         },
-    )
+    );
+    (guard, root)
 }
 
 /// The same, with the supervisor `make` makes from the fixture.

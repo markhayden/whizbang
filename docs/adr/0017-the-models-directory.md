@@ -1713,7 +1713,13 @@ another process by the mark alone.
   found on the disk, asks neither its cancellation nor the mark until it is done:
   the mark stops it at the publication, under the directory's lock. And an
   install that stopped for a mark whose remover then died is not started again by
-  anything here: it is asked for again.
+  anything here: it is asked for again. *An install that lands at a removal's
+  end* (stated by task P5b, from the review of task P5a): a removal lets the
+  model's lock go when it has drained, and only then takes its mark off and lets
+  the remover's lock go (step 6). An install that takes the model's lock in that
+  moment finds a mark whose remover is alive, at its first look where it asks its
+  cancellation, and ends as `InstallRefused::Draining`, as it would a moment
+  before; asked again once the mark is off, it goes on.
 
 **A mark is live only while its remover is, and the count of removals** (task P5a
 of checkpoint 1C; the plan's decisions D6 and D5). Code: `remove.rs` (`draining`,
@@ -1747,8 +1753,8 @@ reads a process id, a time or a host name, and nothing is signalled.
   directory's lock; an install's own look at the mark where it asks its
   cancellation, and the look by which it takes a dead remover's mark off; and one
   who holds no lock and lists models (`models::draining` itself; the command is
-  task N3b's). The supervisor of the worker asks it too, when it is built (task
-  P5b). The three who decide go through one function (`remove::stops`): yes and a
+  task N3b's). The supervisor of the worker asks it too, of a queued request whose
+  count has not moved (task P5b; ADR 0020, "The worker", "Removal"). The three who decide go through one function (`remove::stops`): yes and a
   refusal both stop them, so a live remover's mark that cannot be read stops
   them as before; a file system that refused is an error and not a yes
   (`remove::a_hold_that_meets_the_mark_of_a_remover_that_was_killed_is_given`, of a
@@ -1801,13 +1807,27 @@ reads a process id, a time or a host name, and nothing is signalled.
   removal that sets its mark: a hold given before the damage can then have a
   count equal to a later one, and a removal is not seen by it; the removal
   still waits for that hold, as for any other, and deletes nothing under it.
+  Its owner is task P5b of checkpoint 1C, which leaves it as this line and says
+  what follows from it: from the damage until the next removal of the model sets
+  its mark, every hold on the model is refused as `Damaged`, so the model takes
+  no new request; and every request queued for it in the worker's queue, which
+  reads the count, is ended there, never sent, at its next read (ADR 0020, "The
+  worker", "Removal"). The next removal, whether it ends well or busy, writes a
+  count over the damage, and the model takes requests again.
   *A mark with no count raised* is not written by whizbang; one written by hand,
   under a remover's lock held by hand, stops holds and moves no count.
 
-**For the tasks that follow.** *P5b:* the supervisor is told of a removal in its
+**For the tasks that follow.** *P5b* (built): the supervisor is told of a removal in its
 own process, and for a removal in another reads `models::removals` for each queued
 request and compares it with the count that request's hold returned; it asks
-`models::draining` and no other question of a mark. *P6b:* what carries a hold's
+`models::draining` and no other question of a mark. A removal tells its caller each
+time it sets its mark through `models::remove_and_tell` (`remove` is the same with
+no one told), whose caller tells the supervisor; what the supervisor does with each
+is ADR 0020, "The worker", "Removal". The remover keeps its lock until its mark is
+off, however it ends, so that the mark is live to its last moment
+(`remove::the_remover_keeps_its_lock_until_its_mark_is_off`, which stops a removal
+just before it takes its mark off, at its end, and finds a share of the remover's
+lock refused there; from the review of task P5a). *P6b:* what carries a hold's
 count to the queue is not built here. `Hold::removals` is where it starts; the
 lease (`inventory.rs`, `Leased`) has the hold and hands nothing on yet. ADR 0015
 must be amended by that task, in "A wrapper around each request" and in "An

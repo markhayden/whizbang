@@ -509,10 +509,10 @@ does around the frames ("The worker", task P4), since they change no byte.
 
 ### The worker
 
-Added by task P4; no byte of `pack/1` changed. The code is
+Added by task P4, and amended by task P5b; no byte of `pack/1` changed. The code is
 `crates/whizbang-backends/src/pack/queue.rs` and `worker.rs`; the tests are in
-`crates/whizbang-backends/tests/it/pack/queue.rs`. All of it is on the supervisor's
-injected clock.
+`crates/whizbang-backends/tests/it/pack/queue.rs` and, for removal, `removal.rs`. All of
+it is on the supervisor's injected clock.
 
 **The queue.** One supervisor in a process (plan 1C, D4) holds the one worker and a
 queue in front of it. A request takes a number and a place at the back; at most **16**
@@ -522,7 +522,11 @@ request's turn is the front of the queue with no turn holding the worker: one ca
 in the worker at a time, in the order the requests came. The turn runs on its caller's
 own thread, so the queue makes no thread; each worker still has the supervisor's three
 (plan 1C, "Rules", "Threads in whizbang"). A request keeps the count of removals its
-hold was given while it waits (D5); comparing it with the model's is task P5b's.
+hold was given while it waits (D5); task P5b compares it with the model's ("Removal",
+below). A waiting request sleeps until the earliest of its deadline, its longest wait
+and its next read of that count, or until the queue changes (task P5b, from the review
+of task P4: until then every waiting request woke every 5 ms); so its cancel is seen
+within 250 ms.
 
 **A turn.** The worker holds one resident model: its name, installation and settings.
 A turn whose own are not resident first sends an `unload` of the resident one, then a
@@ -541,6 +545,11 @@ the current call and then unloads the first. Each of the three is one request of
 | Waiting | Its deadline | `timed_out`, `not_sent` | the request's deadline passed while it waited in the queue of the pack's worker; it was not sent |
 | Waiting, with no deadline | 5,840 s of the clock: the turns of every request that can be ahead of it, each at most 365 s (a hello, an unload, a load, a call, a cancel's limit, and six of 5 s) | `timed_out`, `not_sent` | the request waited 5840 seconds in the queue … the most the calls ahead of it can take; it was not sent |
 | Waiting | A restart | `unavailable`, `not_sent` | the pack's worker was restarted before this request's turn came; it was not sent |
+| Waiting | A removal of its model in this process, which tells the supervisor when it sets its mark (task P5b) | `rejected`, `not_sent` | the model is being removed; the request was ended while it waited in the queue of the pack's worker, and was not sent |
+| Waiting, or taken off the queue | Its model's count of removals, read every 250 ms of the clock and when it is taken off the queue, has moved from the one its hold was given (task P5b) | `rejected`, `not_sent` | a removal of the model began after the request's hold was given; the request was ended while it waited in the queue of the pack's worker, and was not sent |
+| Waiting, or taken off the queue | That count cannot be read as one | `rejected`, `not_sent` | the model's count of removals cannot be read; the request was ended … |
+| Waiting, or taken off the queue | The count as its own, and the model draining: a mark under a live remover, or what is no mark there under one (`models::draining`, D6) | `rejected`, `not_sent` | the model is being removed; the request was ended … |
+| Waiting, or asked | The supervisor ended (`Supervisor::kill`, task P5b) | `unavailable`, `not_sent` | the supervisor of the pack's worker was ended before this request's turn came; it was not sent |
 | In its turn, before a byte is written | Its cancel or deadline (looked at before the worker is started, and again after its hello) | `cancelled` or `timed_out`, `not_sent` | … before the pack's worker was asked, or while the pack's worker was started; it was not sent |
 | In its turn, the worker not started again | Three workers in a row that ended before they answered anything (below) | `unavailable`, `not_sent` | the pack's worker ended before it answered anything 3 times in a row; no worker is started until 60 seconds after the last |
 | In the worker | Its result, or the worker's `error` for it | none, or the worker's fault, `answered` | the pack's worker ended the request with the fault … |
@@ -549,10 +558,26 @@ the current call and then unloads the first. Each of the three is one request of
 | In the worker | Its cancel, then 5 s | `cancelled`; the worker killed | the pack's worker did not stop the cancelled request within 5 seconds of its cancel and was killed |
 | In the worker | Its cancel, then its deadline or its kind's limit, when earlier | `cancelled`; the worker killed | the pack's worker had not stopped the cancelled request by the end of its wait and was killed |
 | In the worker | The worker ends, breaks the protocol, or cannot be written to | as task P3b made them (`unavailable`, `malformed`, `too_large`) | as task P3b made them |
+| In the worker, or being started | The supervisor ended (`Supervisor::kill`, task P5b): at the call's next look, without waiting for the call | `unavailable`; the worker killed | the pack's worker was killed when its supervisor was ended (… while it was started, when its supervisor was ended) |
+
+The row of a cancel and then a deadline is
+`queue::a_cancelled_call_whose_deadline_comes_before_five_seconds_after_its_cancel_is_killed_at_its_deadline_as_cancelled`
+(task P5b, from the review of task P4).
 
 A request in the worker that ended it is `unresolved` once a byte of it left, and
-`not_sent` when none did (task P3b). Each sentence of one that ended the worker ends
-"; the pack's worker is restarted for the next request".
+`not_sent` when none did (task P3b). Each sentence of one that ended the worker then
+says what the next request finds (changed by task P5b, from the review of task P4: until
+then every such sentence ended "; the pack's worker is restarted for the next request",
+which was false after the third failure in a row and at a start that failed):
+
+- "; the pack's worker is restarted for the next request", of a worker that said its
+  hello, when the next start does not wait;
+- "; it said no hello, and the next request starts another worker", of a worker that
+  ended before its hello, when the next start does not wait;
+- "; 3 workers in a row ended before they answered anything, and no worker is started
+  until 60 seconds after the last", when it does
+  (`queue::a_fault_that_ended_the_worker_at_its_start_says_what_the_next_request_finds`);
+- nothing more, when the supervisor was ended.
 
 **Cancellation is cooperative.** A cancel is not a flag the supervisor keeps: it is the
 caller's signal (`Cancellation`, ADR 0008), looked at between two looks at the worker's
@@ -578,12 +603,57 @@ in that time is refused at once, as the table says; one after it starts one work
 if that one ends the same way the pause begins again. So a worker that dies at every
 start is started at most once a minute, by a request, after the first three.
 
+**Removal** (task P5b; plan 1C, D5 and D6; ADR 0017, "Removal"). The supervisor is
+made with the models directory the worker is told of, and reads counts of removals
+there. Two ways reach the queue, and neither can be missed:
+
+- **A removal in this process** is made by `models::remove_and_tell`, which tells its
+  caller each time it sets its mark, with the count raised; the caller tells the
+  supervisor (`Supervisor::removing`). Every request waiting for the model ends at once,
+  `rejected` and `not_sent`, and its caller lets its hold go; when the model is resident
+  and no turn holds the worker, a turn of the supervisor's own unloads it, on the
+  remover's thread, within the limit of an unload, and the journal numbers that unload
+  0 (`removal::a_removal_refuses_new_requests_cancels_the_queued_ones_and_waits_for_the_current_call`,
+  `removal::a_removal_in_this_process_unloads_the_model_that_was_resident_and_idle`).
+- **A removal in another process** tells nothing. Each waiting request reads its
+  model's count every 250 ms of the clock, and again when it is taken off the queue,
+  without the queue's lock; a count that has moved from its own, or cannot be read,
+  ends it, `rejected` and `not_sent`, whether or not the mark is still there. With the
+  count as its own, it asks `models::draining`, the one question of a mark (D6), and a
+  yes or a refusal ends it the same way: only a mark set by hand, under a remover's lock
+  held by hand, moves no count
+  (`removal::a_removal_from_a_second_process_cancels_the_queued_requests_within_the_interval_while_another_call_holds_the_worker`,
+  `removal::a_removal_that_began_and_timed_out_between_two_looks_still_cancels_the_requests_queued_before_it`).
+
+New requests are refused by the lease, whose hold the mark refuses (1B). The current
+call is not ended: the removal waits for its hold, which is let go when the call is
+over. A removal that times out takes its mark off, and the model takes requests again:
+a hold given then has the raised count, and its request is not ended
+(`removal::a_removal_whose_wait_times_out_answers_busy_and_the_model_takes_requests_again`).
+The mark of a remover that died stops nothing here either
+(`removal::after_a_remover_was_killed_with_its_mark_set_a_request_for_the_model_is_answered_by_the_worker`,
+with a real process that is killed). One limit, stated by D5: an idle worker in another
+process keeps a removed model in memory until its next request or its end; no request
+is answered from it, since the lease refuses every one.
+
+**Its end** (`Supervisor::kill`; task P5b, from the review of task P4, which found that
+the test kit's guard waited for a call in the worker that would not end, so that a test
+that failed hung until the runner's limit). Every request waiting ends, as the table
+says; the call in the worker ends at its next look (a pause of 5 ms of the clock apart),
+and the worker is killed and waited for; a worker being started is ended the same way;
+and nothing is taken after, a request asked then refused at once and no worker started
+(`queue::the_guard_ends_the_call_in_its_worker_at_once_and_every_waiting_request`, with
+a call to `fake-deaf` and a request waiting behind it).
+
 **What the supervisor tells.** Its status (who waits, with each one's number, model and
 count of removals; the call in the worker, its kind, its model, how many events it has
 said, whether it was written whole and whether its `cancel` was sent; the resident
 model; the worker's process id), a wait for a state of it, bounded on the clock, and a
 journal of the last 64 requests written to a worker, each with its request's number and
 the worker's process id. They are diagnostics, and what the tests of this section read.
+A call is told as written once the worker speaks of it in an event, which can come
+before the writer says it wrote it (task P5b: until then a status could show an event of
+a call whose worker it did not name yet, and P4's test of a slow load read it so).
 
 ## Consequences
 

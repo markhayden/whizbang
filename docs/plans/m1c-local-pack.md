@@ -1507,7 +1507,9 @@ with no sleep:
   clock, and a journal of the last 64 requests written to a worker; the tests read them
   and never sleep, on a clock that they move.
 - **The fault of the current call when its worker ended** keeps its kind and stage, and
-  its sentence gains "; the pack's worker is restarted for the next request".
+  its sentence gains "; the pack's worker is restarted for the next request". (Changed
+  by P5b: it now says what the next request finds, which those words did not after a
+  start that failed or the third failure in a row; ADR 0020, "The worker".)
 
 **Notes for P5b:** a waiting request is `queue::Waiting`, with its number, its model and
 `removals`, the count its hold was given (`queue::Request::removals`). Ending queued
@@ -1548,7 +1550,7 @@ the model). **Size:** medium.
 
 **Depends on:** P4, P5a.
 
-- [ ] D5: the supervisor is told of a removal in its process, and reads the count for
+- [x] D5: the supervisor is told of a removal in its process, and reads the count for
       queued requests by the clock and when it takes one off the queue.
 
 **Done when** these pass (`tests/it/pack/removal.rs`):
@@ -1561,6 +1563,66 @@ the model). **Size:** medium.
 - `removal::after_a_remover_was_killed_with_its_mark_set_a_request_for_the_model_is_answered_by_the_worker`
 
 **Carry-over:** what the worker's queue owes to removal. **Size:** small.
+**Built with the task:**
+
+- **Which test shows which clause.** "Told of a removal in its process": the first test
+  (the queued requests for the model end while the current call holds the worker, and
+  no other is ended) and the fifth (the model unloaded from the idle worker). "Reads the
+  count for queued requests by the clock": the second, on a clock that stands still
+  until the test moves it 250 ms, so the request is seen waiting before that and ended
+  after it, while another call holds the worker. "And when it takes one off the queue":
+  the third, whose removal began and timed out with the clock standing still, so that no
+  look by the clock came, and whose request is ended, never sent, when it is taken off
+  the queue; the first test's request for the other model, and the fourth's request
+  leased after the removal, are each read so and answered. The fourth and the sixth hold
+  that nothing is ended that should not be. D5's
+  other halves are the tests' too: new requests refused by the lease (the first), the
+  current call waited for (the first), busy at the deadline with the mark off (the
+  fourth). "Cancels", in the tests' names, is D5's "ended as refused": such a request
+  ends `rejected` and `not_sent`, the fault the lease gives a request it refuses, not
+  `cancelled`, which says that its run was cancelled.
+- **How a removal in this process tells the supervisor:** `models::remove_and_tell`, a
+  removal that tells its caller each time it sets its mark with the count raised
+  (`models::remove` is it with no one told), and `Supervisor::removing`, which the
+  caller calls then. Told after the mark and not before: every request leased before it
+  has the old count, and none is leased after it while the remover lives. The wiring
+  that calls it is P6a's.
+- **The supervisor asks `models::draining`** of a queued request whose count has not
+  moved, and no other question of a mark (D6; the carry-over row on a remover that
+  died, closed here). Only a mark set by hand under a remover's lock held by hand moves
+  no count. An unreadable count, or an answer of `draining` that is a refusal, ends the
+  request too: stopping is always safe (ADR 0017, its owner's line on a count that
+  cannot be read).
+- **Follow-ups of the review of P5a:** the remover keeps its lock until its mark is off
+  (`remove::the_remover_keeps_its_lock_until_its_mark_is_off`, a test more than "Done
+  when" names, in `tests/it/models/remove.rs`; a mutant that let the lock go before the
+  mark came off failed it); ADR 0017 states that an install landing between a removal's
+  letting go of the model's lock and its mark coming off ends `Draining`, and gives the
+  limit on a count that cannot be read an owner, this task, saying that a damaged count
+  refuses holds until the next removal.
+- **Follow-ups of the review of P4,** each in ADR 0020, "The worker":
+  - The test kit's guard waited for a call in the worker that would not end
+    (`fake-wait`, `fake-deaf`), so a test that failed hung until the runner's 30 s.
+    `Supervisor::kill`, which the guard calls, now ends the supervisor without waiting:
+    the call in the worker ends at its next look and the worker is killed, every
+    request waiting ends, nothing is taken after
+    (`queue::the_guard_ends_the_call_in_its_worker_at_once_and_every_waiting_request`).
+  - The words "the pack's worker is restarted for the next request" were false after
+    the third failure in a row (the next request is refused) and at a start that failed
+    (no worker had run): a fault that ended the worker now says what the next request
+    finds
+    (`queue::a_fault_that_ended_the_worker_at_its_start_says_what_the_next_request_finds`).
+  - ADR 0020's row of a cancel and then its deadline had no test:
+    `queue::a_cancelled_call_whose_deadline_comes_before_five_seconds_after_its_cancel_is_killed_at_its_deadline_as_cancelled`.
+  - A waiting request woke every 5 ms: it now sleeps until the earliest of its
+    deadline, its longest wait and its next read of the count, 250 ms at most, or until
+    the queue changes; the read of the count is in that loop.
+- **Found on the way:** a status could show an event of a call before the worker it was
+  written to, since an event can be read before the writer says it wrote the request;
+  P4's test of a slow load read the worker then, and failed once here. A call is now told
+  as written at its first event. P4's test of a queued request that keeps its count now
+  writes that count in the model's folder, since the count is read now.
+- Four tests more than "Done when" names: the four above.
 
 ### N1. The download client behind the checked downloader
 
