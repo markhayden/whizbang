@@ -2,12 +2,14 @@
 //! protocol's codec, the conformance suite and the worker's supervisor. So far the
 //! codec ([`proto`]), the folder of the fixed vectors, the supervisor's process and one
 //! call through it ([`worker`]), and the behavioural half of the conformance suite
-//! ([`conformance`]): each task adds its module here.
+//! ([`conformance`]), and the supervisor's queue, cancellation, deadlines and restart
+//! ([`queue`]): each task adds its module here.
 
 use std::path::Path;
 
 mod conformance;
 mod proto;
+mod queue;
 mod worker;
 
 /// The folder of the conformance suite's fixed vectors, from this crate's manifest.

@@ -1424,14 +1424,14 @@ inside a call; each joins `TABLE` as shown once P4 builds it.
 **Depends on:** P3b. **Reads:** `SPEC.md` section 4, "The worker"; ADR 0008,
 "Cancellation".
 
-- [ ] The supervisor's queue of D4, with one call in the worker at a time. A request for
+- [x] The supervisor's queue of D4, with one call in the worker at a time. A request for
       another model waits for the current call; then the old model is unloaded.
-- [ ] A cancelled call is sent `cancel`; one that has not ended by its deadline has its
+- [x] A cancelled call is sent `cancel`; one that has not ended by its deadline has its
       worker killed. A call past its own deadline ends as `timed_out` at the worker's
       boundary. A restart, and a worker that dies, end the current call and every
       queued request with a fault that says so; none is sent again. The next request
       starts a new worker; nothing starts one in a loop.
-- [ ] ADR 0020 gains "The worker": the queue's size, the states, what each fault says.
+- [x] ADR 0020 gains "The worker": the queue's size, the states, what each fault says.
 
 **Done when** these pass, in `tests/it/pack/queue.rs`, each on the injected clock and
 with no sleep:
@@ -1453,6 +1453,66 @@ with no sleep:
 
 **Carry-over:** a request past its deadline is cut off at the worker's boundary.
 **Size:** medium.
+**Built with the task:**
+
+- **Which test shows which clause.** Box one: the queue of D4,
+  `queue::the_seventeenth_waiting_request_is_refused_as_unavailable_and_not_held`; one
+  call at a time, `queue::requests_run_one_at_a_time_in_the_order_they_came`; another
+  model waits and the old one is unloaded,
+  `queue::a_request_for_another_model_waits_for_the_current_call_and_the_first_model_is_then_unloaded`
+  and `queue::two_requests_for_one_model_cause_one_load`. Box two: `cancel` sent,
+  `queue::a_cancelled_call_that_stops_ends_as_cancelled_and_the_worker_lives_on`; killed
+  at its deadline,
+  `queue::a_cancelled_call_that_has_not_stopped_at_its_deadline_has_its_worker_restarted`
+  and `queue::a_call_with_no_deadline_is_cut_off_at_the_kinds_limit_and_a_cancelled_one_five_seconds_after_its_cancel`;
+  `timed_out` at the boundary,
+  `queue::a_call_past_its_deadline_ends_as_timed_out_and_its_worker_is_restarted`; a
+  restart and a death end the current call and the queued ones, saying so,
+  `queue::a_restart_ends_the_current_call_and_every_queued_request_each_with_a_fault_that_says_the_worker_was_restarted`
+  and `queue::a_worker_that_exits_inside_a_call_fails_what_was_in_flight_and_the_next_request_starts_another`;
+  none sent again, `queue::nothing_that_was_dispatched_is_sent_again_after_a_restart`
+  and `queue::a_queued_request_that_is_cancelled_leaves_the_queue_and_is_never_sent`;
+  the next request starts a new worker, in each of the restart tests; nothing starts one
+  in a loop,
+  `queue::a_worker_that_ends_before_it_answers_anything_is_not_started_again_in_a_loop`
+  (a test more than "Done when" names). The limits of D7 for a `load` and an `unload`,
+  `queue::a_load_or_an_unload_that_does_not_end_within_its_limit_has_its_worker_killed`;
+  a flood, `queue::a_worker_that_floods_events_has_its_call_ended_as_malformed_and_is_restarted`.
+  Box three: ADR 0020, "The worker". The case table's five cases of P4 now name tests
+  that are here, and `conformance::every_case_of_the_table_names_the_fake_model_or_the_fake_fault_that_produces_it`
+  holds every case's test to the test files.
+- **The queue** (`whizbang_backends::pack::queue::Supervisor`) holds the worker and at
+  most 16 waiting requests (`QUEUED_MOST`); the 17th is refused at once, `unavailable`,
+  `not_sent`, and not held. A turn runs on its caller's thread: the queue makes no
+  thread, and a worker still has three (`pack::threads`, unchanged). A turn whose model,
+  installation and settings are not resident unloads the resident one and loads its
+  own; other settings for the same model are a reload. A request with no deadline waits
+  in the queue at most 5,840 s of the clock (`WAIT_LIMIT`: 16 turns of 365 s, the most a
+  turn can take), so every wait of the queue is finite on the clock too.
+- **Cancellation and deadlines** are the caller's (`pack::Limits`: a `Cancellation` of
+  the core's and an instant of the supervisor's clock), looked at between two looks at
+  the worker; the call in the worker waits until the earliest of its kind's limit, its
+  deadline and 5 s after its `cancel` (`CANCEL_LIMIT`), and past it the worker is killed
+  and waited for. A request cancelled or past its deadline before a byte of it is written
+  is not sent, and the worker lives on.
+- **The bound on restarts:** a worker that ends before it answered anything, at no
+  caller's deadline or cancel, counts; 3 in a row (`STARTS_FAILED_MOST`) and no worker is
+  started until 60 s of the clock after the last (`RESTART_PAUSE`). A request meanwhile
+  is refused at once, `unavailable`, `not_sent`, and says so. A worker that answers sets
+  the count to none.
+- **What the supervisor tells:** its status, a wait for a state of it bounded on the
+  clock, and a journal of the last 64 requests written to a worker; the tests read them
+  and never sleep, on a clock that they move.
+- **The fault of the current call when its worker ended** keeps its kind and stage, and
+  its sentence gains "; the pack's worker is restarted for the next request".
+
+**Notes for P5b:** a waiting request is `queue::Waiting`, with its number, its model and
+`removals`, the count its hold was given (`queue::Request::removals`). Ending queued
+requests is what a restart already does, in `Supervisor::call`; a removal can end those
+of one model the same way, `cancelled` or refused and `not_sent`, and read the count
+by the clock in `Supervisor::wait_for_turn`'s loop, which looks every 5 ms at most. The
+resident model is `Shared::resident`, and an idle worker is one with no turn
+(`Shared::turn`).
 
 ### P5a. A mark is live only while its remover is; the count of removals
 
@@ -2300,7 +2360,7 @@ Every row of `docs/carry-over.md` whose owner names 1C: thirty.
 | What a segmenter adapter took and gave | P1 (the order, diagnostics, settings in `load`), P6a (settings in the config) |
 | What a filler was sent beside an image and one plane | **Milestone 3, with the first fill backend.** 1C has none |
 | An adapter's keeping of the rule for a fault's sentence | P3b (the worker), N1 (the client) |
-| Nothing bounds what a backend builds; nothing cuts off one past its deadline | P1 (the bound), P4 (the deadline) |
+| Nothing bounds what a backend builds; nothing cuts off one past its deadline | P1 (the bound), P4 (the deadline, at the supervisor's boundary). **Added by P4:** P6a hands a request's bounds (its signal and deadline) to the queue, since no backend of the kind exists before it |
 | Whether a failed call may have been charged: `not_sent` | P3b, N1 |
 | The roster and the backends given apart | P6a |
 | The models directory's lock by 20,000 tries | N2 (a time in place of a count) |

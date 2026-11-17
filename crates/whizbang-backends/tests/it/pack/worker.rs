@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use whizbang_backends::pack::proto::{Ask, Raster};
+use whizbang_backends::pack::queue::Supervisor;
 use whizbang_backends::pack::worker::{
     CALL_LIMIT, END_LIMIT, HELLO_LIMIT, LINE_BYTES, LINES_KEPT, LINGERING, PASSED,
 };
@@ -60,6 +61,27 @@ pub(super) fn supervised(fault: Option<&str>, clock: Arc<dyn Clock>) -> Guard<Wo
     made(fault, |fixture| {
         Worker::new(launch(fixture), clock, Secrets::none())
     })
+}
+
+/// The queue of task P4 in front of a supervisor of the pack's fakes with this fault, on
+/// this clock, its launch changed by `change`, held by the test kit's guard, which kills
+/// its worker and waits for it.
+pub(super) fn queued<C: Clock + 'static>(
+    fault: Option<&str>,
+    clock: Arc<C>,
+    change: impl FnOnce(&mut Launch),
+) -> Guard<Arc<Supervisor>> {
+    kit::fakes(fault).guard(
+        |fixture| {
+            let mut launch = launch(fixture);
+            change(&mut launch);
+            let worker = Worker::new(launch, clock, Secrets::none()).with_spawn(kit::spawn);
+            Arc::new(Supervisor::new(worker))
+        },
+        |supervisor| {
+            supervisor.kill();
+        },
+    )
 }
 
 /// The same, with the supervisor `make` makes from the fixture.
