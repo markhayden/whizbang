@@ -862,7 +862,12 @@ fn the_guard_ends_the_call_in_its_worker_at_once_and_every_waiting_request() {
     dropping.join().unwrap();
     let killed = failed(call.join().unwrap());
     assert_eq!(killed.fault.kind(), FaultKind::Unavailable, "{killed:?}");
-    assert_eq!(killed.ended, Some(Ended::Killed));
+    // The kill closes the worker's input before it signals: a worker that ends at the
+    // end of its input first is reaped as having exited, and is gone either way.
+    assert!(
+        matches!(killed.ended, Some(Ended::Killed | Ended::Exited(0))),
+        "{killed:?}"
+    );
     assert_eq!(
         killed.fault.sentence(),
         "the pack's worker was killed when its supervisor was ended"
