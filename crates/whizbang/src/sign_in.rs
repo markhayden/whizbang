@@ -416,4 +416,39 @@ mod tests {
         }
         assert!(token_of("x".repeat(512).as_bytes()).is_ok());
     }
+
+    #[test]
+    fn a_fifo_opened_by_the_open_that_does_not_wait_is_opened_at_once_and_judged_no_regular_file() {
+        // Follow-up of the review of N4: the name may be swapped for a FIFO between the
+        // look and the open. The open that does not wait opens it at once, with no
+        // writer, and the opened file is judged no regular file. Were the flag lost,
+        // the open would wait for a writer: it runs on one thread of the test kit's,
+        // waited for ten seconds at most, after which a writer is opened to let it go
+        // and the test fails.
+        let scratch = whizbang_testkit::scratch::Scratch::new("sign-in-fifo");
+        let place = scratch.path().join("token");
+        let made = std::process::Command::new("mkfifo").arg(&place).status();
+        if !made.is_ok_and(|status| status.success()) {
+            eprintln!("skip: no FIFO could be made here (mkfifo)");
+            return;
+        }
+        let (ended, has_ended) = std::sync::mpsc::channel();
+        let opening = place.clone();
+        let waiting = whizbang_testkit::threads::spawn(move || {
+            let opened = super::open_without_waiting(&opening)
+                .and_then(|file| file.metadata())
+                .map(|metadata| Opened::of(&metadata));
+            let _ = ended.send(opened.map_err(|error| error.kind()));
+        });
+        let Ok(opened) = has_ended.recv_timeout(std::time::Duration::from_secs(10)) else {
+            let writer = std::fs::OpenOptions::new().write(true).open(&place);
+            drop(writer);
+            let _ = waiting.join();
+            panic!("the open waited at the FIFO for a writer");
+        };
+        waiting.join().unwrap();
+        let opened = opened.unwrap();
+        assert!(!opened.regular);
+        assert_eq!(judge(&opened, opened.owner), Err(SignInRefused::NotAFile));
+    }
 }

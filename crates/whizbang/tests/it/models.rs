@@ -1,9 +1,9 @@
 //! `whizbang models list`, `get` and `remove` (plan 1C, task N3b; ADR 0017). The
 //! binary's own functions (`whizbang::model_commands`), given a test's catalogue, a
 //! fake of the download and a clock the test moves; and the real binary, which has
-//! the catalogue it ships, empty until its first entry (task N5), so that nothing
-//! of it can reach a models directory but by a test's catalogue. Nothing here
-//! leaves the machine. Every key is made up at run time.
+//! the catalogue it ships, whose one model, `sam3` (task N5), needs the Hub's token:
+//! every start of it here is refused before anything is asked of any address, so
+//! nothing here leaves the machine. Every key is made up at run time.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -17,7 +17,7 @@ use whizbang_backends::models::{
     Catalogue, CatalogueFile, Entry, EntryParts, FileName, Installations, Licence, ModelName,
     ModelsDir, Platform, Revision, Title,
 };
-use whizbang_core::capability::Installation;
+use whizbang_core::capability::{Installation, Installed, Inventory, Unready};
 use whizbang_core::config::DOWNLOAD_LEAST_KIB_PER_SECOND;
 use whizbang_core::contract::{Clock, Secrets};
 use whizbang_core::egress::{Address, CheckedDownloader, Origin};
@@ -397,12 +397,41 @@ fn list_names_each_model_of_the_catalogue_with_its_title_licence_size_platforms_
     );
 }
 
+/// What the shipped catalogue's `sam3` is said to be on this platform when nothing is
+/// installed: not installed, and not ready for want of an adapter, or, on a platform
+/// its entry does not name, for that.
+fn sam3_not_installed() -> String {
+    let why = if Platform::this() == Some(Platform::MacosArm64) {
+        Unready::NoAdapter
+    } else {
+        Unready::NotForThisPlatform
+    };
+    format!("not installed; not ready: {why}")
+}
+
+/// What `get sam3` of the real binary is refused with, under a config that names no
+/// token for the Hub, on this platform: the token first on the platform its entry
+/// names, and the platform elsewhere.
+fn sam3_get_refused() -> &'static str {
+    if Platform::this() == Some(Platform::MacosArm64) {
+        "a download of the model from https://huggingface.co needs a token, and the config \
+         names none for that origin, so the model was not installed and nothing was downloaded."
+    } else {
+        "the model does not run on this platform (its entry names macos-arm64), so it was not \
+         installed and nothing was downloaded"
+    }
+}
+
 #[test]
-fn under_the_catalogue_it_ships_no_models_command_resolves_or_makes_a_models_directory() {
-    // The real binary, with the catalogue it ships, which holds no model: `list`
-    // says so, and `get` and `remove` refuse a model it does not hold. None of the
-    // three opens, makes or asks where a models directory is, whatever names one;
-    // the platform's would be in the function's temporary home, which stays empty.
+fn under_the_catalogue_it_ships_no_models_command_makes_a_models_directory_or_asks_anything_of_any_address()
+ {
+    // The real binary, with the catalogue it ships, whose one model is `sam3` (task
+    // N5): `list` names it, not installed and not ready; `get` is refused before
+    // anything is asked of any address, since no config here names the Hub's token
+    // (and, on a platform its entry does not name, for that first); `remove` finds
+    // it not installed. None of the three makes a models directory, whatever names
+    // one; the platform's would be in the function's temporary home, which stays
+    // empty. So no test that starts the binary contacts any host.
     let shelf = Shelf::new("models-shipped");
     let config = shelf.path("whizbang.toml");
     let configured = shelf.path("configured");
@@ -414,44 +443,46 @@ fn under_the_catalogue_it_ships_no_models_command_resolves_or_makes_a_models_dir
     let flagged = shelf.models_dir();
     let flag = flagged.to_str().unwrap();
     let config = config.to_str().unwrap();
+    let not_removed = "the model was not removed: the model is not installed";
+    let platforms = "the one in this machine's data folder for whizbang";
     let runs: [(&[&str], i32, &str); 9] = [
-        (&["models", "list"], 0, ""),
-        (&["models", "list", "--models-dir", flag], 0, ""),
-        (&["models", "list", "--config", config], 0, ""),
+        (&["models", "list"], 0, platforms),
         (
-            &["models", "get", "sam3"],
-            1,
-            "the catalogue holds no model of that name",
+            &["models", "list", "--models-dir", flag],
+            0,
+            "the one --models-dir names",
         ),
+        (
+            &["models", "list", "--config", config],
+            0,
+            "the one the config's `models.dir` names",
+        ),
+        (&["models", "get", "sam3"], 1, sam3_get_refused()),
         (
             &["models", "get", "sam3", "--models-dir", flag],
             1,
-            "the catalogue holds no model of that name",
+            sam3_get_refused(),
         ),
         (
             &["models", "get", "sam3", "--config", config],
             1,
-            "the catalogue holds no model of that name",
+            sam3_get_refused(),
         ),
-        (
-            &["models", "remove", "sam3"],
-            1,
-            "the catalogue holds no model of that name",
-        ),
+        (&["models", "remove", "sam3"], 1, not_removed),
         (
             &["models", "remove", "sam3", "--models-dir", flag],
             1,
-            "the catalogue holds no model of that name",
+            not_removed,
         ),
         (
             &[
                 "models", "remove", "sam3", "--wait", "1", "--config", config,
             ],
             1,
-            "the catalogue holds no model of that name",
+            not_removed,
         ),
     ];
-    for (args, code, complaint) in runs {
+    for (args, code, said) in runs {
         let mut command = binary();
         let home = command.home().to_path_buf();
         let out = command.args(args).output().expect("the binary runs");
@@ -461,17 +492,20 @@ fn under_the_catalogue_it_ships_no_models_command_resolves_or_makes_a_models_dir
             String::from_utf8(out.stderr).unwrap(),
         );
         if code == 0 {
-            assert_eq!(stdout, "models: 0: the catalogue holds no model yet\n");
+            let listed = format!(
+                "models: 1\n\
+                 directory: {said}, not made yet\n\
+                 sam3\tSAM 3\tSAM License\t3.4 GB\tmacos-arm64\t{}\n",
+                sam3_not_installed()
+            );
+            assert_eq!(stdout, listed);
             assert_eq!(stderr, "");
-            in_the_guide(&format!("$ whizbang models list\n{stdout}"));
+            if said == platforms && Platform::this() == Some(Platform::MacosArm64) {
+                in_the_guide(&format!("$ whizbang models list\n{stdout}"));
+            }
         } else {
             assert_eq!(stdout, "");
-            assert!(
-                stderr.starts_with(&format!("whizbang: {complaint}")),
-                "{stderr}"
-            );
-            assert!(!stderr.contains("sam3"), "{stderr}");
-            in_the_guide(&stderr);
+            assert!(stderr.starts_with(&format!("whizbang: {said}")), "{stderr}");
         }
         assert!(everything_under(&home).is_empty(), "{args:?}");
     }
@@ -687,6 +721,168 @@ fn a_second_get_attaches_to_the_first_waits_by_the_clock_and_ends_with_the_same_
     assert!(pauses.iter().all(|span| *span == PAUSE), "{pauses:?}");
     assert_eq!(PAUSE, Duration::from_millis(250));
     assert_eq!(state_of(&list(&tools), "alpha"), "installed");
+}
+
+// --- pin -----------------------------------------------------------------------------------------
+
+/// A draft of one entry, `drafted`, at [`ORIGIN`]: these files, each with its bound
+/// as its size and a hash of zeros, at the address of the test's catalogue.
+fn draft(files: &[(&str, u64)]) -> String {
+    let files: Vec<String> = files
+        .iter()
+        .map(|(name, bound)| {
+            format!(
+                "{{\"name\":\"{name}\",\"size\":{bound},\"sha256\":\"sha256:{}\",\
+                 \"from\":\"{ORIGIN}/files/drafted/{name}\"}}",
+                "0".repeat(64)
+            )
+        })
+        .collect();
+    format!(
+        "{{\"format\":\"catalogue/2\",\"models\":[{{\"name\":\"drafted\",\"title\":\"A draft\",\
+         \"revision\":\"1\",\"adapter\":\"{ADAPTER}\",\"licence\":\"MIT\",\
+         \"platforms\":[\"macos-arm64\"],\"features\":[],\"origins\":[\"{ORIGIN}\"],\
+         \"files\":[{}]}}]}}",
+        files.join(",")
+    )
+}
+
+#[test]
+fn pin_prints_the_size_and_hash_of_each_file_it_fetched_through_the_checked_downloader_and_installs_nothing()
+ {
+    // Plan 1C, task N5: `models pin <draft>` fetches each file of a draft entry once,
+    // through the checked downloader held to the draft's origins, and prints its size
+    // and SHA-256. A draft's size is the most bytes wanted. Nothing is installed or
+    // written: no models directory is made.
+    let shelf = Shelf::new("models-pin");
+    let clock = Hand::new();
+    let (graph, licence, big) = (
+        bytes_of("drafted", "graph.onnx", 2500),
+        bytes_of("drafted", "LICENSE.txt", 30),
+        bytes_of("drafted", "big.bin", 20),
+    );
+    let storage = Address::of("https://storage.example.net/x?sig=abc", &none()).unwrap();
+    let fake = Arc::new(
+        FakeDownloader::new()
+            .serving(&at("drafted/graph.onnx"), graph.clone())
+            .serving(&at("drafted/LICENSE.txt"), licence.clone())
+            .serving(&at("drafted/big.bin"), big)
+            .moved(&at("drafted/weights.bin"), storage.clone())
+            .serving(&storage, b"never".to_vec()),
+    );
+    let made = Arc::new(Made::default());
+    let tools = Tools::of(shelf.models(&[]), clock.clone(), downloads(&fake, &made));
+    let path = shelf.path("draft.json");
+    let files = [
+        ("graph.onnx", 4000),
+        ("LICENSE.txt", 30),
+        ("big.bin", 10),
+        ("weights.bin", 100),
+    ];
+    std::fs::write(&path, draft(&files)).unwrap();
+    let said = model_commands::pin(Under::default(), &path, &tools).unwrap_err();
+    assert_eq!(
+        said,
+        format!(
+            "pinned drafted: nothing was installed or written\n\
+             LICENSE.txt\t30\t{}\n\
+             big.bin\tnot pinned: more than its bound of 10 bytes came\n\
+             graph.onnx\t2500\t{}\n\
+             weights.bin\tnot pinned: rejected: the origin is not one this download may \
+             reach; it was moved to https://storage.example.net, which the draft does not \
+             name, and nothing was asked there\n",
+            Digest::of_bytes(&licence),
+            Digest::of_bytes(&graph),
+        )
+    );
+    // Through a checked downloader the maker made for the draft's origins alone; the
+    // address off them was not asked, and nothing of it but its origin is printed.
+    assert_eq!(*made.origins.lock().unwrap(), [vec![ORIGIN.to_owned()]]);
+    assert_eq!(fake.asked(&storage), 0);
+    assert!(!said.contains("sig=abc"));
+    // A draft whose files all end within their bounds: the same lines, and done.
+    std::fs::write(&path, draft(&files[..2])).unwrap();
+    let pinned = model_commands::pin(Under::default(), &path, &tools).unwrap();
+    assert!(pinned.ends_with(&format!("graph.onnx\t2500\t{}\n", Digest::of_bytes(&graph))));
+    // Nothing was installed or written: no models directory, nothing beside the draft.
+    assert!(!shelf.models_dir().exists());
+    assert_eq!(everything_under(shelf.dir.path()), ["draft.json"]);
+    // What is not a draft of one entry is refused, before anything is asked.
+    let asked = fake.requests().len();
+    std::fs::write(&path, "{\"format\":\"catalogue/2\",\"models\":[]}").unwrap();
+    let refused = model_commands::pin(Under::default(), &path, &tools).unwrap_err();
+    assert_eq!(refused, "the draft holds 0 models, and pin takes one");
+    let refused = model_commands::pin(Under::default(), shelf.dir.path(), &tools).unwrap_err();
+    assert!(refused.starts_with("the draft cannot be read"), "{refused}");
+    assert_eq!(fake.requests().len(), asked);
+}
+
+// --- the table of adapters (task N5) ------------------------------------------------------------
+
+mod inventory {
+    use super::*;
+
+    #[test]
+    fn a_model_whose_adapter_the_binarys_table_names_as_not_yet_shipped_is_not_ready_for_want_of_an_adapter_installed_or_not()
+     {
+        // Plan 1C, task N5: the table fixes the revision of an adapter the pack does
+        // not ship yet. `get` installs the model under it; the inventory calls the
+        // model not ready, for want of an adapter, before the install and after it;
+        // and `list` says it is installed and not ready, for that. Once the table
+        // names the adapter as shipped, under the same revision (task R2a), the same
+        // installation is ready: nothing is downloaded again.
+        let shelf = Shelf::new("models-not-yet-shipped");
+        let clock = Hand::new();
+        let fake = Arc::new(serving(&[alpha()]));
+        let catalogue = Catalogue::new(vec![alpha()], &none()).unwrap();
+        let not_yet = Models::of(catalogue.clone(), Vec::new())
+            .not_yet_shipped(adapters())
+            .flag(Some(&shelf.models_dir()));
+        let tools = shelf.tools(not_yet, &clock, &fake);
+        let inventory = |shipped: Vec<(ModelName, Revision)>| {
+            Installations::of(
+                ModelsDir::at(Arc::new(RealFs), &shelf.models_dir()),
+                catalogue.clone(),
+                shipped,
+                none(),
+            )
+        };
+        let no_adapter =
+            |installed: Installed| matches!(installed, Installed::NotReady(Unready::NoAdapter));
+        assert!(no_adapter(inventory(Vec::new()).look("alpha")));
+        assert_eq!(
+            state_of(&list(&tools), "alpha"),
+            "not installed; not ready: this build has no adapter for it"
+        );
+        let (got, _) = get(&tools, "alpha");
+        let identity = identity_in(&got.unwrap(), "alpha");
+        assert!(no_adapter(inventory(Vec::new()).look("alpha")));
+        assert_eq!(
+            state_of(&list(&tools), "alpha"),
+            "installed, not ready: this build has no adapter for it"
+        );
+        // Shipped under the same revision: ready, as the same installation, and
+        // nothing more was asked for.
+        let asked = fake.requests().len();
+        let record = inventory(adapters()).ready("alpha").unwrap();
+        assert_eq!(record.identity().digest().to_string(), identity);
+        let shipped = shelf.tools(shelf.models(&[alpha()]), &clock, &fake);
+        assert_eq!(state_of(&list(&shipped), "alpha"), "installed");
+        let (again, _) = get(&shipped, "alpha");
+        assert_eq!(identity_in(&again.unwrap(), "alpha"), identity);
+        assert_eq!(fake.requests().len(), asked);
+        // The binary's own table names `sam3` at its revision, not yet shipped.
+        let table = wiring::adapters();
+        assert_eq!(table.len(), 1);
+        assert_eq!(
+            (
+                table[0].name.as_str(),
+                table[0].revision.as_str(),
+                table[0].shipped
+            ),
+            ("sam3", "1", false)
+        );
+    }
 }
 
 // --- remove --------------------------------------------------------------------------------------
@@ -1036,20 +1232,22 @@ fn list_of_an_empty_catalogue_and_get_or_remove_of_a_model_it_does_not_hold_neve
     assert!(!shelf.path("platform-models").exists());
 }
 
-/// Each shipped entry whose download needs a token: none until the catalogue's first
-/// entry (task N5).
+/// Each shipped entry whose download needs a token and that runs on this platform:
+/// `sam3` on the Mac (task N5). Elsewhere `get` refuses it for its platform before the
+/// token is looked for, so the runs below are none there, and the halves of these
+/// tests that read the binary's source are what hold them; the macOS runner runs
+/// them.
 fn shipped_needing_a_token() -> Vec<String> {
     let catalogue = wiring::catalogue().unwrap();
     let names: Vec<String> = catalogue
         .entries()
         .iter()
         .filter(|entry| entry.needs_token().is_some())
+        .filter(|entry| Platform::this().is_some_and(|on| entry.runs_on(on)))
         .map(|entry| entry.name().as_str().to_owned())
         .collect();
-    // Until N5 the catalogue holds no model at all, so the runs below are none and
-    // the halves of these tests that read the binary's source are what hold them.
-    if catalogue.entries().is_empty() {
-        assert!(names.is_empty());
+    if Platform::this() == Some(Platform::MacosArm64) {
+        assert_eq!(names, ["sam3"]);
     }
     names
 }
@@ -1082,6 +1280,9 @@ fn get_with_the_sign_in(
     }
     let out = command.output().expect("the binary runs");
     assert_eq!(out.status.code(), Some(1), "{out:?}");
+    // Refused before anything was asked: the models directory, which `get` opens
+    // before it makes the download client, was not made.
+    assert!(!shelf.models_dir().exists());
     String::from_utf8(out.stderr).unwrap()
 }
 

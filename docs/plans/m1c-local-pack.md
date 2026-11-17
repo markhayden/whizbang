@@ -346,6 +346,14 @@ the hosts as C1b named them:
 |---|---|---|---|
 | `github.com`, for release downloads under `/astral-sh/python-build-standalone/releases/download/…` (the Python) and `/astral-sh/uv/releases/download/0.12.23/…` (`uv`, on CI), and `release-assets.githubusercontent.com`, where those downloads are redirected | `uv` installing the Python the pack pins; the CI action installing `uv` | Both CI runners (`macos-15`, `ubuntu-22.04`); the owner's Mac only if the pinned Python is ever missing there | C1b |
 
+Given by the owner on 2026-11-16 (the owner's local date), as the orchestrator passed it
+on, ahead of the host being known: "when it comes in i am good with the hugging face
+stuff. no need to approve". Recorded by N5:
+
+| Approved | For | Where | Needed before |
+|---|---|---|---|
+| The Hub's own storage host, the one it moves a file download to: named by N5 as `us.aws.cdn.hf.co` (under the Hub's domain `hf.co`), found by `whizbang models pin` refusing the move and printing its origin alone | Downloading the SAM 3 files the Hub moves there; no token is sent to it (ADR 0012) | The owner's Mac; never CI | N5 |
+
 Nothing else. Without a mirror named, `uv` 0.12.23 tries its maker's own host,
 `releases.astral.sh`, before GitHub (its source, `crates/uv-python/src/downloads.rs`), and
 that host is not approved. So every command that installs a Python names GitHub's releases
@@ -370,7 +378,8 @@ approvals above do not cover a host by a name nobody has read (C1b's two were na
 approved on 2026-11-16, above):
 
 - The host the Hub moves a file download to, its storage: N5 names it to the owner
-  before the entry lists it as an origin (open question 2). A second package index
+  before the entry lists it as an origin (open question 2). **Named by N5:**
+  `us.aws.cdn.hf.co`, under the owner's approval of 2026-11-16 above. A second package index
   for Linux with CUDA, if a lock needs one, is Y1's to name the same way (open
   question 5).
 
@@ -385,6 +394,9 @@ Each is settled by the task named, from documentation or by the owner; none bloc
 
 1. Has the owner's account access to `facebook/sam3` today? The owner says it has
    (2026-11-15); N5 finds out for real.
+   **Settled by N5 (2026-11-17): yes.** With the token of the owner's sign-in, read by
+   whizbang, the Hub served every listed file of the pinned commit, the large one
+   included; nothing was refused as a credential's fault.
 2. Which host does the Hub move a file download to? The entry's origins must name it.
    A refusal cannot tell: ADR 0019's refusals quote nothing of an address. N5 takes it
    from the Hub's documentation, or `whizbang models pin` prints the origin, and only
@@ -402,6 +414,18 @@ Each is settled by the task named, from documentation or by the owner; none bloc
    own library. All of that is about the Hub's own client. It says neither that a plain
    request for a file's address is served whole nor that it is refused, so the question
    is live, and it stays the first thing N5 finds out.
+   **Settled by N5 (2026-11-17), through whizbang's own client, by `whizbang models
+   pin`.** A `GET` of `model.safetensors` at the pinned commit on `huggingface.co`,
+   with the token, is moved, and the address it is moved to is at
+   `https://us.aws.cdn.hf.co`: a first pin whose draft named the Hub alone refused that
+   move and printed that origin and nothing else of the address. With that origin
+   added, the same narrow client (HTTP/1.1 only, no range, no chunked body, a
+   `Location` of at most 2,048 bytes with no `@`, no `#` and no IPv6 host) followed the
+   one move and was served the whole file, 3,439,938,512 bytes, as one body of a stated
+   `Content-Length`: no other move, no transfer coding, no range and no protocol of
+   Xet's was needed. The small files are served by `huggingface.co` itself. So the
+   client needs no change, and the plan none. The host was approved by the owner on
+   2026-11-16, ahead of its name ("Origins").
 3. Does candidate A run SAM 3 on the Apple GPU with the fallback off? (R1.)
 4. Which Python does the runtime's wheel support? The pack pins the newest that it
    does. (Y1; the pack's core runs on any since 3.12.)
@@ -1612,7 +1636,7 @@ medium.
 (the Hub itself was approved on 2026-11-15); access to the model, which the owner says is
 granted; the Hub's command-line sign-in on the Mac, which the owner has. **Runs on:** the owner's Mac, for its last box.
 
-- [ ] The shipped catalogue, built into the binary, with one entry, `sam3`: the files
+- [x] The shipped catalogue, built into the binary, with one entry, `sam3`: the files
       of D11, each `from` an address at a pinned revision of `facebook/sam3`, the
       licence as its maker names it, the features this build's adapter gives (`phrase`).
       The adapter's revision is fixed here, in the binary's table of adapters, as the
@@ -1626,7 +1650,7 @@ granted; the Hub's command-line sign-in on the Mac, which the owner has. **Runs 
       prepared, before a worker is started. Nothing calls the model ready while a load
       of it would be refused. The identity does not depend on the mark, so R2a changes
       it and nothing is downloaded again.
-- [ ] How the sizes and hashes were fixed, written in the entry's comment and the ADR:
+- [x] How the sizes and hashes were fixed, written in the entry's comment and the ADR:
       the large file's from the Hub's public listing of the pinned revision, which
       states its SHA-256 (read by the builder, outside whizbang: "Origins"); the small
       files' from the bytes fetched once through the checked downloader by
@@ -1634,7 +1658,7 @@ granted; the Hub's command-line sign-in on the Mac, which the owner has. **Runs 
       size and hash, and the origin alone of a hop it refused, and installs nothing.
       The second is trust on first use, stated as a limit. `SPEC.md` section 11
       gains the command.
-- [ ] On the Mac: `whizbang models get sam3`, by the owner or with the owner's leave,
+- [x] On the Mac: `whizbang models get sam3`, by the owner or with the owner's leave,
       into a models directory outside the repo. Nothing but whizbang downloads a file.
       The token is read by the binary from the sign-in (D12), and is never printed,
       passed as an argument or read by an agent: no agent opens, lists or prints the
@@ -1659,6 +1683,63 @@ last clause read "the secrets scan passes over the working tree with the token i
 env file". The token is in the sign-in's store and in no env file, so the scan cannot
 search for its value; the clause now says what the scan can show. Two tests are added
 for the window before R2a, a follow-up of the plan's review.
+**Reworded with the task** (by N5): the second box read "the large file's from the Hub's
+public listing of the pinned revision, which states its SHA-256 (read by the builder,
+outside whizbang: "Origins"); the small files' from the bytes fetched once …". The
+listing was read once, without a token, as approved: for this gated repository the Hub
+masks the large file's `lfs.oid` and its Xet hash, each as 64 asterisks, to a reader
+without a token, so it could not give the hash. Every file's hash, the large file's
+included, was then fixed by `whizbang models pin`, trust on first use, with the
+orchestrator's leave; the listing gave every file's size, which `pin` agreed with. The
+first `get` downloaded the files a second time and held each to its size and hash. "The
+entry's comment" is the documentation of `wiring::catalogue` and ADR 0017, "The shipped
+catalogue": a catalogue is strict JSON, which has no comment.
+**What N5 decided and built** (ADR 0017, "The shipped catalogue"; ADR 0019's amendment):
+
+- The entry: commit `3c879f39826c281e95690f02c7821c4de09afae7` of `facebook/sam3`;
+  `model.safetensors`, `config.json`, `processor_config.json`, `tokenizer.json`,
+  `tokenizer_config.json`, `special_tokens_map.json`, `vocab.json`, `merges.txt` and
+  `LICENSE`; origins `https://huggingface.co` and `https://us.aws.cdn.hf.co`; the
+  licence `SAM License`, the first line of its maker's licence; the platform
+  `macos-arm64` alone, the one 1C installs on (Linux comes with the runtime on Linux,
+  1D, under a new revision); entry revision `2026-11.1`; adapter `sam3` at revision
+  `1`, not yet shipped.
+- `whizbang models pin <draft>` (`model_commands::pin`, `models::pin_file`): through the
+  checked downloader, which can now be told the origin of an address it refused
+  (`CheckedDownloader::noting_refused`,
+  `chains::a_checked_download_that_notes_refusals_is_told_the_origin_alone_of_each_address_it_refused`).
+- A build with no kind of backend opens no models directory for a command that builds
+  an executor: with the first entry, `rascal grow` under a config would otherwise have
+  made one (ADR 0017's amendment;
+  `wired::with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory`,
+  rewritten to what is now true, and failing on the day a kind is registered).
+  `models::under_the_catalogue_it_ships_no_models_command_resolves_or_makes_a_models_directory`
+  is now
+  `models::under_the_catalogue_it_ships_no_models_command_makes_a_models_directory_or_asks_anything_of_any_address`:
+  `list` of `sam3` does work out where the directory is.
+- The carry-over rows N5 owned: the two real-binary token tests
+  (`models::the_real_binary_started_with_a_temporary_home_reads_the_sign_in_there_and_no_other`,
+  `models::the_real_binary_started_with_hf_token_set_reads_the_sign_in_and_never_the_variable`)
+  now start the binary for `sam3` on macOS, each refused before anything is asked and
+  before the models directory is made; on Linux the entry's platform is refused first,
+  so they run there for no model. The resolver's wait is accepted in a line, with what
+  bounds it on each platform. The narrow client is enough for the Hub (open question
+  2). N4's follow-up on the open that does not wait is held by
+  `sign_in::tests::a_fifo_opened_by_the_open_that_does_not_wait_is_opened_at_once_and_judged_no_regular_file`.
+
+**On the Mac** (2026-11-17, the release build of this branch, through `scripts/heavy.sh`
+with the thread limit at 200, under a config that names the sign-in and a models
+directory in the builder's scratch folder; fields only):
+
+| Field | Value |
+|---|---|
+| Installation's identity | `sha256:37ab46c2f87b600f4654dd972ce85a27b1024b4fc92901b11464bd6fa9664d32` |
+| Bytes installed | 3,445,003,826, in nine files |
+| Time of the first `get` | 1,220 s |
+| A second `get` | The same identity, in 2 s; nothing downloaded |
+| `models list` | `installed, not ready: this build has no adapter for it` |
+| Hosts whizbang asked | `huggingface.co` (every file, with the token) and `us.aws.cdn.hf.co` (the large file, moved there; no token): the entry's two origins, which its checked downloader holds it to |
+
 **Carry-over:** the shipped catalogue. **Size:** medium.
 
 ### Y1. `whizbang setup`, and the lock file

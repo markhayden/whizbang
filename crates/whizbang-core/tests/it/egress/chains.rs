@@ -180,6 +180,48 @@ fn a_download_whose_first_address_is_off_its_origins_asks_nothing() {
     assert!(fake.requests().is_empty());
 }
 
+#[test]
+fn a_checked_download_that_notes_refusals_is_told_the_origin_alone_of_each_address_it_refused() {
+    // Plan 1C, task N5 (open question 2): a developer's command names to the owner the
+    // host a file is moved to, before an entry lists it. The note is told the origin
+    // and nothing else of the address; the refusal is the same, and nothing is asked
+    // of the address.
+    let first = address("https://weights.example.org/m/graph.onnx");
+    let elsewhere = address("https://storage.example.net/g?sig=abc");
+    let fake = Arc::new(
+        FakeDownloader::new()
+            .moved(&first, elsewhere.clone())
+            .serving(&elsewhere, file()),
+    );
+    let noted = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let keep = noted.clone();
+    let through = checked(&fake).noting_refused(Arc::new(move |origin: &Origin| {
+        keep.lock().unwrap().push(origin.to_string());
+    }));
+    let (ended, kept) = download(&through, &asking(&first));
+    assert_eq!(
+        refused_as(&ended.unwrap_err()),
+        (FaultKind::Rejected, Stage::Unresolved, OFF)
+    );
+    assert_eq!(*noted.lock().unwrap(), ["https://storage.example.net"]);
+    assert_eq!((fake.asked(&elsewhere), kept.len()), (0, 0));
+    // A download followed within its origins is told nothing.
+    let mirror = address("https://mirror.example.net/g");
+    let fake = Arc::new(
+        FakeDownloader::new()
+            .moved(&first, mirror.clone())
+            .serving(&mirror, file()),
+    );
+    noted.lock().unwrap().clear();
+    let keep = noted.clone();
+    let through = checked(&fake).noting_refused(Arc::new(move |origin: &Origin| {
+        keep.lock().unwrap().push(origin.to_string());
+    }));
+    let (ended, _) = download(&through, &asking(&first));
+    assert_eq!(ended.unwrap(), Downloaded::Bytes(2500));
+    assert!(noted.lock().unwrap().is_empty());
+}
+
 /// A fake that serves the file after this many moves, each within the mirror.
 fn chain(moves: u32) -> (Arc<FakeDownloader>, Address) {
     let first = address("https://weights.example.org/m/graph.onnx");

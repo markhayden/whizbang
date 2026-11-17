@@ -1644,12 +1644,27 @@ fn a_call_for_a_model_whose_adapter_this_build_lacks_is_refused_when_prepared_wi
     let other = ModelName::new("another-adapter", &none).unwrap();
     // The model is in the catalogue and installed, by a build that had its adapter.
     // This build has another adapter, or none at all, which is what the binary has
-    // until its first.
-    assert!(wiring::adapters().is_empty());
-    for adapters in [vec![(other, adapter())], wiring::adapters()] {
+    // until its pack ships its first (task R2a).
+    let shipped: Vec<(ModelName, Revision)> = wiring::adapters()
+        .into_iter()
+        .filter(|adapter| adapter.shipped)
+        .map(|adapter| (adapter.name, adapter.revision))
+        .collect();
+    assert!(shipped.is_empty());
+    // And the model's own adapter at its revision, named in the table as not yet
+    // shipped (task N5): the call is refused when it is prepared, before any worker
+    // could be started.
+    let fake_adapter = ModelName::new("fake-adapter", &none).unwrap();
+    for (adapters, not_yet) in [
+        (vec![(other, adapter())], Vec::new()),
+        (shipped, Vec::new()),
+        (Vec::new(), vec![(fake_adapter, adapter())]),
+    ] {
         let (first, _) = entry("2026-11.1");
         let catalogue = Catalogue::new(vec![first], &none).unwrap();
-        let models = Models::of(catalogue, adapters).flag(Some(&world.models_dir()));
+        let models = Models::of(catalogue, adapters)
+            .not_yet_shipped(not_yet)
+            .flag(Some(&world.models_dir()));
         let executor = world.runner(&world.named().installed(models).unwrap());
         // When the call is prepared: not ready, with the reason, and no model.
         let prepared = executor.prepare(&Call::new("paints")).unwrap();
@@ -1825,15 +1840,29 @@ fn the_models_directory_is_the_flags_then_the_configs_then_the_platforms() {
     assert!(std::fs::read_dir(&open).unwrap().next().is_none());
 
     // Where no model could be asked for, no directory is opened or made: under a
-    // catalogue that holds none, as the shipped one does, and for a command that
-    // names neither a config nor a directory. Where the platform's is, is not even
-    // asked: that is every command of the binary today, whatever it names.
+    // catalogue that holds none; under the kinds this build has, which are none, with
+    // the catalogue it ships (task N5); and for a command that names neither a config
+    // nor a directory. Where the platform's is, is not even asked: that is every
+    // command of the binary but `whizbang models` today, whatever it names.
     let never = world.beside("never");
     let before = asked.load(Ordering::SeqCst);
-    let shipped = Models::shipped().unwrap();
+    let empty = Models::of(
+        Catalogue::new(Vec::new(), &Secrets::none()).unwrap(),
+        Vec::new(),
+    );
     for flag in [None, Some(never.as_path())] {
-        let models = shipped.clone().flag(flag).platform(says(Some(&never)));
+        let models = empty.clone().flag(flag).platform(says(Some(&never)));
         let over = world.named().installed(models).unwrap();
+        assert!(over.installations().is_none());
+        let models = Models::shipped()
+            .unwrap()
+            .flag(flag)
+            .platform(says(Some(&never)));
+        let over = world
+            .named()
+            .kinds(wiring::kinds())
+            .installed(models)
+            .unwrap();
         assert!(over.installations().is_none());
     }
     let over = Over::nothing()
@@ -2050,17 +2079,26 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
 
 #[test]
 fn with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory() {
-    // The shipped catalogue holds no model, so no command of the binary opens a
-    // models directory, or asks where the platform's is, whatever names one. That
-    // is what keeps every test that starts the binary off the data folder of
-    // whoever runs the tests. **When the catalogue is given its first entry (plan
-    // 1C, task N5), this fails:** before then, each test that starts the binary
-    // gives it a cleared environment with a temporary home folder, and names the
-    // models directory, as this one does.
+    // Plan 1C, task N5: the shipped catalogue holds one model, `sam3`, and every test
+    // that starts the binary gives it a cleared environment with a temporary home
+    // folder (task N3c). This build has no kind of backend, so no config can offer a
+    // backend that asks for a model: a command that builds an executor opens no
+    // models directory, and asks nothing of where the platform's is, whatever names
+    // one. Only `whizbang models` looks at one, and only `models get` makes one
+    // (`models::under_the_catalogue_it_ships_no_models_command_makes_a_models_directory_or_asks_anything_of_any_address`).
+    // **When this build is given its first kind (task P6a), this fails,** and says
+    // that a command run under a config now opens the models directory.
+    let names: Vec<String> = wiring::catalogue()
+        .unwrap()
+        .entries()
+        .iter()
+        .map(|entry| entry.name().as_str().to_owned())
+        .collect();
+    assert_eq!(names, ["sam3"]);
     assert!(
-        wiring::catalogue().unwrap().entries().is_empty(),
-        "the shipped catalogue has a model: every test that starts the binary must now \
-         start it with a temporary home folder"
+        wiring::kinds().is_empty(),
+        "this build has a kind: a command run under a config may now open the models \
+         directory, and every test that starts the binary must name one of its own"
     );
     let world = World::new("wired-shipped");
     std::fs::write(world.config_path(), "").unwrap();
@@ -2087,6 +2125,8 @@ fn with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory() 
         // Nothing was made in the home: no models directory in the platform's place.
         assert!(std::fs::read_dir(&home).unwrap().next().is_none());
     };
+    // No directory named: the platform's would be in the temporary home.
+    run(&[]);
     // The directory named by the flag, and then by the config.
     run(&["--models-dir", flagged.to_str().unwrap()]);
     let dir = format!("[models]\ndir = '{}'\n", configured.to_str().unwrap());

@@ -30,6 +30,7 @@ mod installation;
 mod inventory;
 mod json;
 mod name;
+mod pin;
 mod refused;
 mod remove;
 mod stage;
@@ -53,6 +54,7 @@ pub use name::{
     FILE_MAX_BYTES, FILE_NAME_LIMIT, FileName, LICENCE_LIMIT, Licence, MODEL_NAME_LIMIT, ModelName,
     Platform, REVISION_LIMIT, Revision, SHOWN_LIMIT, TITLE_LIMIT, Title,
 };
+pub use pin::{PinRefused, Pinned, pin_file};
 pub use refused::{Refused, Rule, What};
 pub use remove::{
     DRAINING_FORMAT, DRAINING_MAX_BYTES, Mark, REMOVALS_FORMAT, REMOVALS_MAX_BYTES, RemoveRefused,

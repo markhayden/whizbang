@@ -357,7 +357,7 @@ impl Received {
 /// origin, and carrying none at any other (plan 1C, D12; ADR 0012, "An address, and a
 /// credential"): an address an answer moved the file to is asked with the credential
 /// only when it is back at that origin.
-fn attached(
+pub(super) fn attached(
     request: DownloadRequest,
     credential: Option<&Credential>,
 ) -> Result<DownloadRequest, NotAllowed> {
