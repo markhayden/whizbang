@@ -14,7 +14,9 @@
 //! extra changes nothing.
 //!
 //! **How**, in this order, each step past the first only when the one before ended
-//! well:
+//! well. Before the first, an extra is refused on any platform but macOS on Apple
+//! silicon ([`EXTRA_HOST`]), the one the lock covers: no `uv` is started and nothing is
+//! made.
 //!
 //! 1. The pack is written into a folder of `setup`'s own in the system's temporary
 //!    folder, for its owner alone, removed on every path out.
@@ -118,6 +120,35 @@ impl Limits {
         }
     }
 }
+
+/// A platform, as Rust names it (`std::env::consts`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Host {
+    /// The system: `macos`, `linux`.
+    pub os: &'static str,
+    /// The processor: `aarch64`, `x86_64`.
+    pub arch: &'static str,
+}
+
+impl Host {
+    /// The platform this binary was built for and runs on.
+    pub fn this() -> Host {
+        Host {
+            os: std::env::consts::OS,
+            arch: std::env::consts::ARCH,
+        }
+    }
+}
+
+/// The one platform the lock covers, so the one an extra is installed on: macOS on
+/// Apple silicon, `sys_platform == 'darwin' and platform_machine == 'arm64'` in the
+/// pack's `tool.uv.environments`. Linux on x86-64 was dropped from the lock by the
+/// owner on 2026-11-17 (ADR 0021, "Amended"); the pack's core, which downloads nothing,
+/// installs on any platform.
+pub const EXTRA_HOST: Host = Host {
+    os: "macos",
+    arch: "aarch64",
+};
 
 /// The files of the pack this build carries, by their place in the pack's folder.
 const CARRIED: [(&str, &[u8]); 9] = [
@@ -244,6 +275,8 @@ pub struct Install {
     pub python: Option<PathBuf>,
     /// The extra to install with the pack's core, or none.
     pub extra: Option<String>,
+    /// The platform it installs on: an extra is refused on any but [`EXTRA_HOST`].
+    pub host: Host,
     /// The pack.
     pub pack: Pack,
     /// How long each `uv` has.
@@ -270,6 +303,14 @@ pub fn install(install: &Install) -> Result<Installed, String> {
         && !is_extra_name(extra)
     {
         return Err("an extra's name is lower-case letters, digits and '-', 64 at most, starting with a letter; nothing was changed".to_owned());
+    }
+    if let Some(extra) = &install.extra
+        && install.host != EXTRA_HOST
+    {
+        return Err(format!(
+            "the extra {extra} is locked for macOS on Apple silicon only in this build, and this is {} on {}; nothing was downloaded and nothing was changed (with no extra, the pack's core installs here)",
+            install.host.os, install.host.arch
+        ));
     }
     if !install.uv.is_absolute() || !install.uv.is_file() {
         return Err(
@@ -741,6 +782,7 @@ pub fn run(asked: Asked<'_>, machine: Machine) -> Result<String, String> {
         uv,
         python: asked.python.map(Path::to_path_buf),
         extra: asked.extra.map(str::to_owned),
+        host: Host::this(),
         pack: Pack::carried(),
         limits: Limits::shipped(),
         parent: machine.parent,

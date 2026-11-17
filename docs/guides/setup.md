@@ -17,8 +17,12 @@ it is also the runtime local models run on: PyTorch, `torchvision` and `transfor
 the versions the pack pins, and everything they need, each at the version and hash the lock
 file names. That is about 760 MB on a Mac. An extra is never installed unless it is named.
 
-The lock covers macOS on Apple silicon and Linux on x86-64. In checkpoint 1C the runtime is
-installed on the Mac only.
+The lock covers macOS on Apple silicon alone, so the runtime extra installs there and
+nowhere else in this build. On any other platform, Linux among them, `whizbang setup --extra
+torch` is refused before anything is downloaded, with a sentence saying the extra is locked
+for macOS on Apple silicon only; `whizbang setup` with no extra still installs the core,
+which needs no package. The runtime on Linux comes later (ADR 0021, "Amended: the Mac
+alone").
 
 ## What it needs
 

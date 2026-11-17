@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::{Duration, Instant};
 
-use whizbang::pack_setup::{self, Install, Limits, Pack};
+use whizbang::pack_setup::{self, Host, Install, Limits, Pack};
 use whizbang_testkit::scratch::Scratch;
 use whizbang_testkit::worker::{processes, python, uv};
 
@@ -155,9 +155,94 @@ fn install_into(root: &Path) -> Install {
         uv: uv().to_path_buf(),
         python: Some(python().to_path_buf()),
         extra: None,
+        host: Host::this(),
         pack: Pack::carried(),
         limits: Limits::shipped(),
         parent: Vec::new(),
+    }
+}
+
+#[test]
+fn an_extra_on_a_platform_the_lock_does_not_cover_is_refused_before_anything_runs() {
+    // The lock covers macOS on Apple silicon alone (ADR 0021, "Amended"). Anywhere else
+    // an extra is refused in a sentence that says so, before any `uv` is started, so
+    // nothing is downloaded, and before the models directory is made.
+    let scratch = Scratch::new("setup-extra-host");
+    let models = models_in(&scratch);
+    // A stand-in for `uv` that notes each start and fails, so that nothing could be
+    // downloaded even if the refusal were missing.
+    let notes = scratch.path().join("notes");
+    std::fs::create_dir(&notes).unwrap();
+    let stand_in = scratch.path().join("uv");
+    script(
+        &stand_in,
+        &format!(
+            "#!/bin/bash\nnote='{}'/call.$$\nprintf '%s\\n' \"$@\" >\"$note.args\"\n/usr/bin/env >\"$note.vars\"\nexit 1\n",
+            notes.display()
+        ),
+    );
+    for (os, arch) in [
+        ("linux", "x86_64"),
+        ("linux", "aarch64"),
+        ("macos", "x86_64"),
+        ("windows", "x86_64"),
+    ] {
+        let mut install = install_into(&models);
+        install.uv = stand_in.clone();
+        install.extra = Some("torch".to_owned());
+        install.host = Host { os, arch };
+        let refused = pack_setup::install(&install).expect_err("an extra off the lock");
+        assert!(
+            refused.contains("is locked for macOS on Apple silicon only in this build"),
+            "{refused}"
+        );
+        assert!(refused.contains(&format!("{os} on {arch}")), "{refused}");
+        assert!(
+            refused.contains("nothing was downloaded and nothing was changed"),
+            "{refused}"
+        );
+        assert!(calls(&notes).is_empty(), "uv was started on {os} {arch}");
+        assert!(!models.exists(), "the models directory was made");
+    }
+    // The one platform an extra is not refused on. The core, which downloads nothing,
+    // is refused on none: the other tests here install it with no extra, on both runners.
+    assert_eq!(
+        pack_setup::EXTRA_HOST,
+        Host {
+            os: "macos",
+            arch: "aarch64"
+        }
+    );
+}
+
+#[test]
+fn the_lock_file_covers_the_mac_alone_and_names_no_nvidia_or_cuda_package() {
+    // The lock is made for the one platform `setup` installs an extra on.
+    let lock = std::fs::read_to_string(pack_folder().join("uv.lock")).unwrap();
+    for key in ["resolution-markers", "supported-markers"] {
+        let start = lock
+            .find(&format!("\n{key} = [\n"))
+            .unwrap_or_else(|| panic!("the lock has its {key}"));
+        let rest = &lock[start + 1..];
+        let list: Vec<&str> = rest[..rest.find("\n]").unwrap()].lines().skip(1).collect();
+        assert_eq!(
+            list,
+            ["    \"platform_machine == 'arm64' and sys_platform == 'darwin'\","],
+            "{key}"
+        );
+    }
+    // And holds none of the packages Linux's CUDA build of `torch` pulls in.
+    for block in lock_blocks() {
+        let name = field(&block, "name").unwrap();
+        for start in ["nvidia-", "cuda-"] {
+            assert!(!name.starts_with(start), "{name}");
+        }
+        assert_ne!(name, "triton");
+        for line in &block {
+            assert!(!line.contains("sys_platform == 'linux'"), "{name}: {line}");
+            assert!(!line.contains("linux_x86_64"), "{name}: {line}");
+            assert!(!line.contains("manylinux"), "{name}: {line}");
+        }
     }
 }
 
