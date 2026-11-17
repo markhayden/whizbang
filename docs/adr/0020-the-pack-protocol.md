@@ -18,6 +18,8 @@ changed. Added, under "What a refusal says": which `over_bound` ends a call as
 `too_large`, what a request whizbang would refuse to write is, how a request from a
 worker is refused, and the text of the `error` whizbang sends after a refusal. And under
 "Consequences", what a run keeps of a result's predicted IoU and diagnostics.
+Amended: 2026-11-17, by task P4 (the queue, cancellation, deadlines and restart). No byte
+and no reason changed. Added: "The worker", under "Decision".
 
 ## Context
 
@@ -504,6 +506,84 @@ of a version a side supports.
 
 What may be added to this record without a new version: sections on what the supervisor
 does around the frames ("The worker", task P4), since they change no byte.
+
+### The worker
+
+Added by task P4; no byte of `pack/1` changed. The code is
+`crates/whizbang-backends/src/pack/queue.rs` and `worker.rs`; the tests are in
+`crates/whizbang-backends/tests/it/pack/queue.rs`. All of it is on the supervisor's
+injected clock.
+
+**The queue.** One supervisor in a process (plan 1C, D4) holds the one worker and a
+queue in front of it. A request takes a number and a place at the back; at most **16**
+wait, and the 17th is refused at once, `unavailable`, `not_sent`, "the queue of the
+pack's worker is full, 16 requests wait; this one was not held", and is not held. A
+request's turn is the front of the queue with no turn holding the worker: one call is
+in the worker at a time, in the order the requests came. The turn runs on its caller's
+own thread, so the queue makes no thread; each worker still has the supervisor's three
+(plan 1C, "Rules", "Threads in whizbang"). A request keeps the count of removals its
+hold was given while it waits (D5); comparing it with the model's is task P5b's.
+
+**A turn.** The worker holds one resident model: its name, installation and settings.
+A turn whose own are not resident first sends an `unload` of the resident one, then a
+`load` of its own, then its call; one that finds its own resident sends its call alone.
+So two requests for one model cause one load, and a request for another model waits for
+the current call and then unloads the first. Each of the three is one request of
+`pack/1`, within its kind's limit: 30 s for an `unload`, 120 s for a `load`, 120 s for a
+`segment` (D7).
+
+**The states of a request, and what each fault says.**
+
+| Where it is | What ends it | Fault, stage | Sentence |
+|---|---|---|---|
+| Asked, the queue full | At once | `unavailable`, `not_sent` | the queue of the pack's worker is full, 16 requests wait; this one was not held |
+| Waiting | Its cancel | `cancelled`, `not_sent` | the request was cancelled while it waited in the queue of the pack's worker; it was not sent |
+| Waiting | Its deadline | `timed_out`, `not_sent` | the request's deadline passed while it waited in the queue of the pack's worker; it was not sent |
+| Waiting, with no deadline | 5,840 s of the clock: the turns of every request that can be ahead of it, each at most 365 s (a hello, an unload, a load, a call, a cancel's limit, and six of 5 s) | `timed_out`, `not_sent` | the request waited 5840 seconds in the queue … the most the calls ahead of it can take; it was not sent |
+| Waiting | A restart | `unavailable`, `not_sent` | the pack's worker was restarted before this request's turn came; it was not sent |
+| In its turn, before a byte is written | Its cancel or deadline (looked at before the worker is started, and again after its hello) | `cancelled` or `timed_out`, `not_sent` | … before the pack's worker was asked, or while the pack's worker was started; it was not sent |
+| In its turn, the worker not started again | Three workers in a row that ended before they answered anything (below) | `unavailable`, `not_sent` | the pack's worker ended before it answered anything 3 times in a row; no worker is started until 60 seconds after the last |
+| In the worker | Its result, or the worker's `error` for it | none, or the worker's fault, `answered` | the pack's worker ended the request with the fault … |
+| In the worker | Its kind's limit | `timed_out`; the worker killed | the pack's worker did not end the request within … seconds and was killed |
+| In the worker | Its deadline, when earlier | `timed_out`; the worker killed | the request's deadline passed before the pack's worker ended it, and the worker was killed |
+| In the worker | Its cancel, then 5 s | `cancelled`; the worker killed | the pack's worker did not stop the cancelled request within 5 seconds of its cancel and was killed |
+| In the worker | Its cancel, then its deadline or its kind's limit, when earlier | `cancelled`; the worker killed | the pack's worker had not stopped the cancelled request by the end of its wait and was killed |
+| In the worker | The worker ends, breaks the protocol, or cannot be written to | as task P3b made them (`unavailable`, `malformed`, `too_large`) | as task P3b made them |
+
+A request in the worker that ended it is `unresolved` once a byte of it left, and
+`not_sent` when none did (task P3b). Each sentence of one that ended the worker ends
+"; the pack's worker is restarted for the next request".
+
+**Cancellation is cooperative.** A cancel is not a flag the supervisor keeps: it is the
+caller's signal (`Cancellation`, ADR 0008), looked at between two looks at the worker's
+output. In the worker, the first look that finds it set hands `cancel` with the
+request's id to the writer, waiting for nothing, and the call then waits at most 5 s
+more. The worker answers it with an `error` whose fault is `cancelled`, or with the
+result it had finished, and lives on; one that does neither in time is killed.
+
+**A deadline** is the caller's, an instant of the supervisor's clock. A call in the
+worker waits until the earliest of its kind's limit, its deadline and, once cancelled,
+5 s after its cancel; past it the worker is killed and waited for. The call is ended
+there, at the worker's boundary, whether or not the worker would have stopped.
+
+**A restart** is the end of the worker inside a turn, by any cause: killed at a limit,
+a deadline or an ignored cancel; ended by itself; ended after a refused frame. It ends
+the request whose turn it was, and every request waiting, as the table says. Nothing
+that was sent is sent again, and nothing waiting is sent to any worker. The supervisor
+starts no worker by itself: the next request starts one (D7). **No loop of starts.** A
+worker that ends before it answered anything (by a result or an `error` for a request),
+at no caller's deadline or cancel, counts; one that answers sets the count to none.
+After 3 in a row, no worker is started until 60 s of the clock after the last: a request
+in that time is refused at once, as the table says; one after it starts one worker, and
+if that one ends the same way the pause begins again. So a worker that dies at every
+start is started at most once a minute, by a request, after the first three.
+
+**What the supervisor tells.** Its status (who waits, with each one's number, model and
+count of removals; the call in the worker, its kind, its model, how many events it has
+said, whether it was written whole and whether its `cancel` was sent; the resident
+model; the worker's process id), a wait for a state of it, bounded on the clock, and a
+journal of the last 64 requests written to a worker, each with its request's number and
+the worker's process id. They are diagnostics, and what the tests of this section read.
 
 ## Consequences
 

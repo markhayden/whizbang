@@ -4,10 +4,10 @@
 //! process; milestone 6 runs the same cases over the HTTP codec (ADR 0020, "The HTTP
 //! codec, on paper").
 //!
-//! The table names every case, what produces it and the test that shows it. The cases
-//! of tasks P3a and P3b are shown now; those of task P4 (cancellation, deadlines, a
-//! flood of events, a slow load or unload) are named with P4's tests, which run them
-//! once P4 is built. Every test here that starts a worker starts it through the test
+//! The table names every case, what produces it and the test that shows it: those of
+//! tasks P3a and P3b here and in the supervisor's tests, and those of task P4
+//! (cancellation, deadlines, a flood of events, a slow load or unload, a worker that ends
+//! inside a call) in the queue's (`super::queue`). Every test here that starts a worker starts it through the test
 //! kit's guard (`super::worker::supervised`), and is of the group `pack-workers`.
 
 use std::collections::BTreeSet;
@@ -283,7 +283,7 @@ fn python_names(file: &str, dictionary: &str) -> BTreeSet<String> {
 fn texts() -> (String, String) {
     let here = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/pack"));
     let mut tests = String::new();
-    for name in ["conformance.rs", "worker.rs", "proto.rs"] {
+    for name in ["conformance.rs", "worker.rs", "proto.rs", "queue.rs"] {
         tests.push_str(&std::fs::read_to_string(here.join(name)).unwrap());
     }
     let plan = Path::new(concat!(
@@ -330,15 +330,21 @@ fn every_case_of_the_table_names_the_fake_model_or_the_fake_fault_that_produces_
             ["conformance", "worker", "queue"].contains(&module),
             "{case:?}"
         );
-        match case.task {
-            "P3a" | "P3b" => assert!(
-                tests.contains(&format!("fn {name}()")),
-                "{} is not a test here",
-                case.test
-            ),
-            "P4" => assert_eq!(module, "queue", "{case:?}"),
-            other => panic!("a case of the task {other}"),
+        // Every task of the table is built: each case's test is here, and those of P4 are
+        // in the queue's tests.
+        assert!(
+            ["P3a", "P3b", "P4"].contains(&case.task),
+            "a case of the task {}",
+            case.task
+        );
+        if case.task == "P4" {
+            assert_eq!(module, "queue", "{case:?}");
         }
+        assert!(
+            tests.contains(&format!("fn {name}()")),
+            "{} is not a test here",
+            case.test
+        );
     }
     // And every fake of the pack produces a case of the table.
     let models: BTreeSet<&str> = models.iter().map(String::as_str).collect();
