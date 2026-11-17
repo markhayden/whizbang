@@ -650,7 +650,7 @@ fn a_worker_that_ends_before_its_hello_is_named_by_its_exit_code() {
     assert_eq!(fault.kind(), FaultKind::Unavailable);
     assert_eq!(
         fault.sentence(),
-        "the pack's worker ended before its hello: it refused a frame or its command line (exit code 2)"
+        "the pack's worker ended before its hello: it refused a frame or command line, or could not write (exit code 2)"
     );
     assert_eq!(worker.ended(), Some(Ended::Exited(2)));
     assert!(

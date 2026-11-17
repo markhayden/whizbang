@@ -223,7 +223,8 @@ impl Launch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ended {
     /// It ended by itself, with this exit code: 0 at the end of its input, 2 at a
-    /// refused frame or command line, 3 at its lifetime (task P2).
+    /// refused frame or command line or at output it could not write, 3 at its lifetime
+    /// (task P2).
     Exited(i32),
     /// The supervisor killed it, at a deadline or at once.
     Killed,
@@ -236,11 +237,14 @@ impl Ended {
         status.code().map_or(Ended::Signalled, Ended::Exited)
     }
 
-    /// What the exit code says, in fixed words.
+    /// What the exit code says, in fixed words, short enough that the longest fault made
+    /// of one, with what comes next after it, keeps within the fault's limit.
     fn meaning(self) -> String {
         match self {
             Ended::Exited(0) => "it ended at the end of its input (exit code 0)".to_owned(),
-            Ended::Exited(2) => "it refused a frame or its command line (exit code 2)".to_owned(),
+            Ended::Exited(2) => {
+                "it refused a frame or command line, or could not write (exit code 2)".to_owned()
+            }
             Ended::Exited(3) => "it reached its lifetime (exit code 3)".to_owned(),
             Ended::Exited(4) => "it ended inside a call (exit code 4)".to_owned(),
             Ended::Exited(code) => format!("it ended with exit code {code}"),
@@ -596,8 +600,9 @@ impl Worker {
     /// What ends this supervisor from another thread, without waiting for the call in
     /// the worker (task P5b): once it is set, the call in the worker ends at its next
     /// look (the looks are a pause of [`PACE`] apart), `unavailable`, and the worker is
-    /// killed and waited for; a worker being started is ended at its next look too; and
-    /// no worker is started again. It is never taken back.
+    /// killed and waited for; a worker being started is ended at its next look too; a
+    /// request not yet written is not sent (`unavailable`, `not_sent`), and the worker is
+    /// killed and waited for; and no worker is started again. It is never taken back.
     pub(super) fn halt(&self) -> Arc<AtomicBool> {
         self.halt.clone()
     }
@@ -785,7 +790,9 @@ impl Worker {
     ///
     /// Cancelled, or past its deadline, before a byte of it is written (before the
     /// worker is started, and again after its hello), it is not sent: `cancelled` or
-    /// `timed_out`, `not_sent`, and the worker lives on. Written, it waits until the
+    /// `timed_out`, `not_sent`, and the worker lives on. With its supervisor ended
+    /// ([`Worker::halt`]) by then, it is not sent either: `unavailable`, `not_sent`, and
+    /// the worker is killed and waited for. Written, it waits until the
     /// earliest of its kind's limit and its deadline. A cancel is sent to the worker as
     /// `cancel` once, through the writer, waiting for nothing, and the call then waits at
     /// most [`CANCEL_LIMIT`] more: the worker's `error` for it (`cancelled`, answered,
@@ -873,6 +880,14 @@ impl Worker {
             let fault = refusal(FaultKind::Unavailable, "the pack's worker is not running");
             return Err((self.failed(fault, None, None), false));
         };
+        // A supervisor ended while the request held its turn: nothing is written, and
+        // the worker is killed as the halt says.
+        if self.halted() {
+            let ended = self.finish(running);
+            let words = "the supervisor of the pack's worker was ended before the request was written; it was not sent, and the worker was killed";
+            let fault = Fault::new(FaultKind::Unavailable, words).not_sent();
+            return Err((self.failed(fault, None, Some(ended)), false));
+        }
         // Noted before a byte is written, so that the reader holds the answer to it. The
         // writer writes it; the call waits for that, and then for the answer, within its
         // limit on the clock.
@@ -1719,5 +1734,63 @@ mod tests {
         }
         assert!(reader.join().is_ok(), "the reader read too far ahead");
         assert_eq!(said, FRAMES);
+    }
+
+    /// A request that holds its turn when the supervisor is ended, before a byte of it is
+    /// written, is not sent: `unavailable`, `not_sent`, and the worker killed. The halt is
+    /// set here between two calls, where `Supervisor::kill` can set it while a request
+    /// waits for the worker's lock. This test starts the pack's fakes through the test
+    /// kit's guard, and is of the group `pack-workers` by its name.
+    #[test]
+    fn a_request_that_holds_its_turn_when_the_supervisor_is_ended_is_not_sent() {
+        use whizbang_core::contract::SystemClock;
+        use whizbang_core::identity::Digest;
+        use whizbang_testkit::worker as kit;
+
+        use crate::models::{InstallationId, ModelName};
+
+        let mut worker = kit::fakes(None).guard(
+            |fixture| {
+                let launch = Launch {
+                    python: fixture.python.clone(),
+                    source: fixture.source.clone(),
+                    module: fixture.module.clone(),
+                    models_dir: fixture.models_dir.clone(),
+                    lifetime_s: fixture.lifetime_s,
+                    more: fixture.more.clone(),
+                };
+                Worker::new(launch, Arc::new(SystemClock), Secrets::none()).with_spawn(kit::spawn)
+            },
+            |worker| {
+                worker.kill();
+            },
+        );
+        let model = ModelName::new("fake-ok", &Secrets::none()).unwrap();
+        let text = Digest::of_bytes(b"an installation of a fake").to_string();
+        let installation = InstallationId::from_text(&text, &Secrets::none()).unwrap();
+        let load = Ask::Load {
+            model: model.clone(),
+            installation,
+            settings: Default::default(),
+        };
+        worker.call(load).unwrap();
+        let pid = worker.pid().unwrap();
+
+        worker.halt().store(true, Ordering::SeqCst);
+        let failed = worker
+            .call(Ask::Unload {
+                model,
+                installation,
+            })
+            .unwrap_err();
+        assert_eq!(failed.fault.kind(), FaultKind::Unavailable, "{failed:?}");
+        assert_eq!(failed.fault.stage(), Stage::NotSent, "{failed:?}");
+        assert_eq!(
+            failed.fault.sentence(),
+            "the supervisor of the pack's worker was ended before the request was written; it was not sent, and the worker was killed"
+        );
+        assert_eq!(failed.ended, Some(Ended::Killed));
+        assert_eq!(worker.pid(), None);
+        assert!(!kit::runs_the_pack(pid));
     }
 }

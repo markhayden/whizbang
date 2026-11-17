@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 
 import kit
@@ -73,7 +74,7 @@ def hello(id="h1", version=proto.VERSION):
 class Running:
     """A worker in this process, over two pipes, whose exit is recorded."""
 
-    def __init__(self, test, module=worker, options=(), lifetime=None, adapters=None, error_output=None):
+    def __init__(self, test, module=worker, options=(), lifetime=None, adapters=None, error_output=None, first=b""):
         to_worker_read, self.to_worker = os.pipe()
         self.from_worker, from_worker_write = os.pipe()
         self.exits = []
@@ -90,6 +91,8 @@ class Running:
             self.made.lifetime = lifetime
         self.reader = proto.Reader(kit.FdStream(self.from_worker), {})
         test.addCleanup(self.close)
+        # What is sent before the worker starts waits in the pipe for its reader.
+        self.send(first)
         self.made.start()
 
     def send(self, frame):
@@ -411,6 +414,40 @@ class Threads(unittest.TestCase):
         self.assertEqual(sorted(now, key=id), sorted(own, key=id))
         self.assertEqual(len(now) + 1, 3)
         # In a process of its own it counts three (Ends checks it in a child).
+        running.end_input()
+        self.assertEqual(running.ended(), [0])
+
+    def test_the_call_thread_runs_before_the_reader_can_answer_a_hello_sent_at_once(self):
+        # A hello waits in the pipe before the worker starts, as whizbang sends it right
+        # after starting the process. Between one start and the next, the reader, once
+        # started, is given all the time it needs to answer it; the answer counts the
+        # worker's threads alive then, and the main thread. Started reader first, it would
+        # count two.
+        counted = threading.Event()
+        alive = []
+        made = []
+
+        class Paused(worker.Worker):
+            def _started(self, thread):
+                if thread.name == "whizbang-pack-reader":
+                    counted.wait(kit.WAIT_SECONDS)
+
+        def count():
+            alive.append(sorted(thread.name for thread in made[0].threads if thread.is_alive()))
+            counted.set()
+            return 1 + len(alive[-1])
+
+        def make(argv, **given):
+            made.append(Paused(MODELS, None, count_threads=count, **given))
+            return made[0]
+
+        running = Running(self, module=types.SimpleNamespace(make=make), first=hello())
+        self.assertTrue(counted.is_set(), "the reader answered the hello while the worker started")
+        answer = running.read()
+        self.assertEqual(alive[0], ["whizbang-pack-call", "whizbang-pack-reader"])
+        self.assertEqual(answer["threads"], 3)
+        # The list keeps its order: the reader first, then the call.
+        self.assertEqual([thread.name for thread in running.made.threads], ["whizbang-pack-reader", "whizbang-pack-call"])
         running.end_input()
         self.assertEqual(running.ended(), [0])
 
