@@ -3,6 +3,12 @@
 Status: accepted. Builds what ADR 0012 ("Three interfaces") and ADR 0019 ("A download and a
 probe", "For later tasks") left to checkpoint 1C, and changes neither.
 Date: 2026-11-16
+Amended: 2026-11-16, after the security review of its pull request. Changed: only bytes of
+the answer, and of the request, count toward the limit between two reads and the least
+rate, and a ceiling of reads of TLS alone is added ("Limits"); the request's bytes are
+zeroed once written; the end of a head is looked for in the new bytes only; the test
+kit's listener serves 32 connections at most. Added: what a name resolves to, and the
+tests of a name, a twenty-digit length and a server that sends TLS alone.
 Spec: section 10, "Egress"
 
 ## Context
@@ -133,6 +139,18 @@ The module's top (`net/mod.rs`) states it whole. In short:
   ignored. Kept on, a resumed session would skip the certificate's check on that
   connection and tie two downloads together for the server, for nothing whizbang needs.
 - ALPN offers `http/1.1` alone.
+- **A name is checked, then resolved by the system, unfiltered.** The gate checks a
+  name against the entry's origins; the client then has the system resolve it, and
+  connects to whatever comes back, which may be a loopback or a private address. What
+  stands between is the check of the certificate against the name the gate let through:
+  the name, not the address it resolved to, is what is checked and sent in the
+  handshake. A test asks `localhost`, from the hosts file: a certificate for that name
+  is taken and the server is told the name, and a certificate for `127.0.0.1` alone,
+  where the name leads, is refused
+  (`client::a_name_is_checked_against_a_certificate_for_that_name_and_asked_for_by_it`).
+  The client puts no bound on how long resolving takes; whether a name that resolves to
+  a private address is refused, and how long its resolving may take, are the
+  installer's command's to decide (tasks N3b and N5).
 
 ### How a test reaches a server on loopback
 
@@ -151,7 +169,7 @@ Ed25519 keys whose PKCS#8 is the seed, signed with `rustls`'s own signing
 test. No key file is committed, and no crate is added for it.
 
 The servers are the test kit's listener on loopback (`whizbang_testkit::loopback`): it
-binds `127.0.0.1` alone, serves a fixed number of connections (16 at most) on one thread
+binds `127.0.0.1` alone, serves a fixed number of connections (32 at most) on one thread
 made through `whizbang_testkit::threads`, sets a 5-second limit on each read and write
 of a connection it serves, and is joined on every path: `finish` waits for its thread,
 and a drop, on a return or in a panic, sets a stop and wakes a blocked accept with a
@@ -164,13 +182,32 @@ machine.
 
 - **To connect:** 10 s for all of a host's addresses together, each tried with the time
   left, by the injected clock; 8 addresses at most.
-- **Between two reads:** 30 s from one byte to the next, either way.
+- **Between two reads:** 30 s from one byte of the answer to the next, or from the
+  request's last byte to the answer's first (or, before that, from the connection or
+  the handshake's last byte written).
 - **A least rate,** a setting (ADR 0011's `download_least_kib_per_second`, 256 KiB a
   second when the config gives none; the command that makes the client is task N3b's):
   fewer bytes than that over any whole minute, counted in whole seconds, ends the
-  download as `timed_out`. The bytes counted are those read from the socket, from the
-  moment it connected: the handshake's, the head's and the body's.
-- **A response's size** is what the caller states (`DownloadRequest::most_bytes`).
+  download as `timed_out`. The bytes counted are the answer's, its head and its body,
+  as TLS hands them over, from the moment the socket connected.
+- **Only the answer counts.** Records of TLS that hold none of the answer (the
+  handshake's, a session ticket's, a key update's) count toward neither limit: a server
+  whose certificate is good could send them for ever, and `rustls` puts no bound on how
+  many tickets of TLS 1.3 it is sent. And more than 4,096 reads of them in a row end the
+  download as `malformed`, so that a clock that stands still cannot keep it alive
+  either (`client::a_server_that_sends_tls_records_and_none_of_the_answer_ends_by_the_limit_between_reads`,
+  where the server sends key updates and nothing else).
+- **A response's size** is what the caller states (`DownloadRequest::most_bytes`). A
+  length of more than 19 digits is refused, not read as the most there is.
+- **The end of a head** is looked for in the bytes that came since the last look, and
+  the three before them, so that a head that comes a byte at a time is not looked over
+  again at each byte
+  (`http::tests::the_end_of_a_head_that_comes_a_byte_at_a_time_is_found_from_where_the_last_look_stopped`).
+
+**A credential is held once.** The request is made in one allocation of its exact size,
+so its value is copied once, into those bytes, which are overwritten with zeros once they
+are written. `rustls` encrypts what it is handed into records of its own, and the
+caller's `Credential` keeps the value as long as the caller holds it.
 
 The socket's own read and write limit is a poll, 250 ms; each time one comes back with
 nothing, the cancellation, the limit between two reads and the least rate are looked
@@ -244,7 +281,7 @@ models directory opened by the opening that asks whose it is.
     A signed storage address longer than that, or holding an `@`, is refused as
     `malformed`.
   - **A host's name is resolved by the system,** whose wait has its own limits and is
-    not bounded here.
+    not bounded here, to whatever addresses it answers ("TLS").
 
 ## Alternatives
 
