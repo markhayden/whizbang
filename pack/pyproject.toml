@@ -1,0 +1,17 @@
+# The Python pack: the worker whizbang starts for a local model (docs/plans/m1c-local-pack.md,
+# D9 and D10). Its core takes no third-party package, so this file names no dependency and
+# no build backend: `tool.uv.package = false` means the project itself is neither built nor
+# installed, and nothing is fetched from a package index for it. The runtime a model needs
+# comes later, as an extra, installed only where a model runs.
+#
+# The Python is pinned in `.python-version` beside this file; `just test-pack` runs the
+# tests with that Python and no other (scripts/test-pack.sh).
+[project]
+name = "whizbang-pack"
+version = "0.0.0"
+description = "The worker whizbang starts for a local model."
+requires-python = "==3.12.*"
+dependencies = []
+
+[tool.uv]
+package = false

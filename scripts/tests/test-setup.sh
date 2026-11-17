@@ -33,10 +33,19 @@ cat >"$tmp/bin/python3" <<'SH'
 [ -n "$FAKE_PYTHON" ] || exit 127
 echo "$FAKE_PYTHON"
 SH
-chmod +x "$tmp/bin/just" "$tmp/bin/cargo" "$tmp/bin/python3"
+# A fake `uv`, which prints its version as the real one does, with a build after it. Its
+# variable is FAKE_UV, the pinned version when unset; empty, it is not installed.
+cat >"$tmp/bin/uv" <<'SH'
+#!/bin/sh
+[ "$1" = --version ] || exit 2
+[ -n "$FAKE_UV" ] || exit 127
+echo "uv $FAKE_UV (0123456789 2026-10-03 aarch64-apple-darwin)"
+SH
+chmod +x "$tmp/bin/just" "$tmp/bin/cargo" "$tmp/bin/python3" "$tmp/bin/uv"
 # with_tools <just> <nextest> <deny> [python, 3.12 when not given; "" for not installed]
 with_tools() {
-  env PATH="$tmp/bin:$PATH" FAKE_JUST="$1" FAKE_NEXTEST="$2" FAKE_DENY="$3" FAKE_PYTHON="${4-3.12}" "$setup" --check
+  env PATH="$tmp/bin:$PATH" FAKE_JUST="$1" FAKE_NEXTEST="$2" FAKE_DENY="$3" FAKE_PYTHON="${4-3.12}" \
+    FAKE_UV="${FAKE_UV-$(pin uv)}" "$setup" --check
 }
 
 expect_pass "every tool at its pin" with_tools "$(pin just)" "$(pin cargo-nextest)" "$(pin cargo-deny)"
@@ -50,6 +59,17 @@ expect_fail "a missing tool" \
   "cargo-deny is missing; install it with: cargo install cargo-deny@$(pin cargo-deny) --locked" \
   with_tools "$(pin just)" "$(pin cargo-nextest)" ""
 grep -q -F "another version" "$tmp/out" && { cat "$tmp/out"; fail "a missing tool is not called another version"; }
+
+# uv is checked as the others are, and named with how to get the pinned one: not by cargo.
+[ -n "$(pin uv)" ] || fail "uv is pinned in scripts/tool-versions.txt"
+expect_pass "uv at its pin" with_tools "$(pin just)" "$(pin cargo-nextest)" "$(pin cargo-deny)"
+grep -q -F "tool ok: uv $(pin uv)" "$tmp/out" || { cat "$tmp/out"; fail "uv at its pin is reported as ok"; }
+FAKE_UV=0.0.1 expect_fail "uv at another version" \
+  "uv is at another version: found 0.0.1, pinned $(pin uv); install the pinned one with: uv self update $(pin uv)" \
+  with_tools "$(pin just)" "$(pin cargo-nextest)" "$(pin cargo-deny)"
+FAKE_UV="" expect_fail "no uv" \
+  "uv is missing; install version $(pin uv) as https://docs.astral.sh/uv/getting-started/installation/ says" \
+  with_tools "$(pin just)" "$(pin cargo-nextest)" "$(pin cargo-deny)"
 
 # Every problem is reported, not only the first.
 expect_fail "two problems at once" "just is missing" with_tools "" 9.9.9 "$(pin cargo-deny)"

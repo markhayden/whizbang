@@ -9,7 +9,8 @@
 #   scripts/setup.sh --check   check the tools only
 #
 # A tool that is missing, or at another version than scripts/tool-versions.txt pins, is
-# named with the command that installs the pinned version, and the script fails. jq and
+# named with the command that installs the pinned version (for uv, which cargo does not
+# install, the command or the page), and the script fails. jq and
 # python3 (3.9 or later, for scripts/baseline) are checked without a pin. The hooks
 # are installed either way. `just check` does not run this: only setup is strict about
 # versions.
@@ -113,6 +114,7 @@ fi
 installed() {
   case "$1" in
     just) just --version ;;
+    uv) uv --version ;;
     cargo-*) cargo "${1#cargo-}" --version ;;
   esac 2>/dev/null | awk 'NR == 1 { print $2 }' || true
 }
@@ -131,6 +133,14 @@ while read -r tool want; do
   have=$(installed "$tool")
   if [ "$have" = "$want" ]; then
     echo "tool ok: $tool $want"
+  elif [ "$tool" = uv ]; then
+    # uv is not installed by cargo. It runs the pack's tests and, later, installs the pack.
+    if [ -z "$have" ]; then
+      echo "tool problem: uv is missing; install version $want as https://docs.astral.sh/uv/getting-started/installation/ says" >&2
+    else
+      echo "tool problem: uv is at another version: found $have, pinned $want; install the pinned one with: uv self update $want" >&2
+    fi
+    status=1
   elif [ -z "$have" ]; then
     echo "tool problem: $tool is missing; install it with: cargo install $tool@$want --locked" >&2
     status=1

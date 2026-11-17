@@ -818,7 +818,10 @@ just setup              # install the git hooks; check the pinned tools
 just check              # fast tier: format check, lint, the crate graph, licences and
                         # sources, the script tests, the reference against a fresh
                         # copy, then the fast tests with seconds per suite and the
-                        # 180-second limit
+                        # 180-second limit, then the pack's Python tests
+just test-pack          # the pack's Python tests, with the Python the pack pins,
+                        # offline, through the thread guard; the runner ends itself
+                        # at 60 seconds
 just test-scripts-slow  # the script tests with their opt-in parts (about 40 seconds)
 just test-models        # model tier
 just test-slow          # slow tier
@@ -837,10 +840,10 @@ just ci                 # what a pull request runs: check, advisories, a smoke o
                         # secrets scan
 ```
 
-`just setup`, `check`, `test-scripts-slow`, `docs`, `scan`, `scan-range`,
+`just setup`, `check`, `test-pack`, `test-scripts-slow`, `docs`, `scan`, `scan-range`,
 `scan-range-secrets` and `ci` exist; the others arrive with the milestone that needs them.
 `just check` is made of recipes that also run alone: `fmt-check`, `clippy`, `graph`, `deny`,
-`test-scripts`, `docs-check`, `timing`. CI also runs `just test-timeout` on one runner: a test
+`test-scripts`, `docs-check`, `timing`, `test-pack`. CI also runs `just test-timeout` on one runner: a test
 that sleeps 31 seconds must fail by timeout.
 
 ## 12. Project structure

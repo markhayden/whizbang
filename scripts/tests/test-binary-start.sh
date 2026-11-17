@@ -10,7 +10,7 @@ call='whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))'
 # --- The repo itself. The script tests are part of `just check`, so this is where
 # `just check` refuses: the check passes on the workspace, and it has seen the places
 # that start the binary (a check that found none would be looking in the wrong place).
-grep -q -x -F 'check: fmt-check clippy graph deny test-scripts docs-check timing' justfile ||
+grep -q -x -F 'check: fmt-check clippy graph deny test-scripts docs-check timing test-pack' justfile ||
   fail "justfile: check runs the script tests, and this check with them"
 expect_pass "the workspace" "$check"
 started=$(sed -n 's/^binary start: ok (.* the real binary is started in \([0-9][0-9]*\) places, .*$/\1/p' "$tmp/out")
