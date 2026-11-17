@@ -289,7 +289,7 @@ are run one way). A resident worker and a GPU runtime add these.
 | Worker processes | One in a whizbang process (D4). A test file starts at most one at a time; the tests that start one are a group in `.config/nextest.toml`, `pack-workers`, two at a time | The supervisor; the group |
 | A worker a test started | Killed and waited for on every path, a panic included | One guard type in the test kit (task P3a), whose drop kills and waits; `just check` refuses a test that starts the pack another way |
 | A worker nobody waits for | Ends by itself: at the end of its input, whatever it is doing then (inside a `load`, or a call that ignores `cancel`: the reading thread ends the process and waits for nothing); and at `--max-lifetime-s`, which the test kit's guard passes (120) and which the kind `pack` passes from its setting `max_lifetime_s`, set by every test that starts a worker through the binary's wiring (P6a, P6b, P7a, P7b, R2b). `whizbang setup` is built before the kind (Y1 needs P3a only), so it takes no setting: the worker it starts for its hello check is given a fixed lifetime, 120, by `setup` itself | The worker; a test of each (P2, P6a, Y1) |
-| `uv` | One at a time, started only by `whizbang setup` and `just test-pack` (and once by hand for Y1's lock), and on CI by the step that installs the pinned Python, which the job's time limit bounds (`timeout-minutes`, 15). **Reworded with the task** (by C1b): the words "and on CI by the step … 15" are added; the row named only `setup`, `just test-pack` and the lock, and C1b's CI step starts `uv` too. A cleared environment with P3a's allow-list; no user's configuration (`--no-config`); `UV_CONCURRENT_DOWNLOADS=4`, `UV_CONCURRENT_INSTALLS=4`, `UV_CONCURRENT_BUILDS=1`. Killed and waited for on every path out of `setup`. 60 s with no extra, which is offline; 30 minutes with one. The stand-in for a `uv` that never ends, which the test of the limit starts, ends itself: after 120 s and not before, so that it outlasts the limit the test passes and still ends when the test is killed and nothing is left to kill it. The Mac's install with an extra, and the making of the lock, run through `scripts/heavy.sh` with the thread limit at 200, and the peak is in the hand-back | Y1: `setup::a_uv_that_does_not_end_within_its_limit_is_killed_and_waited_for`, `setup::uv_is_given_the_allow_list_and_no_users_config` |
+| `uv` | One at a time, started only by `whizbang setup` and `just test-pack` (and once by hand for Y1's lock), and on CI by the step that installs the pinned Python, which the job's time limit bounds (`timeout-minutes`, 15). **Reworded with the task** (by C1b): the words "and on CI by the step … 15" are added; the row named only `setup`, `just test-pack` and the lock, and C1b's CI step starts `uv` too. And by the test kit's fixture, `uv python find` alone, offline, once in a test process that starts a worker, so at most two at a time (the group `pack-workers`), killed and waited for at 60 s. **Reworded with the task** (by P3a): that sentence is added; the fixture finds the pinned Python as `just test-pack` does (P3a, "Built with the task"). A cleared environment with P3a's allow-list; no user's configuration (`--no-config`); `UV_CONCURRENT_DOWNLOADS=4`, `UV_CONCURRENT_INSTALLS=4`, `UV_CONCURRENT_BUILDS=1`. Killed and waited for on every path out of `setup`. 60 s with no extra, which is offline; 30 minutes with one. The stand-in for a `uv` that never ends, which the test of the limit starts, ends itself: after 120 s and not before, so that it outlasts the limit the test passes and still ends when the test is killed and nothing is left to kill it. The Mac's install with an extra, and the making of the lock, run through `scripts/heavy.sh` with the thread limit at 200, and the peak is in the hand-back | Y1: `setup::a_uv_that_does_not_end_within_its_limit_is_killed_and_waited_for`, `setup::uv_is_given_the_allow_list_and_no_users_config` |
 | The pack's Python tests | Run under `scripts/thread-guard.sh`. The runner ends itself at a stated limit, 60 s, by the standard library's `faulthandler.dump_traceback_later(…, exit=True)`. A thread a test starts is a daemon thread, so no test's thread keeps the runner alive | C1b |
 | Threads in the worker | Three of the worker's own (reader, call, main). The runtime's pools are held to 8 threads each, before the runtime is imported: by the environment the supervisor sets (`OMP_NUM_THREADS`, `MKL_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS`, `TOKENIZERS_PARALLELISM=false`) and by the adapter's own calls to the runtime; R1 lists every pool the chosen runtime has, from its documentation | The worker reports its count in `hello` and after each call; over 64 with a fake model fails the conformance suite |
 | Threads in the worker, real model | 200 at most, enforced while it runs | R1's script and `just test-models` run under `scripts/thread-guard.sh` with its limit set to 200: it counts the command and everything it started, during the load and the call, and kills on the first count over. Both also run under the watch on resident memory of the row below. The evidence record holds the peak it saw |
@@ -448,7 +448,9 @@ Each is settled by the task named, from documentation or by the owner; none bloc
      and the place itself can be pointed at a folder that holds no token, by the
      variables above.
    Still N4's: which of the three variables its reader follows, in its amendment to
-   ADR 0011. Still P3a's: which variables the worker's environment sets.
+   ADR 0011. Still P3a's: which variables the worker's environment sets. Settled by
+   P3a: every place those variables name is one empty folder of the worker's own, and
+   `HF_TOKEN_PATH` a file in it that is not there (P3a, "Built with the task").
 
 ## Strands and order
 
@@ -1094,13 +1096,19 @@ are, and are not"; the carry-over row on the store's locks; squint
 `full.rs` (the client that survives, D1: what is ported and what is not is in the commit message);
 rascal `crates/rascal-mcp/src/client/env.rs` (the environment's allow-list).
 
-- [ ] `whizbang_backends::pack::Worker`: started from a command line it is given, with a
+- [x] `whizbang_backends::pack::Worker`: started from the launch it is given, with a
       cleared environment and an allow-list (no variable whose name ends in `_KEY`,
       `_TOKEN` or `_SECRET`, and none the config names as a key), the thread limits and
       the offline variables of D11 set, and with them the variables that keep the
       Hub's libraries from reading the token of a sign-in (D12; open question 9); a hello each way; stopped as D7 says. Its error
       output is read by line, 256 lines of 4,096 bytes kept, redacted.
-- [ ] `whizbang_testkit::worker`: the guard of "Rules", and the pack with fake models
+      **Reworded with the task:** "started from a command line it is given" is now
+      "started from the launch it is given". The pack is not installed, so the
+      supervisor makes the command line itself from a `Launch` (the interpreter by its
+      absolute path, the pack's source, the entry point, the models directory and the
+      lifetime), so that `--max-lifetime-s` is always passed and the interpreter is
+      never looked for on `PATH`; only a test's fault is added to it.
+- [x] `whizbang_testkit::worker`: the guard of "Rules", and the pack with fake models
       and fake faults as a fixture.
 
 **Done when** these pass, in `crates/whizbang-backends/tests/it/pack/worker.rs`:
@@ -1118,6 +1126,71 @@ rascal `crates/rascal-mcp/src/client/env.rs` (the environment's allow-list).
 
 **Carry-over:** the child's copy of the store's lock (closed by the fourth and sixth
 tests and the line of D7). **Size:** medium.
+**Built with the task:**
+
+- **How the interpreter is found.** The supervisor is given it, as an absolute path, and
+  never looks on `PATH`: one that is not an absolute path to a file is refused before
+  anything starts, `unavailable`, "the pack's Python is not installed; run whizbang
+  setup". The binary starts no worker until P6a; Y1 makes the environment the kind
+  then takes its interpreter from. In tests the fixture finds the pinned Python as
+  `scripts/test-pack.sh` does: `uv python find`, offline, with no user's configuration
+  and downloads of a Python off, in a cleared environment, at most 60 seconds, killed
+  and waited for past them, once in a test process.
+  **Reworded with the task** (by P3a), in the row of "Rules" on `uv`: "started only by
+  `whizbang setup` and `just test-pack`" now names the test kit's fixture too, which
+  starts `uv python find` and nothing else; and "one at a time" is at most two, the
+  group `pack-workers`. The row named neither, and the fixture needs the one Python the
+  pack pins without taking one from `PATH`.
+- **The command line** is `<python> -I -B -c <boot> <source> <module> --models-dir
+  <folder> --max-lifetime-s <seconds>`, then a test's `--fake-fault`. The boot
+  (`pack::worker::BOOT`) closes every descriptor above the three, which a descriptor
+  that whoever started whizbang handed it without closing at a program's start would
+  otherwise reach; every file whizbang opens is closed there already, and nothing runs
+  between the start of the child and the start of its program.
+- **The environment** (open question 9, P3a's part): cleared; `LANG`, `LC_ALL` and
+  `LC_CTYPE` of the parent's, but for a key's name; then `HOME`, `TMPDIR`,
+  `XDG_CACHE_HOME` and `HF_HOME` set to one empty folder the supervisor makes for each
+  worker (its owner's only, in the system's temporary folder) and removes once the
+  worker has been waited for, and `HF_TOKEN_PATH` to a file in it that is not there; so
+  no library in the worker finds the sign-in's store by a home, a cache or the Hub's
+  own place. `HF_HUB_OFFLINE`, `HF_HUB_DISABLE_TELEMETRY`,
+  `HF_HUB_DISABLE_IMPLICIT_TOKEN` and `DO_NOT_TRACK` are `1`; `PATH` is `/usr/bin:/bin`;
+  the pools are held at 8 (`OMP_NUM_THREADS`, `MKL_NUM_THREADS`,
+  `OPENBLAS_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS`) and `TOKENIZERS_PARALLELISM` is
+  `false`; the watermark of "Rules" starts at 0.5, for R1 to change. No token, home
+  folder, proxy or Python variable of the parent's passes.
+- **Exit codes** name how a worker that ended before its hello ended, in its fault: 0,
+  2 and 3 each shown (`worker::a_worker_that_ends_before_its_hello_is_named_by_its_exit_code`,
+  and the dropped supervisor's 0); 4 is from inside a call, which is P4's to show.
+- **Threads:** two for each worker, made by a spawner of the supervisor's own
+  (`pack::threads`, a process holds two at most: one worker), the third place in the
+  workspace allowed to make a thread (`clippy.toml`, ADR 0008 as amended,
+  `scripts/tests/test-thread-lint.sh`). A test hands the supervisor the test kit's,
+  so its threads count toward the test's 64 (the dropped supervisor's test counts
+  them). Both readers are joined on every path: each ends at the end of its pipe,
+  which the end of the process closes.
+- **The guard:** `Fixture::guard` holds the supervisor a test makes from the fixture
+  (the test kit does not depend on `whizbang-backends`); its drop kills the worker,
+  waits for it, and fails the test if `ps` lists a child of the test's process that
+  runs the pack. The tests that start one are the group `pack-workers`, two at a time.
+  "`just check` refuses a test that starts the pack another way" is
+  `worker::no_test_starts_the_pack_but_through_the_test_kits_guard`, a fast test that
+  reads the crates' sources.
+- **The fakes:** `error-output` now also writes its environment and its descriptors,
+  a line each, and last a marker, a host and a made-up token: the fourth, fifth, sixth
+  and ninth tests read them, and P3b's test of a fault reads the last three.
+- **Not built here:** the cleaner of a text of the protocol. P3a writes none (its hello
+  holds no text, and its faults are whizbang's, not the protocol's); P3b builds it.
+- Two tests more than "Done when" names:
+  `worker::a_python_that_is_not_there_or_not_absolute_is_refused_and_says_to_run_setup`
+  and the one on exit codes above.
+
+**Notes for P3b and P4:** the output's reader hands each frame on a channel and ends
+at the first refusal or the end; it reads with an `Open` of its own, which P3b
+replaces with the one the writer notes requests in. The error output is complete only
+once the worker has ended (`Worker::error_output` after `stop` or `kill`): the reader
+may still be behind when a frame arrives. `Worker::folder` is the worker's folder while
+it runs.
 
 ### P3b. One call, and the conformance table
 

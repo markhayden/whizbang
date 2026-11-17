@@ -68,6 +68,9 @@ Spec: section 3, "The execution contract", "What a run publishes", "Nested calls
 "Storage" and "What every run records"; section 6, "Spend"
 Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
 that said something was still to come; no decision changed.
+Amended: 2026-11-17, with task P3a of checkpoint 1C. Changed under "What keeps a test
+from making threads without end": the lint is allowed in a third place, the spawner of
+the pack's supervisor.
 
 ## Context
 
@@ -597,8 +600,10 @@ part parked threads until the system refused one, and the machine went down.
   (`spawn`, `scope`), which counts the live threads it made in the process and panics,
   in the caller, at the 65th: nothing is asked of the system. `clippy.toml` refuses
   `std::thread::spawn`, `std::thread::scope` and a builder's `spawn` everywhere in the
-  workspace, tests included, and is allowed in two places: that helper, and the
-  executor's own spawner (`spawn_thread`), which the bound above holds. `just check`
+  workspace, tests included, and is allowed in three places: that helper; the
+  executor's own spawner (`spawn_thread`), which the bound above holds; and the spawner
+  of the pack's supervisor (`whizbang_backends::pack::threads`), which holds a process to
+  one worker's two threads, and which a test replaces with that helper. `just check`
   lints every target, so a test that makes a thread another way fails it
   (`scripts/tests/test-thread-lint.sh`, on a fixture). This is the stop that works
   against a loop: a loop of raw spawns makes tens of thousands of threads a second.

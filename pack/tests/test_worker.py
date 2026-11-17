@@ -475,6 +475,14 @@ class Fakes(unittest.TestCase):
         lines = running.error_output.lines()
         self.assertGreater(len(lines), 256)
         self.assertTrue(any(len(line) > 4096 for line in lines))
+        # Then its environment and its descriptors, and last the marker, the host and the
+        # made-up token that whizbang's tests look for, all within the last 256 lines.
+        self.assertTrue(any(line.startswith("environment ") for line in lines[-256:]))
+        self.assertTrue(any(line.startswith("descriptor 0 ") for line in lines[-256:]))
+        self.assertEqual(
+            lines[-3:],
+            ["marker " + fakes.MARKER, "connecting to host " + fakes.HOST, "token " + fakes.TOKEN],
+        )
 
         # flood: more events than a request may send.
         running = faulty("flood")
