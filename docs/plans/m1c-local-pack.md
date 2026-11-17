@@ -458,6 +458,8 @@ Each is settled by the task named, from documentation or by the owner; none bloc
    `cuda-pathfinder`, `cuda-toolkit`, and `triton`) are on the same index. The lock names
    no index but `https://pypi.org/simple` and no file host but
    `files.pythonhosted.org` (`setup::the_lock_file_names_no_index_but_the_approved_one`).
+   **Then dropped by the owner (2026-11-17):** the lock holds the runtime for the Mac
+   alone, and the core alone for Linux, for the NVIDIA packages' licences (under Y1, "Amended after the task"; ADR 0021's amendment).
 6. The licences of the runtime's packages, read from their metadata, not from memory.
    (R1, in the ADR.) **Settled by R1 (2026-11-17):** ADR 0022, "The runtime's packages",
    from the installed metadata of each.
@@ -2202,6 +2204,25 @@ line. **Size:** medium.
   from the index with the three packages unpinned, peak 14 threads, chose the versions,
   and the lock with them pinned was then written from what that resolution had cached,
   peak 1 thread.
+
+**Amended after the task (the owner, 2026-11-17: "drop it"):** Linux on x86-64 is dropped
+from the runtime in the lock for 1C. There the index's `torch` is the CUDA build and pulls
+in NVIDIA's packages, three under NVIDIA's proprietary licence and thirteen stating none;
+1C installs and runs the runtime only on the owner's Mac, and the public lock names no
+proprietary package nobody has tested. Each package of the extra now carries the marker of
+macOS on Apple silicon, and the lock was made again (41 packages; the 19 Linux-only ones
+and the Linux wheels gone; the Mac's versions unchanged), so the words "60 packages, every
+one with a wheel for both" above are history. `tool.uv.environments` keeps Linux on x86-64,
+for the core alone: `uv sync` refuses a platform the lock is not made for, the core's
+install among them, which the Linux runner showed when it was dropped from there. The
+boxes' words do not change: the second box names the lock "made on the Mac", which it
+still is. `whizbang setup --extra` on any other platform is refused before anything is
+downloaded or made; the core installs on Linux, offline (ADR 0021, "Amended: the Mac
+alone"). Three tests more:
+`setup::an_extra_on_a_platform_the_lock_does_not_cover_is_refused_before_anything_runs`,
+`setup::the_command_refuses_an_extra_off_the_mac_before_it_makes_the_models_directory`
+and `setup::the_extra_is_for_the_mac_alone_and_the_lock_names_no_nvidia_or_cuda_package`.
+The runtime on Linux is the carry-over row "Linux runtime extra", owned by 1D.
 
 ### P6a. The kind `pack`: a local segmenter through the executor
 

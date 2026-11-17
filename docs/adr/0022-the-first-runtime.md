@@ -60,7 +60,7 @@ holds its copy).
 
 | Candidate | Phrase on the Apple GPU | Point and box, documented | CUDA, documented | Verdict |
 |---|---|---|---|---|
-| A. PyTorch, through `transformers` | **Shown by R1**, below, with the fallback off | Yes: `Sam3TrackerModel` takes `input_points` and `input_boxes` (`https://huggingface.co/docs/transformers/model_doc/sam3_tracker`; the installed `transformers/models/sam3_tracker/`) | Yes: the model card's examples choose CUDA (`https://huggingface.co/docs/transformers/model_doc/sam3`), and the lock's `torch` for Linux on x86-64 is a CUDA build with its CUDA libraries from the same index (ADR 0021) | **Meets the bar: chosen** |
+| A. PyTorch, through `transformers` | **Shown by R1**, below, with the fallback off | Yes: `Sam3TrackerModel` takes `input_points` and `input_boxes` (`https://huggingface.co/docs/transformers/model_doc/sam3_tracker`; the installed `transformers/models/sam3_tracker/`) | Yes: the model card's examples choose CUDA (`https://huggingface.co/docs/transformers/model_doc/sam3`), and the index's `torch` for Linux on x86-64 is a CUDA build with its CUDA libraries from the same index (ADR 0021; dropped from the lock by the owner on 2026-11-17, ADR 0021's amendment) | **Meets the bar: chosen** |
 | B. ONNX Runtime, Core ML provider | Not tried | No: the old export is phrase only | Yes, its CUDA provider | Not reached |
 | C. MLX port | Documented by its author | Boxes; points not stated (`https://huggingface.co/mlx-community/sam3-image`) | No | Fails the bar |
 | D. Meta's own package | No: CUDA is a stated prerequisite (`https://github.com/facebookresearch/sam3`; pull request 400 open) | Yes | Yes | Fails the bar |

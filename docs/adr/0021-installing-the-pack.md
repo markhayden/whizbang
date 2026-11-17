@@ -2,6 +2,15 @@
 
 Status: accepted.
 Date: 2026-11-17
+Amended: 2026-11-17, by the owner's decision of that day, in their words "drop it": Linux
+on x86-64 is dropped from the runtime in the pack's lock for checkpoint 1C, so the lock holds
+the extra's packages for macOS on Apple silicon alone. On Linux the index's `torch` is the
+CUDA build and pulls in NVIDIA's packages: three under NVIDIA's proprietary licence and
+thirteen whose metadata states none. 1C installs and runs the runtime only on the owner's
+Mac, and the public lock names no proprietary package nobody has tested. `whizbang setup
+--extra` is refused on any other platform before anything is downloaded; the core still
+installs on Linux. Linux comes back when a Linux story needs it (`docs/carry-over.md`,
+"Linux runtime extra"). See "Amended: the Mac alone", below.
 Spec: section 4, "The Python pack"; section 17, "Offline bundles for installing the pack"
 
 ## Context
@@ -152,6 +161,46 @@ alone. Their licences, read from each package's own metadata (the installed
 distributions on the Mac; for the Linux-only ones, the index's metadata of the locked
 version), are listed in the pull request of task Y1. R1 records them for the runtime it
 chooses (open question 6). On the Mac, the environment with the extra is about 760 MB.
+
+### Amended: the Mac alone
+
+By the owner's decision of 2026-11-17 ("drop it"), each package of the extra `torch` in
+`pack/pyproject.toml` carries the marker
+`sys_platform == 'darwin' and platform_machine == 'arm64'`, and the lock was made again from
+it on the owner's Mac by the command above. The first making, before the marker, could not
+resolve from `uv`'s cache and contacted `pypi.org` and `files.pythonhosted.org`, the origins
+the owner approved, and no other host; the final making, with the marker, ran with
+`--offline` and contacted nothing. `tool.uv.environments` still names
+both platforms: `uv sync` refuses a platform the lock is not made for, the core's install
+among them, so Linux on x86-64 stays, for the core alone; there the extra resolves to
+nothing. Where this record says the lock pins the runtime for two platforms, read the Mac
+alone. The new lock holds 41 packages: the pack and the 40 the Mac installs with the extra,
+at the same versions as before (`torch` 2.15.0, `torchvision` 0.29.2, `transformers`
+5.23.0). The 19 Linux-only packages (fifteen `nvidia-*`, `cuda-bindings`,
+`cuda-pathfinder`, `cuda-toolkit` and `triton`), `torch`'s dependencies marked for Linux,
+and the Linux wheels of the packages both platforms shared are gone; nothing was added but
+the new markers
+(`setup::the_extra_is_for_the_mac_alone_and_the_lock_names_no_nvidia_or_cuda_package`).
+
+Why: on Linux on x86-64 the index's `torch` is the CUDA build, and it pulls in NVIDIA's
+packages, three under NVIDIA's proprietary licence and thirteen whose metadata states no
+licence. 1C installs and runs the runtime only on the owner's Mac, so the public lock
+should name no proprietary package that nobody has tested.
+
+What a Linux user gets: `whizbang setup` with no extra installs the core, offline, as
+before; CI's Linux runner shows it. `whizbang setup --extra <name>` on any platform but
+macOS on Apple silicon is refused in a sentence that says the extra is locked for that
+platform only in this build, before the models directory (or the data folder above it) is
+made and before any `uv` is started, so nothing is downloaded and nothing is made
+(`whizbang::pack_setup::EXTRA_HOST`;
+`setup::an_extra_on_a_platform_the_lock_does_not_cover_is_refused_before_anything_runs`,
+which gives `install` a made-up platform, and
+`setup::the_command_refuses_an_extra_off_the_mac_before_it_makes_the_models_directory`,
+which gives the command's `run` one).
+
+The runtime on Linux comes back when a Linux story needs it: its "done when" starts with
+the owner deciding on NVIDIA's licences, or on a CPU-only build from a host the owner
+approves (`docs/carry-over.md`, "Linux runtime extra").
 
 ## Consequences
 
