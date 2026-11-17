@@ -636,11 +636,13 @@ fn sources(most: usize) -> Vec<PathBuf> {
 
 #[test]
 fn no_test_starts_the_pack_but_through_the_test_kits_guard() {
-    // Who names the pack's Python package, and so may start it: the supervisor, and
-    // the test kit's fixture. Who makes a supervisor in a test: the supervisor's own
-    // tests here, each through the test kit's guard. The needle is put together, so
-    // that this file does not hold it.
+    // Who names an entry point of the pack's Python package as a module to run (its
+    // worker or its fakes), and so may start it: the supervisor, and the test kit's
+    // fixture. A test that reads the package's files as files names it otherwise. Who
+    // makes a supervisor in a test: the supervisor's own tests here, each through the
+    // test kit's guard. The needles are put together, so that this file holds neither.
     let package = ["whizbang", "pack"].join("_");
+    let entry_points = [format!("{package}.worker"), format!("{package}.fakes")];
     let crates = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
         .canonicalize()
         .unwrap();
@@ -655,7 +657,10 @@ fn no_test_starts_the_pack_but_through_the_test_kits_guard() {
             .unwrap()
             .to_string_lossy()
             .into_owned();
-        if text.contains(&package) {
+        if entry_points
+            .iter()
+            .any(|entry| text.contains(entry.as_str()))
+        {
             naming.insert(place.clone());
         }
         if !place.contains("/src/") && (text.contains("Worker::new(") || text.contains("Launch {"))
