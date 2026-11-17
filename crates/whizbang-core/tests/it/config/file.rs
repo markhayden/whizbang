@@ -4,7 +4,8 @@
 //! a key, escaped and cut, and never shows a value or a path.
 
 use whizbang_core::config::{
-    BACKENDS_LIMIT, CONFIG_BYTES_LIMIT, Config, ConfigRefused, KEY_SHOWN_LIMIT, RECIPIENTS_LIMIT,
+    BACKENDS_LIMIT, CONFIG_BYTES_LIMIT, Config, ConfigRefused, DOWNLOAD_LEAST_KIB_LIMIT,
+    DOWNLOAD_LEAST_KIB_PER_SECOND, KEY_SHOWN_LIMIT, MODELS_DIR_LIMIT, RECIPIENTS_LIMIT,
     SETTINGS_LIMIT, Setting,
 };
 use whizbang_core::contract::{Capability, Secrets};
@@ -193,7 +194,7 @@ fn an_unknown_table_or_key_is_refused_naming_the_key() {
             "[egress.recipients.one]\norigin = \"https://h\"\nclasses = []\ntoken = \"t\"\n",
             "egress.recipients.one.token",
         ),
-        ("[models]\ndir = \"m\"\n", "models.dir"),
+        ("[models]\nfolder = \"/m\"\n", "models.folder"),
     ] {
         let refused = refusal(text);
         assert_eq!(key_of(&refused), key, "{refused}");
@@ -204,7 +205,7 @@ fn an_unknown_table_or_key_is_refused_naming_the_key() {
 }
 
 #[test]
-fn tools_is_refused_until_it_has_a_shape_and_models_holds_nothing_yet() {
+fn tools_is_refused_until_it_has_a_shape_and_a_table_with_nothing_in_it_is_as_no_table() {
     for text in ["[tools]\n", "[tools]\npaths = [\"a.py\"]\n", "tools = 1\n"] {
         let refused = refusal(text);
         assert_eq!(key_of(&refused), "tools");
@@ -222,9 +223,105 @@ fn tools_is_refused_until_it_has_a_shape_and_models_holds_nothing_yet() {
     ] {
         assert_eq!(read(text), Config::empty(), "{text}");
     }
-    // `models` is a table of the file, and no key of it has a shape yet.
+    // `models` is a table of the file: with nothing in it, it is as no table.
     assert_eq!(read("[models]\n"), Config::empty());
     assert_eq!(key_of(&refusal("models = 1\n")), "models");
+}
+
+#[test]
+fn the_models_table_names_the_directory_and_the_least_rate_of_a_download() {
+    // With neither key the config gives neither: where the directory is and what
+    // the least rate is are then whoever asks's to say.
+    let empty = read("[models]\n");
+    assert_eq!(empty.models_dir(), None);
+    assert_eq!(empty.download_least_kib_per_second(), None);
+    assert_eq!(DOWNLOAD_LEAST_KIB_PER_SECOND, 256);
+    // Each is read by itself, and both together.
+    let both =
+        read("[models]\ndir = \"/srv/whizbang models/é\"\ndownload_least_kib_per_second = 512\n");
+    assert_eq!(
+        both.models_dir(),
+        Some(std::path::Path::new("/srv/whizbang models/é"))
+    );
+    assert_eq!(both.download_least_kib_per_second(), Some(512));
+    assert_eq!(
+        read("[models]\ndir = \"/\"\n")
+            .models_dir()
+            .unwrap()
+            .to_str(),
+        Some("/")
+    );
+    let most = MODELS_DIR_LIMIT;
+    let longest = format!("/{}", "d".repeat(most - 1));
+    let config = read(&format!("[models]\ndir = \"{longest}\"\n"));
+    assert_eq!(
+        config.models_dir().unwrap().to_str(),
+        Some(longest.as_str())
+    );
+    for rate in [1, DOWNLOAD_LEAST_KIB_LIMIT] {
+        let config = read(&format!(
+            "[models]\ndownload_least_kib_per_second = {rate}\n"
+        ));
+        assert_eq!(config.download_least_kib_per_second(), Some(rate));
+    }
+    // The directory is an absolute path, as it is written: a relative one would be
+    // another folder from each working folder, and `~` is nobody's home here. No
+    // refusal shows what was written.
+    let marker = "zqxjk";
+    for dir in [
+        format!("\"{marker}/models\""),
+        format!("\"~/{marker}\""),
+        format!("\"./{marker}\""),
+        "\"\"".to_owned(),
+        format!("\"/{marker}\\u0007\""),
+        format!("\"/{marker}\\u0000\""),
+        format!("\"/{marker}\\n\""),
+        format!("\"/{}\"", marker.repeat(most / marker.len() + 1)),
+        "7".to_owned(),
+        format!("[\"/{marker}\"]"),
+    ] {
+        let refused = refusal(&format!("[models]\ndir = {dir}\n"));
+        assert_eq!(key_of(&refused), "models.dir", "{dir}");
+        assert!(!said(&refused).contains(marker), "{refused}");
+    }
+    let refused = refusal("[models]\ndir = \"models\"\n");
+    assert!(
+        refused.to_string().contains("an absolute path"),
+        "{refused}"
+    );
+    // The least rate is a whole number of kibibytes a second, one at least.
+    let over = DOWNLOAD_LEAST_KIB_LIMIT + 1;
+    for rate in ["0", "-1", &over.to_string(), "1.5", "\"256\"", "true"] {
+        let refused = refusal(&format!(
+            "[models]\ndownload_least_kib_per_second = {rate}\n"
+        ));
+        assert_eq!(
+            key_of(&refused),
+            "models.download_least_kib_per_second",
+            "{rate}"
+        );
+    }
+    // And the table has those two keys and no other.
+    let refused = refusal("[models]\ndir = \"/m\"\ncatalogue = \"c.json\"\n");
+    assert_eq!(key_of(&refused), "models.catalogue");
+    assert!(
+        refused
+            .to_string()
+            .contains("is not known; the keys here are dir and download_least_kib_per_second"),
+        "{refused}"
+    );
+    // What is printed of a config holds no directory, and neither key is among the
+    // settings a run records: a record leaves the machine.
+    assert!(!format!("{both:?}").contains("srv"), "{both:?}");
+    assert!(both.settings_of(&[], &Secrets::none()).unwrap().is_empty());
+    // A directory that holds a secret the reader was told of refuses the whole file.
+    let key = made_up_key("dir");
+    let secrets = Secrets::new([key.clone()]).unwrap();
+    let text = format!("[models]\ndir = \"/srv/{key}\"\n");
+    assert_eq!(
+        Config::parse(text.as_bytes(), &secrets).unwrap_err(),
+        ConfigRefused::HoldsSecret
+    );
 }
 
 #[test]
@@ -1259,7 +1356,8 @@ fn a_config_prints_its_shape_and_none_of_its_values() {
     let shown = format!("{config:?}");
     assert_eq!(
         shown,
-        "Config { backends: 1, call_cap: true, recipients: 1 }"
+        "Config { backends: 1, call_cap: true, recipients: 1, models_dir: false, \
+         download_least: false }"
     );
     let (_, backend) = config.backends(Capability::Fill).next().unwrap();
     let (_, recipient) = config.recipients().next().unwrap();
@@ -1277,7 +1375,8 @@ fn a_config_prints_its_shape_and_none_of_its_values() {
     }
     assert_eq!(
         format!("{:?}", Config::empty()),
-        "Config { backends: 0, call_cap: false, recipients: 0 }"
+        "Config { backends: 0, call_cap: false, recipients: 0, models_dir: false, \
+         download_least: false }"
     );
 }
 

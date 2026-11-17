@@ -94,6 +94,11 @@ that said something was still to come; no decision changed.
 Amended: 2026-11-15, after a test of task I4b failed twice on the Linux runner. Added
 under "One way to a writer, with recovery before it", "Limits": what of a started run
 holds the writer, and until when.
+Amended: 2026-11-15, with task N3a of checkpoint 1C (`docs/plans/m1c-local-pack.md`).
+Changed under "An inventory": `Unready` has a fifth reason, that this build has no
+adapter for the model. Changed under "The binary wired": a command names a models
+directory, the binary's wiring opens it and makes the inventory, and the inventory
+is told the secrets the executor is told (ADR 0017, "Where the directory is").
 
 ## Context
 
@@ -820,8 +825,14 @@ for its model, and two answers (`Installed`):
   ADR 0017 writes an installation's identity, so the type has no place for a path, a
   file's name, a time or any text read from a disk
   (`inventory::an_identity_is_a_digest_as_text_and_is_a_version_a_declaration_takes`);
-- **not ready, and why** (`Unready`): not installed, out of date, damaged, or not in the
-  catalogue. Each is fixed words with nothing in it. **There is no fifth:** an inventory
+- **not ready, and why** (`Unready`): not installed, out of date, damaged, not in the
+  catalogue, or, since task N3a of checkpoint 1C, that this build has no adapter for
+  it. Each is fixed words with nothing in it. **The fifth** is for a model the
+  catalogue holds and no adapter of the build runs: "this build has no adapter for
+  it". Until it was there such a model was called out of date when installed and not
+  installed when not, and each of those tells a person to install, which would mend
+  nothing; an inventory says the fifth whether or not the model is installed (ADR
+  0017, "The inventory"). **There is no sixth:** an inventory
   that cannot tell, or cannot read what it found, has `Damaged` to say and no way to say
   ready without an identity. What is half installed is not installed or is damaged; which
   of the two is the inventory's own (task M6, ADR 0017).
@@ -1650,10 +1661,11 @@ else gives either executor a source, a secret or a part.
 
 **The inventory and the lease** (`Over::installed`; ADR 0017, "The inventory" and "The
 lease"). Tests named `wired::` as above, over a models directory in a scratch folder
-in which the test installs a model with a fake of the download.
+in which the test installs a model with a fake of the download; since task N3a the
+wiring opens that directory itself, as it opens one a command names.
 
 - **What a config offers always stands over an inventory:** the models directory
-  the wiring was given (`models::Installations`), or, with none, the inventory that
+  the wiring opened (`models::Installations`), or, with none, the inventory that
   knows no model (`NoInventory`). So a local backend is prepared under the identity
   of an installation or is not ready, and is never answered as its kind declared it
   with nothing known of what is installed. **Under no models directory no local
@@ -1668,21 +1680,32 @@ in which the test installs a model with a fake of the download.
   model installed again between the admission and the request, the request is
   refused before it leaves, as not ready, and the backend is not called
   (`wired::a_request_to_a_local_model_takes_a_lease_on_the_installation_its_run_was_admitted_with_and_is_refused_unsent_once_that_is_replaced`).
-- **No command names a models directory.** An inventory is of a catalogue, and the
-  build has none: the catalogue's first entry is checkpoint 1C's. So the binary's
-  own commands give no models directory, and the tests give one. The build
-  registers no kind either, so nothing of the binary's own is made not ready by
-  this: the fake backends are the tests', and the tests install their model.
+- **A command names a models directory** since task N3a of checkpoint 1C
+  (`--models-dir`, then the config's `[models] dir`, then the platform's data
+  folder), and the binary's wiring opens it and makes the inventory of the
+  catalogue the build ships, under the adapters it has: ADR 0017, "Where the
+  directory is", with its tests. The shipped catalogue holds no model until its
+  first entry (task N5), and under a catalogue of none no directory is opened, so
+  the binary's own commands are still over the inventory that knows no model; the
+  tests give the same wiring a catalogue and a place. The build registers no kind
+  either, so nothing of the binary's own is made not ready by this: the fake
+  backends are the tests', and the tests install their model. (Until task N3a no
+  command named a models directory, and a test handed the wiring an inventory it
+  had made.)
 
 **Limits, each stated.**
 
 - **`runs show` cuts a model's version at 64 characters,** as it cuts every text of
   a record, and an installation's identity is 71: the line shows its start, and
   `runs show --json` the whole of it.
-- **The inventory is told its secrets by whoever makes it** (`Installations::of`),
-  apart from the executor's (`Over::knowing`). Nothing holds the two to one set
-  yet: the command that names a models directory makes both (`docs/carry-over.md`,
-  checkpoint 1C).
+- **The inventory is told the secrets the executor is told,** since task N3a of
+  checkpoint 1C: the wiring makes the inventory itself, with the secrets
+  `Over::knowing` gives the executor and the source, and makes it again when they
+  are given after it
+  (`wired::a_secret_the_executor_is_told_of_is_refused_as_a_models_name_by_the_binarys_inventory`).
+  Those are the secrets given from the start; the values an env file holds are
+  the executor's from the first call on and are not the inventory's (ADR 0017,
+  "Where the directory is", limits).
 - **The cost `runs show` states is of the run's own requests.** What a run it
   called cost is in that run's record (ADR 0016, "The run's spend lines"), and
   nothing adds a tree up. `whizbang spend status --run` shows what the books hold

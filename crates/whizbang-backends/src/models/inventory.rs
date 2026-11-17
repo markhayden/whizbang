@@ -83,6 +83,12 @@ impl Installations {
         if holds_secret(entry.name().as_str(), &self.secrets) {
             return Err(Unready::NotInCatalogue);
         }
+        // A model whose adapter this build does not have is that, installed or not
+        // and whatever is on the disk: nothing this build installs would make it
+        // ready, and nothing of it is read.
+        let Some(revision) = self.adapters.get(entry.adapter()) else {
+            return Err(Unready::NoAdapter);
+        };
         // A model one of whose layout folders is a link is refused by every
         // install, hold and removal (ADR 0017, "A folder of the layout that is a
         // link"), so it is not called ready on the word of a pointer read through
@@ -101,9 +107,6 @@ impl Installations {
         // Current is what an install would make now, from this entry under the
         // revision this build's adapter states: the same record, or the
         // installation is out of date. Two revisions are the same or they are not.
-        let Some(revision) = self.adapters.get(entry.adapter()) else {
-            return Err(Unready::OutOfDate);
-        };
         match InstallationRecord::of(entry, revision.clone(), &self.secrets) {
             Ok(now) if now == record => Ok(record),
             Ok(_) => Err(Unready::OutOfDate),

@@ -69,6 +69,13 @@ Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after s
 that said something was still to come; and under "Kinds", that a backend which names a
 recipient must not declare a version written as a bare identity, which ADR 0015
 already decided. No decision changed.
+Amended: 2026-11-15, a thirteenth note, with task N3a of checkpoint 1C
+(`docs/plans/m1c-local-pack.md`). The table `models` is given its two keys: `dir`,
+where the models directory is, and `download_least_kib_per_second`, the least rate
+of a download ("What the file holds"). Added to "The digest": the table is one more
+field, hashed only when it gives a key, so no digest of a file without one moved;
+and a fourth fixed digest. Under "Which settings a run records": neither key is
+recorded, and why.
 
 ## Context
 
@@ -270,11 +277,43 @@ under another account, or with an account beside one with none, is another recip
 How an approval is matched to a backend and what the gate does with it are the egress
 tasks' (`file::a_recipient_is_an_origin_with_the_classes_of_data_it_may_receive`).
 
-**`models`** is a table of the file and holds no key yet: any key in it is refused as not
-known. It is named now so that its heading can be written, and it is given its keys by
-an amendment to this record when a task needs one. **`tools`** is refused, with or
-without anything in it: its shape is the first decision of milestone 2
-(`file::tools_is_refused_until_it_has_a_shape_and_models_holds_nothing_yet`).
+**`models`** holds two keys, each of which may be left out, and no other (task N3a
+of checkpoint 1C gave it them; until then any key in it was refused):
+
+```toml
+[models]
+dir = "/srv/whizbang/models"
+download_least_kib_per_second = 256
+```
+
+| Key | Is | Rule |
+|---|---|---|
+| `dir` | Where the models directory is (ADR 0017, "Where the directory is") | An absolute path, as it is written: it starts with `/`, holds no control character, and is 1,024 bytes at most (`MODELS_DIR_LIMIT`). It may hold spaces and letters outside ASCII, as a folder's name may |
+| `download_least_kib_per_second` | The least rate of a model's download, in kibibytes a second | A whole number from 1 to 1,048,576 (`DOWNLOAD_LEAST_KIB_LIMIT`), which is a gibibyte a second |
+
+- **`dir` is the second of three that may say where the directory is:** a command's
+  flag is asked first, and the platform's data folder serves when neither says.
+  ADR 0017 has the order and what is done with the folder; the reader only keeps
+  the text (`Config::models_dir`). Nothing is asked of the disk when the file is
+  read: a path that is not there, or is another user's, is said by the opening of
+  the directory. **It is absolute** because a config is not tied to a working
+  folder: a relative path would be another folder from each place a command is run
+  in. A `~` is not read as anybody's home folder. No refusal shows what was
+  written.
+- **`download_least_kib_per_second` is what a download must keep up over any whole
+  minute** or be ended as timed out (plan 1C, "Rules": the download client's
+  limits). Whoever makes the download client gives it this, or 256 when the file
+  gives none (`DOWNLOAD_LEAST_KIB_PER_SECOND`); the client is task N1's and the
+  command that makes it task N3b's, so at this head the reader keeps the number
+  (`Config::download_least_kib_per_second`) and nothing uses it yet. A whole
+  number of kibibytes, since a setting is never a number with a fraction; one at
+  least, since a least rate of nothing is no limit, and a download that never ends
+  is what the limit is for.
+
+(`file::the_models_table_names_the_directory_and_the_least_rate_of_a_download`.)
+**`tools`** is refused, with or without anything in it: its shape is the first
+decision of milestone 2
+(`file::tools_is_refused_until_it_has_a_shape_and_a_table_with_nothing_in_it_is_as_no_table`).
 
 Each list has its bound: 16 backends for a capability, 32 settings for a backend, 32
 recipients, 16 upstreams (`file::more_than_the_bound_of_a_list_is_refused`).
@@ -514,19 +553,25 @@ be absent is `u` 0, or `u` 1 and then the field. The fields, in order:
    2. `u`, how many upstreams, and each as `b`, sorted;
    3. `u`, how many classes, and each as `b` its name, sorted;
    4. `u` 1 if it may be probed, else 0.
+4. **Only when the `models` table gives a key** (task N3a): `u` 1; then the
+   directory, `b`, its text as written, which may be absent; then the least rate of
+   a download, `u` kibibytes a second, which may be absent. A file whose `models`
+   table gives neither key has no fourth field at all.
 
 The short form enters as what it is: a backend named `default`, with the default
 `default`. The empty config hashes 45 bytes: the 17 of `whizbang:config/1`, a zero byte,
 and three fields of `u` 0, nine bytes each. Three digests are fixed
 (`digest::the_digests_of_three_fixed_configs_are_the_records`; they were worked out from
 this section alone with a few lines of a scripting language's standard library, not
-from the code):
+from the code), and a fourth with the `models` table's keys, worked out the same way
+(`digest::the_models_table_is_in_the_digest_only_when_it_gives_a_key`):
 
 | Config | Digest |
 |---|---|
 | The empty one | `sha256:9d60a543ea39be1ca1bc2c4e1a90094a59ded6bdcfdf1c21436f4026f207c4a6` |
 | The example of `SPEC.md` section 4 | `sha256:e0f7ca76571f20c077084f4dcb18a57c0adf857b37d59928546508937fa31c7f` |
-| The config `FULL` of the digest's tests, with something in every place | `sha256:c151bf69e75bfec361a2018365535e49731847d0dbf6d13f4bb71b06356d6399` |
+| The config `FULL` of the digest's tests, with something in every place 1B had | `sha256:c151bf69e75bfec361a2018365535e49731847d0dbf6d13f4bb71b06356d6399` |
+| A `models` table alone: `dir = "/srv/models"` and `download_least_kib_per_second = 512` | `sha256:ee9df2aebf87f7a9e248dae8aeedd73d37169b59269afef6faec153fa6ec9ab0` |
 
 What follows from hashing what was read:
 
@@ -593,7 +638,17 @@ What follows from hashing what was read:
   stored.
 
 A key added to the file later that is absent from older files must hash as absent, or it
-is a new kind, `config/2`, and every digest changes with it.
+is a new kind, `config/2`, and every digest changes with it. **The `models` table's
+keys were added so** (task N3a): the fields before them are each closed by a count or a
+length, so what follows the last recipient is read as the fourth field or is not there,
+and a file that gives neither key hashes to the bytes it hashed to before. The three
+digests above did not move. Both keys are hashed, so that "a change to any setting
+changes it" stays true of every key the file has. What that costs: the digest of a
+config that names a directory is of that path among the rest, so one who holds a
+record and the rest of the config can test a guess at the path against it. A path is
+not a credential, and the path itself is in no record ("Which settings a run
+records"). And the directory a flag names is in no digest, as the store a flag names is
+in none: the digest is of the file.
 
 ### Which settings a run records
 
@@ -612,6 +667,11 @@ It does not record the name of a variable, any credential, a backend the call di
 resolve, or the `egress` table: where data went is the record's `egress` group, and the
 config's digest in `asked.config` stands for the rest
 (`settings::the_settings_of_a_run_are_the_resolved_backends_and_the_cap_sorted_by_name`).
+Nor the `models` table (task N3a): a record leaves the machine, and where the models
+directory is names a folder of its user's; what a run was answered from is in the
+record as the identity of the installation, which is its model's version. The least
+rate of a download is of no run
+(`file::the_models_table_names_the_directory_and_the_least_rate_of_a_download`).
 A `url` is the address as the config keeps it: its origin as an origin writes itself,
 and its path as the file gave it. A key the reader was not told of, written as the host
 in capitals, is kept in lower case, which redaction does not find.

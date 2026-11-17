@@ -1164,15 +1164,29 @@ accepted in a line that names the first two tests. **Size:** small.
 **Depends on:** N2. **Reads:** ADR 0017, "The catalogue", "The inventory"; ADR 0015, "An
 inventory"; ADR 0011 on the `models` table.
 
-- [ ] `catalogue/2`, by an amendment to ADR 0017: an entry gains a title and the
+- [x] `catalogue/2`, by an amendment to ADR 0017: an entry gains a title and the
       platforms it runs on. `catalogue/1` is no longer read: no catalogue was shipped.
-- [ ] `Unready` gains a fifth reason, by an amendment to ADR 0015: this build has no
+- [x] `Unready` gains a fifth reason, by an amendment to ADR 0015: this build has no
       adapter for the model. The inventory gives it where it said out of date.
-- [ ] Where the directory is: a flag, then the config's `[models] dir` (an amendment to
+- [x] Where the directory is: a flag, then the config's `[models] dir` (an amendment to
       ADR 0011), then the platform's data folder. The same amendment names the
       setting for a download's least rate.
-- [ ] The binary's wiring is given the inventory of the shipped catalogue, which is
-      empty until N5 (`Over::installed`), told the secrets the executor is told.
+- [x] The binary's wiring is given the shipped catalogue, which is empty until N5
+      (`Over::installed`), and makes the inventory of it, told the secrets the
+      executor is told, in the models directory it opens.
+      **Reworded with the task:** the box read "The binary's wiring is given the
+      inventory of the shipped catalogue, which is empty until N5 (`Over::installed`),
+      told the secrets the executor is told." An inventory is over a models
+      directory, and one is opened only by the opening that asks whose it is, which
+      makes the folder where it is not there. Handed an inventory of the empty
+      catalogue, every command that runs an action would open, and make, a models
+      directory, in the data folder of whoever runs it and of whoever runs the
+      tests, to be told of every model what the inventory that knows none says
+      already: that it is not in the catalogue. So the wiring is given the catalogue
+      and the place, and makes the inventory itself, which is also what holds its
+      secrets to the executor's; and under a catalogue that holds no model it opens
+      nothing (ADR 0017, "Where the directory is"). A test gives the same wiring a
+      catalogue with a model, and the six tests below go through it.
 
 **Done when** these pass (`tests/it/models/`, `crates/whizbang/tests/it/wired.rs`):
 
@@ -1186,6 +1200,19 @@ inventory"; ADR 0011 on the `models` table.
 **Carry-over:** the adapter this build lacks (the reason); a model's title, platforms
 and where the directory is; one set of secrets for the inventory and the executor.
 **Size:** small.
+
+With the task, from the review of N2 (ADR 0017, "A models directory is its owner's
+alone"): who whizbang runs as is read from a pair of sockets and a failure to learn
+it has its own refusal; the test that no product code names `ModelsDir::at` reads
+every product crate; and the real file system is shown to say that a folder of
+another user is not this user's. For N3c and N5: under the shipped catalogue, which
+holds no model, no command opens a models directory or asks where the platform's
+is, so none of the starts of the binary N3c moves can reach it today;
+`wired::with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory`
+holds that and fails on the day the catalogue is given an entry, by when N3c has
+given every start a cleared environment and a temporary home
+(`docs/carry-over.md`). This task's own start of the binary, in `wired.rs`, clears
+the environment already.
 
 ### N3b. `whizbang models list`, `get` and `remove`
 
@@ -1623,7 +1650,7 @@ Every row of `docs/carry-over.md` whose owner names 1C: thirty.
 |---|---|
 | The store's locks: a child's copy while the worker is started | P3a; the moment for Ctrl-C accepted in a line (D7) |
 | Pull-request CI on the macOS runner over its budget | C0 (measured); C0b (the job's 10 minutes, by five runs of one commit; Z1 reports `main`). The fast tier's test time there against its 180 s: **the owner** |
-| A file opened by a look and then an opening; a lock file opened plainly | N2: accepted in a line (D13) |
+| A file opened by a look and then an opening; a lock file opened plainly | N2: accepted in a line for a models directory (D13). **The store's half: milestone 5, with the row on the store's locks.** **Reworded with the task** (by N3a, from the review of N2): the cell read "N2: accepted in a line (D13)". D13 is about a models directory, and the row's two openings to lock that are the store's own (a reader's share of a generation file, a prune's try at one) are in no models directory: nothing asks whose a store's folder is. So the row stays open for those two, re-owned as the row itself now says |
 | The run record: `device` and `cached` | P7a (`run/4`) |
 | What a segmenter adapter took and gave | P1 (the order, diagnostics, settings in `load`), P6a (settings in the config) |
 | What a filler was sent beside an image and one plane | **Milestone 3, with the first fill backend.** 1C has none |
