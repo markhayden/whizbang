@@ -124,6 +124,18 @@ fn complain(complaint: &str) -> ExitCode {
     ExitCode::from(1)
 }
 
+/// The same, for a complaint whose own line breaks are lines to print: the models
+/// commands', whose complaints hold no path and nothing a caller typed, and which may
+/// end with lines of a config to add. Each line goes through the escape by itself, so
+/// a character that is not printable is still escaped; the first says who speaks.
+fn complain_in_lines(complaint: &str) -> ExitCode {
+    for (at, line) in complaint.lines().enumerate() {
+        let speaker = if at == 0 { "whizbang: " } else { "" };
+        eprintln!("{speaker}{}", door::printable(line));
+    }
+    ExitCode::from(1)
+}
+
 /// What the parser of the command line answers by itself: help and the version, which
 /// are printed as it prints them, and a usage error, which quotes what the caller
 /// typed. A usage error is printed line by line through the door's escape, so that no
@@ -216,7 +228,7 @@ fn main() -> ExitCode {
                 std::sync::Arc::new(hub_sign_in_token_file),
             ) {
                 Ok(text) => emit(text.as_bytes()),
-                Err(complaint) => complain(&complaint),
+                Err(complaint) => complain_in_lines(&complaint),
             }
         }
         Command::Backends(_) => match backends::run() {

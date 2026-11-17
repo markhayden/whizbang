@@ -1128,6 +1128,8 @@ fn the_real_binary_started_with_a_temporary_home_reads_the_sign_in_there_and_no_
         let said = get_with_the_sign_in(&shelf, &model, &[], |home| {
             let place = home.join(".cache").join("huggingface");
             std::fs::create_dir_all(&place).unwrap();
+            let folder = std::fs::Permissions::from_mode(0o700);
+            std::fs::set_permissions(&place, folder).unwrap();
             std::fs::write(place.join("token"), made_up_key("home")).unwrap();
             let open = std::fs::Permissions::from_mode(0o644);
             std::fs::set_permissions(place.join("token"), open).unwrap();

@@ -178,7 +178,7 @@ impl Bench {
 
     /// Writes a token file at this place, readable and writable by its owner alone.
     fn sign_in_at(&self, place: &Path, token: &str) {
-        std::fs::create_dir_all(place.parent().unwrap()).unwrap();
+        folder_of(place, 0o700);
         std::fs::write(place, token).unwrap();
         std::fs::set_permissions(place, std::fs::Permissions::from_mode(0o600)).unwrap();
     }
@@ -242,6 +242,14 @@ impl Bench {
         });
         (path, env)
     }
+}
+
+/// Makes the folder a token file is to be in, with this mode, as the Hub's tool makes
+/// it (700) unless a test says otherwise.
+fn folder_of(place: &Path, mode: u32) {
+    let folder = place.parent().unwrap();
+    std::fs::create_dir_all(folder).unwrap();
+    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(mode)).unwrap();
 }
 
 fn under<'a>(config: &'a (PathBuf, Option<PathBuf>)) -> Under<'a> {
@@ -413,11 +421,15 @@ fn an_entry_whose_origin_needs_a_token_the_config_does_not_name_is_refused_befor
     let fake = Arc::new(serving(&[model.clone(), weighted.clone()]));
     let told = Told::default();
     let tools = bench.tools(&[model, weighted], &fake, &told);
-    let sign_in = "sign in with the Hub's command-line tool (`hf auth login`) and name the \
-                   sign-in in the config, as `[[models.tokens]]` with `origin = \
-                   \"https://huggingface.co\"` and `sign_in = \"huggingface\"`";
-    let key = "set the token in the env file and name its variable in the config, as \
-               `[[models.tokens]]` with `origin = \"https://huggingface.co\"` and `key_env`";
+    // The sign-in is never a default: the refusal ends with the exact three lines to
+    // add to the config, each a line of its own, and names the other way in.
+    let expected = "a download of the model from https://huggingface.co needs a token, and \
+                    the config names none for that origin, so the model was not installed \
+                    and nothing was downloaded. To use the sign-in of the Hub's command-line \
+                    tool (`hf auth login`), add these three lines to the config; or name a \
+                    variable of the env file that holds the token, as `key_env` in place of \
+                    `sign_in`:\n[[models.tokens]]\norigin = \"https://huggingface.co\"\n\
+                    sign_in = \"huggingface\"";
     // No config; and a config that names a token for another origin only.
     let elsewhere = bench.config(
         "[[models.tokens]]\norigin = \"https://weights.example.org\"\nsign_in = \"huggingface\"\n",
@@ -434,27 +446,52 @@ fn an_entry_whose_origin_needs_a_token_the_config_does_not_name_is_refused_befor
     ] {
         let (got, said) = get(under, "gated", &tools);
         let refused = got.unwrap_err();
-        assert!(
-            refused.starts_with(
-                "a download of the model from https://huggingface.co needs a token, and the \
-                 config names none for that origin, so the model was not installed and \
-                 nothing was downloaded: "
-            ),
-            "{label}: {refused}"
-        );
-        assert!(refused.contains(sign_in), "{label}: {refused}");
-        assert!(refused.contains(key), "{label}: {refused}");
+        assert_eq!(refused, expected, "{label}");
         assert!(said.is_empty());
-        // The guide shows it as the binary prints it, a line of its own.
+        // The three lines a person adds are a config the reader takes, which names
+        // the sign-in for the Hub's origin.
+        let added: String = refused
+            .lines()
+            .skip(1)
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let config = whizbang_core::config::Config::parse(added.as_bytes(), &none()).unwrap();
+        assert_eq!(
+            config.model_token(&origin(HUB)),
+            Some(&whizbang_core::config::TokenFrom::SignIn)
+        );
+        // The guide shows it as the binary prints it, line by line.
         let guide = include_str!("../../../../docs/guides/models.md");
-        let line = format!("whizbang: {refused}");
-        assert!(guide.lines().any(|shown| shown == line), "{line}");
+        let printed: Vec<String> = refused
+            .lines()
+            .enumerate()
+            .map(|(at, line)| {
+                if at == 0 {
+                    format!("whizbang: {line}")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect();
+        let lines: Vec<&str> = guide.lines().collect();
+        assert!(
+            lines
+                .windows(printed.len())
+                .any(|window| window.iter().zip(&printed).all(|(a, b)| a == b)),
+            "{printed:?}"
+        );
     }
     // An origin that is not the Hub's is told of the key alone: the sign-in is the
     // Hub's.
     let (got, _) = get(Under::default(), "weighted", &tools);
     let refused = got.unwrap_err();
-    assert!(refused.contains("`key_env`"), "{refused}");
+    assert!(
+        refused.ends_with(
+            "with the variable's name:\n[[models.tokens]]\norigin = \
+             \"https://weights.example.org\"\nkey_env = \"NAME_OF_THE_VARIABLE\""
+        ),
+        "{refused}"
+    );
     assert!(!refused.contains("sign_in"), "{refused}");
     // A variable the env file does not set is named, with what to do.
     let unset = bench.config(
@@ -701,7 +738,7 @@ fn a_sign_in_that_is_not_there_or_cannot_be_read_ends_the_install_before_anythin
     type Plant = Box<dyn Fn(&Path)>;
     let file = |bytes: Vec<u8>, mode: u32| -> Plant {
         Box::new(move |place: &Path| {
-            std::fs::create_dir_all(place.parent().unwrap()).unwrap();
+            folder_of(place, 0o700);
             std::fs::write(place, &bytes).unwrap();
             std::fs::set_permissions(place, std::fs::Permissions::from_mode(mode)).unwrap();
         })
@@ -728,6 +765,18 @@ fn a_sign_in_that_is_not_there_or_cannot_be_read_ends_the_install_before_anythin
             "writable by the group",
             file(token.clone().into_bytes(), 0o620),
             "the Hub's sign-in's token file can be read or written by others than its owner",
+        ),
+        (
+            "in a folder others can write",
+            Box::new(|place: &Path| {
+                folder_of(place, 0o770);
+                std::fs::write(place, made_up_token("folder")).unwrap();
+                let own = std::fs::Permissions::from_mode(0o600);
+                std::fs::set_permissions(place, own).unwrap();
+            }),
+            "the folder of the Hub's sign-in's token file can be written by others than its \
+             owner, who could put another token there, so it is not used; make the folder \
+             its owner's alone (mode 700), as the Hub's tool makes it",
         ),
         (
             "empty",
@@ -787,6 +836,80 @@ fn a_sign_in_that_is_not_there_or_cannot_be_read_ends_the_install_before_anythin
     assert!(fake.requests().is_empty());
     assert!(!bench.models_dir().exists());
     assert!(told.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_pipe_at_the_sign_ins_place_is_refused_before_it_is_opened_and_nothing_waits() {
+    // Review of N4: opening a FIFO to read waits for a writer. The place is looked at
+    // before anything is opened, so a pipe is refused as no regular file at once. The
+    // `get` runs on one thread of the test kit's, waited for ten seconds at most; if
+    // it is still waiting then, a writer is opened to let it go, and the test fails.
+    let bench = Bench::new("credential-pipe");
+    let place = bench.token_file();
+    folder_of(&place, 0o700);
+    let made = std::process::Command::new("mkfifo").arg(&place).status();
+    if !made.is_ok_and(|status| status.success()) {
+        eprintln!("skip: no FIFO could be made here (mkfifo)");
+        return;
+    }
+    std::fs::set_permissions(&place, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let config = bench.config(SIGNED_IN, None);
+    let model = gated();
+    let fake = Arc::new(serving(std::slice::from_ref(&model)));
+    let told = Told::default();
+    let tools = bench.tools(std::slice::from_ref(&model), &fake, &told);
+    let (ended, has_ended) = std::sync::mpsc::channel();
+    let asked = config.clone();
+    let waiting = whizbang_testkit::threads::spawn(move || {
+        let _ = ended.send(get(under(&asked), "gated", &tools).0);
+    });
+    let got = has_ended.recv_timeout(std::time::Duration::from_secs(10));
+    let Ok(got) = got else {
+        let writer = std::fs::OpenOptions::new().write(true).open(&place);
+        drop(writer);
+        let _ = waiting.join();
+        panic!("get waited at the pipe for a writer");
+    };
+    waiting.join().unwrap();
+    let refused = got.unwrap_err();
+    assert!(
+        refused.contains("the Hub's sign-in's token is not a regular file"),
+        "{refused}"
+    );
+    assert!(fake.requests().is_empty());
+    assert!(!bench.models_dir().exists());
+}
+
+#[test]
+fn a_file_at_the_same_host_on_another_port_is_asked_for_with_no_credential() {
+    // Review of N4: an origin is its scheme, its host and its port. A file of the
+    // entry at the Hub's host on another port is another origin's, and its request
+    // carries nothing; so is one at the host written in capitals, which is the same
+    // origin and carries it.
+    let bench = Bench::new("credential-port");
+    let token = made_up_token("port");
+    bench.sign_in(&token);
+    let config = bench.config(SIGNED_IN, None);
+    let other_port = "https://huggingface.co:8443";
+    let capitals = "https://HuggingFace.co";
+    let model = entry(
+        "ported",
+        &[(other_port, "a.bin"), (capitals, "b.bin")],
+        &[HUB],
+        Some(HUB),
+    );
+    let fake = Arc::new(serving(std::slice::from_ref(&model)));
+    let told = Told::default();
+    let tools = bench.tools(std::slice::from_ref(&model), &fake, &told);
+    let (got, _) = get(under(&config), "ported", &tools);
+    got.unwrap();
+    assert_eq!(
+        carried(&fake),
+        [
+            (other_port.to_owned(), Vec::new()),
+            (HUB.to_owned(), bearer(&token)),
+        ]
+    );
 }
 
 #[test]

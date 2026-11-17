@@ -1524,6 +1524,22 @@ of: the Hub's tool writes it 600. The file's one trailing line break is taken of
 anything else that is not printable ASCII is refused. `get` of a model installed
 already reads the token too, since whether anything is downloaded is known only under
 the model's lock.
+**Changed after the security review of N4** (two findings and four follow-ups): the
+reader looks at the name before it opens, refuses anything but a regular file, and
+opens without waiting
+(`credential::a_pipe_at_the_sign_ins_place_is_refused_before_it_is_opened_and_nothing_waits`);
+the opened file must be this user's
+(`sign_in::tests::a_token_file_that_is_not_this_users_or_that_others_may_read_or_write_is_refused`);
+its folder must not be one others can write (a case of
+`credential::a_sign_in_that_is_not_there_or_cannot_be_read_…`); a file at the same host
+on another port carries nothing
+(`credential::a_file_at_the_same_host_on_another_port_is_asked_for_with_no_credential`);
+the gate and the real client on loopback carry no credential to another allowed
+origin after a move
+(`client::a_credentialed_download_moved_to_another_allowed_origin_is_asked_there_with_no_credential`);
+`scripts/check-sign-in.sh` holds the handing on to the models commands' call. And for
+N5, the coordinator's decision: no built-in default; the owner writes the
+`[[models.tokens]]` entry, and the refusal prints the three lines to add.
 **Added with the task**, for follow-ups of the reviews of N3b and N3c:
 `models::list_of_an_empty_catalogue_and_get_or_remove_of_a_model_it_does_not_hold_never_ask_where_the_platforms_directory_is`
 (a platform that counts each ask); the guide's "Limits" gains the unbounded wait of

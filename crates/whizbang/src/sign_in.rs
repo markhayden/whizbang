@@ -24,6 +24,7 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use whizbang_core::contract::SECRET_MIN_BYTES;
+use whizbang_core::store::fs::{Fs as _, RealFs, this_user};
 
 /// The most bytes a token file may hold. A token of the Hub is some forty; a file
 /// longer than this is no sign-in's.
@@ -106,6 +107,11 @@ pub enum SignInRefused {
     NotAFile,
     /// Others than its owner can read or write it.
     Open,
+    /// It is not the file of the user whizbang runs as.
+    NotYours,
+    /// Its folder can be written by others than its owner, who could put another
+    /// token in its place.
+    FolderOpen,
     /// It could not be opened or read.
     Unreadable,
     /// It is empty, or holds only a line break.
@@ -132,6 +138,15 @@ impl std::fmt::Display for SignInRefused {
                  owner, so it is not used; make it its owner's alone (mode 600), or sign in \
                  again, which writes it so"
             }
+            SignInRefused::NotYours => {
+                "the Hub's sign-in's token file is not the file of the user whizbang runs \
+                 as, so it is not used; sign in as that user"
+            }
+            SignInRefused::FolderOpen => {
+                "the folder of the Hub's sign-in's token file can be written by others than \
+                 its owner, who could put another token there, so it is not used; make the \
+                 folder its owner's alone (mode 700), as the Hub's tool makes it"
+            }
             SignInRefused::Unreadable => "the Hub's sign-in's token file could not be read",
             SignInRefused::Empty => "the Hub's sign-in's token file is empty",
             SignInRefused::TooLong => "the Hub's sign-in's token file is longer than a token",
@@ -156,30 +171,45 @@ impl std::error::Error for SignInRefused {}
 ///   ([`SignInRefused::Open`]), never read and warned of: the Hub's tool writes the
 ///   file for its owner alone (mode 600) and so does every sign-in since; one that
 ///   others can read is a token that may have been read already, and one that others
-///   can write may be another's token. The mode is asked of the file that was opened,
-///   not of the name again.
+///   can write may be another's token.
+/// - **A file that is not the user's own is refused** ([`SignInRefused::NotYours`]):
+///   a link someone planted, or a file another user or the system made, may hold
+///   another's token, which whizbang would send under this user's name. The user is
+///   the one the store's file system learns (`store::fs::this_user`).
+/// - **A file whose folder others can write is refused**
+///   ([`SignInRefused::FolderOpen`]): whoever can write the folder can put another
+///   file at the name. The folder is the one the name is in, as the Hub's tool makes
+///   it, 700; a link at the name is followed for the file and not for this look.
+/// - **Nothing that is not a regular file is opened.** The name is looked at first, a
+///   link followed: a FIFO, a socket, a device or a folder is refused
+///   ([`SignInRefused::NotAFile`]) before any open, since opening a FIFO waits for a
+///   writer. The open itself does not wait (`O_NONBLOCK`), so a name swapped for a
+///   FIFO between the look and the open is opened at once, and refused by the second
+///   look, which is of the file that was opened: its kind, its owner, its mode and its
+///   length are all asked of that.
 pub fn read(place: &Path) -> Result<Token, SignInRefused> {
-    let file = match std::fs::File::open(place) {
-        Ok(file) => file,
+    match std::fs::metadata(place) {
+        Ok(found) if found.is_file() => {}
+        Ok(_) => return Err(SignInRefused::NotAFile),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Err(SignInRefused::NotThere);
         }
         Err(_) => return Err(SignInRefused::Unreadable),
-    };
+    }
+    let user = this_user().map_err(|_| SignInRefused::Unreadable)?;
+    let folder = place.parent().ok_or(SignInRefused::NoPlace)?;
+    let writers = RealFs
+        .who_may_write(folder)
+        .map_err(|_| SignInRefused::Unreadable)?;
+    if writers.group || writers.anyone {
+        return Err(SignInRefused::FolderOpen);
+    }
+    let file = open_without_waiting(place).map_err(|error| match error.kind() {
+        std::io::ErrorKind::NotFound => SignInRefused::NotThere,
+        _ => SignInRefused::Unreadable,
+    })?;
     let metadata = file.metadata().map_err(|_| SignInRefused::Unreadable)?;
-    if !metadata.is_file() {
-        return Err(SignInRefused::NotAFile);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err(SignInRefused::Open);
-        }
-    }
-    if metadata.len() > TOKEN_MAX_BYTES {
-        return Err(SignInRefused::TooLong);
-    }
+    judge(&Opened::of(&metadata), user)?;
     let mut bytes = Vec::with_capacity(usize::try_from(TOKEN_MAX_BYTES + 1).unwrap_or(0));
     let read = file
         .take(TOKEN_MAX_BYTES + 1)
@@ -190,6 +220,64 @@ pub fn read(place: &Path) -> Result<Token, SignInRefused> {
     // token, once.
     bytes.iter_mut().for_each(|byte| *byte = 0);
     token
+}
+
+/// The flag that makes an open not wait: for a FIFO, for a writer. The standard
+/// library has no name for it and the workspace has no crate that does, so it is
+/// written here for the two systems whizbang builds for (`SPEC.md` section 1).
+#[cfg(target_os = "macos")]
+const O_NONBLOCK: i32 = 0x0004;
+#[cfg(target_os = "linux")]
+const O_NONBLOCK: i32 = 0o4000;
+
+/// Opens the file to read, without waiting.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn open_without_waiting(place: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(O_NONBLOCK)
+        .open(place)
+}
+
+/// What is asked of the file that was opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Opened {
+    regular: bool,
+    owner: u32,
+    mode: u32,
+    length: u64,
+}
+
+impl Opened {
+    fn of(metadata: &std::fs::Metadata) -> Opened {
+        use std::os::unix::fs::MetadataExt;
+        Opened {
+            regular: metadata.is_file(),
+            owner: metadata.uid(),
+            mode: metadata.mode(),
+            length: metadata.len(),
+        }
+    }
+}
+
+/// Whether the file that was opened may be read as this user's token: a regular
+/// file, this user's, that nobody else may read or write, and not longer than a token
+/// file is.
+fn judge(opened: &Opened, user: u32) -> Result<(), SignInRefused> {
+    if !opened.regular {
+        return Err(SignInRefused::NotAFile);
+    }
+    if opened.owner != user {
+        return Err(SignInRefused::NotYours);
+    }
+    if opened.mode & 0o077 != 0 {
+        return Err(SignInRefused::Open);
+    }
+    if opened.length > TOKEN_MAX_BYTES {
+        return Err(SignInRefused::TooLong);
+    }
+    Ok(())
 }
 
 /// The token these bytes of a token file hold.
@@ -220,7 +308,44 @@ mod tests {
     use std::ffi::OsStr;
     use std::path::PathBuf;
 
-    use super::{SignInRefused, token_file, token_of};
+    use super::{Opened, SignInRefused, judge, token_file, token_of};
+
+    #[test]
+    fn a_token_file_that_is_not_this_users_or_that_others_may_read_or_write_is_refused() {
+        // The decision over what was asked of the opened file, with made-up numbers:
+        // no file of another user is needed, and nothing runs as another.
+        let user = 501;
+        let own = Opened {
+            regular: true,
+            owner: user,
+            mode: 0o100_600,
+            length: 40,
+        };
+        assert_eq!(judge(&own, user), Ok(()));
+        let another = Opened {
+            owner: user + 1,
+            ..own
+        };
+        assert_eq!(judge(&another, user), Err(SignInRefused::NotYours));
+        let root = Opened { owner: 0, ..own };
+        assert_eq!(judge(&root, user), Err(SignInRefused::NotYours));
+        for mode in [0o100_640, 0o100_604, 0o100_620, 0o100_602, 0o100_700] {
+            let open = Opened { mode, ..own };
+            let expected = if mode & 0o077 == 0 {
+                Ok(())
+            } else {
+                Err(SignInRefused::Open)
+            };
+            assert_eq!(judge(&open, user), expected, "{mode:o}");
+        }
+        let fifo = Opened {
+            regular: false,
+            ..own
+        };
+        assert_eq!(judge(&fifo, user), Err(SignInRefused::NotAFile));
+        let long = Opened { length: 513, ..own };
+        assert_eq!(judge(&long, user), Err(SignInRefused::TooLong));
+    }
 
     fn os(text: &str) -> Option<&OsStr> {
         Some(OsStr::new(text))

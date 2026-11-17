@@ -490,21 +490,27 @@ fn credential_of(
     let not_downloaded = "so the model was not installed and nothing was downloaded";
     let token = match read.tokens.iter().find(|token| token.origin() == origin) {
         None => {
-            let sign_in = if origin.to_string() == SIGN_IN_ORIGIN {
+            // No default: the config names the sign-in or nobody's token is read, so
+            // a `get` never reads the Hub's token of one who did not opt in. The
+            // refusal ends with the lines to add, each a line of its own.
+            let head = format!(
+                "a download of the model from {origin} needs a token, and the config names \
+                 none for that origin, {not_downloaded}."
+            );
+            return Err(if origin.to_string() == SIGN_IN_ORIGIN {
                 format!(
-                    "sign in with the Hub's command-line tool (`hf auth login`) and name the \
-                     sign-in in the config, as `[[models.tokens]]` with `origin = \
-                     \"{origin}\"` and `sign_in = \"huggingface\"`; or "
+                    "{head} To use the sign-in of the Hub's command-line tool (`hf auth \
+                     login`), add these three lines to the config; or name a variable of the \
+                     env file that holds the token, as `key_env` in place of `sign_in`:\n\
+                     [[models.tokens]]\norigin = \"{origin}\"\nsign_in = \"huggingface\""
                 )
             } else {
-                String::new()
-            };
-            return Err(format!(
-                "a download of the model from {origin} needs a token, and the config names \
-                 none for that origin, {not_downloaded}: {sign_in}set the token in the env \
-                 file and name its variable in the config, as `[[models.tokens]]` with \
-                 `origin = \"{origin}\"` and `key_env`"
-            ));
+                format!(
+                    "{head} Set the token in the env file, and add these three lines to the \
+                     config, with the variable's name:\n[[models.tokens]]\norigin = \
+                     \"{origin}\"\nkey_env = \"NAME_OF_THE_VARIABLE\""
+                )
+            });
         }
         Some(token) => match token.from() {
             TokenFrom::Variable(variable) => match read.credentials.model_token(origin) {

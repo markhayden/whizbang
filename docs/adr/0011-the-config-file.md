@@ -441,7 +441,28 @@ program the binary starts. No source of the binary names either
 of the file that was opened, not of the name again.
 
 - A link is followed, as the Hub's tool follows one; what it leads to must be a
-  regular file.
+  regular file. **Nothing else is opened** (from the security review of N4): the
+  name is looked at first, a link followed, and a FIFO, a socket, a device or a folder
+  is refused before any open, since opening a FIFO waits for a writer that may never
+  come. The open itself does not wait (`O_NONBLOCK`, written in the reader for macOS
+  and Linux, as the workspace has no crate that names it), so a name swapped for a
+  FIFO between the look and the open is opened at once and refused by the look at
+  the opened file
+  (`credential::a_pipe_at_the_sign_ins_place_is_refused_before_it_is_opened_and_nothing_waits`).
+- **The opened file is this user's** (from the same review): its owner is the user
+  the process runs as, learned the one way the workspace learns it
+  (`store::fs::this_user`, now public), or it is refused. A link planted at the name,
+  or a file another user or the system made, may hold another's token, which whizbang
+  would send under this user's name, the reason below for the mode
+  (`sign_in::tests::a_token_file_that_is_not_this_users_or_that_others_may_read_or_write_is_refused`).
+- **Its folder is not one others can write** (`store::fs`'s `who_may_write`): whoever
+  can write the folder can put another file at the name. The folder is the one the
+  name is in; the Hub's tool makes it 700. A link at the name is followed for the file
+  and not for this look; the owner check holds the file the link leads to.
+- **No default.** Without a `[[models.tokens]]` entry for the origin nothing is read:
+  a default would read the Hub's token of anyone who ran `get`, without their saying
+  so (the coordinator's decision for N5). The refusal ends with the three lines to add,
+  each printed as a line of its own.
 - **A file that others than its owner can read or write is refused, not read and
   warned of.** The Hub's tool writes the file for its owner alone, mode 600, and its
   folder 700 (its source, `utils/_auth.py`, `_write_secret`, read for this record), so

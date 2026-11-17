@@ -134,9 +134,15 @@ key_env = "HF_DOWNLOAD_TOKEN"
 - **`HF_TOKEN` and `HUGGING_FACE_HUB_TOKEN` are not read.** Hugging Face's own tools
   take them in place of the file; whizbang takes the sign-in, or the env file's key.
 - **The token file must be yours alone,** readable and writable by you and nobody else
-  (mode 600), which is how the tool writes it. One that others can read or write is
-  refused, not read: `chmod 600` it, or sign in again. The file holds the token and at
-  most one line break after it.
+  (mode 600), in a folder only you can write (700), which is how the tool writes both.
+  One that others can read or write, one that is another user's, and one in a folder
+  others can write are refused, not read: `chmod 600` the file and `chmod 700` its
+  folder, or sign in again. Anything at the place that is not a regular file, a pipe
+  say, is refused before it is opened. The file holds the token and at most one line
+  break after it.
+- **Nothing is read unless the config says so.** There is no default: without the
+  lines above, `get` reads no sign-in, so nobody's token is sent without their saying
+  so.
 
 `get` reads the token only when it is to install a model whose entry says a download
 from that origin needs one, and before anything is asked or the models directory is
@@ -145,10 +151,14 @@ token is sent with every request to its origin, and with no request to another, 
 when a server moves a file to another origin. It is in nothing `get` prints, in no
 status record and in no refusal, and it is not kept after the install ends.
 
-What `get` says when it has no token, before anything is downloaded:
+What `get` says when the config names no token, before anything is downloaded; the
+last three lines are what to add to the config:
 
 ```text
-whizbang: a download of the model from https://huggingface.co needs a token, and the config names none for that origin, so the model was not installed and nothing was downloaded: sign in with the Hub's command-line tool (`hf auth login`) and name the sign-in in the config, as `[[models.tokens]]` with `origin = "https://huggingface.co"` and `sign_in = "huggingface"`; or set the token in the env file and name its variable in the config, as `[[models.tokens]]` with `origin = "https://huggingface.co"` and `key_env`
+whizbang: a download of the model from https://huggingface.co needs a token, and the config names none for that origin, so the model was not installed and nothing was downloaded. To use the sign-in of the Hub's command-line tool (`hf auth login`), add these three lines to the config; or name a variable of the env file that holds the token, as `key_env` in place of `sign_in`:
+[[models.tokens]]
+origin = "https://huggingface.co"
+sign_in = "huggingface"
 ```
 
 A sign-in that is not there or cannot be read is said the same way, with what is wrong

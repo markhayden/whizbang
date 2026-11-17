@@ -27,6 +27,7 @@ good_main() {
     'fn main() {' \
     '    let _ = models::run(' \
     '        &command,' \
+    '        std::sync::Arc::new(platforms_models_dir),' \
     '        std::sync::Arc::new(hub_sign_in_token_file),' \
     '    );' \
     '}' >"$main_rs"
@@ -62,6 +63,13 @@ printf '%s\n' 'fn hub_sign_in_token_file() -> Option<std::path::PathBuf> { None 
 expect_fail "main hands it on twice" "it is defined once and handed on once" "$check" "$repo"
 printf '%s\n' 'fn main() {}' >"$main_rs"
 expect_fail "main does not define it" "it is defined once and handed on once" "$check" "$repo"
+# Handed on once, but outside the models commands' call: kept, and handed elsewhere.
+printf '%s\n' 'fn hub_sign_in_token_file() -> Option<std::path::PathBuf> { None }' \
+  'fn main() { let kept = std::sync::Arc::new(hub_sign_in_token_file); let _ = models::run(&command, std::sync::Arc::new(platforms_models_dir), kept); }' >"$main_rs"
+expect_fail "main hands it on outside the call" "inside models::run" "$check" "$repo"
+printf '%s\n' 'fn hub_sign_in_token_file() -> Option<std::path::PathBuf> { None }' \
+  'fn main() { let _ = rascal::run(&command, std::sync::Arc::new(hub_sign_in_token_file)); }' >"$main_rs"
+expect_fail "main hands it to another command" "inside models::run" "$check" "$repo"
 good_main
 expect_pass "main as it was" "$check" "$repo"
 

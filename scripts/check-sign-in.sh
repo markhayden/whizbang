@@ -12,7 +12,9 @@
 # piece of the binary is handed what says the place, and every test hands it a temporary
 # folder. So the function's name is in `crates/whizbang/src/main.rs` alone, and there
 # exactly twice: its definition, `fn hub_sign_in_token_file()`, and the one place `main`
-# hands it on uncalled, `std::sync::Arc::new(hub_sign_in_token_file)`. A call of it,
+# hands it on uncalled, `std::sync::Arc::new(hub_sign_in_token_file)`, as the third
+# argument of `models::run(&command, std::sync::Arc::new(platforms_models_dir), ...)` and
+# nowhere else. A call of it,
 # `hub_sign_in_token_file()` anywhere but its definition, is refused, in `main.rs` too.
 #
 # It reads every `.rs` file under `crates/`, outside any folder named `target`. Lines that
@@ -79,10 +81,15 @@ else
   text=$(code "$main_rs")
   named=$(printf '%s\n' "$text" | count "$name")
   defined=$(printf '%s\n' "$text" | count "fn$name()")
-  handed=$(printf '%s\n' "$text" | count "std::sync::Arc::new($name)")
+  # Handed on inside the call of the models commands, as their third argument, and
+  # nowhere else: an `Arc::new` of it beside that call would be another holder of the
+  # real place.
+  handed=$(printf '%s\n' "$text" | count "models::run(&command,std::sync::Arc::new(platforms_models_dir),std::sync::Arc::new($name)")
+  anywhere=$(printf '%s\n' "$text" | count "std::sync::Arc::new($name)")
+  [ "$anywhere" -eq "$handed" ] || handed=0
   called=$(printf '%s\n' "$text" | count "$name()")
   if [ "$defined" -ne 1 ] || [ "$handed" -ne 1 ] || [ "$named" -ne 2 ] || [ "$called" -ne 1 ]; then
-    refuse "$main_rs" "it names $name $named times ($defined definitions, $handed handed on, $called with brackets); it is defined once and handed on once, as std::sync::Arc::new($name), and never called there"
+    refuse "$main_rs" "it names $name $named times ($defined definitions, $handed handed on, $called with brackets); it is defined once and handed on once, as std::sync::Arc::new($name) inside models::run(...), and never called there"
   fi
 fi
 
