@@ -87,7 +87,12 @@ fn cancelled(why: &'static str, moves: u32) -> Fault {
 pub struct CheckedDownloader {
     downloader: Arc<dyn Downloader>,
     origins: Vec<Origin>,
+    refused: Option<Refusals>,
 }
+
+/// What is told the origin of an address a checked download refused, after the
+/// refusal and before it is answered ([`CheckedDownloader::noting_refused`]).
+pub type Refusals = Arc<dyn Fn(&Origin) + Send + Sync>;
 
 impl CheckedDownloader {
     /// This downloader, held to these origins: at most [`DOWNLOAD_ORIGINS_LIMIT`]. One
@@ -102,7 +107,19 @@ impl CheckedDownloader {
         Ok(CheckedDownloader {
             downloader,
             origins: origins.to_vec(),
+            refused: None,
         })
+    }
+
+    /// The same, telling `note` the origin, and only the origin, of each address it
+    /// refuses as off its origins: what a developer's command that pins a draft entry
+    /// prints, so that the host a file is moved to can be named to the owner before
+    /// an entry lists it (plan 1C, task N5; open question 2). Nothing is asked of that
+    /// address, and the refusal is the same fault, in the same fixed words.
+    #[must_use]
+    pub fn noting_refused(mut self, note: Refusals) -> CheckedDownloader {
+        self.refused = Some(note);
+        self
     }
 }
 
@@ -127,6 +144,9 @@ impl Downloader for CheckedDownloader {
         let mut moves = 0;
         loop {
             if !self.origins.contains(request.from().origin()) {
+                if let Some(note) = &self.refused {
+                    note(request.from().origin());
+                }
                 return Err(refused(OFF, moves));
             }
             if cancellation.is_cancelled() {

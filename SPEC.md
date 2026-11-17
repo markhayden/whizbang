@@ -802,6 +802,10 @@ whizbang models list|get <model>|remove <model> [--wait <seconds>]
                     [--config <file> [--env-file <file>]] [--models-dir <dir>]
                                        # the catalogue's models, installing one, removing
                                        # one (docs/guides/models.md)
+whizbang models pin <draft> [--config <file> [--env-file <file>]]
+                                       # for whoever writes a catalogue entry: fetch each
+                                       # file of a draft entry once and print its size and
+                                       # SHA-256; installs and writes nothing
 whizbang backends status [--probe]
 whizbang store list|delete|prune
 whizbang store import <file> --store <dir> [--create]
@@ -901,6 +905,9 @@ GitHub redirects; the old name must never be reused.
   warm build cache and compilation not counted.
 - Pull-request CI: under 10 minutes on GitHub's hosted `macos-15` and `ubuntu-22.04` runners,
   compilation included, with caches.
+- Fast tier's limit (`scripts/timing.sh`): on GitHub's hosted `macos-15` runner the test
+  time is limited to 300 s, by the owner's decision of 2026-11-17, because its test time
+  varies about two-fold on unchanged code; Linux CI and the owner's Mac keep 180 s.
 
 These are targets, not measurements: squint's Rust tests alone took about 3 minutes a pass.
 Each milestone's note includes a timing report by suite. When a budget is exceeded, coverage

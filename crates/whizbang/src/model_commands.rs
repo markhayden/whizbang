@@ -5,14 +5,15 @@
 //! own ([`Tools::of`]).
 //!
 //! **Which of them works out where the models directory is, and when.** None does
-//! unless the catalogue gives it a reason, and the catalogue this build ships holds no
-//! model until its first entry (task N5):
+//! unless the catalogue gives it a reason (the catalogue this build ships holds one
+//! model, `sam3`, task N5); `pin` never does:
 //!
 //! - `list` with a catalogue that holds at least one model. It opens the directory
 //!   only when something is there: where nothing is, every model is not installed,
 //!   and nothing is made.
 //! - `get` of a model the catalogue holds, that runs on this platform and whose
-//!   adapter this build has. It opens the directory, and makes it where it is not.
+//!   adapter is in this build's table, shipped or not yet (task N5). It opens the
+//!   directory, and makes it where it is not.
 //! - `remove` of a model the catalogue holds. It opens the directory only when
 //!   something is there: where nothing is, the model is not installed.
 //!
@@ -24,21 +25,30 @@
 //! it names are read from its env file first, and every text a command prints, a
 //! complaint included, has them taken out. A model whose name holds one is not looked
 //! for: to these commands it is not in the catalogue.
+//!
+//! **Only `get` reads a download's token, and only of a model that needs one** (plan
+//! 1C, task N4; [`get`]): `list`, `remove`, and `get` of a model whose download needs
+//! no token or whose token is a variable of the env file never open the Hub's
+//! sign-in.
 
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use whizbang_backends::models::{
-    Current, Entry, InstallRefused, ModelsDir, RemoveRefused, Revision, State, Status, current,
-    draining, install_or_attach, remove as remove_model, unrunnable,
+    Carrying, Current, Entry, FileRefused, InstallRefused, ModelsDir, PinRefused, Pinned,
+    RemoveRefused, Revision, State, Status, current, draining, install_or_attach_carrying,
+    pin_file, remove as remove_model, unrunnable,
 };
-use whizbang_core::capability::Unready;
-use whizbang_core::config::{DOWNLOAD_LEAST_KIB_PER_SECOND, Loaded};
+use whizbang_core::capability::{FaultKind, Unready};
+use whizbang_core::config::{
+    Credentials, DOWNLOAD_LEAST_KIB_PER_SECOND, Loaded, ModelToken, SIGN_IN_ORIGIN, TokenFrom,
+};
 use whizbang_core::contract::{Cancellation, Clock, Secrets, SystemClock};
-use whizbang_core::egress::{CheckedDownloader, NotAllowed, Origin};
+use whizbang_core::egress::{CheckedDownloader, Credential, NotAllowed, Origin};
 
-use crate::wiring::{self, Models, Platform, Said};
+use crate::sign_in::{self, SignInRefused};
+use crate::wiring::{self, Models, Platform, Said, SignIn};
 
 /// How long a command waits between two looks: one who attaches to an install that
 /// is running, and a removal that waits for a lock or a hold. The clock's pause.
@@ -63,28 +73,45 @@ pub struct Tools {
     models: Models,
     clock: Arc<dyn Clock>,
     downloads: Downloads,
+    sign_in: Option<SignIn>,
 }
 
 impl Tools {
     /// What the binary gives: the models this build ships, with the flag's directory
-    /// and what says where the platform's is; the machine's clock; and the download
-    /// client.
-    pub fn shipped(dir: Option<&Path>, platform: Platform) -> Result<Tools, String> {
+    /// and what says where the platform's is; the machine's clock; the download
+    /// client; and what says where the Hub's sign-in keeps its token.
+    pub fn shipped(
+        dir: Option<&Path>,
+        platform: Platform,
+        sign_in: SignIn,
+    ) -> Result<Tools, String> {
         let models = Models::shipped()?.flag(dir).platform(platform);
-        Ok(Tools::of(
+        let tools = Tools::of(
             models,
             Arc::new(SystemClock),
             Arc::new(whizbang_backends::net::downloader),
-        ))
+        );
+        Ok(tools.sign_in(sign_in))
     }
 
-    /// These: what a test gives.
+    /// These, with no place for a sign-in: what a test gives.
     pub fn of(models: Models, clock: Arc<dyn Clock>, downloads: Downloads) -> Tools {
         Tools {
             models,
             clock,
             downloads,
+            sign_in: None,
         }
+    }
+
+    /// The same, with what says where the Hub's sign-in keeps its token
+    /// (`sign_in::token_file`). **It is not asked here, and not unless it is
+    /// needed:** only by `get` of a model whose entry says a download from its origin
+    /// needs a token, under a config that names the sign-in for that origin. Without
+    /// it, the sign-in is not there.
+    pub fn sign_in(mut self, says: SignIn) -> Tools {
+        self.sign_in = Some(says);
+        self
     }
 }
 
@@ -92,6 +119,7 @@ impl std::fmt::Debug for Tools {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Tools")
             .field("models", &self.models)
+            .field("sign_in", &self.sign_in.is_some())
             .finish()
     }
 }
@@ -104,11 +132,14 @@ pub struct Under<'a> {
 }
 
 /// What a command takes from the config: where it says the models directory is, the
-/// least rate of a download, and the secrets of the variables it names.
+/// least rate of a download, the secrets of the variables it names, and where it says
+/// each download's token is, with the tokens of its env file.
 struct Read {
     dir: Option<std::path::PathBuf>,
     least: u64,
     secrets: Secrets,
+    tokens: Vec<ModelToken>,
+    credentials: Credentials,
 }
 
 /// Reads the config and its env file, as an executor's source reads them; with no
@@ -120,6 +151,8 @@ fn read(under: Under<'_>) -> Result<Read, String> {
             dir: None,
             least: DOWNLOAD_LEAST_KIB_PER_SECOND,
             secrets: Secrets::none(),
+            tokens: Vec::new(),
+            credentials: Credentials::none(),
         });
     };
     let loaded = Loaded::of_files(config, under.env_file)
@@ -131,6 +164,8 @@ fn read(under: Under<'_>) -> Result<Read, String> {
             .download_least_kib_per_second()
             .unwrap_or(DOWNLOAD_LEAST_KIB_PER_SECOND),
         secrets: loaded.secrets().clone(),
+        tokens: config.model_tokens().to_vec(),
+        credentials: loaded.credentials().clone(),
     })
 }
 
@@ -167,13 +202,28 @@ fn holds_secret(text: &str, secrets: &Secrets) -> bool {
     secrets.redact(text) != text
 }
 
-/// The revision this build's adapter of the entry states, when the build has it.
+/// The revision this build's pack ships the entry's adapter under, when it ships it.
 fn adapter_of<'a>(tools: &'a Tools, entry: &Entry) -> Option<&'a Revision> {
     let adapters = &tools.models.adapters;
     adapters
         .iter()
         .find(|(name, _)| name == entry.adapter())
         .map(|(_, revision)| revision)
+}
+
+/// The revision this build's table fixes for the entry's adapter, shipped or not yet:
+/// what `get` installs under (plan 1C, task N5). A model whose adapter is in the
+/// table but not shipped yet is installed under the revision it will be loaded under,
+/// so nothing is downloaded again when the adapter ships.
+fn revision_of<'a>(tools: &'a Tools, entry: &Entry) -> Option<&'a Revision> {
+    let models = &tools.models;
+    adapter_of(tools, entry).or_else(|| {
+        models
+            .not_yet_shipped
+            .iter()
+            .find(|(name, _)| name == entry.adapter())
+            .map(|(_, revision)| revision)
+    })
 }
 
 /// Whether anything is at the directory's place, a link followed. What cannot be
@@ -347,9 +397,18 @@ fn shown(status: Option<Status>) -> String {
 /// whose entry does not name this platform, and one whose adapter this build does not
 /// have, since no install by this build would make it ready.
 ///
-/// A credential: none is attached to a request. An entry that says its origin needs a
-/// token is task N4's, which reads it here, before the downloader is made; until then
-/// the shipped catalogue holds no such entry.
+/// **A credential** (plan 1C, D12): an entry that says a download from its origin
+/// needs a token is installed with one, which every request for that origin carries
+/// and no request for another does. Where the token is, the config says for that
+/// origin (`[[models.tokens]]`): a variable of the env file, or the Hub's
+/// command-line sign-in, which is read here, after the checks above and before the
+/// models directory is opened or anything is asked, from the place the binary was
+/// given ([`Tools::sign_in`]), and by no other command. It is told to redaction
+/// before the request is made, so nothing this prints, the status record and every
+/// refusal hold it, and it is dropped when the install ends. One limit: a `get` of a
+/// model installed already reads it too, since whether anything is to be downloaded
+/// is known only under the model's lock. An origin that refuses the token (401 or
+/// 403) ends the install with a sentence that says to ask for access.
 pub fn get(
     under: Under<'_>,
     model: &str,
@@ -357,8 +416,7 @@ pub fn get(
     say: &mut dyn FnMut(&str),
 ) -> Result<String, String> {
     run(under, tools, |read| {
-        let secrets = &read.secrets;
-        let entry = entry(tools, model, secrets)?;
+        let entry = entry(tools, model, &read.secrets)?;
         if unrunnable(entry, tools.models.runs_on, true) == Some(Unready::NotForThisPlatform) {
             return Err(format!(
                 "the model does not run on this platform (its entry names {}), so it was not \
@@ -366,47 +424,281 @@ pub fn get(
                 platforms(entry, ", ")
             ));
         }
-        let Some(adapter) = adapter_of(tools, entry) else {
+        let Some(adapter) = revision_of(tools, entry) else {
             return Err(
                 "this build has no adapter for the model, so it was not installed and \
                         nothing was downloaded"
                     .to_owned(),
             );
         };
-        let (said, root) = tools.models.chosen(read.dir.as_deref())?;
-        let dir = wiring::open_models_dir(said, &root, tools.clock.clone())?;
-        let downloader = (tools.downloads)(read.least, entry.origins(), secrets)
-            .map_err(|refused| format!("the download client could not be made: {refused}"))?;
-        let mut last = None;
-        let clock = tools.clock.clone();
-        let installed = install_or_attach(
-            &dir,
-            entry,
-            adapter,
-            &downloader,
-            &Cancellation::new(),
-            secrets,
-            &mut |status| {
-                let line = shown(status);
-                if last.as_ref() != Some(&line) {
-                    say(&secrets.redact(&line));
-                    last = Some(line);
-                }
-                clock.pause(PAUSE);
-            },
-        )
-        .map_err(|refused| not_installed(&refused))?;
-        Ok(format!(
-            "installed {}: {}\n",
-            entry.name().as_str(),
-            installed.identity().digest()
-        ))
+        // The token, read now and not before: the model is to be installed, and
+        // nothing has been asked or made yet. From here on every text has it taken
+        // out, beside the config's secrets.
+        let credential = credential_of(entry, read, tools)?;
+        let secrets = match &credential {
+            Some((_, joined)) => joined.clone(),
+            None => read.secrets.clone(),
+        };
+        let carried = credential.as_ref().map(|(credential, _)| credential);
+        let installed = (|| -> Result<String, String> {
+            let (said, root) = tools.models.chosen(read.dir.as_deref())?;
+            let dir = wiring::open_models_dir(said, &root, tools.clock.clone())?;
+            let downloader = (tools.downloads)(read.least, entry.origins(), &secrets)
+                .map_err(|refused| format!("the download client could not be made: {refused}"))?;
+            let mut last = None;
+            let clock = tools.clock.clone();
+            let carrying = Carrying {
+                downloader: &downloader,
+                credential: carried,
+            };
+            let installed = install_or_attach_carrying(
+                &dir,
+                entry,
+                adapter,
+                &carrying,
+                &Cancellation::new(),
+                &secrets,
+                &mut |status| {
+                    let line = shown(status);
+                    if last.as_ref() != Some(&line) {
+                        say(&secrets.redact(&line));
+                        last = Some(line);
+                    }
+                    clock.pause(PAUSE);
+                },
+            )
+            .map_err(|refused| not_installed(&refused, carried.is_some()))?;
+            Ok(format!(
+                "installed {}: {}\n",
+                entry.name().as_str(),
+                installed.identity().digest()
+            ))
+        })();
+        // The credential, and with it the token, is dropped here: nothing keeps it
+        // after the install ends.
+        drop(credential);
+        match installed {
+            Ok(text) => Ok(secrets.redact(&text)),
+            Err(complaint) => Err(secrets.redact(&complaint)),
+        }
     })
 }
 
-/// What `get` says of an install that was refused.
-fn not_installed(refused: &InstallRefused) -> String {
+/// The header a download's token is carried in, as a bearer's.
+const TOKEN_HEADER: &str = "Authorization";
+
+/// The credential a download of this entry carries, and the secrets that hold its
+/// token beside the config's; none when no download of the entry needs a token (plan
+/// 1C, D12). The token is where the config says for the entry's origin: a variable
+/// of the env file, read with the config; or the Hub's sign-in, read here, from the
+/// place the binary was given, and never for another origin. Refused, in fixed words
+/// that hold no token and no path and say how to sign in or which key to set: an
+/// origin the config names no token for, a variable the env file does not set, and a
+/// sign-in that is not there or cannot be read.
+fn credential_of(
+    entry: &Entry,
+    read: &Read,
+    tools: &Tools,
+) -> Result<Option<(Credential, Secrets)>, String> {
+    let Some(origin) = entry.needs_token() else {
+        return Ok(None);
+    };
+    let not_downloaded = "so the model was not installed and nothing was downloaded";
+    let token = match read.tokens.iter().find(|token| token.origin() == origin) {
+        None => {
+            // No default: the config names the sign-in or nobody's token is read, so
+            // a `get` never reads the Hub's token of one who did not opt in. The
+            // refusal ends with the lines to add, each a line of its own.
+            let head = format!(
+                "a download of the model from {origin} needs a token, and the config names \
+                 none for that origin, {not_downloaded}."
+            );
+            return Err(if origin.to_string() == SIGN_IN_ORIGIN {
+                format!(
+                    "{head} To use the sign-in of the Hub's command-line tool (`hf auth \
+                     login`), add these three lines to the config; or name a variable of the \
+                     env file that holds the token, as `key_env` in place of `sign_in`:\n\
+                     [[models.tokens]]\norigin = \"{origin}\"\nsign_in = \"huggingface\""
+                )
+            } else {
+                format!(
+                    "{head} Set the token in the env file, and add these three lines to the \
+                     config, with the variable's name:\n[[models.tokens]]\norigin = \
+                     \"{origin}\"\nkey_env = \"NAME_OF_THE_VARIABLE\""
+                )
+            });
+        }
+        Some(token) => match token.from() {
+            TokenFrom::Variable(variable) => match read.credentials.model_token(origin) {
+                Some(value) => value.expose().to_owned(),
+                None => {
+                    return Err(format!(
+                        "the config names the variable `{variable}` for the token of {origin}, \
+                         and the env file does not set it, {not_downloaded}: set it in the \
+                         env file"
+                    ));
+                }
+            },
+            TokenFrom::SignIn => {
+                let place = tools.sign_in.as_ref().and_then(|says| says());
+                let got = match place {
+                    Some(place) => sign_in::read(&place),
+                    None => Err(SignInRefused::NoPlace),
+                };
+                match got {
+                    Ok(token) => token.expose().to_owned(),
+                    Err(refused) => {
+                        return Err(format!(
+                            "the token of {origin} is the Hub's sign-in's, {not_downloaded}: \
+                             {refused}"
+                        ));
+                    }
+                }
+            }
+        },
+    };
+    // Told to redaction before anything is asked: every text from here on, the
+    // client's faults among them, has the token taken out. A token is at least as
+    // long as a secret (`sign_in::read`, and the env file's reader).
+    let told = Secrets::new([token.clone()])
+        .map_err(|_| format!("the token is shorter than a token, {not_downloaded}"))?;
+    let secrets = read.secrets.joined(&told);
+    let credential = Credential::new(
+        origin.clone(),
+        TOKEN_HEADER,
+        &format!("Bearer {token}"),
+        &secrets,
+    )
+    .map_err(|_| format!("the token cannot be carried in a request, {not_downloaded}"))?;
+    Ok(Some((credential, secrets)))
+}
+
+/// What `get` says of an install that was refused. An origin that refused a request
+/// that carried a token refused that token: the account it is of has no access to the
+/// model, or it is not the right token.
+fn not_installed(refused: &InstallRefused, carried: bool) -> String {
+    let credential = matches!(
+        refused,
+        InstallRefused::File {
+            why: FileRefused::Download(FaultKind::Credential),
+            ..
+        }
+    );
+    if credential && carried {
+        return format!(
+            "the model was not installed: {refused}. The origin refused the token: ask for \
+             access to the model on its page with the account the token is of (on the Hub, \
+             accept the model's terms there), and check that the token is that account's"
+        );
+    }
+    if credential {
+        return format!(
+            "the model was not installed: {refused}. The origin asks for a token, and the \
+             catalogue does not say that the model needs one"
+        );
+    }
     format!("the model was not installed: {refused}")
+}
+
+// --- pin -----------------------------------------------------------------------------------------
+
+/// `whizbang models pin <draft>`: a developer's command (plan 1C, task N5). The draft is
+/// a catalogue (`catalogue/2`) of one entry whose sizes and hashes are not known yet:
+/// each file's `size` is the most bytes wanted of it, and its `sha256` any hash. Each
+/// file is fetched once, through the checked downloader held to the draft's origins,
+/// with the draft's token as `get` would carry it, and a line of its name, size and
+/// SHA-256 is printed. **Nothing is installed or written:** no models directory is
+/// opened, and the bytes are hashed as they come and dropped.
+///
+/// A file moved to an origin the draft does not name is not fetched there, and its
+/// line names that origin, and only the origin: so the host a download is moved to
+/// is named before an entry lists it (open question 2). A file that does not end
+/// within its bound, or whose download failed, says so in its line, with the fault's
+/// kind and fixed words. Every line has the config's secrets and the token taken
+/// out. What is pinned is what the origin served that once: trust on first use.
+pub fn pin(under: Under<'_>, draft: &Path, tools: &Tools) -> Result<String, String> {
+    run(under, tools, |read| {
+        // A draft is a file: anything else is refused before it is opened, so a
+        // pipe in its place cannot hold the command.
+        let unreadable = "the draft cannot be read: name a catalogue file of one entry";
+        if !std::fs::metadata(draft).is_ok_and(|meta| meta.is_file()) {
+            return Err(unreadable.to_owned());
+        }
+        let file = std::fs::File::open(draft).map_err(|_| unreadable.to_owned())?;
+        let catalogue = whizbang_backends::models::Catalogue::read_from(file, &read.secrets)
+            .map_err(|refused| format!("the draft cannot be used: {refused}"))?;
+        let [entry] = catalogue.entries() else {
+            return Err(format!(
+                "the draft holds {} models, and pin takes one",
+                catalogue.entries().len()
+            ));
+        };
+        let credential = credential_of(entry, read, tools)?;
+        let secrets = match &credential {
+            Some((_, joined)) => joined.clone(),
+            None => read.secrets.clone(),
+        };
+        let carried = credential.as_ref().map(|(credential, _)| credential);
+        let refused = Arc::new(std::sync::Mutex::new(Vec::<Origin>::new()));
+        let noted = refused.clone();
+        let downloader = (tools.downloads)(read.least, entry.origins(), &secrets)
+            .map_err(|refused| format!("the download client could not be made: {refused}"))?
+            .noting_refused(Arc::new(move |origin: &Origin| {
+                if let Ok(mut noted) = noted.lock() {
+                    noted.push(origin.clone());
+                }
+            }));
+        let carrying = Carrying {
+            downloader: &downloader,
+            credential: carried,
+        };
+        let mut text = format!(
+            "pinned {}: nothing was installed or written\n",
+            entry.name().as_str()
+        );
+        let mut whole = true;
+        for file in entry.files() {
+            if let Ok(mut noted) = refused.lock() {
+                noted.clear();
+            }
+            let pinned = pin_file(entry, file, &carrying, &Cancellation::new());
+            let name = file.name().as_str();
+            let line = match pinned {
+                Ok(Pinned { size, sha256 }) => format!("{name}\t{size}\t{sha256}"),
+                Err(why) => {
+                    whole = false;
+                    let said = match why {
+                        PinRefused::OverBound => {
+                            format!("more than its bound of {} bytes came", file.size())
+                        }
+                        PinRefused::Elsewhere => {
+                            "it moved to an origin the draft does not name".to_owned()
+                        }
+                        PinRefused::TooManyMoves => "it moved too many times".to_owned(),
+                        PinRefused::Cancelled => "it was cancelled".to_owned(),
+                        PinRefused::Download(fault) => {
+                            format!("{}: {}", fault.kind().name(), fault.sentence())
+                        }
+                    };
+                    let elsewhere = refused
+                        .lock()
+                        .map(|noted| noted.clone())
+                        .unwrap_or_default();
+                    match elsewhere.first() {
+                        Some(origin) => format!(
+                            "{name}\tnot pinned: {said}; it was moved to {origin}, which the \
+                             draft does not name, and nothing was asked there"
+                        ),
+                        None => format!("{name}\tnot pinned: {said}"),
+                    }
+                }
+            };
+            text.push_str(&secrets.redact(&line));
+            text.push('\n');
+        }
+        drop(credential);
+        if whole { Ok(text) } else { Err(text) }
+    })
 }
 
 // --- remove --------------------------------------------------------------------------------------

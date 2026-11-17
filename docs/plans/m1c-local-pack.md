@@ -299,7 +299,7 @@ are run one way). A resident worker and a GPU runtime add these.
 | Time, a worker | The limits of D7, each finite with no caller's deadline | The supervisor; a test of each |
 | Memory, one result | 1 GiB of payload (D2), refused before it is allocated; a result's header bounded from its request; the adapter cuts candidates to the most instances asked before it makes a full-size plane | P1, R2a |
 | Memory, beside a result | 256 events and 64 KiB of diagnostics for one request (D2) | P1, P4 |
-| Time, fast tier | A call's deadline comes from the injected clock; one test 30 s, the suite 180 s, as now. The pack's Python tests: 10 s in all | `scripts/timing.sh`; for the pack's Python tests, their runner, `pack/tests/run.py`. **Reworded with the task** (by C1b): this cell read "`scripts/timing.sh`" alone. That script times the Rust tests; the pack's Python tests are run by `just test-pack`, and their runner is what holds them to 10 s, failing a run over it and saying how long it took |
+| Time, fast tier | A call's deadline comes from the injected clock; one test 30 s, the suite 180 s, as now (300 s on GitHub's hosted macOS runner since the owner's decision of 2026-11-17: `SPEC.md` section 13). The pack's Python tests: 10 s in all | `scripts/timing.sh`; for the pack's Python tests, their runner, `pack/tests/run.py`. **Reworded with the task** (by C1b): this cell read "`scripts/timing.sh`" alone. That script times the Rust tests; the pack's Python tests are run by `just test-pack`, and their runner is what holds them to 10 s, failing a run over it and saying how long it took |
 | Time, model tier | Load 120 s, one request 60 s, the recipe 10 minutes | The supervisor's deadlines; the recipe |
 | Disk | One download of about 3.5 GB into a models directory outside the repo; one environment for the runtime, its size measured by R1 | Tasks N5 and Y1 only |
 | Network | No test of the fast tier leaves the machine. The client's tests use a listener on loopback, made through the test kit, that serves a fixed number of connections. The client has a limit to connect (10 s), a limit between two reads (30 s), and a least rate for a download, a setting whose default is 256 KiB a second: under it over any whole minute ends the download as timed out. A test passes its own limits, under a second. Root certificates are compiled in: the platform's verifier may ask a revocation service nobody approved | Task N1 |
@@ -346,6 +346,14 @@ the hosts as C1b named them:
 |---|---|---|---|
 | `github.com`, for release downloads under `/astral-sh/python-build-standalone/releases/download/…` (the Python) and `/astral-sh/uv/releases/download/0.12.23/…` (`uv`, on CI), and `release-assets.githubusercontent.com`, where those downloads are redirected | `uv` installing the Python the pack pins; the CI action installing `uv` | Both CI runners (`macos-15`, `ubuntu-22.04`); the owner's Mac only if the pinned Python is ever missing there | C1b |
 
+Given by the owner on 2026-11-16 (the owner's local date), as the orchestrator passed it
+on, ahead of the host being known: "when it comes in i am good with the hugging face
+stuff. no need to approve". Recorded by N5:
+
+| Approved | For | Where | Needed before |
+|---|---|---|---|
+| The Hub's own storage host, the one it moves a file download to: named by N5 as `us.aws.cdn.hf.co` (under the Hub's domain `hf.co`), found by `whizbang models pin` refusing the move and printing its origin alone | Downloading the SAM 3 files the Hub moves there; no token is sent to it (ADR 0012) | The owner's Mac; never CI | N5 |
+
 Nothing else. Without a mirror named, `uv` 0.12.23 tries its maker's own host,
 `releases.astral.sh`, before GitHub (its source, `crates/uv-python/src/downloads.rs`), and
 that host is not approved. So every command that installs a Python names GitHub's releases
@@ -370,7 +378,8 @@ approvals above do not cover a host by a name nobody has read (C1b's two were na
 approved on 2026-11-16, above):
 
 - The host the Hub moves a file download to, its storage: N5 names it to the owner
-  before the entry lists it as an origin (open question 2). A second package index
+  before the entry lists it as an origin (open question 2). **Named by N5:**
+  `us.aws.cdn.hf.co`, under the owner's approval of 2026-11-16 above. A second package index
   for Linux with CUDA, if a lock needs one, is Y1's to name the same way (open
   question 5).
 
@@ -385,6 +394,9 @@ Each is settled by the task named, from documentation or by the owner; none bloc
 
 1. Has the owner's account access to `facebook/sam3` today? The owner says it has
    (2026-11-15); N5 finds out for real.
+   **Settled by N5 (2026-11-17): yes.** With the token of the owner's sign-in, read by
+   whizbang, the Hub served every listed file of the pinned commit, the large one
+   included; nothing was refused as a credential's fault.
 2. Which host does the Hub move a file download to? The entry's origins must name it.
    A refusal cannot tell: ADR 0019's refusals quote nothing of an address. N5 takes it
    from the Hub's documentation, or `whizbang models pin` prints the origin, and only
@@ -402,6 +414,18 @@ Each is settled by the task named, from documentation or by the owner; none bloc
    own library. All of that is about the Hub's own client. It says neither that a plain
    request for a file's address is served whole nor that it is refused, so the question
    is live, and it stays the first thing N5 finds out.
+   **Settled by N5 (2026-11-17), through whizbang's own client, by `whizbang models
+   pin`.** A `GET` of `model.safetensors` at the pinned commit on `huggingface.co`,
+   with the token, is moved, and the address it is moved to is at
+   `https://us.aws.cdn.hf.co`: a first pin whose draft named the Hub alone refused that
+   move and printed that origin and nothing else of the address. With that origin
+   added, the same narrow client (HTTP/1.1 only, no range, no chunked body, a
+   `Location` of at most 2,048 bytes with no `@`, no `#` and no IPv6 host) followed the
+   one move and was served the whole file, 3,439,938,512 bytes, as one body of a stated
+   `Content-Length`: no other move, no transfer coding, no range and no protocol of
+   Xet's was needed. The small files are served by `huggingface.co` itself. So the
+   client needs no change, and the plan none. The host was approved by the owner on
+   2026-11-16, ahead of its name ("Origins").
 3. Does candidate A run SAM 3 on the Apple GPU with the fallback off? (R1.)
 4. Which Python does the runtime's wheel support? The pack pins the newest that it
    does. (Y1; the pack's core runs on any since 3.12.)
@@ -448,9 +472,15 @@ Each is settled by the task named, from documentation or by the owner; none bloc
      and the place itself can be pointed at a folder that holds no token, by the
      variables above.
    Still N4's: which of the three variables its reader follows, in its amendment to
-   ADR 0011. Still P3a's: which variables the worker's environment sets. Settled by
-   P3a: every place those variables name is one empty folder of the worker's own, and
-   `HF_TOKEN_PATH` a file in it that is not there (P3a, "Built with the task").
+   ADR 0011. **Settled by N4** (ADR 0011, "A download's token"): all three, in the
+   page's order, `HF_TOKEN_PATH`, then `HF_HOME`, then `XDG_CACHE_HOME`, then the home
+   folder; a variable set to a path that is not absolute names no place. The page was
+   read again for N4, and the Hub's source of the function that writes the token
+   (`utils/_auth.py`), which writes it for its owner alone (600); no token file was
+   looked at. Still P3a's: which variables the worker's environment sets. **Settled by
+   P3a:** all four places (`HF_TOKEN_PATH`, `HF_HOME`, `XDG_CACHE_HOME` and the home
+   folder) are one empty folder of the worker's own, and `HF_TOKEN_PATH` a file in it
+   that is not there (P3a, "Built with the task").
 
 ## Strands and order
 
@@ -1566,11 +1596,11 @@ through the function, which the check counts.
 **Depends on:** N3c. **Reads:** ADR 0012, "An address, and a credential"; ADR 0019, "A
 download and a probe"; ADR 0011 on keys from the env file.
 
-- [ ] D12, by amendments to ADRs 0011, 0012 and 0017: the config's key for an origin's
+- [x] D12, by amendments to ADRs 0011, 0012 and 0017: the config's key for an origin's
       token, which names where the token is (the Hub's command-line sign-in, or a
       variable of the env file); an entry's statement that its origin needs one; the
       installer attaching it to a request for that origin.
-- [ ] The reader of the sign-in's store: one function names the real place, from the
+- [x] The reader of the sign-in's store: one function names the real place, from the
       Hub's documentation (open question 9), and only `main` calls it, which `just
       check` holds; the wiring is given the place as a value. The token is read when a
       download from its origin is about to be asked and not before, told to redaction
@@ -1610,6 +1640,67 @@ the worker's environment.
 reader does with `HF_TOKEN`, with the eleventh test; and that the binary's tests start
 it through the test kit's one function, which is a task of its own, N3c, since it
 moves tests N4 does not otherwise touch.
+**Reworded with the task** (by N4), three things:
+
+- "only `main` calls it, which `just check` holds" now reads: only `main` names it,
+  and hands it on uncalled to the models commands, which ask it only for `get` of a
+  model that needs the sign-in's token; `just check` refuses its name anywhere else
+  and a call of it in `main` too (`scripts/check-sign-in.sh`, shown on planted files
+  by `scripts/tests/test-sign-in.sh`). It is `main`'s `hub_sign_in_token_file`, the
+  pattern of `platforms_models_dir`: a function `main` called would read the sign-in
+  for every command.
+- "(`tests/it/models/credential.rs`, `tests/it/config/`, …)" now reads
+  `crates/whizbang/tests/it/credential.rs` for the nine `credential::` tests: they go
+  through the binary's own `get`, which is the binary crate's, so they are in its
+  tests; and `crates/whizbang-core/tests/it/config/file.rs` for the config's key
+  (`file::a_downloads_token_is_named_for_an_origin_as_the_sign_in_or_a_variable_and_the_sign_in_for_the_hub_alone`).
+- The last two tests could not be shown as worded: the real binary reaches the reader
+  only through a shipped model that needs a token, and the shipped catalogue holds none
+  until N5, which also cannot be handed another (N3b's rewording). Each is now two
+  halves. The first is a reading of the binary's source: `main`'s one function hands
+  `HF_TOKEN_PATH`, `HF_HOME`, `XDG_CACHE_HOME` and `HOME`, in that order, to
+  `sign_in::token_file` and reads nothing else for it, and no source of the binary
+  names `"HF_TOKEN"` or `HUGGING_FACE_HUB_TOKEN`; with the place's order shown on
+  made-up folders
+  (`sign_in::tests::the_place_is_hf_token_path_then_hf_home_then_xdg_cache_home_then_the_home_folder`)
+  and the reading shown through `get` (`credential::`). The second starts the real
+  binary, through the test kit's function, for each shipped model that needs the
+  sign-in's token: with a temporary home and nothing there, and with a file there that
+  others can read, each refused as that before anything is asked; and with `HF_TOKEN`
+  and `HUGGING_FACE_HUB_TOKEN` set and no sign-in, refused as not there. That half
+  runs for no model until N5's entry, and N5 shows it running (`docs/carry-over.md`,
+  the row on the real binary's reading of the sign-in).
+
+**Decided with the task** (ADR 0011, "A download's token"): the reader follows all
+three of the Hub's variables that move the place, and not only the default, since the
+Hub's tool writes the sign-in where they say; a variable set to a relative path names
+no place. A token file that others can read or write is refused, not read and warned
+of: the Hub's tool writes it 600. The file's one trailing line break is taken off;
+anything else that is not printable ASCII is refused. `get` of a model installed
+already reads the token too, since whether anything is downloaded is known only under
+the model's lock.
+**Changed after the security review of N4** (two findings and four follow-ups): the
+reader looks at the name before it opens, refuses anything but a regular file, and
+opens without waiting
+(`credential::a_pipe_at_the_sign_ins_place_is_refused_before_it_is_opened_and_nothing_waits`);
+the opened file must be this user's
+(`sign_in::tests::a_token_file_that_is_not_this_users_or_that_others_may_read_or_write_is_refused`);
+its folder must not be one others can write (a case of
+`credential::a_sign_in_that_is_not_there_or_cannot_be_read_…`); a file at the same host
+on another port carries nothing
+(`credential::a_file_at_the_same_host_on_another_port_is_asked_for_with_no_credential`);
+the gate and the real client on loopback carry no credential to another allowed
+origin after a move
+(`client::a_credentialed_download_moved_to_another_allowed_origin_is_asked_there_with_no_credential`);
+`scripts/check-sign-in.sh` holds the handing on to the models commands' call. And for
+N5, the coordinator's decision: no built-in default; the owner writes the
+`[[models.tokens]]` entry, and the refusal prints the three lines to add.
+**Added with the task**, for follow-ups of the reviews of N3b and N3c:
+`models::list_of_an_empty_catalogue_and_get_or_remove_of_a_model_it_does_not_hold_never_ask_where_the_platforms_directory_is`
+(a platform that counts each ask); the guide's "Limits" gains the unbounded wait of
+one attached to another install and a build for a platform no catalogue names; the
+documentation of `Installations::on` and its line in ADR 0017 no longer say it is for
+a test; and the guide says where `get` takes the token from.
 **Carry-over:** a credential for a download that needs one. **Size:** small, now
 medium.
 
@@ -1619,7 +1710,7 @@ medium.
 (the Hub itself was approved on 2026-11-15); access to the model, which the owner says is
 granted; the Hub's command-line sign-in on the Mac, which the owner has. **Runs on:** the owner's Mac, for its last box.
 
-- [ ] The shipped catalogue, built into the binary, with one entry, `sam3`: the files
+- [x] The shipped catalogue, built into the binary, with one entry, `sam3`: the files
       of D11, each `from` an address at a pinned revision of `facebook/sam3`, the
       licence as its maker names it, the features this build's adapter gives (`phrase`).
       The adapter's revision is fixed here, in the binary's table of adapters, as the
@@ -1633,7 +1724,7 @@ granted; the Hub's command-line sign-in on the Mac, which the owner has. **Runs 
       prepared, before a worker is started. Nothing calls the model ready while a load
       of it would be refused. The identity does not depend on the mark, so R2a changes
       it and nothing is downloaded again.
-- [ ] How the sizes and hashes were fixed, written in the entry's comment and the ADR:
+- [x] How the sizes and hashes were fixed, written in the entry's comment and the ADR:
       the large file's from the Hub's public listing of the pinned revision, which
       states its SHA-256 (read by the builder, outside whizbang: "Origins"); the small
       files' from the bytes fetched once through the checked downloader by
@@ -1641,7 +1732,7 @@ granted; the Hub's command-line sign-in on the Mac, which the owner has. **Runs 
       size and hash, and the origin alone of a hop it refused, and installs nothing.
       The second is trust on first use, stated as a limit. `SPEC.md` section 11
       gains the command.
-- [ ] On the Mac: `whizbang models get sam3`, by the owner or with the owner's leave,
+- [x] On the Mac: `whizbang models get sam3`, by the owner or with the owner's leave,
       into a models directory outside the repo. Nothing but whizbang downloads a file.
       The token is read by the binary from the sign-in (D12), and is never printed,
       passed as an argument or read by an agent: no agent opens, lists or prints the
@@ -1666,6 +1757,63 @@ last clause read "the secrets scan passes over the working tree with the token i
 env file". The token is in the sign-in's store and in no env file, so the scan cannot
 search for its value; the clause now says what the scan can show. Two tests are added
 for the window before R2a, a follow-up of the plan's review.
+**Reworded with the task** (by N5): the second box read "the large file's from the Hub's
+public listing of the pinned revision, which states its SHA-256 (read by the builder,
+outside whizbang: "Origins"); the small files' from the bytes fetched once …". The
+listing was read once, without a token, as approved: for this gated repository the Hub
+masks the large file's `lfs.oid` and its Xet hash, each as 64 asterisks, to a reader
+without a token, so it could not give the hash. Every file's hash, the large file's
+included, was then fixed by `whizbang models pin`, trust on first use, with the
+orchestrator's leave; the listing gave every file's size, which `pin` agreed with. The
+first `get` downloaded the files a second time and held each to its size and hash. "The
+entry's comment" is the documentation of `wiring::catalogue` and ADR 0017, "The shipped
+catalogue": a catalogue is strict JSON, which has no comment.
+**What N5 decided and built** (ADR 0017, "The shipped catalogue"; ADR 0019's amendment):
+
+- The entry: commit `3c879f39826c281e95690f02c7821c4de09afae7` of `facebook/sam3`;
+  `model.safetensors`, `config.json`, `processor_config.json`, `tokenizer.json`,
+  `tokenizer_config.json`, `special_tokens_map.json`, `vocab.json`, `merges.txt` and
+  `LICENSE`; origins `https://huggingface.co` and `https://us.aws.cdn.hf.co`; the
+  licence `SAM License`, the first line of its maker's licence; the platform
+  `macos-arm64` alone, the one 1C installs on (Linux comes with the runtime on Linux,
+  1D, under a new revision); entry revision `2026-11.1`; adapter `sam3` at revision
+  `1`, not yet shipped.
+- `whizbang models pin <draft>` (`model_commands::pin`, `models::pin_file`): through the
+  checked downloader, which can now be told the origin of an address it refused
+  (`CheckedDownloader::noting_refused`,
+  `chains::a_checked_download_that_notes_refusals_is_told_the_origin_alone_of_each_address_it_refused`).
+- A build with no kind of backend opens no models directory for a command that builds
+  an executor: with the first entry, `rascal grow` under a config would otherwise have
+  made one (ADR 0017's amendment;
+  `wired::with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory`,
+  rewritten to what is now true, and failing on the day a kind is registered).
+  `models::under_the_catalogue_it_ships_no_models_command_resolves_or_makes_a_models_directory`
+  is now
+  `models::under_the_catalogue_it_ships_no_models_command_makes_a_models_directory_or_asks_anything_of_any_address`:
+  `list` of `sam3` does work out where the directory is.
+- The carry-over rows N5 owned: the two real-binary token tests
+  (`models::the_real_binary_started_with_a_temporary_home_reads_the_sign_in_there_and_no_other`,
+  `models::the_real_binary_started_with_hf_token_set_reads_the_sign_in_and_never_the_variable`)
+  now start the binary for `sam3` on macOS, each refused before anything is asked and
+  before the models directory is made; on Linux the entry's platform is refused first,
+  so they run there for no model. The resolver's wait is accepted in a line, with what
+  bounds it on each platform. The narrow client is enough for the Hub (open question
+  2). N4's follow-up on the open that does not wait is held by
+  `sign_in::tests::a_fifo_opened_by_the_open_that_does_not_wait_is_opened_at_once_and_judged_no_regular_file`.
+
+**On the Mac** (2026-11-17, the release build of this branch, through `scripts/heavy.sh`
+with the thread limit at 200, under a config that names the sign-in and a models
+directory in the builder's scratch folder; fields only):
+
+| Field | Value |
+|---|---|
+| Installation's identity | `sha256:37ab46c2f87b600f4654dd972ce85a27b1024b4fc92901b11464bd6fa9664d32` |
+| Bytes installed | 3,445,003,826, in nine files |
+| Time of the first `get` | 1,220 s |
+| A second `get` | The same identity, in 2 s; nothing downloaded |
+| `models list` | `installed, not ready: this build has no adapter for it` |
+| Hosts whizbang asked | `huggingface.co` (every file, with the token) and `us.aws.cdn.hf.co` (the large file, moved there; no token): the entry's two origins, which its checked downloader holds it to |
+
 **Carry-over:** the shipped catalogue. **Size:** medium.
 
 ### Y1. `whizbang setup`, and the lock file
@@ -1913,7 +2061,7 @@ Every row of `docs/carry-over.md` whose owner names 1C: thirty.
 | Row | Task, or new owner |
 |---|---|
 | The store's locks: a child's copy while the worker is started | P3a; the moment for Ctrl-C accepted in a line (D7) |
-| Pull-request CI on the macOS runner over its budget | C0 (measured); C0b (the job's 10 minutes, by five runs of one commit; Z1 reports `main`). The fast tier's test time there against its 180 s: **the owner** |
+| Pull-request CI on the macOS runner over its budget | C0 (measured); C0b (the job's 10 minutes, by five runs of one commit; Z1 reports `main`). The fast tier's test time there against its 180 s: **the owner**. **Settled by the owner on 2026-11-17**: the limit on GitHub's hosted macOS runner is 300 s, because its test time varies about two-fold on unchanged code; Linux CI and the owner's Mac keep 180 s, and one test keeps 30 s (`scripts/timing.sh`, `SPEC.md` section 13) |
 | A file opened by a look and then an opening; a lock file opened plainly | N2: accepted in a line for a models directory (D13). **The store's half: milestone 5, with the row on the store's locks.** **Reworded with the task** (by N3a, from the review of N2): the cell read "N2: accepted in a line (D13)". D13 is about a models directory, and the row's two openings to lock that are the store's own (a reader's share of a generation file, a prune's try at one) are in no models directory: nothing asks whose a store's folder is. So the row stays open for those two, re-owned as the row itself now says |
 | The run record: `device` and `cached` | P7a (`run/4`) |
 | What a segmenter adapter took and gave | P1 (the order, diagnostics, settings in `load`), P6a (settings in the config) |

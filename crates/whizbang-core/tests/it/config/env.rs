@@ -493,7 +493,7 @@ fn a_marker_key_is_in_no_error_no_debug_no_record_and_no_journal_of_a_run_that_u
     let shown = format!("{env:?} {credentials:?} {handed:?} {:?}", handed.key());
     assert_eq!(
         shown,
-        "EnvFile(2) Credentials { backends: 1, missing: 0, secrets: Secrets(1) } \
+        "EnvFile(2) Credentials { backends: 1, tokens: 0, missing: 0, secrets: Secrets(1) } \
          Handed { key: true, token: false } Some(KeyValue(..))"
     );
     // No refusal that the file or the config can be brought to shows it.

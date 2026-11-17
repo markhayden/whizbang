@@ -22,6 +22,9 @@ origin alone holds (`https://HOST/Path` or `https://host:443/Path` for a secret
 Spec: section 4, "Backends"; section 6, "Spend"; section 10, "Egress"
 Amended: 2026-11-15, at the exit check of checkpoint 1B (task Z1): notes after sentences
 that said something was still to come; no decision changed.
+Amended: 2026-11-16, with task N4 of checkpoint 1C (plan 1C, D12). Added: "A download's
+token": the credential a model's download carries, which origin it goes to, and what is
+told of it before anything is asked.
 
 ## Context
 
@@ -165,6 +168,45 @@ origin" is held by the types
 (`ways_out::a_credential_is_bound_to_one_origin_and_is_never_printed`,
 `ways_out::what_is_sent_is_an_address_bounded_pieces_and_a_credential_of_its_own_origin`,
 `ways_out::a_credential_of_another_scheme_on_the_same_host_and_port_is_refused_by_each_request`).
+
+### A download's token
+
+Task N4 of checkpoint 1C (D12). Where a token is, and how the Hub's sign-in is read, is
+ADR 0011's, "A download's token"; what is done with it is here.
+
+- **A catalogue entry says that a download from one of its origins needs a token**
+  (`Entry::needs_token`; ADR 0017). `whizbang models get` of such a model reads the
+  token where the config says for that origin, or is refused before anything is asked,
+  in words that say how to sign in or which key to set
+  (`credential::an_entry_whose_origin_needs_a_token_the_config_does_not_name_is_refused_before_anything_is_asked_and_says_how_to_sign_in_or_which_key_to_set`).
+- **It is made a `Credential` bound to that origin,** carried as `Authorization:
+  Bearer …`, and handed to the installer, which attaches it to each request whose
+  address is at that origin and to no other (`install_carrying`): a file at another
+  origin of the entry is asked for with nothing, and so is an address a server moves a
+  file to at another origin; a move back to the token's origin carries it again, as the
+  checked downloader does ("A download and a probe", ADR 0019)
+  (`credential::a_download_from_an_origin_the_config_names_a_token_for_carries_it_and_one_from_another_origin_does_not`,
+  `credential::a_download_moved_to_another_origin_is_asked_there_with_no_credential`).
+  The type holds it too: a request built for another origin with it is refused
+  (`NotAllowed::Elsewhere`, above). The Hub's sign-in is named only for
+  `https://huggingface.co` (ADR 0011), so its token has no other origin to go to
+  (`credential::a_token_of_the_sign_in_is_read_from_the_place_the_wiring_was_given_and_sent_to_its_origin_only`).
+- **It is told to redaction before a request is made.** The token joins the config's
+  secrets, and those are what the download client, the installer, the status record
+  and every text `get` prints or refuses with are told of; a fault whose words hold it
+  is said by its kind alone
+  (`credential::the_token_is_in_no_status_record_no_refusal_and_nothing_get_prints`,
+  `credential::a_token_of_the_sign_in_is_redacted_from_a_fault_made_after_it_was_read`).
+  The client copies it once into a request's bytes and zeroes them (ADR 0024).
+- **It is kept nowhere after the install ends:** not on the disk, not in a record, and
+  the credential is dropped when `get` returns. It is never handed to the worker (P3a's).
+- **An origin that answers 401 or 403** to a request that carried it ends the install
+  with a sentence that says to ask for access to the model with the account the token is
+  of
+  (`credential::an_origin_that_answers_that_access_is_refused_ends_the_install_with_a_sentence_that_says_to_ask_for_access`).
+  The installer keeps a fault's kind and not its words, so the sentence cannot say
+  which origin answered; with one origin that needs a token, it is that one or a server
+  that wanted one the catalogue does not say it needs.
 
 ### The four classes of data
 

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use clap::Subcommand;
 use whizbang::model_commands::{self, Tools, WAIT_LIMIT_SECONDS};
-use whizbang::wiring::Platform;
+use whizbang::wiring::{Platform, SignIn};
 
 use crate::rascal::Under;
 
@@ -47,29 +47,45 @@ pub enum Command {
         #[command(flatten)]
         under: Under,
     },
+    /// For whoever writes a catalogue entry: fetch each file of a draft entry once and
+    /// print its size and SHA-256. Each file's size in the draft is the most bytes
+    /// wanted of it. Nothing is installed or written.
+    #[command(after_help = EXIT_CODES)]
+    Pin {
+        /// The draft: a catalogue file (format catalogue/2) of one entry.
+        draft: std::path::PathBuf,
+        #[command(flatten)]
+        under: Under,
+    },
 }
 
 /// Runs a models command: what to print on success, or the complaint. `platform` says
 /// where the models directory in this machine's data folder is; it is `main`'s reading
 /// of the environment, and is asked only if a models directory is to be looked in and
 /// nothing else named one. What `get` says as it waits is printed on the standard
-/// error, a line at a time, through the door's escape.
-pub fn run(command: &Command, platform: Platform) -> Result<String, String> {
+/// error, a line at a time, through the door's escape. `sign_in` says where the Hub's
+/// sign-in keeps its token; it is `main`'s, and is asked only by `get` of a model that
+/// needs it (plan 1C, D12).
+pub fn run(command: &Command, platform: Platform, sign_in: SignIn) -> Result<String, String> {
     match command {
         Command::List { under } => {
-            let tools = Tools::shipped(under.models_dir(), platform)?;
+            let tools = Tools::shipped(under.models_dir(), platform, sign_in)?;
             model_commands::list(under.asked(), &tools)
         }
         Command::Get { model, under } => {
-            let tools = Tools::shipped(under.models_dir(), platform)?;
+            let tools = Tools::shipped(under.models_dir(), platform, sign_in)?;
             model_commands::get(under.asked(), model, &tools, &mut |line| {
                 eprintln!("whizbang: {}", whizbang::door::printable(line));
             })
         }
         Command::Remove { model, wait, under } => {
-            let tools = Tools::shipped(under.models_dir(), platform)?;
+            let tools = Tools::shipped(under.models_dir(), platform, sign_in)?;
             let wait = Duration::from_secs(*wait);
             model_commands::remove(under.asked(), model, wait, &tools)
+        }
+        Command::Pin { draft, under } => {
+            let tools = Tools::shipped(under.models_dir(), platform, sign_in)?;
+            model_commands::pin(under.asked(), draft, &tools)
         }
     }
 }

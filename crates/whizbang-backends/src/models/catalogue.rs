@@ -170,6 +170,9 @@ pub struct Entry {
     features: BTreeSet<String>,
     origins: Vec<Origin>,
     files: Vec<CatalogueFile>,
+    /// The origin whose downloads need a token, when one does (plan 1C, D12): one of
+    /// the origins.
+    needs_token: Option<Origin>,
 }
 
 impl Entry {
@@ -265,7 +268,25 @@ impl Entry {
             features: stated,
             origins,
             files,
+            needs_token: None,
         })
+    }
+
+    /// The same entry, stating that a download from this origin needs a token (plan
+    /// 1C, D12): whoever installs the model attaches one to every request for that
+    /// origin, and to no other. The origin is one of the entry's own, or the entry is
+    /// refused.
+    pub fn needing_a_token_at(mut self, origin: Origin) -> Result<Entry, Refused> {
+        if !self.origins.contains(&origin) {
+            return Err(Refused::at("needs_token", Rule::Elsewhere));
+        }
+        self.needs_token = Some(origin);
+        Ok(self)
+    }
+
+    /// The origin whose downloads need a token, when one does.
+    pub fn needs_token(&self) -> Option<&Origin> {
+        self.needs_token.as_ref()
     }
 
     pub fn name(&self) -> &ModelName {
@@ -354,6 +375,8 @@ struct WrittenEntry<'a> {
     features: Vec<&'a str>,
     origins: Vec<String>,
     files: Vec<WrittenFile<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    needs_token: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -450,6 +473,7 @@ impl Catalogue {
                         from: written(&file.from),
                     })
                     .collect(),
+                needs_token: entry.needs_token.as_ref().map(Origin::to_string),
             })
             .collect();
         let catalogue = WrittenCatalogue {
@@ -537,6 +561,14 @@ fn entry(json: Json, at: &str, secrets: &Secrets) -> Result<Entry, Refused> {
     for (n, file) in object.list("files", FILES_LIMIT)?.into_iter().enumerate() {
         files.push(catalogue_file(file, &format!("{at}.files[{n}]"), secrets)?);
     }
+    // Left out, no download of the model needs a token.
+    let place = format!("{at}.needs_token");
+    let needs_token = match object.text_if_there("needs_token")? {
+        Some(written) => Some(
+            Origin::of(&written, secrets).map_err(|why| not_allowed(why, &place, Rule::Origin))?,
+        ),
+        None => None,
+    };
     object.done()?;
     let parts = EntryParts {
         name,
@@ -549,7 +581,13 @@ fn entry(json: Json, at: &str, secrets: &Secrets) -> Result<Entry, Refused> {
         origins,
         files,
     };
-    Entry::new(parts, secrets).map_err(|refused| refused.under(at))
+    let entry = Entry::new(parts, secrets).map_err(|refused| refused.under(at))?;
+    match needs_token {
+        Some(origin) => entry
+            .needing_a_token_at(origin)
+            .map_err(|refused| refused.under(at)),
+        None => Ok(entry),
+    }
 }
 
 /// One file of a model, read from the value at this place.

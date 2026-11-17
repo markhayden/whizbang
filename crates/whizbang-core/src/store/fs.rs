@@ -517,9 +517,11 @@ impl std::error::Error for UserUnknown {}
 /// macOS and on Linux by
 /// `fs::the_real_file_system_says_that_a_folder_of_another_user_is_not_this_users`.
 /// It is asked once in a process. A failure is [`UserUnknown`], whatever the system
-/// said.
+/// said. Public for the binary's reader of the Hub's sign-in, which holds the token
+/// file it opened to this user (plan 1C, task N4), so that there is one way to learn
+/// it.
 #[cfg(unix)]
-fn this_user() -> io::Result<u32> {
+pub fn this_user() -> io::Result<u32> {
     use std::os::fd::OwnedFd;
     use std::os::unix::fs::MetadataExt;
     use std::os::unix::net::UnixStream;

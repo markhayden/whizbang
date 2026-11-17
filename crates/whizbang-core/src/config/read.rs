@@ -17,8 +17,9 @@ use super::refused::shown;
 use super::settings::setting_name;
 use super::{
     Approval, BACKENDS_LIMIT, Backend, CALL_CAP_LIMIT_MICROS, CAPABILITIES, CONFIG_BYTES_LIMIT,
-    Config, ConfigRefused, DOWNLOAD_LEAST_KIB_LIMIT, MODELS_DIR_LIMIT, Offered, RECIPIENTS_LIMIT,
-    SETTING_TEXT_LIMIT, SETTINGS_LIMIT, Setting, TEXT_LIMIT, VARIABLE_LIMIT,
+    Config, ConfigRefused, DOWNLOAD_LEAST_KIB_LIMIT, MODEL_TOKENS_LIMIT, MODELS_DIR_LIMIT,
+    ModelToken, Offered, RECIPIENTS_LIMIT, SETTING_TEXT_LIMIT, SETTINGS_LIMIT, SIGN_IN_ORIGIN,
+    Setting, TEXT_LIMIT, TokenFrom, VARIABLE_LIMIT,
 };
 use crate::contract::record::SETTING_NAME_LIMIT;
 use crate::contract::{Secrets, text};
@@ -385,7 +386,10 @@ fn config(mut table: Table, secrets: &Secrets) -> Read<Config> {
             let at = at.then("download_least_kib_per_second");
             config.download_least_kib = Some(least_rate(&at, &value)?);
         }
-        at.unknown(&models, "dir and download_least_kib_per_second")?;
+        if let Some(value) = models.remove("tokens") {
+            config.model_tokens = model_tokens(&at.then("tokens"), value)?;
+        }
+        at.unknown(&models, "dir, download_least_kib_per_second and tokens")?;
     }
     if table.contains_key("tools") {
         return Err(At::top("tools", secrets)
@@ -412,6 +416,64 @@ fn models_dir(at: &At, value: Value) -> Read<String> {
         return Err(at.refuse(format!("is longer than {MODELS_DIR_LIMIT} bytes")));
     }
     Ok(text)
+}
+
+/// The tokens of downloads (ADR 0011, "A download's token"): a list of at most
+/// [`MODEL_TOKENS_LIMIT`] tables, each an `origin` and exactly one of `sign_in`, whose
+/// one value is `huggingface` and which is taken for [`SIGN_IN_ORIGIN`] alone, or
+/// `key_env`, a variable of the env file. Each origin is named once. Nothing that is
+/// written is shown.
+fn model_tokens(at: &At, value: Value) -> Read<Vec<ModelToken>> {
+    let Value::Array(items) = value else {
+        return Err(at.wrong("a list of tables", &value));
+    };
+    if items.len() > MODEL_TOKENS_LIMIT {
+        return Err(at.refuse(format!("names more than {MODEL_TOKENS_LIMIT} origins")));
+    }
+    let mut tokens: Vec<ModelToken> = Vec::new();
+    for (n, item) in items.into_iter().enumerate() {
+        let at = at.then(&n.to_string());
+        let mut table = at.table(item)?;
+        let Some(origin) = table.remove("origin") else {
+            return Err(at
+                .then("origin")
+                .refuse("is missing: a token is named for an origin"));
+        };
+        let origin = at.then("origin").origin(origin)?;
+        let from = match (table.remove("sign_in"), table.remove("key_env")) {
+            (Some(_), Some(_)) | (None, None) => {
+                return Err(
+                    at.refuse("must name exactly one of sign_in and key_env: where the token is")
+                );
+            }
+            (Some(value), None) => {
+                let at = at.then("sign_in");
+                if at.text(value)? != "huggingface" {
+                    return Err(at.refuse(
+                        "must be \"huggingface\": the sign-in of the Hub's command-line tool \
+                         is the one whizbang reads",
+                    ));
+                }
+                if origin.to_string() != SIGN_IN_ORIGIN {
+                    return Err(at.refuse(format!(
+                        "is taken for the origin {SIGN_IN_ORIGIN} alone: the Hub's token is \
+                         never sent to another"
+                    )));
+                }
+                TokenFrom::SignIn
+            }
+            (None, Some(value)) => TokenFrom::Variable(at.then("key_env").variable(value)?),
+        };
+        at.unknown(&table, "origin, sign_in and key_env")?;
+        if tokens.iter().any(|token| token.origin == origin) {
+            return Err(at
+                .then("origin")
+                .refuse("names an origin a token is named for already"));
+        }
+        tokens.push(ModelToken { origin, from });
+    }
+    tokens.sort_by_key(|token| token.origin.to_string());
+    Ok(tokens)
 }
 
 /// The least rate of a download: a whole number of kibibytes a second, one at least.
