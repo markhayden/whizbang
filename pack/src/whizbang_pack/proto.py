@@ -284,7 +284,7 @@ def _parse_json(header):
         text = header.decode("utf-8", "strict")
     except UnicodeDecodeError:
         raise _not_json("is not strict UTF-8") from None
-    if text.startswith("﻿"):
+    if text.startswith("\N{ZERO WIDTH NO-BREAK SPACE}"):
         raise _not_json("starts with a byte order mark")
     if _deepest(text) >= DEPTH_LIMIT:
         raise _not_json("nests %d deep or more" % DEPTH_LIMIT)
