@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 use whizbang::door::{self, GrowAsked};
-use whizbang::wiring::{self, Make, Over};
+use whizbang::wiring::{self, Make, Models, Over, Platform};
 use whizbang_core::contract::Recovery;
 
 use crate::store::Where;
@@ -31,17 +31,34 @@ pub struct Under {
     /// credentials. A config that names a variable is not used without it.
     #[arg(long, value_name = "FILE", requires = "config")]
     env_file: Option<PathBuf>,
+    /// The models directory: where installed models are kept. With none it is the
+    /// one the config names (`dir` in its table `models`), and then the one in this
+    /// machine's data folder for whizbang. It must be yours alone to write.
+    #[arg(long, value_name = "DIR")]
+    models_dir: Option<PathBuf>,
 }
 
 impl Under {
     /// What an executor of this build is built over for a command given these: the
-    /// two files, the kinds of this build, and no secret beside those the env file
-    /// holds.
-    pub fn over(&self) -> Over {
-        Over::nothing()
+    /// two files, the kinds of this build, no secret beside those the env file
+    /// holds, and the models this build ships, in the models directory the flag
+    /// names, or the config, or else the one in the machine's data folder, which
+    /// `platform` says when it is asked, and it is asked only then.
+    ///
+    /// A config that cannot be used is said first, in the readers' own words, which
+    /// name the key or the line and no path; then a models directory that is not
+    /// used, in the opening's.
+    pub fn over(&self, platform: Option<Platform>) -> Result<Over, String> {
+        let over = Over::nothing()
             .config(self.config.as_deref())
             .env_file(self.env_file.as_deref())
-            .kinds(wiring::kinds())
+            .kinds(wiring::kinds());
+        wiring::loaded(&over)?;
+        let models = Models::shipped()?.flag(self.models_dir.as_deref());
+        over.installed(match platform {
+            Some(says) => models.platform(says),
+            None => models,
+        })
     }
 }
 
@@ -77,13 +94,26 @@ pub enum Command {
     },
 }
 
-/// Runs a rascal command: what to print on success, or the complaint.
-pub fn run(command: &Command) -> Result<String, String> {
-    run_with(command, wiring::recovery())
+/// Runs a rascal command: what to print on success, or the complaint. `platform`
+/// says where the models directory in this machine's data folder is; it is `main`'s
+/// reading of the environment, and is asked only if a models directory is to be
+/// opened and nothing else named one.
+pub fn run(command: &Command, platform: Platform) -> Result<String, String> {
+    run_at(command, wiring::recovery(), Some(platform))
 }
 
-/// The same, with the store recovered by this before the executor is built over it.
+/// The same, with the store recovered by this before the executor is built over it,
+/// on a machine with no data folder: what a test of this crate runs.
+#[cfg(test)]
 pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String> {
+    run_at(command, recovery, None)
+}
+
+fn run_at(
+    command: &Command,
+    recovery: Recovery,
+    platform: Option<Platform>,
+) -> Result<String, String> {
     match command {
         Command::Grow {
             mask,
@@ -93,10 +123,9 @@ pub fn run_with(command: &Command, recovery: Recovery) -> Result<String, String>
             under,
             request_id,
         } => {
-            // A config that cannot be used is said before the store is opened, in
-            // the readers' own words, which name the key or the line and no path.
-            let over = under.over();
-            wiring::loaded(&over)?;
+            // A config that cannot be used, and a models directory that is not
+            // used, are said before the store is opened.
+            let over = under.over(platform)?;
             // A command that runs an action makes no store where there is none. The
             // executor is built over the writer, which the one entry point hands out
             // once the store is recovered.

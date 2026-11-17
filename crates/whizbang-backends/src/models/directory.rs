@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use whizbang_core::contract::Clock;
-use whizbang_core::store::fs::{Fs, LockFile};
+use whizbang_core::store::fs::{Fs, LockFile, UserUnknown};
 
 use super::ModelName;
 
@@ -82,6 +82,9 @@ pub enum OpenRefused {
     /// The folder is another user's, whatever its mode: its owner can write it, and
     /// is not the user this process runs as. Nothing in it was read.
     NotOwn,
+    /// The user this process runs as could not be learned, so whose the folder is
+    /// cannot be told. Nothing in it was read, and nothing was made.
+    UserUnknown,
     /// The file system refused, or cannot say whose a folder is. The kind of failure,
     /// and no path.
     Disk(io::ErrorKind),
@@ -96,6 +99,9 @@ impl std::fmt::Display for OpenRefused {
             OpenRefused::NotOwn => {
                 "the models directory belongs to another user, and is not used; name a folder of your own, or make this one yours (chown) and ask again"
             }
+            OpenRefused::UserUnknown => {
+                "which user whizbang runs as could not be learned, so whose the models directory is cannot be told, and it is not used; nothing in it was read and nothing was made; ask again"
+            }
             OpenRefused::Disk(_) => "the models directory could not be made or looked at",
         })
     }
@@ -105,6 +111,9 @@ impl std::error::Error for OpenRefused {}
 
 impl From<io::Error> for OpenRefused {
     fn from(error: io::Error) -> OpenRefused {
+        if UserUnknown::is(&error) {
+            return OpenRefused::UserUnknown;
+        }
         OpenRefused::Disk(error.kind())
     }
 }
@@ -121,7 +130,8 @@ impl ModelsDir {
     ///
     /// **Nothing is asked of the folder either:** not whose it is, nor who may write
     /// it. This is for a folder its caller made and answers for, which is a test's;
-    /// the binary names a models directory only through [`ModelsDir::open`]
+    /// no source file of a product crate names this, under any name: the binary
+    /// reaches a models directory only through [`ModelsDir::open`]
     /// (`directory::the_binary_names_a_models_directory_only_through_the_opening_that_asks_whose_it_is`).
     /// And it is given no clock: its lock is tried up to the ceiling of tries,
     /// giving way to other threads between two, as before there was a time.
@@ -149,6 +159,10 @@ impl ModelsDir {
     ///   them write is taken as it is.
     /// - **A link at the name is followed,** as everywhere: the folder asked about
     ///   is the one the name leads to.
+    ///
+    /// - **Where the user this process runs as cannot be learned,** the directory is
+    ///   not opened ([`OpenRefused::UserUnknown`]): that failure is never read as a
+    ///   folder that is not there, so nothing is made to be refused afterwards.
     ///
     /// **A look, when it is opened.** A mode or an owner changed afterwards is not
     /// seen, and the folders above this one are not looked at.

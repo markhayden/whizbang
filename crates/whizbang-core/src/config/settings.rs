@@ -233,8 +233,7 @@ mod tests {
         };
         let long = Config {
             backends: BTreeMap::from([("segment", offered)]),
-            call_cap_micros: None,
-            recipients: BTreeMap::new(),
+            ..Config::empty()
         };
         let refused = long
             .settings_of(&[(Capability::Segment, backend.as_str())], &Secrets::none())

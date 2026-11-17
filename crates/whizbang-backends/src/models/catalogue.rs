@@ -1,7 +1,7 @@
 //! The catalogue (ADR 0017, "The catalogue"): the models that can be installed. For
-//! each: its files with their sizes and hashes, the address each is first asked for at
-//! and the origins a download of them may reach, its licence, the features its adapter
-//! gives with it, and a revision.
+//! each: its title, its files with their sizes and hashes, the address each is first
+//! asked for at and the origins a download of them may reach, its licence, the
+//! platforms it runs on, the features its adapter gives with it, and a revision.
 //!
 //! A catalogue is a file a person writes, in JSON, and is read strictly: any way JSON
 //! allows of saying the one thing, and nothing else. What whizbang writes of one is
@@ -16,10 +16,14 @@ use whizbang_core::identity::Digest;
 
 use super::json::{self, Json, Object};
 use super::name::{files_named, holds_secret};
-use super::{FILE_MAX_BYTES, FileName, Licence, ModelName, Refused, Revision, Rule, What};
+use super::{
+    FILE_MAX_BYTES, FileName, Licence, ModelName, Platform, Refused, Revision, Rule, Title, What,
+};
 
-/// The format of a catalogue this reader reads.
-pub const CATALOGUE_FORMAT: &str = "catalogue/1";
+/// The format of a catalogue this reader reads. The first, `catalogue/1`, had no
+/// title and no platforms, and is refused as any other format is: no catalogue of it
+/// was shipped.
+pub const CATALOGUE_FORMAT: &str = "catalogue/2";
 
 /// The most bytes of a catalogue.
 pub const CATALOGUE_MAX_BYTES: u64 = 1 << 20;
@@ -32,6 +36,10 @@ pub const FILES_LIMIT: usize = 64;
 
 /// The most features an entry states.
 pub const FEATURES_LIMIT: usize = 16;
+
+/// The most platforms an entry names. There are fewer platforms than this today; a
+/// list is held to its bound before any of its items is looked at.
+pub const PLATFORMS_LIMIT: usize = 8;
 
 /// The most origins a download of one model's files may reach.
 pub const ORIGINS_LIMIT: usize = 8;
@@ -118,11 +126,15 @@ impl CatalogueFile {
 #[derive(Clone)]
 pub struct EntryParts {
     pub name: ModelName,
+    /// The title, as it is shown to a person.
+    pub title: Title,
     /// The revision of this entry: whoever changes anything of the entry changes it.
     pub revision: Revision,
     /// The adapter that runs the model.
     pub adapter: ModelName,
     pub licence: Licence,
+    /// The platforms the model runs on.
+    pub platforms: Vec<Platform>,
     /// The features the adapter gives with this model, each a feature's name.
     pub features: Vec<String>,
     /// The origins a download of the files may reach.
@@ -134,9 +146,11 @@ impl std::fmt::Debug for EntryParts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EntryParts")
             .field("name", &self.name)
+            .field("title", &self.title)
             .field("revision", &self.revision)
             .field("adapter", &self.adapter)
             .field("licence", &self.licence)
+            .field("platforms", &self.platforms.len())
             .field("features", &self.features.len())
             .field("origins", &self.origins.len())
             .field("files", &self.files.len())
@@ -148,9 +162,11 @@ impl std::fmt::Debug for EntryParts {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     name: ModelName,
+    title: Title,
     revision: Revision,
     adapter: ModelName,
     licence: Licence,
+    platforms: Vec<Platform>,
     features: BTreeSet<String>,
     origins: Vec<Origin>,
     files: Vec<CatalogueFile>,
@@ -159,6 +175,7 @@ pub struct Entry {
 impl Entry {
     /// An entry of these parts.
     ///
+    /// - 1 to [`PLATFORMS_LIMIT`] platforms, each named once.
     /// - At most [`FEATURES_LIMIT`] features, each a feature's name as a backend
     ///   declares one (ADR 0006) and each stated once; a feature that holds a secret
     ///   is refused whole.
@@ -167,18 +184,36 @@ impl Entry {
     ///   in the case of their letters are one; and each file's address is at one of
     ///   the origins.
     ///
-    /// Features, origins and files are kept in the order of their texts, whatever
-    /// order they were given in. A refusal's place counts them as they were given.
+    /// Platforms, features, origins and files are kept in the order of their texts,
+    /// whatever order they were given in. A refusal's place counts them as they were given.
     pub fn new(parts: EntryParts, secrets: &Secrets) -> Result<Entry, Refused> {
         let EntryParts {
             name,
+            title,
             revision,
             adapter,
             licence,
+            mut platforms,
             features,
             mut origins,
             mut files,
         } = parts;
+        if platforms.is_empty() {
+            return Err(Refused::at("platforms", Rule::NoPlatforms));
+        }
+        if platforms.len() > PLATFORMS_LIMIT {
+            return Err(Refused::at(
+                "platforms",
+                Rule::Count {
+                    most: PLATFORMS_LIMIT,
+                },
+            ));
+        }
+        // The order of the names is the order the platforms are declared in.
+        platforms.sort_unstable();
+        if platforms.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(Refused::at("platforms", Rule::NamedTwice));
+        }
         if features.len() > FEATURES_LIMIT {
             return Err(Refused::at(
                 "features",
@@ -222,9 +257,11 @@ impl Entry {
         files.sort_by(|one, other| one.name.cmp(&other.name));
         Ok(Entry {
             name,
+            title,
             revision,
             adapter,
             licence,
+            platforms,
             features: stated,
             origins,
             files,
@@ -235,8 +272,23 @@ impl Entry {
         &self.name
     }
 
+    /// The title, as it is shown to a person.
+    pub fn title(&self) -> &Title {
+        &self.title
+    }
+
     pub fn revision(&self) -> &Revision {
         &self.revision
+    }
+
+    /// The platforms the model runs on, in the order of their names.
+    pub fn platforms(&self) -> &[Platform] {
+        &self.platforms
+    }
+
+    /// Whether the model runs on this platform.
+    pub fn runs_on(&self, platform: Platform) -> bool {
+        self.platforms.contains(&platform)
     }
 
     pub fn adapter(&self) -> &ModelName {
@@ -294,9 +346,11 @@ struct WrittenCatalogue<'a> {
 #[derive(Serialize)]
 struct WrittenEntry<'a> {
     name: &'a str,
+    title: &'a str,
     revision: &'a str,
     adapter: &'a str,
     licence: &'a str,
+    platforms: Vec<&'static str>,
     features: Vec<&'a str>,
     origins: Vec<String>,
     files: Vec<WrittenFile<'a>>,
@@ -371,17 +425,19 @@ impl Catalogue {
     }
 
     /// The catalogue as whizbang writes it: compact JSON, the fields in the order of
-    /// this format, the models, the features, the origins and the files each in the
-    /// order of their texts. The same catalogue gives the same bytes.
+    /// this format, the models, the platforms, the features, the origins and the files
+    /// each in the order of their texts. The same catalogue gives the same bytes.
     pub fn to_bytes(&self) -> Vec<u8> {
         let models = self
             .entries
             .iter()
             .map(|entry| WrittenEntry {
                 name: entry.name.as_str(),
+                title: entry.title.as_str(),
                 revision: entry.revision.as_str(),
                 adapter: entry.adapter.as_str(),
                 licence: entry.licence.as_str(),
+                platforms: entry.platforms.iter().map(|p| p.name()).collect(),
                 features: entry.features().collect(),
                 origins: entry.origins.iter().map(Origin::to_string).collect(),
                 files: entry
@@ -431,12 +487,26 @@ fn entry(json: Json, at: &str, secrets: &Secrets) -> Result<Entry, Refused> {
     let mut object = Object::of(json, at)?;
     let under = |key: &str, refused: Refused| refused.under(&format!("{at}.{key}"));
     let name = ModelName::new(&object.text("name")?, secrets).map_err(|r| under("name", r))?;
+    let title = Title::new(&object.text("title")?, secrets).map_err(|r| under("title", r))?;
     let revision =
         Revision::new(&object.text("revision")?, secrets).map_err(|r| under("revision", r))?;
     let adapter =
         ModelName::new(&object.text("adapter")?, secrets).map_err(|r| under("adapter", r))?;
     let licence =
         Licence::new(&object.text("licence")?, secrets).map_err(|r| under("licence", r))?;
+    let mut platforms = Vec::new();
+    for (n, platform) in object
+        .list("platforms", PLATFORMS_LIMIT)?
+        .into_iter()
+        .enumerate()
+    {
+        let place = format!("{at}.platforms[{n}]");
+        let written = json::text(platform, &place)?;
+        if holds_secret(&written, secrets) {
+            return Err(Refused::HoldsSecret);
+        }
+        platforms.push(Platform::named(&written).ok_or(Refused::at(&place, Rule::Platform))?);
+    }
     let mut features = Vec::new();
     for (n, feature) in object
         .list("features", FEATURES_LIMIT)?
@@ -470,9 +540,11 @@ fn entry(json: Json, at: &str, secrets: &Secrets) -> Result<Entry, Refused> {
     object.done()?;
     let parts = EntryParts {
         name,
+        title,
         revision,
         adapter,
         licence,
+        platforms,
         features,
         origins,
         files,

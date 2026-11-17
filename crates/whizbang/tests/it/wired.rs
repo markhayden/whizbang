@@ -9,13 +9,14 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use whizbang::wiring::{self, Over};
+use whizbang::wiring::{self, Models, Over, Said};
 use whizbang_backends::models::{
     Catalogue, CatalogueFile, Entry, EntryParts, FileName, Installations, Licence, ModelName,
-    ModelsDir, Revision, install,
+    ModelsDir, Platform, Revision, Title, install,
 };
 use whizbang_core::capability::{
-    Bounds, Declaration, Fault, FillRequest, Filler, Painted, Picture, Price, Support,
+    Bounds, Declaration, Fault, FillRequest, Filler, Installed, Inventory, Painted, Picture, Price,
+    Support, Unready,
 };
 use whizbang_core::config::{self, Config, KindRefused, Kinds, Setting, Table};
 use whizbang_core::contract::{
@@ -60,7 +61,11 @@ pub const MODEL: &str = "paint-1";
 pub struct Fakes {
     made: Mutex<Vec<Arc<FakeFiller>>>,
     dies: Mutex<Option<Arc<ShimFs>>>,
+    out: Mutex<Option<Looks>>,
 }
+
+/// What a test does while a request is with a backend.
+type Looks = Arc<dyn Fn() + Send + Sync>;
 
 impl Fakes {
     /// How many requests the backends it made were sent, over all of them.
@@ -74,6 +79,12 @@ impl Fakes {
     /// publication after the request left, which is its settlement, fails.
     pub fn die_once_a_request_has_left(&self, fs: &Arc<ShimFs>) {
         *self.dies.lock().unwrap() = Some(fs.clone());
+    }
+
+    /// From now on, a backend it made that is sent a request does this before it
+    /// answers: what a test looks at while a request is out.
+    pub fn while_a_request_is_out(&self, look: impl Fn() + Send + Sync + 'static) {
+        *self.out.lock().unwrap() = Some(Arc::new(look));
     }
 }
 
@@ -89,6 +100,10 @@ impl Filler for Handed {
     fn fill(&self, request: &FillRequest, bounds: &Bounds) -> Result<Painted, Fault> {
         if let Some(fs) = self.1.dies.lock().unwrap().as_ref() {
             fs.refuse_before(fs.events().len());
+        }
+        let look = self.1.out.lock().unwrap().clone();
+        if let Some(look) = look {
+            look();
         }
         self.0.fill(request, bounds)
     }
@@ -212,13 +227,16 @@ pub struct World {
     pub root: PathBuf,
     pub fakes: Arc<Fakes>,
     pub runs: Arc<AtomicU64>,
-    /// What is installed in the models directory, for the catalogue's first revision.
-    pub installed: Arc<Installations>,
 }
 
 /// The catalogue's entry for [`MODEL`] at this revision: one file, whose content
 /// names the revision, so that two revisions are two installations.
 fn entry(revision: &str) -> (Entry, FakeDownloader) {
+    entry_named(MODEL, revision)
+}
+
+/// The same, for a model of this name.
+fn entry_named(model: &str, revision: &str) -> (Entry, FakeDownloader) {
     let none = Secrets::none();
     let name = |text: &str| ModelName::new(text, &none).unwrap();
     let content = format!("weights of {revision}").into_bytes();
@@ -231,10 +249,12 @@ fn entry(revision: &str) -> (Entry, FakeDownloader) {
         &none,
     );
     let parts = EntryParts {
-        name: name(MODEL),
+        name: name(model),
+        title: Title::new("A model of the tests", &none).unwrap(),
         revision: Revision::new(revision, &none).unwrap(),
         adapter: name("fake-adapter"),
         licence: Licence::new("Apache-2.0", &none).unwrap(),
+        platforms: Platform::ALL.to_vec(),
         features: Vec::new(),
         origins: vec![Origin::of("https://weights.example.org", &none).unwrap()],
         files: vec![file.unwrap()],
@@ -253,24 +273,49 @@ impl World {
         let dir = Scratch::new(label);
         let root = dir.path().join("store");
         drop(Store::open(&root, Arc::new(RealFs)).unwrap());
-        let models = dir.path().join("models");
-        std::fs::create_dir(&models).unwrap();
-        let (first, _) = entry("2026-11.1");
-        let installed = Installations::of(
-            ModelsDir::at(Arc::new(RealFs), &models),
-            Catalogue::new(vec![first.clone()], &Secrets::none()).unwrap(),
-            [(first.adapter().clone(), adapter())],
-            Secrets::none(),
-        );
+        std::fs::create_dir(dir.path().join("models")).unwrap();
         let world = World {
             dir,
             root,
             fakes: Arc::new(Fakes::default()),
             runs: Arc::new(AtomicU64::new(0)),
-            installed: Arc::new(installed),
         };
         world.install("2026-11.1");
         world
+    }
+
+    /// The models directory of this world, in which [`MODEL`] is installed.
+    pub fn models_dir(&self) -> PathBuf {
+        self.dir.path().join("models")
+    }
+
+    /// A folder of this name in the world's scratch folder, which nothing has made.
+    pub fn beside(&self, name: &str) -> PathBuf {
+        self.dir.path().join(name)
+    }
+
+    /// The test's catalogue, which holds [`MODEL`] at its first revision, under the
+    /// one adapter of the tests: what the binary's wiring is given in place of the
+    /// catalogue it ships, with no word yet of where the directory is.
+    pub fn models(&self) -> Models {
+        let (first, _) = entry("2026-11.1");
+        let adapters = vec![(first.adapter().clone(), adapter())];
+        Models::of(
+            Catalogue::new(vec![first], &Secrets::none()).unwrap(),
+            adapters,
+        )
+    }
+
+    /// What is installed in this world's models directory, for the catalogue's
+    /// first revision, as a test looks at it: over the folder the test made.
+    pub fn installed(&self) -> Installations {
+        let (first, _) = entry("2026-11.1");
+        Installations::of(
+            ModelsDir::at(Arc::new(RealFs), &self.models_dir()),
+            Catalogue::new(vec![first.clone()], &Secrets::none()).unwrap(),
+            [(first.adapter().clone(), adapter())],
+            Secrets::none(),
+        )
     }
 
     /// Installs [`MODEL`] at this revision of its entry, with a fake of the download:
@@ -298,15 +343,24 @@ impl World {
         self.dir.path().join("keys.env")
     }
 
-    /// Writes the config file, and answers what a command that names it is built
-    /// over: that file, no env file, the kinds with the fake, and what is installed
-    /// in this world's models directory.
+    /// Writes the config file, and answers what a command that names it and this
+    /// world's models directory (`--models-dir`) is built over: that file, no env
+    /// file, the kinds with the fake, and the models of the test's catalogue, in the
+    /// directory the binary's own wiring opened.
     pub fn config(&self, text: &str) -> Over {
         std::fs::write(self.config_path(), text).unwrap();
+        self.named()
+            .installed(self.models().flag(Some(&self.models_dir())))
+            .expect("the models directory is opened")
+    }
+
+    /// What a command that names this world's config file is built over, before
+    /// anything is said of models: the file, no env file, and the kinds with the
+    /// fake.
+    pub fn named(&self) -> Over {
         Over::nothing()
             .config(Some(&self.config_path()))
             .kinds(kinds_with(&self.fakes))
-            .installed(self.installed.clone())
     }
 
     /// The actions of this build with `paints` and `echo` registered beside them.
@@ -506,7 +560,7 @@ fn under_a_config_a_run_is_handed_the_backend_its_kind_made_and_runs_show_prints
     // The model is local: it was admitted under the identity of its installation,
     // which is the version its record names.
     has_line(&text, "models: 1");
-    let identity = world.installed.ready(MODEL).unwrap().identity().digest();
+    let identity = world.installed().ready(MODEL).unwrap().identity().digest();
     assert_eq!(
         version_of(&world.root, finished.run().as_str()),
         identity.to_string()
@@ -1522,7 +1576,7 @@ fn a_request_to_a_local_model_takes_a_lease_on_the_installation_its_run_was_admi
  {
     let world = Arc::new(World::new("wired-lease"));
     let over = world.config("[backends.fill]\nkind = \"fake\"\n");
-    let admitted_with = world.installed.ready(MODEL).unwrap().identity().digest();
+    let admitted_with = world.installed().ready(MODEL).unwrap().identity().digest();
     let mut registry = world.registry();
     let again = world.clone();
     let replaced = Arc::new(Mutex::new(None));
@@ -1560,4 +1614,417 @@ fn a_request_to_a_local_model_takes_a_lease_on_the_installation_its_run_was_admi
         &text,
         "spend: $0.00 reserved; paid requests: none; cost: $0.00",
     );
+}
+
+// --- the binary's inventory: where the directory is, the fifth reason, the secrets ------------------
+
+/// A config whose one backend is local and asks for this model.
+fn local(model: &str) -> String {
+    format!("[backends.fill]\nkind = \"fake\"\nmodel = \"{model}\"\n")
+}
+
+/// What the inventory the binary's wiring made answers of [`MODEL`].
+fn looked(over: &Over) -> Installed {
+    over.installations().expect("an inventory").look(MODEL)
+}
+
+/// The permission bits of a folder.
+#[cfg(unix)]
+fn mode_of(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).unwrap().permissions().mode() & 0o7777
+}
+
+#[test]
+fn a_call_for_a_model_whose_adapter_this_build_lacks_is_refused_when_prepared_with_that_reason() {
+    let world = World::new("wired-no-adapter");
+    std::fs::write(world.config_path(), local(MODEL)).unwrap();
+    let said = "the fill backend default is local, and its model is not ready: this build has \
+                no adapter for it";
+    let none = Secrets::none();
+    let other = ModelName::new("another-adapter", &none).unwrap();
+    // The model is in the catalogue and installed, by a build that had its adapter.
+    // This build has another adapter, or none at all, which is what the binary has
+    // until its first.
+    assert!(wiring::adapters().is_empty());
+    for adapters in [vec![(other, adapter())], wiring::adapters()] {
+        let (first, _) = entry("2026-11.1");
+        let catalogue = Catalogue::new(vec![first], &none).unwrap();
+        let models = Models::of(catalogue, adapters).flag(Some(&world.models_dir()));
+        let executor = world.runner(&world.named().installed(models).unwrap());
+        // When the call is prepared: not ready, with the reason, and no model.
+        let prepared = executor.prepare(&Call::new("paints")).unwrap();
+        let Readiness::NotReady(missing) = prepared.readiness() else {
+            panic!("the call is ready: {prepared:?}");
+        };
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].why(), said);
+        assert!(prepared.needs()[0].model().is_none());
+        // And refused at admission the same way, with no run and nothing sent.
+        assert_eq!(not_ready(executor.submit(&Call::new("paints"))), said);
+    }
+    assert_eq!((world.ran(), world.fakes.requests()), (0, 0));
+    assert!(world.held().is_empty());
+    // Under the adapter the model was installed with, the same call is ready.
+    let executor = world.runner(&world.config(&local(MODEL)));
+    let prepared = executor.prepare(&Call::new("paints")).unwrap();
+    assert_eq!(prepared.readiness(), &Readiness::Ready);
+}
+
+#[cfg(unix)]
+#[test]
+fn the_models_directory_is_the_flags_then_the_configs_then_the_platforms() {
+    use std::ffi::OsStr;
+    // The choice, by itself.
+    let (flag, config, platform) = (Path::new("/f"), Path::new("/c"), Path::new("/p"));
+    for (given, chosen) in [
+        (
+            (Some(flag), Some(config), Some(platform)),
+            Some((Said::Flag, flag)),
+        ),
+        ((Some(flag), None, None), Some((Said::Flag, flag))),
+        (
+            (None, Some(config), Some(platform)),
+            Some((Said::Config, config)),
+        ),
+        (
+            (None, None, Some(platform)),
+            Some((Said::Platform, platform)),
+        ),
+        ((None, None, None), None),
+    ] {
+        assert_eq!(wiring::models_dir(given.0, given.1, given.2), chosen);
+    }
+    // The platform's, from what an environment says: nothing is read here.
+    let home = Some(OsStr::new("/made-up/house"));
+    let places = |macos, home, data: Option<&str>| {
+        wiring::platform_models_dir(macos, home, data.map(OsStr::new))
+            .map(|place| place.to_str().unwrap().to_owned())
+    };
+    assert_eq!(
+        places(true, home, Some("/data")).as_deref(),
+        Some("/made-up/house/Library/Application Support/whizbang/models")
+    );
+    assert_eq!(
+        places(false, home, Some("/data")).as_deref(),
+        Some("/data/whizbang/models")
+    );
+    for data in [None, Some(""), Some("data"), Some("./data")] {
+        assert_eq!(
+            places(false, home, data).as_deref(),
+            Some("/made-up/house/.local/share/whizbang/models"),
+            "{data:?}"
+        );
+    }
+    for home in [None, Some(OsStr::new("")), Some(OsStr::new("someone"))] {
+        assert_eq!(places(true, home, Some("/data")), None);
+        assert_eq!(places(false, home, None), None);
+    }
+
+    // Through the binary's wiring. The model is installed in one models directory,
+    // `kept`; each of the three names it or names another, which is empty. The
+    // directory that was opened is the one whose answer the inventory gives.
+    let world = World::new("wired-where");
+    let kept = world.models_dir();
+    let (other, third) = (world.beside("other"), world.beside("third"));
+    let ready = |found: Installed| matches!(found, Installed::Ready(_));
+    let absent = Installed::NotReady(Unready::NotInstalled);
+    let written = |dir: Option<&Path>| {
+        let dir = dir.map(|dir| format!("[models]\ndir = '{}'\n", dir.to_str().unwrap()));
+        std::fs::write(world.config_path(), dir.unwrap_or_default()).unwrap();
+    };
+    // What says where the platform's is counts each time it is asked: it is asked
+    // only when a directory is to be opened and neither of the others named one.
+    let asked = Arc::new(AtomicU64::new(0));
+    let says = |platform: Option<&Path>| -> wiring::Platform {
+        let (asked, platform) = (asked.clone(), platform.map(Path::to_owned));
+        Arc::new(move || {
+            asked.fetch_add(1, Ordering::SeqCst);
+            platform.clone()
+        })
+    };
+    let over = |flag: Option<&Path>, platform: Option<&Path>| {
+        world
+            .named()
+            .installed(world.models().flag(flag).platform(says(platform)))
+    };
+    // The flag, over the config's and the platform's.
+    written(Some(&other));
+    assert!(ready(looked(&over(Some(&kept), Some(&third)).unwrap())));
+    written(Some(&kept));
+    assert_eq!(looked(&over(Some(&other), Some(&kept)).unwrap()), absent);
+    // With no flag, the config's, over the platform's.
+    assert!(ready(looked(&over(None, Some(&third)).unwrap())));
+    written(Some(&other));
+    assert_eq!(looked(&over(None, Some(&kept)).unwrap()), absent);
+    assert_eq!(
+        asked.load(Ordering::SeqCst),
+        0,
+        "nobody asked for the platform's"
+    );
+    assert!(!third.exists());
+    // With neither, the platform's, asked for once each time.
+    written(None);
+    assert!(ready(looked(&over(None, Some(&kept)).unwrap())));
+    assert_eq!(looked(&over(None, Some(&third)).unwrap()), absent);
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
+    // Each that was opened was made, its own folder alone, for its owner only.
+    for made in [&other, &third] {
+        assert_eq!(mode_of(made), 0o700, "{}", made.display());
+    }
+    // With none of the three there is no models directory, and the command says how
+    // to name one.
+    let refused = over(None, None).unwrap_err();
+    assert!(
+        refused.contains("--models-dir") && refused.contains("`dir`"),
+        "{refused}"
+    );
+
+    // The folders above the platform's are made, for their owner only: nobody made
+    // whizbang's data folder before its first use.
+    let home = world.beside("home");
+    let data = home.join("Library").join("Application Support");
+    let place = data.join("whizbang").join("models");
+    assert_eq!(looked(&over(None, Some(&place)).unwrap()), absent);
+    for made in [&home, &data, &data.join("whizbang"), &place] {
+        assert_eq!(mode_of(made), 0o700, "{}", made.display());
+    }
+    // The folders above one a person named are not: a path written wrong is said.
+    let wrong = world.beside("no-such").join("models");
+    let refused = over(Some(&wrong), Some(&place)).unwrap_err();
+    assert!(
+        refused.contains("could not be made or looked at"),
+        "{refused}"
+    );
+    assert!(refused.contains("the one --models-dir names"), "{refused}");
+    written(Some(&wrong));
+    let refused = over(None, Some(&place)).unwrap_err();
+    assert!(
+        refused.contains("the config's `models.dir` names"),
+        "{refused}"
+    );
+    assert!(!world.beside("no-such").exists());
+    // No refusal holds a path.
+    let scratch = world.root.parent().unwrap().to_str().unwrap();
+    assert!(!refused.contains(scratch), "{refused}");
+
+    // The directory is opened by the opening that asks whose it is: one that others
+    // may write is refused, with how to mend it, whichever of the three named it.
+    written(None);
+    let open = world.beside("open");
+    std::fs::create_dir(&open).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
+    }
+    let refused = over(None, Some(&open)).unwrap_err();
+    assert!(refused.contains("chmod go-w"), "{refused}");
+    assert!(
+        refused.contains("in this machine's data folder"),
+        "{refused}"
+    );
+    assert!(std::fs::read_dir(&open).unwrap().next().is_none());
+
+    // Where no model could be asked for, no directory is opened or made: under a
+    // catalogue that holds none, as the shipped one does, and for a command that
+    // names neither a config nor a directory. Where the platform's is, is not even
+    // asked: that is every command of the binary today, whatever it names.
+    let never = world.beside("never");
+    let before = asked.load(Ordering::SeqCst);
+    let shipped = Models::shipped().unwrap();
+    for flag in [None, Some(never.as_path())] {
+        let models = shipped.clone().flag(flag).platform(says(Some(&never)));
+        let over = world.named().installed(models).unwrap();
+        assert!(over.installations().is_none());
+    }
+    let over = Over::nothing()
+        .kinds(kinds_with(&world.fakes))
+        .installed(world.models().platform(says(Some(&never))))
+        .unwrap();
+    assert!(over.installations().is_none());
+    assert!(!never.exists());
+    assert_eq!(asked.load(Ordering::SeqCst), before);
+}
+
+#[test]
+fn under_the_binarys_wiring_a_call_for_an_installed_model_is_prepared_under_its_identity_and_holds_a_lease()
+ {
+    let world = World::new("wired-leased");
+    let record = world.installed().ready(MODEL).unwrap();
+    let identity = record.identity().digest().to_string();
+    // The binary's wiring opened the directory and made the inventory; the test
+    // gave it a catalogue and the place.
+    let over = world.config(&local(MODEL));
+    assert!(matches!(looked(&over), Installed::Ready(_)));
+    let executor = world.runner(&over);
+    let prepared = executor.prepare(&Call::new("paints")).unwrap();
+    assert_eq!(prepared.readiness(), &Readiness::Ready);
+    let model = prepared.needs()[0].model().expect("a model");
+    assert_eq!((model.model(), model.version()), (MODEL, identity.as_str()));
+    // While its request is out, the installation is held: the file a hold locks
+    // cannot be taken alone, which is what a removal waits for. Before the request
+    // and after it, nothing holds it.
+    let hold_file = world
+        .models_dir()
+        .join("models")
+        .join(MODEL)
+        .join("holds")
+        .join(record.identity().hex());
+    let held = |file: &Path| RealFs.try_alone(file).unwrap().is_none();
+    assert!(!held(&hold_file));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let (noted, file) = (seen.clone(), hold_file.clone());
+    world
+        .fakes
+        .while_a_request_is_out(move || noted.lock().unwrap().push(held(&file)));
+    let finished = executor.submit(&Call::new("paints")).unwrap();
+    assert_eq!(finished.outcome().name(), "completed");
+    assert_eq!(*seen.lock().unwrap(), [true]);
+    assert!(!held(&hold_file));
+    drop(executor);
+    assert_eq!(version_of(&world.root, finished.run().as_str()), identity);
+}
+
+#[test]
+fn a_secret_the_executor_is_told_of_is_refused_as_a_models_name_by_the_binarys_inventory() {
+    let world = World::new("wired-inventory-secret");
+    std::fs::write(world.config_path(), "").unwrap();
+    // A model whose name is a key, in a catalogue made by a reader that was told of
+    // no secret, and installed.
+    let key = made_up_key("model");
+    let secrets = Secrets::new([key.clone()]).unwrap();
+    let none = Secrets::none();
+    let (named, downloads) = entry_named(&key, "2026-11.1");
+    let dir = ModelsDir::at(Arc::new(RealFs), &world.models_dir());
+    install(
+        &dir,
+        &named,
+        &adapter(),
+        &downloads,
+        &Cancellation::new(),
+        &none,
+    )
+    .unwrap();
+    let models = || {
+        let adapters = vec![(named.adapter().clone(), adapter())];
+        Models::of(
+            Catalogue::new(vec![named.clone()], &none).unwrap(),
+            adapters,
+        )
+        .flag(Some(&world.models_dir()))
+    };
+    let look = |over: &Over| over.installations().unwrap().look(&key);
+    let hidden = Installed::NotReady(Unready::NotInCatalogue);
+    // Told of nothing, the binary's inventory finds the model ready.
+    let untold = world.named().installed(models()).unwrap();
+    assert!(matches!(look(&untold), Installed::Ready(_)));
+    // Told of the key, it does not look for it: the name is a secret, and nothing
+    // of that name is read from the disk. The inventory is told what the executor
+    // is told, whichever is given first.
+    let told_after = untold.clone().knowing(secrets.clone());
+    assert_eq!(look(&told_after), hidden);
+    let told_before = world.named().knowing(secrets.clone()).installed(models());
+    let told_before = told_before.unwrap();
+    assert_eq!(look(&told_before), hidden);
+    // And told of nothing again, it is found again: one set, the last one given.
+    assert!(matches!(
+        look(&told_after.clone().knowing(none.clone())),
+        Installed::Ready(_)
+    ));
+    // The executor built over the same is told the same: it takes the key out of
+    // what a run writes.
+    let executor = world.runner(&told_before);
+    let said = format!("the key is {key}");
+    executor
+        .submit(&Call::new("echo").argument("text", Value::text(&said)))
+        .unwrap();
+    drop(executor);
+    for bytes in world.bytes() {
+        let found = bytes.windows(key.len()).any(|at| at == key.as_bytes());
+        assert!(!found, "a file of the store holds the key");
+    }
+}
+
+#[test]
+fn only_main_reads_where_the_platforms_data_folder_is() {
+    // What says where the platform's data folder is, is something the wiring is
+    // given. One function of the binary reads it from the environment, `main` alone
+    // names it, handing it on uncalled, and nothing else in the binary reads the
+    // environment at all: so no test of the wiring can be pointed at the data
+    // folder of whoever runs it. The wiring calls what it was handed only when a
+    // models directory is to be opened and nothing else named one
+    // (`wired::the_models_directory_is_the_flags_then_the_configs_then_the_platforms`).
+    let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let (mut reads, mut calls, mut files) = (Vec::new(), Vec::new(), 0);
+    for entry in std::fs::read_dir(&sources).unwrap() {
+        let path = entry.unwrap().path();
+        assert!(path.is_file(), "a folder of sources that is not looked at");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let code: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+        for read in ["env::var", "env::vars", "var_os", "home_dir", "env!(\"HOME"] {
+            reads.extend(code.matches(read).map(|_| name.clone()));
+        }
+        calls.extend(code.matches("platforms_models_dir").map(|_| name.clone()));
+        // Its name with nothing in the brackets is its definition, and never a call.
+        let defined = code.matches("fnplatforms_models_dir()").count();
+        let written = code.matches("platforms_models_dir()").count();
+        assert_eq!(written, defined, "{name} calls it");
+        files += 1;
+    }
+    assert!(files > 10, "{files} files of the binary were read");
+    // `env::var_os` twice, each counted as `env::var` and as `var_os`: the home
+    // folder and the data folder, in the one function.
+    assert_eq!(reads, ["main.rs"; 4], "the environment is read elsewhere");
+    // The function's definition, and the one place it is handed on, to the one
+    // command that builds an executor.
+    assert_eq!(calls, ["main.rs"; 2], "the reading is named elsewhere");
+    let main = std::fs::read_to_string(sources.join("main.rs")).unwrap();
+    let handed = "rascal::run(&command, std::sync::Arc::new(platforms_models_dir))";
+    assert_eq!(main.matches(handed).count(), 1);
+}
+
+#[test]
+fn with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory() {
+    // The shipped catalogue holds no model, so no command of the binary opens a
+    // models directory, or asks where the platform's is, whatever names one. That
+    // is what keeps every test that starts the binary off the data folder of
+    // whoever runs the tests. **When the catalogue is given its first entry (plan
+    // 1C, task N5), this fails:** before then, each test that starts the binary
+    // gives it a cleared environment with a temporary home folder, and names the
+    // models directory, as this one does.
+    assert!(
+        wiring::catalogue().unwrap().entries().is_empty(),
+        "the shipped catalogue has a model: every test that starts the binary must now \
+         start it with a temporary home folder"
+    );
+    let world = World::new("wired-shipped");
+    std::fs::write(world.config_path(), "").unwrap();
+    let home = world.beside("home");
+    std::fs::create_dir(&home).unwrap();
+    let (flagged, configured) = (world.beside("flagged"), world.beside("configured"));
+    let mask = format!("sha256:{}", "0".repeat(64));
+    let run = |more: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+            .args(["rascal", "grow", "--mask", &mask, "--px", "1", "--config"])
+            .arg(world.config_path())
+            .args(more)
+            .arg("--store")
+            .arg(&world.root)
+            .env_clear()
+            .env("HOME", &home)
+            .output()
+            .expect("the binary runs");
+        // The command got as far as its store: the mask is not in it.
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let err = String::from_utf8(out.stderr).unwrap();
+        assert!(!err.contains("models directory"), "{err}");
+    };
+    // The directory named by the flag, and then by the config.
+    run(&["--models-dir", flagged.to_str().unwrap()]);
+    let dir = format!("[models]\ndir = '{}'\n", configured.to_str().unwrap());
+    std::fs::write(world.config_path(), dir).unwrap();
+    run(&[]);
+    assert!(std::fs::read_dir(&home).unwrap().next().is_none());
+    assert!(!flagged.exists() && !configured.exists());
 }

@@ -24,11 +24,13 @@ mod staging;
 mod status;
 
 use whizbang_backends::models::{
-    CatalogueFile, Entry, EntryParts, FileName, Licence, ModelName, Refused, Revision,
+    CatalogueFile, Entry, EntryParts, FileName, Licence, ModelName, Platform, Refused, Revision,
+    Title,
 };
 use whizbang_core::contract::Secrets;
 use whizbang_core::egress::{Address, Origin};
 use whizbang_core::identity::Digest;
+use whizbang_core::store::fs::{Fs, LockFile, RealFs};
 
 /// A value no test would write by accident, told to the readers as a secret. Every
 /// character of it may stand in a model's name and in a file's, so that a name is
@@ -82,9 +84,11 @@ pub fn file(name: &str, size: u64, of: &[u8]) -> CatalogueFile {
 pub fn parts(name: &str) -> EntryParts {
     EntryParts {
         name: model(name),
+        title: Title::new("Tiny, for tests", &none()).unwrap(),
         revision: revision("2026-11.1"),
         adapter: model("owlv2-sam2"),
         licence: licence("Apache-2.0"),
+        platforms: vec![Platform::MacosArm64, Platform::LinuxX86_64],
         features: vec!["phrase".to_owned(), "box".to_owned()],
         origins: vec![origin("https://weights.example.org")],
         files: vec![
@@ -96,6 +100,22 @@ pub fn parts(name: &str) -> EntryParts {
 
 pub fn entry(name: &str) -> Entry {
     Entry::new(parts(name), &none()).unwrap()
+}
+
+/// A remover of the model `tiny` that is alive, as a process of its own: it has the
+/// remover's lock (`models/tiny/REMOVER`) alone, until what this gives is dropped.
+/// The model's folder is there. It sets no mark: the test writes what it wants at
+/// the mark's name.
+pub fn live_remover(root: &std::path::Path) -> Box<dyn LockFile> {
+    RealFs
+        .hold_lock_file(&root.join("models/tiny/REMOVER"), true)
+        .unwrap()
+        .expect("no other remover is alive")
+}
+
+/// What a remover that died left: its lock file, which nobody holds.
+pub fn dead_remover(root: &std::path::Path) {
+    drop(live_remover(root));
 }
 
 /// What is printed of a refusal, both ways.

@@ -110,3 +110,12 @@ scan-range-secrets base head:
 
 # What a pull request runs.
 ci: check deny-advisories smoke compile-fail scan-secrets
+
+# `ci` in two halves, for CI's macOS runner, where the script tests alone take three to five
+# minutes: it runs each half in a job of its own, side by side (.github/workflows/ci.yml).
+# The first half is `ci` without the script tests. The second is the script tests, after
+# `deny` as in `check`: one of them reads the workspace's crates from cargo's home, where
+# `deny` puts them. scripts/tests/test-ci-jobs.sh holds the two to `check` and `ci`.
+ci-without-scripts: fmt-check clippy graph deny docs-check timing deny-advisories smoke compile-fail scan-secrets
+
+ci-scripts: deny test-scripts

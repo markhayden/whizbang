@@ -61,8 +61,8 @@ fn every_example_in_the_guide_and_in_the_record_is_read() {
     let record = include_str!("../../../../../docs/adr/0011-the-config-file.md");
     // The counts are held, so that an example whose fence was mistyped, and which this
     // test would then pass over, is missed here.
-    assert_eq!(read_the_examples_of(guide), (4, 5));
-    assert_eq!(read_the_examples_of(record), (3, 0));
+    assert_eq!(read_the_examples_of(guide), (5, 6));
+    assert_eq!(read_the_examples_of(record), (4, 0));
 }
 
 #[test]

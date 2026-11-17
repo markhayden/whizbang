@@ -187,6 +187,39 @@ fn a_table_with_nothing_in_it_is_as_no_table() {
 }
 
 #[test]
+fn the_models_table_is_in_the_digest_only_when_it_gives_a_key() {
+    // A file that gives neither key hashes as it did before the table had keys: the
+    // digests fixed above did not move. With a key, the table is one more field at
+    // the end. This digest was worked out from the record's words alone, as those
+    // were.
+    assert_eq!(
+        digest("[models]\ndir = \"/srv/models\"\ndownload_least_kib_per_second = 512\n")
+            .to_string(),
+        "sha256:ee9df2aebf87f7a9e248dae8aeedd73d37169b59269afef6faec153fa6ec9ab0"
+    );
+    // Each key changes it, by being there and by what it says; and one is never
+    // taken for the other.
+    let texts = [
+        String::new(),
+        "[models]\ndir = \"/srv/models\"\n".to_owned(),
+        "[models]\ndir = \"/srv/model\"\n".to_owned(),
+        "[models]\ndownload_least_kib_per_second = 512\n".to_owned(),
+        "[models]\ndownload_least_kib_per_second = 256\n".to_owned(),
+        "[models]\ndir = \"/srv/models\"\ndownload_least_kib_per_second = 256\n".to_owned(),
+        format!("{FULL}\n[models]\ndir = \"/srv/models\"\n"),
+        FULL.to_owned(),
+    ];
+    let digests: BTreeMap<Digest, &String> =
+        texts.iter().map(|text| (digest(text), text)).collect();
+    assert_eq!(digests.len(), texts.len());
+    // The least rate written as its default is a key that is given: it is hashed.
+    assert_ne!(
+        digest("[models]\ndownload_least_kib_per_second = 256\n"),
+        digest("")
+    );
+}
+
+#[test]
 fn a_change_to_any_setting_changes_the_digest() {
     // Each line is the full config with one thing changed: a value, a name, a thing
     // added or a thing taken away. Every one has a digest of its own.
