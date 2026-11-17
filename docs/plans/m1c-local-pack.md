@@ -1135,19 +1135,33 @@ the model). **Size:** medium.
 **Depends on:** C1a. **Reads:** ADR 0012, "Three interfaces"; ADR 0019, "Every hop", "A
 download and a probe", "For later tasks"; `egress/ways.rs`, `chains.rs`, `hops.rs`.
 
-- [ ] One blocking HTTP client over TLS in `whizbang_backends::net`, by a crate that
-      `just deny` accepts; any licence it adds to `deny.toml` is named in the pull
-      request. It implements `Downloader`, the one way out 1C uses; a real `Sender`
-      and a real `Prober` wait for the first thing that sends (milestone 2), since a
+- [x] One blocking HTTP client over TLS in `whizbang_backends::net`, by two crates the
+      owner approved on 2026-11-16, `rustls` (pinned `=0.23.46`, default features off,
+      `ring`, `std` and `tls12` on) and `webpki-roots` (pinned `=1.0.12`), with
+      HTTP/1.1 written in `whizbang_backends::net` itself (ADR 0024); `just deny`
+      accepts every crate they bring, and `deny.toml` is not changed. It implements
+      `Downloader`, the one way out 1C uses; a real `Sender` and a real `Prober` wait for the first thing that sends (milestone 2), since a
       sender shaped with no provider to send to would be a guess. It follows nothing:
       an answer that points elsewhere comes back as `Moved`. A download is streamed to
       its sink and stopped at the bytes it was asked for, and has the limits of
       "Rules": to connect, between two reads, and a least rate, which its maker
       gives it (N3a's amendment to ADR 0011 names the setting). Its root
       certificates are compiled in.
-- [ ] In the binary the client is made only inside a `CheckedDownloader`.
+      **Reworded with the task:** the box read "by a crate that `just deny` accepts;
+      any licence it adds to `deny.toml` is named in the pull request". The owner
+      approved exactly two crates, by name and with their features, and no HTTP
+      crate: an HTTP crate brings more dependencies, reads proxy variables and follows
+      redirects unless each is turned off, and gives no clean way to bound the time
+      between two reads or to know whether a byte left (ADR 0024, "Alternatives").
+      `CDLA-Permissive-2.0`, the licence of `webpki-roots`, was already allowed.
+- [x] In the binary the client is made only inside a `CheckedDownloader`. The one
+      public way to it is `whizbang_backends::net::downloader`, which answers a
+      `CheckedDownloader`, and the client is not public; nothing in the binary makes
+      one yet (task N3b's `models get` will)
+      (`public::the_only_public_way_to_the_client_is_a_checked_downloader`).
 
-**Done when** these pass (`tests/it/net/`, against the loopback listener of "Rules"):
+**Done when** these pass (`crates/whizbang-backends/src/net/tests/`, against the loopback
+listener of "Rules"):
 
 - `client::a_download_is_streamed_to_its_sink_and_stopped_at_the_bytes_it_was_asked_for`
 - `client::an_answer_that_points_elsewhere_is_handed_back_as_moved_and_nothing_is_asked_of_the_second_address`
@@ -1161,6 +1175,22 @@ download and a probe", "For later tasks"; `egress/ways.rs`, `chains.rs`, `hops.r
 - `client::the_client_trusts_the_roots_compiled_into_it_and_asks_no_other_service`
 - `client::a_download_through_the_checked_downloader_that_is_moved_off_its_entrys_origins_is_refused`
 - `client::the_installer_installs_a_model_of_two_files_from_the_listener_through_the_checked_downloader`
+
+**Reworded with the task:** the line above read "(`tests/it/net/`, against the loopback
+listener of "Rules")". The client trusts only the roots compiled into it, and a test's
+server needs a root of the test's own: the constructor that takes one is
+`#[cfg(test)]`, so that no other code, the binary's included, can call it, and a test
+under `tests/it/` cannot reach it either. So the tests are inside the crate, in
+`src/net/tests/` (module `net::tests::client`), and `tests/it/net/` holds what is
+public (`public::the_only_public_way_to_the_client_is_a_checked_downloader`,
+`public::through_the_public_way_an_address_off_its_origins_or_not_https_asks_nothing`).
+**Added with the task**, for the owner's safety properties (ADR 0024):
+`client::the_answers_the_subset_does_not_handle_are_each_refused_by_name`,
+`client::the_client_speaks_tls_1_3_and_1_2_and_each_connection_is_a_full_handshake`,
+`client::the_limit_to_connect_is_for_all_of_a_hosts_addresses_and_a_connect_out_of_its_time_is_not_sent`,
+`client::under_a_clock_that_stands_still_a_mute_peer_ends_by_the_ceiling_of_polls`,
+`client::the_client_makes_no_thread_and_one_socket_for_each_request`, the least rate's
+meter at its bound (`wire::tests::…`), and the test kit's listener (`loopback::…`).
 
 **Carry-over:** the real network client, for downloads; a fault's sentence and
 `not_sent`, for this adapter. **Size:** medium.
