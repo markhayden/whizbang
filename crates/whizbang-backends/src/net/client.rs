@@ -228,18 +228,29 @@ impl Downloader for Client {
         // From here a byte may have left: every fault is unresolved.
         let mut wire = Wire::new(socket, tls, &*self.clock, self.timing, cancellation)?;
         wire.handshake()?;
-        wire.send(&http::request(address, request.credential()))?;
+        // The request holds the credential's value: it is written, and then its bytes
+        // are overwritten with zeros before they are let go (`http::request` makes it
+        // in one allocation, so no other copy of it is left behind).
+        let mut written = http::request(address, request.credential());
+        let sent = wire.send(&written);
+        written.fill(0);
+        std::hint::black_box(&mut written);
+        drop(written);
+        sent?;
 
         let mut buffer = vec![0; PIECE_MAX_BYTES];
         let mut head = Vec::new();
+        // How much of the head was looked at for its end already.
+        let mut scanned = 0;
         let end = loop {
-            if let Some(end) = http::end_of_head(&head)? {
+            if let Some(end) = http::end_of_head(&head, scanned)? {
                 break end;
             }
             let read = wire.read(&mut buffer)?;
             if read == 0 {
                 return Err(Fault::new(FaultKind::Malformed, super::wire::CUT).unresolved());
             }
+            scanned = head.len();
             head.extend_from_slice(&buffer[..read]);
         };
         let answer = http::head(&head[..end])?;

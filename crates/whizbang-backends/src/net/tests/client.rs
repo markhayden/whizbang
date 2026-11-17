@@ -581,6 +581,12 @@ fn the_answers_the_subset_does_not_handle_are_each_refused_by_name() {
         ("HTTP/1.1 200 OK\r\n\r\nxyz".into(), http::NO_LENGTH),
         ("HTTP/1.1 200 OK\r\nContent-Length: 3, 3\r\n\r\nxyz".into(), http::BAD_LENGTH),
         (
+            // Twenty digits: more than a length of 64 bits holds, refused, and not
+            // read as the most there is.
+            "HTTP/1.1 200 OK\r\nContent-Length: 99999999999999999999\r\n\r\nxyz".into(),
+            http::BAD_LENGTH,
+        ),
+        (
             "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nContent-Length: 3\r\n\r\nxyz".into(),
             http::LENGTH_TWICE,
         ),
@@ -818,4 +824,96 @@ fn the_installer_installs_a_model_of_two_files_from_the_listener_through_the_che
             "/old/LICENSE.txt"
         ]
     );
+}
+
+#[test]
+fn a_name_is_checked_against_a_certificate_for_that_name_and_asked_for_by_it() {
+    // `localhost`, from the hosts file: resolved to loopback, and nothing else asked.
+    let named =
+        |port: u16| Address::of(&format!("https://localhost:{port}/f"), &Secrets::none()).unwrap();
+    // A certificate for the name `localhost` alone is taken when it is asked as
+    // `localhost`, and the server is told that name.
+    let pki = Pki::for_name(7, "localhost");
+    let (listener, log) = serving(&pki, 1, vec![ok(b"abc")]);
+    let got = get(&the_tests_client(&pki), named(listener.port()), 3);
+    assert_eq!(got.ended, Ok(Downloaded::Bytes(3)));
+    assert_eq!(listener.finish(), 1);
+    assert_eq!(seen(&log)[0].name.as_deref(), Some("localhost"));
+
+    // A certificate for the address `127.0.0.1` alone is refused when the address
+    // asked is `localhost`, though that is where the name leads.
+    let pki = Pki::loopback();
+    let (listener, log) = serving(&pki, 1, vec![ok(b"abc")]);
+    let got = get(&the_tests_client(&pki), named(listener.port()), 3);
+    assert_eq!(got.fault().sentence(), UNTRUSTED);
+    assert_eq!(listener.finish(), 1);
+    assert!(seen(&log)[0].request.is_empty());
+}
+
+#[test]
+fn a_server_that_sends_tls_records_and_none_of_the_answer_ends_by_the_limit_between_reads() {
+    // A server whose certificate is good, that answers nothing and keeps the
+    // connection busy with records of TLS alone: a key update, then ten seconds of a
+    // clock only it moves, once the client has read the update, and again, 25 times.
+    // (`rustls` takes 32 key updates in a row at most; session tickets of TLS 1.3, which
+    // it takes without a limit, come only in one flight after the handshake, which
+    // cannot be spread over the clock.) Only bytes of the answer count, toward the limit
+    // between two reads and toward the least rate, so the download ends at that limit,
+    // 30 seconds after its request; were the updates counted, each would put the limit
+    // off again, and it would end only after the last of them.
+    let pki = Pki::loopback();
+    let clock = Hand::standing();
+    let config = pki.server(&[&rustls::version::TLS13]);
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let listener = {
+        let (clock, done) = (clock.clone(), done.clone());
+        Listener::serve(1, move |_, stream| {
+            let mut tls = rustls::StreamOwned::new(
+                rustls::ServerConnection::new(config.clone()).unwrap(),
+                stream,
+            );
+            read_head(&mut tls);
+            // The client has read what was sent once it has looked at the clock twice
+            // since: it looks before each read of its socket. A bounded wait, ended at
+            // once when the test is past the download.
+            let read_since = |before: u64| {
+                let patience = std::time::Instant::now() + Duration::from_secs(5);
+                while clock.reads() < before + 2
+                    && !done.load(std::sync::atomic::Ordering::SeqCst)
+                    && std::time::Instant::now() < patience
+                {
+                    std::thread::yield_now();
+                }
+            };
+            for _ in 0..25 {
+                let before = clock.reads();
+                if tls.conn.refresh_traffic_keys().is_err() || tls.flush().is_err() {
+                    return;
+                }
+                read_since(before);
+                clock.advance(Duration::from_secs(10));
+            }
+            // Then a minute more, and nothing, until the client leaves.
+            clock.advance(Duration::from_secs(60));
+            let mut rest = [0; 1024];
+            while matches!(tls.read(&mut rest), Ok(read) if read > 0) {}
+        })
+    };
+    // A least rate a key update alone would keep.
+    let slow = Timing {
+        least_bytes_per_second: 1,
+        ..timing()
+    };
+    let client = client(&pki, slow, clock.clone(), None);
+    let got = get(&client, address(listener.port(), "/f"), 100);
+    let spent = clock.elapsed();
+    done.store(true, std::sync::atomic::Ordering::SeqCst);
+    let fault = got.fault();
+    assert_eq!(fault.kind(), FaultKind::TimedOut);
+    assert_eq!(fault.sentence(), STALLED);
+    assert!(got.pieces.is_empty());
+    // At the limit: three updates, ten seconds apart, and no fourth.
+    assert!(spent >= Duration::from_secs(30), "{spent:?}");
+    assert!(spent <= Duration::from_secs(40), "{spent:?}");
+    assert_eq!(listener.finish(), 1);
 }

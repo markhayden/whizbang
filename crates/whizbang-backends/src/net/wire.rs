@@ -2,10 +2,16 @@
 //! every wait on it ([`super`], "Limits").
 //!
 //! The socket's own read and write limits are a short poll, so that no call blocks
-//! longer than that; each time one returns with nothing, the cancellation, the limit
-//! between two reads and the least rate are looked at, by the injected clock. A count of
-//! polls with nothing beside the clock ends the wait too, so a clock that stands still,
-//! as a test's may, cannot make it endless.
+//! longer than that; before each read, the cancellation, the limit between two reads
+//! and the least rate are looked at, by the injected clock. A count of polls with
+//! nothing beside the clock ends the wait too, so a clock that stands still, as a
+//! test's may, cannot make it endless.
+//!
+//! **Only the answer counts.** The limit between two reads and the least rate count
+//! the bytes of the answer, its head and its body, as TLS hands them over, and the
+//! bytes of the request that leave: never records of TLS alone (a handshake's, a
+//! session ticket's, a key update's), which a server whose certificate is good could
+//! send for ever and so keep a download alive with none of the file.
 //!
 //! Every fault here is unresolved: the socket connected, so a byte of the request may
 //! have left (`Fault::not_sent` is said only before that, in [`super::client`]).
@@ -26,7 +32,8 @@ pub(crate) const RATE_WINDOW_SECONDS: u64 = 60;
 pub(crate) struct Timing {
     /// To connect, for all of a host's addresses together.
     pub(crate) connect: Duration,
-    /// From one byte to the next, either way.
+    /// From one byte of the answer to the next, or from the request's last byte to the
+    /// answer's first.
     pub(crate) between_reads: Duration,
     /// The least bytes a second, over any whole minute.
     pub(crate) least_bytes_per_second: u64,
@@ -52,6 +59,13 @@ pub(crate) const BROKEN: &str = "the connection failed";
 pub(crate) const UNTRUSTED: &str = "the server's certificate is not one the client trusts for \
                                     the address's host";
 pub(crate) const TLS_FAILED: &str = "the TLS of the connection failed";
+pub(crate) const TLS_ONLY: &str = "the server sent records of TLS and none of the answer, more \
+                                   than 4096 times in a row";
+
+/// The most reads off the socket in a row that bring no byte of the answer: far more
+/// than a handshake and a head take. With the limit between two reads it ends a server
+/// that sends records of TLS alone, under a clock that stands still too.
+pub(crate) const UNANSWERED_LIMIT: u32 = 4096;
 
 fn unresolved(kind: FaultKind, why: &'static str) -> Fault {
     Fault::new(kind, why).unresolved()
@@ -129,10 +143,12 @@ pub(crate) struct Wire<'a> {
     clock: &'a dyn Clock,
     timing: Timing,
     cancellation: &'a Cancellation,
-    /// When a byte last moved, either way.
+    /// When a byte of the answer last came, or a byte of the request last left.
     last: Instant,
-    /// The polls in a row that moved nothing.
+    /// The polls in a row that brought nothing off the socket.
     quiet: u128,
+    /// The reads off the socket since the last byte of the answer.
+    unanswered: u32,
     rate: Rate,
     /// The socket's other side ended it.
     ended: bool,
@@ -163,6 +179,7 @@ impl<'a> Wire<'a> {
             cancellation,
             last: now,
             quiet: 0,
+            unanswered: 0,
             rate: Rate::new(now, timing.least_bytes_per_second),
             ended: false,
         })
@@ -182,13 +199,21 @@ impl<'a> Wire<'a> {
         if self.rate.under(now) {
             return Err(unresolved(FaultKind::TimedOut, TOO_SLOW));
         }
+        if self.unanswered > UNANSWERED_LIMIT {
+            return Err(unresolved(FaultKind::Malformed, TLS_ONLY));
+        }
         Ok(())
     }
 
+    /// Progress: bytes of the answer, as TLS hands them over (`received`), or bytes of
+    /// the request that left (`received` is then nothing). Records of TLS that hold
+    /// none of the answer, a handshake's, a ticket's or a key update's, are not
+    /// progress: a server could send them for ever.
     fn moved(&mut self, received: u64) {
         let now = self.clock.now();
         self.last = now;
         self.quiet = 0;
+        self.unanswered = 0;
         if received > 0 {
             self.rate.received(now, received);
         }
@@ -217,8 +242,10 @@ impl<'a> Wire<'a> {
                     self.ended = true;
                     return self.process();
                 }
-                Ok(received) => {
-                    self.moved(received as u64);
+                Ok(_) => {
+                    // Bytes off the socket, which are not yet bytes of the answer.
+                    self.quiet = 0;
+                    self.unanswered = self.unanswered.saturating_add(1);
                     return self.process();
                 }
                 Err(error) if waited(&error) => self.quiet += 1,
@@ -265,7 +292,12 @@ impl<'a> Wire<'a> {
     pub(crate) fn read(&mut self, into: &mut [u8]) -> Result<usize, Fault> {
         loop {
             match self.tls.reader().read(into) {
-                Ok(read) => return Ok(read),
+                Ok(read) => {
+                    if read > 0 {
+                        self.moved(read as u64);
+                    }
+                    return Ok(read);
+                }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     if self.ended {
                         return Err(unresolved(FaultKind::Unavailable, CUT));

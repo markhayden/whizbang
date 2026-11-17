@@ -46,13 +46,19 @@
 //! handshake with a full check.
 //!
 //! **Limits** (plan 1C, "Rules": the network). To connect, 10 s for all of a host's
-//! addresses together ([`CONNECT_LIMIT`]); from one byte to the next, either way, 30 s
-//! ([`BETWEEN_READS_LIMIT`]); and a least rate, which the maker gives: fewer bytes than
-//! that over any whole minute, counted in whole seconds, ends the download as timed
-//! out. The socket's own limit is a short poll, at which the cancellation is looked at
-//! too, so a cancellation is seen within a poll, and by the limit between two reads at
-//! the latest. A host's name is resolved by the system, which has its own limits: that
-//! one wait is not bounded here.
+//! addresses together ([`CONNECT_LIMIT`]); from one byte of the answer to the next, or
+//! from the request's last byte to the answer's first, 30 s ([`BETWEEN_READS_LIMIT`]);
+//! and a least rate, which the maker gives: fewer bytes of the answer than that over
+//! any whole minute, counted in whole seconds, ends the download as timed out. Records
+//! of TLS that hold none of the answer (tickets, key updates) count toward neither,
+//! and more than 4,096 reads of them in a row end the download. The socket's own limit
+//! is a short poll, at which the cancellation is looked at too, so a cancellation is
+//! seen within a poll, and by the limit between two reads at the latest. A host's name
+//! is resolved by the system, which has its own limits: that one wait is not bounded
+//! here.
+//!
+//! **A credential** is copied once, into the request's bytes, which are overwritten
+//! with zeros once they are written.
 //!
 //! **What a fault says of how far a request got.** Before the socket connects (an
 //! address refused, a name not resolved, a cancellation, a connection refused or out of
@@ -82,7 +88,8 @@ use wire::Timing;
 /// The limit to connect, for all of a host's addresses together.
 pub const CONNECT_LIMIT: Duration = Duration::from_secs(10);
 
-/// The limit from one byte to the next, either way.
+/// The limit from one byte of the answer to the next, or from the request's last byte
+/// to the answer's first.
 pub const BETWEEN_READS_LIMIT: Duration = Duration::from_secs(30);
 
 /// The socket's own limit for one call: how soon a cancellation is seen when nothing

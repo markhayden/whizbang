@@ -20,7 +20,7 @@ use std::time::Duration;
 use crate::threads;
 
 /// The most connections one listener serves.
-pub const CONNECTIONS_LIMIT: usize = 16;
+pub const CONNECTIONS_LIMIT: usize = 32;
 
 /// How long a connection the listener serves waits for one read or one write, and how
 /// long the stop's own connection waits to connect.
