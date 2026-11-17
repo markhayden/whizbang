@@ -99,13 +99,62 @@ A download that is slower than the config's `download_least_kib_per_second` over
 whole minute, 256 kibibytes a second unless the config says, is ended as timed out
 (the config guide, "Where models are kept").
 
-**A model whose files need a token.** Some models' files are behind a sign-in: SAM 3's
-are on Hugging Face, which gives them only to an account that was granted access. No
-model in the catalogue needs one today, and `get` reads no token. With task N4 of
-checkpoint 1C the config will say where the token of each origin is, either the sign-in
-Hugging Face's own command-line tool keeps on the machine or a variable of the env file,
-and `get` will read it only when a download from that origin needs it, and send it to
-that origin only.
+### A model whose files need a token
+
+Some models' files are behind a sign-in: SAM 3's are on Hugging Face, which gives them
+only to an account that was granted access. A catalogue entry says when a download from
+one of its origins needs a token. No model in the catalogue needs one today.
+
+**Where `get` takes the token from is what the config says for that origin,** and
+nowhere else (the config guide, "A download's token"). There are two ways, and an
+origin is given one of them. The sign-in Hugging Face's own command-line tool keeps on
+this machine:
+
+```toml
+[[models.tokens]]
+origin = "https://huggingface.co"
+sign_in = "huggingface"
+```
+
+Or a variable of the env file (`--env-file`), read as every key is:
+
+```toml
+[[models.tokens]]
+origin = "https://huggingface.co"
+key_env = "HF_DOWNLOAD_TOKEN"
+```
+
+- **The sign-in** is the token `hf auth login` writes. `get` reads it from where that tool
+  keeps it: the file `HF_TOKEN_PATH` names when that variable is set; otherwise `token`
+  in the folder `HF_HOME` names; otherwise `huggingface/token` in the folder
+  `XDG_CACHE_HOME` names; otherwise `.cache/huggingface/token` in your home folder. A
+  variable that names a place that is not an absolute path is not followed: the sign-in
+  is then not found. The sign-in is taken for `https://huggingface.co` alone, so its
+  token is never sent to another origin; a config that names it for any other is refused.
+- **`HF_TOKEN` and `HUGGING_FACE_HUB_TOKEN` are not read.** Hugging Face's own tools
+  take them in place of the file; whizbang takes the sign-in, or the env file's key.
+- **The token file must be yours alone,** readable and writable by you and nobody else
+  (mode 600), which is how the tool writes it. One that others can read or write is
+  refused, not read: `chmod 600` it, or sign in again. The file holds the token and at
+  most one line break after it.
+
+`get` reads the token only when it is to install a model whose entry says a download
+from that origin needs one, and before anything is asked or the models directory is
+opened; `list`, `remove`, and `get` of any other model never look at the sign-in. The
+token is sent with every request to its origin, and with no request to another, also
+when a server moves a file to another origin. It is in nothing `get` prints, in no
+status record and in no refusal, and it is not kept after the install ends.
+
+What `get` says when it has no token, before anything is downloaded:
+
+```text
+whizbang: a download of the model from https://huggingface.co needs a token, and the config names none for that origin, so the model was not installed and nothing was downloaded: sign in with the Hub's command-line tool (`hf auth login`) and name the sign-in in the config, as `[[models.tokens]]` with `origin = "https://huggingface.co"` and `sign_in = "huggingface"`; or set the token in the env file and name its variable in the config, as `[[models.tokens]]` with `origin = "https://huggingface.co"` and `key_env`
+```
+
+A sign-in that is not there or cannot be read is said the same way, with what is wrong
+and never the file's path or what it holds. When the origin refuses the token, `get`
+says to ask for access to the model on its page with the account the token is of (on
+Hugging Face, by accepting the model's terms there).
 
 ### `remove`
 
@@ -162,3 +211,12 @@ request id is the same run.
   deleted by hand when no run is using it.
 - **Ctrl-C during `get`** ends it. What it had downloaded is deleted by the next `get`
   of the model; the installation that was there before stays in use.
+- **A `get` that attached to another install waits with no limit of its own.** It
+  ends when the install it waits for ends; an install that never ends, a program stopped
+  by a debugger say, keeps it waiting until Ctrl-C.
+- **A build for a platform no catalogue names runs none of its models.** The catalogue
+  names `macos-arm64` and `linux-x86_64`; a build for any other, Intel macOS for one,
+  lists every model as not ready because it does not run on this platform, and `get`
+  refuses each.
+- **`get` of a model installed already reads its token too,** when it needs one:
+  whether anything is to be downloaded is known only once the install has begun.

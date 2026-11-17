@@ -14,7 +14,7 @@ use std::path::Path;
 use sha2::{Digest as _, Sha256};
 use whizbang_core::capability::FaultKind;
 use whizbang_core::contract::{Cancellation, Secrets};
-use whizbang_core::egress::{DownloadRequest, Downloaded, Downloader};
+use whizbang_core::egress::{Credential, DownloadRequest, Downloaded, Downloader, NotAllowed};
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::{LockFile, NewFile, PIECE_MAX_BYTES};
 
@@ -182,9 +182,15 @@ pub fn stage(
     secrets: &Secrets,
 ) -> Result<Staged, StageRefused> {
     let lock = lock_model(dir, entry, cancellation, secrets)?;
-    let files = stage_locked(dir, entry, downloader, cancellation, secrets, &mut |_| {
-        Ok(())
-    })?;
+    let files = stage_locked(
+        dir,
+        entry,
+        downloader,
+        None,
+        cancellation,
+        secrets,
+        &mut |_| Ok(()),
+    )?;
     Ok(Staged {
         model: entry.name().clone(),
         files,
@@ -250,10 +256,14 @@ impl Stop<'_> {
 
 /// Stages every file of the entry, for one who holds the model's lock. `staged` is
 /// told after each file how many are staged, and its refusal refuses the staging.
+/// `credential` is attached to each request whose address is at its origin, and to no
+/// other ([`attached`]).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn stage_locked(
     dir: &ModelsDir,
     entry: &Entry,
     downloader: &dyn Downloader,
+    credential: Option<&Credential>,
     cancellation: &Cancellation,
     secrets: &Secrets,
     staged: &mut dyn FnMut(usize) -> io::Result<()>,
@@ -284,7 +294,7 @@ pub(super) fn stage_locked(
             if let Some(stopped) = stop.asked() {
                 return Err(stopped);
             }
-            stage_file(dir, entry, file, &files, downloader, &stop)?;
+            stage_file(dir, entry, file, &files, downloader, credential, &stop)?;
             // Made from what the catalogue states, which the file was just held to.
             let installed = InstalledFile::new(file.name().clone(), file.size(), file.sha256());
             done.push(installed.map_err(|_| StageRefused::Disk(io::ErrorKind::InvalidData))?);
@@ -343,6 +353,22 @@ impl Received {
     }
 }
 
+/// The request, carrying the credential when its address is at the credential's
+/// origin, and carrying none at any other (plan 1C, D12; ADR 0012, "An address, and a
+/// credential"): an address an answer moved the file to is asked with the credential
+/// only when it is back at that origin.
+fn attached(
+    request: DownloadRequest,
+    credential: Option<&Credential>,
+) -> Result<DownloadRequest, NotAllowed> {
+    match credential {
+        Some(credential) if credential.origin() == request.from().origin() => {
+            request.with_credential(credential.clone())
+        }
+        _ => Ok(request),
+    }
+}
+
 /// Downloads one file into `files`, and holds it to its size and its hash.
 fn stage_file(
     dir: &ModelsDir,
@@ -350,6 +376,7 @@ fn stage_file(
     file: &CatalogueFile,
     files: &Path,
     downloader: &dyn Downloader,
+    credential: Option<&Credential>,
     stop: &Stop,
 ) -> Result<(), StageRefused> {
     let cancellation = stop.cancellation;
@@ -375,6 +402,7 @@ fn stage_file(
         // One byte more than the size: a file that is too long is then seen to be,
         // where a downloader that keeps to what it is asked would cut it at its size.
         let request = DownloadRequest::new(from, size + 1)
+            .and_then(|request| attached(request, credential))
             .map_err(|_| refused(FileRefused::Download(FaultKind::Malformed)))?;
         // Asked at each piece: a downloader that does not ask is not handed a sink
         // that keeps on taking. And asked when the downloader has answered, whatever

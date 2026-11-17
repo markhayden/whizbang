@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest as _, Sha256};
 use whizbang_core::contract::{Cancellation, Secrets};
-use whizbang_core::egress::Downloader;
+use whizbang_core::egress::{Credential, Downloader};
 use whizbang_core::identity::Digest;
 use whizbang_core::store::fs::{Fs, PIECE_MAX_BYTES};
 
@@ -199,6 +199,54 @@ pub fn install(
     cancellation: &Cancellation,
     secrets: &Secrets,
 ) -> Result<InstallationRecord, InstallRefused> {
+    let carrying = Carrying {
+        downloader,
+        credential: None,
+    };
+    install_carrying(
+        dir,
+        entry,
+        adapter_revision,
+        &carrying,
+        cancellation,
+        secrets,
+    )
+}
+
+/// What an install downloads with: the downloader, and the credential it attaches to
+/// each request for the credential's origin, and to no other (plan 1C, D12). An
+/// entry that says a download from its origin needs a token is installed with one;
+/// the caller reads it, and tells the installer's `secrets` of it before anything is
+/// asked, so that nothing the install writes or answers holds it.
+#[derive(Clone, Copy)]
+pub struct Carrying<'a> {
+    pub downloader: &'a dyn Downloader,
+    pub credential: Option<&'a Credential>,
+}
+
+impl std::fmt::Debug for Carrying<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Carrying")
+            .field("credential", &self.credential.is_some())
+            .finish()
+    }
+}
+
+/// [`install`], downloading with what `carrying` gives: each request for the
+/// credential's origin carries it, and each request for another origin, an address a
+/// file moved to included, carries none.
+pub fn install_carrying(
+    dir: &ModelsDir,
+    entry: &Entry,
+    adapter_revision: &Revision,
+    carrying: &Carrying<'_>,
+    cancellation: &Cancellation,
+    secrets: &Secrets,
+) -> Result<InstallationRecord, InstallRefused> {
+    let Carrying {
+        downloader,
+        credential,
+    } = *carrying;
     let record = match InstallationRecord::of(entry, adapter_revision.clone(), secrets) {
         Ok(record) => record,
         Err(Refused::HoldsSecret) => return Err(InstallRefused::HoldsSecret),
@@ -243,6 +291,7 @@ pub fn install(
                 dir,
                 entry,
                 downloader,
+                credential,
                 cancellation,
                 secrets,
                 &mut |staged| {
@@ -307,11 +356,37 @@ pub fn install_or_attach(
     secrets: &Secrets,
     watch: &mut dyn FnMut(Option<Status>),
 ) -> Result<InstallationRecord, InstallRefused> {
-    let started = install(
+    let carrying = Carrying {
+        downloader,
+        credential: None,
+    };
+    install_or_attach_carrying(
         dir,
         entry,
         adapter_revision,
-        downloader,
+        &carrying,
+        cancellation,
+        secrets,
+        watch,
+    )
+}
+
+/// [`install_or_attach`], downloading with what `carrying` gives
+/// ([`install_carrying`]). One who attaches downloads nothing, and sends nothing.
+pub fn install_or_attach_carrying(
+    dir: &ModelsDir,
+    entry: &Entry,
+    adapter_revision: &Revision,
+    carrying: &Carrying<'_>,
+    cancellation: &Cancellation,
+    secrets: &Secrets,
+    watch: &mut dyn FnMut(Option<Status>),
+) -> Result<InstallationRecord, InstallRefused> {
+    let started = install_carrying(
+        dir,
+        entry,
+        adapter_revision,
+        carrying,
         cancellation,
         secrets,
     );

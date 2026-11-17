@@ -214,6 +214,45 @@ Neither key is in the config's digest: where models are kept, and how slow a dow
 may be, are not part of what a run means, so moving the directory makes no run of
 yours another.
 
+### A download's token
+
+A model whose files are behind a sign-in, as SAM 3's are on Hugging Face, is downloaded
+with a token. The config says where the token of an origin is, never the token itself:
+
+```toml
+[[models.tokens]]
+origin = "https://huggingface.co"
+sign_in = "huggingface"
+
+[[models.tokens]]
+origin = "https://weights.example.org"
+key_env = "WEIGHTS_TOKEN"
+```
+
+Each entry is an `origin` and exactly one of two keys. `sign_in = "huggingface"` is the
+sign-in Hugging Face's command-line tool keeps on this machine (`hf auth login`), which
+`whizbang models get` reads only when a download from that origin needs it. `key_env`
+names a variable of the env file, as a backend's key does, and the config then needs
+its env file. Eight origins at most, each once. Like the other keys of `[models]`, these
+are in no digest.
+
+The sign-in's token is sent to Hugging Face and to no other origin, so it is taken for
+`https://huggingface.co` alone:
+
+```toml refused
+[[models.tokens]]
+origin = "https://weights.example.org"
+sign_in = "huggingface"
+```
+
+```text
+the config's key `models.tokens.0.sign_in` is taken for the origin
+https://huggingface.co alone: the Hub's token is never sent to another
+```
+
+Where the sign-in keeps its token, and what `get` does with it, are in the guide
+`models.md`.
+
 ## What is refused
 
 The file is read strictly, so that a slip is told and not guessed at. A refusal names

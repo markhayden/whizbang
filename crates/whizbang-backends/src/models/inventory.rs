@@ -89,10 +89,11 @@ impl Installations {
         }
     }
 
-    /// The same, for models that are to run on this platform, or on none: what a
-    /// test gives to show a model whose entry does not name the platform it runs on.
-    /// [`Installations::of`] gives the platform this build is for
-    /// ([`Platform::this`]).
+    /// The same, for models that are to run on this platform, or on none. The
+    /// binary's wiring calls it with the platform its models are to run on, which is
+    /// the one this build is for ([`Platform::this`]) unless a test gives another; a
+    /// test gives another to show a model whose entry does not name the platform it
+    /// runs on. [`Installations::of`] gives the platform this build is for.
     #[must_use]
     pub fn on(mut self, platform: Option<Platform>) -> Installations {
         self.on = platform;

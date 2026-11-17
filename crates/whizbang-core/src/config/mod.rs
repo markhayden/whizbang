@@ -82,6 +82,57 @@ pub const DOWNLOAD_LEAST_KIB_PER_SECOND: u64 = 256;
 /// The most a config may give as the least rate of a download: a gibibyte a second.
 pub const DOWNLOAD_LEAST_KIB_LIMIT: u64 = 1024 * 1024;
 
+/// The most origins the config may name a download's token for (`[[models.tokens]]`).
+pub const MODEL_TOKENS_LIMIT: usize = 8;
+
+/// The one origin a token of the Hub's command-line sign-in may be named for, and so
+/// the one it is ever sent to (plan 1C, D12). A config that names the sign-in for any
+/// other origin is refused.
+pub const SIGN_IN_ORIGIN: &str = "https://huggingface.co";
+
+/// What a config says of where a download's token is: `sign_in = "huggingface"`, or
+/// `key_env`, a variable of the env file (ADR 0011, "A download's token").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenFrom {
+    /// The token the Hub's command-line tool keeps for its sign-in, which is read only
+    /// when a download from [`SIGN_IN_ORIGIN`] needs it.
+    SignIn,
+    /// The variable of the env file it is in, read as every key is.
+    Variable(String),
+}
+
+/// One origin's token, as the config names it: never the token itself.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ModelToken {
+    pub(crate) origin: Origin,
+    pub(crate) from: TokenFrom,
+}
+
+impl ModelToken {
+    /// The origin a download from which carries the token.
+    pub fn origin(&self) -> &Origin {
+        &self.origin
+    }
+
+    /// Where the token is.
+    pub fn from(&self) -> &TokenFrom {
+        &self.from
+    }
+}
+
+impl std::fmt::Debug for ModelToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let from = match self.from {
+            TokenFrom::SignIn => "sign-in",
+            TokenFrom::Variable(_) => "variable",
+        };
+        f.debug_struct("ModelToken")
+            .field("origin", &self.origin)
+            .field("from", &from)
+            .finish()
+    }
+}
+
 /// The capabilities, in the order of their names' bytes: the order a config's digest
 /// takes them in.
 const CAPABILITIES: [Capability; 3] = [Capability::Fill, Capability::Judge, Capability::Segment];
@@ -97,6 +148,8 @@ pub struct Config {
     models_dir: Option<String>,
     /// `[models] download_least_kib_per_second`.
     download_least_kib: Option<u64>,
+    /// `[[models.tokens]]`, each origin once, in the order of their texts.
+    model_tokens: Vec<ModelToken>,
 }
 
 /// The backends of one capability.
@@ -187,13 +240,37 @@ impl Config {
         self.download_least_kib
     }
 
-    /// The name of every variable the file says a credential is in.
+    /// Where the token of a download from this origin is, when the file names it:
+    /// `[[models.tokens]]` (ADR 0011, "A download's token"). None for an origin it
+    /// does not name.
+    pub fn model_token(&self, origin: &Origin) -> Option<&TokenFrom> {
+        self.model_tokens
+            .iter()
+            .find(|token| &token.origin == origin)
+            .map(|token| &token.from)
+    }
+
+    /// Every download's token the file names, in the order of their origins' texts.
+    pub fn model_tokens(&self) -> &[ModelToken] {
+        &self.model_tokens
+    }
+
+    /// The name of every variable the file says a credential is in: a backend's, and
+    /// a download's token's.
     pub fn variables(&self) -> BTreeSet<&str> {
+        let tokens = self
+            .model_tokens
+            .iter()
+            .filter_map(|token| match &token.from {
+                TokenFrom::Variable(name) => Some(name.as_str()),
+                TokenFrom::SignIn => None,
+            });
         self.backends
             .values()
             .flat_map(|offered| offered.backends.values())
             .flat_map(Backend::credentials)
             .map(|(_, variable)| variable)
+            .chain(tokens)
             .collect()
     }
 
@@ -394,6 +471,7 @@ impl std::fmt::Debug for Config {
             .field("recipients", &self.recipients.len())
             .field("models_dir", &self.models_dir.is_some())
             .field("download_least", &self.download_least_kib.is_some())
+            .field("model_tokens", &self.model_tokens.len())
             .finish()
     }
 }

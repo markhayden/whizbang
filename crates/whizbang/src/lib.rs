@@ -3,4 +3,5 @@
 
 pub mod door;
 pub mod model_commands;
+pub mod sign_in;
 pub mod wiring;

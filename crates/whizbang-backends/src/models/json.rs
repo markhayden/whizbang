@@ -195,6 +195,14 @@ impl Object {
         }
     }
 
+    /// A text that may be left out: none when the object has no such field.
+    pub(super) fn text_if_there(&mut self, key: &str) -> Result<Option<String>, Refused> {
+        if !self.fields.contains_key(key) {
+            return Ok(None);
+        }
+        self.text(key).map(Some)
+    }
+
     pub(super) fn whole(&mut self, key: &str) -> Result<u64, Refused> {
         match self.take(key)? {
             Json::Whole(whole) => Ok(whole),

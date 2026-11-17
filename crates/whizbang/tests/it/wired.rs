@@ -2026,16 +2026,25 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
         files += 1;
     }
     assert!(files > 10, "{files} files of the binary were read");
-    // `env::var_os` twice, each counted as `env::var` and as `var_os`: the home
-    // folder and the data folder, in the one function.
-    assert_eq!(reads, ["main.rs"; 4], "the environment is read elsewhere");
+    // `env::var_os` six times, each counted as `env::var` and as `var_os`: the home
+    // folder and the data folder, in the one function; and the four variables that
+    // say where the Hub's sign-in keeps its token, in the other (task N4,
+    // `models::the_real_binary_started_with_a_temporary_home_reads_the_sign_in_there_and_no_other`).
+    assert_eq!(reads, ["main.rs"; 12], "the environment is read elsewhere");
     // The function's definition, and the two places it is handed on: to the one
     // command that builds an executor, and to the models commands (task N3b).
     assert_eq!(calls, ["main.rs"; 3], "the reading is named elsewhere");
     let main = std::fs::read_to_string(sources.join("main.rs")).unwrap();
-    for command in ["rascal", "models"] {
-        let handed = format!("{command}::run(&command, std::sync::Arc::new(platforms_models_dir))");
-        assert_eq!(main.matches(&handed).count(), 1, "{command}");
+    let main: String = main.chars().filter(|c| !c.is_whitespace()).collect();
+    let main = main.replace(",)", ")");
+    // The models commands are handed the sign-in's place beside it, whose function
+    // `scripts/check-sign-in.sh` holds to `main` (task N4).
+    let platform = "std::sync::Arc::new(platforms_models_dir)";
+    for handed in [
+        format!("rascal::run(&command,{platform})"),
+        format!("models::run(&command,{platform},"),
+    ] {
+        assert_eq!(main.matches(&handed).count(), 1, "{handed}");
     }
 }
 

@@ -278,6 +278,64 @@ fn an_entry_of_the_second_version_holds_a_title_and_its_platforms_and_the_first_
 }
 
 #[test]
+fn an_entry_may_say_that_a_download_from_one_of_its_origins_needs_a_token() {
+    // Plan 1C, task N4, D12: the field may be left out, and then no download of the
+    // model needs a token; given, it is one of the entry's origins, written as an
+    // origin. Nothing of the token is in a catalogue: only that one is needed.
+    let plain = read(&written()).unwrap();
+    assert_eq!(plain.entry("tiny").unwrap().needs_token(), None);
+    let mut value = written();
+    value["models"][0]["needs_token"] = json!("https://weights.example.org");
+    let catalogue = read(&value).unwrap();
+    let tiny = catalogue.entry("tiny").unwrap();
+    assert_eq!(
+        tiny.needs_token(),
+        Some(&origin("https://weights.example.org"))
+    );
+    // Written again as it was read, and read back the same; one with none written
+    // without the field.
+    assert_eq!(
+        Catalogue::parse(&catalogue.to_bytes(), &none()).unwrap(),
+        catalogue
+    );
+    let bytes = String::from_utf8(catalogue.to_bytes()).unwrap();
+    assert!(
+        bytes.contains("\"needs_token\":\"https://weights.example.org\""),
+        "{bytes}"
+    );
+    assert!(
+        !String::from_utf8(plain.to_bytes())
+            .unwrap()
+            .contains("needs_token")
+    );
+    assert_eq!(
+        entry("tiny")
+            .needing_a_token_at(origin("https://weights.example.org"))
+            .unwrap(),
+        *tiny
+    );
+    // An origin the entry does not name, and what is not an origin, are refused.
+    let refused = refusal_after(|value| {
+        value["models"][0]["needs_token"] = json!("https://elsewhere.example.org");
+    });
+    assert_eq!(
+        refused,
+        value_refused("models[0].needs_token", Rule::Elsewhere)
+    );
+    let refused = refusal_after(|value| {
+        value["models"][0]["needs_token"] = json!("not an origin");
+    });
+    assert!(matches!(refused, Refused::Value { ref at, .. } if at == "models[0].needs_token"));
+    let refused = refusal_after(|value| value["models"][0]["needs_token"] = json!(7));
+    assert_eq!(refused, value_refused("models[0].needs_token", Rule::Kind));
+    assert!(
+        entry("tiny")
+            .needing_a_token_at(origin("https://elsewhere.example.org"))
+            .is_err()
+    );
+}
+
+#[test]
 fn a_catalogue_round_trips() {
     let mut second = parts("sam3");
     second.features = Vec::new();

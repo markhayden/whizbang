@@ -159,6 +159,24 @@ fn platforms_models_dir() -> Option<std::path::PathBuf> {
     )
 }
 
+/// Where the Hub's command-line sign-in keeps its token, from the environment of this
+/// process: the variables `HF_TOKEN_PATH`, `HF_HOME`, `XDG_CACHE_HOME` and `HOME`, as
+/// the Hub's documentation has them (`whizbang::sign_in::token_file`; plan 1C, D12).
+/// **This is the one function that names the real place,** and `main` the one place
+/// that names it (`just check` refuses its name anywhere else:
+/// `scripts/check-sign-in.sh`). `main` does not call it: it hands it on, and it is
+/// called only by `get` of a model whose download needs the sign-in's token. The
+/// variables that hold a token itself, which the Hub's own tools read in place of the
+/// file, are not read.
+fn hub_sign_in_token_file() -> Option<std::path::PathBuf> {
+    whizbang::sign_in::token_file(
+        std::env::var_os("HF_TOKEN_PATH").as_deref(),
+        std::env::var_os("HF_HOME").as_deref(),
+        std::env::var_os("XDG_CACHE_HOME").as_deref(),
+        std::env::var_os("HOME").as_deref(),
+    )
+}
+
 fn main() -> ExitCode {
     door::quiet_panics();
     let cli = match Cli::try_parse() {
@@ -192,7 +210,11 @@ fn main() -> ExitCode {
             Err(complaint) => complain(&complaint),
         },
         Command::Models { command } => {
-            match models::run(&command, std::sync::Arc::new(platforms_models_dir)) {
+            match models::run(
+                &command,
+                std::sync::Arc::new(platforms_models_dir),
+                std::sync::Arc::new(hub_sign_in_token_file),
+            ) {
                 Ok(text) => emit(text.as_bytes()),
                 Err(complaint) => complain(&complaint),
             }

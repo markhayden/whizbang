@@ -448,7 +448,12 @@ Each is settled by the task named, from documentation or by the owner; none bloc
      and the place itself can be pointed at a folder that holds no token, by the
      variables above.
    Still N4's: which of the three variables its reader follows, in its amendment to
-   ADR 0011. Still P3a's: which variables the worker's environment sets.
+   ADR 0011. **Settled by N4** (ADR 0011, "A download's token"): all three, in the
+   page's order, `HF_TOKEN_PATH`, then `HF_HOME`, then `XDG_CACHE_HOME`, then the home
+   folder; a variable set to a path that is not absolute names no place. The page was
+   read again for N4, and the Hub's source of the function that writes the token
+   (`utils/_auth.py`), which writes it for its owner alone (600); no token file was
+   looked at. Still P3a's: which variables the worker's environment sets.
 
 ## Strands and order
 
@@ -1436,11 +1441,11 @@ through the function, which the check counts.
 **Depends on:** N3c. **Reads:** ADR 0012, "An address, and a credential"; ADR 0019, "A
 download and a probe"; ADR 0011 on keys from the env file.
 
-- [ ] D12, by amendments to ADRs 0011, 0012 and 0017: the config's key for an origin's
+- [x] D12, by amendments to ADRs 0011, 0012 and 0017: the config's key for an origin's
       token, which names where the token is (the Hub's command-line sign-in, or a
       variable of the env file); an entry's statement that its origin needs one; the
       installer attaching it to a request for that origin.
-- [ ] The reader of the sign-in's store: one function names the real place, from the
+- [x] The reader of the sign-in's store: one function names the real place, from the
       Hub's documentation (open question 9), and only `main` calls it, which `just
       check` holds; the wiring is given the place as a value. The token is read when a
       download from its origin is about to be asked and not before, told to redaction
@@ -1480,6 +1485,51 @@ the worker's environment.
 reader does with `HF_TOKEN`, with the eleventh test; and that the binary's tests start
 it through the test kit's one function, which is a task of its own, N3c, since it
 moves tests N4 does not otherwise touch.
+**Reworded with the task** (by N4), three things:
+
+- "only `main` calls it, which `just check` holds" now reads: only `main` names it,
+  and hands it on uncalled to the models commands, which ask it only for `get` of a
+  model that needs the sign-in's token; `just check` refuses its name anywhere else
+  and a call of it in `main` too (`scripts/check-sign-in.sh`, shown on planted files
+  by `scripts/tests/test-sign-in.sh`). It is `main`'s `hub_sign_in_token_file`, the
+  pattern of `platforms_models_dir`: a function `main` called would read the sign-in
+  for every command.
+- "(`tests/it/models/credential.rs`, `tests/it/config/`, …)" now reads
+  `crates/whizbang/tests/it/credential.rs` for the nine `credential::` tests: they go
+  through the binary's own `get`, which is the binary crate's, so they are in its
+  tests; and `crates/whizbang-core/tests/it/config/file.rs` for the config's key
+  (`file::a_downloads_token_is_named_for_an_origin_as_the_sign_in_or_a_variable_and_the_sign_in_for_the_hub_alone`).
+- The last two tests could not be shown as worded: the real binary reaches the reader
+  only through a shipped model that needs a token, and the shipped catalogue holds none
+  until N5, which also cannot be handed another (N3b's rewording). Each is now two
+  halves. The first is a reading of the binary's source: `main`'s one function hands
+  `HF_TOKEN_PATH`, `HF_HOME`, `XDG_CACHE_HOME` and `HOME`, in that order, to
+  `sign_in::token_file` and reads nothing else for it, and no source of the binary
+  names `"HF_TOKEN"` or `HUGGING_FACE_HUB_TOKEN`; with the place's order shown on
+  made-up folders
+  (`sign_in::tests::the_place_is_hf_token_path_then_hf_home_then_xdg_cache_home_then_the_home_folder`)
+  and the reading shown through `get` (`credential::`). The second starts the real
+  binary, through the test kit's function, for each shipped model that needs the
+  sign-in's token: with a temporary home and nothing there, and with a file there that
+  others can read, each refused as that before anything is asked; and with `HF_TOKEN`
+  and `HUGGING_FACE_HUB_TOKEN` set and no sign-in, refused as not there. That half
+  runs for no model until N5's entry, and N5 shows it running (`docs/carry-over.md`,
+  the row on the real binary's reading of the sign-in).
+
+**Decided with the task** (ADR 0011, "A download's token"): the reader follows all
+three of the Hub's variables that move the place, and not only the default, since the
+Hub's tool writes the sign-in where they say; a variable set to a relative path names
+no place. A token file that others can read or write is refused, not read and warned
+of: the Hub's tool writes it 600. The file's one trailing line break is taken off;
+anything else that is not printable ASCII is refused. `get` of a model installed
+already reads the token too, since whether anything is downloaded is known only under
+the model's lock.
+**Added with the task**, for follow-ups of the reviews of N3b and N3c:
+`models::list_of_an_empty_catalogue_and_get_or_remove_of_a_model_it_does_not_hold_never_ask_where_the_platforms_directory_is`
+(a platform that counts each ask); the guide's "Limits" gains the unbounded wait of
+one attached to another install and a build for a platform no catalogue names; the
+documentation of `Installations::on` and its line in ADR 0017 no longer say it is for
+a test; and the guide says where `get` takes the token from.
 **Carry-over:** a credential for a download that needs one. **Size:** small, now
 medium.
 
