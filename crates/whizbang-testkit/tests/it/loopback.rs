@@ -78,7 +78,7 @@ fn served(listener: &Listener) {
 }
 
 #[test]
-#[should_panic(expected = "a listener serves 1 to 16 connections")]
+#[should_panic(expected = "a listener serves 1 to 32 connections")]
 fn a_listener_of_more_connections_than_its_limit_is_not_made() {
     let _ = Listener::serve(CONNECTIONS_LIMIT + 1, |_, _| {});
 }

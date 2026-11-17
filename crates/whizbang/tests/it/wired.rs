@@ -19,9 +19,9 @@ use whizbang_core::capability::{
 };
 use whizbang_core::config::{self, Config, KindRefused, Kinds, Setting, Table};
 use whizbang_core::contract::{
-    Action, ActionDescriptor, Argument, Call, CallError, Cancellation, Capability, Clock, Context,
-    Engine, Executor, Failure, Kind, Made, ModelIdentity, PreparedCall, Produced, Readiness,
-    Refusal, RefusalKind, Registry, Request, Requirement, Secrets, Value, ValueType,
+    Action, ActionDescriptor, Answer, Argument, Call, CallError, Cancellation, Capability, Clock,
+    Context, Engine, Executor, Failure, Kind, Made, ModelIdentity, PreparedCall, Produced,
+    Readiness, Refusal, RefusalKind, Registry, Request, Requirement, Secrets, Value, ValueType,
 };
 use whizbang_core::egress::{Address, Origin, Recipient};
 use whizbang_core::identity::{CanonicalPixels, Digest};
@@ -1945,6 +1945,53 @@ fn a_secret_the_executor_is_told_of_is_refused_as_a_models_name_by_the_binarys_i
 }
 
 #[test]
+fn two_configs_that_differ_only_in_where_the_models_directory_is_repeat_the_same_run() {
+    // Where the models directory is, is not part of what a run means (task N3b): a
+    // model is the identity of its installation, wherever its folder is. So a
+    // config that moves the directory, and changes nothing else, is the config it
+    // was: its digest is the same, a preparation made before the move is not
+    // stale after it, and a request sent again under its id repeats its run.
+    let world = World::new("wired-moved");
+    let moved = world.beside("moved");
+    let written = |dir: &Path, least: u64| {
+        let text = format!(
+            "{}\n[models]\ndir = '{}'\ndownload_least_kib_per_second = {least}\n",
+            local(MODEL),
+            dir.to_str().unwrap()
+        );
+        std::fs::write(world.config_path(), &text).unwrap();
+        Config::parse(text.as_bytes(), &Secrets::none())
+            .unwrap()
+            .digest()
+    };
+    let before = written(&world.models_dir(), 9);
+    let executor = world.runner(&world.named().installed(world.models()).unwrap());
+    let call = Call::new("echo").argument("text", Value::text("hello"));
+    let prepared = executor.prepare(&call).unwrap();
+    assert_eq!(prepared.config(), before);
+    // The config now names another directory, and another least rate.
+    assert_eq!(written(&moved, 300), before);
+    let id = executor.request_id("moved-1").unwrap();
+    let request = Request::new(call).with_id(id).expecting(&prepared);
+    let ran = executor.request(&request).unwrap();
+    assert!(matches!(ran, Answer::Ran(_)), "{ran:?}");
+    drop(executor);
+    // A new command over the config as it is now opens the directory it names,
+    // and the same request is answered with the run it made.
+    let executor = world.runner(&world.named().installed(world.models()).unwrap());
+    assert!(moved.is_dir());
+    let again = executor.request(&request).unwrap();
+    assert!(matches!(again, Answer::Repeat(_)), "{again:?}");
+    assert_eq!(again.run(), ran.run());
+    drop(executor);
+    assert_eq!(world.held().len(), 1);
+    has_line(
+        &shown(&world.root, ran.run().as_str()),
+        &format!("config: {before}"),
+    );
+}
+
+#[test]
 fn only_main_reads_where_the_platforms_data_folder_is() {
     // What says where the platform's data folder is, is something the wiring is
     // given. One function of the binary reads it from the environment, `main` alone
@@ -1982,12 +2029,14 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
     // `env::var_os` twice, each counted as `env::var` and as `var_os`: the home
     // folder and the data folder, in the one function.
     assert_eq!(reads, ["main.rs"; 4], "the environment is read elsewhere");
-    // The function's definition, and the one place it is handed on, to the one
-    // command that builds an executor.
-    assert_eq!(calls, ["main.rs"; 2], "the reading is named elsewhere");
+    // The function's definition, and the two places it is handed on: to the one
+    // command that builds an executor, and to the models commands (task N3b).
+    assert_eq!(calls, ["main.rs"; 3], "the reading is named elsewhere");
     let main = std::fs::read_to_string(sources.join("main.rs")).unwrap();
-    let handed = "rascal::run(&command, std::sync::Arc::new(platforms_models_dir))";
-    assert_eq!(main.matches(handed).count(), 1);
+    for command in ["rascal", "models"] {
+        let handed = format!("{command}::run(&command, std::sync::Arc::new(platforms_models_dir))");
+        assert_eq!(main.matches(&handed).count(), 1, "{command}");
+    }
 }
 
 #[test]

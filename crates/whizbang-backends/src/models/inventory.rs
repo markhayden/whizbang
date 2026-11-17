@@ -24,8 +24,8 @@ use whizbang_core::contract::{RefusalKind, Secrets};
 use super::install::{Current, current};
 use super::name::holds_secret;
 use super::{
-    Catalogue, Hold, HoldRefused, Holds, InstallationId, InstallationRecord, ModelName, ModelsDir,
-    Revision,
+    Catalogue, Entry, Hold, HoldRefused, Holds, InstallationId, InstallationRecord, ModelName,
+    ModelsDir, Platform, Revision,
 };
 
 /// What is installed in one models directory, as readiness asks it: the models of
@@ -35,9 +35,28 @@ pub struct Installations {
     dir: ModelsDir,
     catalogue: Catalogue,
     adapters: BTreeMap<ModelName, Revision>,
+    /// The platform the models are to run on: this build's, unless a test says.
+    on: Option<Platform>,
     secrets: Secrets,
     /// This process's holds on the installations of the directory.
     holds: Holds,
+}
+
+/// Why a model of a catalogue could not be ready on this platform under these
+/// adapters, whatever is on the disk, when it could not (ADR 0017, "The inventory"):
+/// its entry does not name the platform ([`Unready::NotForThisPlatform`]), or the
+/// build has no adapter of the name the entry gives ([`Unready::NoAdapter`]), in that
+/// order. `on` is the platform, none for a build that is for none a catalogue names.
+/// Nothing is read: it is what the inventory says before it looks at the disk, and
+/// what whoever lists models says of one when there is no directory to look in.
+pub fn unrunnable(entry: &Entry, on: Option<Platform>, has_adapter: bool) -> Option<Unready> {
+    if !on.is_some_and(|platform| entry.runs_on(platform)) {
+        return Some(Unready::NotForThisPlatform);
+    }
+    if !has_adapter {
+        return Some(Unready::NoAdapter);
+    }
+    None
 }
 
 impl std::fmt::Debug for Installations {
@@ -65,8 +84,19 @@ impl Installations {
             dir,
             catalogue,
             adapters: adapters.into_iter().collect(),
+            on: Platform::this(),
             secrets,
         }
+    }
+
+    /// The same, for models that are to run on this platform, or on none: what a
+    /// test gives to show a model whose entry does not name the platform it runs on.
+    /// [`Installations::of`] gives the platform this build is for
+    /// ([`Platform::this`]).
+    #[must_use]
+    pub fn on(mut self, platform: Option<Platform>) -> Installations {
+        self.on = platform;
+        self
     }
 
     /// The record of the installation of this model that is ready, when one is: what
@@ -83,10 +113,15 @@ impl Installations {
         if holds_secret(entry.name().as_str(), &self.secrets) {
             return Err(Unready::NotInCatalogue);
         }
-        // A model whose adapter this build does not have is that, installed or not
-        // and whatever is on the disk: nothing this build installs would make it
-        // ready, and nothing of it is read.
-        let Some(revision) = self.adapters.get(entry.adapter()) else {
+        // A model whose entry does not name this platform, or whose adapter this
+        // build does not have, is that, installed or not and whatever is on the
+        // disk: nothing this build installs would make it ready, and nothing of it
+        // is read.
+        let revision = self.adapters.get(entry.adapter());
+        if let Some(why) = unrunnable(entry, self.on, revision.is_some()) {
+            return Err(why);
+        }
+        let Some(revision) = revision else {
             return Err(Unready::NoAdapter);
         };
         // A model one of whose layout folders is a link is refused by every

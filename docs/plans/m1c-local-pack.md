@@ -1355,14 +1355,23 @@ the environment already.
 **Depends on:** N1, N3a. **Reads:** the carry-over row on the commands (it names what
 they call); ADR 0017, "Attaching and cancelling", "Removal".
 
-- [ ] The three commands over `whizbang_backends::models`, and `docs/guides/models.md`.
+- [x] The three commands over `whizbang_backends::models`, and `docs/guides/models.md`.
       `list` prints, for each entry: its name, title, licence, size, platforms and
       state. `get` installs or attaches, waits between tries by the clock, and prints
       what the status record shows. `remove --wait <seconds>` drains.
 
 **Done when** these pass (`crates/whizbang/tests/it/models.rs`, with a test's catalogue
-and the fake downloader through the binary's own function, and `list` as the real
-binary):
+and the fake downloader through the binary's own functions, `whizbang::model_commands`,
+and the real binary under the catalogue it ships):
+
+**Reworded with the task** (by N3b): the line above read "…through the binary's own
+function, and `list` as the real binary". The real binary lists the catalogue it
+ships, which holds no model until N5, and a test cannot hand it another: a catalogue
+taken from a file or a variable would be a way to download from origins no shipped
+entry names. So `list` of a catalogue with models is shown through the binary's own
+function, the one `main` calls, and the real binary is started for `list`, `get` and
+`remove` under the shipped catalogue
+(`models::under_the_catalogue_it_ships_no_models_command_resolves_or_makes_a_models_directory`).
 
 - `models::list_names_each_model_of_the_catalogue_with_its_title_licence_size_platforms_and_state`
 - `models::get_installs_a_model_and_list_then_says_it_is_installed`
@@ -1372,6 +1381,25 @@ binary):
 - `models::a_model_this_platform_cannot_run_is_listed_as_that_and_get_refuses_it`
 - `models::a_model_whose_layout_has_a_link_is_listed_as_having_one`
 - `models::a_secret_the_config_names_is_in_nothing_the_commands_print`
+
+**Added with the task**, for five follow-ups of earlier reviews that were on its path:
+`models::under_the_catalogue_it_ships_no_models_command_resolves_or_makes_a_models_directory`;
+`models::a_relative_models_dir_is_refused_before_anything_is_made` (a relative
+`--models-dir` made a folder in the working folder and was then refused);
+`models::get_makes_the_download_client_with_the_configs_least_rate_or_the_default`
+(the carry-over row on the least rate);
+`wired::two_configs_that_differ_only_in_where_the_models_directory_is_repeat_the_same_run`
+and `digest::the_models_table_is_in_no_digest` (the `models` table had come into the
+config's digest with N3a; ADR 0011 is amended);
+`inventory::a_model_whose_entry_does_not_name_this_platform_is_not_ready_for_that_reason_installed_or_not`
+(`Unready` gains a sixth reason, that the model does not run on this platform; ADR
+0015 is amended). `list` asks `models::draining` of each model and says "being
+removed" of a live remover's mark, shown inside
+`models::remove_drains_and_answers_busy_at_its_wait_with_the_model_still_installed`.
+**For N5:** `get` installs only a model whose adapter is in the binary's table of
+adapters (`wiring::adapters`), whose revision is part of an installation's identity;
+the table N5 writes, which names `sam3` as not yet shipped, must still give `get` that
+revision, or `get sam3` is refused as having no adapter.
 
 **Carry-over:** the `models` commands; how one who attaches is paced; what `models
 list` says of a link. **Size:** medium.
@@ -1436,8 +1464,8 @@ add start the binary through the function from the first.
 **Shown by:** `binary::the_command_has_a_cleared_environment_and_a_temporary_home`
 (the test kit: a process with a planted variable calls the function, and the program
 it starts lists its whole environment); `scripts/tests/test-binary-start.sh` (the
-workspace passes, with twenty-one places counted: the twenty above and the one N3a
-added in `wired.rs`; each other way is refused on planted files); and the tests of `crates/whizbang/tests/it/` that start the binary, each
+workspace passes, with twenty-two places counted: the twenty above, the one N3a
+added in `wired.rs` and the one N3b added in `models.rs`; each other way is refused on planted files); and the tests of `crates/whizbang/tests/it/` that start the binary, each
 through the function, which the check counts.
 **Size:** small.
 

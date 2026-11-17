@@ -251,6 +251,18 @@ impl ModelsDir {
         Ok(())
     }
 
+    /// Whether a folder of the model's layout is a link: the same look as every
+    /// install, hold and removal makes before it refuses one, for whoever lists
+    /// models, which says so where the inventory says damaged (ADR 0017, "A folder of
+    /// the layout that is a link"). A look, and nothing is followed.
+    pub fn has_link(&self, model: &ModelName) -> io::Result<bool> {
+        match self.unlinked(model) {
+            Ok(()) => Ok(false),
+            Err(error) if is_linked(&error) => Ok(true),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Removes the model's staging folder and syncs the removal, for one who holds
     /// the model's lock. What cannot be removed now is removed by the next to stage.
     /// Nothing is removed through a folder of the layout that is a link.

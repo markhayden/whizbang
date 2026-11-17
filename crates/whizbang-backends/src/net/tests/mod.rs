@@ -31,6 +31,8 @@ pub(super) struct Hand {
     base: Instant,
     ms: AtomicU64,
     step: u64,
+    /// How many times it has been read.
+    reads: AtomicU64,
 }
 
 impl Hand {
@@ -43,7 +45,13 @@ impl Hand {
             base: Instant::now(),
             ms: AtomicU64::new(0),
             step: step_ms,
+            reads: AtomicU64::new(0),
         })
+    }
+
+    /// How many times it has been read.
+    pub(super) fn reads(&self) -> u64 {
+        self.reads.load(Ordering::SeqCst)
     }
 
     pub(super) fn advance(&self, by: Duration) {
@@ -59,6 +67,7 @@ impl Hand {
 
 impl Clock for Hand {
     fn now_ms(&self) -> u64 {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         self.ms.fetch_add(self.step, Ordering::SeqCst)
     }
 
@@ -166,9 +175,19 @@ pub(super) struct Pki {
 }
 
 impl Pki {
-    /// A root from the seed `root_seed`, and a certificate for `127.0.0.1` and the
-    /// host `ip` names, signed by it.
+    /// A root from the seed `root_seed`, and a certificate for the address `ip`
+    /// alone, signed by it.
     pub(super) fn made(root_seed: u8, ip: [u8; 4]) -> Pki {
+        Pki::named(root_seed, der(0x87, &ip))
+    }
+
+    /// The same, for the DNS name `name` alone.
+    pub(super) fn for_name(root_seed: u8, name: &str) -> Pki {
+        Pki::named(root_seed, der(0x82, name.as_bytes()))
+    }
+
+    /// A root, and a certificate for the one subject alternative name `alt_name`.
+    fn named(root_seed: u8, alt_name: Vec<u8>) -> Pki {
         let root_name = "whizbang test root";
         let constraints = seq(&[der(0x01, &[0xff])]);
         let root = certificate(
@@ -178,7 +197,7 @@ impl Pki {
             vec![extension(&[0x55, 0x1d, 0x13], true, constraints)],
         );
         let leaf_seed = root_seed.wrapping_add(1);
-        let alt_names = seq(&[der(0x87, &ip)]);
+        let alt_names = seq(&[alt_name]);
         let server_auth = seq(&[oid(&[0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01])]);
         let leaf = certificate(
             2,
@@ -257,6 +276,8 @@ pub(super) struct Seen {
     pub(super) request: Vec<u8>,
     pub(super) version: Option<rustls::ProtocolVersion>,
     pub(super) kind: Option<rustls::HandshakeKind>,
+    /// The name the client asked for in the handshake (SNI), when it asked for one.
+    pub(super) name: Option<String>,
 }
 
 pub(super) type Log = Arc<Mutex<Vec<Seen>>>;
@@ -282,6 +303,7 @@ pub(super) fn respond(
         request,
         version: tls.conn.protocol_version(),
         kind: tls.conn.handshake_kind(),
+        name: tls.conn.server_name().map(str::to_owned),
     });
     if tls.write_all(&answer).and_then(|()| tls.flush()).is_ok() {
         tls.conn.send_close_notify();

@@ -63,9 +63,12 @@ enum Command {
         #[command(subcommand)]
         command: spend::Command,
     },
-    /// Models: what is installed, and getting and removing one. Not built yet: it says
-    /// so and exits 1, whatever it is asked.
-    Models(stub::Asked),
+    /// Models: what the catalogue holds and what is installed, and getting and
+    /// removing one.
+    Models {
+        #[command(subcommand)]
+        command: models::Command,
+    },
     /// Backends: whether each configured one is ready. Not built yet: it says so and
     /// exits 1, whatever it is asked.
     Backends(stub::Asked),
@@ -188,10 +191,12 @@ fn main() -> ExitCode {
             Ok(text) => emit(text.as_bytes()),
             Err(complaint) => complain(&complaint),
         },
-        Command::Models(_) => match models::run() {
-            Ok(text) => emit(text.as_bytes()),
-            Err(complaint) => complain(&complaint),
-        },
+        Command::Models { command } => {
+            match models::run(&command, std::sync::Arc::new(platforms_models_dir)) {
+                Ok(text) => emit(text.as_bytes()),
+                Err(complaint) => complain(&complaint),
+            }
+        }
         Command::Backends(_) => match backends::run() {
             Ok(text) => emit(text.as_bytes()),
             Err(complaint) => complain(&complaint),

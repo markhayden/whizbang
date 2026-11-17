@@ -19,29 +19,47 @@ pub(crate) const FIELDS_LIMIT: usize = 100;
 /// credential's field when the request carries one. A credential's value is printable
 /// ASCII and spaces and its name is letters, digits, `-` and `_` (ADR 0012), and an
 /// address's rest is printable ASCII with no space, so nothing here can end a line.
+///
+/// It is made in one allocation of its exact size, so that the credential's value is
+/// copied once, into what is returned, and into no buffer that grew and was let go:
+/// whoever writes it overwrites it then (`client.rs`).
 pub(crate) fn request(address: &Address, credential: Option<&Credential>) -> Vec<u8> {
     let rest = match address.rest() {
         "" => "/",
         rest => rest,
     };
     let origin = address.origin();
-    let host = if origin.port() == 443 {
-        origin.host().to_owned()
+    let port = if origin.port() == 443 {
+        String::new()
     } else {
-        format!("{}:{}", origin.host(), origin.port())
+        format!(":{}", origin.port())
     };
-    let mut text = format!(
-        "GET {rest} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: whizbang\r\nAccept: */*\r\n\
-         Accept-Encoding: identity\r\nConnection: close\r\n"
-    );
-    if let Some(credential) = credential {
-        text.push_str(credential.header());
-        text.push_str(": ");
-        text.push_str(credential.expose());
-        text.push_str("\r\n");
+    let parts: [&[u8]; 6] = [
+        b"GET ",
+        rest.as_bytes(),
+        b" HTTP/1.1\r\nHost: ",
+        origin.host().as_bytes(),
+        port.as_bytes(),
+        b"\r\nUser-Agent: whizbang\r\nAccept: */*\r\nAccept-Encoding: identity\r\n\
+          Connection: close\r\n",
+    ];
+    let carried: [&[u8]; 4] = match credential {
+        Some(credential) => [
+            credential.header().as_bytes(),
+            b": ",
+            credential.expose().as_bytes(),
+            b"\r\n",
+        ],
+        None => [b"", b"", b"", b""],
+    };
+    let end: [&[u8]; 1] = [b"\r\n"];
+    let all = parts.iter().chain(&carried).chain(&end);
+    let length = all.clone().map(|part| part.len()).sum();
+    let mut text = Vec::with_capacity(length);
+    for part in all {
+        text.extend_from_slice(part);
     }
-    text.push_str("\r\n");
-    text.into_bytes()
+    text
 }
 
 /// An answer's head, as far as the client acts on it.
@@ -134,21 +152,29 @@ fn malformed(why: &'static str) -> Fault {
 
 /// Where the head ends in `bytes`, after its empty line, when it is all there. A head
 /// longer than [`HEAD_MAX_BYTES`] without its end is refused.
-pub(crate) fn end_of_head(bytes: &[u8]) -> Result<Option<usize>, Fault> {
-    let end = bytes
+///
+/// `scanned` is how many of the bytes were looked at before, by a call that found no
+/// end: the search starts three bytes before that, where an end that the new bytes
+/// complete may begin, so each byte is looked at a bounded number of times however
+/// the head arrives.
+pub(crate) fn end_of_head(bytes: &[u8], scanned: usize) -> Result<Option<usize>, Fault> {
+    let from = scanned.saturating_sub(3).min(bytes.len());
+    let end = bytes[from..]
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
-        .map(|at| at + 4);
+        .map(|at| from + at + 4);
     match end {
         Some(end) if end <= HEAD_MAX_BYTES => Ok(Some(end)),
         Some(_) => Err(malformed(HEAD_TOO_LARGE)),
         None if bytes.len() >= HEAD_MAX_BYTES => Err(malformed(HEAD_TOO_LARGE)),
         None => {
             // A line that is already over its bound is refused before the rest comes.
-            let last = bytes
+            // Only the last line's worth of bytes is looked at for where it starts.
+            let tail = bytes.len().saturating_sub(LINE_MAX_BYTES + 2);
+            let last = bytes[tail..]
                 .windows(2)
                 .rposition(|window| window == b"\r\n")
-                .map_or(0, |at| at + 2);
+                .map_or(tail, |at| tail + at + 2);
             if bytes.len() - last > LINE_MAX_BYTES {
                 return Err(malformed(LINE_TOO_LONG));
             }
@@ -274,6 +300,8 @@ mod tests {
         let credential =
             Credential::new(origin, "Authorization", "Bearer made-up", &Secrets::none()).unwrap();
         let carried = request(&address("https://127.0.0.1:8443"), Some(&credential));
+        // Made in one allocation of its size: no larger buffer held the value first.
+        assert_eq!(carried.capacity(), carried.len());
         assert_eq!(
             carried,
             b"GET / HTTP/1.1\r\nHost: 127.0.0.1:8443\r\nUser-Agent: whizbang\r\n\
@@ -296,18 +324,47 @@ mod tests {
     #[test]
     fn the_end_of_a_head_is_found_and_a_line_or_a_head_over_its_bound_is_refused_before_its_end() {
         assert_eq!(
-            end_of_head(b"HTTP/1.1 200 OK\r\n\r\nbody").unwrap(),
+            end_of_head(b"HTTP/1.1 200 OK\r\n\r\nbody", 0).unwrap(),
             Some(19)
         );
-        assert_eq!(end_of_head(b"HTTP/1.1 200 OK\r\nA: b").unwrap(), None);
+        assert_eq!(end_of_head(b"HTTP/1.1 200 OK\r\nA: b", 0).unwrap(), None);
         let long_line = [
             b"HTTP/1.1 200 OK\r\nA: ".as_slice(),
             &[b'b'; LINE_MAX_BYTES],
         ]
         .concat();
-        let refused = end_of_head(&long_line).unwrap_err();
+        let refused = end_of_head(&long_line, 0).unwrap_err();
         assert_eq!(refused.sentence(), LINE_TOO_LONG);
         let many = b"A: b\r\n".repeat(HEAD_MAX_BYTES / 6 + 1);
-        assert_eq!(end_of_head(&many).unwrap_err().sentence(), HEAD_TOO_LARGE);
+        assert_eq!(
+            end_of_head(&many, 0).unwrap_err().sentence(),
+            HEAD_TOO_LARGE
+        );
+    }
+
+    #[test]
+    fn the_end_of_a_head_that_comes_a_byte_at_a_time_is_found_from_where_the_last_look_stopped() {
+        // Each byte is added and only what is new, and the three bytes before it, are
+        // looked at: the end is found at the byte that completes it, wherever the
+        // earlier bytes put it.
+        let whole = b"HTTP/1.1 200 OK\r\nA: b\r\n\r\nbody";
+        let mut found = None;
+        for length in 1..=whole.len() {
+            if let Some(end) = end_of_head(&whole[..length], length - 1).unwrap() {
+                found = Some((length, end));
+                break;
+            }
+        }
+        assert_eq!(found, Some((25, 25)));
+        // Looked at from past an end it would have found, it does not find it: the
+        // search starts where it is told to.
+        assert_eq!(
+            end_of_head(b"HTTP/1.1 200 OK\r\n\r\nbody", 10).unwrap(),
+            Some(19)
+        );
+        assert_eq!(
+            end_of_head(b"HTTP/1.1 200 OK\r\n\r\nbody", 20).unwrap(),
+            None
+        );
     }
 }

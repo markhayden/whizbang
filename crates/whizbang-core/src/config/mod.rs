@@ -210,9 +210,9 @@ impl Config {
     /// 2. the cap of one call in millionths (may be absent);
     /// 3. the recipients, each as its name, its origin, its account (may be absent),
     ///    its upstreams, its classes, and whether it may be probed;
-    /// 4. only when the `models` table gives a key: 1, the directory (may be absent)
-    ///    and the least rate of a download (may be absent). A file that gives neither
-    ///    hashes as one did before the table had keys.
+    ///
+    /// The `models` table is not in it, whatever it gives: where the models directory
+    /// is and the least rate of a download say nothing of what a run means.
     ///
     /// No value of a credential is in it: a config holds none.
     pub fn digest(&self) -> Digest {
@@ -284,17 +284,10 @@ impl Config {
             }
             fields.unsigned(u64::from(recipient.probe));
         }
-        if self.models_dir.is_some() || self.download_least_kib.is_some() {
-            fields.unsigned(1);
-            optional(&mut fields, self.models_dir.as_deref());
-            match self.download_least_kib {
-                Some(rate) => {
-                    fields.unsigned(1);
-                    fields.unsigned(rate);
-                }
-                None => fields.unsigned(0),
-            }
-        }
+        // The `models` table is in no digest: where the models directory is and how
+        // slow a download may be are not part of what a run means, and a run's model
+        // is the identity of its installation, wherever its folder is (ADR 0011, "The
+        // digest", amended with task N3b).
         fields.finish()
     }
 }
