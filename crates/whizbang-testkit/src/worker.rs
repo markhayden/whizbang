@@ -329,13 +329,22 @@ pub fn runs_the_pack(pid: u32) -> bool {
         .any(|listed| listed.pid == pid && listed.command.contains("whizbang_pack"))
 }
 
-/// The processes of the machine whose command line holds this word, by process id.
-pub fn naming(word: &str) -> Vec<u32> {
+/// The children of the process with this id whose command line holds this word, by
+/// process id: what a test starts and names, never the machine's other processes.
+pub fn children_of_naming(parent: u32, word: &str) -> Vec<u32> {
     processes()
         .into_iter()
-        .filter(|listed| listed.command.contains(word))
+        .filter(|listed| listed.parent == parent && listed.command.contains(word))
         .map(|listed| listed.pid)
         .collect()
+}
+
+/// Whether the process with this id runs, and its command line holds this word: one
+/// that ended, or whose id another command now has, does not.
+pub fn runs_naming(pid: u32, word: &str) -> bool {
+    processes()
+        .iter()
+        .any(|listed| listed.pid == pid && listed.command.contains(word))
 }
 
 /// The folders this process's supervisors made for their workers that are still

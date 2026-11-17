@@ -507,7 +507,7 @@ impl Worker {
             self.finish(running);
             return Err(refusal(
                 FaultKind::Unavailable,
-                "the pack's worker could not be given its threads",
+                "the pack's worker could not be given its threads; a process an earlier worker started may still hold that worker's streams open",
             ));
         }
         Ok(running)

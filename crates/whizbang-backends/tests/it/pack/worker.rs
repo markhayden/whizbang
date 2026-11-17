@@ -659,6 +659,16 @@ fn a_process_the_worker_started_that_holds_its_streams_open_keeps_neither_stop_n
     let mut dropped = held.take().unwrap();
     stopped.ready().unwrap();
     dropped.ready().unwrap();
+    // Each worker's own process, its child while the worker lives: only these two are
+    // looked at, never another process of the machine.
+    let started: Vec<u32> = [stopped.pid().unwrap(), dropped.pid().unwrap()]
+        .into_iter()
+        .map(|worker| {
+            let named = kit::children_of_naming(worker, GRANDCHILD);
+            assert_eq!(named.len(), 1, "{named:?}");
+            named[0]
+        })
+        .collect();
 
     stopped_clock.rushing.store(true, Ordering::SeqCst);
     dropped_clock.rushing.store(true, Ordering::SeqCst);
@@ -667,11 +677,12 @@ fn a_process_the_worker_started_that_holds_its_streams_open_keeps_neither_stop_n
     drop(dropped);
     // Both returned while the two processes still held the streams: within the bound,
     // and not after the two seconds those processes live.
-    assert_eq!(
-        kit::naming(GRANDCHILD).len(),
-        2,
-        "both still hold the streams"
-    );
+    for pid in &started {
+        assert!(
+            kit::runs_naming(*pid, GRANDCHILD),
+            "{pid} still holds the streams"
+        );
+    }
     assert!(
         asked.elapsed() < Duration::from_secs(2),
         "{:?}",
@@ -681,10 +692,7 @@ fn a_process_the_worker_started_that_holds_its_streams_open_keeps_neither_stop_n
 
     // The readers it let go are kept, and no worker is started while they live: the
     // refusal is at once, and says why.
-    assert_eq!(
-        stopped.error_output().last().map(String::as_str),
-        Some(LINGERING)
-    );
+    assert!(stopped.error_output().contains(&LINGERING.to_owned()));
     let fault = stopped.ready().unwrap_err();
     assert_eq!(fault.kind(), FaultKind::Unavailable);
     assert_eq!(
@@ -696,7 +704,16 @@ fn a_process_the_worker_started_that_holds_its_streams_open_keeps_neither_stop_n
     // The two processes end by themselves, and their streams with them: every reader
     // ends, nothing of the test is left, and a worker starts again.
     assert!(kit::readers_ended(Duration::from_secs(20)));
-    assert_eq!(kit::naming(GRANDCHILD), Vec::<u32>::new());
+    // The stopped worker's error output, read whole now, names its process as the one
+    // looked at; neither of the two runs any more.
+    let said = format!("grandchild {}", started[0]);
+    assert!(stopped.error_output().contains(&said), "{said}");
+    for pid in &started {
+        assert!(
+            !kit::runs_naming(*pid, GRANDCHILD),
+            "{pid} outlived its life"
+        );
+    }
     stopped_clock.rushing.store(false, Ordering::SeqCst);
     stopped.ready().unwrap();
     assert!(stopped.stop().is_some());
