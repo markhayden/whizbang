@@ -14,7 +14,7 @@ path = "tests/it/main.rs"
 
 [dependencies]
 # No feature of its own: one turned on here would reach every crate of the tests and not
-# the binary (ADR 0021). The comparison keeps a number's text with its own reader.
+# the binary (ADR 0023). The comparison keeps a number's text with its own reader.
 serde_json = { workspace = true }
 
 [lints]

@@ -1,4 +1,4 @@
-# 0021. One serde_json: the tests build the JSON library the binary ships
+# 0023. One serde_json: the tests build the JSON library the binary ships
 
 Status: accepted
 Date: 2026-11-16

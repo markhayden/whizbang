@@ -4,7 +4,7 @@
 # for: so a feature one crate turns on reaches every crate of `just check`, clippy and CI's
 # tests, which build the whole workspace, and none of the binary `just smoke` builds
 # (`-p whizbang`) unless the binary depends on that crate. Then the tests would not test
-# the serde_json that ships (`arbitrary_precision` did this: docs/adr/0021-one-serde-json.md).
+# the serde_json that ships (`arbitrary_precision` did this: docs/adr/0023-one-serde-json.md).
 #
 #   scripts/check-features.sh                                  the workspace, from `cargo tree`
 #   scripts/check-features.sh --shipped FILE --workspace FILE  two saved answers of `cargo tree`
@@ -70,7 +70,7 @@ if [ "$features_shipped" != "$features_workspace" ]; then
   echo "features: serde_json's features differ between the shipped binary and the tests" >&2
   echo "  the binary (-p whizbang): ${features_shipped:-none}" >&2
   echo "  the workspace and its tests: ${features_workspace:-none}" >&2
-  echo "  a crate turns on a feature the binary does not build with: see docs/adr/0021-one-serde-json.md" >&2
+  echo "  a crate turns on a feature the binary does not build with: see docs/adr/0023-one-serde-json.md" >&2
   exit 1
 fi
 echo "features: ok (serde_json $version_shipped with ${features_shipped:-no features}, in the binary and in the tests)"

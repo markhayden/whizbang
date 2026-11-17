@@ -36,7 +36,7 @@ timing:
     scripts/timing.sh
 
 # The crate edges of SPEC.md section 3 (scripts/crate-graph.txt), and the features of
-# serde_json, the same for the binary and for the tests (ADR 0021).
+# serde_json, the same for the binary and for the tests (ADR 0023).
 graph:
     scripts/check-crate-graph.sh
     scripts/check-features.sh

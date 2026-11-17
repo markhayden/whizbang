@@ -116,7 +116,7 @@ not yet needed.
 The edges are listed in one file, `scripts/crate-graph.txt`, and checked by `just check`. A
 path dependency on a crate outside the workspace fails the check. So does a feature of
 `serde_json` that the tests build with and the binary does not, or the reverse
-(`scripts/check-features.sh`, ADR 0021): no crate turns one on for itself.
+(`scripts/check-features.sh`, ADR 0023): no crate turns one on for itself.
 
 ### The execution contract
 

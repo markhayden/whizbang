@@ -3,7 +3,7 @@
 //!
 //! `serde_json` keeps a number's text only under its feature `arbitrary_precision`, and a
 //! feature one crate turns on reaches every crate of a build: the tests would then build a
-//! `serde_json` that the binary does not ship (docs/adr/0021-one-serde-json.md). So this
+//! `serde_json` that the binary does not ship (docs/adr/0023-one-serde-json.md). So this
 //! reader is the comparison's own. It reads what `serde_json` reads and refuses what it
 //! refuses, to the same depth, and a text is decoded by `serde_json` itself. A number is
 //! kept as written, but for how its exponent is marked: `E` is written `e`, and a `+` is
