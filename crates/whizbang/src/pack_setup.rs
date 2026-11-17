@@ -15,8 +15,8 @@
 //!
 //! **How**, in this order, each step past the first only when the one before ended
 //! well. Before the first, an extra is refused on any platform but macOS on Apple
-//! silicon ([`EXTRA_HOST`]), the one the lock covers: no `uv` is started and nothing is
-//! made.
+//! silicon ([`EXTRA_HOST`]), the one the lock holds an extra for: no `uv` is started
+//! and nothing is made.
 //!
 //! 1. The pack is written into a folder of `setup`'s own in the system's temporary
 //!    folder, for its owner alone, removed on every path out.
@@ -140,11 +140,12 @@ impl Host {
     }
 }
 
-/// The one platform the lock covers, so the one an extra is installed on: macOS on
-/// Apple silicon, `sys_platform == 'darwin' and platform_machine == 'arm64'` in the
-/// pack's `tool.uv.environments`. Linux on x86-64 was dropped from the lock by the
-/// owner on 2026-11-17 (ADR 0021, "Amended"); the pack's core, which downloads nothing,
-/// installs on any platform.
+/// The one platform the lock holds an extra's packages for, so the one an extra is
+/// installed on: macOS on Apple silicon, the marker
+/// `sys_platform == 'darwin' and platform_machine == 'arm64'` on every package of the
+/// pack's extras. Linux on x86-64 was dropped from the runtime by the owner on
+/// 2026-11-17 (ADR 0021, "Amended"); the lock still covers it for the pack's core, which
+/// downloads nothing.
 pub const EXTRA_HOST: Host = Host {
     os: "macos",
     arch: "aarch64",
@@ -308,7 +309,7 @@ pub fn install(install: &Install) -> Result<Installed, String> {
         && install.host != EXTRA_HOST
     {
         return Err(format!(
-            "the extra {extra} is locked for macOS on Apple silicon only in this build, and this is {} on {}; nothing was downloaded and nothing was changed (with no extra, the pack's core installs here)",
+            "the extra {extra} is locked for macOS on Apple silicon only in this build, and this is {} on {}; nothing was downloaded and nothing was changed (with no extra, setup installs the pack's core, which needs no package)",
             install.host.os, install.host.arch
         ));
     }

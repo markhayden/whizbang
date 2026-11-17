@@ -215,31 +215,38 @@ fn an_extra_on_a_platform_the_lock_does_not_cover_is_refused_before_anything_run
     );
 }
 
+/// The marker every package of an extra carries in the pack's file: the one platform
+/// `setup` installs an extra on.
+const MAC: &str = "sys_platform == 'darwin' and platform_machine == 'arm64'";
+
 #[test]
-fn the_lock_file_covers_the_mac_alone_and_names_no_nvidia_or_cuda_package() {
-    // The lock is made for the one platform `setup` installs an extra on.
-    let lock = std::fs::read_to_string(pack_folder().join("uv.lock")).unwrap();
-    for key in ["resolution-markers", "supported-markers"] {
-        let start = lock
-            .find(&format!("\n{key} = [\n"))
-            .unwrap_or_else(|| panic!("the lock has its {key}"));
-        let rest = &lock[start + 1..];
-        let list: Vec<&str> = rest[..rest.find("\n]").unwrap()].lines().skip(1).collect();
-        assert_eq!(
-            list,
-            ["    \"platform_machine == 'arm64' and sys_platform == 'darwin'\","],
-            "{key}"
-        );
+fn the_extra_is_for_the_mac_alone_and_the_lock_names_no_nvidia_or_cuda_package() {
+    // Each package of each extra is for the Mac alone, so on Linux, which the lock still
+    // covers for the core (`uv sync` refuses a platform the lock is not made for), the
+    // extra resolves to nothing.
+    let pyproject = std::fs::read_to_string(pack_folder().join("pyproject.toml")).unwrap();
+    let all = extras();
+    assert!(!all.is_empty());
+    for (extra, listed) in &all {
+        assert!(!listed.is_empty(), "{extra}");
+        for item in listed {
+            assert!(
+                pyproject.contains(&format!("\"{item}; {MAC}\"")),
+                "{item} of {extra} is not for the Mac alone"
+            );
+        }
     }
-    // And holds none of the packages Linux's CUDA build of `torch` pulls in.
-    for block in lock_blocks() {
+    // The lock holds none of the packages Linux's CUDA build of `torch` pulls in, and
+    // no file for Linux.
+    let blocks = lock_blocks();
+    assert!(blocks.len() > 3);
+    for block in blocks {
         let name = field(&block, "name").unwrap();
         for start in ["nvidia-", "cuda-"] {
             assert!(!name.starts_with(start), "{name}");
         }
         assert_ne!(name, "triton");
         for line in &block {
-            assert!(!line.contains("sys_platform == 'linux'"), "{name}: {line}");
             assert!(!line.contains("linux_x86_64"), "{name}: {line}");
             assert!(!line.contains("manylinux"), "{name}: {line}");
         }
@@ -366,7 +373,8 @@ fn quoted<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     Some(&rest[..rest.find('"')?])
 }
 
-/// The pack's extras, from its own file: each name, and what it lists.
+/// The pack's extras, from its own file: each name, and what it lists, each without the
+/// marker that says which platform it is for.
 fn extras() -> Vec<(String, Vec<String>)> {
     let pyproject = std::fs::read_to_string(pack_folder().join("pyproject.toml")).unwrap();
     let mut inside = false;
@@ -383,7 +391,11 @@ fn extras() -> Vec<(String, Vec<String>)> {
         let listed = list
             .trim_matches(|c| c == '[' || c == ']')
             .split(',')
-            .map(|item| item.trim().trim_matches('"').to_owned())
+            .map(|item| {
+                let item = item.trim().trim_matches('"');
+                let item = item.split_once(';').map_or(item, |(wanted, _)| wanted);
+                item.trim().to_owned()
+            })
             .filter(|item| !item.is_empty())
             .collect();
         found.push((name.to_owned(), listed));

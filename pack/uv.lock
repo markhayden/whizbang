@@ -3,9 +3,11 @@ revision = 5
 requires-python = "==3.12.*"
 resolution-markers = [
     "platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "platform_machine == 'x86_64' and sys_platform == 'linux'",
 ]
 supported-markers = [
     "platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "platform_machine == 'x86_64' and sys_platform == 'linux'",
 ]
 
 [[package]]
@@ -462,15 +464,15 @@ source = { virtual = "." }
 
 [package.optional-dependencies]
 torch = [
-    { name = "torch" },
-    { name = "torchvision" },
-    { name = "transformers" },
+    { name = "torch", marker = "sys_platform != 'linux'" },
+    { name = "torchvision", marker = "sys_platform != 'linux'" },
+    { name = "transformers", marker = "sys_platform != 'linux'" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "torch", marker = "extra == 'torch'", specifier = "==2.15.0" },
-    { name = "torchvision", marker = "extra == 'torch'", specifier = "==0.29.2" },
-    { name = "transformers", marker = "extra == 'torch'", specifier = "==5.23.0" },
+    { name = "torch", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'torch'", specifier = "==2.15.0" },
+    { name = "torchvision", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'torch'", specifier = "==0.29.2" },
+    { name = "transformers", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'torch'", specifier = "==5.23.0" },
 ]
 provides-extras = ["torch"]

@@ -18,14 +18,18 @@ dependencies = []
 
 [project.optional-dependencies]
 # Candidate A of the plan's D8: PyTorch, and SAM 3 through the `transformers` library,
-# whose image processor for SAM 3 imports `torchvision`.
-torch = ["torch==2.15.0", "torchvision==0.29.2", "transformers==5.23.0"]
+# whose image processor for SAM 3 imports `torchvision`. Each is for the Mac (Apple
+# silicon) alone, by the owner's decision of 2026-11-17 (docs/adr/0021-installing-the-pack.md,
+# "Amended"): on Linux on x86-64 the index's `torch` is a CUDA build that pulls in NVIDIA's
+# packages, so the lock holds none of it there.
+torch = ["torch==2.15.0; sys_platform == 'darwin' and platform_machine == 'arm64'", "torchvision==0.29.2; sys_platform == 'darwin' and platform_machine == 'arm64'", "transformers==5.23.0; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 
 [tool.uv]
 package = false
-# The platform the lock is made for: the Mac (Apple silicon) alone. Linux on x86-64 was
-# dropped by the owner on 2026-11-17 (docs/adr/0021-installing-the-pack.md, "Amended"):
-# there the index's `torch` is a CUDA build that pulls in NVIDIA's packages.
+# The platforms the lock is made for: the Mac (Apple silicon), with the extra, and Linux on
+# x86-64, with the core alone. `uv sync` refuses a platform the lock is not made for, the
+# core's install among them, so Linux stays.
 environments = [
   "sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
