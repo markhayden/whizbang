@@ -55,7 +55,9 @@
 //! let go past it, no worker is started until they end, and the kept error output ends
 //! with [`LINGERING`]. Such a process is not killed: ending a worker's group of
 //! processes takes a call the standard library does not have (`docs/carry-over.md`).
-//! The worker starts none (task P2); whether the runtime does is task R1's to find.
+//! The worker starts none (task P2). The runtime starts one only to draw a progress bar,
+//! the standard library's resource tracker, which ends with the worker; the progress
+//! bars are off in the worker's environment, and it then starts none (task R1, ADR 0022).
 //!
 //! **Every path out of a start ends the worker,** a panic among them: from the moment
 //! its process is started it is held by a value whose drop kills it, waits for it, lets
@@ -111,8 +113,10 @@ pub const PASSED: [&str; 3] = ["LANG", "LC_ALL", "LC_CTYPE"];
 const POOL_THREADS: &str = "8";
 
 /// The allocator's high watermark on the Apple GPU, below 1.0 of the device's
-/// recommended maximum (plan 1C, "Rules", "GPU memory"): task R1 starts at 0.5 and
-/// writes here the value it ends with.
+/// recommended maximum (plan 1C, "Rules", "GPU memory"): task R1 started at 0.5 and
+/// ended with it (ADR 0022). The low watermark is set to the same value: the runtime
+/// refuses a low one above the high one, and its default low one, 1.4, is above any
+/// high one under 1.0.
 const GPU_WATERMARK: &str = "0.5";
 
 /// The program the interpreter is started with (`-c`). It closes every descriptor
@@ -683,7 +687,7 @@ pub fn environment(
     let home = home.as_os_str().to_owned();
     let mut token = PathBuf::from(&home);
     token.push("token");
-    let set: [(&str, OsString); 17] = [
+    let set: [(&str, OsString); 19] = [
         // The worker's own folder, empty, for everything that would look in a home.
         ("HOME", home.clone()),
         ("TMPDIR", home.clone()),
@@ -705,7 +709,11 @@ pub fn environment(
         ("VECLIB_MAXIMUM_THREADS", POOL_THREADS.into()),
         ("TOKENIZERS_PARALLELISM", "false".into()),
         ("PYTORCH_MPS_HIGH_WATERMARK_RATIO", GPU_WATERMARK.into()),
+        ("PYTORCH_MPS_LOW_WATERMARK_RATIO", GPU_WATERMARK.into()),
         ("PYTHONDONTWRITEBYTECODE", "1".into()),
+        // The libraries' progress bars off: drawing one makes a lock of `multiprocessing`,
+        // which starts a process of the standard library's (ADR 0022).
+        ("HF_HUB_DISABLE_PROGRESS_BARS", "1".into()),
     ];
     for (name, value) in set {
         chosen.retain(|(had, _)| had != name);

@@ -53,6 +53,7 @@ manifest. This file holds what you cannot work out from the code.
 | `scripts/heavy.sh <label> <command...>` | Around any heavy command: one runs at a time on a machine, the next waits. The command runs under `scripts/thread-guard.sh` |
 | `just test-only <which tests>` | One crate's tests or one test, as in `just test-only -p whizbang-core watch::`: the only way to run some of the tests. It runs them under `scripts/thread-guard.sh`, and takes `-p <crate>` or `--package <crate>`, `--lib`, `--test <name>`, `-E <filter>`, `--no-capture`, `--no-fail-fast` and filter words; anything else is refused before anything runs (`scripts/test-only.sh`). Heavy |
 | `scripts/thread-guard.sh <command...>` | Around anything else that runs tests: it kills the command when one process holds more than 300 threads, or when it can no longer count them |
+| `scripts/memory-watch.sh <command...>` | Around anything that loads a real model, beside the thread guard: it kills the command when it and everything it started hold more than 24 GiB resident, and reports the peaks it saw and any process the command left running |
 
 An action's name and purpose are printed in the reference as they are, so `just docs` refuses
 any that could be read as markup. A name is a lower-case letter, then lower-case letters,

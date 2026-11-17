@@ -602,3 +602,56 @@ fn the_pack_this_build_carries_is_the_repositorys() {
         );
     }
 }
+
+/// The packages ADR 0022 names as the runtime it chose, each with its version: the rows
+/// of the table under its heading "The runtime's packages".
+fn the_runtime_the_adr_names() -> (String, Vec<(String, String)>) {
+    let adr = std::fs::read_to_string(pack_folder().join("../docs/adr/0022-the-first-runtime.md"))
+        .expect("ADR 0022 is there");
+    let start = adr
+        .find("\n### The runtime's packages\n")
+        .expect("the ADR has its table of the runtime's packages");
+    let section = &adr[start + 1..];
+    let section = &section[..section[4..].find("\n#").map_or(section.len(), |at| at + 4)];
+    let extra = section
+        .lines()
+        .find_map(|line| {
+            let at = line.find("the pack's extra `")? + "the pack's extra `".len();
+            Some(line[at..line[at..].find('`')? + at].to_owned())
+        })
+        .expect("the ADR names the pack's extra");
+    let mut packages = Vec::new();
+    for line in section.lines().filter(|line| line.starts_with("| `")) {
+        let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        packages.push((cells[1].trim_matches('`').to_owned(), cells[2].to_owned()));
+    }
+    (extra, packages)
+}
+
+#[test]
+fn the_runtime_the_adr_names_is_the_one_the_lock_pins() {
+    // ADR 0022 names the runtime by the pack's extra and its packages at their versions;
+    // the pack's file pins the extra to exactly those, and the lock holds each at it.
+    let (extra, named) = the_runtime_the_adr_names();
+    assert!(!named.is_empty(), "the ADR names the runtime's packages");
+    let (_, listed) = extras()
+        .into_iter()
+        .find(|(name, _)| *name == extra)
+        .unwrap_or_else(|| panic!("the pack has no extra {extra}"));
+    let mut pinned: Vec<String> = listed;
+    pinned.sort();
+    let mut wanted: Vec<String> = named
+        .iter()
+        .map(|(name, version)| format!("{name}=={version}"))
+        .collect();
+    wanted.sort();
+    assert_eq!(pinned, wanted, "the extra {extra} pins what the ADR names");
+    let blocks = lock_blocks();
+    for (name, version) in &named {
+        let block = blocks
+            .iter()
+            .find(|block| field(block, "name") == Some(name.as_str()))
+            .unwrap_or_else(|| panic!("{name} is not in the lock"));
+        assert_eq!(field(block, "version"), Some(version.as_str()), "{name}");
+    }
+}
