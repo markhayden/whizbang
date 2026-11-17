@@ -102,9 +102,14 @@ fn environment(command: &mut Command, folder: &Path, home: &Path) {
 /// whoever writes to them. Nothing of the environment the tests run in is passed on: no
 /// `PATH`, no token, no proxy. The binary needs none of it.
 ///
+/// **The folder is removed when the returned value is dropped,** whether or not a
+/// program it started has ended. A test that spawns the binary keeps the value alive
+/// until that child has been waited for; `output` and `status` wait by themselves.
+///
 /// # Panics
 /// When the temporary folder cannot be made: a test cannot go on without it.
 #[allow(clippy::panic)]
+#[must_use = "the temporary folder is removed when this is dropped"]
 pub fn command(path: impl AsRef<OsStr>) -> Binary {
     let folder = folder();
     let home = folder.0.join("home");
@@ -131,8 +136,10 @@ impl Binary {
     /// The same environment and the same folder, for a shell script that starts the
     /// binary itself: the command is `/bin/bash -c <script>`, and the script finds the
     /// binary's path in the variable `WHIZBANG`. For what only a shell can set up before
-    /// the binary starts, such as a limit on the size of a file. Arguments given before
-    /// this are dropped; the script names its own.
+    /// the binary starts, such as a limit on the size of a file. Everything set on the
+    /// command before this is dropped: its arguments, the variables a test added, its
+    /// working folder and its input and outputs. The script names its own arguments;
+    /// set the rest after this.
     #[must_use]
     pub fn under_shell(self, script: &str) -> Binary {
         let mut command = Command::new(SHELL);

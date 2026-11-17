@@ -1288,12 +1288,20 @@ add start the binary through the function from the first.
   (`scripts/tests/test-binary-start.sh`), which is part of `just check`. It reads text.
   Its top says what it refuses and what it does not catch.
 - No test had relied on the environment it ran in: all passed unchanged in meaning.
+- A test file of a crate that starts the binary may not clear the environment again
+  or take a variable from it (`.env_clear(`, `.env_remove(`). N3a's test that started
+  the binary with its own cleared environment and home
+  (`wired::with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory`)
+  starts it through the function, and looks for nothing made in the function's home.
+  The texts `wired::only_main_reads_where_the_platforms_data_folder_is` searches the
+  binary's source for are in a data file, `environment-reads.txt`, which the check
+  does not read; the test requires all five.
 
 **Shown by:** `binary::the_command_has_a_cleared_environment_and_a_temporary_home`
 (the test kit: a process with a planted variable calls the function, and the program
 it starts lists its whole environment); `scripts/tests/test-binary-start.sh` (the
-workspace passes, with twenty places counted; each other way is refused on planted
-files); and the tests of `crates/whizbang/tests/it/` that start the binary, each
+workspace passes, with twenty-one places counted: the twenty above and the one N3a
+added in `wired.rs`; each other way is refused on planted files); and the tests of `crates/whizbang/tests/it/` that start the binary, each
 through the function, which the check counts.
 **Size:** small.
 

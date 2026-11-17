@@ -1955,14 +1955,21 @@ fn only_main_reads_where_the_platforms_data_folder_is() {
     // (`wired::the_models_directory_is_the_flags_then_the_configs_then_the_platforms`).
     let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let (mut reads, mut calls, mut files) = (Vec::new(), Vec::new(), 0);
+    // The texts searched for are kept in a data file, one a line, and not written
+    // here: in a test of a crate that starts the binary, `just check` refuses them as
+    // reads of the environment (scripts/check-binary-start.sh), and they are not.
+    // An empty list would find nothing and pass: the five are required.
+    let searched: Vec<&str> = include_str!("environment-reads.txt").lines().collect();
+    assert_eq!(searched.len(), 5, "{searched:?}");
+    assert!(searched.iter().all(|read| !read.is_empty()), "{searched:?}");
     for entry in std::fs::read_dir(&sources).unwrap() {
         let path = entry.unwrap().path();
         assert!(path.is_file(), "a folder of sources that is not looked at");
         let text = std::fs::read_to_string(&path).unwrap();
         let code: String = text.chars().filter(|c| !c.is_whitespace()).collect();
         let name = path.file_name().unwrap().to_str().unwrap().to_owned();
-        for read in ["env::var", "env::vars", "var_os", "home_dir", "env!(\"HOME"] {
-            reads.extend(code.matches(read).map(|_| name.clone()));
+        for read in &searched {
+            reads.extend(code.matches(*read).map(|_| name.clone()));
         }
         calls.extend(code.matches("platforms_models_dir").map(|_| name.clone()));
         // Its name with nothing in the brackets is its definition, and never a call.
@@ -1999,31 +2006,33 @@ fn with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory() 
     );
     let world = World::new("wired-shipped");
     std::fs::write(world.config_path(), "").unwrap();
-    let home = world.beside("home");
-    std::fs::create_dir(&home).unwrap();
     let (flagged, configured) = (world.beside("flagged"), world.beside("configured"));
     let mask = format!("sha256:{}", "0".repeat(64));
     let run = |more: &[&str]| {
-        let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+        // The function's temporary home, with the platform's data folder inside it:
+        // the command is kept until the run has been waited for, and the home is
+        // looked into after it.
+        let mut command = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"));
+        let home = command.home().to_path_buf();
+        let out = command
             .args(["rascal", "grow", "--mask", &mask, "--px", "1", "--config"])
             .arg(world.config_path())
             .args(more)
             .arg("--store")
             .arg(&world.root)
-            .env_clear()
-            .env("HOME", &home)
             .output()
             .expect("the binary runs");
         // The command got as far as its store: the mask is not in it.
         assert_eq!(out.status.code(), Some(1), "{out:?}");
         let err = String::from_utf8(out.stderr).unwrap();
         assert!(!err.contains("models directory"), "{err}");
+        // Nothing was made in the home: no models directory in the platform's place.
+        assert!(std::fs::read_dir(&home).unwrap().next().is_none());
     };
     // The directory named by the flag, and then by the config.
     run(&["--models-dir", flagged.to_str().unwrap()]);
     let dir = format!("[models]\ndir = '{}'\n", configured.to_str().unwrap());
     std::fs::write(world.config_path(), dir).unwrap();
     run(&[]);
-    assert!(std::fs::read_dir(&home).unwrap().next().is_none());
     assert!(!flagged.exists() && !configured.exists());
 }

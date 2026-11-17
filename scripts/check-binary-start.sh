@@ -27,15 +27,19 @@
 #    anything else brought in from `env::`, `home_dir`), which is how a real home or the
 #    whole environment would be handed on; and the texts "HOME", "TMPDIR", "USERPROFILE"
 #    and any that starts "XDG_", which is how one of the function's places would be set
-#    to another. A test asks the command for its home (`home()`).
+#    to another. A test asks the command for its home (`home()`). And `.env_clear(` or
+#    `.env_remove(`, which would take one of the function's places away: the function
+#    sets the environment, and a test adds variables of its own to it and takes none.
+#    A test that searches source for such texts keeps them in a data file, which this
+#    check does not read (`crates/whizbang/tests/it/environment-reads.txt`).
 #
 # What it does not catch. It reads text, and stops a mistake, not a person set on getting
 # past it: a path to the binary worked out with no variable (from the test binary's own
 # place, say); the binary started by a program the test starts (the function's own
 # `under_shell` is the way for a script); a variable's name that is not written as one
 # text ("HO" and "ME"), or given by another crate's helper; `env` brought in under
-# another name (`use std::env as e`); a dependency renamed to `whizbang_testkit` in a
-# manifest; and a comment that ends a line of code is read as code, so one that names
+# another name (`use std::env as e`); texts kept in a file that is not `.rs`; a
+# dependency renamed to `whizbang_testkit` in a manifest; and a comment that ends a line of code is read as code, so one that names
 # the variable is refused. The test kit's own test shows what the function gives.
 #
 # It sets no `EXIT` trap and writes no file, so its own syntax error is a failure.
@@ -131,6 +135,11 @@ for crate in $starters; do
     for place in '"HOME"' '"TMPDIR"' '"USERPROFILE"' '"XDG_'; do
       if [ "$(printf '%s\n' "$text" | count "$place")" -gt 0 ]; then
         refuse "$file" "it has the text $place in a crate whose tests start the real binary: the home and the folders are the function's, and a test asks the command for its home (\`home()\`)"
+      fi
+    done
+    for clearing in '.env_clear(' '.env_remove('; do
+      if [ "$(printf '%s\n' "$text" | count "$clearing")" -gt 0 ]; then
+        refuse "$file" "it has \`$clearing\` in a crate whose tests start the real binary: the function sets the environment, and a test adds to it and takes nothing from it"
       fi
     done
   done < <(find "$dir/crates/$crate" -type f -name '*.rs' ! -path '*/target/*' ! -path "$dir/crates/$crate/src/*" | sort)

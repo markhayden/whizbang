@@ -14,8 +14,12 @@ grep -q -x -F 'check: fmt-check clippy graph deny test-scripts docs-check timing
   fail "justfile: check runs the script tests, and this check with them"
 expect_pass "the workspace" "$check"
 started=$(sed -n 's/^binary start: ok (.* the real binary is started in \([0-9][0-9]*\) places, .*$/\1/p' "$tmp/out")
-[ -n "$started" ] && [ "$started" -ge 19 ] ||
-  { cat "$tmp/out" >&2; fail "the check counts the places that start the real binary: nineteen or more"; }
+# Exactly the number the plan states (N3c, "Shown by"): a test that starts the binary is
+# added to both, or the check has stopped seeing some.
+[ "$started" = 21 ] ||
+  { cat "$tmp/out" >&2; fail "the check counts the places that start the real binary: twenty-one, not ${started:-none}"; }
+grep -q -F 'with twenty-one places counted' docs/plans/m1c-local-pack.md ||
+  fail "the plan states the number of places, twenty-one"
 # The function is the test kit's, clears the environment, and is the only thing in the
 # crates that does: no test builds a cleared command of its own beside it.
 grep -q -F 'pub fn command(path: impl AsRef<OsStr>) -> Binary' crates/whizbang-testkit/src/binary.rs ||
@@ -149,6 +153,13 @@ refused "the data folder set to another place" "$places" \
   "fn w(real: &str) { $call.env(\"XDG_DATA_HOME\", real).output().unwrap(); }"
 refused "the home put back by removing it" "$places" \
   "fn w() { $call.env_remove(\"HOME\").output().unwrap(); }"
+clears='the function sets the environment, and a test adds to it and takes nothing from it'
+refused "the environment cleared again" "\`.env_clear(\`" \
+  "fn w() { $call.env_clear().output().unwrap(); }"
+refused "a variable of the function's taken away by a name in a constant" "\`.env_remove(\`" \
+  'const H: &str = concat!("HO", "ME");' "fn w() { $call.env_remove(H).output().unwrap(); }"
+refused "the clearing broken over lines" "$clears" \
+  'fn w() {' "    $call" '        .env_clear()' '        .output()' '        .unwrap();' '}'
 # A helper in another file of the same tests is held too: the files are one program.
 printf '%s\n' "fn w() { $call; }" >"$planted"
 printf '%s\n' 'pub fn real_home() -> String { std::env::var("HOME").unwrap() }' >"$repo/crates/whizbang/tests/it/helper.rs"

@@ -330,6 +330,6 @@ deferred is on the carry-over list with a milestone. A tool is not done without 
   gives the binary a cleared environment and a temporary home, removed with the command,
   so no test reads or writes a real home. Add arguments, variables of the test's own and
   input to what it returns; ask it for the home (`home()`); keep it until the binary has
-  been waited for. `just check` refuses any other way, and a test beside it that reads the
-  environment it runs in (`scripts/check-binary-start.sh`, whose top says what it cannot
-  catch).
+  been waited for; never clear or remove a variable of it. `just check` refuses any other
+  way, and a test beside it that reads the environment it runs in or takes from the
+  command's (`scripts/check-binary-start.sh`, whose top says what it cannot catch).
