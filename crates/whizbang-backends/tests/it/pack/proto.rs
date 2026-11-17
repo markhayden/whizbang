@@ -631,6 +631,220 @@ fn a_hello_of_another_version_is_refused_and_says_both_versions() {
     assert_eq!(refused(&none, &mut Open::new()), Reason::MissingField);
     let number = changed(&hello, |header| header["version"] = json!(1));
     assert_eq!(refused(&number, &mut Open::new()), Reason::BadValue);
+    // After the version, the role, which says which fields the hello has: a role that
+    // is neither name is refused for its value though a field that is no hello's is
+    // there too, and one that is missing is a missing field.
+    let roled = |role: Value| {
+        changed(&hello, |header| {
+            header["role"] = role;
+            header["extra"] = json!(1);
+        })
+    };
+    assert_eq!(
+        refused(&roled(json!("server")), &mut Open::new()),
+        Reason::BadValue
+    );
+    assert_eq!(
+        refused(&roled(json!(1)), &mut Open::new()),
+        Reason::BadValue
+    );
+    assert_eq!(
+        refused(&roled(json!("whizbang")), &mut Open::new()),
+        Reason::UnknownField
+    );
+    let no_role = changed(&hello, |header| {
+        header.as_object_mut().unwrap().remove("role");
+        header["extra"] = json!(1);
+    });
+    assert_eq!(refused(&no_role, &mut Open::new()), Reason::MissingField);
+}
+
+#[test]
+fn a_header_is_strict_json_in_strict_utf8_and_each_edge_of_it_has_one_reason() {
+    let reason = |header: &[u8]| refused(&frame(header, &[]), &mut Open::new());
+    // What is not JSON, or not strictly, is refused before any field is looked at,
+    // though a lenient reader would take each and refuse it later or not at all.
+    let not_json: [&[u8]; 28] = [
+        // A byte-order mark.
+        b"\xef\xbb\xbf{\"type\":\"cancel\",\"id\":\"r1\"}",
+        // Surrogates encoded as bytes, which strict UTF-8 refuses.
+        b"{\"type\":\"cancel\",\"id\":\"r\xed\xa0\x80\"}",
+        b"{\"type\":\"cancel\",\"id\":\"r\xed\xbf\xbf\"}",
+        // Escaped surrogates that are not a pair, which name no character.
+        b"{\"type\":\"cancel\",\"id\":\"r\\ud800\"}",
+        b"{\"type\":\"cancel\",\"id\":\"r\\udc00\"}",
+        b"{\"type\":\"cancel\",\"id\":\"r\\ud800\\u0041\"}",
+        // A number outside a double's range.
+        b"{\"type\":\"cancel\",\"id\":1e400}",
+        b"{\"type\":\"cancel\",\"id\":-1e400}",
+        // A field given twice.
+        b"{\"type\":\"cancel\",\"id\":\"r1\",\"id\":\"r1\"}",
+        // NaN and the infinities.
+        b"{\"type\":\"cancel\",\"id\":NaN}",
+        b"{\"type\":\"cancel\",\"id\":Infinity}",
+        b"{\"type\":\"cancel\",\"id\":-Infinity}",
+        // A control character written as itself in a text.
+        b"{\"type\":\"cancel\",\"id\":\"r\n1\"}",
+        b"{\"type\":\"cancel\",\"id\":\"r\t1\"}",
+        // And what JSON's grammar has not: numbers it does not write, escapes it has
+        // not, a comma with nothing after it, a key that is no text, a value cut short.
+        b"{\"type\":\"cancel\",\"id\":01}",
+        b"{\"type\":\"cancel\",\"id\":1.}",
+        b"{\"type\":\"cancel\",\"id\":.5}",
+        b"{\"type\":\"cancel\",\"id\":+1}",
+        b"{\"type\":\"cancel\",\"id\":1e}",
+        b"{\"type\":\"cancel\",\"id\":-}",
+        b"{\"type\":\"cancel\",\"id\":\"r\\x1\"}",
+        b"{\"type\":\"cancel\",\"id\":\"r\\u00g1\"}",
+        b"{\"type\":\"cancel\",\"id\":\"r1\",}",
+        b"{\"type\":\"cancel\",\"id\":[1,]}",
+        b"{type:\"cancel\",\"id\":\"r1\"}",
+        b"{\"type\":\"cancel\",\"id\":tru}",
+        b"{\"type\":\"cancel\",\"id\":\"r1}",
+        b" ",
+    ];
+    for header in not_json {
+        assert_eq!(
+            reason(header),
+            Reason::NotJson,
+            "{}",
+            String::from_utf8_lossy(header)
+        );
+    }
+    // JSON nested 128 deep, counting the header's own object as the first, is not
+    // JSON here; 127 deep is, and is refused for its value.
+    let nested = |depth: usize| {
+        let (open, close) = ("[".repeat(depth - 1), "]".repeat(depth - 1));
+        format!("{{\"type\":\"cancel\",\"id\":{open}{close}}}").into_bytes()
+    };
+    assert_eq!(reason(&nested(2)), Reason::BadValue);
+    assert_eq!(reason(&nested(127)), Reason::BadValue);
+    assert_eq!(reason(&nested(128)), Reason::NotJson);
+    assert_eq!(reason(&nested(4_096)), Reason::NotJson);
+    // What JSON has and the header's rules refuse is refused for its value: a whole
+    // number past 64 bits, an escaped separator, a text where a list is asked.
+    let cancel = |id: &str| reason(format!("{{\"type\":\"cancel\",\"id\":{id}}}").as_bytes());
+    for id in [
+        "18446744073709551616",
+        "-9223372036854775809",
+        "1e-400",
+        "\"r\\/1\"",
+        "{}",
+    ] {
+        assert_eq!(cancel(id), Reason::BadValue, "{id}");
+    }
+    // White space is JSON, and is refused only for the writing.
+    assert_eq!(cancel(" \"r1\" "), Reason::NotCanonical);
+    assert_eq!(cancel("\"r\\u0031\""), Reason::NotCanonical);
+
+    // `-0` is not a whole number: where one is asked it is a bad value, and not the
+    // canonical writing of 0. Each header below is canonical but for the `-`.
+    let under = binding("a picture");
+    let messages: BTreeMap<&str, (Message, Open)> = every_message()
+        .into_iter()
+        .map(|(name, message, open)| (name, (message, open)))
+        .collect();
+    let replaced = |name: &str, old: &str, new: &str| {
+        let (message, open) = &messages[name];
+        let bytes = written(message);
+        let (_, rest) = taken_apart(&bytes);
+        let length = bytes.len() - rest.len();
+        let text = String::from_utf8(bytes[4..length].to_vec()).unwrap();
+        assert!(text.contains(old), "{name} {old}");
+        let mut changed = frame(text.replacen(old, new, 1).as_bytes(), &[]);
+        changed.extend(rest);
+        let mut again = Open::new();
+        if let Some(awaited) = open.awaited("r1") {
+            again.expect("r1", awaited.clone()).unwrap();
+        }
+        read(&changed, &mut again)
+            .map(|_| ())
+            .map_err(|said| said.reason())
+    };
+    let zeros = [
+        ("hello-worker", "\"threads\":3", "\"threads\":-0"),
+        ("result-load", "\"threads\":3", "\"threads\":-0"),
+        ("request-load", "\"value\":-5", "\"value\":-0"),
+        (
+            "request-segment",
+            "\"max_instances\":2",
+            "\"max_instances\":-0",
+        ),
+        ("request-segment", "\"width\":8", "\"width\":-0"),
+        ("result-segment", "\"query\":0", "\"query\":-0"),
+        // Nor is a flag a whole number.
+        ("hello-worker", "\"threads\":3", "\"threads\":true"),
+        ("request-load", "\"value\":-5", "\"value\":-5.0"),
+    ];
+    for (name, old, new) in zeros {
+        assert_eq!(
+            replaced(name, old, new),
+            Err(Reason::BadValue),
+            "{name} {new}"
+        );
+    }
+    // A setting's value may be 0, written as it is.
+    assert_eq!(
+        replaced("request-load", "\"value\":-5", "\"value\":0"),
+        Ok(())
+    );
+    // An escaped pair of surrogates is JSON, and names one character, which the
+    // canonical writing writes as itself.
+    let pair = ("\"phrase\":\"a dog\"", "\"phrase\":\"a dog\\ud83d\\ude00\"");
+    assert_eq!(
+        replaced("request-segment", pair.0, pair.1),
+        Err(Reason::NotCanonical)
+    );
+    let itself = "\"phrase\":\"a dog\u{1f600}\"";
+    assert_eq!(replaced("request-segment", pair.0, itself), Ok(()));
+
+    // A number with a fraction may be -0 wherever its field takes 0, and is read and
+    // written back with its own bits: a score, a predicted IoU, an edge of a box, a
+    // coordinate of a point.
+    let negative = Found {
+        query: 0,
+        score: -0.0,
+        iou: Some(-0.0),
+        bounds: [-0.0, -0.0, 2.0, 2.0],
+        plane: plane(under, [0, 0, 2, 2]),
+    };
+    let answer = result("r1", vec![negative]);
+    let bytes = written(&answer);
+    let (header, _) = taken_apart(&bytes);
+    let zero = json!("8000000000000000");
+    assert_eq!(header["instances"][0]["score"], zero);
+    assert_eq!(header["instances"][0]["iou"], zero);
+    assert_eq!(header["instances"][0]["box"][1], zero);
+    let read_back = one(&bytes, &mut awaiting("r1", under));
+    assert_eq!(written(&read_back), bytes);
+    let Message::Result {
+        answer: Answer::Segment(found),
+        ..
+    } = &read_back
+    else {
+        panic!("not a segment's result");
+    };
+    assert!(found[0].score.is_sign_negative());
+    assert!(found[0].iou.unwrap().is_sign_negative());
+    assert!(found[0].bounds[0].is_sign_negative());
+    let asked = Message::Request {
+        id: "r1".to_owned(),
+        ask: Ask::Segment {
+            model: model(),
+            installation: installation(),
+            image: image(under),
+            queries: vec![
+                Query::point(-0.0, -0.0).unwrap(),
+                Query::boxed(-0.0, -0.0, 1.0, 1.0).unwrap(),
+            ],
+            max_instances: 1,
+        },
+    };
+    let bytes = written(&asked);
+    let (header, _) = taken_apart(&bytes);
+    assert_eq!(header["queries"][0]["point"][1], zero);
+    assert_eq!(header["queries"][1]["box"][0], zero);
+    assert_eq!(written(&one(&bytes, &mut Open::new())), bytes);
 }
 
 // --- bounds -----------------------------------------------------------------------------------
@@ -916,6 +1130,27 @@ fn a_results_header_is_bounded_from_its_request_and_holds_the_most_instances_adr
         refused(&frame(said.as_bytes(), &[]), &mut two),
         Reason::HeaderTooLarge
     );
+    // A result's header over 64 KiB is read while a `load` is open beside its request,
+    // whichever of the two ids is the lesser: its four bytes are held to the larger
+    // bound, not the smaller and not the first. At that bound the reader goes on to a
+    // header that is not there, and one byte over is refused.
+    let bytes = written(&result("r1", all.clone()));
+    assert!(header > HEADER_LIMIT);
+    for beside in ["r0", "r2"] {
+        let both = || {
+            let mut open = opened(64, 64);
+            open.expect(beside, Awaited::load()).unwrap();
+            open
+        };
+        let read_back = one(&bytes, &mut both());
+        assert!(matches!(read_back, Message::Result { .. }), "{beside}");
+        let at = bound(64, 64) as u32;
+        assert_eq!(refused(&at.to_be_bytes(), &mut both()), Reason::Truncated);
+        assert_eq!(
+            refused(&(at + 1).to_be_bytes(), &mut both()),
+            Reason::HeaderTooLarge
+        );
+    }
 
     // Every other message is held to 64 KiB too, whatever is open. A batch of the most
     // phrases, each of the most bytes, fits; the same batch of characters that are
@@ -1120,6 +1355,24 @@ fn a_result_over_one_gibibyte_of_payload_is_refused_whatever_its_request_would_a
     assert_eq!(refused(&answer(64), &mut opened(1, 64)), Reason::TooLarge);
     // The count a request allows is still held: 33 instances under a request for 32.
     assert_eq!(refused(&answer(33), &mut opened(1, 32)), Reason::OverBound);
+    // The reader's bound is to the byte: 25 planes of 42,949,673 pixels are one byte
+    // over a gibibyte, and are refused from the header, though nothing follows it.
+    let odd: u64 = 42_949_673;
+    assert_eq!(25 * odd, (1 << 30) + 1);
+    let one_over = Found {
+        plane: Raster {
+            binding: under,
+            width: odd as u32,
+            height: 1,
+            samples: Vec::new(),
+        },
+        ..large()
+    };
+    let header = result_header("r1", "", &vec![entry(&one_over); 25]);
+    let mut open = Open::new();
+    let awaited = Awaited::segment(odd as u32, 1, under, 1, 25);
+    open.expect("r1", awaited).unwrap();
+    assert_eq!(refused(&frame(&header, &[]), &mut open), Reason::TooLarge);
     // And the writer refuses to write such a result, before it writes a byte.
     let found = large();
     assert_eq!(
@@ -2098,38 +2351,28 @@ fn no_message_has_a_field_that_holds_a_path() {
 
 // --- the order of an answer ----------------------------------------------------------------------
 
-#[test]
-fn an_answer_is_in_the_fixed_order_whatever_order_it_was_built_in() {
-    let under = binding("a picture");
-    let boxed = |query: u32, score: f64, bounds: [u32; 4]| found(under, query, score, bounds);
-    // In the fixed order: best score first; then by the query; then by the box's top,
-    // its left, its right and its bottom; then by the plane's bytes.
-    let mut same_box = boxed(1, 0.5, [1, 1, 3, 3]);
-    same_box.plane.samples[9] = 0;
-    let ordered = vec![
-        boxed(2, 0.9, [4, 4, 6, 6]),
-        boxed(0, 0.5, [4, 4, 6, 6]),
-        boxed(1, 0.5, [1, 0, 3, 3]),
-        boxed(1, 0.5, [0, 1, 3, 3]),
-        boxed(1, 0.5, [1, 1, 2, 3]),
-        boxed(1, 0.5, [1, 1, 3, 2]),
-        same_box,
-        boxed(1, 0.5, [1, 1, 3, 3]),
-        boxed(0, 0.25, [0, 0, 1, 1]),
-    ];
-    let mut open = Open::new();
-    let awaited = Awaited::segment(WIDTH, HEIGHT, under, 3, 8);
-    open.expect("r1", awaited.clone()).unwrap();
-    let expected = written(&result("r1", ordered.clone()));
-    let Message::Result { answer, .. } = one(&expected, &mut open) else {
+/// Holds `ordered` to the fixed order under a request of these bounds: built in any
+/// other order it is written as the same bytes, those bytes are read back and written
+/// again as themselves, and with any two neighbours swapped by hand, in the header and
+/// in the planes, they are refused.
+fn held_to_the_fixed_order(ordered: &[Found], awaited: &Awaited) {
+    let opened = || {
+        let mut open = Open::new();
+        open.expect("r1", awaited.clone()).unwrap();
+        open
+    };
+    let expected = written(&result("r1", ordered.to_vec()));
+    let read_back = one(&expected, &mut opened());
+    assert_eq!(written(&read_back), expected);
+    let Message::Result { answer, .. } = read_back else {
         panic!("not a result");
     };
-    assert_eq!(answer, Answer::Segment(ordered.clone()));
+    assert_eq!(answer, Answer::Segment(ordered.to_vec()));
 
     // Built in any other order, it is written as the same bytes: every rotation of the
     // list, and each backwards.
     for turn in 0..ordered.len() {
-        let mut built = ordered.clone();
+        let mut built = ordered.to_vec();
         built.rotate_left(turn);
         assert_eq!(written(&result("r1", built.clone())), expected, "{turn}");
         built.reverse();
@@ -2149,9 +2392,11 @@ fn an_answer_is_in_the_fixed_order_whatever_order_it_was_built_in() {
             let start = length + at * plane_bytes;
             bytes.extend(&expected[start..start + plane_bytes]);
         }
-        let mut open = Open::new();
-        open.expect("r1", awaited.clone()).unwrap();
-        assert_eq!(refused(&bytes, &mut open), Reason::OutOfOrder, "{first}");
+        assert_eq!(
+            refused(&bytes, &mut opened()),
+            Reason::OutOfOrder,
+            "{first}"
+        );
     }
     // The same header with nothing swapped is the codec's own bytes.
     let entries: Vec<String> = ordered.iter().map(entry).collect();
@@ -2159,6 +2404,57 @@ fn an_answer_is_in_the_fixed_order_whatever_order_it_was_built_in() {
         frame(&result_header("r1", "", &entries), &[]),
         expected[..length]
     );
+}
+
+#[test]
+fn an_answer_is_in_the_fixed_order_whatever_order_it_was_built_in() {
+    let under = binding("a picture");
+    let boxed = |query: u32, score: f64, bounds: [u32; 4]| found(under, query, score, bounds);
+    // In the fixed order: best score first; then by the query; then by the box's top,
+    // its left, its right and its bottom; then by the predicted IoU; then by the
+    // plane's bytes.
+    let mut same_box = boxed(1, 0.5, [1, 1, 3, 3]);
+    same_box.plane.samples[9] = 0;
+    let ordered = vec![
+        boxed(2, 0.9, [4, 4, 6, 6]),
+        boxed(0, 0.5, [4, 4, 6, 6]),
+        boxed(1, 0.5, [1, 0, 3, 3]),
+        boxed(1, 0.5, [0, 1, 3, 3]),
+        boxed(1, 0.5, [1, 1, 2, 3]),
+        boxed(1, 0.5, [1, 1, 3, 2]),
+        same_box,
+        boxed(1, 0.5, [1, 1, 3, 3]),
+        boxed(0, 0.25, [0, 0, 1, 1]),
+    ];
+    let awaited = Awaited::segment(WIDTH, HEIGHT, under, 3, 8);
+    held_to_the_fixed_order(&ordered, &awaited);
+
+    // The order is total. Instances that tie on the score, the query and the box are
+    // ordered by their predicted IoU, none first and then the lesser, before their
+    // planes are looked at: a lesser IoU comes first though its plane's bytes are the
+    // greater. And -0 is less than 0 wherever a number with a fraction is compared, so
+    // a score of 0 is better than one of -0, and a box whose top is -0 comes before
+    // one whose top is 0.
+    let (lesser, greater) = (plane(under, [0, 0, 1, 1]), plane(under, [0, 0, 2, 2]));
+    assert!(lesser.samples < greater.samples);
+    let tied = |score: f64, top: f64, iou: Option<f64>, plane: &Raster| Found {
+        query: 0,
+        score,
+        iou,
+        bounds: [0.0, top, 1.0, 1.0],
+        plane: plane.clone(),
+    };
+    let ties = vec![
+        tied(0.125, 0.0, None, &greater),
+        tied(0.125, 0.0, Some(-0.0), &greater),
+        tied(0.125, 0.0, Some(0.0), &greater),
+        tied(0.125, 0.0, Some(0.75), &lesser),
+        tied(0.125, 0.0, Some(0.75), &greater),
+        tied(0.0, -0.0, Some(0.75), &lesser),
+        tied(0.0, 0.0, Some(0.75), &lesser),
+        tied(-0.0, 0.0, Some(0.75), &lesser),
+    ];
+    held_to_the_fixed_order(&ties, &awaited);
 
     // What the core is handed keeps that order within each query.
     let answers = proto::answers(ordered, 3).unwrap();

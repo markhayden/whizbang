@@ -9,16 +9,18 @@
 //! reason of a closed list and a sentence of fixed words and numbers, which quotes
 //! nothing the other side sent.
 //!
-//! The walk over a header is by hand, as the models directory's reader of JSON is, so
-//! that every refusal is made here. Nothing here starts a process, holds a queue or
-//! knows a deadline: that is the supervisor's (tasks P3a to P4).
+//! The walk over a header is by hand, from its bytes, so that every refusal is made
+//! here and none depends on how a JSON library was built: serde_json's
+//! `arbitrary_precision`, which another crate of the workspace turns on, would hand
+//! `-0` over as 0 and a number with a fraction as an object. Nothing here starts a
+//! process, holds a queue or knows a deadline: that is the supervisor's (tasks P3a to
+//! P4).
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::io::{Read, Write};
 
-use serde::de::{Deserialize, Deserializer, Error as _, MapAccess, SeqAccess, Visitor};
 use whizbang_core::capability::{
     Asked, FAULT_LIMIT, FaultKind, INSTANCE_LIMIT, Instance, PIXEL_LIMIT, QUERY_LIMIT, Query,
     SegmentRequest, Unfit,
@@ -402,20 +404,29 @@ pub fn answers(found: Vec<Found>, queries: usize) -> Result<Vec<Vec<Instance>>, 
 }
 
 /// The fixed order of an answer: best score first; then by the query; then by the
-/// box's top, its left, its right and its bottom; then by the plane's bytes.
+/// box's top, its left, its right and its bottom; then by the predicted IoU, none
+/// first; then by the plane's bytes. It is total: two instances it finds equal are
+/// equal in every byte a result holds of them.
 fn in_order(one: &Found, other: &Found) -> Ordering {
     by_header(one, other).then_with(|| one.plane.samples.cmp(&other.plane.samples))
 }
 
-/// The part of the fixed order that a header alone gives.
+/// The part of the fixed order that a header alone gives: every key but the plane's
+/// bytes. Numbers with a fraction are compared by IEEE 754's total order: by value,
+/// and -0 before 0. A header holds no number that is not finite.
 fn by_header(one: &Found, other: &Found) -> Ordering {
-    let number = |a: f64, b: f64| a.partial_cmp(&b).unwrap_or(Ordering::Equal);
+    let number = |a: f64, b: f64| a.total_cmp(&b);
+    let iou = match (one.iou, other.iou) {
+        (Some(one), Some(other)) => number(one, other),
+        (one, other) => one.is_some().cmp(&other.is_some()),
+    };
     number(other.score, one.score)
         .then(one.query.cmp(&other.query))
         .then(number(one.bounds[1], other.bounds[1]))
         .then(number(one.bounds[0], other.bounds[0]))
         .then(number(one.bounds[2], other.bounds[2]))
         .then(number(one.bounds[3], other.bounds[3]))
+        .then(iou)
 }
 
 /// The instances in the fixed order, whatever order they were built in.
@@ -1182,63 +1193,257 @@ enum Json {
     Object(BTreeMap<String, Json>),
 }
 
-impl<'de> Deserialize<'de> for Json {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Json, D::Error> {
-        struct Reading;
+/// The most objects and lists a header holds one inside another, its own object the
+/// first (ADR 0020, "What a reader takes as JSON").
+const DEPTH_LIMIT: usize = 127;
 
-        impl<'de> Visitor<'de> for Reading {
-            type Value = Json;
+/// A header that is not JSON, strictly (ADR 0020, "What a reader takes as JSON").
+struct NotJson;
 
-            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str("a JSON value")
+/// Reads a header as JSON, strictly, by hand: what a value is never depends on how a
+/// library was built. The bytes are strict UTF-8, and then one JSON value with
+/// nothing after it but white space.
+fn json(header: &[u8]) -> Result<Json, NotJson> {
+    let text = std::str::from_utf8(header).map_err(|_| NotJson)?;
+    let mut walk = Walk {
+        bytes: text.as_bytes(),
+        at: 0,
+    };
+    let value = walk.value(0)?;
+    walk.space();
+    match walk.at == walk.bytes.len() {
+        true => Ok(value),
+        false => Err(NotJson),
+    }
+}
+
+/// A walk over the bytes of a header that are known to be UTF-8.
+struct Walk<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+impl Walk<'_> {
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.at).copied()
+    }
+
+    fn next(&mut self) -> Result<u8, NotJson> {
+        let byte = self.peek().ok_or(NotJson)?;
+        self.at += 1;
+        Ok(byte)
+    }
+
+    fn space(&mut self) {
+        while matches!(self.peek(), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+            self.at += 1;
+        }
+    }
+
+    fn word(&mut self, word: &[u8], value: Json) -> Result<Json, NotJson> {
+        match self.bytes[self.at..].starts_with(word) {
+            true => {
+                self.at += word.len();
+                Ok(value)
             }
+            false => Err(NotJson),
+        }
+    }
 
-            fn visit_unit<E>(self) -> Result<Json, E> {
-                Ok(Json::Null)
+    /// A value, inside `depth` objects and lists.
+    fn value(&mut self, depth: usize) -> Result<Json, NotJson> {
+        self.space();
+        match self.peek().ok_or(NotJson)? {
+            b'{' | b'[' if depth >= DEPTH_LIMIT => Err(NotJson),
+            b'{' => self.object(depth + 1),
+            b'[' => self.list(depth + 1),
+            b'"' => self.text().map(Json::Text),
+            b't' => self.word(b"true", Json::Flag(true)),
+            b'f' => self.word(b"false", Json::Flag(false)),
+            b'n' => self.word(b"null", Json::Null),
+            b'-' | b'0'..=b'9' => self.number(),
+            _ => Err(NotJson),
+        }
+    }
+
+    fn object(&mut self, depth: usize) -> Result<Json, NotJson> {
+        self.at += 1;
+        let mut fields = BTreeMap::new();
+        self.space();
+        if self.peek() == Some(b'}') {
+            self.at += 1;
+            return Ok(Json::Object(fields));
+        }
+        loop {
+            self.space();
+            if self.peek() != Some(b'"') {
+                return Err(NotJson);
             }
-
-            fn visit_bool<E>(self, flag: bool) -> Result<Json, E> {
-                Ok(Json::Flag(flag))
+            let name = self.text()?;
+            self.space();
+            if self.next()? != b':' {
+                return Err(NotJson);
             }
-
-            fn visit_u64<E>(self, whole: u64) -> Result<Json, E> {
-                Ok(Json::Whole(whole))
+            let value = self.value(depth)?;
+            if fields.insert(name, value).is_some() {
+                return Err(NotJson);
             }
-
-            fn visit_i64<E>(self, whole: i64) -> Result<Json, E> {
-                Ok(Json::Negative(whole))
-            }
-
-            fn visit_f64<E>(self, _: f64) -> Result<Json, E> {
-                Ok(Json::Fraction)
-            }
-
-            fn visit_str<E>(self, text: &str) -> Result<Json, E> {
-                Ok(Json::Text(text.to_owned()))
-            }
-
-            fn visit_seq<A: SeqAccess<'de>>(self, mut list: A) -> Result<Json, A::Error> {
-                let mut items = Vec::new();
-                while let Some(item) = list.next_element()? {
-                    items.push(item);
-                }
-                Ok(Json::List(items))
-            }
-
-            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Json, A::Error> {
-                let mut fields = BTreeMap::new();
-                while let Some(key) = map.next_key::<String>()? {
-                    if fields.contains_key(&key) {
-                        return Err(A::Error::custom("a field is given twice"));
-                    }
-                    let value = map.next_value()?;
-                    fields.insert(key, value);
-                }
-                Ok(Json::Object(fields))
+            self.space();
+            match self.next()? {
+                b',' => {}
+                b'}' => return Ok(Json::Object(fields)),
+                _ => return Err(NotJson),
             }
         }
+    }
 
-        deserializer.deserialize_any(Reading)
+    fn list(&mut self, depth: usize) -> Result<Json, NotJson> {
+        self.at += 1;
+        let mut items = Vec::new();
+        self.space();
+        if self.peek() == Some(b']') {
+            self.at += 1;
+            return Ok(Json::List(items));
+        }
+        loop {
+            items.push(self.value(depth)?);
+            self.space();
+            match self.next()? {
+                b',' => {}
+                b']' => return Ok(Json::List(items)),
+                _ => return Err(NotJson),
+            }
+        }
+    }
+
+    /// Four hex digits of a `\u` escape.
+    fn unit(&mut self) -> Result<u32, NotJson> {
+        let digits = self.bytes.get(self.at..self.at + 4).ok_or(NotJson)?;
+        if !digits.iter().all(u8::is_ascii_hexdigit) {
+            return Err(NotJson);
+        }
+        self.at += 4;
+        let digits = std::str::from_utf8(digits).map_err(|_| NotJson)?;
+        u32::from_str_radix(digits, 16).map_err(|_| NotJson)
+    }
+
+    /// A text, from its opening `"`. A control character written as itself, an escape
+    /// JSON has not, and a surrogate that is not half of a pair are not JSON.
+    fn text(&mut self) -> Result<String, NotJson> {
+        self.at += 1;
+        let mut text = String::new();
+        loop {
+            let start = self.at;
+            while let Some(byte) = self.peek() {
+                if byte == b'"' || byte == b'\\' || byte < 0x20 {
+                    break;
+                }
+                self.at += 1;
+            }
+            // Only whole characters are passed over: each stop is an ASCII byte.
+            text.push_str(std::str::from_utf8(&self.bytes[start..self.at]).map_err(|_| NotJson)?);
+            match self.next()? {
+                b'"' => return Ok(text),
+                b'\\' => {}
+                _ => return Err(NotJson),
+            }
+            let character = match self.next()? {
+                b'"' => '"',
+                b'\\' => '\\',
+                b'/' => '/',
+                b'b' => '\u{8}',
+                b'f' => '\u{c}',
+                b'n' => '\n',
+                b'r' => '\r',
+                b't' => '\t',
+                b'u' => {
+                    let first = self.unit()?;
+                    let code = match first {
+                        0xd800..=0xdbff => {
+                            if !self.bytes[self.at..].starts_with(b"\\u") {
+                                return Err(NotJson);
+                            }
+                            self.at += 2;
+                            let second = self.unit()?;
+                            if !(0xdc00..=0xdfff).contains(&second) {
+                                return Err(NotJson);
+                            }
+                            0x10000 + ((first - 0xd800) << 10) + (second - 0xdc00)
+                        }
+                        0xdc00..=0xdfff => return Err(NotJson),
+                        other => other,
+                    };
+                    char::from_u32(code).ok_or(NotJson)?
+                }
+                _ => return Err(NotJson),
+            };
+            text.push(character);
+        }
+    }
+
+    /// A number, as JSON writes one. A whole number with no sign, or with one and
+    /// under zero, is kept when 64 bits hold it; `-0`, and any number with a fraction
+    /// or an exponent or past 64 bits, is only a number; one outside a double's range
+    /// is not JSON.
+    fn number(&mut self) -> Result<Json, NotJson> {
+        let start = self.at;
+        let digits = |walk: &mut Walk| {
+            let from = walk.at;
+            while walk.peek().is_some_and(|byte| byte.is_ascii_digit()) {
+                walk.at += 1;
+            }
+            walk.at - from
+        };
+        let negative = self.peek() == Some(b'-');
+        if negative {
+            self.at += 1;
+        }
+        match self.peek() {
+            Some(b'0') => self.at += 1,
+            Some(b'1'..=b'9') => {
+                digits(self);
+            }
+            _ => return Err(NotJson),
+        }
+        let mut whole = true;
+        if self.peek() == Some(b'.') {
+            self.at += 1;
+            whole = false;
+            if digits(self) == 0 {
+                return Err(NotJson);
+            }
+        }
+        if matches!(self.peek(), Some(b'e' | b'E')) {
+            self.at += 1;
+            whole = false;
+            if matches!(self.peek(), Some(b'+' | b'-')) {
+                self.at += 1;
+            }
+            if digits(self) == 0 {
+                return Err(NotJson);
+            }
+        }
+        let written = std::str::from_utf8(&self.bytes[start..self.at]).map_err(|_| NotJson)?;
+        if whole {
+            match negative {
+                false => {
+                    if let Ok(value) = written.parse::<u64>() {
+                        return Ok(Json::Whole(value));
+                    }
+                }
+                true => {
+                    if let Ok(value) = written.parse::<i64>()
+                        && value < 0
+                    {
+                        return Ok(Json::Negative(value));
+                    }
+                }
+            }
+        }
+        match written.parse::<f64>() {
+            Ok(value) if value.is_finite() => Ok(Json::Fraction),
+            _ => Err(NotJson),
+        }
     }
 }
 
@@ -1485,7 +1690,7 @@ fn parse(header: &[u8]) -> Result<Message, Refused> {
             "a header is not one JSON object with each field once",
         )
     };
-    let Ok(Json::Object(fields)) = serde_json::from_slice::<Json>(header) else {
+    let Ok(Json::Object(fields)) = json(header) else {
         return Err(not_json());
     };
     let message = match peek(&fields, "type")?.as_str() {

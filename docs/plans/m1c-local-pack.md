@@ -766,6 +766,7 @@ last in the core's `tests/it/capability/segment.rs`:
 
 - `proto::every_vector_parses_to_what_it_states_and_is_written_back_byte_for_byte`
 - `proto::a_hello_of_another_version_is_refused_and_says_both_versions`
+- `proto::a_header_is_strict_json_in_strict_utf8_and_each_edge_of_it_has_one_reason`
 - `proto::a_header_or_a_payload_over_its_bound_is_refused_before_it_is_read`
 - `proto::a_results_header_is_bounded_from_its_request_and_holds_the_most_instances_adr_0006_allows`
 - `proto::a_load_carries_at_most_32_settings_and_one_more_is_refused`
@@ -790,6 +791,20 @@ A setting's text may hold no `/` and no `\` on the wire, which the config allows
 P6a refuses such a setting where the config is read. Both carry-over rows keep a part:
 what a run keeps of a result's diagnostics and predicted IoU is P3b's, with the
 supervisor that first reads a worker through the codec.
+Notes for P2, from what the Rust codec decides (ADR 0020, "What a reader takes as JSON"):
+
+- Decode the header as strict UTF-8 before parsing it: a lone surrogate, encoded or
+  escaped, is `not_json`.
+- Refuse NaN, the infinities, a number outside a double's range, duplicate keys, JSON
+  nested 128 deep and a byte-order mark explicitly, as `not_json`: Python's `json`
+  accepts each.
+- `True` passes a Python check for an `int`, and `-0` parses as the int 0: refuse both
+  where a whole number is asked (`bad_value`).
+- The worker's writer sorts instances into the fixed order, whatever order an adapter
+  gives them in.
+- It cleans an adapter's texts (diagnostics, events, a fault's sentence) to the
+  characters a fault's sentence may hold before it writes them.
+- It cuts diagnostics at about 63 KiB, so a result never meets its header's bound.
 
 ### P2. The Python worker, with fake models
 
@@ -875,6 +890,12 @@ tests and the line of D7). **Size:** medium.
 - `worker::a_request_that_could_not_be_written_is_not_sent_and_one_written_and_unanswered_is_unresolved`
 
 **Carry-over:** a fault's sentence; `not_sent` only when no byte left. **Size:** medium.
+**Notes from P1** for the supervisor, which the codec leaves to it:
+
+- Refuse a `request` frame from a worker before its payload is read: the codec reads
+  one whole (up to 200 MB of pixels) before the supervisor answers it `unsupported`.
+- A request the codec refuses to write (`header_too_large`, a batch of phrases full of
+  characters written as two or six) is a fault before anything is sent.
 
 ### P4. Queue, cancellation, deadline, restart
 

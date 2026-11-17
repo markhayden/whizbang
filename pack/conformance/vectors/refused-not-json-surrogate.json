@@ -1,0 +1,7 @@
+{
+  "frame": "000000207b2274797065223a2263616e63656c222c226964223a22725c7564383030227d",
+  "name": "refused-not-json-surrogate",
+  "open": [],
+  "refused": "not_json",
+  "says": "an escaped lone surrogate, which names no character"
+}

@@ -92,6 +92,38 @@ byte, and two codecs cannot differ in bytes while they agree in meaning.
 A reader checks this by writing what it read and comparing the bytes: a header that
 parses and is not its own canonical writing is refused (`not_canonical`).
 
+### What a reader takes as JSON
+
+A header is decoded as strict UTF-8 and then parsed as JSON (RFC 8259), strictly. Each
+of these is refused as `not_json`, before any field is looked at, though a lenient
+reader would take it and refuse it later for another reason, or not at all:
+
+- A byte-order mark (`EF BB BF`) before the object.
+- Bytes that strict UTF-8 does not allow, among them a surrogate encoded as bytes
+  (`ED A0 80` to `ED BF BF`).
+- A `\u` escape of a surrogate that is not one half of a pair (`\ud800` alone, or
+  followed by anything but a `\udc00` to `\udfff`, and `\udc00` to `\udfff` alone): it
+  names no character. A pair is JSON and names one character, which the canonical
+  writing writes as itself, so a header that escapes one is not its canonical writing.
+- A number outside a double's range, such as `1e400` or `-1e400`.
+- Objects and lists nested 128 deep, counting the header's own object as the first. A
+  reader takes 127; no message of `pack/1` is deeper than 4.
+- A field given twice in one object.
+- `NaN`, `Infinity`, `-Infinity`, and anything else that is not a JSON value: a number
+  JSON's grammar does not write (`01`, `1.`, `.5`, `+1`, `1e`), an escape it has not
+  (`\x`), a comma with nothing after it, a key that is no text.
+- A control character (under U+0020) written as itself inside a text.
+
+And among the values JSON has:
+
+- `-0` is not a whole number. Where a whole number is asked (an entry's width, a
+  query's place, a setting's value, any count) it is `bad_value`, as `1.0` and `1e2`
+  are; it is not taken as 0 and then refused as `not_canonical`. Nor are `true` and
+  `false` whole numbers.
+- A number with a fraction may be -0 (`"8000000000000000"`) wherever its field takes 0:
+  a score, a predicted IoU, an edge of a box, a coordinate of a point. It is read as -0
+  and written back with its own bits; 0 and -0 are two writings of two numbers.
+
 ### The messages
 
 Six, told apart by `type`. Every message has an `id`: 1 to 64 characters, a lower-case
@@ -166,13 +198,22 @@ An instance is `{"query":…,"score":…,"iou":…,"box":[…],"plane":…}`:
 - `plane` is a payload's entry for the instance's plane.
 
 **The fixed order of an answer.** Best score first; among equal scores, by `query`; then
-by the box's top, then its left, then its right, then its bottom; then by the plane's
-bytes, the lesser first. Numbers are compared as numbers, so 0 and -0 are equal. The
-writer sorts, whatever order the answer was built in, and the reader refuses a result
-whose instances are in another order (`out_of_order`): by what the header shows before
-a plane is read, and by the planes once they are. This is rascal's one order (`order`:
-score, query, top, left), made total. Among the instances of one query it is best score
-first.
+by the box's top, then its left, then its right, then its bottom; then by the predicted
+IoU, `null` first and then the lesser first; then by the plane's bytes, the lesser
+first. Numbers with a fraction are compared by IEEE 754's total order, which on the
+finite numbers a header holds is their value, with -0 less than 0: so among scores,
+which go best first, 0 comes before -0, and among edges and predicted IoUs -0 comes
+before 0. (It is the order of the 64 bits read as a whole number with a sign, once the
+63 lower bits of one under zero are flipped.) The order is total: two instances equal
+in every key are equal in every byte a result holds of them, so the order the writer
+gives is the only one a reader takes. The predicted IoU comes before the plane's bytes
+so that every key but the last is in the header: the reader holds those before a plane
+is read, and the header it writes again to check its canonical writing, which has no
+planes yet, is in the same order. The writer sorts, whatever order the answer was built
+in, and the reader refuses a result whose instances are in another order
+(`out_of_order`): by what the header shows before a plane is read, and by the planes
+once they are. This is rascal's one order (`order`: score, query, top, left), made
+total. Among the instances of one query it is best score first.
 
 **`event`.** Fields: `type`, `id`, `text`. Something a call says before it ends: `id` is
 an open request's, and `text` is a text of the protocol, not empty.
@@ -263,7 +304,7 @@ the name of another version, and that only when it is a plain name.
 |---|---|
 | `truncated` | The input ended, or failed, inside a frame |
 | `header_too_large` | A header's stated length is 0 or over its bound |
-| `not_json` | The header is not UTF-8, is not one JSON object, or gives a field twice |
+| `not_json` | The header is not strict UTF-8, is not one JSON object, or gives a field twice: each case of "What a reader takes as JSON" |
 | `unknown_message` | `type` is none of the six |
 | `version` | A hello states another version. The sentence names both |
 | `unknown_kind` | A request or a result is of a kind `pack/1` has not |
@@ -281,11 +322,17 @@ the name of another version, and that only when it is a plain name.
 
 The rules are looked at in this order: the header's length; that it is JSON; `type`;
 for a hello, `version`, before any other field, since another version may have other
-fields; `kind`; in each object, a field that is not its own, then one that is missing;
-the values, and with them the counts and the orders a header shows; the canonical
-writing; what the reader has open; and then each payload's length. A frame that breaks
-rules of two of these steps is refused for the earlier step's; among the values of one
-header, which is named is the reader's own. Each refusal vector breaks one rule.
+fields, and then `role`, which says which fields the hello has; for a request or a
+result, `kind`, which says the same of it; in each object, a field that is not its own,
+then one that is missing; the values, and with them the counts and the orders a header
+shows; the canonical writing; what the reader has open; and then each payload's length.
+`type`, `version`, `role` and `kind` are each `missing_field` when absent and
+`bad_value` when they are no text; a `role` that is neither name is `bad_value`, so a
+hello with such a role and a field that is no hello's is refused for its role. A frame
+that breaks rules of two of these steps is refused for the earlier step's; among the
+values of one header, which is named is the reader's own. Each refusal vector breaks one
+rule, or, where no frame can break that rule alone (JSON nested too deep, a number out
+of range), breaks it at an earlier step than the other.
 
 After a refusal the reader cannot know where the next frame starts, so the conversation
 is over: the side that refused sends an `error` with the conversation's id, when it can
