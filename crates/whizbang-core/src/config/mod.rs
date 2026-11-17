@@ -73,6 +73,15 @@ pub const VARIABLE_LIMIT: usize = 64;
 /// The largest cap of one call: a million US dollars, in millionths.
 pub const CALL_CAP_LIMIT_MICROS: u64 = 1_000_000 * 1_000_000;
 
+/// The most bytes of the models directory's path, as a config names it.
+pub const MODELS_DIR_LIMIT: usize = 1024;
+
+/// The least rate of a download, in kibibytes a second, when no config gives one.
+pub const DOWNLOAD_LEAST_KIB_PER_SECOND: u64 = 256;
+
+/// The most a config may give as the least rate of a download: a gibibyte a second.
+pub const DOWNLOAD_LEAST_KIB_LIMIT: u64 = 1024 * 1024;
+
 /// The capabilities, in the order of their names' bytes: the order a config's digest
 /// takes them in.
 const CAPABILITIES: [Capability; 3] = [Capability::Fill, Capability::Judge, Capability::Segment];
@@ -84,6 +93,10 @@ pub struct Config {
     backends: BTreeMap<&'static str, Offered>,
     call_cap_micros: Option<u64>,
     recipients: BTreeMap<String, Approval>,
+    /// `[models] dir`, as it is written.
+    models_dir: Option<String>,
+    /// `[models] download_least_kib_per_second`.
+    download_least_kib: Option<u64>,
 }
 
 /// The backends of one capability.
@@ -160,6 +173,20 @@ impl Config {
             .map(|(name, recipient)| (name.as_str(), recipient))
     }
 
+    /// Where the models directory is, when the file says: `[models] dir`, an absolute
+    /// path as it is written. A command's flag is asked first, and the platform's
+    /// data folder serves when neither says (ADR 0011, "What the file holds").
+    pub fn models_dir(&self) -> Option<&std::path::Path> {
+        self.models_dir.as_deref().map(std::path::Path::new)
+    }
+
+    /// The least rate of a download in kibibytes a second, when the file gives one:
+    /// `[models] download_least_kib_per_second`. Whoever makes the download client
+    /// gives it this, or [`DOWNLOAD_LEAST_KIB_PER_SECOND`].
+    pub fn download_least_kib_per_second(&self) -> Option<u64> {
+        self.download_least_kib
+    }
+
     /// The name of every variable the file says a credential is in.
     pub fn variables(&self) -> BTreeSet<&str> {
         self.backends
@@ -182,7 +209,10 @@ impl Config {
     ///    boolean, or 3 and a text;
     /// 2. the cap of one call in millionths (may be absent);
     /// 3. the recipients, each as its name, its origin, its account (may be absent),
-    ///    its upstreams, its classes, and whether it may be probed.
+    ///    its upstreams, its classes, and whether it may be probed;
+    /// 4. only when the `models` table gives a key: 1, the directory (may be absent)
+    ///    and the least rate of a download (may be absent). A file that gives neither
+    ///    hashes as one did before the table had keys.
     ///
     /// No value of a credential is in it: a config holds none.
     pub fn digest(&self) -> Digest {
@@ -253,6 +283,17 @@ impl Config {
                 fields.bytes(class.as_bytes());
             }
             fields.unsigned(u64::from(recipient.probe));
+        }
+        if self.models_dir.is_some() || self.download_least_kib.is_some() {
+            fields.unsigned(1);
+            optional(&mut fields, self.models_dir.as_deref());
+            match self.download_least_kib {
+                Some(rate) => {
+                    fields.unsigned(1);
+                    fields.unsigned(rate);
+                }
+                None => fields.unsigned(0),
+            }
         }
         fields.finish()
     }
@@ -358,6 +399,8 @@ impl std::fmt::Debug for Config {
             .field("backends", &backends)
             .field("call_cap", &self.call_cap_micros.is_some())
             .field("recipients", &self.recipients.len())
+            .field("models_dir", &self.models_dir.is_some())
+            .field("download_least", &self.download_least_kib.is_some())
             .finish()
     }
 }

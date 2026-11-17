@@ -24,7 +24,8 @@ mod staging;
 mod status;
 
 use whizbang_backends::models::{
-    CatalogueFile, Entry, EntryParts, FileName, Licence, ModelName, Refused, Revision,
+    CatalogueFile, Entry, EntryParts, FileName, Licence, ModelName, Platform, Refused, Revision,
+    Title,
 };
 use whizbang_core::contract::Secrets;
 use whizbang_core::egress::{Address, Origin};
@@ -83,9 +84,11 @@ pub fn file(name: &str, size: u64, of: &[u8]) -> CatalogueFile {
 pub fn parts(name: &str) -> EntryParts {
     EntryParts {
         name: model(name),
+        title: Title::new("Tiny, for tests", &none()).unwrap(),
         revision: revision("2026-11.1"),
         adapter: model("owlv2-sam2"),
         licence: licence("Apache-2.0"),
+        platforms: vec![Platform::MacosArm64, Platform::LinuxX86_64],
         features: vec!["phrase".to_owned(), "box".to_owned()],
         origins: vec![origin("https://weights.example.org")],
         files: vec![

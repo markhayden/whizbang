@@ -2,7 +2,7 @@
 //!
 //! A local backend, one that names no recipient, answers with a model that is on this
 //! machine or is not. An [`Inventory`] says which: the model is ready, and then under
-//! which installation; or it is not, for one of four reasons. A roster over an
+//! which installation; or it is not, for one of five reasons. A roster over an
 //! inventory ([`InstalledRoster`]) resolves a call as a [`Roster`] does and then asks
 //! the inventory about the one backend that was picked, when it is local. A model that
 //! is not ready makes its backend not ready, with the reason, and no other backend is
@@ -190,7 +190,7 @@ impl std::fmt::Display for Installation {
 }
 
 /// Why a local model is not ready. Each is fixed words: none holds a name, a path or
-/// anything read from a disk. There is no fifth: an inventory that cannot tell, or
+/// anything read from a disk. There is no sixth: an inventory that cannot tell, or
 /// cannot read what it found, says [`Unready::Damaged`], never ready.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unready {
@@ -204,6 +204,9 @@ pub enum Unready {
     Damaged,
     /// The catalogue does not hold the model.
     NotInCatalogue,
+    /// The catalogue holds the model, and this build has no adapter that runs it:
+    /// nothing this build could install would make it ready.
+    NoAdapter,
 }
 
 impl std::fmt::Display for Unready {
@@ -213,6 +216,7 @@ impl std::fmt::Display for Unready {
             Unready::OutOfDate => "its installation is out of date",
             Unready::Damaged => "its installation is damaged",
             Unready::NotInCatalogue => "it is not in the catalogue",
+            Unready::NoAdapter => "this build has no adapter for it",
         })
     }
 }

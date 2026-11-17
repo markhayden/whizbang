@@ -17,8 +17,8 @@ use super::refused::shown;
 use super::settings::setting_name;
 use super::{
     Approval, BACKENDS_LIMIT, Backend, CALL_CAP_LIMIT_MICROS, CAPABILITIES, CONFIG_BYTES_LIMIT,
-    Config, ConfigRefused, Offered, RECIPIENTS_LIMIT, SETTING_TEXT_LIMIT, SETTINGS_LIMIT, Setting,
-    TEXT_LIMIT, VARIABLE_LIMIT,
+    Config, ConfigRefused, DOWNLOAD_LEAST_KIB_LIMIT, MODELS_DIR_LIMIT, Offered, RECIPIENTS_LIMIT,
+    SETTING_TEXT_LIMIT, SETTINGS_LIMIT, Setting, TEXT_LIMIT, VARIABLE_LIMIT,
 };
 use crate::contract::record::SETTING_NAME_LIMIT;
 use crate::contract::{Secrets, text};
@@ -377,11 +377,15 @@ fn config(mut table: Table, secrets: &Secrets) -> Read<Config> {
     }
     if let Some(value) = table.remove("models") {
         let at = At::top("models", secrets);
-        if let Some(key) = at.table(value)?.keys().next() {
-            return Err(at
-                .then(key)
-                .refuse("is not known; the table `models` has no key yet"));
+        let mut models = at.table(value)?;
+        if let Some(value) = models.remove("dir") {
+            config.models_dir = Some(models_dir(&at.then("dir"), value)?);
         }
+        if let Some(value) = models.remove("download_least_kib_per_second") {
+            let at = at.then("download_least_kib_per_second");
+            config.download_least_kib = Some(least_rate(&at, &value)?);
+        }
+        at.unknown(&models, "dir and download_least_kib_per_second")?;
     }
     if table.contains_key("tools") {
         return Err(At::top("tools", secrets)
@@ -391,6 +395,35 @@ fn config(mut table: Table, secrets: &Secrets) -> Read<Config> {
         Some(key) => Err(At::top(key, secrets)
             .refuse("is not known; the tables are backends, spend, egress and models")),
         None => Ok(config),
+    }
+}
+
+/// Where the models directory is: an absolute path, as it is written. Nothing of it
+/// is shown by a refusal, and nothing is asked of the disk.
+fn models_dir(at: &At, value: Value) -> Read<String> {
+    let text = at.text(value)?;
+    if !text.starts_with('/') || text.chars().any(char::is_control) {
+        return Err(at.refuse(
+            "must be an absolute path: it starts with / and holds no control character; \
+             a ~ is not read as a home folder; what is written there is not shown",
+        ));
+    }
+    if text.len() > MODELS_DIR_LIMIT {
+        return Err(at.refuse(format!("is longer than {MODELS_DIR_LIMIT} bytes")));
+    }
+    Ok(text)
+}
+
+/// The least rate of a download: a whole number of kibibytes a second, one at least.
+fn least_rate(at: &At, value: &Value) -> Read<u64> {
+    let Value::Integer(rate) = value else {
+        return Err(at.wrong("a whole number", value));
+    };
+    match u64::try_from(*rate) {
+        Ok(rate) if (1..=DOWNLOAD_LEAST_KIB_LIMIT).contains(&rate) => Ok(rate),
+        _ => Err(at.refuse(format!(
+            "must be from 1 to {DOWNLOAD_LEAST_KIB_LIMIT}: kibibytes a second"
+        ))),
     }
 }
 

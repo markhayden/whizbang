@@ -479,50 +479,72 @@ fn new_file(path: &Path) -> io::Result<std::fs::File> {
     options.open(path)
 }
 
-/// The user this process runs as, as the number the system knows it by: the owner of
-/// a file the process has just made. The standard library does not say who the
-/// process runs as, and the workspace has no crate and no `unsafe` that would; the
-/// system gives a new file to whoever made it. The file is made in the system's
-/// temporary folder under a name that was free, following no link, owner-only and
-/// empty, and is removed at once; it is asked once in a process.
+/// What an error of the file system carries when the user this process runs as
+/// could not be learned ([`Fs::who_may_write`]). It holds no path and no number. Its
+/// error is never of the kind "not found", which one who opens a folder reads as a
+/// folder that is still to be made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UserUnknown;
+
+impl UserUnknown {
+    /// The error that carries this.
+    pub fn error() -> io::Error {
+        io::Error::other(UserUnknown)
+    }
+
+    /// Whether this error carries it.
+    pub fn is(error: &io::Error) -> bool {
+        error
+            .get_ref()
+            .is_some_and(|inner| inner.is::<UserUnknown>())
+    }
+}
+
+impl std::fmt::Display for UserUnknown {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the user this process runs as could not be learned")
+    }
+}
+
+impl std::error::Error for UserUnknown {}
+
+/// The user this process runs as, as the number the system knows it by. The standard
+/// library does not say who the process runs as, and the workspace has no crate and
+/// no `unsafe` that would. The system gives what a process makes to the user it runs
+/// as, so this is the owner of something the process has just made: one end of a
+/// pair of connected sockets, which has no name anywhere, touches no folder and is
+/// closed at once. That it is the owner of a file the process makes is held on
+/// macOS and on Linux by
+/// `fs::the_real_file_system_says_that_a_folder_of_another_user_is_not_this_users`.
+/// It is asked once in a process. A failure is [`UserUnknown`], whatever the system
+/// said.
 #[cfg(unix)]
 fn this_user() -> io::Result<u32> {
+    use std::os::fd::OwnedFd;
     use std::os::unix::fs::MetadataExt;
+    use std::os::unix::net::UnixStream;
     use std::sync::OnceLock;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
     static USER: OnceLock<u32> = OnceLock::new();
-    static NEXT: AtomicU64 = AtomicU64::new(0);
     if let Some(user) = USER.get() {
         return Ok(*user);
     }
-    let folder = std::env::temp_dir();
-    // A name that is taken is another's file, and is left: the next name is tried, a
-    // bounded count of times.
-    for _ in 0..16 {
-        let path = folder.join(format!(
-            "whizbang-user-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        match new_file(&path) {
-            Ok(file) => {
-                let user = file.metadata().map(|made| made.uid());
-                let _ = std::fs::remove_file(&path);
-                let user = user?;
-                return Ok(*USER.get_or_init(|| user));
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-    }
-    Err(io::ErrorKind::AlreadyExists.into())
+    let unknown = |_: io::Error| UserUnknown::error();
+    let (end, _other) = UnixStream::pair().map_err(unknown)?;
+    // Read through a file's metadata: the system is asked about the open socket
+    // itself, by no name.
+    let end = std::fs::File::from(OwnedFd::from(end));
+    let user = end.metadata().map_err(unknown)?.uid();
+    Ok(*USER.get_or_init(|| user))
 }
 
 /// [`Fs::who_may_write`] for the real file system.
 #[cfg(unix)]
 fn who_may_write(path: &Path) -> io::Result<Writers> {
     use std::os::unix::fs::MetadataExt;
+    // Before the folder is looked at: one who cannot learn its user is told so, and
+    // never that a folder is not there.
+    let user = this_user()?;
     let found = std::fs::metadata(path)?;
     if !found.is_dir() {
         return Err(io::Error::new(
@@ -531,7 +553,7 @@ fn who_may_write(path: &Path) -> io::Result<Writers> {
         ));
     }
     Ok(Writers {
-        owner_is_this_user: found.uid() == this_user()?,
+        owner_is_this_user: found.uid() == user,
         group: found.mode() & 0o020 != 0,
         anyone: found.mode() & 0o002 != 0,
     })

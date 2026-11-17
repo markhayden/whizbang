@@ -30,12 +30,13 @@ const TINY: &str = "tiny-judge";
 const SMALL: &str = "small-judge";
 const HOSTED: &str = "hosted-judge";
 
-/// The four reasons, each with its words.
-const REASONS: [(Unready, &str); 4] = [
+/// The five reasons, each with its words.
+const REASONS: [(Unready, &str); 5] = [
     (Unready::NotInstalled, "it is not installed"),
     (Unready::OutOfDate, "its installation is out of date"),
     (Unready::Damaged, "its installation is damaged"),
     (Unready::NotInCatalogue, "it is not in the catalogue"),
+    (Unready::NoAdapter, "this build has no adapter for it"),
 ];
 
 fn local(model: &str, features: &[&str]) -> Declaration {

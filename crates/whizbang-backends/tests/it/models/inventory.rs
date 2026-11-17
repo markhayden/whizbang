@@ -312,6 +312,57 @@ fn a_model_in_the_catalogue_is_ready_when_installed_and_not_installed_otherwise(
 }
 
 #[test]
+fn a_model_whose_adapter_this_build_lacks_is_not_ready_for_that_reason_installed_or_not() {
+    let scratch = Scratch::new("inventory-no-adapter");
+    let root = scratch.path();
+    // The catalogue holds the model, and the build has an adapter, of another name
+    // than the one the entry gives.
+    let lacking = || {
+        Installations::of(
+            ModelsDir::at(Arc::new(RealFs), root),
+            Catalogue::new(vec![second()], &none()).unwrap(),
+            [(model("another-adapter"), adapter())],
+            none(),
+        )
+    };
+    let why = Installed::NotReady(Unready::NoAdapter);
+    let said = format!("{NOT_READY}this build has no adapter for it");
+    // Not installed: it is not said to be "not installed", which an install would
+    // mend; no install by this build would. Nothing was looked for on the disk,
+    // and nothing made.
+    assert_eq!(lacking().look("tiny"), why);
+    assert_eq!(World::over(lacking(), "tiny").why_not(), said);
+    assert!(std::fs::read_dir(root).unwrap().next().is_none());
+    // Installed, by a build that had the adapter: the same reason, where this said
+    // out of date.
+    let record = installed(root, &second());
+    assert_eq!(inventory(root).look("tiny"), ready(&record));
+    assert_eq!(lacking().look("tiny"), why);
+    assert_eq!(World::over(lacking(), "tiny").why_not(), said);
+    // And damaged on the disk, the same: what is there is not read for a model no
+    // adapter here could run.
+    std::fs::write(tiny(root).join("CURRENT"), b"not a pointer").unwrap();
+    assert_eq!(
+        inventory(root).look("tiny"),
+        Installed::NotReady(Unready::Damaged)
+    );
+    assert_eq!(lacking().look("tiny"), why);
+    // A build with no adapter at all, which is this build until its first.
+    let none_at_all = Installations::of(
+        ModelsDir::at(Arc::new(RealFs), root),
+        Catalogue::new(vec![second()], &none()).unwrap(),
+        [],
+        none(),
+    );
+    assert_eq!(none_at_all.look("tiny"), why);
+    // A model the catalogue does not hold is still that, whatever adapters there are.
+    assert_eq!(
+        lacking().look("sam3"),
+        Installed::NotReady(Unready::NotInCatalogue)
+    );
+}
+
+#[test]
 fn an_installation_whose_recorded_catalogue_or_adapter_revision_is_not_the_current_one_is_prepared_as_out_of_date()
  {
     let scratch = Scratch::new("inventory-revisions");
@@ -332,17 +383,6 @@ fn an_installation_whose_recorded_catalogue_or_adapter_revision_is_not_the_curre
     // date as a "newer" one is.
     let world = World::over(inventory_of(root, &first(), &adapter()), "tiny");
     assert_eq!(world.why_not(), said);
-    // The build has no adapter of the name the entry gives: no revision is current.
-    let no_adapter = Installations::of(
-        ModelsDir::at(Arc::new(RealFs), root),
-        Catalogue::new(vec![second()], &none()).unwrap(),
-        [(model("another-adapter"), adapter())],
-        none(),
-    );
-    assert_eq!(
-        no_adapter.look("tiny"),
-        Installed::NotReady(Unready::OutOfDate)
-    );
     // The entry names another adapter at the same revisions, or other files: what
     // would be installed now is not what is installed.
     let mut other = parts("tiny");

@@ -8,7 +8,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use whizbang_backends::models::{Installations, Lease};
+use whizbang_backends::models::{
+    Catalogue, Installations, Lease, ModelName, ModelsDir, OpenRefused, Revision,
+};
 use whizbang_core::artifact::Contents;
 use whizbang_core::capability::{Inventory, NoInventory};
 use whizbang_core::config::{Config, Credentials, Files, Kinds, Offers};
@@ -51,6 +53,171 @@ pub fn kinds() -> Kinds {
     Kinds::new()
 }
 
+/// The catalogue this build ships (ADR 0017, "The catalogue"): the models it can
+/// install. It holds none until the first model's entry is written (plan 1C, task
+/// N5), so the inventory of it reads no directory, and none is opened or made.
+pub fn catalogue() -> Result<Catalogue, String> {
+    Catalogue::new(Vec::new(), &Secrets::none()).map_err(|refused| refused.to_string())
+}
+
+/// The adapters this build has, each with the revision it states of itself: none.
+/// A model whose adapter is not here is not ready, and says so (ADR 0017, "The
+/// inventory").
+pub fn adapters() -> Vec<(ModelName, Revision)> {
+    Vec::new()
+}
+
+/// The models directory in the platform's data folder for whizbang (ADR 0017, "Where
+/// the directory is"), from what the environment says, which whoever calls this
+/// read: on macOS `Library/Application Support/whizbang/models` under the home
+/// folder; elsewhere `whizbang/models` under the data folder `XDG_DATA_HOME` names,
+/// or under `.local/share` of the home folder when it names none. A folder the
+/// environment names is taken only when it is an absolute path; with none there is
+/// no such directory, and nothing is guessed.
+///
+/// It reads nothing itself: not the environment, and not the disk. The binary's
+/// `main` gives it this process's environment, and nothing else does
+/// (`wired::only_main_reads_where_the_platforms_data_folder_is`), so no test is
+/// pointed at the data folder of whoever runs it.
+pub fn platform_models_dir(
+    macos: bool,
+    home: Option<&std::ffi::OsStr>,
+    xdg_data_home: Option<&std::ffi::OsStr>,
+) -> Option<PathBuf> {
+    fn absolute(folder: Option<&std::ffi::OsStr>) -> Option<&Path> {
+        folder.map(Path::new).filter(|folder| folder.is_absolute())
+    }
+    let data = if macos {
+        absolute(home)?.join("Library").join("Application Support")
+    } else {
+        match absolute(xdg_data_home) {
+            Some(data) => data.to_owned(),
+            None => absolute(home)?.join(".local").join("share"),
+        }
+    };
+    Some(data.join("whizbang").join("models"))
+}
+
+/// Which of the three said where the models directory is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Said {
+    /// The command's flag, `--models-dir`.
+    Flag,
+    /// The config's `[models] dir`.
+    Config,
+    /// Neither: the platform's data folder.
+    Platform,
+}
+
+/// Where the models directory is (ADR 0017, "Where the directory is"): what the
+/// command's flag says, then what the config says, then the platform's data
+/// folder; and nothing when none of the three says.
+pub fn models_dir<'a>(
+    flag: Option<&'a Path>,
+    config: Option<&'a Path>,
+    platform: Option<&'a Path>,
+) -> Option<(Said, &'a Path)> {
+    let flag = flag.map(|dir| (Said::Flag, dir));
+    let config = config.map(|dir| (Said::Config, dir));
+    flag.or(config)
+        .or(platform.map(|dir| (Said::Platform, dir)))
+}
+
+/// What says where the platform's models directory is, when it is asked: asked at
+/// most once, and only when neither a flag nor a config named a directory that is
+/// about to be opened.
+pub type Platform = Arc<dyn Fn() -> Option<PathBuf> + Send + Sync>;
+
+/// The models a command's executor is built over: a catalogue, the adapters of the
+/// build, and what the command line and the machine say of where the models
+/// directory is. What `{:?}` prints is counts and whether each place is named: no
+/// path and no name.
+#[derive(Clone)]
+pub struct Models {
+    catalogue: Catalogue,
+    adapters: Vec<(ModelName, Revision)>,
+    flag: Option<PathBuf>,
+    platform: Option<Platform>,
+}
+
+impl Models {
+    /// The models of this build: the catalogue it ships ([`catalogue`]) under the
+    /// adapters it has ([`adapters`]). What the binary gives.
+    pub fn shipped() -> Result<Models, String> {
+        Ok(Models::of(catalogue()?, adapters()))
+    }
+
+    /// The models of this catalogue under these adapters: what a test gives.
+    pub fn of(catalogue: Catalogue, adapters: Vec<(ModelName, Revision)>) -> Models {
+        Models {
+            catalogue,
+            adapters,
+            flag: None,
+            platform: None,
+        }
+    }
+
+    /// The same, with the directory the command's flag names (`--models-dir`), or
+    /// none.
+    pub fn flag(mut self, dir: Option<&Path>) -> Models {
+        self.flag = dir.map(Path::to_owned);
+        self
+    }
+
+    /// The same, with what says where the models directory of the platform's data
+    /// folder is ([`platform_models_dir`]). **It is not asked here, and not unless
+    /// it is needed:** only when a directory is about to be opened and neither the
+    /// flag nor the config named one ([`Over::installed`]). A command that opens no
+    /// models directory never learns where the platform's is.
+    pub fn platform(mut self, says: Platform) -> Models {
+        self.platform = Some(says);
+        self
+    }
+}
+
+impl std::fmt::Debug for Models {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Models")
+            .field("models", &self.catalogue.entries().len())
+            .field("adapters", &self.adapters.len())
+            .field("flag", &self.flag.is_some())
+            .field("platform", &self.platform.is_some())
+            .finish()
+    }
+}
+
+/// A models directory that was opened, and the inventory over it.
+#[derive(Clone)]
+struct Opened {
+    dir: ModelsDir,
+    catalogue: Catalogue,
+    adapters: Vec<(ModelName, Revision)>,
+    installations: Arc<Installations>,
+}
+
+impl Opened {
+    /// The inventory of this directory, told these secrets.
+    fn knowing(
+        dir: ModelsDir,
+        catalogue: Catalogue,
+        adapters: Vec<(ModelName, Revision)>,
+        secrets: &Secrets,
+    ) -> Opened {
+        let installations = Installations::of(
+            dir.clone(),
+            catalogue.clone(),
+            adapters.clone(),
+            secrets.clone(),
+        );
+        Opened {
+            dir,
+            catalogue,
+            adapters,
+            installations: Arc::new(installations),
+        }
+    }
+}
+
 /// What this build's executor is built over, beside its actions and its store: the
 /// config file and its env file, as the command line names them, the kinds of
 /// backend, and the secrets it is told of from the start. What `{:?}` prints is
@@ -62,7 +229,7 @@ pub struct Over {
     env: Option<PathBuf>,
     kinds: Kinds,
     secrets: Secrets,
-    installed: Option<Arc<Installations>>,
+    installed: Option<Opened>,
 }
 
 impl Over {
@@ -99,21 +266,137 @@ impl Over {
     /// config that holds one (`Files::knowing`). Nothing else gives either its
     /// secrets, so the two never know two sets (ADR 0011, "The source over both
     /// files").
+    ///
+    /// **And to the inventory,** when there is one ([`Over::installed`]): it is made
+    /// again here, over the same directory, told these. So the inventory and the
+    /// executor are told one set whichever of the two is given first
+    /// (`wired::a_secret_the_executor_is_told_of_is_refused_as_a_models_name_by_the_binarys_inventory`).
     pub fn knowing(mut self, secrets: Secrets) -> Over {
         self.secrets = secrets;
+        if let Some(opened) = self.installed.take() {
+            let Opened {
+                dir,
+                catalogue,
+                adapters,
+                ..
+            } = opened;
+            self.installed = Some(Opened::knowing(dir, catalogue, adapters, &self.secrets));
+        }
         self
     }
 
-    /// The same, with what is installed in a models directory (ADR 0017, "The
-    /// inventory"): the inventory a local backend's model is looked up in, and the
-    /// holds a lease is taken from. The inventory is told its secrets by whoever
-    /// makes it. No command names a models directory yet: the catalogue that an
-    /// inventory is of comes with the first local model (checkpoint 1C), so the
-    /// binary gives none and a test gives one over a scratch folder.
-    pub fn installed(mut self, installed: Arc<Installations>) -> Over {
-        self.installed = Some(installed);
-        self
+    /// The same, with what is installed in the models directory of these models
+    /// (ADR 0017, "The inventory", "Where the directory is"): the inventory a local
+    /// backend's model is looked up in, and the holds a lease is taken from. It is
+    /// given after the config ([`Over::config`]), which may say where the directory
+    /// is.
+    ///
+    /// - **The directory is the flag's, then the config's `[models] dir`, then the
+    ///   platform's** ([`models_dir`]). The config file is read here, once and by
+    ///   itself, for that one key: a directory named in it afterwards is not seen
+    ///   by an executor that is already built.
+    /// - **It is opened by the opening that asks whose it is** (`ModelsDir::open`),
+    ///   and by no other way. That opening makes the directory's own folder and no
+    ///   folder above it; here, **the folders above the platform's are made**, for
+    ///   their owner only, since nobody made a data folder for whizbang before its
+    ///   first use. The folders above one a person named are not made: a path
+    ///   written wrong is said, not made.
+    /// - **The inventory is told the secrets this was told** ([`Over::knowing`]), and
+    ///   no others: nobody else gives the inventory of an executor its secrets.
+    /// - **The platform's is not even worked out unless it is the one:** what says
+    ///   where it is ([`Models::platform`]) is asked only when a directory is about
+    ///   to be opened and neither the flag nor the config named one.
+    /// - **Where no model could be asked for, no directory is opened or made:** with
+    ///   a catalogue that holds no model, as the shipped one does until its first
+    ///   entry; and for a command that names neither a config nor a directory, whose
+    ///   executor has no backend. Such an executor is over the inventory that knows
+    ///   no model.
+    ///
+    /// What comes back otherwise is why the directory is not used, in fixed words
+    /// that say how to mend it and hold no path.
+    pub fn installed(mut self, models: Models) -> Result<Over, String> {
+        if models.catalogue.entries().is_empty() {
+            return Ok(self);
+        }
+        if self.config.is_none() && models.flag.is_none() {
+            return Ok(self);
+        }
+        // The config file alone, for its one key: whether its env file can be
+        // used is said where the two are read together ([`loaded`]), and again at
+        // each ask of the source.
+        let config = match &self.config {
+            Some(path) => Some(
+                Config::read(path, &self.secrets)
+                    .map_err(|refused| format!("the config cannot be used: {refused}"))?,
+            ),
+            None => None,
+        };
+        let config = config.as_ref().and_then(Config::models_dir);
+        // The platform's is asked for last, and only when the other two are silent.
+        let named = models_dir(models.flag.as_deref(), config, None);
+        let platform = match (named, &models.platform) {
+            (None, Some(says)) => says(),
+            _ => None,
+        };
+        let chosen = named.or(models_dir(None, None, platform.as_deref()));
+        let Some((said, root)) = chosen else {
+            return Err(
+                "no models directory is named, and this machine's data folder is not known: \
+                 name one with --models-dir, or as `dir` in the config's table `models`"
+                    .to_owned(),
+            );
+        };
+        if said == Said::Platform
+            && let Some(above) = root.parent()
+        {
+            made_for_its_owner(above).map_err(|_| {
+                "the data folder that is to hold the models directory could not be made; \
+                 name a models directory with --models-dir, or as `dir` in the config's \
+                 table `models`"
+                    .to_owned()
+            })?;
+        }
+        let dir = ModelsDir::open(Arc::new(RealFs), root, Arc::new(SystemClock))
+            .map_err(|refused| not_used(refused, said))?;
+        self.installed = Some(Opened::knowing(
+            dir,
+            models.catalogue,
+            models.adapters,
+            &self.secrets,
+        ));
+        Ok(self)
     }
+
+    /// What is installed, as this was given it: the inventory of the models
+    /// directory that was opened, or none.
+    pub fn installations(&self) -> Option<&Arc<Installations>> {
+        self.installed.as_ref().map(|opened| &opened.installations)
+    }
+}
+
+/// Makes this folder and every folder above it that is not there, each for its
+/// owner only. A folder that is there is left as it is.
+fn made_for_its_owner(folder: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(folder)
+}
+
+/// What a command says of a models directory that was not opened: the opening's own
+/// sentence, which says how to mend it and holds no path, and which of the three
+/// named the directory.
+fn not_used(refused: OpenRefused, said: Said) -> String {
+    let named = match said {
+        Said::Flag => "the one --models-dir names",
+        Said::Config => "the one the config's `models.dir` names",
+        Said::Platform => "the one in this machine's data folder for whizbang",
+    };
+    format!("{refused} (the models directory is {named})")
 }
 
 impl std::fmt::Debug for Over {
@@ -145,7 +428,7 @@ impl Over {
     /// ever answered as its kind declared it, with nothing known of what is
     /// installed and no lease to hold it.
     fn inventory(&self) -> Arc<dyn Inventory> {
-        match &self.installed {
+        match self.installations() {
             Some(installed) => installed.clone(),
             None => Arc::new(NoInventory),
         }
@@ -260,7 +543,7 @@ pub fn runner(registry: Registry, store: Arc<Store>, over: &Over) -> Result<Engi
     // The lease stands in its place wherever there is a models directory to take
     // a hold in. Without one no local backend is ready ([`Over::inventory`]), so
     // no request ever comes to the place.
-    Ok(match &over.installed {
+    Ok(match over.installations() {
         Some(installed) => {
             let lease = Lease::over(installed.clone());
             engine.with_wrapper(Place::Lease, Arc::new(lease))

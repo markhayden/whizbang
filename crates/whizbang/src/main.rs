@@ -141,6 +141,21 @@ fn answered_by_the_parser(error: &clap::Error) -> ExitCode {
     ExitCode::from(2)
 }
 
+/// The models directory in this machine's data folder for whizbang, from the
+/// environment of this process. **This is the one place the binary reads it,** and
+/// `main` the one place it is named (`wired::only_main_reads_where_the_platforms_data_folder_is`):
+/// every other function is given what says the place, so a test gives its own or
+/// none, and none can be pointed at the data folder of whoever runs it. `main` does
+/// not call it: it hands it on, and it is called only if a models directory is to
+/// be opened and neither a flag nor a config named one.
+fn platforms_models_dir() -> Option<std::path::PathBuf> {
+    wiring::platform_models_dir(
+        cfg!(target_os = "macos"),
+        std::env::var_os("HOME").as_deref(),
+        std::env::var_os("XDG_DATA_HOME").as_deref(),
+    )
+}
+
 fn main() -> ExitCode {
     door::quiet_panics();
     let cli = match Cli::try_parse() {
@@ -163,10 +178,12 @@ fn main() -> ExitCode {
             Ok(bytes) => emit(&bytes),
             Err(complaint) => complain(&complaint),
         },
-        Command::Rascal { command } => match rascal::run(&command) {
-            Ok(text) => emit(text.as_bytes()),
-            Err(complaint) => complain(&complaint),
-        },
+        Command::Rascal { command } => {
+            match rascal::run(&command, std::sync::Arc::new(platforms_models_dir)) {
+                Ok(text) => emit(text.as_bytes()),
+                Err(complaint) => complain(&complaint),
+            }
+        }
         Command::Spend { command } => match spend::run(&command) {
             Ok(text) => emit(text.as_bytes()),
             Err(complaint) => complain(&complaint),
