@@ -72,9 +72,9 @@ enum Command {
     /// Backends: whether each configured one is ready. Not built yet: it says so and
     /// exits 1, whatever it is asked.
     Backends(stub::Asked),
-    /// Setup: installing the Python pack. Not built yet: it says so and exits 1,
-    /// whatever it is asked.
-    Setup(stub::Asked),
+    /// Setup: installing the Python pack from the lock file this build carries, and
+    /// checking that its worker says hello.
+    Setup(setup::Args),
 }
 
 fn describe(json: bool, pretty: bool) -> Result<String, String> {
@@ -235,9 +235,17 @@ fn main() -> ExitCode {
             Ok(text) => emit(text.as_bytes()),
             Err(complaint) => complain(&complaint),
         },
-        Command::Setup(_) => match setup::run() {
+        // Setup reads two things more of this process's environment: `PATH`, where
+        // `uv` is looked for when `--uv` names none, and the variables `uv`'s own
+        // environment is chosen from (the locale, and where `uv` keeps its Pythons).
+        Command::Setup(args) => match setup::run(
+            &args,
+            std::sync::Arc::new(platforms_models_dir),
+            std::env::var_os("PATH"),
+            std::env::vars_os().collect(),
+        ) {
             Ok(text) => emit(text.as_bytes()),
-            Err(complaint) => complain(&complaint),
+            Err(complaint) => complain_in_lines(&complaint),
         },
     }
 }
