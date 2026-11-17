@@ -208,11 +208,20 @@ class Worker:
     # --- the three threads ---------------------------------------------------------------
 
     def start(self):
-        """Starts the reader and the call thread, both daemons."""
+        """Starts the reader and the call thread, both daemons: the call thread first.
+
+        whizbang sends its hello as soon as the process is started, and the reader's answer
+        counts the threads the process holds. Started first, the reader could answer before
+        the call thread was there and count two of the three. `threads` keeps its order,
+        the reader first and then the call."""
         for name, target in (("whizbang-pack-reader", self._read_frames), ("whizbang-pack-call", self._run_calls)):
             self.threads.append(threading.Thread(target=target, name=name, daemon=True))
-        for thread in self.threads:
+        for thread in reversed(self.threads):
             thread.start()
+            self._started(thread)
+
+    def _started(self, thread):
+        """Nothing; a test waits here between one start and the next."""
 
     def wait(self):
         """The main thread's part: waits for the end, and ends the worker at its lifetime."""
