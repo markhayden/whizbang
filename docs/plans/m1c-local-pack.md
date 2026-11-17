@@ -1026,7 +1026,13 @@ and `models/adapters.py` (the adapter's interface and its fakes, as reference).
 - `test_worker.Threads.test_the_worker_holds_three_threads_with_a_fake_model`
 
 The tests drive the worker in-process over pipes, and start one child process at a
-time, three times in all, each killed and waited for in the test's cleanup.
+time, four times in all, each killed and waited for in the test's cleanup.
+**Reworded with the task** (from P2's review): "three times in all" is now "four times
+in all". The review asked that the `python -m` stanza of each entry point be run in a
+test. The three children of `test_worker.Ends` now start `whizbang_pack.worker` as a
+program, and one more,
+`test_worker.Fakes.test_the_fakes_entry_point_runs_as_a_program_with_its_fault`, starts
+`whizbang_pack.fakes` with a fault.
 **Size:** medium.
 **Built with the task:** the codec was written from ADR 0020 and the vectors alone, not
 from the Rust codec. Each of P1's notes has a test of its own in `test_proto.StrictJson`
@@ -1037,22 +1043,26 @@ their double; the writer's total order, its cleaning and its cut of diagnostics 
 63 KiB). `test_worker.Threads` counts the worker's own threads in this process (its
 reader and its call, beside the thread that started it, and none started by a call);
 the count of three a process reports is checked in a child, by the first test of
-`test_worker.Ends`. Where ADR 0020 left the reader a choice, the codec takes these:
-a result's header over its own request's bound is `header_too_large`, looked at with
-what the reader has open, once the result's `id` is known; an instance whose `query`
-is past its request's count of queries is `bad_value`; payloads over 1 GiB together
-are `too_large` from the header's values, before what is open is looked at; a query
-object with no field is `missing_field`, and one with two, or another, is
-`unknown_field`; a fraction written with upper-case hex digits is `bad_value`. ADR 0006
-cleans a sentence by putting `?` for a character it may not hold, and `?` is no
-character of a text of the protocol, so the writer puts a space, then drops white space
-at the ends again; a text that is then empty is `no reason was given` for a sentence and
-`no text was given` for an event.
+`test_worker.Ends`. Where the two readers first named different reasons for one frame
+that breaks two rules, the Python reader now names the Rust reader's: the Rust codec,
+its bytes and its reasons did not change. ADR 0020 was amended on 2026-11-17 to say the
+Rust order where it was silent or said otherwise ("The steps in full"). Ten refusal
+vectors hold it, each reason the Rust reader's, confirmed by its own vector test
+(`test_proto.Refusals.test_a_frame_that_breaks_rules_of_two_steps_is_named_as_whizbangs_reader_names_it`).
+The 62 vectors of P1 are unchanged. ADR 0006 cleans a sentence by putting `?` for a
+character it may not hold, and `?` is no character of a text of the protocol (ADR 0020,
+as amended), so the writer puts a space, then drops white space at the ends again; a
+text that is then empty is `no reason was given` for a sentence and `no text was given`
+for an event. The reader counts nesting in one pass over the header, linear in its
+length (`test_proto.StrictJson.test_the_nesting_is_counted_in_one_pass_whatever_the_header_holds`).
+The worker ends at its lifetime and at the end of its input without waiting on its
+error output (`test_worker.Ends.test_the_lifetime_ends_the_worker_though_its_error_output_is_blocked`).
 **Notes for P3a:** the command line is
 `python -m whizbang_pack.worker --models-dir <absolute folder> [--max-lifetime-s <whole seconds>]`,
 and `python -m whizbang_pack.fakes` takes the same and `--fake-fault <name>`; neither is
 installed (`tool.uv.package = false`), so the supervisor puts `pack/src` on the path the
-way it starts Python (the tests use `-I -B -c` with the path as an argument). Exit codes:
+way it starts Python (the tests use `-I -B -c` with the path as an argument, and run each
+module as a program). Exit codes:
 0 at the end of the input or at whizbang's error that names the conversation, 2 at a
 refused frame or an output that cannot be written (and at a command line refused before
 anything starts), 3 at the lifetime, 4 from `fake-exit`. The worker answers a refused
@@ -1065,7 +1075,16 @@ that prints cannot write into the frames. It reads no variable of its environmen
 what the supervisor sets for the Hub's libraries is P3a's. `error-output` writes 300
 lines, every tenth over 5,000 bytes, and nothing in them is a secret: what the fault
 prints for the redaction tests of P3a and P3b (a marker, a host, a made-up token) is
-theirs to add, since P2 names none.
+theirs to add, since P2 names none. The supervisor reads the worker's error output
+without stopping until it closes, and drops what is past its bound (256 lines of 4,096
+bytes) rather than stopping to read. Otherwise a pipe that fills blocks any thread of the
+worker that prints, and a call stalls until its deadline. The worker does not bound what a
+library prints, and it never waits on its error output when it ends.
+**Notes for P3a and P3b:** a text of the protocol that the Rust side makes from words it
+was handed (a fault's sentence it sends, diagnostics) is cleaned by a cleaner of the
+protocol: a space for a character the text may not hold, as the Python writer does. It
+is never cleaned by the core's `fault::clean`, which puts `?`, a character the reader
+refuses (ADR 0020, "A text of the protocol", as amended).
 
 ### P3a. The supervisor's process: start, hello, stop; the guard
 

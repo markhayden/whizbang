@@ -1,9 +1,10 @@
 """The worker and its fake models (docs/plans/m1c-local-pack.md, P2).
 
 Most tests drive the worker in this process, over two pipes, with an exit that is recorded
-in place of `os._exit`. The tests of `Ends` start a child process, one at a time and three
-times in all, each killed and waited for in the test's cleanup, with its environment
-cleared to the variables `scripts/test-pack.sh` hands on.
+in place of `os._exit`. Four tests start a child process, one at a time and four times in
+all (three in `Ends`, one in `Fakes`), each its entry point's module run as a program, each
+killed and waited for in the test's cleanup, with its environment cleared to the
+variables `scripts/test-pack.sh` hands on.
 """
 
 import ast
@@ -71,11 +72,11 @@ def hello(id="h1", version=proto.VERSION):
 class Running:
     """A worker in this process, over two pipes, whose exit is recorded."""
 
-    def __init__(self, test, module=worker, options=(), lifetime=None, adapters=None):
+    def __init__(self, test, module=worker, options=(), lifetime=None, adapters=None, error_output=None):
         to_worker_read, self.to_worker = os.pipe()
         self.from_worker, from_worker_write = os.pipe()
         self.exits = []
-        self.error_output = _Lines()
+        self.error_output = _Lines() if error_output is None else error_output
         self.made = module.make(
             ["--models-dir", MODELS] + list(options),
             stdin=open(to_worker_read, "rb", buffering=0),
@@ -502,6 +503,17 @@ class Fakes(unittest.TestCase):
             self.assertEqual(running.ended(), [0], name)
             self.assertIsNone(running.rest(), "the slow call never answered")
 
+    def test_the_fakes_entry_point_runs_as_a_program_with_its_fault(self):
+        # The fourth and last child of these tests: `python -m whizbang_pack.fakes` takes
+        # its fault. (The three of `Ends` run `python -m whizbang_pack.worker`.)
+        child = Child(self, module="whizbang_pack.fakes", options=["--fake-fault", "other-version"])
+        child.send(hello())
+        with self.assertRaises(proto.Refused) as caught:
+            child.read()
+        self.assertEqual(caught.exception.reason, "version")
+        child.end_input()
+        self.assertEqual(child.wait(), 0)
+
 
 class Imports(unittest.TestCase):
     def test_the_core_imports_nothing_outside_the_standard_library(self):
@@ -530,19 +542,26 @@ class Imports(unittest.TestCase):
 
 # --- child processes ------------------------------------------------------------------------
 
-BOOT = "import sys; sys.path.insert(0, sys.argv.pop(1)); from whizbang_pack.worker import main; main(sys.argv[1:])"
+# Runs an entry point's module as a program, as `python -m` does, with the pack's `src`
+# on the path (the pack is not installed): its `if __name__ == "__main__"` stanza runs.
+BOOT = (
+    "import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); name = sys.argv.pop(1); "
+    "runpy.run_module(name, run_name='__main__', alter_sys=True)"
+)
 
 
 class Child:
-    """One worker in a child process: its environment cleared to the allow-list, every wait
-    on it bounded, and killed and waited for in its test's cleanup."""
+    """One worker in a child process, started by its entry point's module as a program: its
+    environment cleared to the allow-list, every wait on it bounded, and killed and waited
+    for in its test's cleanup."""
 
-    def __init__(self, test, lifetime="120"):
+    def __init__(self, test, lifetime="120", module="whizbang_pack.worker", options=()):
         self.error_output = tempfile.TemporaryFile()
         test.addCleanup(self.error_output.close)
         self.began = time.monotonic()
         self.process = subprocess.Popen(
-            [sys.executable, "-I", "-B", "-c", BOOT, kit.SRC, "--models-dir", MODELS, "--max-lifetime-s", lifetime],
+            [sys.executable, "-I", "-B", "-c", BOOT, kit.SRC, module, "--models-dir", MODELS, "--max-lifetime-s", lifetime]
+            + list(options),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=self.error_output,
@@ -579,7 +598,30 @@ class Child:
         assert self.process.returncode is not None
 
 
+class _Blocked:
+    """An error output whose every write and flush waits, as a full pipe nobody reads does,
+    until its test lets it go (or the test's wait passes)."""
+
+    def __init__(self, test):
+        self.released = threading.Event()
+        test.addCleanup(self.released.set)
+
+    def write(self, text):
+        self.released.wait(kit.WAIT_SECONDS)
+        return len(text)
+
+    def flush(self):
+        self.released.wait(kit.WAIT_SECONDS)
+
+
 class Ends(unittest.TestCase):
+    def test_the_lifetime_ends_the_worker_though_its_error_output_is_blocked(self):
+        running = Running(self, lifetime=0.2, error_output=_Blocked(self))
+        began = time.monotonic()
+        self.assertEqual(running.made.wait(), worker.LIFETIME_CODE)
+        self.assertEqual(running.exits, [worker.LIFETIME_CODE])
+        self.assertLess(time.monotonic() - began, 2.0, "nothing waited on the error output")
+
     def test_the_worker_exits_at_the_end_of_its_input_and_at_its_lifetime(self):
         child = Child(self)
         child.send(hello())

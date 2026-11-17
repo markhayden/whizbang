@@ -1,8 +1,10 @@
 """The frames of `pack/1`, written and read strictly (docs/adr/0020-the-pack-protocol.md).
 
-Written from that record and the vectors under `pack/conformance/vectors/` alone, so that it
-is a second codec beside whizbang's own and the vectors hold the two to one another. The
-standard library only (D10 of docs/plans/m1c-local-pack.md).
+Written from that record and the vectors under `pack/conformance/vectors/`, as a second
+codec beside whizbang's own; the vectors hold the two to one another. Where one frame
+breaks rules of two steps, it names the reason whizbang's reader names: the steps and their
+order are the record's ("What a refusal says"). The standard library only (D10 of
+docs/plans/m1c-local-pack.md).
 
 A message is a `dict` of the fields its header holds, by the same names, but for three:
 
@@ -50,6 +52,9 @@ THREADS_LIMIT = 65_535
 SETTING_NAME_LIMIT = 64
 SETTING_TEXT_LIMIT = 1_024
 DEPTH_LIMIT = 128
+# A whole number a header's count or size field holds: 32 bits. Past it, the value is of
+# the wrong type (`bad_value`); within it and past its bound, it is `over_bound`.
+WHOLE_MOST = (1 << 32) - 1
 
 FAULTS = (
     "cancelled",
@@ -118,12 +123,10 @@ _DEVICE = re.compile(r"[a-z][a-z0-9._:-]*\Z")
 _SETTING_NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _FRACTION = re.compile(r"[0-9a-f]{16}\Z")
-_PLAIN_VERSION = re.compile(r"[a-z][a-z0-9_-]{0,15}/[0-9]{1,4}\Z")
+_PLAIN_VERSION = re.compile(r"[a-z0-9][a-z0-9./_-]{0,31}\Z")
 _SURROGATE = re.compile("[\ud800-\udfff]")
-# A JSON text, its quotes and what is between them, to be taken out before brackets are
-# counted. A header that does not close a text is refused as JSON anyway.
-_JSON_TEXT = re.compile(r'"(?:[^"\\]|\\.)*"', re.DOTALL)
-_NOT_BRACKET = re.compile(r"[^\[\]{}]+")
+# The characters that say where a JSON text starts and ends, and where nesting does.
+_SPECIAL = re.compile(r'[\[\]{}"\\]')
 
 _I64_LEAST = -(1 << 63)
 _I64_MOST = (1 << 63) - 1
@@ -254,15 +257,29 @@ def _object(pairs):
 
 
 def _deepest(text):
-    """How deep objects and lists nest in a JSON text, outside its texts."""
-    brackets = _NOT_BRACKET.sub("", _JSON_TEXT.sub("", text))
+    """How deep objects and lists nest in a JSON text, outside its texts: one pass over
+    the characters that matter (brackets, quotes and backslashes), so linear in the
+    header's length whatever it holds."""
     depth = deepest = 0
-    for character in brackets:
-        if character in "[{":
+    inside = False
+    escaped = -1  # the place of the character a backslash escapes
+    for found in _SPECIAL.finditer(text):
+        at = found.start()
+        character = found.group()
+        if inside:
+            if at == escaped:
+                continue
+            if character == "\\":
+                escaped = at + 1
+            elif character == '"':
+                inside = False
+        elif character == '"':
+            inside = True
+        elif character in "[{":
             depth += 1
             if depth > deepest:
                 deepest = depth
-        else:
+        elif character in "]}":
             depth -= 1
     return deepest
 
@@ -310,7 +327,14 @@ def _not_json(what):
     return Refused("not_json", "the header " + what)
 
 
-# --- the rules of values --------------------------------------------------------------------
+# --- taking a header apart ------------------------------------------------------------------
+#
+# Two passes, as ADR 0020 orders them. The first takes each object apart: a field that is
+# not its own, then one that is missing, then each field's type, field by field in the order
+# below (for a result, its instances before its other fields), with the rules a setting, a
+# query and an entry's words keep where they are read. The second holds the message to the
+# rules of its values and counts. A message that passes both is then held to the fixed
+# order of its instances.
 
 
 def _bad(what, rule, id=None):
@@ -326,293 +350,357 @@ def _is_whole(value):
     return type(value) is int
 
 
-def _whole(value, what, least, most, id, over=False):
-    if not _is_whole(value) or value < least:
-        raise _bad(what, "a whole number from %d to %d" % (least, most), id)
-    if value > most:
-        if over:
-            raise _over(what, most, id)
-        raise _bad(what, "a whole number from %d to %d" % (least, most), id)
-    return value
+class _Object:
+    """An object of a header being taken apart: its fields are exactly its own before any
+    is taken. A field that is not its own is refused first, then one that is missing."""
+
+    def __init__(self, fields, names, id):
+        for name in fields:
+            if name not in names:
+                raise Refused("unknown_field", "an object holds a field that is not its own", id)
+        for name in names:
+            if name not in fields:
+                raise Refused("missing_field", "an object lacks the field " + name, id)
+        self.fields = fields
+        self.id = id
+
+    def take(self, name):
+        return self.fields[name]
+
+    def text(self, name):
+        value = self.fields[name]
+        if not isinstance(value, str):
+            raise _bad(name, "a text", self.id)
+        return value
+
+    def whole(self, name):
+        """A whole number of 32 bits at most."""
+        value = self.fields[name]
+        if not _is_whole(value) or not 0 <= value <= WHOLE_MOST:
+            raise _bad(name, "a whole number in its range", self.id)
+        return value
+
+    def list(self, name):
+        value = self.fields[name]
+        if not isinstance(value, list):
+            raise _bad(name, "a list", self.id)
+        return value
+
+    def entry(self, name, rules):
+        value = self.fields[name]
+        if not isinstance(value, dict):
+            raise _bad(name, "an object", self.id)
+        entry = _Object(value, _ENTRY, self.id)
+        width = entry.whole("width")
+        height = entry.whole("height")
+        for field, word in zip(_ENTRY[2:6], rules):
+            if entry.text(field) != word:
+                raise _bad(field, "the one rule its entry has", self.id)
+        binding = entry.text("binding")
+        if not _DIGEST.match(binding):
+            raise _bad("binding", "sha256: and 64 lower-case hex digits", self.id)
+        return Payload(width, height, binding)
 
 
-def _named(value, pattern, limit, what, rule, id):
-    if not isinstance(value, str) or len(value) > limit or not pattern.match(value):
-        raise _bad(what, rule, id)
-    return value
-
-
-def _check_id(value, id=None):
-    return _named(value, _ID, ID_LIMIT, "an id", "1 to 64 of lower-case letters, digits and . _ -", id)
-
-
-def _check_device(value, id):
-    return _named(value, _DEVICE, DEVICE_LIMIT, "a device", "a name of lower-case letters, digits and . _ - :", id)
-
-
-def _check_model(value, id):
-    return _named(value, _MODEL, MODEL_LIMIT, "a model", "a name of lower-case letters, digits and _ . -", id)
-
-
-def _check_digest(value, what, id):
-    if not isinstance(value, str) or not _DIGEST.match(value):
-        raise _bad(what, "sha256: and 64 lower-case hex digits", id)
-    return value
-
-
-def _check_text(value, what, least, most, id, counted):
-    if not isinstance(value, str) or len(value) < least or not all(c in TEXT_CHARACTERS for c in value):
-        raise _bad(what, "a text of ASCII letters, digits, spaces and . , ; : ' ( ) % + - _", id)
-    if len(value) > most:
-        if counted:
-            raise _over(what, most, id)
-        raise _bad(what, "%d characters at most" % most, id)
-    return value
-
-
-def _check_fraction(value, what, id):
-    if not isinstance(value, str) or not _FRACTION.match(value):
-        raise _bad(what, "16 lower-case hex digits of a double", id)
-    number = struct.unpack(">d", bytes.fromhex(value))[0]
-    if not math.isfinite(number):
-        raise _bad(what, "finite", id)
-    return number
-
-
-def _check_fields(obj, fields, id):
-    """A field that is not its own, then one that is missing (ADR 0020, the order of rules)."""
-    for name in obj:
-        if name not in fields:
-            raise Refused("unknown_field", "an object holds a field that is not its own", id)
-    for name in fields:
-        if name not in obj:
-            raise Refused("missing_field", "an object lacks the field " + name, id)
-
-
-def _check_object(value, fields, what, id):
-    if not isinstance(value, dict):
-        raise _bad(what, "an object", id)
-    _check_fields(value, fields, id)
-    return value
-
-
-def _check_list(value, what, id):
-    if not isinstance(value, list):
-        raise _bad(what, "a list", id)
-    return value
-
-
-def _named_field(obj, name, id):
-    """A field that says which fields its object has (`type`, `version`, `role`, `kind`):
-    `missing_field` when absent and `bad_value` when it is no text."""
+def _peek(obj, name, id):
+    """A text field of an object whose other fields are not known yet (`type`, `version`,
+    `role`, `kind`): `missing_field` when absent and `bad_value` when it is no text."""
     if name not in obj:
         raise Refused("missing_field", "an object lacks the field " + name, id)
     value = obj[name]
     if not isinstance(value, str):
-        raise _bad("the field " + name, "a text", id)
+        raise _bad(name, "a text", id)
     return value
 
 
-def _check_entry(value, what, rules, id):
-    entry = _check_object(value, _ENTRY, what, id)
-    width = _whole(entry["width"], "a width", 1, PIXEL_LIMIT, id, over=True)
-    height = _whole(entry["height"], "a height", 1, PIXEL_LIMIT, id, over=True)
-    if width * height > PIXEL_LIMIT:
-        raise _over("an entry's pixels", PIXEL_LIMIT, id)
-    if (entry["layout"], entry["data"], entry["colour"], entry["alpha"]) != rules:
-        raise _bad(what, "a layout, data type, colour and alpha rule of " + "/".join(rules), id)
-    binding = _check_digest(entry["binding"], "a binding", id)
-    return Payload(width, height, binding)
+def _number(value, what, id):
+    """A number with a fraction, from its 16 lower-case hex digits; any double. That it is
+    finite is its field's rule, held in the second pass."""
+    if not isinstance(value, str) or not _FRACTION.match(value):
+        raise _bad(what, "a number, as 16 lower-case hex digits", id)
+    return struct.unpack(">d", bytes.fromhex(value))[0]
 
 
-def _check_setting_value(value, id):
-    if isinstance(value, bool):
-        return value
-    if _is_whole(value):
-        if not _I64_LEAST <= value <= _I64_MOST:
-            raise _bad("a setting's value", "a whole number that fits in 64 bits with a sign", id)
-        return value
-    if isinstance(value, str):
-        if (
-            not 1 <= len(value) <= SETTING_TEXT_LIMIT
-            or not all(" " <= c <= "~" for c in value)
-            or value != value.strip(" ")
-            or "/" in value
-            or "\\" in value
-        ):
-            raise _bad("a setting's text", "1 to 1024 printable ASCII characters, no space at an end, no separator", id)
-        return value
-    raise _bad("a setting's value", "true, false, a whole number or a text", id)
+def _numbers(value, count, what, id):
+    if not isinstance(value, list):
+        raise _bad(what, "a list", id)
+    if len(value) != count:
+        raise _bad(what, "a list of its own length", id)
+    return [_number(item, what, id) for item in value]
 
 
-def _check_settings(value, id):
-    items = _check_list(value, "settings", id)
-    if len(items) > SETTINGS_LIMIT:
-        raise _over("settings", SETTINGS_LIMIT, id)
+def _named(value, pattern, limit):
+    return len(value) <= limit and pattern.match(value) is not None
+
+
+def _check_setting(name, value, id):
+    if not _named(name, _SETTING_NAME, SETTING_NAME_LIMIT):
+        raise _bad("a setting's name", "a name of lower-case letters, digits and _", id)
+    if isinstance(value, str) and not (
+        1 <= len(value) <= SETTING_TEXT_LIMIT
+        and all(" " <= c <= "~" and c not in "/\\" for c in value)
+        and not value.startswith(" ")
+        and not value.endswith(" ")
+    ):
+        raise _bad("a setting's text", "1 to 1024 printable ASCII characters, no space at an end, no separator", id)
+
+
+def _read_settings(items, id):
     settings = {}
-    names = []
+    last = None
     for item in items:
-        item = _check_object(item, _SETTING, "a setting", id)
-        name = _named(item["name"], _SETTING_NAME, SETTING_NAME_LIMIT, "a setting's name", "a name of lower-case letters, digits and _", id)
-        settings[name] = _check_setting_value(item["value"], id)
-        names.append(name.encode("ascii"))
-    if any(first >= second for first, second in zip(names, names[1:])):
-        raise Refused("out_of_order", "settings are not in the order of their names, or one is given twice", id)
+        if not isinstance(item, dict):
+            raise _bad("a setting", "an object", id)
+        setting = _Object(item, _SETTING, id)
+        name = setting.text("name")
+        value = setting.take("value")
+        if isinstance(value, (bool, str)):
+            pass
+        elif _is_whole(value) and _I64_LEAST <= value <= _I64_MOST:
+            pass
+        else:
+            raise _bad("a setting's value", "a scalar", id)
+        _check_setting(name, value, id)
+        if last is not None and last >= name.encode("utf-8"):
+            raise Refused("out_of_order", "settings are not in the order of their names, each once", id)
+        last = name.encode("utf-8")
+        settings[name] = value
     return settings
 
 
-def _check_queries(value, id):
-    items = _check_list(value, "queries", id)
-    if not items:
-        raise _bad("queries", "1 to 64 of them", id)
-    if len(items) > QUERIES_LIMIT:
-        raise _over("queries", QUERIES_LIMIT, id)
+def _read_queries(items, id):
     queries = []
     for item in items:
         if not isinstance(item, dict):
             raise _bad("a query", "an object", id)
+        if any(name not in _QUERY_KINDS for name in item):
+            raise Refused("unknown_field", "a query holds a field that is not its own", id)
+        if len(item) > 1:
+            raise _bad("a query", "one of a phrase, a point and a box", id)
         if not item:
             raise Refused("missing_field", "a query lacks a phrase, a point or a box", id)
-        if len(item) > 1 or any(name not in _QUERY_KINDS for name in item):
-            raise Refused("unknown_field", "a query holds a field that is not its own", id)
-        (kind, given), = item.items()
+        ((kind, given),) = item.items()
         if kind == "phrase":
-            if not isinstance(given, str) or not given:
-                raise _bad("a phrase", "a text of 1 to 512 bytes", id)
+            if not isinstance(given, str):
+                raise _bad("phrase", "a text", id)
+            if not given:
+                raise _bad("a phrase", "1 byte at least", id)
             if len(given.encode("utf-8")) > PHRASE_LIMIT:
                 raise _over("a phrase's bytes", PHRASE_LIMIT, id)
             queries.append({"phrase": given})
-            continue
-        count = 2 if kind == "point" else 4
-        numbers = _check_list(given, "a " + kind, id)
-        if len(numbers) != count:
-            raise _bad("a " + kind, "%d numbers" % count, id)
-        numbers = [_check_fraction(number, "a " + kind + "'s number", id) for number in numbers]
-        if any(number < 0 for number in numbers):
-            raise _bad("a " + kind, "not under zero", id)
-        if kind == "box" and not (numbers[0] < numbers[2] and numbers[1] < numbers[3]):
-            raise _bad("a box", "its left under its right and its top under its bottom", id)
-        queries.append({kind: numbers})
+        elif kind == "point":
+            x, y = _numbers(given, 2, "point", id)
+            if not (math.isfinite(x) and math.isfinite(y) and x >= 0 and y >= 0):
+                raise _bad("a point", "two finite numbers, neither under zero", id)
+            queries.append({"point": [x, y]})
+        else:
+            edges = _numbers(given, 4, "box", id)
+            left, top, right, bottom = edges
+            if not (all(math.isfinite(edge) and edge >= 0 for edge in edges) and left < right and top < bottom):
+                raise _bad("a box", "four finite numbers, none under zero, with area", id)
+            queries.append({"box": edges})
     return queries
 
 
-def _check_instances(value, id):
-    items = _check_list(value, "instances", id)
-    if len(items) > MOST_INSTANCES:
-        raise _over("instances", MOST_INSTANCES, id)
+def _read_instances(items, id):
     instances = []
     for item in items:
-        item = _check_object(item, _INSTANCE, "an instance", id)
-        query = _whole(item["query"], "a query's place", 0, QUERIES_LIMIT - 1, id)
-        score = _check_fraction(item["score"], "a score", id)
-        if not 0 <= score <= 1:
-            raise _bad("a score", "from 0 to 1", id)
-        iou = item["iou"]
-        if iou is not None:
-            iou = _check_fraction(iou, "a predicted IoU", id)
-            if not 0 <= iou <= 1:
-                raise _bad("a predicted IoU", "from 0 to 1, or null", id)
-        box = _check_list(item["box"], "a box", id)
-        if len(box) != 4:
-            raise _bad("a box", "4 numbers", id)
-        box = [_check_fraction(edge, "an edge of a box", id) for edge in box]
-        plane = _check_entry(item["plane"], "a plane's entry", _PLANE_RULES, id)
+        if not isinstance(item, dict):
+            raise _bad("an instance", "an object", id)
+        instance = _Object(item, _INSTANCE, id)
+        query = instance.whole("query")
+        score = _number(instance.take("score"), "score", id)
+        iou = instance.take("iou")
+        iou = None if iou is None else _number(iou, "iou", id)
+        box = _numbers(instance.take("box"), 4, "box", id)
+        plane = instance.entry("plane", _PLANE_RULES)
         instances.append({"query": query, "score": score, "iou": iou, "box": box, "plane": plane})
-    for first, second in zip(instances, instances[1:]):
-        if _header_key(first) > _header_key(second):
-            raise Refused("out_of_order", "instances are not in the fixed order", id)
-    total = sum(item["plane"].width * item["plane"].height for item in instances)
-    if total > PAYLOAD_CEILING:
-        raise Refused("too_large", "a result's payloads together are over %d bytes" % PAYLOAD_CEILING, id)
     return instances
 
 
-def _message(obj):
-    """The message a parsed header holds, its rules looked at in ADR 0020's order: `type`;
-    a hello's `version` and `role`, or a request's or a result's `kind`; in each object a
-    field that is not its own, then one that is missing; then the values."""
-    raw_id = obj.get("id")
-    id = raw_id if isinstance(raw_id, str) and len(raw_id) <= ID_LIMIT and _ID.match(raw_id) else None
+def _read_model(fields, message):
+    model = fields.text("model")
+    if not _named(model, _MODEL, MODEL_LIMIT):
+        raise _bad("model", "a model's name", fields.id)
+    installation = fields.text("installation")
+    if not _DIGEST.match(installation):
+        raise _bad("installation", "an identity", fields.id)
+    message["model"] = model
+    message["installation"] = installation
 
-    kind_of_message = _named_field(obj, "type", id)
+
+def _take_apart(obj, id):
+    """The first pass (whizbang's reader's `parse`)."""
+    kind_of_message = _peek(obj, "type", id)
     if kind_of_message == "hello":
-        version = _named_field(obj, "version", id)
+        version = _peek(obj, "version", id)
         if version != VERSION:
-            shown = version if _PLAIN_VERSION.match(version) else "another"
-            raise Refused("version", "the hello states the version %s, and this side speaks %s" % (shown, VERSION), id)
-        role = _named_field(obj, "role", id)
+            shown = version if _named(version, _PLAIN_VERSION, 32) else "a version that is not a name"
+            raise Refused("version", "this side speaks %s and the other said %s" % (VERSION, shown), id)
+        role = _peek(obj, "role", id)
         if role not in ("whizbang", "worker"):
-            raise _bad("a role", "whizbang or worker", id)
-        _check_fields(obj, _HELLO_WORKER if role == "worker" else _HELLO_WHIZBANG, id)
-        message = {"type": "hello", "id": _check_id(obj["id"], id), "version": version, "role": role}
+            raise _bad("role", "whizbang or worker", id)
+        fields = _Object(obj, _HELLO_WORKER if role == "worker" else _HELLO_WHIZBANG, id)
+        message = {"type": "hello", "id": fields.text("id"), "version": version, "role": role}
         if role == "worker":
-            device = obj["device"]
-            message["device"] = None if device is None else _check_device(device, id)
-            message["threads"] = _whole(obj["threads"], "a count of threads", 1, THREADS_LIMIT, id)
+            device = fields.take("device")
+            if device is not None and not isinstance(device, str):
+                raise _bad("device", "a text or null", id)
+            message["device"] = device
+            message["threads"] = fields.whole("threads")
         return message
 
     if kind_of_message == "request":
-        kind = _named_field(obj, "kind", id)
+        kind = _peek(obj, "kind", id)
         if kind not in _REQUEST:
-            raise Refused("unknown_kind", "a request of a kind %s has not" % VERSION, id)
-        _check_fields(obj, _REQUEST[kind], id)
-        message = {
-            "type": "request",
-            "id": _check_id(obj["id"], id),
-            "kind": kind,
-            "model": _check_model(obj["model"], id),
-            "installation": _check_digest(obj["installation"], "an installation", id),
-        }
+            raise Refused("unknown_kind", "a request or a result is of a kind this version has not", id)
+        fields = _Object(obj, _REQUEST[kind], id)
+        message = {"type": "request", "id": fields.text("id"), "kind": kind}
+        _read_model(fields, message)
         if kind == "load":
-            message["settings"] = _check_settings(obj["settings"], id)
+            message["settings"] = _read_settings(fields.list("settings"), id)
         elif kind == "segment":
-            message["image"] = _check_entry(obj["image"], "an image's entry", _IMAGE_RULES, id)
-            message["queries"] = _check_queries(obj["queries"], id)
-            message["max_instances"] = _whole(obj["max_instances"], "the most instances", 1, INSTANCES_LIMIT, id, over=True)
+            message["image"] = fields.entry("image", _IMAGE_RULES)
+            message["queries"] = _read_queries(fields.list("queries"), id)
+            message["max_instances"] = fields.whole("max_instances")
         return message
 
     if kind_of_message == "result":
-        kind = _named_field(obj, "kind", id)
+        kind = _peek(obj, "kind", id)
         if kind not in _RESULT:
-            raise Refused("unknown_kind", "a result of a kind %s has not" % VERSION, id)
-        _check_fields(obj, _RESULT[kind], id)
+            raise Refused("unknown_kind", "a request or a result is of a kind this version has not", id)
+        fields = _Object(obj, _RESULT[kind], id)
+        # A result's instances are taken before its other fields.
+        instances = _read_instances(fields.list("instances"), id) if kind == "segment" else None
         message = {
             "type": "result",
-            "id": _check_id(obj["id"], id),
+            "id": fields.text("id"),
             "kind": kind,
-            "device": _check_device(obj["device"], id),
-            "threads": _whole(obj["threads"], "a count of threads", 1, THREADS_LIMIT, id),
-            "diagnostics": _check_text(obj["diagnostics"], "diagnostics", 0, DIAGNOSTICS_LIMIT, id, counted=True),
+            "device": fields.text("device"),
+            "threads": fields.whole("threads"),
+            "diagnostics": fields.text("diagnostics"),
         }
-        if kind == "segment":
-            message["instances"] = _check_instances(obj["instances"], id)
+        if instances is not None:
+            message["instances"] = instances
         return message
 
     if kind_of_message == "event":
-        _check_fields(obj, _EVENT, id)
-        return {
-            "type": "event",
-            "id": _check_id(obj["id"], id),
-            "text": _check_text(obj["text"], "an event's text", 1, DIAGNOSTICS_LIMIT, id, counted=True),
-        }
+        fields = _Object(obj, _EVENT, id)
+        return {"type": "event", "id": fields.text("id"), "text": fields.text("text")}
 
     if kind_of_message == "cancel":
-        _check_fields(obj, _CANCEL, id)
-        return {"type": "cancel", "id": _check_id(obj["id"], id)}
+        fields = _Object(obj, _CANCEL, id)
+        return {"type": "cancel", "id": fields.text("id")}
 
     if kind_of_message == "error":
-        _check_fields(obj, _ERROR, id)
-        fault = obj["fault"]
+        fields = _Object(obj, _ERROR, id)
+        message = {"type": "error", "id": fields.text("id")}
+        fault = fields.text("fault")
         if fault not in FAULTS:
-            raise _bad("a fault", "one of the eight names", id)
-        return {
-            "type": "error",
-            "id": _check_id(obj["id"], id),
-            "fault": fault,
-            "sentence": _check_text(obj["sentence"], "a sentence", 1, SENTENCE_LIMIT, id, counted=False),
-        }
+            raise _bad("fault", "one of the eight faults", id)
+        message["fault"] = fault
+        message["sentence"] = fields.text("sentence")
+        return message
 
-    raise Refused("unknown_message", "a message of a type %s has not" % VERSION, id)
+    raise Refused("unknown_message", "a message is of none of the six types", id)
+
+
+def _check_id(value, id):
+    if not _named(value, _ID, ID_LIMIT):
+        raise _bad("an id", "1 to 64 of lower-case letters, digits and . _ -", id)
+
+
+def _check_device(value, id):
+    if not _named(value, _DEVICE, DEVICE_LIMIT):
+        raise _bad("a device", "a name of lower-case letters, digits and . _ - :", id)
+
+
+def _check_threads(value, id):
+    if not 1 <= value <= THREADS_LIMIT:
+        raise _bad("a count of threads", "from 1 to 65535", id)
+
+
+def _check_text(value, what, least, most, id):
+    if len(value) < least or not all(c in TEXT_CHARACTERS for c in value):
+        raise _bad(what, "a text of ASCII letters, digits, spaces and . , ; : ' ( ) % + - _", id)
+    if len(value) > most:
+        if most == DIAGNOSTICS_LIMIT:
+            raise _over(what, most, id)
+        raise _bad(what, "within its length", id)
+
+
+def _check_entry(payload, id):
+    pixels = payload.width * payload.height
+    if pixels == 0:
+        raise _bad("a payload's width or height", "at least 1", id)
+    if pixels > PIXEL_LIMIT:
+        raise _over("a payload's count of pixels", PIXEL_LIMIT, id)
+
+
+def _check_unit(value, what, id):
+    if not 0 <= value <= 1:
+        raise _bad(what, "a number from 0 to 1", id)
+
+
+def _check(message, id):
+    """The second pass (whizbang's reader's `check`): every rule a message keeps that its
+    header alone shows."""
+    kind_of_message = message["type"]
+    _check_id(message["id"], id)
+    if kind_of_message == "hello":
+        if message["role"] == "worker":
+            if message["device"] is not None:
+                _check_device(message["device"], id)
+            _check_threads(message["threads"], id)
+    elif kind_of_message == "request":
+        kind = message["kind"]
+        if kind == "load":
+            if len(message["settings"]) > SETTINGS_LIMIT:
+                raise _over("the count of settings", SETTINGS_LIMIT, id)
+        elif kind == "segment":
+            _check_entry(message["image"], id)
+            queries = message["queries"]
+            if not queries:
+                raise _bad("the list of queries", "of one query at least", id)
+            if len(queries) > QUERIES_LIMIT:
+                raise _over("the count of queries", QUERIES_LIMIT, id)
+            if message["max_instances"] == 0:
+                raise _bad("the most instances", "at least 1", id)
+            if message["max_instances"] > INSTANCES_LIMIT:
+                raise _over("the most instances", INSTANCES_LIMIT, id)
+    elif kind_of_message == "result":
+        _check_device(message["device"], id)
+        _check_threads(message["threads"], id)
+        _check_text(message["diagnostics"], "a result's diagnostics", 0, DIAGNOSTICS_LIMIT, id)
+        instances = message.get("instances")
+        if instances is not None:
+            if len(instances) > MOST_INSTANCES:
+                raise _over("the count of instances", MOST_INSTANCES, id)
+            for item in instances:
+                _check_unit(item["score"], "a score", id)
+                if item["iou"] is not None:
+                    _check_unit(item["iou"], "a predicted IoU", id)
+                if not all(math.isfinite(edge) for edge in item["box"]):
+                    raise _bad("a box", "four finite numbers", id)
+                _check_entry(item["plane"], id)
+    elif kind_of_message == "event":
+        _check_text(message["text"], "an event's text", 1, DIAGNOSTICS_LIMIT, id)
+    elif kind_of_message == "error":
+        _check_text(message["sentence"], "an error's sentence", 1, SENTENCE_LIMIT, id)
+
+
+def _message(obj):
+    """The message a parsed header holds, held to every rule its header alone shows."""
+    raw_id = obj.get("id")
+    id = raw_id if isinstance(raw_id, str) and _named(raw_id, _ID, ID_LIMIT) else None
+    message = _take_apart(obj, id)
+    _check(message, id)
+    instances = message.get("instances") if message["type"] == "result" else None
+    if instances:
+        for first, second in zip(instances, instances[1:]):
+            if _header_key(first) > _header_key(second):
+                raise Refused("out_of_order", "the instances of a result are not in the fixed order", id)
+    return message
 
 
 def _payloads(message):
@@ -727,8 +815,8 @@ def header(message):
 
 def clean(text, limit):
     """A text cut to `limit` characters that a text of the protocol may hold: white space at
-    its ends is dropped, and every other character is a space (ADR 0006, "Faults"; a `?`,
-    which that record puts in its place, is no character of a protocol's text)."""
+    its ends is dropped, and every other character is a space (ADR 0006, "Faults", puts a
+    `?` in its place, which is no character of a protocol's text: ADR 0020, as amended)."""
     kept = "".join(c if c in TEXT_CHARACTERS else " " for c in str(text).strip())
     return kept.strip()[:limit]
 
@@ -807,7 +895,12 @@ class Reader:
     """Reads frames from a binary stream, strictly. `open_requests` maps the id of each
     request the reader has open to what its answer is held to (as `awaiting` gives it, or as
     a vector's `open` states it); an event counts toward its request, and a result or an
-    error closes it."""
+    error closes it.
+
+    The steps, in ADR 0020's order: the header's length against the largest bound among
+    the requests open; that it is JSON; the two passes over its fields and values, then the
+    fixed order of its instances; its canonical writing; what is open; each payload's
+    length; and last, the order of planes the header showed tied."""
 
     def __init__(self, stream, open_requests=None):
         self.stream = stream
@@ -838,23 +931,21 @@ class Reader:
         if size == 0 or size > bound:
             raise Refused("header_too_large", "a header's length is 0 or over its bound of %d bytes" % bound)
         written = self._read_or_truncated(size)
-        obj = _parse_json(written)
-        if obj.get("type") != "result" and size > HEADER_LIMIT:
-            raise Refused("header_too_large", "a header is over its bound of %d bytes" % HEADER_LIMIT)
-        message = _message(obj)
+        message = _message(_parse_json(written))
+        id = message["id"]
         if header(message) != written:
-            raise Refused("not_canonical", "the header is not the canonical writing of what it holds", message["id"])
+            raise Refused("not_canonical", "a header is not the canonical writing of what it holds", id)
         self._held_to_open(message, size)
         for payload, expected in _payloads(message):
             length = int.from_bytes(self._read_or_truncated(8), "big")
             if length != expected:
-                raise Refused("wrong_length", "a payload's length is not the count its entry gives", message["id"])
+                raise Refused("wrong_length", "a payload's length is not the count its entry gives", id)
             payload.samples = self._read_or_truncated(length)
         if message["type"] == "result" and message["kind"] == "segment":
             instances = message["instances"]
             for first, second in zip(instances, instances[1:]):
                 if _order_key(first) > _order_key(second):
-                    raise Refused("out_of_order", "instances are not in the fixed order", message["id"])
+                    raise Refused("out_of_order", "the instances of a result are not in the fixed order", id)
         self._note(message)
         return message
 
@@ -868,41 +959,57 @@ class Reader:
         return data
 
     def _held_to_open(self, message, size):
-        """What the reader has open: a result or an event names an open request, a result is
-        of its kind and within what it allows, and what is sent beside it is counted."""
+        """What the reader has open. A result: that its request is open and of its kind,
+        its header within what the request allows, its diagnostics within what is left of
+        the text; then instance by instance its query's place, the count for that query,
+        its plane's size and binding; and last, its planes together within 1 GiB. An event:
+        that its request is open, its header within 64 KiB, the count of events and the
+        text. Any other message: its header within 64 KiB."""
         kind_of_message = message["type"]
-        if kind_of_message not in ("result", "event"):
-            return
         id = message["id"]
-        entry = self.open.get(id)
-        if entry is None:
-            raise Refused("unexpected", "a %s names a request that is not open" % kind_of_message, id)
-        if kind_of_message == "event":
-            if entry["events"] >= EVENTS_LIMIT:
-                raise _over("the events of a request", EVENTS_LIMIT, id)
-            if entry["text"] + len(message["text"]) > DIAGNOSTICS_LIMIT:
-                raise _over("the text of a request's events and diagnostics", DIAGNOSTICS_LIMIT, id)
-            return
-        if message["kind"] != entry["kind"]:
-            raise Refused("unexpected", "a result is of another kind than its request", id)
-        if size > _allowed(entry):
-            raise Refused("header_too_large", "a result's header is over what its request allows", id)
-        if message["kind"] == "segment":
+        if kind_of_message == "result":
+            entry = self.open.get(id)
+            if entry is None:
+                raise Refused("unexpected", "the request a result names is not open", id)
+            if message["kind"] != entry["kind"]:
+                raise Refused("unexpected", "a result is of another kind than its request", id)
+            if size > _allowed(entry):
+                raise Refused("header_too_large", "a result's header is over what its request allows", id)
+            if entry["text"] + len(message["diagnostics"]) > DIAGNOSTICS_LIMIT:
+                raise _over("the text sent for one request", DIAGNOSTICS_LIMIT, id)
+            if message["kind"] != "segment":
+                return
             counts = {}
+            together = 0
             for item in message["instances"]:
-                if item["query"] >= entry["queries"]:
-                    raise _bad("a query's place", "a place in its request's queries", id)
-                counts[item["query"]] = counts.get(item["query"], 0) + 1
-                if counts[item["query"]] > entry["max_instances"]:
-                    raise _over("a query's instances", entry["max_instances"], id)
-            for item in message["instances"]:
+                query = item["query"]
+                if query >= entry["queries"]:
+                    raise _bad("an instance's query", "one its request holds", id)
+                counts[query] = counts.get(query, 0) + 1
+                if counts[query] > entry["max_instances"]:
+                    raise _over("the count of instances for a query", entry["max_instances"], id)
                 plane = item["plane"]
                 if (plane.width, plane.height) != (entry["width"], entry["height"]):
                     raise Refused("wrong_size", "a plane is not the size of its request's image", id)
                 if plane.binding != entry["binding"]:
                     raise Refused("wrong_binding", "a plane names another binding than its request's image", id)
-        if entry["text"] + len(message["diagnostics"]) > DIAGNOSTICS_LIMIT:
-            raise _over("the text of a request's events and diagnostics", DIAGNOSTICS_LIMIT, id)
+                together += plane.width * plane.height
+            if together > PAYLOAD_CEILING:
+                raise Refused("too_large", "a result's payloads together are over %d bytes" % PAYLOAD_CEILING, id)
+            return
+        if kind_of_message == "event":
+            entry = self.open.get(id)
+            if entry is None:
+                raise Refused("unexpected", "the request an event names is not open", id)
+            if size > HEADER_LIMIT:
+                raise Refused("header_too_large", "a header is over its bound of %d bytes" % HEADER_LIMIT, id)
+            if entry["events"] >= EVENTS_LIMIT:
+                raise _over("the count of events for one request", EVENTS_LIMIT, id)
+            if entry["text"] + len(message["text"]) > DIAGNOSTICS_LIMIT:
+                raise _over("the text sent for one request", DIAGNOSTICS_LIMIT, id)
+            return
+        if size > HEADER_LIMIT:
+            raise Refused("header_too_large", "a header is over its bound of %d bytes" % HEADER_LIMIT, id)
 
     def _note(self, message):
         kind_of_message = message["type"]

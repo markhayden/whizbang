@@ -6,6 +6,7 @@ import io
 import json
 import random
 import struct
+import time
 import unittest
 
 import kit
@@ -120,7 +121,39 @@ class Refusals(unittest.TestCase):
                 self.assertIn(vector["refused"], proto.REASONS)
                 frame = bytes.fromhex(vector["frame"])
                 self.assertEqual(reason(frame, kit.open_table(vector)), vector["refused"])
-        self.assertEqual(seen, 50)
+        # The 50 of P1, and the 10 added with P2, whose reasons whizbang's reader gives
+        # (its own test of the vectors reads them too).
+        self.assertEqual(seen, 60)
+
+    def test_a_frame_that_breaks_rules_of_two_steps_is_named_as_whizbangs_reader_names_it(self):
+        # Each row the two readers once named differently, the reason a vector states and
+        # whizbang's reader gives.
+        names = {vector["name"]: vector for vector in kit.vectors()}
+        for name, expected in (
+            ("refused-bad-value-query-two-fields", "bad_value"),
+            ("refused-wrong-size-before-too-large", "wrong_size"),
+            ("refused-over-bound-text-before-binding", "over_bound"),
+            ("refused-out-of-order-before-query-past", "out_of_order"),
+            ("refused-over-bound-event-text-past-header", "over_bound"),
+            ("refused-bad-value-width-past-32-bits", "bad_value"),
+            ("refused-bad-value-most-instances-past-32-bits", "bad_value"),
+            ("refused-unknown-field-instance-before-id", "unknown_field"),
+            ("refused-out-of-order-settings-before-id", "out_of_order"),
+            ("refused-out-of-order-settings-past-their-count", "out_of_order"),
+        ):
+            with self.subTest(name):
+                vector = names[name]
+                self.assertEqual(vector["refused"], expected)
+                self.assertEqual(reason(bytes.fromhex(vector["frame"]), kit.open_table(vector)), expected)
+        # A header that is no result and is over 64 KiB, read while a larger result is
+        # allowed, is held to 64 KiB with what is open: after its values and its writing.
+        big = segment_open(queries=64, most=64)
+        padded = '{"type":"cancel", "id":"r1"%s}' % (" " * proto.HEADER_LIMIT)
+        self.assertEqual(reason(frame_of(padded), big), "not_canonical")
+        self.assertEqual(reason(frame_of('{"type":"cancel","id":"r1","x":"%s"}' % ("a" * proto.HEADER_LIMIT)), big), "unknown_field")
+        # A width, a height or the most instances within 32 bits and over its bound is
+        # over_bound; past 32 bits it is of the wrong type.
+        self.assertEqual(proto.WHOLE_MOST, 4_294_967_295)
 
     def test_a_refusal_says_fixed_words_and_quotes_only_a_plain_version(self):
         try:
@@ -132,9 +165,10 @@ class Refusals(unittest.TestCase):
         else:
             self.fail("another version was read")
         try:
-            read(frame_of('{"type":"hello","id":"h1","version":"x/../y","role":"whizbang"}'))
+            read(frame_of('{"type":"hello","id":"h1","version":"Pack 2 <x>","role":"whizbang"}'))
         except Refused as refused:
-            self.assertNotIn("..", refused.sentence)
+            self.assertEqual(refused.reason, "version")
+            self.assertNotIn("<x>", refused.sentence)
         else:
             self.fail("another version was read")
 
@@ -191,8 +225,23 @@ class StrictJson(unittest.TestCase):
         self.assertEqual(reason(nested(127)), "bad_value", "127 is JSON, and no id")
         self.assertEqual(reason(nested(128)), "not_json")
         self.assertEqual(reason(nested(400)), "not_json")
-        # Brackets inside a text are not nesting.
+        # Brackets inside a text are not nesting, an escaped quote does not end a text, and
+        # an escaped backslash does not escape the quote after it.
         self.assertEqual(reason(cancel_with_id('"' + "[" * 200 + '"')), "bad_value")
+        self.assertEqual(reason(cancel_with_id('"\\"' + "[" * 200 + '"')), "bad_value")
+        self.assertEqual(reason(cancel_with_id('["\\\\",' + "[" * 126 + "]" * 127)), "not_json")
+        self.assertEqual(reason(cancel_with_id('["\\\\",' + "[" * 125 + "]" * 126)), "bad_value")
+
+    def test_the_nesting_is_counted_in_one_pass_whatever_the_header_holds(self):
+        # Escaped quotes and backslashes, closed and not: each 64 KiB, each read in well
+        # under a second.
+        filler = (proto.HEADER_LIMIT - 40) // 2
+        for inner in ('\\"' * filler, '\\"' * filler + "x", '"\\' * filler, "\\" * (2 * filler)):
+            with self.subTest(inner[:4]):
+                header = '{"type":"cancel","id":"%s"}' % inner
+                began = time.monotonic()
+                reason(frame_of(header[: proto.HEADER_LIMIT]))
+                self.assertLess(time.monotonic() - began, 0.5)
 
     def test_what_json_has_not_is_refused(self):
         for text in ("01", "1.", ".5", "+1", "1e", '"\\x"', "1,", "'r1'"):

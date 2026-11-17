@@ -224,7 +224,8 @@ class Worker:
         return self._stopping.is_set()
 
     def stop(self, code):
-        """Ends the worker with `code`: the process, through its exit, at once."""
+        """Ends the worker with `code`: the process, through its exit, at once, waiting for
+        no thread and no stream."""
         with self._lock:
             if self.code is not None:
                 return
@@ -235,10 +236,8 @@ class Worker:
             current.wake()
         self._calls.put(None)
         self._ended.set()
-        try:
-            self.stderr.flush()
-        except (OSError, ValueError, AttributeError):
-            pass
+        # Nothing is waited for here, the error output least of all: a thread blocked on a
+        # full pipe of it holds its lock, and a flush would wait for that thread.
         self._exit(code)
 
     def _read_frames(self):

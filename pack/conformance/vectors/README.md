@@ -42,6 +42,8 @@ order, each `{"query":…,"score":…,"iou":…,"box":[…],"plane":…}` with `
 
 The vectors were written once, with task P1 of checkpoint 1C: the frames that are read
 by the Rust codec, and the refusals from those by changing bytes, and before `pack/1`
-was merged those for a total order and for what a strict reader of JSON refuses. They
-are fixed:
+was merged those for a total order and for what a strict reader of JSON refuses. Ten
+were added with task P2, for frames that break rules of two steps, where the two codecs
+once named different reasons: each states the reason the Rust codec gives, and the
+order of the steps is ADR 0020's, "The steps in full". They are fixed:
 `pack/1` does not change, so a vector is added and never written again.
