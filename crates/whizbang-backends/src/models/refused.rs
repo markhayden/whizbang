@@ -22,6 +22,8 @@ pub enum What {
     Status,
     /// A draining mark, `draining/1`.
     Mark,
+    /// A model's count of removals, `removals/1`.
+    Removals,
 }
 
 impl std::fmt::Display for What {
@@ -31,6 +33,7 @@ impl std::fmt::Display for What {
             What::Installation => "the installation record",
             What::Status => "the status record",
             What::Mark => "the draining mark",
+            What::Removals => "the count of removals",
         })
     }
 }

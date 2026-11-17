@@ -1,7 +1,8 @@
 //! Removal of a model (ADR 0017, "Removal"): the model is marked as draining, its
 //! holds are waited for until a deadline of the injected clock, and its pointer is
 //! cleared; or the removal answers that the model is held, and has changed no
-//! pointer. The clock is moved by hand, and what paces a removal's tries is the
+//! pointer. A mark is live only while its remover is: a remover that is alive has
+//! the remover's lock, which a test takes by `live_remover` where it plants a mark. The clock is moved by hand, and what paces a removal's tries is the
 //! test's: a barrier, or the clock. One shim stands for one process.
 
 use std::path::Path;
@@ -9,12 +10,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use whizbang_backends::models::{
-    Current, DRAINING_FORMAT, DRAINING_MAX_BYTES, HoldRefused, InstallRefused, Mark, ModelName,
-    ModelsDir, Refused, RemoveRefused, Removed, Rule, State, What, draining, install_or_attach,
-    remove,
+    Current, DRAINING_FORMAT, DRAINING_MAX_BYTES, HoldRefused, Holds, InstallRefused, Mark,
+    ModelName, ModelsDir, REMOVALS_FORMAT, REMOVALS_MAX_BYTES, Refused, RemoveRefused, Removed,
+    Rule, State, What, draining, install_or_attach, removals, remove,
 };
 use whizbang_core::contract::{Cancellation, Clock};
-use whizbang_core::store::fs::{Fs, RealFs};
+use whizbang_core::store::fs::{Fs, Held, LockFile, OpenFile, RealFs};
 use whizbang_testkit::barrier::Barriers;
 use whizbang_testkit::downloads::FakeDownloader;
 use whizbang_testkit::fs_shim::{Event, Lost, ShimFs};
@@ -28,7 +29,7 @@ use super::publishing::{
     installed, installing, is_whole, reading, record_of, said, second, tiny,
 };
 use super::staging::{TERMS, at, graph, incoming, names_under, serving_both, touches_only};
-use super::{MARKER, model, none, secrets, shows_nothing_of};
+use super::{MARKER, dead_remover, live_remover, model, none, secrets, shows_nothing_of};
 
 /// A clock a test moves by hand: it stands still until it is told to go on.
 pub(super) struct Hand {
@@ -91,7 +92,8 @@ pub(super) fn removed(root: &Path) -> Result<Removed, RemoveRefused> {
     )
 }
 
-/// Whether the model is marked, read strictly by one who holds no lock.
+/// Whether the model is draining, asked by one who holds no lock: marked, and its
+/// remover alive.
 pub(super) fn marked(root: &Path) -> bool {
     draining(
         &ModelsDir::at(Arc::new(RealFs), root),
@@ -387,9 +389,11 @@ fn a_mark_on_the_disk_is_read_strictly_by_a_reader_and_as_there_by_whoever_decid
     assert_eq!(refused, Err(RemoveRefused::Held));
     drop(held);
     assert_eq!(read(), Ok(false));
-    // What is at the mark's name and is no mark: refused by the reader, with no
-    // path; and a mark all the same to a hold and to a publication, which do not
-    // go on beside what they cannot read.
+    // What is at the mark's name, under a remover that is alive, and is no mark:
+    // refused by the reader, with no path; and a mark all the same to a hold and to
+    // a publication, which do not go on beside what they cannot read. The same
+    // with its remover gone is no mark to anybody
+    // (`a_publication_an_installs_own_look_and_a_listing_take_the_mark_of_a_dead_remover_as_no_mark`).
     type Put = fn(&Path);
     let puts: [Put; 5] = [
         |mark| std::fs::write(mark, b"").unwrap(),
@@ -417,6 +421,7 @@ fn a_mark_on_the_disk_is_read_strictly_by_a_reader_and_as_there_by_whoever_decid
         let mark = tiny(root).join("DRAINING");
         let dir = ModelsDir::at(Arc::new(RealFs), root);
         let read = || draining(&dir, &model("tiny"), &none());
+        let remover = live_remover(root);
         put(&mark);
         let refused = read().unwrap_err();
         shows_nothing_of(&refused, &[&*root.to_string_lossy(), "DRAINING", "tiny"]);
@@ -425,6 +430,10 @@ fn a_mark_on_the_disk_is_read_strictly_by_a_reader_and_as_there_by_whoever_decid
             HoldRefused::Draining,
             "put {which}"
         );
+        // Its remover gone, the same thing at the mark's name is no mark.
+        drop(remover);
+        assert_eq!(read(), Ok(false), "put {which}");
+        drop(hold(&holds, &record).unwrap());
         // A removal replaces whatever is there with its own mark, and takes it off.
         let mut seen = false;
         let foreign = RealFs.try_share(&hold_file_of(root, &record)).unwrap();
@@ -438,13 +447,16 @@ fn a_mark_on_the_disk_is_read_strictly_by_a_reader_and_as_there_by_whoever_decid
         drop(foreign);
         assert_eq!(read(), Ok(false), "put {which}");
         let _ = std::fs::remove_file(mark.with_file_name("aside"));
-        // Put there when an install is about to point, it stops the publication.
+        // Put there, under a remover that is alive, when an install is about to
+        // point, it stops the publication.
+        let remover = live_remover(root);
         let fs = Arc::new(ShimFs::new());
         let at = mark.clone();
         fs.pause_before(pointing, move || put(&at));
         let install = installing(&fs, root, &second(), &serving_both());
         assert_eq!(install, Err(InstallRefused::Draining), "put {which}");
         assert_eq!(reading(root), Current::Installed(record.clone()));
+        drop(remover);
     }
 }
 
@@ -485,9 +497,13 @@ fn a_removal_marks_under_the_directorys_lock_says_removing_and_clears_the_pointe
     let (at, file) = (root.clone(), hold_file_of(&root, &record));
     let seen = Arc::new(Mutex::new(None));
     let see = seen.clone();
+    let remover = model.join("REMOVER");
     fs.pause_before(cleared, move || {
         let directory = RealFs.hold_lock_file(&at.join("LOCK"), false).unwrap();
         let shared = RealFs.try_share(&file).unwrap();
+        // And the remover's lock is the removal's alone, as it is for as long as
+        // its mark is set.
+        assert!(RealFs.try_share(&remover).unwrap().is_none());
         *see.lock().unwrap() = Some((
             directory.is_none(),
             shared.is_none(),
@@ -523,11 +539,18 @@ fn a_removal_marks_under_the_directorys_lock_says_removing_and_clears_the_pointe
             Event::Rename(new.clone(), to.to_path_buf()),
         ]
     };
+    let (count, count_new) = (model.join("REMOVALS"), model.join("REMOVALS.new"));
     let mut expected = vec![
-        // The mark, under the directory's lock, before the model's lock.
+        // The remover's lock, before the mark.
+        Event::Lock(model.join("REMOVER")),
+        // The mark, under the directory's lock, before the model's lock; and the
+        // count of removals raised under the same lock.
         Event::Lock(root.join("LOCK")),
         Event::Write(mark.clone()),
         Event::SyncFile(mark.clone()),
+        Event::Write(count_new.clone()),
+        Event::SyncFile(count_new.clone()),
+        Event::Rename(count_new, count),
         Event::Lock(model.join("LOCK")),
     ];
     expected.extend(said_in(&status));
@@ -548,13 +571,17 @@ fn a_removal_marks_under_the_directorys_lock_says_removing_and_clears_the_pointe
         Event::SyncDir(model.clone()),
     ]);
     assert_eq!(changes, expected);
-    // What is left: the lock files, the hold file, the status and the empty
-    // folders. The pointer and the installation are gone.
+    // What is left: the lock files, the remover's among them and free, the hold
+    // file, the status, the count of removals and the empty folders. The pointer
+    // and the installation are gone.
     let mut after = before.clone();
     after.retain(|name| {
         name != "models/tiny/CURRENT" && !name.starts_with("models/tiny/installations/")
     });
+    after.extend(["models/tiny/REMOVALS", "models/tiny/REMOVER"].map(str::to_owned));
+    after.sort();
     assert_eq!(names_under(&root), after);
+    assert!(RealFs.try_alone(&model.join("REMOVER")).unwrap().is_some());
     assert!(after.contains(&format!("models/tiny/holds/{}", record.identity().hex())));
 }
 
@@ -640,7 +667,8 @@ fn a_crash_at_any_event_of_a_removal_leaves_the_model_installed_or_not_installed
         |event| matches!(event, Event::Remove(p) if p.ends_with("CURRENT")),
     );
     // Up to the clearing of the pointer the only names that are not durable are the
-    // mark's and the status's, which nothing here decides by: those events are
+    // remover's lock's, the mark's, the count's and the status's, by which nothing
+    // decides whether the model is installed: those events are
     // tried under the loss of every name and of none. From the clearing on, where
     // the pointer and the folders are at stake, under all six.
     let tried = (0..clean.len()).flat_map(|event| {
@@ -680,17 +708,16 @@ fn a_crash_at_any_event_of_a_removal_leaves_the_model_installed_or_not_installed
         }
         // The status is not durable, and is never half a record.
         let _ = said(root);
-        // A limit, pinned: a mark that the crash left stays, and while it does no
-        // hold on the model is given, though its installation is named and whole.
+        // A mark that the crash left stays, and is a dead remover's: it stops
+        // nobody. A hold on the model is given whenever its installation is named
+        // (until task P5a of checkpoint 1C this pinned the limit that it was
+        // refused as draining), and has the count as the crash left it: raised
+        // once, or not at all when the crash lost the count or came before it.
         if let Current::Installed(record) = &now {
-            let asked = hold(&holds_over(root), record).map(|_| ());
-            let left = tiny(root).join("DRAINING").exists();
-            let expected = if left {
-                Err(HoldRefused::Draining)
-            } else {
-                Ok(())
-            };
-            assert_eq!(asked, expected, "{at}");
+            assert!(!marked(root), "{at}");
+            let held = hold(&holds_over(root), record)
+                .unwrap_or_else(|refused| panic!("{at}: {refused:?}"));
+            assert!(held.removals() <= 1, "{at}");
         }
         // The next removal finds a mark, or none, and ends with the model not
         // installed and no mark; and the model installs again.
@@ -1035,15 +1062,21 @@ fn with_an_install_stopped_after_it_read_the_pointer_a_removal_does_not_go_on_be
     });
     assert_eq!(refused, Err(RemoveRefused::Busy));
     assert_eq!(pauses, 3);
-    // What the removal did on its disk: the directory's lock and the mark, set and
-    // taken off. It never had the model's lock.
+    // What the removal did on its disk: the remover's lock, then under the
+    // directory's lock the mark and the count, and the mark taken off. It never
+    // had the model's lock.
     let (lock, mark) = (root.join("LOCK"), tiny(&root).join("DRAINING"));
+    let count_new = tiny(&root).join("REMOVALS.new");
     assert_eq!(
         fs.events(),
         [
+            Event::Lock(tiny(&root).join("REMOVER")),
             Event::Lock(lock.clone()),
             Event::Write(mark.clone()),
             Event::SyncFile(mark.clone()),
+            Event::Write(count_new.clone()),
+            Event::SyncFile(count_new.clone()),
+            Event::Rename(count_new, tiny(&root).join("REMOVALS")),
             Event::Lock(lock),
             Event::Remove(mark),
             Event::SyncDir(tiny(&root)),
@@ -1124,7 +1157,7 @@ fn with_a_removal_stopped_after_it_read_the_pointer_an_install_is_busy_and_touch
 fn child_removes_and_stops_when_it_has_marked() {
     let root = root_from_parent();
     let fs = Arc::new(ShimFs::new());
-    fs.pause_before(3, || {
+    fs.pause_before(when_marked(), || {
         say("marked yes");
         told();
     });
@@ -1138,27 +1171,33 @@ fn a_mark_left_by_a_process_that_died_is_taken_off_by_the_next_to_take_the_lock(
     let root = scratch.path();
     let record = installed(root, &second());
     let holds = holds_over(root);
+    let mark = tiny(root).join("DRAINING");
     // A remover that dies when it has set its mark, before it takes the model's
-    // lock: a disk of its own stands for its process, and keeps the mark.
+    // lock: a disk of its own stands for its process, and keeps the mark. Its
+    // remover's lock went with it, so the mark is on the disk and is no mark to
+    // one who asks: until task P5a of checkpoint 1C it refused every hold.
+    let marked_at = when_marked();
     let dies = || {
-        let fs = Arc::new(ShimFs::new().crash_before(3, Lost::ContentOnly));
+        let fs = Arc::new(ShimFs::new().crash_before(marked_at, Lost::ContentOnly));
         let ended = removing(fs.clone(), root, &Hand::new(), SECOND, &mut never);
         assert!(ended.is_err() && fs.crashed());
-        assert_eq!(fs.events().len(), 3);
-        assert!(marked(root));
-        assert_eq!(hold(&holds, &record).unwrap_err(), HoldRefused::Draining);
+        assert_eq!(fs.events().len(), marked_at);
+        assert_eq!(std::fs::read(&mark).unwrap(), Mark.to_bytes());
+        assert!(!marked(root));
+        drop(hold(&holds, &record).unwrap());
         assert_eq!(reading(root), Current::Installed(record.clone()));
     };
     // The next to take the lock is an install, of the identity that is there: it
-    // takes the mark off under the directory's lock, as its first change after the
-    // status, downloads nothing, and the next hold is given. The sync that follows
-    // is the install's own, of the model's folder, before it deletes anything.
+    // asks whether the mark's remover is alive and takes the mark off under the
+    // directory's lock, as its first change after the status, downloads nothing,
+    // and the next hold is given. The sync that follows is the install's own, of
+    // the model's folder, before it deletes anything.
     dies();
     let fs = Arc::new(ShimFs::new());
     let fake = serving_both();
     assert_eq!(installing(&fs, root, &second(), &fake), Ok(record.clone()));
     assert!(fake.requests().is_empty());
-    assert!(!marked(root));
+    assert!(!mark.exists());
     let events = fs.events();
     let model = tiny(root);
     let locked = index_of(&events, |event| *event == Event::Lock(model.join("LOCK")));
@@ -1168,9 +1207,10 @@ fn a_mark_left_by_a_process_that_died_is_taken_off_by_the_next_to_take_the_lock(
     );
     assert!(locked < said_first);
     assert_eq!(
-        events[said_first + 1..said_first + 4],
+        events[said_first + 1..said_first + 5],
         [
             Event::Lock(root.join("LOCK")),
+            Event::TryShare(model.join("REMOVER")),
             Event::Remove(model.join("DRAINING")),
             Event::SyncDir(model.clone()),
         ]
@@ -1180,7 +1220,7 @@ fn a_mark_left_by_a_process_that_died_is_taken_off_by_the_next_to_take_the_lock(
     // it off when it is done.
     dies();
     assert!(removed(root).is_ok());
-    assert!(!marked(root));
+    assert!(!mark.exists());
     assert_eq!(reading(root), Current::NotInstalled);
     // And the remover is a real process that is killed when it has set its mark.
     installed(root, &second());
@@ -1191,18 +1231,32 @@ fn a_mark_left_by_a_process_that_died_is_taken_off_by_the_next_to_take_the_lock(
     assert_eq!(other.says("marked"), "yes");
     assert!(marked(root));
     other.killed();
-    assert!(marked(root));
-    assert_eq!(hold(&holds, &record).unwrap_err(), HoldRefused::Draining);
+    assert!(mark.exists() && !marked(root));
     assert_eq!(installed(root, &second()), record);
-    assert!(!marked(root));
+    assert!(!mark.exists());
     drop(hold(&holds, &record).unwrap());
+    // The mark of a remover that is alive is not taken off by an install: the
+    // install stops for it, of another identity and of the one that is there, and
+    // the mark is as its remover wrote it.
+    let remover = live_remover(root);
+    std::fs::write(&mark, Mark.to_bytes()).unwrap();
+    for entry in [entry_at("2026-11.3"), second()] {
+        let fake = serving_both();
+        let refused = installing(&Arc::new(ShimFs::new()), root, &entry, &fake);
+        assert_eq!(refused, Err(InstallRefused::Draining));
+        assert!(fake.requests().is_empty());
+        assert_eq!(std::fs::read(&mark).unwrap(), Mark.to_bytes());
+        assert_eq!(reading(root), Current::Installed(record.clone()));
+    }
+    drop(remover);
 }
 
 #[test]
 fn a_removal_that_is_not_given_the_models_lock_sets_its_mark_again_and_again_when_it_is() {
-    // One who takes the model's lock takes off a mark it finds: it cannot tell a
-    // dead remover's from a live one's. A live remover sets its own again: each
-    // time it is not given the lock, and when it is.
+    // A mark that is taken off under a remover that is alive, here by hand, as a
+    // version of whizbang that could not tell a dead remover's mark from a live
+    // one's took it off: the remover sets its own again, each time it is not
+    // given the lock, and when it is.
     let scratch = Scratch::new("remove-mark-again");
     let root = scratch.path();
     let record = installed(root, &second());
@@ -1247,6 +1301,8 @@ fn an_install_stops_for_a_mark_before_each_file_and_at_each_piece_whatever_the_d
     let before = installed(root, &first());
     let mark = tiny(root).join("DRAINING");
     let set = mark.clone();
+    // The mark is a remover's that is alive throughout: it has the remover's lock.
+    let _remover = live_remover(root);
     let deaf = Deaf::doing(move || std::fs::write(&set, Mark.to_bytes()).unwrap());
     let fs = Arc::new(ShimFs::new());
     let dir = ModelsDir::at(fs.clone(), root);
@@ -1692,8 +1748,8 @@ fn a_removal_that_finds_no_pointer_leaves_a_folder_a_run_still_holds_and_deletes
 fn a_second_removal_that_is_busy_leaves_the_mark_of_the_one_that_has_the_lock_and_no_hold_is_given_meanwhile()
  {
     // Removal A has the model's lock and waits for a hold. Removal B of the same
-    // model, with patience or with none, ends busy: it never had the model's lock,
-    // and the mark it found is not its own to take off. A hold asked for before, in
+    // model, with patience or with none, ends busy: it is not given the remover's
+    // lock, which A has, and the mark it found is not its own to take off. A hold asked for before, in
     // between and after is refused as draining, throughout A's wait.
     let scratch = Scratch::new("remove-two");
     let root = scratch.path();
@@ -1739,8 +1795,7 @@ fn a_second_removal_that_is_busy_leaves_the_mark_of_the_one_that_has_the_lock_an
 #[test]
 fn a_removal_that_waits_for_a_hold_sets_its_mark_again_when_it_is_gone() {
     // A removal has the model's lock and waits for a hold. Its mark is taken off
-    // under it, as a second removal that made the mark first and then ended busy
-    // takes its own off. At its next try the removal sets the mark again.
+    // under it, by hand. At its next try the removal sets the mark again.
     let scratch = Scratch::new("remove-mark-in-wait");
     let root = scratch.path();
     let record = installed(root, &second());
@@ -1767,11 +1822,11 @@ fn a_removal_that_made_the_mark_and_never_had_the_lock_takes_its_own_mark_off_an
     // Busy behind an install, with no mark there before: the mark is the
     // removal's own, and it takes it off, so the install is not stopped by a mark
     // nobody stands behind. (Held by `remove::a_removal_of_a_model_that_is_
-    // installing_…` too, whose install goes on.) Busy with a mark already there, as
-    // a dead remover leaves one: it is left as it was found.
+    // installing_…` too, whose install goes on.)
     let scratch = Scratch::new("remove-own-mark");
     let root = scratch.path();
     installed(root, &second());
+    let mark = tiny(root).join("DRAINING");
     let lock = RealFs
         .hold_lock_file(&tiny(root).join("LOCK"), false)
         .unwrap();
@@ -1786,15 +1841,27 @@ fn a_removal_that_made_the_mark_and_never_had_the_lock_takes_its_own_mark_off_an
         )
     };
     assert_eq!(busy(), Err(RemoveRefused::Busy));
-    assert!(!tiny(root).join("DRAINING").exists());
-    std::fs::write(tiny(root).join("DRAINING"), b"").unwrap();
+    assert!(!mark.exists());
+    // Busy with a mark already there under a remover that is alive: it is
+    // another's, and is left as it was found. The removal never had the
+    // remover's lock, so it set no mark of its own.
+    let remover = live_remover(root);
+    std::fs::write(&mark, b"").unwrap();
     assert_eq!(busy(), Err(RemoveRefused::Busy));
-    assert_eq!(std::fs::read(tiny(root).join("DRAINING")).unwrap(), b"");
+    assert_eq!(std::fs::read(&mark).unwrap(), b"");
+    // The same thing with its remover gone, as a dead remover leaves one: with the
+    // remover's lock the removal makes it its own, and takes it off when it ends
+    // busy behind the model's lock. Until task P5a of checkpoint 1C it was left,
+    // since nobody could tell that its remover had died.
+    drop(remover);
+    assert_eq!(busy(), Err(RemoveRefused::Busy));
+    assert!(!mark.exists());
     drop(lock);
-    // With the lock, a removal makes whatever is there its own mark, and takes it
-    // off at its end.
+    // With the model's lock too, a removal makes whatever is there its own mark,
+    // and takes it off at its end.
+    std::fs::write(&mark, b"").unwrap();
     assert!(removed(root).is_ok());
-    assert!(!tiny(root).join("DRAINING").exists());
+    assert!(!mark.exists());
 }
 
 #[test]
@@ -1831,10 +1898,11 @@ fn a_removal_waits_for_a_hold_on_the_installation_the_pointer_names_though_its_f
 
 #[test]
 fn a_removal_that_made_its_mark_again_while_it_tried_for_the_lock_takes_it_off_when_it_ends_busy() {
-    // A mark is there before the removal begins, so it is not the removal's own.
-    // The holder of the model's lock takes it off, as an install does with one it
-    // finds; the removal, not given the lock, makes the mark again: now it is its
-    // own, and when its deadline comes it takes it off.
+    // Something is at the mark's name before the removal begins, and no remover is
+    // alive: with the remover's lock it is the removal's own, and is replaced by
+    // the mark as it is written. It is then taken off under the removal, as a
+    // person might; the removal, not given the model's lock, makes the mark
+    // again, and when its deadline comes it takes it off.
     let scratch = Scratch::new("remove-remade-mark");
     let root = scratch.path();
     installed(root, &second());
@@ -1848,11 +1916,14 @@ fn a_removal_that_made_its_mark_again_while_it_tried_for_the_lock_takes_it_off_w
     let clock = Arc::new(Hand::new());
     let remover = removal_on_a_thread(root, &barriers, &clock);
     barriers.arrived("try", 1);
-    assert_eq!(std::fs::read(&mark).unwrap(), b"");
+    assert_eq!(std::fs::read(&mark).unwrap(), Mark.to_bytes());
+    assert!(marked(root));
     std::fs::remove_file(&mark).unwrap();
     barriers.release("try");
     barriers.arrived("try", 2);
     assert!(marked(root));
+    // Each time the mark was set the count was raised.
+    assert_eq!(removals_of(root), 2);
     clock.advance(60 * SECOND);
     barriers.release("try");
     assert_eq!(remover.join().unwrap(), Err(RemoveRefused::Busy));
@@ -1863,11 +1934,13 @@ fn a_removal_that_made_its_mark_again_while_it_tried_for_the_lock_takes_it_off_w
 #[test]
 fn of_two_removals_the_one_that_made_the_mark_and_ends_busy_takes_it_off_and_the_one_with_the_lock_sets_it_again()
  {
-    // Removal B begins first and makes the mark; the model's lock is another's, so
-    // B waits. The lock is let go and removal A takes it: the mark it found is its
-    // own from then, and it waits for a hold. B's deadline comes: B ends busy and
-    // takes off the mark it made. That is the window: no mark, under a removal
-    // that waits. At A's next try the mark is there again.
+    // Removal B begins first: it has the remover's lock and makes the mark; the
+    // model's lock is another's, so B waits. Removal A begins: the remover's lock
+    // is B's, so A waits for it, and sets no mark and raises no count. B's
+    // deadline comes: B ends busy, takes off the mark it made and lets the
+    // remover's lock go. That is the window: no mark, and no remover that has
+    // set one, so a hold is given. At A's next try it has the remover's lock, the
+    // mark is there again, and no hold is given from then.
     let scratch = Scratch::new("remove-two-in-order");
     let root = scratch.path();
     let record = installed(root, &second());
@@ -1881,25 +1954,445 @@ fn of_two_removals_the_one_that_made_the_mark_and_ends_busy_takes_it_off_and_the
     let b = removal_on_a_thread(root, &b_tries, &b_clock);
     b_tries.arrived("try", 1);
     assert!(marked(root));
-    drop(lock);
+    assert_eq!(removals_of(root), 1);
     let (a_tries, a_clock) = (Barriers::new(), Arc::new(Hand::new()));
     let a = removal_on_a_thread(root, &a_tries, &a_clock);
     a_tries.arrived("try", 1);
-    assert_eq!(said(root), Some((State::Removing, 0, 0)));
-    assert!(marked(root));
-    // B's deadline comes while A has the lock.
+    assert_eq!(removals_of(root), 1);
+    assert_eq!(said(root), Some((State::Installed, 2, 2)));
+    // B's deadline comes while A waits for the remover's lock.
     b_clock.advance(60 * SECOND);
     b_tries.release("try");
     assert_eq!(b.join().unwrap(), Err(RemoveRefused::Busy));
     assert!(!tiny(root).join("DRAINING").exists());
-    // A's next try sets the mark again, and no hold is given from then.
+    drop(hold(&holds, &record).unwrap());
+    drop(lock);
+    // A's next try: the remover's lock, its mark, the model's lock; and it waits
+    // for the hold.
     a_tries.release("try");
     a_tries.arrived("try", 2);
     assert!(marked(root));
+    assert_eq!(removals_of(root), 2);
+    assert_eq!(said(root), Some((State::Removing, 0, 0)));
     assert_eq!(hold(&holds, &record).unwrap_err(), HoldRefused::Draining);
     held.let_go();
     a_tries.open("try");
     assert!(a.join().unwrap().is_ok());
     assert!(!marked(root));
     assert_eq!(reading(root), Current::NotInstalled);
+}
+
+// --- a mark is live only while its remover is (plan of 1C, decision D6; task P5a) ----------------
+
+/// How many removals of the model `tiny` have set their mark.
+fn removals_of(root: &Path) -> u64 {
+    removals(
+        &ModelsDir::at(Arc::new(RealFs), root),
+        &model("tiny"),
+        &none(),
+    )
+    .unwrap()
+}
+
+/// The index, among the events of a removal that nothing stops, of its taking of
+/// the model's lock: every event before it is of the remover's lock, the mark and
+/// the count.
+fn when_marked() -> usize {
+    index_of(
+        &clean_removal(),
+        |event| matches!(event, Event::Lock(p) if p.ends_with("tiny/LOCK")),
+    )
+}
+
+#[test]
+fn a_hold_that_meets_the_mark_of_a_remover_that_was_killed_is_given() {
+    let scratch = Scratch::new("remove-killed-remover");
+    let root = scratch.path();
+    let record = installed(root, &second());
+    let holds = holds_over(root);
+    let mark = tiny(root).join("DRAINING");
+    // A real process that removes the model and is stopped when it has set its
+    // mark. While it lives, the model is draining and no hold is given.
+    let mut other = Other::running(
+        "models::remove::child_removes_and_stops_when_it_has_marked",
+        root,
+    );
+    assert_eq!(other.says("marked"), "yes");
+    assert!(marked(root));
+    assert_eq!(hold(&holds, &record).unwrap_err(), HoldRefused::Draining);
+    // Killed. Its mark is on the disk as it wrote it, and nothing took it off; no
+    // process id was read to learn that it died.
+    other.killed();
+    assert_eq!(std::fs::read(&mark).unwrap(), Mark.to_bytes());
+    assert!(!marked(root));
+    let held = hold(&holds, &record).unwrap();
+    assert_eq!(held.installation(), record.identity());
+    drop(hold(&holds_over(root), &record).unwrap());
+    assert_eq!(reading(root), Current::Installed(record.clone()));
+    // A run takes no mark off: it is there still, and stops nothing.
+    assert!(mark.exists());
+    drop(held);
+    // The same of a remover that a disk of its own stands for, which loses power
+    // when it has set its mark: the mark is kept, and the hold is given.
+    let scratch = Scratch::new("remove-crashed-remover");
+    let root = scratch.path();
+    let record = installed(root, &second());
+    let fs = Arc::new(ShimFs::new().crash_before(when_marked(), Lost::ContentOnly));
+    let ended = removing(fs.clone(), root, &Hand::new(), SECOND, &mut never);
+    assert!(ended.is_err() && fs.crashed());
+    assert!(tiny(root).join("DRAINING").exists());
+    assert!(!marked(root));
+    drop(hold(&holds_over(root), &record).unwrap());
+}
+
+#[test]
+fn a_hold_that_meets_the_mark_of_a_live_remover_is_refused_as_draining() {
+    let scratch = Scratch::new("remove-live-remover");
+    let root = scratch.path();
+    let record = installed(root, &second());
+    let holds = holds_over(root);
+    let mark = tiny(root).join("DRAINING");
+    // A remover that has its lock and has set no mark yet stops nobody.
+    let remover = live_remover(root);
+    drop(hold(&holds, &record).unwrap());
+    // With its mark set: draining, to this process and to another, whatever the
+    // pointer says, and whether or not the mark can be read as one.
+    std::fs::write(&mark, Mark.to_bytes()).unwrap();
+    assert!(marked(root));
+    assert_eq!(hold(&holds, &record).unwrap_err(), HoldRefused::Draining);
+    let other = holds_over(root);
+    assert_eq!(hold(&other, &record).unwrap_err(), HoldRefused::Draining);
+    std::fs::write(&mark, b"not a mark").unwrap();
+    assert_eq!(hold(&holds, &record).unwrap_err(), HoldRefused::Draining);
+    // The remover is gone, and what it left is as it was: the hold is given.
+    drop(remover);
+    assert!(mark.exists());
+    drop(hold(&holds, &record).unwrap());
+    // And the remover is a real second process, which lives: refused, each time.
+    std::fs::remove_file(&mark).unwrap();
+    let mut other = Other::running(
+        "models::remove::child_removes_and_stops_when_it_has_marked",
+        root,
+    );
+    assert_eq!(other.says("marked"), "yes");
+    for _ in 0..3 {
+        assert_eq!(hold(&holds, &record).unwrap_err(), HoldRefused::Draining);
+    }
+    assert_eq!(count(&holds, &record), 0);
+    other.tell("go");
+    assert_eq!(other.says("ended"), "true");
+    other.ended_well();
+    assert_eq!(reading(root), Current::NotInstalled);
+}
+
+#[test]
+fn a_publication_an_installs_own_look_and_a_listing_take_the_mark_of_a_dead_remover_as_no_mark() {
+    // What a dead remover left at the mark's name, each way: its mark as it wrote
+    // it, and what is no mark at all.
+    type Put = fn(&Path);
+    let puts: [Put; 3] = [
+        |mark| std::fs::write(mark, Mark.to_bytes()).unwrap(),
+        |mark| std::fs::write(mark, b"").unwrap(),
+        |mark| std::fs::create_dir(mark).unwrap(),
+    ];
+    let clean = events_after(&[&first()], &second());
+    let pointing = index_of(
+        &clean,
+        |event| matches!(event, Event::Lock(p) if !p.ends_with("tiny/LOCK")),
+    );
+    let between = index_of(
+        &clean,
+        |event| matches!(event, Event::Begin(p) if p.ends_with("graph.onnx")),
+    );
+    for (which, put) in puts.into_iter().enumerate() {
+        // A publication: the mark is there when the install takes the directory's
+        // lock to point, and its remover is gone. The install publishes. The first
+        // put is of a remover that never had a lock file at all.
+        let scratch = Scratch::new("remove-dead-publish");
+        let root = scratch.path();
+        installed(root, &first());
+        if which != 0 {
+            dead_remover(root);
+        }
+        let mark = tiny(root).join("DRAINING");
+        let fs = Arc::new(ShimFs::new());
+        let at = mark.clone();
+        fs.pause_before(pointing, move || put(&at));
+        let published = installing(&fs, root, &second(), &serving_both());
+        assert_eq!(published, Ok(record_of(&second())), "put {which}");
+        assert_eq!(reading(root), Current::Installed(record_of(&second())));
+        // The listing's question, asked by one who holds no lock: no.
+        assert!(mark.exists(), "put {which}");
+        let dir = ModelsDir::at(Arc::new(RealFs), root);
+        assert_eq!(
+            draining(&dir, &model("tiny"), &none()),
+            Ok(false),
+            "put {which}"
+        );
+        // An install's own look, where it asks its cancellation: the mark is put
+        // between two files, with the first staged. The second is asked for, and
+        // the install ends well.
+        let scratch = Scratch::new("remove-dead-look");
+        let root = scratch.path();
+        installed(root, &first());
+        if which != 0 {
+            dead_remover(root);
+        }
+        let fs = Arc::new(ShimFs::new());
+        let at = tiny(root).join("DRAINING");
+        fs.pause_before(between, move || put(&at));
+        let fake = serving_both();
+        let again = installing(&fs, root, &second(), &fake);
+        assert_eq!(again, Ok(record_of(&second())), "put {which}");
+        assert_eq!(fake.requests().len(), 2, "put {which}");
+    }
+    // And inside a file, of a downloader that looks at nothing: the mark of a dead
+    // remover is set after the first piece, and every piece after it is kept.
+    let scratch = Scratch::new("remove-dead-inside");
+    let root = scratch.path();
+    installed(root, &first());
+    dead_remover(root);
+    let set = tiny(root).join("DRAINING");
+    let deaf = Deaf::doing(move || std::fs::write(&set, Mark.to_bytes()).unwrap());
+    let dir = ModelsDir::at(Arc::new(RealFs), root);
+    let ended = whizbang_backends::models::install(
+        &dir,
+        &second(),
+        &adapter(),
+        &deaf,
+        &Cancellation::new(),
+        &none(),
+    );
+    assert_eq!(ended, Ok(record_of(&second())));
+    is_whole(root, &record_of(&second()));
+}
+
+/// The real file system, with one thing done once in the moment a lock on the
+/// remover's lock file has been given and is still held, by whatever call asked.
+struct Meanwhile {
+    then: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Meanwhile {
+    fn doing(then: impl FnOnce() + Send + 'static) -> Meanwhile {
+        Meanwhile {
+            then: Mutex::new(Some(Box::new(then))),
+        }
+    }
+
+    fn given(&self, path: &Path, given: bool) {
+        if given && path.ends_with("tiny/REMOVER") {
+            let then = self.then.lock().unwrap().take();
+            if let Some(then) = then {
+                then();
+            }
+        }
+    }
+}
+
+impl Fs for Meanwhile {
+    fn create_dir(&self, path: &Path) -> std::io::Result<()> {
+        RealFs.create_dir(path)
+    }
+    fn write_new(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        RealFs.write_new(path, bytes)
+    }
+    fn sync_dir(&self, path: &Path) -> std::io::Result<()> {
+        RealFs.sync_dir(path)
+    }
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        RealFs.rename(from, to)
+    }
+    fn remove_all(&self, path: &Path) -> std::io::Result<()> {
+        RealFs.remove_all(path)
+    }
+    fn read_at_most(&self, path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+        RealFs.read_at_most(path, limit)
+    }
+    fn list(&self, path: &Path) -> std::io::Result<Vec<std::path::PathBuf>> {
+        RealFs.list(path)
+    }
+    fn exists(&self, path: &Path) -> std::io::Result<bool> {
+        RealFs.exists(path)
+    }
+    fn hold_lock_file(
+        &self,
+        path: &Path,
+        create: bool,
+    ) -> std::io::Result<Option<Box<dyn LockFile>>> {
+        let held = RealFs.hold_lock_file(path, create)?;
+        self.given(path, held.is_some());
+        Ok(held)
+    }
+    fn share(&self, path: &Path) -> std::io::Result<Box<dyn Held>> {
+        let held = RealFs.share(path)?;
+        self.given(path, true);
+        Ok(held)
+    }
+    fn try_alone(&self, path: &Path) -> std::io::Result<Option<Box<dyn Held>>> {
+        let held = RealFs.try_alone(path)?;
+        self.given(path, held.is_some());
+        Ok(held)
+    }
+    fn open_file(&self, path: &Path) -> std::io::Result<Box<dyn OpenFile>> {
+        RealFs.open_file(path)
+    }
+    fn try_share(&self, path: &Path) -> std::io::Result<Option<Box<dyn Held>>> {
+        let held = RealFs.try_share(path)?;
+        self.given(path, held.is_some());
+        Ok(held)
+    }
+    fn is_link(&self, path: &Path) -> std::io::Result<bool> {
+        RealFs.is_link(path)
+    }
+}
+
+#[test]
+fn two_that_ask_at_once_whether_a_dead_removers_mark_is_live_both_answer_no() {
+    // The second asks in the moment the first has what it asked the remover's lock
+    // for, and still has it: each of the two orders of who is first, a hold and
+    // one who holds no lock. Neither reads the other as a remover that is alive.
+    for first_is_a_hold in [false, true] {
+        let scratch = Scratch::new("remove-two-ask");
+        let root = scratch.path().to_path_buf();
+        let record = installed(&root, &second());
+        dead_remover(&root);
+        std::fs::write(tiny(&root).join("DRAINING"), Mark.to_bytes()).unwrap();
+        let seen = Arc::new(Mutex::new(None));
+        let (see, at, of) = (seen.clone(), root.clone(), record.clone());
+        let fs = Arc::new(Meanwhile::doing(move || {
+            let dir = ModelsDir::at(Arc::new(RealFs), &at);
+            let listed = draining(&dir, &model("tiny"), &none());
+            // A hold asks under the directory's lock, which a first that is a
+            // hold has: the second is then one who holds no lock, alone.
+            let held = (!first_is_a_hold)
+                .then(|| hold(&holds_over(&at), &of).map(|held| held.installation()));
+            *see.lock().unwrap() = Some((listed, held));
+        }));
+        let dir = ModelsDir::at(fs, &root);
+        if first_is_a_hold {
+            let held = hold(&Holds::over(dir), &record).unwrap();
+            assert_eq!(held.installation(), record.identity());
+        } else {
+            assert_eq!(draining(&dir, &model("tiny"), &none()), Ok(false));
+        }
+        // The second asked, in that moment, and was answered no both ways.
+        assert_eq!(
+            *seen.lock().unwrap(),
+            Some((
+                Ok(false),
+                (!first_is_a_hold).then_some(Ok(record.identity()))
+            )),
+            "first is a hold: {first_is_a_hold}"
+        );
+    }
+}
+
+#[test]
+fn each_removal_that_sets_its_mark_raises_the_count_and_a_removal_that_timed_out_leaves_it_raised()
+{
+    assert_eq!(REMOVALS_FORMAT, "removals/1");
+    assert_eq!(REMOVALS_MAX_BYTES, 64);
+    let scratch = Scratch::new("remove-count");
+    let root = scratch.path();
+    // A model that was never installed is not marked, and has no count.
+    assert_eq!(removed(root), Err(RemoveRefused::NotInstalled));
+    assert_eq!(removals_of(root), 0);
+    assert!(names_under(root).is_empty());
+    let record = installed(root, &second());
+    let count_file = tiny(root).join("REMOVALS");
+    assert_eq!(removals_of(root), 0);
+    assert!(!count_file.exists());
+    let holds = holds_over(root);
+    let held = hold(&holds, &record).unwrap();
+    // A removal that times out: the count is raised by the time its mark is set,
+    // and is left raised when the mark is taken off.
+    let clock = Hand::new();
+    let refused = removing(Arc::new(RealFs), root, &clock, SECOND, &mut || {
+        assert!(marked(root));
+        assert_eq!(removals_of(root), 1);
+        clock.advance(SECOND);
+    });
+    assert_eq!(refused, Err(RemoveRefused::Held));
+    assert!(!tiny(root).join("DRAINING").exists());
+    assert_eq!(removals_of(root), 1);
+    assert_eq!(
+        std::fs::read(&count_file).unwrap(),
+        br#"{"format":"removals/1","count":1}"#
+    );
+    // One that is busy behind the model's lock set its mark too: raised.
+    let lock = RealFs
+        .hold_lock_file(&tiny(root).join("LOCK"), false)
+        .unwrap();
+    assert!(lock.is_some());
+    let busy = removing(
+        Arc::new(RealFs),
+        root,
+        &Hand::new(),
+        Duration::ZERO,
+        &mut never,
+    );
+    assert_eq!(busy, Err(RemoveRefused::Busy));
+    assert_eq!(removals_of(root), 2);
+    drop(lock);
+    // One that is busy behind a remover that is alive set no mark: not raised.
+    let remover = live_remover(root);
+    let busy = removing(
+        Arc::new(RealFs),
+        root,
+        &Hand::new(),
+        Duration::ZERO,
+        &mut never,
+    );
+    assert_eq!(busy, Err(RemoveRefused::Busy));
+    assert_eq!(removals_of(root), 2);
+    drop(remover);
+    // The count is written under the directory's lock, with the mark, by a rename
+    // over the count that was there.
+    let events = {
+        let copy = Scratch::new("remove-count-events");
+        installed(copy.path(), &second());
+        let fs = Arc::new(ShimFs::new());
+        removing(fs.clone(), copy.path(), &Hand::new(), SECOND, &mut never).unwrap();
+        fs.events()
+    };
+    let renamed = index_of(
+        &events,
+        |event| matches!(event, Event::Rename(_, to) if to.ends_with("tiny/REMOVALS")),
+    );
+    assert!(renamed < when_marked());
+    let fs = Arc::new(ShimFs::new());
+    let at = root.to_path_buf();
+    let seen = Arc::new(Mutex::new(None));
+    let see = seen.clone();
+    fs.pause_after_rename_onto("REMOVALS", move || {
+        let directory = RealFs.hold_lock_file(&at.join("LOCK"), false).unwrap();
+        *see.lock().unwrap() = Some((directory.is_none(), marked(&at), removals_of(&at)));
+    });
+    held.let_go();
+    let removed_now = removing(fs.clone(), root, &Hand::new(), SECOND, &mut never);
+    assert_eq!(removed_now.unwrap().installation(), Some(record.identity()));
+    assert_eq!(*seen.lock().unwrap(), Some((true, true, 3)));
+    assert_eq!(removals_of(root), 3);
+    // It outlives the model, and an install does not lower it.
+    assert_eq!(reading(root), Current::NotInstalled);
+    assert_eq!(installed(root, &second()), record);
+    assert_eq!(removals_of(root), 3);
+    // What is at the count's name and is no count is refused by the reader, with no
+    // path; the next removal that sets its mark writes a count over it.
+    let dir = ModelsDir::at(Arc::new(RealFs), root);
+    for bytes in [
+        &b""[..],
+        br#"{"format":"removals/1","count":3} "#,
+        br#"{"format":"removals/2","count":3}"#,
+        br#"{"format":"removals/1","count":-1}"#,
+        br#"{"format":"removals/1","count":3,"pid":7}"#,
+        &[b'9'; 65],
+    ] {
+        std::fs::write(&count_file, bytes).unwrap();
+        let refused = removals(&dir, &model("tiny"), &none()).unwrap_err();
+        shows_nothing_of(&refused, &[&*root.to_string_lossy(), "REMOVALS", "tiny"]);
+    }
+    assert!(removed(root).is_ok());
+    assert_eq!(removals_of(root), 1);
 }
