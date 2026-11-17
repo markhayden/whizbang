@@ -10,7 +10,7 @@ worker's own (`whizbang_pack.worker`) refuses `--fake-fault`.
 | `no-hello` | Reads whizbang's hello and never answers it |
 | `other-version` | Answers the hello with one that states `pack/2`; writes a line to its error output for each `error` it takes, with its fault and its sentence |
 | `deaf-to-end-of-input` | Does not end at the end of its input; only its lifetime ends it, so it is refused without `--max-lifetime-s` |
-| `error-output` | Writes 300 lines to its error output before its hello, every tenth over 5,000 bytes; then a line for each variable of its environment and for each descriptor it holds, and a marker, a host and a made-up token, a line each, for the redaction tests of whizbang's supervisor. At the start of each call it writes a line that names the call, and the marker, the host and the token again |
+| `error-output` | Writes 300 lines to its error output before its hello, every tenth over 5,000 bytes; then a line for each variable of its environment and for each descriptor it holds, and a marker, a host and a made-up token, a line each, for the redaction tests of whizbang's supervisor. At the start of each call it writes a line that names the call, and the marker, the host and the token again; before a segment of `fake-exit` it first closes its frames' output, and writes them `LATE_SECONDS` later, the end of its input not ending it meanwhile |
 | `flood` | Sends 300 events before each call, more than a request may send |
 | `slow-load` | Says a `load` began, then waits, deaf to a cancel, until the worker ends |
 | `slow-unload` | The same of an `unload` |
@@ -24,6 +24,7 @@ Without `--fake-fault` it is the worker itself, with the same fake models.
 import os
 import stat
 import sys
+import time
 
 from whizbang_pack import proto
 from whizbang_pack import worker as _worker
@@ -46,6 +47,10 @@ DESCRIPTORS_LOOKED_AT = 1024
 # that a test can look for it among the machine's processes.
 GRANDCHILD_SECONDS = 2
 GRANDCHILD_WORD = "whizbang-fake-grandchild"
+
+# How long `error-output` waits, before a segment of `fake-exit`, between closing its
+# frames' output and writing its last lines.
+LATE_SECONDS = 0.5
 
 # The id of the request `asks` sends, and the binding its image is under.
 ASKED_ID = "w1"
@@ -104,10 +109,26 @@ class ErrorOutput(Worker):
         self.stderr.flush()
         super()._say_hello()
 
+    late = False
+
+    def _end_of_input(self):
+        # Inside the late lines before `fake-exit` ends the process, the end of the input
+        # does not end it: `fake-exit` does, at once after them.
+        if not self.late:
+            super()._end_of_input()
+
     def _before_call(self, call):
         # The same three lines again, inside the call, just before it does anything: a
         # supervisor that hands on this error output with a failure of the call holds them
-        # only if it waited for the error output's end.
+        # only if it waited for the error output's end. Before a segment of `fake-exit`,
+        # which ends the process, the frames' output is closed first and the lines come
+        # `LATE_SECONDS` after it, the end of its input not ending it meanwhile: a
+        # supervisor that took the error output as soon as the frames ended would miss them.
+        request = call.request
+        if request["kind"] == "segment" and request["model"] == "fake-exit":
+            self.late = True
+            self.stdout.close()
+            time.sleep(LATE_SECONDS)
         self.stderr.write("in the call %s\n" % call.id)
         self.stderr.write("marker %s\n" % MARKER)
         self.stderr.write("connecting to host %s\n" % HOST)

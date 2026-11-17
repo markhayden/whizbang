@@ -1344,8 +1344,11 @@ taken from the installation `setup` made, never from a path compiled into the bi
 - **The error output handed on is whole** (P3a's note): a failure that ends the worker
   takes the error output after the worker's end, which waits for its reader within 5 s;
   the fault `error-output` now writes its marker, host and token again at the start of
-  each call, just before `fake-exit` ends the process, and the failure holds them, the
-  token redacted. No fault's sentence is made from the error output.
+  each call; before a segment of `fake-exit` it first closes its frames' output, and
+  writes them half a second later, the end of its input not ending it meanwhile, just
+  before `fake-exit` ends the process. The failure holds them, the token redacted, which
+  a supervisor that took the error output when the frames ended would not (a mutant
+  that did so failed the test). No fault's sentence is made from the error output.
 - **What a run keeps of a result's predicted IoU and diagnostics** (the carry-over row
   P1 gave this task), decided: the core's `Instance` and `SegmentResponse` stay as they
   are, so what an action is answered with does not depend on which backend answered.
