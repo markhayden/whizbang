@@ -914,14 +914,15 @@ on the runners, each named in the request.
       not exist yet, so the script hands on PATH, HOME, TMPDIR and
       `UV_PYTHON_INSTALL_DIR` and nothing else; P3a and Y1 hold `whizbang setup` to the
       rest of the row.
-- [ ] CI: one step installs `uv` at its pinned version, by an action pinned to a commit,
+- [x] CI: one step installs `uv` at its pinned version, by an action pinned to a commit,
       with its cache. Its time on each runner is in the hand-back.
-      Built in the pull request of C1b: `taiki-e/install-action` at commit `ab49d3c`
-      (v2.90.5), already the workflow's, with `fallback: none`; then a step installs the
-      pinned Python from GitHub's releases only, into a folder that `Swatinem/rust-cache`
-      keeps, keyed by the pin (`scripts/tests/test-pack.sh` holds each). Ticked when CI on
-      that pull request has shown the step under 30 seconds on both runners, as "Done
-      when" asks.
+      `taiki-e/install-action` at commit `ab49d3c` (v2.90.5), already the workflow's,
+      with `fallback: none`; then a step installs the pinned Python from GitHub's
+      releases only, into a folder that `Swatinem/rust-cache` keeps, keyed by the pin
+      (`scripts/tests/test-pack.sh` holds each). On the first CI run of the pull request
+      (commit `a5181b8`), with nothing cached: the action, four tools with `uv`, 2 s on
+      macOS and 3 s on Linux; the Python step, downloaded, 2 s on macOS and 1 s on Linux;
+      test time 76.5 s and 87.9 s. Both under 30 seconds, as "Done when" asks.
 
 **Done when** `just check` passes on both runners with the new step under 30 seconds,
 and these pass in `scripts/tests/test-pack.sh`: the runner of the pack's tests ends
