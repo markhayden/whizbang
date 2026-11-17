@@ -1002,13 +1002,13 @@ Notes for P2, from what the Rust codec decides (ADR 0020, "What a reader takes a
 **Depends on:** P1, C1b. **Reads:** ADR 0020; rascal `tools/python/src/rascal_tools/server.py`
 and `models/adapters.py` (the adapter's interface and its fakes, as reference).
 
-- [ ] `whizbang_pack.proto`: the same frames, standard library only.
-- [ ] `whizbang_pack.worker`: reads frames on one thread, runs one call at a time on
+- [x] `whizbang_pack.proto`: the same frames, standard library only.
+- [x] `whizbang_pack.worker`: reads frames on one thread, runs one call at a time on
       another, answers `cancel` by setting the call's flag, and exits at the end of
       its input, whatever the call is doing, and at `--max-lifetime-s`. One resident model: a `load` of another unloads
       the first. It is given the models directory as an argument and opens an
       installation by the model's name and the identity a `load` names.
-- [ ] The adapter interface (`load`, `segment`, `unload`, the features it declares, its
+- [x] The adapter interface (`load`, `segment`, `unload`, the features it declares, its
       revision), the six fake models of D3, and the entry point `whizbang_pack.fakes`
       with its faults.
 
@@ -1028,6 +1028,44 @@ and `models/adapters.py` (the adapter's interface and its fakes, as reference).
 The tests drive the worker in-process over pipes, and start one child process at a
 time, three times in all, each killed and waited for in the test's cleanup.
 **Size:** medium.
+**Built with the task:** the codec was written from ADR 0020 and the vectors alone, not
+from the Rust codec. Each of P1's notes has a test of its own in `test_proto.StrictJson`
+and `test_proto.Writing` (strict UTF-8 before `json`; a byte-order mark, NaN, the
+infinities, numbers past a double, whole numbers past 4,300 digits, a field twice,
+nesting 128 deep, `-0`, `true` and `false` as whole numbers; fractions as the bits of
+their double; the writer's total order, its cleaning and its cut of diagnostics at
+63 KiB). `test_worker.Threads` counts the worker's own threads in this process (its
+reader and its call, beside the thread that started it, and none started by a call);
+the count of three a process reports is checked in a child, by the first test of
+`test_worker.Ends`. Where ADR 0020 left the reader a choice, the codec takes these:
+a result's header over its own request's bound is `header_too_large`, looked at with
+what the reader has open, once the result's `id` is known; an instance whose `query`
+is past its request's count of queries is `bad_value`; payloads over 1 GiB together
+are `too_large` from the header's values, before what is open is looked at; a query
+object with no field is `missing_field`, and one with two, or another, is
+`unknown_field`; a fraction written with upper-case hex digits is `bad_value`. ADR 0006
+cleans a sentence by putting `?` for a character it may not hold, and `?` is no
+character of a text of the protocol, so the writer puts a space, then drops white space
+at the ends again; a text that is then empty is `no reason was given` for a sentence and
+`no text was given` for an event.
+**Notes for P3a:** the command line is
+`python -m whizbang_pack.worker --models-dir <absolute folder> [--max-lifetime-s <whole seconds>]`,
+and `python -m whizbang_pack.fakes` takes the same and `--fake-fault <name>`; neither is
+installed (`tool.uv.package = false`), so the supervisor puts `pack/src` on the path the
+way it starts Python (the tests use `-I -B -c` with the path as an argument). Exit codes:
+0 at the end of the input or at whizbang's error that names the conversation, 2 at a
+refused frame or an output that cannot be written (and at a command line refused before
+anything starts), 3 at the lifetime, 4 from `fake-exit`. The worker answers a refused
+frame with an `error` of the conversation's id (or, before a hello, the refused header's
+own id when it has a valid one): `too_large` for `header_too_large`, `over_bound` and
+`too_large`, `malformed` for every other reason. A request that comes while a call
+runs is answered `unavailable`. The worker moves its standard output to a copy before
+anything runs and points the standard output at its error output, so that a library
+that prints cannot write into the frames. It reads no variable of its environment;
+what the supervisor sets for the Hub's libraries is P3a's. `error-output` writes 300
+lines, every tenth over 5,000 bytes, and nothing in them is a secret: what the fault
+prints for the redaction tests of P3a and P3b (a marker, a host, a made-up token) is
+theirs to add, since P2 names none.
 
 ### P3a. The supervisor's process: start, hello, stop; the guard
 
