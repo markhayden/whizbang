@@ -51,8 +51,16 @@
 //! for. Each wait is also a bounded count of looks, so a clock that stands still ends it
 //! too. The two threads are joined once the worker has been waited for: each ends at the
 //! end of its pipe, which the end of the process closes. A process the worker started
-//! and that outlived it would hold the pipes open, and the join would wait for it; the
-//! worker starts none (task P2), and whether the runtime does is task R1's to find.
+//! that outlives it holds the pipes open: the readers are then given [`END_LIMIT`] and
+//! let go past it, no worker is started until they end, and the kept error output ends
+//! with [`LINGERING`]. Such a process is not killed: ending a worker's group of
+//! processes takes a call the standard library does not have (`docs/carry-over.md`).
+//! The worker starts none (task P2); whether the runtime does is task R1's to find.
+//!
+//! **Every path out of a start ends the worker,** a panic among them: from the moment
+//! its process is started it is held by a value whose drop kills it, waits for it, lets
+//! its readers end within [`END_LIMIT`] of the machine's time and removes its folder,
+//! unless the supervisor's own end of it ran first.
 //!
 //! **One worker, started once** at P3a: a worker that ended after its hello is not
 //! noticed until it is stopped; noticing it, and the restart, are task P4's.
@@ -88,6 +96,9 @@ pub const LINE_BYTES: usize = 4_096;
 const LINE_READ_BYTES: usize = 2 * LINE_BYTES;
 /// How long the supervisor lets pass between two looks at what it waits for.
 const PACE: Duration = Duration::from_millis(5);
+/// The line the kept error output ends with when a worker's streams stayed open after
+/// it ended, held by a process it started.
+pub const LINGERING: &str = "whizbang: the worker ended and a process it started still holds its streams open; their readers were let go";
 /// The entry point of the worker itself, which the kind `pack` starts.
 pub const WORKER_MODULE: &str = "whizbang_pack.worker";
 
@@ -105,14 +116,17 @@ const POOL_THREADS: &str = "8";
 const GPU_WATERMARK: &str = "0.5";
 
 /// The program the interpreter is started with (`-c`). It closes every descriptor
-/// above its three, puts the pack's source (its first argument) on the Python path,
-/// and runs the module its second argument names as a program, with the arguments
-/// after those two.
-pub const BOOT: &str = "import os, sys\n\
-os.closerange(3, 65536)\n\
+/// above its three, up to the process's limit of open files (a million when it has
+/// none); imports what it uses of the standard library before the pack's source is on
+/// the path, so that nothing in the pack can stand in for it; then puts the pack's
+/// source (its first argument) on the Python path and runs the module its second
+/// argument names as a program, with the arguments after those two.
+pub const BOOT: &str = "import os, sys, resource, runpy\n\
+most = resource.getrlimit(resource.RLIMIT_NOFILE)[0]\n\
+if most == resource.RLIM_INFINITY or most > 1048576:\n    most = 1048576\n\
+os.closerange(3, most)\n\
 sys.path.insert(0, sys.argv.pop(1))\n\
 name = sys.argv.pop(1)\n\
-import runpy\n\
 runpy.run_module(name, run_name='__main__', alter_sys=True)\n";
 
 /// What the supervisor starts: the interpreter, the pack's source, the entry point,
@@ -200,13 +214,68 @@ type Heard = Result<Option<Message>, Refused>;
 /// The lines of the error output that are kept.
 type Kept = Arc<Mutex<VecDeque<String>>>;
 
-/// A worker that is running.
+/// A worker that is running, from the moment its process is started. Whatever path it
+/// leaves by, a panic among them, its process is killed unless it ended and is waited
+/// for, its readers are joined within [`END_LIMIT`] or let go, and its folder removed:
+/// by [`Worker::finish`] on the paths that return, and by its drop on any other.
 struct Running {
     child: Child,
+    /// How the process ended, once it was waited for.
+    reaped: Option<Ended>,
     input: Option<ChildStdin>,
     heard: Receiver<Heard>,
     readers: Vec<JoinHandle<()>>,
-    home: PathBuf,
+    /// The worker's folder, until it is removed.
+    home: Option<PathBuf>,
+}
+
+impl Running {
+    /// The process ended by itself, with this status, and was waited for.
+    fn reaped(&mut self, status: ExitStatus) -> Ended {
+        let ended = Ended::of(status);
+        self.reaped = Some(ended);
+        ended
+    }
+
+    /// Kills the process, unless it was waited for or has ended, and waits for it.
+    fn kill(&mut self) -> Ended {
+        drop(self.input.take());
+        if let Some(ended) = self.reaped {
+            return ended;
+        }
+        let ended = kill(&mut self.child);
+        self.reaped = Some(ended);
+        ended
+    }
+
+    /// Removes the worker's folder, once.
+    fn remove_home(&mut self) {
+        if let Some(home) = self.home.take() {
+            let _ = std::fs::remove_dir_all(home);
+        }
+    }
+}
+
+impl Drop for Running {
+    /// The end of a worker on a path that did not reach [`Worker::finish`]: a panic
+    /// between its start and its end. The process is killed and waited for; the readers
+    /// are given [`END_LIMIT`] of the machine's time, not the supervisor's clock, which
+    /// may be what panicked, and are let go past it; the folder is removed.
+    fn drop(&mut self) {
+        self.kill();
+        let until = std::time::Instant::now() + END_LIMIT;
+        while self.readers.iter().any(|reader| !reader.is_finished())
+            && std::time::Instant::now() < until
+        {
+            std::thread::sleep(PACE);
+        }
+        for reader in self.readers.drain(..) {
+            if reader.is_finished() {
+                let _ = reader.join();
+            }
+        }
+        self.remove_home();
+    }
 }
 
 /// The supervisor of one worker process. It starts none until it is asked to
@@ -223,6 +292,9 @@ pub struct Worker {
     kept: Kept,
     ended: Option<Ended>,
     conversations: u64,
+    /// The readers of a worker that ended while something held its streams open: let
+    /// go at [`END_LIMIT`], and no worker is started while one of them lives.
+    lingering: Vec<JoinHandle<()>>,
 }
 
 impl std::fmt::Debug for Worker {
@@ -252,6 +324,7 @@ impl Worker {
             kept: Arc::default(),
             ended: None,
             conversations: 0,
+            lingering: Vec::new(),
         }
     }
 
@@ -287,6 +360,19 @@ impl Worker {
         if self.running.is_some() {
             return Ok(());
         }
+        let (ended, lingering): (Vec<_>, Vec<_>) = std::mem::take(&mut self.lingering)
+            .into_iter()
+            .partition(JoinHandle::is_finished);
+        for reader in ended {
+            let _ = reader.join();
+        }
+        self.lingering = lingering;
+        if !self.lingering.is_empty() {
+            return Err(refusal(
+                FaultKind::Unavailable,
+                "a process the last worker started still holds its streams open; no worker is started until they close",
+            ));
+        }
         let python = &self.launch.python;
         if !python.is_absolute() || !python.is_file() {
             return Err(refusal(
@@ -308,7 +394,9 @@ impl Worker {
     /// The folder of the worker that is running: its home, its temporary folder and the
     /// Hub's libraries' place, empty when it was started, removed when it ends.
     pub fn folder(&self) -> Option<&Path> {
-        self.running.as_ref().map(|running| running.home.as_path())
+        self.running
+            .as_ref()
+            .and_then(|running| running.home.as_deref())
     }
 
     /// What the worker that is running said of itself in its hello.
@@ -335,20 +423,17 @@ impl Worker {
         let mut running = self.running.take()?;
         drop(running.input.take());
         let exited = self.until(END_LIMIT, || running.child.try_wait().ok().flatten());
-        let ended = match exited {
-            Some(status) => Ended::of(status),
-            None => kill(&mut running.child),
-        };
-        Some(self.finish(running, ended))
+        if let Some(status) = exited {
+            running.reaped(status);
+        }
+        Some(self.finish(running))
     }
 
     /// Kills the worker that is running now, and waits for it. Says how it ended;
     /// nothing when none was running.
     pub fn kill(&mut self) -> Option<Ended> {
-        let mut running = self.running.take()?;
-        drop(running.input.take());
-        let ended = kill(&mut running.child);
-        Some(self.finish(running, ended))
+        let running = self.running.take()?;
+        Some(self.finish(running))
     }
 
     /// Starts the process and its two threads.
@@ -390,12 +475,15 @@ impl Worker {
         self.kept = Arc::default();
         self.said = None;
         let (tell, heard) = mpsc::channel();
+        // From here on the worker is ended on every path, a panic among them, by
+        // `finish` or by the drop of `running`.
         let mut running = Running {
             child,
+            reaped: None,
             input,
             heard,
             readers: Vec::new(),
-            home,
+            home: Some(home),
         };
         let made = match (output, errors) {
             (Some(output), Some(errors)) => {
@@ -416,8 +504,7 @@ impl Worker {
             _ => Err(io::Error::other("a stream of the worker was not piped")),
         };
         if made.is_err() {
-            let ended = kill(&mut running.child);
-            self.finish(running, ended);
+            self.finish(running);
             return Err(refusal(
                 FaultKind::Unavailable,
                 "the pack's worker could not be given its threads",
@@ -474,11 +561,10 @@ impl Worker {
                 // Its output ended: the worker has ended, or is ending.
                 drop(running.input.take());
                 let exited = self.until(END_LIMIT, || running.child.try_wait().ok().flatten());
-                let ended = match exited {
-                    Some(status) => Ended::of(status),
-                    None => kill(&mut running.child),
-                };
-                self.finish(running, ended);
+                if let Some(status) = exited {
+                    running.reaped(status);
+                }
+                let ended = self.finish(running);
                 return Err(refusal(
                     FaultKind::Unavailable,
                     &format!(
@@ -495,20 +581,44 @@ impl Worker {
                 ),
             ),
         };
-        let ended = kill(&mut running.child);
-        self.finish(running, ended);
+        self.finish(running);
         Err(refusal(kind, &sentence))
     }
 
-    /// What is left once the process has been waited for: its threads are joined, its
-    /// folder removed, and how it ended noted.
-    fn finish(&mut self, mut running: Running, ended: Ended) -> Ended {
-        drop(running.input.take());
-        // Each reader ends at the end of its pipe, which the process's end closes.
+    /// The end of a worker: its process killed unless it ended and was waited for; its
+    /// two readers joined, each at the end of its pipe, which the end of the process
+    /// closes, within [`END_LIMIT`] of the clock; its folder removed; and how it ended
+    /// noted. A process the worker started that holds its streams open past that keeps
+    /// the readers from their end: they are let go, kept as lingering, which refuses the
+    /// next start until they end, and a line of the kept error output says so. Nothing
+    /// that was started is killed but the worker (the end of a worker's group of
+    /// processes is not one the standard library gives; `docs/carry-over.md`).
+    fn finish(&mut self, mut running: Running) -> Ended {
+        let ended = running.kill();
+        let all_ended = self
+            .until(END_LIMIT, || {
+                running
+                    .readers
+                    .iter()
+                    .all(JoinHandle::is_finished)
+                    .then_some(())
+            })
+            .is_some();
         for reader in running.readers.drain(..) {
-            let _ = reader.join();
+            if reader.is_finished() {
+                let _ = reader.join();
+            } else {
+                self.lingering.push(reader);
+            }
         }
-        let _ = std::fs::remove_dir_all(&running.home);
+        if !all_ended {
+            let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+            if kept.len() == LINES_KEPT {
+                kept.pop_front();
+            }
+            kept.push_back(LINGERING.to_owned());
+        }
+        running.remove_home();
         self.ended = Some(ended);
         ended
     }

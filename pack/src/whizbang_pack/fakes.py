@@ -14,6 +14,7 @@ worker's own (`whizbang_pack.worker`) refuses `--fake-fault`.
 | `flood` | Sends 300 events before each call, more than a request may send |
 | `slow-load` | Says a `load` began, then waits, deaf to a cancel, until the worker ends |
 | `slow-unload` | The same of an `unload` |
+| `grandchild` | Before its hello, starts a process of its own that holds the worker's standard input, its frames and its error output open, writes `grandchild <pid>` to its error output, and says hello. The process ends by itself after `GRANDCHILD_SECONDS`, whatever happens to the worker, so that nothing it starts outlives a test by more than that |
 
 Without `--fake-fault` it is the worker itself, with the same fake models.
 """
@@ -38,6 +39,11 @@ TOKEN = "made-up-token-5b8e1d0c4a2f6e93"
 
 # The descriptors `error-output` looks at: from 0 up to this, not including it.
 DESCRIPTORS_LOOKED_AT = 1024
+
+# How long the process `grandchild` starts lives, and a word its command line holds so
+# that a test can look for it among the machine's processes.
+GRANDCHILD_SECONDS = 2
+GRANDCHILD_WORD = "whizbang-fake-grandchild"
 
 
 class NoHello(Worker):
@@ -123,6 +129,28 @@ class SlowUnload(Worker):
         call.wait_for_stop()
 
 
+class Grandchild(Worker):
+    def _say_hello(self):
+        import subprocess
+
+        # It inherits the standard input and the error output (and the standard output,
+        # which is the error output here: `main`), and is handed the copy the frames are
+        # written to. It reads nothing and writes nothing; it only holds them.
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import time; time.sleep(%d)" % GRANDCHILD_SECONDS,
+                GRANDCHILD_WORD,
+            ],
+            pass_fds=(self.stdout.fileno(),),
+        )
+        self.stderr.write("grandchild %d\n" % process.pid)
+        self.stderr.flush()
+        super()._say_hello()
+
+
 FAULTS = {
     "no-hello": NoHello,
     "other-version": OtherVersion,
@@ -131,6 +159,7 @@ FAULTS = {
     "flood": Flood,
     "slow-load": SlowLoad,
     "slow-unload": SlowUnload,
+    "grandchild": Grandchild,
 }
 
 

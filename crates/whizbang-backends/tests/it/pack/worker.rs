@@ -16,7 +16,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use whizbang_backends::pack::worker::{END_LIMIT, HELLO_LIMIT, LINE_BYTES, LINES_KEPT, PASSED};
+use whizbang_backends::pack::worker::{
+    END_LIMIT, HELLO_LIMIT, LINE_BYTES, LINES_KEPT, LINGERING, PASSED,
+};
 use whizbang_backends::pack::{Ended, Launch, Worker};
 use whizbang_core::capability::FaultKind;
 use whizbang_core::contract::{Clock, Secrets, SystemClock};
@@ -610,6 +612,122 @@ fn a_worker_that_ends_before_its_hello_is_named_by_its_exit_code() {
     );
     assert_eq!(worker.ended(), Some(Ended::Exited(3)));
     assert_eq!(kit::pack_children(), Vec::<u32>::new());
+}
+
+/// A supervisor of the fakes with this fault, held by a guard as something the test can
+/// take out and drop itself.
+fn droppable(fault: &str, clock: Arc<dyn Clock>) -> Guard<Option<Worker>> {
+    kit::fakes(Some(fault)).guard(
+        |fixture| Some(Worker::new(launch(fixture), clock, Secrets::none()).with_spawn(kit::spawn)),
+        |worker| {
+            if let Some(worker) = worker.as_mut() {
+                worker.kill();
+            }
+        },
+    )
+}
+
+#[test]
+fn a_dropped_supervisor_kills_a_worker_deaf_to_the_end_of_its_input_at_the_deadline() {
+    let clock = Arc::new(Rushed::default());
+    let mut held = droppable("deaf-to-end-of-input", clock.clone());
+    let mut worker = held.take().unwrap();
+    worker.ready().unwrap();
+    let pid = worker.pid().unwrap();
+
+    // Dropped, it closes the input, which this worker does not end at; at the deadline,
+    // on the clock, it is killed, and it is gone when the drop returns.
+    clock.rushing.store(true, Ordering::SeqCst);
+    drop(worker);
+    assert!(clock.moved() >= END_LIMIT, "{:?}", clock.moved());
+    assert!(!kit::runs_the_pack(pid));
+    assert_eq!(kit::pack_children(), Vec::<u32>::new());
+}
+
+/// The word the command line of the process the fault `grandchild` starts holds.
+const GRANDCHILD: &str = "whizbang-fake-grandchild";
+
+#[test]
+fn a_process_the_worker_started_that_holds_its_streams_open_keeps_neither_stop_nor_drop_waiting() {
+    // Two workers, each of which starts a process that holds its streams open for two
+    // seconds after it ends. One is stopped, the other dropped, each on a clock that
+    // rushes through the wait for its readers.
+    let stopped_clock = Arc::new(Rushed::default());
+    let dropped_clock = Arc::new(Rushed::default());
+    let mut stopped = supervised(Some("grandchild"), stopped_clock.clone());
+    let mut held = droppable("grandchild", dropped_clock.clone());
+    let mut dropped = held.take().unwrap();
+    stopped.ready().unwrap();
+    dropped.ready().unwrap();
+
+    stopped_clock.rushing.store(true, Ordering::SeqCst);
+    dropped_clock.rushing.store(true, Ordering::SeqCst);
+    let asked = Instant::now();
+    assert!(stopped.stop().is_some());
+    drop(dropped);
+    // Both returned while the two processes still held the streams: within the bound,
+    // and not after the two seconds those processes live.
+    assert_eq!(
+        kit::naming(GRANDCHILD).len(),
+        2,
+        "both still hold the streams"
+    );
+    assert!(
+        asked.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        asked.elapsed()
+    );
+    assert_eq!(kit::pack_children(), Vec::<u32>::new());
+
+    // The readers it let go are kept, and no worker is started while they live: the
+    // refusal is at once, and says why.
+    assert_eq!(
+        stopped.error_output().last().map(String::as_str),
+        Some(LINGERING)
+    );
+    let fault = stopped.ready().unwrap_err();
+    assert_eq!(fault.kind(), FaultKind::Unavailable);
+    assert_eq!(
+        fault.sentence(),
+        "a process the last worker started still holds its streams open; no worker is started until they close"
+    );
+    assert_eq!(stopped.pid(), None);
+
+    // The two processes end by themselves, and their streams with them: every reader
+    // ends, nothing of the test is left, and a worker starts again.
+    assert!(kit::readers_ended(Duration::from_secs(20)));
+    assert_eq!(kit::naming(GRANDCHILD), Vec::<u32>::new());
+    stopped_clock.rushing.store(false, Ordering::SeqCst);
+    stopped.ready().unwrap();
+    assert!(stopped.stop().is_some());
+}
+
+/// A clock whose every pause panics, as one that is broken might.
+struct Panics;
+
+impl Clock for Panics {
+    fn now_ms(&self) -> u64 {
+        SystemClock.now_ms()
+    }
+
+    fn pause(&self, _span: Duration) {
+        panic!("the clock gives up");
+    }
+}
+
+#[test]
+fn a_panic_between_a_workers_start_and_its_end_leaves_no_process_no_child_unwaited_and_no_folder() {
+    // A worker that says no hello: the wait for it asks the clock to pause, which panics
+    // while the worker runs.
+    let mut worker = supervised(Some("no-hello"), Arc::new(Panics));
+    let panicked = catch_unwind(AssertUnwindSafe(|| worker.ready()));
+    assert!(panicked.is_err());
+    // No process of the test's, running or ended and not waited for, and no folder of
+    // a worker's.
+    assert_eq!(kit::children(), Vec::new());
+    assert_eq!(kit::worker_folders(), Vec::<PathBuf>::new());
+    assert_eq!(worker.pid(), None);
+    assert!(kit::readers_ended(Duration::from_secs(10)));
 }
 
 /// The `.rs` files under `crates/`, outside any `target` folder: at most `most`.

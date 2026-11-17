@@ -433,7 +433,18 @@ class Fakes(unittest.TestCase):
         self.assertEqual(threading.active_count(), before, "a refused command line starts nothing")
         self.assertEqual(
             sorted(fakes.FAULTS),
-            sorted(("no-hello", "other-version", "deaf-to-end-of-input", "error-output", "flood", "slow-load", "slow-unload")),
+            sorted(
+                (
+                    "no-hello",
+                    "other-version",
+                    "deaf-to-end-of-input",
+                    "error-output",
+                    "flood",
+                    "slow-load",
+                    "slow-unload",
+                    "grandchild",
+                )
+            ),
         )
 
         def faulty(name, lifetime=None):

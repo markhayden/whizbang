@@ -37,8 +37,8 @@ allowed=$(grep -r -l -F 'disallowed_methods' crates --include='*.rs' | sort | tr
   fail "the executor allows the lint once, on its spawner"
 [ "$(grep -c -F 'allow(clippy::disallowed_methods)' crates/whizbang-backends/src/pack/threads.rs)" = 1 ] ||
   fail "the pack's supervisor allows the lint once, on its spawner"
-grep -B1 -F 'pub fn spawn(' crates/whizbang-backends/src/pack/threads.rs | grep -F 'allow(clippy::disallowed_methods)' >/dev/null ||
-  fail "the pack supervisor's allow is on its spawn"
+grep -B1 -x -F 'pub(crate) fn spawn(' crates/whizbang-backends/src/pack/threads.rs | grep -F 'allow(clippy::disallowed_methods)' >/dev/null ||
+  fail "the pack supervisor's allow is on its spawn, which only the crate can call"
 grep -F 'pub const THREADS_LIMIT: usize = 2;' crates/whizbang-backends/src/pack/threads.rs >/dev/null ||
   fail "the pack's supervisor holds a process to one worker's two threads"
 [ "$(grep -c -F 'allow(clippy::disallowed_methods)' crates/whizbang-testkit/src/threads.rs)" = 3 ] ||

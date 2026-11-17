@@ -1198,7 +1198,25 @@ tests and the line of D7). **Size:** medium.
   `scripts/tests/test-thread-lint.sh`). A test hands the supervisor the test kit's,
   so its threads count toward the test's 64 (the dropped supervisor's test counts
   them). Both readers are joined on every path: each ends at the end of its pipe,
-  which the end of the process closes.
+  which the end of the process closes. A process the worker started that outlives it
+  holds the pipes open: the readers are given 5 s (`END_LIMIT`, on the clock) and let
+  go past it, still holding their places, no worker is started until they end (a
+  fault that says so, at once), and the kept error output says so last
+  (`worker::a_process_the_worker_started_that_holds_its_streams_open_keeps_neither_stop_nor_drop_waiting`,
+  with the fault `grandchild` of the fakes, whose process lives two seconds). Such a
+  process is not killed: killing the worker's group of processes takes `libc` or
+  `unsafe`, which the workspace forbids, or the system's `kill` program, which the
+  builder's permission to run was refused; the carry-over row on processes a worker
+  starts keeps it, and R1's "Done when" asks about the runtime's.
+- **Every path out of a start ends the worker,** a panic among them: from the moment
+  its process is started it is held by a value whose drop kills it, waits for it, lets
+  its readers end within 5 s of the machine's time and removes its folder
+  (`worker::a_panic_between_a_workers_start_and_its_end_leaves_no_process_no_child_unwaited_and_no_folder`,
+  with a clock whose pause panics). The kill on the drop's path is
+  `worker::a_dropped_supervisor_kills_a_worker_deaf_to_the_end_of_its_input_at_the_deadline`.
+- **The boot** imports what it uses of the standard library before the pack's source
+  is on the path, so the pack cannot stand in for it, and closes the descriptors above
+  the three up to the process's limit of open files (a million at most).
 - **The guard:** `Fixture::guard` holds the supervisor a test makes from the fixture
   (the test kit does not depend on `whizbang-backends`); its drop kills the worker,
   waits for it, and fails the test if `ps` lists a child of the test's process that
@@ -1211,16 +1229,24 @@ tests and the line of D7). **Size:** medium.
   and ninth tests read them, and P3b's test of a fault reads the last three.
 - **Not built here:** the cleaner of a text of the protocol. P3a writes none (its hello
   holds no text, and its faults are whizbang's, not the protocol's); P3b builds it.
-- Two tests more than "Done when" names:
-  `worker::a_python_that_is_not_there_or_not_absolute_is_refused_and_says_to_run_setup`
-  and the one on exit codes above.
+- Five tests more than "Done when" names:
+  `worker::a_python_that_is_not_there_or_not_absolute_is_refused_and_says_to_run_setup`,
+  the one on exit codes, and the three above on a process the worker starts, a panic
+  and the drop's kill; and a unit test of the spawner
+  (`pack::threads::tests::two_places_are_taken_the_third_is_refused_at_once_and_a_place_comes_back_after_a_return_or_a_panic`).
 
 **Notes for P3b and P4:** the output's reader hands each frame on a channel and ends
 at the first refusal or the end; it reads with an `Open` of its own, which P3b
-replaces with the one the writer notes requests in. The error output is complete only
+replaces with the one the writer notes requests in. That channel is not bounded: a
+worker that writes frames faster than they are taken grows it, so P3b bounds it (a
+channel of a fixed size, the reader waiting on it). The error output is complete only
 once the worker has ended (`Worker::error_output` after `stop` or `kill`): the reader
 may still be behind when a frame arrives. `Worker::folder` is the worker's folder while
 it runs.
+
+**Notes for P6a and Y1:** `Launch::source`, the pack's source the worker runs, is
+taken from the installation `setup` made, never from a path compiled into the binary
+(the test kit's fixture takes the repository's, which no shipped binary has).
 
 ### P3b. One call, and the conformance table
 
@@ -1971,7 +1997,13 @@ Tag `m1c-fakes` on the merge. **Carry-over:** `backends status`. **Size:** small
 **Done when** ADR 0022 names one runtime with its numbers and its sources, the script's
 numbers are in the pull request as fields (never its raw output, which holds absolute
 paths), and `just check` passes. A fast test holds the ADR to the
-lock: `setup::the_runtime_the_adr_names_is_the_one_the_lock_pins`.
+lock: `setup::the_runtime_the_adr_names_is_the_one_the_lock_pins`. And ADR 0022 says
+whether the runtime starts processes of its own (compilers, loaders, pools of
+processes), from its documentation and from the run: if it does, each ends with the
+worker, or the supervisor kills them with it, with a test; the supervisor of P3a
+kills only the worker, and lets go of readers that such a process keeps waiting.
+**Added with P3a's pull request,** from its review: a process the worker starts that
+outlives it holds the worker's streams open (`docs/carry-over.md`).
 **Size:** medium.
 
 ### R2a. The adapter `sam3`

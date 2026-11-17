@@ -47,10 +47,77 @@ impl Drop for Place {
 /// process already holds [`THREADS_LIMIT`] made here. The lint against making a thread
 /// is allowed here, and its bound is the count (`clippy.toml`).
 #[allow(clippy::disallowed_methods)]
-pub fn spawn(name: String, work: Box<dyn FnOnce() + Send + 'static>) -> io::Result<JoinHandle<()>> {
+pub(crate) fn spawn(
+    name: String,
+    work: Box<dyn FnOnce() + Send + 'static>,
+) -> io::Result<JoinHandle<()>> {
     let place = Place::take()?;
     std::thread::Builder::new().name(name).spawn(move || {
         let _place = place;
         work();
     })
+}
+
+#[cfg(test)]
+mod tests {
+    //! The spawner itself: the one test that makes threads through it, never more than
+    //! the two it allows, each parked on a channel of its own that this test ends.
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{Arc, mpsc};
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    /// A thread parked until its channel is sent to or dropped.
+    fn parked() -> (mpsc::Sender<()>, JoinHandle<()>) {
+        let (tell, go) = mpsc::channel::<()>();
+        let thread = spawn(
+            "parked".to_owned(),
+            Box::new(move || {
+                let _ = go.recv();
+            }),
+        )
+        .unwrap();
+        (tell, thread)
+    }
+
+    #[test]
+    fn two_places_are_taken_the_third_is_refused_at_once_and_a_place_comes_back_after_a_return_or_a_panic()
+     {
+        let (tell_first, first) = parked();
+        let (tell_second, second) = parked();
+        assert_eq!(LIVE.load(Ordering::SeqCst), 2);
+
+        // The third is refused in the caller, at once, waiting for nothing, and its work
+        // never runs.
+        let ran = Arc::new(AtomicBool::new(false));
+        let seen = ran.clone();
+        let asked = Instant::now();
+        let third = spawn(
+            "third".to_owned(),
+            Box::new(move || seen.store(true, Ordering::SeqCst)),
+        );
+        assert!(third.is_err());
+        assert!(asked.elapsed() < Duration::from_secs(1));
+        assert_eq!(LIVE.load(Ordering::SeqCst), 2);
+
+        // One returns and is joined: its place comes back, and one more is made.
+        tell_first.send(()).unwrap();
+        first.join().unwrap();
+        assert_eq!(LIVE.load(Ordering::SeqCst), 1);
+
+        // A thread whose work panics gives its place back too.
+        let panicked = spawn(
+            "panics".to_owned(),
+            Box::new(|| panic!("the work gives up")),
+        )
+        .unwrap();
+        assert!(panicked.join().is_err());
+        assert_eq!(LIVE.load(Ordering::SeqCst), 1);
+
+        drop(tell_second);
+        second.join().unwrap();
+        assert_eq!(LIVE.load(Ordering::SeqCst), 0);
+        assert!(!ran.load(Ordering::SeqCst));
+    }
 }

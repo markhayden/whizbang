@@ -29,8 +29,8 @@ use std::io::{self, Read};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
 use std::sync::mpsc;
+use std::sync::{Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -252,56 +252,141 @@ impl<T> Drop for Guard<T> {
     }
 }
 
-/// The children of this process that run the pack, by process id, as `ps` lists them
-/// (a process whose command line names `whizbang_pack`). Nothing is signalled.
+/// One process as `ps` lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listed {
+    pub pid: u32,
+    pub parent: u32,
+    /// Its state, as `ps` gives it: a `Z` first for a process that ended and was not
+    /// waited for.
+    pub state: String,
+    pub command: String,
+}
+
+/// Every process of the machine, as `ps` lists them, but for the `ps` that lists them.
+/// Nothing is signalled.
 ///
 /// # Panics
 /// When `ps` cannot be run: what it would have shown is not known.
 #[allow(clippy::panic)]
-pub fn pack_children() -> Vec<u32> {
-    let own = std::process::id();
-    pack_processes()
-        .into_iter()
-        .filter(|(_, parent)| *parent == own)
-        .map(|(pid, _)| pid)
-        .collect()
-}
-
-/// Whether a process with this id runs the pack, as `ps` lists the processes.
-pub fn runs_the_pack(pid: u32) -> bool {
-    pack_processes().iter().any(|(listed, _)| *listed == pid)
-}
-
-/// Every process of the machine that runs the pack: its id and its parent's.
-#[allow(clippy::panic)]
-fn pack_processes() -> Vec<(u32, u32)> {
-    let listed = Command::new("ps")
-        .args(["-A", "-o", "pid=,ppid=,command="])
+pub fn processes() -> Vec<Listed> {
+    let started = Command::new("ps")
+        .args(["-A", "-o", "pid=,ppid=,stat=,command="])
         .stdin(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .output();
-    let listed = match listed {
+        .spawn();
+    let Ok(child) = started else {
+        panic!("ps could not be started: {started:?}");
+    };
+    let own_ps = child.id();
+    let listed = match child.wait_with_output() {
         Ok(listed) if listed.status.success() => listed.stdout,
         other => panic!("ps could not list the processes: {other:?}"),
     };
     String::from_utf8_lossy(&listed)
         .lines()
-        .filter(|line| line.contains("whizbang_pack"))
         .filter_map(|line| {
             let mut words = line.split_whitespace();
             let pid = words.next()?.parse().ok()?;
             let parent = words.next()?.parse().ok()?;
-            Some((pid, parent))
+            let state = words.next()?.to_owned();
+            let command = words.collect::<Vec<_>>().join(" ");
+            Some(Listed {
+                pid,
+                parent,
+                state,
+                command,
+            })
         })
+        .filter(|listed| listed.pid != own_ps)
         .collect()
 }
 
+/// The children of this process, of any command, ended and not waited for among them.
+pub fn children() -> Vec<Listed> {
+    let own = std::process::id();
+    processes()
+        .into_iter()
+        .filter(|listed| listed.parent == own)
+        .collect()
+}
+
+/// The children of this process that run the pack, by process id (a process whose
+/// command line names `whizbang_pack`).
+pub fn pack_children() -> Vec<u32> {
+    children()
+        .into_iter()
+        .filter(|listed| listed.command.contains("whizbang_pack"))
+        .map(|listed| listed.pid)
+        .collect()
+}
+
+/// Whether a process with this id runs the pack.
+pub fn runs_the_pack(pid: u32) -> bool {
+    processes()
+        .iter()
+        .any(|listed| listed.pid == pid && listed.command.contains("whizbang_pack"))
+}
+
+/// The processes of the machine whose command line holds this word, by process id.
+pub fn naming(word: &str) -> Vec<u32> {
+    processes()
+        .into_iter()
+        .filter(|listed| listed.command.contains(word))
+        .map(|listed| listed.pid)
+        .collect()
+}
+
+/// The folders this process's supervisors made for their workers that are still
+/// there (`whizbang-worker-<this process's id>-<n>` in the system's temporary folder).
+pub fn worker_folders() -> Vec<PathBuf> {
+    let start = format!("whizbang-worker-{}-", std::process::id());
+    let Ok(listing) = std::fs::read_dir(std::env::temp_dir()) else {
+        return Vec::new();
+    };
+    listing
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with(&start))
+        .map(|entry| entry.path())
+        .collect()
+}
+
+/// A note, for each thread the supervisor made in a test, that is dropped when the
+/// thread's work is over, by a return or a panic.
+static READERS: Mutex<Vec<mpsc::Receiver<()>>> = Mutex::new(Vec::new());
+
 /// What the supervisor makes its two threads with in a test: [`crate::threads::spawn`],
 /// so that they are counted with the test's other threads, and the one over the
-/// process's limit is not made.
+/// process's limit is not made. Each is noted, so that a test can wait for them to end
+/// ([`readers_ended`]).
 pub fn spawn(
     _name: String,
     work: Box<dyn FnOnce() + Send + 'static>,
 ) -> io::Result<JoinHandle<()>> {
-    Ok(crate::threads::spawn(work))
+    let (over, noted) = mpsc::channel::<()>();
+    READERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(noted);
+    Ok(crate::threads::spawn(move || {
+        let _over = over;
+        work();
+    }))
+}
+
+/// Waits until every thread the supervisor made in this process has ended, or until
+/// `within` has passed for one of them. Says whether all ended.
+pub fn readers_ended(within: Duration) -> bool {
+    let noted = std::mem::take(
+        &mut *READERS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
+    noted.iter().all(|reader| {
+        matches!(
+            reader.recv_timeout(within),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        )
+    })
 }
