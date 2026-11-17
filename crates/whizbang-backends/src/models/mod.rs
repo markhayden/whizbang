@@ -8,7 +8,8 @@
 //! ([`current`]), the status record an installer writes ([`status`]), a request
 //! that attaches to an install that is running ([`install_or_attach`]), and the holds
 //! of a process on the installations in use ([`Holds`]), and a removal that drains
-//! them, clears the pointer and deletes the model's files ([`remove`]), whose mark
+//! them, clears the pointer and deletes the model's files ([`remove`], and
+//! [`remove_and_tell`], which tells its caller each time it sets its mark), whose mark
 //! is live only while its remover is ([`draining`]) and which raises the model's
 //! count of removals ([`removals`]); and what is
 //! installed as readiness asks it ([`Installations`]). The disk is reached only through
@@ -58,7 +59,7 @@ pub use pin::{PinRefused, Pinned, pin_file};
 pub use refused::{Refused, Rule, What};
 pub use remove::{
     DRAINING_FORMAT, DRAINING_MAX_BYTES, Mark, REMOVALS_FORMAT, REMOVALS_MAX_BYTES, RemoveRefused,
-    Removed, draining, removals, remove,
+    Removed, draining, removals, remove, remove_and_tell,
 };
 pub use stage::{FileRefused, MOVES_LIMIT, StageRefused, Staged, stage};
 pub use status::{STATUS_FORMAT, STATUS_MAX_BYTES, State, Status, status};

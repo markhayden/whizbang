@@ -2396,3 +2396,38 @@ fn each_removal_that_sets_its_mark_raises_the_count_and_a_removal_that_timed_out
     assert!(removed(root).is_ok());
     assert_eq!(removals_of(root), 1);
 }
+
+#[test]
+fn the_remover_keeps_its_lock_until_its_mark_is_off() {
+    // Stopped just before it takes its mark off, at its end, a removal still has the
+    // remover's lock alone: one who asks whether the mark is live is refused a share,
+    // and the model is draining. Once the mark is off the lock is let go.
+    let scratch = Scratch::new("remove-lock-to-the-end");
+    let root = scratch.path().to_path_buf();
+    installed(&root, &second());
+    let off = clean_removal()
+        .iter()
+        .rposition(|event| matches!(event, Event::Remove(p) if p.ends_with("tiny/DRAINING")))
+        .unwrap();
+    let fs = Arc::new(ShimFs::new());
+    let seen = Arc::new(Mutex::new(None));
+    let (see, at) = (seen.clone(), root.clone());
+    fs.pause_before(off, move || {
+        let share = RealFs.try_share(&tiny(&at).join("REMOVER")).unwrap();
+        *see.lock().unwrap() = Some((
+            tiny(&at).join("DRAINING").exists(),
+            share.is_none(),
+            marked(&at),
+        ));
+    });
+    let removed = removing(fs, &root, &Hand::new(), SECOND, &mut never);
+    assert!(removed.is_ok());
+    assert_eq!(*seen.lock().unwrap(), Some((true, true, true)));
+    assert!(!tiny(&root).join("DRAINING").exists());
+    assert!(
+        RealFs
+            .try_share(&tiny(&root).join("REMOVER"))
+            .unwrap()
+            .is_some()
+    );
+}

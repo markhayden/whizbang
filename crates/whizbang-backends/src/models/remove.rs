@@ -340,6 +340,24 @@ pub fn remove(
     secrets: &Secrets,
     pause: &mut dyn FnMut(),
 ) -> Result<Removed, RemoveRefused> {
+    remove_and_tell(dir, model, clock, patience, secrets, pause, &mut || {})
+}
+
+/// [`remove`], telling `marked` each time the removal has set its mark, with the
+/// count raised, and has let the directory's lock go: the first time, and each time
+/// it sets the mark again. What the removal does is the same; `marked` runs on its
+/// thread, holding the remover's lock and no other. It is how a removal tells the
+/// worker's supervisor of its own process (task P5b of checkpoint 1C, decision D5),
+/// which ends the requests queued for the model and unloads it when it is idle.
+pub fn remove_and_tell(
+    dir: &ModelsDir,
+    model: &ModelName,
+    clock: &dyn Clock,
+    patience: Duration,
+    secrets: &Secrets,
+    pause: &mut dyn FnMut(),
+    marked: &mut dyn FnMut(),
+) -> Result<Removed, RemoveRefused> {
     if holds_secret(model.as_str(), secrets) {
         return Err(RemoveRefused::HoldsSecret);
     }
@@ -369,8 +387,10 @@ pub fn remove(
     };
     // With the remover's lock whatever is at the mark's name is this removal's
     // own: a remover that died left it, and it is replaced.
-    let ended = set_mark(dir, model, secrets)
-        .and_then(|()| drain(dir, model, clock, deadline, secrets, pause));
+    let ended = set_mark(dir, model, secrets).and_then(|()| {
+        marked();
+        drain(dir, model, clock, deadline, secrets, pause, marked)
+    });
     // However it ended. A mark that cannot be taken off now is a dead remover's
     // once this one's lock is let go, and stops nobody; it does not change what
     // this one answers.
@@ -432,7 +452,8 @@ fn clear_mark(dir: &ModelsDir, folder: &Path) -> Result<(), RemoveRefused> {
 }
 
 /// What a removal does once its mark is set: the model's lock, the status, the
-/// holds, and the pointer.
+/// holds, and the pointer. `marked` is told each time the mark is set again.
+#[allow(clippy::too_many_arguments)]
 fn drain(
     dir: &ModelsDir,
     name: &ModelName,
@@ -440,6 +461,7 @@ fn drain(
     deadline: Option<Instant>,
     secrets: &Secrets,
     pause: &mut dyn FnMut(),
+    marked: &mut dyn FnMut(),
 ) -> Result<Removed, RemoveRefused> {
     let fs = dir.fs();
     let lock = dir.model(name).join("LOCK");
@@ -452,7 +474,9 @@ fn drain(
         }
         // A mark that is gone is set again, so that an install that is running
         // reads it.
-        mark_if_none(dir, name, secrets)?;
+        if mark_if_none(dir, name, secrets)? {
+            marked();
+        }
         pause();
     };
     // Looked at again under the lock, which may have been waited for: nothing is
@@ -461,6 +485,7 @@ fn drain(
     // What is there and is no mark as it is written is replaced.
     if !mark_is_written(dir, name) {
         set_mark(dir, name, secrets)?;
+        marked();
     }
     let model = Model::of(dir, name, secrets);
     // What the status said before: a removal that changes no pointer puts it back.
@@ -515,7 +540,9 @@ fn drain(
                     Ok(None) if past(clock, deadline) => return Err(RemoveRefused::Held),
                     Ok(None) => {
                         // A mark that is gone is set again.
-                        mark_if_none(dir, name, secrets)?;
+                        if mark_if_none(dir, name, secrets)? {
+                            marked();
+                        }
                         pause();
                     }
                     // No hold file: nothing was ever held there.

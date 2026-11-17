@@ -2,16 +2,19 @@
 //! requests came; a bounded queue; a request for another model that waits and then
 //! unloads the first; a cancel, a deadline and each kind's limit, on the injected clock;
 //! and a restart that ends the current call and every queued request, sends nothing
-//! again, and is not made in a loop.
+//! again, and is not made in a loop. Task P5b adds, from the review of P4: a cancel and
+//! then an earlier deadline, what a fault that ended the worker says comes next, and the
+//! guard that ends a call in the worker without waiting for it.
 //!
 //! Every test here starts the pack through the test kit's guard
 //! (`super::worker::queued`), and is of the group `pack-workers`. The clock is the
-//! machine's, moved on by the test ([`Stepped`]): a wait of the supervisor's ends when
-//! the test moves the clock past it, never by a sleep of the test's. What a test waits
-//! for is a state of the supervisor ([`Supervisor::wait_for`]), which it is told of.
+//! machine's, moved on by the test ([`Stepped`]), or one that stands still until the test
+//! moves it ([`Still`]): a wait of the supervisor's ends when the test moves the clock
+//! past it, never by a sleep of the test's. What a test waits for is a state of the
+//! supervisor ([`Supervisor::wait_for`]), which it is told of.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -27,7 +30,7 @@ use whizbang_testkit::threads;
 use whizbang_testkit::worker as kit;
 
 use super::conformance::{installation, model, segment};
-use super::worker::queued;
+use super::worker::{queued, queued_over};
 
 /// How long a test waits, on the clock, for a state of the supervisor.
 const WITHIN: Duration = Duration::from_secs(20);
@@ -57,6 +60,41 @@ impl Clock for Stepped {
 
     fn now(&self) -> Instant {
         Instant::now() + self.moved()
+    }
+
+    fn pause(&self, span: Duration) {
+        SystemClock.pause(span);
+    }
+}
+
+/// A clock that stands still until the test moves it ([`Still::step`]); its pause waits
+/// as the machine's does, so that the supervisor's own waits are not rushed through.
+/// What is held to a time of it happens when the test says, and not before.
+pub(super) struct Still {
+    start: Instant,
+    moved: Mutex<Duration>,
+}
+
+impl Still {
+    pub(super) fn new() -> Still {
+        Still {
+            start: Instant::now(),
+            moved: Mutex::new(Duration::ZERO),
+        }
+    }
+
+    pub(super) fn step(&self, by: Duration) {
+        *self.moved.lock().unwrap() += by;
+    }
+}
+
+impl Clock for Still {
+    fn now_ms(&self) -> u64 {
+        SystemClock.now_ms()
+    }
+
+    fn now(&self) -> Instant {
+        self.start + *self.moved.lock().unwrap()
     }
 
     fn pause(&self, span: Duration) {
@@ -659,12 +697,20 @@ fn nothing_that_was_dispatched_is_sent_again_after_a_restart() {
 #[test]
 fn a_queued_request_that_is_cancelled_leaves_the_queue_and_is_never_sent() {
     let clock = Arc::new(Stepped::default());
-    let supervisor = queued(None, clock, |_| {});
+    let (supervisor, root) = queued_over(None, clock, |_| {});
     let held = Cancellation::new();
     let first = asked(&supervisor, request("fake-wait"), cancelled_by(&held));
     seen(&supervisor, |status| calling(status, "segment", 1));
 
-    // Queued, with the count of removals its hold was given, which it keeps (D5).
+    // Queued, with the count of removals its hold was given, which it keeps (D5): the
+    // model's count, which seven removals raised (task P5b reads it).
+    let folder = root.join("models/fake-ok");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("REMOVALS"),
+        br#"{"format":"removals/1","count":7}"#,
+    )
+    .unwrap();
     let leave = Cancellation::new();
     let mut counted = request("fake-ok");
     counted.removals = 7;
@@ -725,4 +771,108 @@ fn a_worker_that_ends_before_it_answers_anything_is_not_started_again_in_a_loop(
     let refused = failed(supervisor.call(request("fake-ok"), &Limits::none()));
     assert_eq!(refused.ended, None);
     assert_eq!(refused.fault.kind(), FaultKind::Unavailable);
+}
+
+// --- follow-ups of the review of task P4, built with task P5b ---------------------------------
+
+#[test]
+fn a_cancelled_call_whose_deadline_comes_before_five_seconds_after_its_cancel_is_killed_at_its_deadline_as_cancelled()
+ {
+    let clock = Arc::new(Still::new());
+    let supervisor = queued(None, clock.clone(), |_| {});
+    let signal = Cancellation::new();
+    let limits = Limits {
+        cancellation: signal.clone(),
+        deadline: Some(clock.now() + Duration::from_secs(2)),
+    };
+    let call = asked(&supervisor, request("fake-deaf"), limits);
+    seen(&supervisor, |status| calling(status, "segment", 1));
+    let first = supervisor.status().worker.unwrap();
+    // Cancelled; the worker ignores it. Its deadline, two seconds on, comes before five
+    // seconds after its cancel: the call ends there, cancelled, and the worker is killed.
+    signal.cancel();
+    seen(&supervisor, |status| {
+        status
+            .calling
+            .as_ref()
+            .is_some_and(|calling| calling.cancel_sent)
+    });
+    clock.step(Duration::from_secs(2));
+    let killed = failed(call.join().unwrap());
+    assert_eq!(killed.fault.kind(), FaultKind::Cancelled, "{killed:?}");
+    assert_eq!(killed.fault.stage(), Stage::Unresolved);
+    assert_eq!(killed.ended, Some(Ended::Killed));
+    assert_eq!(
+        killed.fault.sentence(),
+        "the pack's worker had not stopped the cancelled request by the end of its wait and was killed; the pack's worker is restarted for the next request"
+    );
+    assert!(!kit::runs_the_pack(first));
+}
+
+#[test]
+fn a_fault_that_ended_the_worker_at_its_start_says_what_the_next_request_finds() {
+    // Each worker ends at once, before its hello: no worker ran, so none is restarted.
+    // The next request starts another, until the third in a row; then none is started
+    // until the pause has passed.
+    let clock = Arc::new(Stepped::default());
+    let supervisor = queued(None, clock, |launch: &mut Launch| {
+        launch.models_dir = "relative/models".into();
+    });
+    for count in 1..=STARTS_FAILED_MOST {
+        let ended = failed(supervisor.call(request("fake-ok"), &Limits::none()));
+        assert_eq!(ended.ended, Some(Ended::Exited(2)), "{ended:?}");
+        let said = ended.fault.sentence();
+        assert!(
+            said.starts_with("the pack's worker ended before its hello: "),
+            "{said}"
+        );
+        let next = if count < STARTS_FAILED_MOST {
+            "; it said no hello, and the next request starts another worker"
+        } else {
+            "; 3 workers in a row ended before they answered anything, and no worker is started until 60 seconds after the last"
+        };
+        assert!(said.ends_with(next), "{said}");
+        assert!(!said.contains("restarted"), "{said}");
+    }
+}
+
+#[test]
+fn the_guard_ends_the_call_in_its_worker_at_once_and_every_waiting_request() {
+    let clock = Arc::new(Stepped::default());
+    let supervisor = queued(None, clock, |_| {});
+    // A call that ignores its cancel holds the worker, and nothing will end it; one more
+    // request waits.
+    let call = asked(&supervisor, request("fake-deaf"), Limits::none());
+    seen(&supervisor, |status| calling(status, "segment", 1));
+    let worker = supervisor.status().worker.unwrap();
+    let waiting = asked(&supervisor, request("fake-ok"), Limits::none());
+    seen(&supervisor, |status| status.waiting.len() == 1);
+
+    // The guard is dropped, as a test that fails drops it: on a thread of its own, so
+    // that this one sees whether the drop waits for the call.
+    let (done, dropped) = mpsc::channel();
+    let dropping = threads::spawn(move || {
+        drop(supervisor);
+        let _ = done.send(());
+    });
+    assert!(
+        dropped.recv_timeout(Duration::from_secs(10)).is_ok(),
+        "the guard waited for the call in its worker"
+    );
+    dropping.join().unwrap();
+    let killed = failed(call.join().unwrap());
+    assert_eq!(killed.fault.kind(), FaultKind::Unavailable, "{killed:?}");
+    assert_eq!(killed.ended, Some(Ended::Killed), "{killed:?}");
+    assert_eq!(
+        killed.fault.sentence(),
+        "the pack's worker was killed when its supervisor was ended"
+    );
+    let left = failed(waiting.join().unwrap());
+    assert_eq!(left.fault.kind(), FaultKind::Unavailable, "{left:?}");
+    assert_eq!(left.fault.stage(), Stage::NotSent);
+    assert_eq!(
+        left.fault.sentence(),
+        "the supervisor of the pack's worker was ended before this request's turn came; it was not sent"
+    );
+    assert!(!kit::runs_the_pack(worker));
 }

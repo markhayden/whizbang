@@ -3,13 +3,15 @@
 //! codec ([`proto`]), the folder of the fixed vectors, the supervisor's process and one
 //! call through it ([`worker`]), and the behavioural half of the conformance suite
 //! ([`conformance`]), and the supervisor's queue, cancellation, deadlines and restart
-//! ([`queue`]): each task adds its module here.
+//! ([`queue`]), and removal against the queue ([`removal`]): each task adds its module
+//! here.
 
 use std::path::Path;
 
 mod conformance;
 mod proto;
 mod queue;
+mod removal;
 mod worker;
 
 /// The folder of the conformance suite's fixed vectors, from this crate's manifest.
