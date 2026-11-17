@@ -7,7 +7,6 @@
 //! next begins, so there is nothing to wait for and nothing to sleep on.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 
 use whizbang_core::store::fs::RealFs;
@@ -26,7 +25,7 @@ struct Ran {
 }
 
 fn whizbang(args: &[&str], root: &Path) -> Ran {
-    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .arg("store")
         .args(args)
         .arg("--store")

@@ -1,11 +1,10 @@
-use std::process::Command;
 use std::sync::Arc;
 
 use whizbang_testkit::echo::Echo;
 use whizbang_testkit::scratch::Scratch;
 
 fn whizbang(args: &[&str]) -> (bool, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args(args)
         .output()
         .expect("the binary runs");
@@ -79,7 +78,7 @@ fn pretty_may_come_before_json() {
 
 #[test]
 fn pretty_without_json_is_a_usage_error_that_names_json() {
-    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args(["describe", "--pretty"])
         .output()
         .expect("the binary runs");
@@ -290,9 +289,8 @@ fn a_write_that_fails_is_exit_3_with_the_reason() {
     let file = dir.path().join("out.txt");
     for form in ["describe", "describe --json"] {
         let script = format!("trap '' XFSZ; ulimit -f 0; exec \"$WHIZBANG\" {form} > \"$OUT\"");
-        let out = Command::new("bash")
-            .args(["-c", &script])
-            .env("WHIZBANG", env!("CARGO_BIN_EXE_whizbang"))
+        let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
+            .under_shell(&script)
             .env("OUT", &file)
             .output()
             .unwrap();

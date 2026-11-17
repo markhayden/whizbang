@@ -3,7 +3,7 @@
 //! on disk. What the commands say of each state of the books is held where they are
 //! called in process (`spending.rs`, among the binary's own tests).
 
-use std::process::{Command, Output};
+use std::process::Output;
 use std::sync::Arc;
 
 use whizbang_core::store::Store;
@@ -11,7 +11,7 @@ use whizbang_core::store::fs::RealFs;
 use whizbang_testkit::scratch::Scratch;
 
 fn whizbang(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args(args)
         .output()
         .expect("the binary runs")

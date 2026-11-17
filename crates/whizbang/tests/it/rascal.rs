@@ -21,7 +21,7 @@ use whizbang_testkit::scratch::Scratch;
 
 /// Runs `whizbang` and gives its exit code, what it printed and what it complained of.
 fn whizbang(args: &[&str]) -> (i32, String, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args(args)
         .output()
         .expect("the binary runs");

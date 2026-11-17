@@ -5,7 +5,6 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -374,7 +373,7 @@ pub struct Ran {
 
 /// The real binary, with these arguments and then `--store` and the store.
 pub fn whizbang(args: &[&str], root: &Path) -> Ran {
-    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args(args)
         .arg("--store")
         .arg(root)

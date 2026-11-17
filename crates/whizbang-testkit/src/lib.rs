@@ -3,6 +3,7 @@
 
 pub mod around;
 pub mod barrier;
+pub mod binary;
 pub mod capabilities;
 pub mod downloads;
 pub mod echo;

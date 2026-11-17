@@ -15,7 +15,7 @@ use whizbang_testkit::scratch::Scratch;
 
 /// Runs `whizbang` and gives its exit code, what it printed and what it complained of.
 fn whizbang(args: &[&str]) -> (i32, String, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args(args)
         .output()
         .expect("the binary runs");
@@ -29,7 +29,10 @@ fn whizbang(args: &[&str]) -> (i32, String, String) {
 /// Runs `whizbang` and waits for its exit, for so long and no longer: a run that has not
 /// ended by then is killed and the test fails. For what must not hang.
 fn whizbang_within(args: &[&str], seconds: u64) -> (i32, String, String) {
-    let child = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    // The command is kept until the run has ended or been killed: its temporary home
+    // goes with it.
+    let mut command = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"));
+    let child = command
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -537,7 +540,7 @@ fn create_makes_a_store_named_by_one_part_alone_in_the_current_directory() {
     let dir = Scratch::new("import");
     let mask = mask();
     std::fs::write(dir.path().join("seam.mask"), mask.to_bytes()).expect("the fixture");
-    let out = Command::new(env!("CARGO_BIN_EXE_whizbang"))
+    let out = whizbang_testkit::binary::command(env!("CARGO_BIN_EXE_whizbang"))
         .args([
             "store",
             "import",
