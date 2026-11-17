@@ -17,10 +17,45 @@ cat >"$tmp/junit.xml" <<'XML'
 </testsuites>
 XML
 
-expect_pass "under the default limit" "$timing" --junit "$tmp/junit.xml"
+# The default limit hangs on where the run is, which these tests plant: each case starts
+# with none of the runner's variables, since the script tests themselves run in CI.
+here() { env -u GITHUB_ACTIONS -u RUNNER_OS -u RUNNER_ENVIRONMENT -u WHIZBANG_TIMING_LIMIT "$@"; }
+mac_ci() { here GITHUB_ACTIONS=true RUNNER_OS=macOS RUNNER_ENVIRONMENT=github-hosted "$@"; }
+linux_ci() { here GITHUB_ACTIONS=true RUNNER_OS=Linux RUNNER_ENVIRONMENT=github-hosted "$@"; }
+
+expect_pass "under the default limit" here "$timing" --junit "$tmp/junit.xml"
 grep -q -E '^whizbang::it +2 +3\.250$' "$tmp/out" || { cat "$tmp/out"; fail "a row per suite: tests and summed seconds"; }
 grep -q -E '^whizbang-core +1 +0\.500$' "$tmp/out" || { cat "$tmp/out"; fail "the second suite's row"; }
 grep -q -F 'test time 2.500s, limit 180s' "$tmp/out" || { cat "$tmp/out"; fail "the total and the default limit"; }
+grep -q -F 'limit 180s: the default, everywhere but the hosted macOS runner of GitHub' "$tmp/out" || { cat "$tmp/out"; fail "why the limit is 180 s"; }
+
+# 300 s on GitHub's hosted macOS runner, the owner's decision of 2026-11-17 (SPEC.md
+# section 13); 180 s on the Linux runner, on a self-hosted one and on a Mac outside CI,
+# the owner's own `just check` among them.
+at() { sed "s/time=\"2.500\">/time=\"$1\">/" "$tmp/junit.xml" >"$tmp/at-$1.xml"; echo "$tmp/at-$1.xml"; }
+expect_pass "the hosted macOS runner at 250 s" mac_ci "$timing" --junit "$(at 250.000)"
+grep -q -F 'test time 250.000s, limit 300s: the hosted macOS runner of GitHub' "$tmp/out" || { cat "$tmp/out"; fail "the hosted macOS runner's limit, and why"; }
+grep -q -F "the decision of the owner, 2026-11-17" "$tmp/out" || { cat "$tmp/out"; fail "the hosted macOS runner's limit names the decision"; }
+expect_pass "the hosted macOS runner at 300 s" mac_ci "$timing" --junit "$(at 300.000)"
+expect_fail "the hosted macOS runner at 301 s" "test time 301.000s exceeds the limit of 300s" \
+  mac_ci "$timing" --junit "$(at 301.000)"
+expect_fail "the hosted Linux runner at 181 s" "test time 181.000s exceeds the limit of 180s" \
+  linux_ci "$timing" --junit "$(at 181.000)"
+expect_fail "a Mac outside CI at 181 s" "test time 181.000s exceeds the limit of 180s" \
+  here RUNNER_OS=macOS "$timing" --junit "$(at 181.000)"
+expect_fail "nothing planted at 181 s" "test time 181.000s exceeds the limit of 180s" \
+  here "$timing" --junit "$(at 181.000)"
+expect_fail "a self-hosted macOS runner at 181 s" "test time 181.000s exceeds the limit of 180s" \
+  here GITHUB_ACTIONS=true RUNNER_OS=macOS RUNNER_ENVIRONMENT=self-hosted "$timing" --junit "$(at 181.000)"
+expect_fail "GitHub's variables without GITHUB_ACTIONS at 181 s" "test time 181.000s exceeds the limit of 180s" \
+  here RUNNER_OS=macOS RUNNER_ENVIRONMENT=github-hosted "$timing" --junit "$(at 181.000)"
+# A limit that is asked for wins on every runner, and says where it came from.
+expect_fail "the environment's limit on the hosted macOS runner" "exceeds the limit of 200s" \
+  mac_ci WHIZBANG_TIMING_LIMIT=200 "$timing" --junit "$(at 250.000)"
+grep -q -F 'limit 200s: from WHIZBANG_TIMING_LIMIT' "$tmp/out" || { cat "$tmp/out"; fail "the environment's limit says so"; }
+expect_fail "--limit on the hosted macOS runner" "exceeds the limit of 200s" \
+  mac_ci "$timing" --junit "$(at 250.000)" --limit 200
+grep -q -F 'limit 200s: from --limit' "$tmp/out" || { cat "$tmp/out"; fail "--limit says so"; }
 
 expect_pass "a limit above the measured time" "$timing" --junit "$tmp/junit.xml" --limit 3
 expect_fail "a limit below the measured time" "test time 2.500s exceeds the limit of 2s" \

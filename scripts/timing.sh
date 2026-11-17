@@ -3,8 +3,14 @@
 #
 #   scripts/timing.sh [--limit SECONDS] [--junit FILE]
 #
-# Fails when a test fails, and when test time exceeds the limit: 180 seconds unless --limit
-# or WHIZBANG_TIMING_LIMIT says otherwise. Raising the limit needs the owner.
+# Fails when a test fails, and when test time exceeds the limit. The limit is --limit, else
+# WHIZBANG_TIMING_LIMIT, else 300 seconds on GitHub's hosted macOS runner and 180 seconds
+# everywhere else: on the Linux runner, on a self-hosted runner, and on any machine outside
+# CI, the owner's Mac among them (SPEC.md section 13). The hosted macOS runner is known by
+# the variables GitHub sets in every job: GITHUB_ACTIONS=true, RUNNER_OS=macOS and
+# RUNNER_ENVIRONMENT=github-hosted, all three. Its 300 seconds are the owner's decision of
+# 2026-11-17: its test time varies about two-fold on unchanged code. The line with the
+# total names the limit that applied and why. Raising a limit needs the owner.
 #
 # Compilation is not counted. Test time is the elapsed time nextest reports for the run,
 # which starts after everything is built; a suite's seconds are the sum of its tests'
@@ -21,11 +27,23 @@ main() {
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-limit=${WHIZBANG_TIMING_LIMIT:-180}
+if [ "${GITHUB_ACTIONS:-}" = true ] && [ "${RUNNER_OS:-}" = macOS ] \
+  && [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ]; then
+  limit=300
+  # No apostrophes in these two lines: scripts/tests/test-syntax.sh reads one as quoting.
+  why="the hosted macOS runner of GitHub, whose test time varies about two-fold on unchanged code (the decision of the owner, 2026-11-17; 180 s everywhere else)"
+else
+  limit=180
+  why="the default, everywhere but the hosted macOS runner of GitHub (300 s there)"
+fi
+if [ -n "${WHIZBANG_TIMING_LIMIT:-}" ]; then
+  limit=$WHIZBANG_TIMING_LIMIT
+  why="from WHIZBANG_TIMING_LIMIT"
+fi
 junit=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --limit) limit=$2; shift 2 ;;
+    --limit) limit=$2; why="from --limit"; shift 2 ;;
     --junit) junit=$2; shift 2 ;;
     *) echo "timing: unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -80,7 +98,7 @@ awk '
   /<testcase /  { tests[suite] += 1; secs[suite] += attr("time") }
   END { for (i = 1; i <= n; i++) printf "%-44s %6d %9.3f\n", order[i], tests[order[i]], secs[order[i]] }
 ' "$junit"
-echo "test time ${total}s, limit ${limit}s (compilation not counted)"
+echo "test time ${total}s, limit ${limit}s: ${why} (compilation not counted)"
 
 if [ "$test_status" -ne 0 ]; then
   echo "timing: a test failed" >&2
