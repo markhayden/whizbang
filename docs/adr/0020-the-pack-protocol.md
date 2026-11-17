@@ -20,6 +20,9 @@ worker is refused, and the text of the `error` whizbang sends after a refusal. A
 "Consequences", what a run keeps of a result's predicted IoU and diagnostics.
 Amended: 2026-11-17, by task P4 (the queue, cancellation, deadlines and restart). No byte
 and no reason changed. Added: "The worker", under "Decision".
+Amended: 2026-11-17, by task P6a (the kind `pack`). No byte and no reason changed. Added,
+under "The worker": what a caller gives with a request beside its cancellation and its
+deadline, the kind's limit for a call and the lifetime of a worker it starts.
 
 ## Context
 
@@ -535,6 +538,13 @@ So two requests for one model cause one load, and a request for another model wa
 the current call and then unloads the first. Each of the three is one request of
 `pack/1`, within its kind's limit: 30 s for an `unload`, 120 s for a `load`, 120 s for a
 `segment` (D7).
+
+**What a caller gives with a request** (`Limits`; amended by task P6a, which hands them
+from the kind `pack`): its cancellation and its deadline, which are the run's; and two
+of the kind's settings (ADR 0011, "The kind `pack`"). `call_limit` is the limit of a
+`segment` when it is shorter than 120 s; a longer one is 120 s, so a turn stays within
+the 365 s below. `lifetime_s` is the `--max-lifetime-s` of a worker started for the
+request; a worker already running keeps its own. No byte of `pack/1` changed.
 
 **The states of a request, and what each fault says.**
 

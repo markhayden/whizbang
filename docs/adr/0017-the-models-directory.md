@@ -159,6 +159,14 @@ the installer is handed a credential with its downloader (`install_carrying`,
 other. Under "The inventory", the reason a model does not run on this platform:
 `Installations::on` is what the binary's wiring calls with the platform its models
 are to run on, where this record said it was for a test.
+Amended: 2026-11-17, with task P6a of checkpoint 1C, which gives the build its first
+kind, `pack`. Changed, in code and under "Where the directory is" (the bullet on where
+no model could be asked for): a models directory is opened only under a config that
+has a local backend, one whose table names no url; the rule is read from the config's
+tables and not from the kinds, so the order in which the wiring is given the two no
+longer matters; and the one worker of the process is told the directory that was
+opened, the one its worker is started over and its supervisor reads counts of
+removals in.
 
 ## Context
 
@@ -456,6 +464,22 @@ opens it. This is what the binary gives.
   (`wired::with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory`,
   which fails on the day the build is given a kind), and only the `models` commands
   look at one. The bullet below on which commands open a directory is read with this.
+  **Amended by task P6a of plan 1C,** which gives the build the kind `pack`: in
+  place of the kinds, the config. A directory is opened, and the platform's asked
+  for, only under a config that has a local backend, one whose table names no url,
+  which is how a backend names no recipient; under a config with none, empty or of
+  remote backends alone, and with no config at all, none is opened or asked for,
+  whatever the flag names
+  (`wired::with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory`,
+  rewritten to say so, and
+  `wired::the_binary_opens_a_models_directory_only_for_a_config_that_has_a_local_backend`,
+  through the real binary with a temporary home). Which backends are local is read
+  from the tables, so the kinds may be given before or after (the guard on the kinds
+  that stood here made the order matter); a backend of a kind the build does not
+  have is not ready, and opening the directory for it asks nothing of a model. The
+  directory opened is the one the one worker of the process is told
+  (`wiring::Over::pack`): its worker is started over it, and its supervisor reads
+  the counts of removals in it (task P5b's note).
 - **The platform's is not even worked out unless it is the one.** The wiring is
   given what says where it is (`Models::platform`), and asks it only when a
   directory is about to be opened and neither the flag nor the config named one:

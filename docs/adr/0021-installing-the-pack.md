@@ -11,6 +11,9 @@ Mac, and the public lock names no proprietary package nobody has tested. `whizba
 --extra` is refused on any other platform before anything is downloaded; the core still
 installs on Linux. Linux comes back when a Linux story needs it (`docs/carry-over.md`,
 "Linux runtime extra"). See "Amended: the Mac alone", below.
+Amended: 2026-11-17, by task P6a (the kind `pack`). Added, under "What the binary carries,
+and where it installs": how the kind finds the worker there, and what a request is told
+where `setup` installed nothing.
 Spec: section 4, "The Python pack"; section 17, "Offline bundles for installing the pack"
 
 ## Context
@@ -77,7 +80,11 @@ folder `pack` that `setup` makes for its owner alone:
 | `pack/env/` | The environment `uv` made (`UV_PROJECT_ENVIRONMENT`), with its Python, `bin/python` |
 
 The kind `pack` (task P6a) starts its worker as `pack/env/bin/python` with `pack/project/src`
-on its path (`whizbang::pack_setup::at`). One models directory has one pack. A flag
+on its path (`whizbang::pack_setup::at`, through `whizbang::pack::installed_launch`), in
+the models directory the wiring opened, and never from a path compiled into the binary.
+Where the source is not there a request is refused, `unavailable` and never sent, with
+"run whizbang setup"; where the Python is not, the supervisor refuses it the same way
+(`pack::without_setup_a_call_is_refused_and_says_to_run_whizbang_setup`). One models directory has one pack. A flag
 (`--models-dir`), the config's `[models] dir` and the platform's data folder say where the
 models directory is, as for `whizbang models`.
 

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 use whizbang::door::{self, GrowAsked};
+use whizbang::pack::OneWorker;
 use whizbang::wiring::{self, Make, Models, Over, Platform};
 use whizbang_core::contract::Recovery;
 
@@ -54,19 +55,23 @@ impl Under {
     }
 
     /// What an executor of this build is built over for a command given these: the
-    /// two files, the kinds of this build, no secret beside those the env file
-    /// holds, and the models this build ships, in the models directory the flag
-    /// names, or the config, or else the one in the machine's data folder, which
-    /// `platform` says when it is asked, and it is asked only then.
+    /// two files, the kinds of this build over the one worker of this process, made
+    /// here from the installation `whizbang setup` made, and given to the wiring
+    /// too; no secret beside those the env file holds; and the models this build
+    /// ships, in the models directory the flag names, or the config, or else the one
+    /// in the machine's data folder, which `platform` says when it is asked, and it
+    /// is asked only then.
     ///
     /// A config that cannot be used is said first, in the readers' own words, which
     /// name the key or the line and no path; then a models directory that is not
     /// used, in the opening's.
     pub fn over(&self, platform: Option<Platform>) -> Result<Over, String> {
+        let worker = OneWorker::installed();
         let over = Over::nothing()
             .config(self.config.as_deref())
             .env_file(self.env_file.as_deref())
-            .kinds(wiring::kinds());
+            .kinds(wiring::kinds(&worker))
+            .pack(worker);
         wiring::loaded(&over)?;
         let models = Models::shipped()?.flag(self.models_dir.as_deref());
         over.installed(match platform {

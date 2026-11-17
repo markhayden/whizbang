@@ -8,6 +8,7 @@ mod escape;
 mod executor;
 mod import;
 mod models;
+mod pack;
 mod rascal;
 mod runs;
 mod setup;

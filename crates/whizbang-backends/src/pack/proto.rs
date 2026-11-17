@@ -685,7 +685,12 @@ fn check_text(what: &str, text: &str, least: usize, most: u64) -> Result<(), Ref
     }
 }
 
-fn check_setting(name: &str, value: &Scalar) -> Result<(), Refused> {
+/// Whether a `load` may carry this setting of a model: its name a name of lower-case
+/// letters, digits and `_`, 64 characters at most; a text of 1 to 1,024 printable ASCII
+/// characters with no space at either end and no separator, `/` or `\`. The kind `pack`
+/// asks it where the config is read (task P6a), so that no `load` is refused for a
+/// setting when it is written.
+pub fn check_setting(name: &str, value: &Scalar) -> Result<(), Refused> {
     let first = |byte: u8| byte.is_ascii_lowercase();
     let rest = |byte: u8| lower(byte) || byte == b'_';
     if !named(name, SETTING_NAME_LIMIT, first, rest) {

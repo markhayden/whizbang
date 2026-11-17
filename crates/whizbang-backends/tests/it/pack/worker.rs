@@ -877,9 +877,21 @@ fn no_test_starts_the_pack_but_through_the_test_kits_guard() {
         ]
     );
     let making: Vec<&str> = making.iter().map(String::as_str).collect();
-    assert_eq!(making, ["whizbang-backends/tests/it/pack/worker.rs"]);
+    // And the binary's tests of the kind `pack` (task P6a), whose one worker of the
+    // wiring is started from the fakes inside the guard.
+    assert_eq!(
+        making,
+        [
+            "whizbang-backends/tests/it/pack/worker.rs",
+            "whizbang/tests/it/pack.rs"
+        ]
+    );
     let this = std::fs::read_to_string(crates.join(making[0])).unwrap();
     assert!(this.contains("kit::fakes(fault).guard("));
+    let binarys = std::fs::read_to_string(crates.join(making[1])).unwrap();
+    assert_eq!(binarys.matches("Launch {").count(), 1);
+    assert_eq!(binarys.matches("Worker::new(").count(), 1);
+    assert_eq!(binarys.matches("kit::fakes(None).guard(").count(), 1);
 }
 
 // --- one call (task P3b) ------------------------------------------------------------------------

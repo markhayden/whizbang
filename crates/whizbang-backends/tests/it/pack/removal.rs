@@ -127,6 +127,7 @@ fn cancelled_by(signal: &Cancellation) -> Limits {
     Limits {
         cancellation: signal.clone(),
         deadline: None,
+        ..Limits::none()
     }
 }
 

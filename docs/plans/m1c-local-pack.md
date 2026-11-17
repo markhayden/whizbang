@@ -2236,12 +2236,12 @@ The runtime on Linux is the carry-over row "Linux runtime extra", owned by 1D.
 **Depends on:** P5b, N3b. **Reads:** ADR 0011, "Kinds"; ADR 0006, "Segment"; the
 carry-over rows on the roster and the backends, and on the old configs.
 
-- [ ] `kind = "pack"` in `wiring::kinds`: a `Segmenter` over the one supervisor of D4. It
+- [x] `kind = "pack"` in `wiring::kinds`: a `Segmenter` over the one supervisor of D4. It
       declares no recipient and no price, and the features the catalogue's entry states.
       Its settings in the config are the model's (the threshold and the rest of P1),
       the limit for a call and `max_lifetime_s`, by an amendment to ADR 0011; a setting
       it does not know is refused.
-- [ ] One walk of the config makes the roster and the backends in the binary.
+- [x] One walk of the config makes the roster and the backends in the binary.
 
 **Done when** these pass (`crates/whizbang/tests/it/pack.rs`, through the binary's
 wiring, with a test action that asks for the segment capability and the pack's fake
@@ -2259,6 +2259,82 @@ models in a test's catalogue):
 
 **Carry-over:** the roster and the backends from one thing; the settings of the first
 real kind. **Size:** medium.
+**Reworded with the task** (by P6a): the sixth test's clause, "a model the config
+resolves and no backend holds is refused at admission", read as a case the binary can
+make. It cannot: one walk of the config makes both what a call resolves and the
+backends a run is handed (`Offers`, ADR 0011, "What a config offers"), so through the
+binary's wiring a resolved model is always held. The test now shows the two halves of
+that through the real kind, under its name: a call that chooses a backend of the walk is
+handed the backend the walk made for that name, and the worker answers it; a backend the
+walk could not make (its model not in the catalogue, or a setting the kind does not
+take) holds no model for the call, which is refused at its admission as not ready, with
+no run and no worker started. The core's own test of a snapshot that resolves a model it
+does not hold stands (`asked::a_call_that_resolved_a_model_its_snapshot_does_not_hold_is_refused_and_not_handed_no_handle`).
+**Built with the task:**
+
+- **Which test shows which clause.** Box one: the kind in `wiring::kinds`, a segmenter
+  over the one supervisor, the first five tests (a call answered by the worker; one
+  load for two actions; one worker for two backends and two snapshots; no worker for a
+  run that needs none; the lifetime); no recipient and no price, the eighth; the
+  features of the catalogue's entry, the first (the action needs `phrase`, which only
+  the entry states); the settings and a setting it does not know, the seventh, with
+  every refusal's words; the amendment to ADR 0011, "The kind `pack`". Box two: the
+  sixth, as reworded above, and the third (two snapshots, each walked once, one worker).
+  The shipped binary, the ninth.
+- **The one worker** (`whizbang::pack::OneWorker`): made once by whoever builds the
+  executor, given to `wiring::kinds(&worker)` and to `Over::pack(worker)`; `rascal grow`
+  is the one command that does (`OneWorker::installed`). The wiring tells it the models
+  directory it opened and the catalogue (`Over::installed`, in either order); its
+  supervisor is made at the first request, over that directory, and the worker is
+  started over the same folder (P5b's note). A worker whose supervisor runs over one
+  directory is told no other: the executor is not built, and says so (the end of the
+  third test).
+- **Where the worker is** (P3a's and Y1's notes): `OneWorker::installed` starts
+  `pack::installed_launch`, the Python and the source of the installation `setup` made
+  in that directory (`pack_setup::at`), `Launch::worker` and nothing more; where the
+  source is missing the request is refused, `unavailable`, `not_sent`, "run whizbang
+  setup", and the supervisor refuses a missing Python the same way
+  (`pack::without_setup_a_call_is_refused_and_says_to_run_whizbang_setup`, a test more).
+  A test hands the wiring its own start through `OneWorker::starting`, inside the test
+  kit's guard; the binary names it nowhere (the ninth test reads the binary's sources).
+  `worker::no_test_starts_the_pack_but_through_the_test_kits_guard` now holds the
+  binary's `tests/it/pack.rs` to one launch, one worker and one guard.
+- **The settings** (P1's note; ADR 0011, "The kind `pack`"): `threshold`, `pad` and
+  `min_cover`, each a text of a number from 0 to 1, and `outline`, a text, are the
+  model's, from rascal's adapters (`Settings` in `tools/python/src/rascal_tools/models/adapters.py`
+  at the pinned commit), sent in `load` and held to the protocol's rule for a text there
+  (`proto::check_setting`, now public): no `/` or `\`. `call_limit_s`, 1 to 120, 120 by
+  default, and `max_lifetime_s`, 1 to 31,536,000 (the most the worker takes), 86,400 by
+  default, are the kind's: the supervisor's `Limits` gains `call_limit` and
+  `lifetime_s` (ADR 0020, "The worker"). Every test that starts a worker through the
+  wiring sets `max_lifetime_s`. A model the catalogue does not hold is refused by the
+  kind, which has no features to declare for it.
+- **What a request is handed** (P4's note and the carry-over row on a backend's
+  deadline): the run's cancellation and deadline, the kind's limit for a call and the
+  lifetime, to the queue
+  (`pack::a_request_through_the_kind_is_bounded_by_its_runs_deadline_and_cancel_and_by_the_kinds_limit`,
+  a test more: a call cut at `call_limit_s = 1`, a run's deadline, and a run's cancel,
+  each against `fake-wait`). The installation the `load` names and the count of
+  removals the request is queued with are read in the directory when it is sent, while
+  the lease holds the admitted installation; P6b replaces both with the declaration's
+  identity and the hold's count.
+- **A removal in this process** (P5b's note): `OneWorker::remove` goes through
+  `models::remove_and_tell`, telling `Supervisor::removing` at each mark
+  (`pack::a_removal_in_this_process_through_the_wiring_tells_the_supervisor_and_unloads_the_resident_model`,
+  a test more). `whizbang models remove` makes no worker, so it stays `models::remove`,
+  and a supervisor in another process reads the count.
+- **Which configs open a models directory** (N3a's and N5's notes, and the carry-over
+  row on `rascal grow`): only one that has a local backend, whose table names no url,
+  read from the config and not from the kinds, so `.kinds()` and `.installed()` may come
+  in either order. `wired::with_the_catalogue_it_ships_the_binary_opens_and_makes_no_models_directory`
+  is rewritten to that (empty, `[models] dir` alone, and remote backends alone open
+  nothing), and `wired::the_binary_opens_a_models_directory_only_for_a_config_that_has_a_local_backend`
+  (a test more) shows a config with a `pack` backend making the platform's directory,
+  the flag's and the config's. The two share one start of the binary, so N3c's count of
+  twenty-three places stands. Three tests of `wired.rs` that opened a directory under a
+  config with no backend now write a local backend; one shows the kinds given after.
+- Six tests more than "Done when" names: the four above, and two unit tests of the
+  settings in `whizbang::pack`.
 
 ### P6b. The installation a call is answered from
 

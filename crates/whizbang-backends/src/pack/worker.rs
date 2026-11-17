@@ -333,13 +333,23 @@ pub struct Said {
 }
 
 /// What a caller bounds one call by, beyond its kind's limit (task P4): its cancellation
-/// signal, and its deadline on the supervisor's clock when it has one.
+/// signal, and its deadline on the supervisor's clock when it has one. And, from the
+/// kind `pack`'s settings (task P6a): a shorter limit for a `segment` than
+/// [`CALL_LIMIT`], and the lifetime a worker started for the call is given.
 #[derive(Debug, Clone, Default)]
 pub struct Limits {
     /// Set by the caller to cancel the call.
     pub cancellation: Cancellation,
     /// When the call must be over, on the supervisor's clock.
     pub deadline: Option<Instant>,
+    /// The limit of a `segment`, when it is shorter than [`CALL_LIMIT`]: the kind's
+    /// setting. A longer one is [`CALL_LIMIT`], so that a turn is never longer than
+    /// [`super::queue::TURN_MOST`]. None: [`CALL_LIMIT`].
+    pub call_limit: Option<Duration>,
+    /// The lifetime, `--max-lifetime-s`, of a worker started for the call, at least 1:
+    /// the kind's setting. A worker that runs already keeps its own. None: the
+    /// launch's.
+    pub lifetime_s: Option<u32>,
 }
 
 impl Limits {
@@ -829,8 +839,14 @@ impl Worker {
         let limit = match &ask {
             Ask::Load { .. } => LOAD_LIMIT,
             Ask::Unload { .. } => UNLOAD_LIMIT,
-            Ask::Segment { .. } => CALL_LIMIT,
+            Ask::Segment { .. } => limits
+                .call_limit
+                .map_or(CALL_LIMIT, |limit| limit.min(CALL_LIMIT)),
         };
+        if let Some(lifetime_s) = limits.lifetime_s.filter(|lifetime| *lifetime >= 1) {
+            // Read when a worker is started, and by no worker that runs already.
+            self.launch.lifetime_s = lifetime_s;
+        }
         let awaited = proto::Awaited::of(&ask);
         self.requests += 1;
         let id = format!("r{}", self.requests);

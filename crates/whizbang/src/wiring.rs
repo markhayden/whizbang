@@ -16,14 +16,16 @@ use whizbang_core::artifact::Contents;
 use whizbang_core::capability::{Inventory, NoInventory};
 use whizbang_core::config::{Config, Credentials, Files, Kinds, Offers};
 use whizbang_core::contract::{
-    Action, ConfigSource, Engine, Interrupted, NoBackends, Opening, Place, Recovery, Registry,
-    Secrets, Snapshot, SystemClock,
+    Action, Capability, ConfigSource, Engine, Interrupted, NoBackends, Opening, Place, Recovery,
+    Registry, Secrets, Snapshot, SystemClock,
 };
 use whizbang_core::description::Description;
 use whizbang_core::egress::DispatchPolicy;
 use whizbang_core::spend::{CallCap, Meter, PreparationAge, StoreLedger};
 use whizbang_core::store::fs::RealFs;
 use whizbang_core::store::{self, Store};
+
+use crate::pack::{OneWorker, PackKind};
 
 /// Every action this build ships, registered in the order a door lists them: the
 /// recipe first, then the primitives. Tools add theirs here as they are ported. What
@@ -47,11 +49,17 @@ pub fn registry() -> Result<Registry, String> {
     Ok(registry)
 }
 
-/// The kinds of backend this build has (ADR 0011, "Kinds"): none. No network client
-/// and no local model is built at this checkpoint, so a backend a config names is of
-/// a kind this build does not have, and is not ready. A test registers a fake.
-pub fn kinds() -> Kinds {
-    Kinds::new()
+/// The kinds of backend this build has (ADR 0011, "Kinds"): one, `pack`, a local
+/// segmenter over the one worker of the process (plan 1C, task P6a; [`crate::pack`]),
+/// which is this. Whoever builds the executor makes the one worker once, and gives the
+/// same to the wiring ([`Over::pack`]), which tells it the models directory it opened.
+/// No network client is built at this checkpoint: a backend of any other kind is of a
+/// kind this build does not have, and is not ready. A test registers a fake beside it.
+pub fn kinds(worker: &Arc<OneWorker>) -> Kinds {
+    let mut kinds = Kinds::new();
+    // One kind, under a name of the rule, in kinds that hold none: it is taken.
+    let _ = kinds.register(Arc::new(PackKind::over(worker.clone())));
+    kinds
 }
 
 /// The catalogue this build ships (ADR 0017, "The catalogue", "The shipped catalogue";
@@ -332,9 +340,10 @@ pub(crate) fn open_models_dir(
     ModelsDir::open(Arc::new(RealFs), root, clock).map_err(|refused| not_used(refused, said))
 }
 
-/// A models directory that was opened, and the inventory over it.
+/// A models directory that was opened, at its folder, and the inventory over it.
 #[derive(Clone)]
 struct Opened {
+    root: PathBuf,
     dir: ModelsDir,
     catalogue: Catalogue,
     adapters: Vec<(ModelName, Revision)>,
@@ -345,6 +354,7 @@ struct Opened {
 impl Opened {
     /// The inventory of this directory, told these secrets.
     fn knowing(
+        root: PathBuf,
         dir: ModelsDir,
         catalogue: Catalogue,
         adapters: Vec<(ModelName, Revision)>,
@@ -353,6 +363,7 @@ impl Opened {
     ) -> Opened {
         let installations = inventory_of(&dir, &catalogue, &adapters, runs_on, secrets);
         Opened {
+            root,
             dir,
             catalogue,
             adapters,
@@ -360,6 +371,27 @@ impl Opened {
             installations: Arc::new(installations),
         }
     }
+
+    /// Tells the one worker of the process where it is: this directory, and the
+    /// catalogue the inventory is over.
+    fn placing(&self, worker: &OneWorker) -> Result<(), String> {
+        worker.place(&self.root, self.dir.clone(), self.catalogue.clone())
+    }
+}
+
+/// Whether a config has a local backend: one whose table names no url, which is how
+/// a backend names no recipient (ADR 0012; ADR 0015, "An inventory"). It is read from
+/// the tables alone, whatever kinds the build has and whichever was given first: a
+/// backend of a kind the build does not have is not ready, and opening the directory
+/// for it asks nothing of a model.
+fn has_local_backend(config: &Config) -> bool {
+    [Capability::Segment, Capability::Fill, Capability::Judge]
+        .into_iter()
+        .any(|capability| {
+            config
+                .backends(capability)
+                .any(|(_, backend)| backend.address().is_none())
+        })
 }
 
 /// The inventory of this directory, for the models of this catalogue under these
@@ -393,6 +425,12 @@ pub struct Over {
     kinds: Kinds,
     secrets: Secrets,
     installed: Option<Opened>,
+    /// The one worker of the process, which the kind `pack` of [`Over::kinds`] is
+    /// over, when one was given ([`Over::pack`]).
+    pack: Option<Arc<OneWorker>>,
+    /// Why that worker could not be told the models directory, when it was given
+    /// after the directory was opened: the executor is not built.
+    unplaced: Option<String>,
 }
 
 impl Over {
@@ -423,6 +461,23 @@ impl Over {
         self
     }
 
+    /// The same, with the one worker of the process: the one the kinds given
+    /// ([`Over::kinds`], [`kinds`]) are over. The wiring tells it the models directory
+    /// it opens ([`Over::installed`]) and the catalogue it is over, whichever of the
+    /// two is given first; where none is opened, no local backend is ready, and the
+    /// worker is never asked. A worker whose supervisor runs over another models
+    /// directory already is not told this one: the executor is then not built, and
+    /// says so.
+    pub fn pack(mut self, worker: Arc<OneWorker>) -> Over {
+        if let Some(opened) = &self.installed
+            && let Err(refused) = opened.placing(&worker)
+        {
+            self.unplaced = Some(refused);
+        }
+        self.pack = Some(worker);
+        self
+    }
+
     /// The same, told of these secrets from the start. **They are given once, here,
     /// and to both:** to the executor, which takes them out of everything it writes
     /// (`Engine::with_secrets`), and to the source of its config, which refuses a
@@ -438,6 +493,7 @@ impl Over {
         self.secrets = secrets;
         if let Some(opened) = self.installed.take() {
             let Opened {
+                root,
                 dir,
                 catalogue,
                 adapters,
@@ -445,6 +501,7 @@ impl Over {
                 ..
             } = opened;
             self.installed = Some(Opened::knowing(
+                root,
                 dir,
                 catalogue,
                 adapters,
@@ -477,47 +534,53 @@ impl Over {
     ///   where it is ([`Models::platform`]) is asked only when a directory is about
     ///   to be opened and neither the flag nor the config named one.
     /// - **Where no model could be asked for, no directory is opened or made:** with
-    ///   a catalogue that holds no model; under a build that has no kind of backend,
-    ///   whose config can offer no backend, local or not, as this build until the kind
-    ///   `pack` (plan 1C, task P6a); and for a command that names neither a config nor
-    ///   a directory, whose executor has no backend. Such an executor is over the
-    ///   inventory that knows no model. So with the shipped catalogue's one model
-    ///   (task N5) no command but `whizbang models` opens or makes a models
-    ///   directory, until this build has a kind.
+    ///   a catalogue that holds no model; and under a config that has no local
+    ///   backend, one whose table names no url (plan 1C, task P6a, which gave the
+    ///   build its first kind, `pack`), or no config at all, whose executor has no
+    ///   backend. Such an executor is over the inventory that knows no model. Which
+    ///   backends are local is read from the config's tables, not from the kinds
+    ///   given ([`Over::kinds`]), so the two may be given in either order.
     ///
     /// - **A relative `--models-dir` is refused first,** whatever else is asked and
     ///   before anything is read or made ([`RELATIVE_MODELS_DIR`]).
+    ///
+    /// - **The one worker of the process is told the directory** ([`Over::pack`]),
+    ///   and the catalogue: the folder its worker is started over, and the
+    ///   directory its supervisor reads the counts of removals in, are this one.
     ///
     /// What comes back otherwise is why the directory is not used, in fixed words
     /// that say how to mend it and hold no path.
     pub fn installed(mut self, models: Models) -> Result<Over, String> {
         models.flag_is_absolute()?;
-        if models.catalogue.entries().is_empty() || self.kinds.is_empty() {
+        if models.catalogue.entries().is_empty() {
             return Ok(self);
         }
-        if self.config.is_none() && models.flag.is_none() {
+        // The config file alone, for its one key and for whether a backend of it is
+        // local: whether its env file can be used is said where the two are read
+        // together ([`loaded`]), and again at each ask of the source.
+        let Some(path) = &self.config else {
             return Ok(self);
-        }
-        // The config file alone, for its one key: whether its env file can be
-        // used is said where the two are read together ([`loaded`]), and again at
-        // each ask of the source.
-        let config = match &self.config {
-            Some(path) => Some(
-                Config::read(path, &self.secrets)
-                    .map_err(|refused| format!("the config cannot be used: {refused}"))?,
-            ),
-            None => None,
         };
+        let config = Config::read(path, &self.secrets)
+            .map_err(|refused| format!("the config cannot be used: {refused}"))?;
+        if !has_local_backend(&config) {
+            return Ok(self);
+        }
         // The platform's is asked for last, and only when the other two are silent.
-        let (said, root) = models.chosen(config.as_ref().and_then(Config::models_dir))?;
+        let (said, root) = models.chosen(config.models_dir())?;
         let dir = open_models_dir(said, &root, Arc::new(SystemClock))?;
-        self.installed = Some(Opened::knowing(
+        let opened = Opened::knowing(
+            root,
             dir,
             models.catalogue,
             models.adapters,
             models.runs_on,
             &self.secrets,
-        ));
+        );
+        if let Some(worker) = &self.pack {
+            opened.placing(worker)?;
+        }
+        self.installed = Some(opened);
         Ok(self)
     }
 
@@ -561,6 +624,7 @@ impl std::fmt::Debug for Over {
             .field("kinds", &self.kinds)
             .field("secrets", &self.secrets)
             .field("models", &self.installed.is_some())
+            .field("pack", &self.pack.is_some())
             .finish()
     }
 }
@@ -637,6 +701,9 @@ pub fn loaded(over: &Over) -> Result<(), String> {
 ///   preparation that is too old is refused as stale before its estimate, which is
 ///   as old, is held to a cap. Neither writes a record into an admission.
 fn wired(engine: Engine, over: &Over) -> Result<Engine, String> {
+    if let Some(refused) = &over.unplaced {
+        return Err(refused.clone());
+    }
     Ok(engine
         .with_config(over.source()?)
         .with_secrets(over.secrets.clone())
